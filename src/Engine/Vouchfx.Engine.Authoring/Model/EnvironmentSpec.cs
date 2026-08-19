@@ -74,7 +74,9 @@ public sealed record EnvironmentSpec(
 /// <c>ReferenceExpression</c>.  <see langword="null"/> when the service declares no
 /// <c>env:</c> block — and, unlike <see cref="DependencySpec.Env"/>, ALSO
 /// <see langword="null"/> for an empty <c>env: {}</c>, which the parser deliberately
-/// collapses so that spelling stays indistinguishable from absent in the environment hash.
+/// collapses so that spelling stays indistinguishable from absent. The asymmetry is
+/// deliberate: the change that added the dependency counterpart was fenced against altering
+/// service <c>env:</c> behaviour in any way, so the collapse this field has always had stayed.
 /// </param>
 public sealed record ServiceSpec(
     string? Image,
@@ -237,17 +239,28 @@ public sealed record DependencySpec(
     public SecuritySpec? Security { get; init; }
 
     /// <summary>
-    /// Optional environment-variable mapping applied to this dependency's container
-    /// (dependency-env spec, REQ-001), the managed-resource counterpart of
-    /// <see cref="ServiceSpec.Env"/> — the only way to configure a managed dependency
-    /// whose image is configured through environment variables (e.g.
-    /// <c>MONGODB_ENABLE_AUTHENTICATION</c>, <c>SQLSERVER_EDITION</c>).
+    /// Optional environment-variable mapping for this dependency's container
+    /// (dependency-env spec, REQ-001) — the managed-resource counterpart <see cref="ServiceSpec.Env"/>
+    /// will gain, by which a managed dependency whose image is configured through environment
+    /// variables (e.g. <c>MONGODB_ENABLE_AUTHENTICATION</c>, <c>SQLSERVER_EDITION</c>) will be
+    /// configurable.
+    /// <para>
+    /// <strong>Not yet applied.</strong> At this commit nothing reads this field: the
+    /// orchestration-layer mapper that will apply it (dependency-env REQ-003) and the
+    /// schema property that will make it reachable from a validated document (REQ-002)
+    /// land in the changes that follow. Until then a dependency <c>env:</c> is refused
+    /// at validation by <c>$defs/dependency</c>'s <c>additionalProperties: false</c>, so
+    /// the only callers that can observe a non-<see langword="null"/> value here are the
+    /// parse paths that bind a document without validating it against the schema.
+    /// </para>
+    /// <para>
     /// <see langword="null"/> when the dependency declares no <c>env:</c> block, which is
     /// the shape every suite written before this field has and whose behaviour is
     /// unchanged. An empty <c>env: {}</c> yields an EMPTY dictionary here rather than
     /// <see langword="null"/> — unlike <see cref="ServiceSpec.Env"/>, whose empty spelling
     /// the parser collapses to <see langword="null"/> — so "declared, empty" stays
     /// distinguishable from "not declared".
+    /// </para>
     /// </summary>
     /// <remarks>
     /// <para>
@@ -255,10 +268,10 @@ public sealed record DependencySpec(
     /// <see cref="ServiceSpec.Env"/>'s is; this record applies no coercion and no
     /// validation of the value's CONTENT, and performs no reference resolution. What a
     /// value's text is allowed to CONTAIN, and which variable names are reserved because
-    /// the engine itself sets them for a dependency's <c>type</c>, are rules of the
-    /// orchestration-layer mapper that consumes this field, and are stated by that mapper's
-    /// own documentation rather than here — this record deliberately describes only what it
-    /// itself does.
+    /// the engine itself sets them for a dependency's <c>type</c>, will be rules of the
+    /// orchestration-layer mapper that consumes this field, and will be stated by that
+    /// mapper's own documentation rather than here — this record deliberately describes only
+    /// what it itself does.
     /// </para>
     /// <para>
     /// An init-only property for the same binary-compatibility reason as

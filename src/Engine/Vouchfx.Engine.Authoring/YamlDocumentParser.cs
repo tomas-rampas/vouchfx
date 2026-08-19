@@ -330,18 +330,13 @@ public static class YamlDocumentParser
             var pullPolicy = GetScalar(serviceMapping, "imagePullPolicy");
             var httpPortRaw = GetScalar(serviceMapping, "httpPort");
             int? httpPort = httpPortRaw is not null && int.TryParse(httpPortRaw, NumberStyles.None, CultureInfo.InvariantCulture, out var p) ? p : null;
-            // An empty 'env: {}' is collapsed back to null HERE, not in the reader, and only
-            // for a service: ParseEnvMap's documented contract is to RETAIN an empty
-            // declaration (see its <returns>, which records this call site as the one
-            // deliberate exception) so a DEPENDENCY can distinguish "declared, empty" from
-            // "not declared" (dependency-env EDGE-002), while changing service 'env:'
-            // behaviour in any way is out of scope for that change. The distinction is not
-            // cosmetic — ServiceSpec.Env is serialised into the environment hash, so promoting
-            // null to {} here would move the hash of every suite that ever wrote 'env: {}' on
-            // a service. THIS LINE IS LOAD-BEARING, NOT A TIDY-UP: deleting it is pinned red
-            // by Parse_Env_EmptyMap_CollapsesToNullOnAServiceButIsRetainedOnADependency.
-            var envMap = ParseEnvMap(serviceMapping, "Service", keyScalar.Value);
-            var env = envMap is { Count: > 0 } ? envMap : null;
+            // Service only: an empty 'env: {}' collapses to null so the spelling stays
+            // indistinguishable from absent — the reader retains it (see its <returns>) so a
+            // dependency can tell the two apart (EDGE-002). The collapse lives at this call
+            // site, not in the reader, because changing service 'env:' behaviour in any way is
+            // out of scope for dependency-env. Pinned by
+            // Parse_Env_EmptyMap_CollapsesToNullOnAServiceButIsRetainedOnADependency.
+            var env = CollapseEmptyEnvToNull(ParseEnvMap(serviceMapping, "Service", keyScalar.Value));
             var security = ParseSecurity(serviceMapping, "Service", keyScalar.Value);
             var (ports, pinnedHostPorts) = ParseServicePorts(serviceMapping, keyScalar.Value);
             var healthCheck = ParseHealthCheck(serviceMapping);
@@ -660,9 +655,9 @@ public static class YamlDocumentParser
     /// <para>
     /// THIS READER'S CONTRACT IS NOT WHAT EVERY CALLER SHIPS: <see cref="ParseServiceMap"/>
     /// deliberately re-collapses an empty dictionary back to <see langword="null"/> for a
-    /// SERVICE, because <c>ServiceSpec.Env</c> is serialised into the environment hash and
-    /// promoting <see langword="null"/> to <c>{}</c> there would move the hash of every suite
-    /// that ever wrote <c>env: {}</c> on a service. That collapse is the caller's rule, not
+    /// SERVICE (via <see cref="CollapseEmptyEnvToNull"/>), because changing service
+    /// <c>env:</c> behaviour in any way is out of scope for dependency-env — the change that
+    /// widened this reader. That collapse is the caller's rule, not
     /// this reader's; both halves are pinned by
     /// <c>Parse_Env_EmptyMap_CollapsesToNullOnAServiceButIsRetainedOnADependency</c>, so
     /// neither this <c>&lt;returns&gt;</c> nor that call site can be "tidied" into agreement
@@ -676,13 +671,17 @@ public static class YamlDocumentParser
     /// applied here (the YAML-scalar-coercion gotcha this parser is elsewhere careful about).
     /// This includes YAML's explicit null: MEASURED against the pinned YamlDotNet 16.3.0
     /// representation model, <c>FOO: ~</c> reads back as the literal one-character text
-    /// <c>~</c> for a service and a dependency alike, and it is the JSON Schema layer — whose
-    /// <c>env</c> value type is <c>string | integer | number | boolean</c> — that refuses that
-    /// spelling, not this reader. Reference resolution (<c>${conn:name}</c> /
-    /// <c>${conn:name.part}</c> / <c>${env:NAME}</c>), <c>${secret:...}</c> rejection, and the
+    /// <c>~</c> for a service and a dependency alike; this reader refuses neither. For a
+    /// SERVICE it is the JSON Schema layer — whose <c>env</c> value type is
+    /// <c>string | integer | number | boolean</c> — that refuses that spelling. For a
+    /// DEPENDENCY there is no <c>env</c> schema yet, so the schema refuses the whole <c>env</c>
+    /// KEY rather than that spelling of a value, and <c>$defs/dependency</c> gains the same
+    /// value-type shape in the schema change that follows this one (dependency-env REQ-002).
+    /// Reference resolution (<c>${conn:name}</c> / <c>${conn:name.part}</c> /
+    /// <c>${env:NAME}</c>), the rejection of <c>${secret:...}</c> (§17), and the
     /// dependency-only refusals (a variable name the engine itself sets for that dependency's
     /// type; <c>${conn:}</c> on a dependency at all) are the orchestration-layer mapper's job
-    /// (§17) — this parser only extracts the literal text.
+    /// — this parser only extracts the literal text.
     /// </remarks>
     /// <exception cref="YamlParseException">
     /// Thrown when the <c>env:</c> node is present but is not a mapping, when a key is not a
@@ -732,6 +731,22 @@ public static class YamlDocumentParser
 
         return dict;
     }
+
+    /// <summary>
+    /// Collapses an empty <c>env: {}</c> back to <see langword="null"/> so that, on a SERVICE,
+    /// the empty spelling stays indistinguishable from a service that declared no <c>env:</c>
+    /// at all.
+    /// </summary>
+    /// <remarks>
+    /// The SERVICE call site's rule, deliberately NOT <see cref="ParseEnvMap"/>'s — that reader
+    /// retains an empty declaration so a DEPENDENCY can distinguish "declared, empty" from "not
+    /// declared" (dependency-env EDGE-002), and changing service <c>env:</c> behaviour in any
+    /// way is out of scope for that change. Named rather than inlined so the rule describes
+    /// itself and cannot drift from a comment; both halves of the asymmetry are pinned by
+    /// <c>Parse_Env_EmptyMap_CollapsesToNullOnAServiceButIsRetainedOnADependency</c>.
+    /// </remarks>
+    private static Dictionary<string, string>? CollapseEmptyEnvToNull(Dictionary<string, string>? env)
+        => env is { Count: > 0 } ? env : null;
 
     private static Dictionary<string, DependencySpec>? ParseDependencyMap(YamlMappingNode environment)
     {
@@ -788,10 +803,22 @@ public static class YamlDocumentParser
             // 'security' and 'env') into a new mapping node so provider resource
             // contributors can bind them. 'security' is excluded here because it is
             // now explicitly bound above, exactly like 'image'/'version'/'type'; 'env'
-            // joins them for the same reason, and excluding it is load-bearing rather
-            // than tidiness (dependency-env REQ-001): leaving it in the untyped bucket
-            // is silent — no consumer reads an 'env' key out of Extra — AND perturbs the
-            // environment hash, so the field would look applied while applying nothing.
+            // joins them for the same reason (dependency-env REQ-001): Extra is the untyped
+            // bucket for fields that no typed field claims, and 'env' now has one. (The
+            // environment hash moves for every existing suite either way, because
+            // DependencySpec gained an Env property that SerialiseEnvironment writes —
+            // "Env":null — whether or not one was declared; that hash never leaves the
+            // process, so it is not the reason for either choice.)
+            //
+            // The move IS a live behaviour change, on exactly the four paths that bind a
+            // document WITHOUT validating it against the schema — WatchRunner.Compile,
+            // ScenarioDiscovery, SuiteSetLoader, and the SHIPPED
+            // Vouchfx.Sdk.Testing.ProviderTestHarness — since only those can reach a
+            // dependency 'env:' at all today ($defs/dependency still refuses the key
+            // outright). Harmless, and stated so the next reader need not re-derive it:
+            // DependencySpec.Extra is read only by EnvironmentMapper, and only for
+            // 'schemaRegistry', 'queues' and 'topics'; nothing reads an 'env' key out of it,
+            // before this change or after.
             YamlMappingNode? extra = BuildExtraNode(depMapping, "type", "version", "image", "security", "env");
 
             dict[keyScalar.Value] = new DependencySpec(type, version, extra)

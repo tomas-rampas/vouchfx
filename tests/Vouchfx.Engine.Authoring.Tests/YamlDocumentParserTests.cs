@@ -1278,9 +1278,11 @@ public sealed class YamlDocumentParserTests
     /// <summary>
     /// The load-bearing half of REQ-001. A dependency's <c>env:</c> must land in the typed
     /// <see cref="DependencySpec.Env"/> field AND must NOT also fall through into
-    /// <see cref="DependencySpec.Extra"/>: leaking there is silent (no consumer reads an
-    /// <c>env</c> key out of <c>Extra</c>) and it perturbs the environment hash, so the
-    /// feature would look like it worked while applying nothing.
+    /// <see cref="DependencySpec.Extra"/>: <c>Extra</c> is the untyped bucket for fields no
+    /// typed field claims, and leaving a now-typed field in it is silent — nothing reads an
+    /// <c>env</c> key out of <c>Extra</c> (<c>EnvironmentMapper</c> reads it only for
+    /// <c>schemaRegistry</c>, <c>queues</c> and <c>topics</c>), so a duplicate there would
+    /// look like a second, live configuration surface while being inert.
     /// </summary>
     [Fact]
     public void Parse_DependencyEnv_IsBoundToTypedField_AndNotLeakedIntoExtra()
@@ -1497,9 +1499,11 @@ public sealed class YamlDocumentParserTests
         Assert.NotNull(declaredEmpty.Env);
         Assert.Empty(declaredEmpty.Env!);
         Assert.Null(absent.Env);
-        // Neither spelling leaks into the untyped bucket.
+        // The declared-but-empty spelling does not leak into the untyped bucket either. (The
+        // 'absent' half is not asserted here: a dependency that writes no 'env:' cannot detect
+        // an env-leaks-into-Extra regression, and Parse_DependencyEnv_Absent_IsNull already
+        // pins that it acquires no Extra.)
         Assert.Null(declaredEmpty.Extra);
-        Assert.Null(absent.Extra);
     }
 
     /// <summary>
@@ -1512,13 +1516,12 @@ public sealed class YamlDocumentParserTests
     [Fact]
     public void Parse_Env_EmptyMap_CollapsesToNullOnAServiceButIsRetainedOnADependency()
     {
-        // The deliberate asymmetry (dependency-env EDGE-002): ServiceSpec.Env is serialised
-        // into the environment hash (ScenarioRunner.ComputeEnvironmentHash, which is the same
-        // canonical form the suite's shared-topology check compares), so 'env: {}' on a service
-        // must stay indistinguishable from absent or every existing suite that wrote it
-        // changes hash. A dependency has no such history, so it distinguishes the two. Both
-        // halves asserted here, from ONE document, so a refactor that "tidies" either one —
-        // collapsing the dependency's empty map, or promoting the service's null — goes red.
+        // The deliberate asymmetry (dependency-env EDGE-002): changing service 'env:' behaviour
+        // in any way is out of scope for that change, and 'env: {}' on a service has always
+        // collapsed to null, so it must keep doing so. A dependency has no such history, so it
+        // distinguishes the two. Both halves asserted here, from ONE document, so a refactor
+        // that "tidies" either one — collapsing the dependency's empty map, or promoting the
+        // service's null — goes red.
         const string yaml = """
             environment:
               services:
@@ -1572,7 +1575,10 @@ public sealed class YamlDocumentParserTests
         var ex = Assert.Throws<YamlParseException>(() => YamlDocumentParser.Parse(yaml));
         Assert.Contains("Dependency 'orders-db'", ex.Message, StringComparison.Ordinal);
         Assert.DoesNotContain("Service", ex.Message, StringComparison.Ordinal);
-        Assert.Contains("env", ex.Message, StringComparison.OrdinalIgnoreCase);
+        // The 'env' KEY by name, quoted and at its position — not a bare "env" substring,
+        // which the message's own word "environment-variable" supplies whether or not the
+        // key is ever named.
+        Assert.Contains("'env' at line", ex.Message, StringComparison.Ordinal);
         Assert.Contains("mapping", ex.Message, StringComparison.OrdinalIgnoreCase);
         // The exact position, not merely a positive one: the fault must be attributed to the
         // offending 'env' scalar itself (line 5, at its opening quote) and not to the parent
@@ -1756,7 +1762,9 @@ public sealed class YamlDocumentParserTests
             Assert.Equal(
                 serviceEx.Message.Replace("Service 'api'", "Dependency 'api'", StringComparison.Ordinal),
                 dependencyEx.Message);
-            Assert.Equal(serviceEx.Line, dependencyEx.Line);
+            // Column only. Line parity is already implied by the message equality above,
+            // since every one of these messages embeds "at line N"; Column is not in any
+            // message text, so this is the assertion carrying weight here.
             Assert.Equal(serviceEx.Column, dependencyEx.Column);
         }
     }
