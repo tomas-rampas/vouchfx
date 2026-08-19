@@ -1294,8 +1294,8 @@ public sealed class YamlDocumentParserTests
                 mongo:
                   type: mongodb
                   env:
-                    MONGODB_ENABLE_AUTHENTICATION: "true"
-                    MONGODB_ROOT_USER: root
+                    MONGO_INITDB_DATABASE: ledger
+                    MONGO_INITDB_ROOT_USERNAME: root
             steps:
               - id: noop
                 type: script.csharp
@@ -1308,8 +1308,8 @@ public sealed class YamlDocumentParserTests
         var dep = doc.Environment!.Dependencies!["mongo"];
         Assert.NotNull(dep.Env);
         Assert.Equal(2, dep.Env!.Count);
-        Assert.Equal("true", dep.Env["MONGODB_ENABLE_AUTHENTICATION"]);
-        Assert.Equal("root", dep.Env["MONGODB_ROOT_USER"]);
+        Assert.Equal("ledger", dep.Env["MONGO_INITDB_DATABASE"]);
+        Assert.Equal("root", dep.Env["MONGO_INITDB_ROOT_USERNAME"]);
         // The half that matters: 'env' is a typed field now, not an extra one.
         Assert.Null(dep.Extra);
     }
@@ -1326,7 +1326,7 @@ public sealed class YamlDocumentParserTests
                   version: "2022-latest"
                   image: nexus.example.com/mirror/mssql
                   env:
-                    SQLSERVER_EDITION: Developer
+                    MSSQL_PID: Developer
             steps:
               - id: noop
                 type: script.csharp
@@ -1341,7 +1341,7 @@ public sealed class YamlDocumentParserTests
         Assert.Equal("2022-latest", dep.Version);
         Assert.Equal("nexus.example.com/mirror/mssql", dep.Image);
         Assert.NotNull(dep.Env);
-        Assert.Equal("Developer", dep.Env!["SQLSERVER_EDITION"]);
+        Assert.Equal("Developer", dep.Env!["MSSQL_PID"]);
         Assert.Null(dep.Extra);
     }
 
@@ -1668,7 +1668,7 @@ public sealed class YamlDocumentParserTests
     public void Parse_Env_ServiceAndDependencyDiagnostics_DifferOnlyBySubjectNoun()
     {
         // Non-mapping 'env:' — deliberately shape-identical: owner 'api', 'env:' on the same
-        // line at the same column in both, offending value written identically. The third
+        // line at the same column in both, offending value written identically. The first
         // argument names the throw site each pair is meant to reach, so a pair that silently
         // stopped exercising its own site (and started duplicating another) goes red rather
         // than passing three times over one diagnostic.

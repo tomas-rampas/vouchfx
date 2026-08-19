@@ -330,12 +330,7 @@ public static class YamlDocumentParser
             var pullPolicy = GetScalar(serviceMapping, "imagePullPolicy");
             var httpPortRaw = GetScalar(serviceMapping, "httpPort");
             int? httpPort = httpPortRaw is not null && int.TryParse(httpPortRaw, NumberStyles.None, CultureInfo.InvariantCulture, out var p) ? p : null;
-            // Service only: an empty 'env: {}' collapses to null so the spelling stays
-            // indistinguishable from absent — the reader retains it (see its <returns>) so a
-            // dependency can tell the two apart (EDGE-002). The collapse lives at this call
-            // site, not in the reader, because changing service 'env:' behaviour in any way is
-            // out of scope for dependency-env. Pinned by
-            // Parse_Env_EmptyMap_CollapsesToNullOnAServiceButIsRetainedOnADependency.
+            // Pinned by Parse_Env_EmptyMap_CollapsesToNullOnAServiceButIsRetainedOnADependency.
             var env = CollapseEmptyEnvToNull(ParseEnvMap(serviceMapping, "Service", keyScalar.Value));
             var security = ParseSecurity(serviceMapping, "Service", keyScalar.Value);
             var (ports, pinnedHostPorts) = ParseServicePorts(serviceMapping, keyScalar.Value);
@@ -810,15 +805,36 @@ public static class YamlDocumentParser
             // "Env":null — whether or not one was declared; that hash never leaves the
             // process, so it is not the reason for either choice.)
             //
-            // The move IS a live behaviour change, on exactly the four paths that bind a
-            // document WITHOUT validating it against the schema — WatchRunner.Compile,
-            // ScenarioDiscovery, SuiteSetLoader, and the SHIPPED
-            // Vouchfx.Sdk.Testing.ProviderTestHarness — since only those can reach a
-            // dependency 'env:' at all today ($defs/dependency still refuses the key
-            // outright). Harmless, and stated so the next reader need not re-derive it:
-            // DependencySpec.Extra is read only by EnvironmentMapper, and only for
-            // 'schemaRegistry', 'queues' and 'topics'; nothing reads an 'env' key out of it,
-            // before this change or after.
+            // Parsing the key at all is live only where a document is bound WITHOUT being
+            // validated against the schema, since $defs/dependency still refuses 'env'
+            // outright: WatchRunner.Compile, ScenarioDiscovery.ParseFile and SuiteSetLoader
+            // in this repo, plus any out-of-repo caller, because Parse is public on a
+            // packable assembly. The shipped caller that looks like it belongs on that list,
+            // Vouchfx.Sdk.Testing.ProviderTestHarness, does NOT: it schema-validates and
+            // returns Halted BEFORE it parses. Nor do ScenarioRunner or ScenarioValidator,
+            // for the same reason. Two consequences, stated so the next reader need not
+            // re-derive them:
+            //
+            //   • WHERE 'env' LANDS changes nothing downstream. Nothing INTERPRETS an 'env'
+            //     key out of DependencySpec.Extra, before this change or after: EnvironmentMapper
+            //     reads Extra only for 'schemaRegistry', 'queues' and 'topics', and
+            //     SerialiseEnvironment (above) serialises it wholesale without reading keys.
+            //
+            //   • WHAT A MALFORMED 'env' DOES changes. Its malformed shapes now throw here
+            //     rather than being copied verbatim into Extra by BuildExtraNode, which accepts
+            //     any scalar-KEYED child whatever the value's node type. On the discovery path
+            //     that is a reclassification, not just a new error site: such a document used to
+            //     bind and build a full ScenarioAst (AstBuilder never inspects the environment)
+            //     and was refused later at the runner's schema door with its security abort
+            //     recorded; it now throws inside ScenarioDiscovery.ParseFile's FIRST try —
+            //     failure class 3, which deliberately sets no RecoveredDocument — and RunCommand
+            //     feeds SecurityAssurance only from failures that carry one. So a suite declaring
+            //     'security:' beside a malformed dependency 'env:' moves from "refused,
+            //     declaration recorded" to "parse failure, declaration silently dropped".
+            //     DELIBERATELY LEFT AS IS: that is exactly what a malformed SERVICE 'env:' has
+            //     done since #159, so this is the service side's consistency rather than a new
+            //     failure mode, and it sits inside issue #411's acknowledged residual. Pinned by
+            //     CliLogicTests.Discover_MalformedDependencyEnv_IsClassThreeAndRecoversNothing.
             YamlMappingNode? extra = BuildExtraNode(depMapping, "type", "version", "image", "security", "env");
 
             dict[keyScalar.Value] = new DependencySpec(type, version, extra)

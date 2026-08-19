@@ -240,15 +240,17 @@ public sealed record DependencySpec(
 
     /// <summary>
     /// Optional environment-variable mapping for this dependency's container
-    /// (dependency-env spec, REQ-001) — the managed-resource counterpart <see cref="ServiceSpec.Env"/>
-    /// will gain, by which a managed dependency whose image is configured through environment
-    /// variables (e.g. <c>MONGODB_ENABLE_AUTHENTICATION</c>, <c>SQLSERVER_EDITION</c>) will be
-    /// configurable.
+    /// (dependency-env spec, REQ-001) — the managed-resource counterpart to
+    /// <see cref="ServiceSpec.Env"/>, by which a managed dependency whose image is configured
+    /// through environment variables (e.g. <c>MONGO_INITDB_DATABASE</c> on the
+    /// <c>library/mongo</c> image, <c>MSSQL_PID</c> on <c>mcr.microsoft.com/mssql/server</c> —
+    /// the images the engine's own <c>AddMongoDB</c>/<c>AddSqlServer</c> mappings start) will
+    /// be configurable.
     /// <para>
-    /// <strong>Not yet applied.</strong> At this commit nothing reads this field: the
-    /// orchestration-layer mapper that will apply it (dependency-env REQ-003) and the
-    /// schema property that will make it reachable from a validated document (REQ-002)
-    /// land in the changes that follow. Until then a dependency <c>env:</c> is refused
+    /// <strong>Not yet applied.</strong> Nothing reads this field in the release that
+    /// introduces it: the orchestration-layer mapper that applies it (dependency-env REQ-003)
+    /// and the schema property that makes it reachable from a validated document (REQ-002)
+    /// arrive in a later release. Until then a dependency <c>env:</c> is refused
     /// at validation by <c>$defs/dependency</c>'s <c>additionalProperties: false</c>, so
     /// the only callers that can observe a non-<see langword="null"/> value here are the
     /// parse paths that bind a document without validating it against the schema.

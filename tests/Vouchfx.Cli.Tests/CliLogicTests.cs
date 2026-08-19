@@ -471,6 +471,92 @@ public sealed class ScenarioDiscoveryTests : IDisposable
         Assert.Null(goodResult.RecoveredMetadata);
     }
 
+    /// <summary>
+    /// A malformed dependency <c>env:</c> is failure class 3 and therefore carries NO
+    /// <c>RecoveredDocument</c> — so a <c>security:</c> declaration standing beside it is
+    /// dropped rather than recorded.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is a RECLASSIFICATION, not merely a new error site, and that is why it is pinned
+    /// here rather than left to the parser's own tests. Before <c>ParseDependencyMap</c> read
+    /// <c>env:</c>, the key was swept into <c>DependencySpec.Extra</c> by <c>BuildExtraNode</c>
+    /// — which accepts any scalar-KEYED child whatever the VALUE's node type — and
+    /// <c>AstBuilder</c> never inspects the environment, so the document became a FULL scenario
+    /// whose <c>security:</c> declaration was refused later, at the runner's schema door, with
+    /// the abort recorded. It now throws inside <c>ScenarioDiscovery.ParseFile</c>'s FIRST
+    /// <c>try</c>, whose catch deliberately sets no <c>RecoveredDocument</c>, and
+    /// <c>RunCommand</c> builds its <c>UnbuiltDocument</c> list from
+    /// <c>Where(failure =&gt; failure.RecoveredDocument is not null)</c>.
+    /// </para>
+    /// <para>
+    /// The control file MEASURES the route the <c>env</c> file used to take rather than asserting
+    /// it from memory: it is identical apart from the KEY NAME, carrying the same offending
+    /// scalar value at the same place, and still parses, still builds, and still exposes its
+    /// security declaration. The key name is the entire delta, and the key name is exactly what
+    /// this change made typed.
+    /// </para>
+    /// <para>
+    /// PINS THE BEHAVIOUR THAT EXISTS, NOT A DESIRED ONE: it matches what a malformed SERVICE
+    /// <c>env:</c> has done since #159, so it is the service side's consistency rather than a new
+    /// failure mode, and it sits inside issue #411's acknowledged residual. Changing the
+    /// classification is that issue's work, not this one's — this test makes a future change to
+    /// it visible.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void Discover_MalformedDependencyEnv_IsClassThreeAndRecoversNothing()
+    {
+        var malformedEnv = Path.Combine(_root, "a-dependency-env.e2e.yaml");
+        File.WriteAllText(malformedEnv, SecuredWithScalarValuedDependencyKey("env"));
+
+        // The control: same document, same offending scalar value, a key no typed field claims.
+        var untypedKey = Path.Combine(_root, "b-dependency-untyped-key.e2e.yaml");
+        File.WriteAllText(untypedKey, SecuredWithScalarValuedDependencyKey("notAField"));
+
+        var discovered = ScenarioDiscovery.Discover(_root, _registry);
+
+        // Class 3: the parser refused it, so nothing bound and nothing is recovered. The raw
+        // text is still retained (it always is) and is deliberately not read as a declaration.
+        var malformedEnvResult = discovered.Single(d => d.AbsolutePath == Path.GetFullPath(malformedEnv));
+        Assert.True(malformedEnvResult.Failed);
+        Assert.Null(malformedEnvResult.Ast);
+        Assert.Null(malformedEnvResult.RecoveredDocument);
+        Assert.Null(malformedEnvResult.RecoveredEnvironment);
+        Assert.Null(malformedEnvResult.RecoveredMetadata);
+        Assert.NotEmpty(malformedEnvResult.YamlText);
+        // The throw site, named, so a pair that started reaching some other diagnostic goes red.
+        Assert.Contains("Dependency 'pg' 'env'", malformedEnvResult.ParseError!, StringComparison.Ordinal);
+        Assert.Contains("must be a mapping", malformedEnvResult.ParseError!, StringComparison.Ordinal);
+
+        // The control, and the whole evidence for the word "reclassification": an untyped key
+        // holding the same value is a FULL scenario, and its security declaration is visible on
+        // the Ast the runner's canonical walk consumes.
+        var untypedKeyResult = discovered.Single(d => d.AbsolutePath == Path.GetFullPath(untypedKey));
+        Assert.False(untypedKeyResult.Failed);
+        Assert.Null(untypedKeyResult.ParseError);
+        Assert.NotNull(untypedKeyResult.Ast);
+        Assert.True(SecuredTargets.Any(untypedKeyResult.Ast!.Environment));
+
+        static string SecuredWithScalarValuedDependencyKey(string dependencyKey) =>
+            "environment:\n" +
+            "  services:\n" +
+            "    api:\n" +
+            "      image: myorg/api:1.0\n" +
+            "      security:\n" +
+            "        profile: mtls\n" +
+            "        endpoint: 8443\n" +
+            "        clientCert: ./client.pem\n" +
+            "        clientKey: ./client.key\n" +
+            "  dependencies:\n" +
+            "    pg:\n" +
+            "      type: postgres\n" +
+            $"      {dependencyKey}: \"not-a-mapping\"\n" +
+            "steps:\n" +
+            "  - id: call-api\n" +
+            "    type: http.rest\n";
+    }
+
     [Fact]
     public void Discover_EmptyDirectory_ReturnsEmpty()
     {
