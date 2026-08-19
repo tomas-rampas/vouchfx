@@ -242,10 +242,27 @@ public sealed record DependencySpec(
     /// Optional environment-variable mapping for this dependency's container
     /// (dependency-env spec, REQ-001) — the managed-resource counterpart to
     /// <see cref="ServiceSpec.Env"/>, by which a managed dependency whose image is configured
-    /// through environment variables (e.g. <c>MONGO_INITDB_DATABASE</c> on the
-    /// <c>library/mongo</c> image, <c>MSSQL_PID</c> on <c>mcr.microsoft.com/mssql/server</c> —
-    /// the images the engine's own <c>AddMongoDB</c>/<c>AddSqlServer</c> mappings start) will
-    /// be configurable.
+    /// through environment variables will be configurable — e.g. <c>MSSQL_PID</c>, which the
+    /// <c>mcr.microsoft.com/mssql/server</c> entrypoint reads at startup to select the edition
+    /// it launches, on the image the engine's own <c>AddSqlServer</c> mapping starts.
+    /// <para>
+    /// That example is deliberately the ONLY one. A variable earns a place here only once it
+    /// has been checked against the image the engine actually starts — that the image's own
+    /// entrypoint reads it, that Aspire's resource builder does not already set it (a name
+    /// Aspire sets is the worst thing to document, because an author copying it lands on a
+    /// silent overwrite), and that it has an observable effect on the started container. One
+    /// verified example is worth more than two plausible ones: three earlier candidates each
+    /// failed one of those three tests — a Bitnami name the image never reads, a name Aspire
+    /// sets itself, and a name whose effect is conditional on init scripts the engine never
+    /// mounts.
+    /// </para>
+    /// <para>
+    /// <strong>Its accepted VALUES are tag-dependent, which is the same rot one level down.</strong>
+    /// <c>Developer</c> is listed for the <c>2022-latest</c> image Aspire 13.4.2 pins; the 2025
+    /// (ver17) edition table replaces it with <c>StandardDeveloper</c>/<c>EnterpriseDeveloper</c>.
+    /// So a future Aspire bump can leave this variable correct and its value stale. Re-check the
+    /// value, not just the name, whenever the pinned tag moves.
+    /// </para>
     /// <para>
     /// <strong>Not yet applied.</strong> Nothing reads this field in the release that
     /// introduces it: the orchestration-layer mapper that applies it (dependency-env REQ-003)

@@ -801,24 +801,42 @@ public static class YamlDocumentParser
             // joins them for the same reason (dependency-env REQ-001): Extra is the untyped
             // bucket for fields that no typed field claims, and 'env' now has one. (The
             // environment hash moves for every existing suite either way, because
-            // DependencySpec gained an Env property that SerialiseEnvironment writes —
+            // DependencySpec gained an Env property that ScenarioRunner.SerialiseEnvironment writes —
             // "Env":null — whether or not one was declared; that hash never leaves the
             // process, so it is not the reason for either choice.)
             //
             // Parsing the key at all is live only where a document is bound WITHOUT being
             // validated against the schema, since $defs/dependency still refuses 'env'
             // outright: WatchRunner.Compile, ScenarioDiscovery.ParseFile and SuiteSetLoader
-            // in this repo, plus any out-of-repo caller, because Parse is public on a
-            // packable assembly. The shipped caller that looks like it belongs on that list,
-            // Vouchfx.Sdk.Testing.ProviderTestHarness, does NOT: it schema-validates and
-            // returns Halted BEFORE it parses. Nor do ScenarioRunner or ScenarioValidator,
-            // for the same reason. Two consequences, stated so the next reader need not
+            // in this repo's product code, plus any out-of-repo caller, because Parse is
+            // public on a packable assembly. The shipped caller that looks like it belongs on
+            // that list, Vouchfx.Sdk.Testing.ProviderTestHarness, does NOT: it schema-validates
+            // and returns Halted BEFORE it parses. Nor do ScenarioRunner or ScenarioValidator,
+            // for the same reason. Three consequences, stated so the next reader need not
             // re-derive them:
             //
-            //   • WHERE 'env' LANDS changes nothing downstream. Nothing INTERPRETS an 'env'
-            //     key out of DependencySpec.Extra, before this change or after: EnvironmentMapper
-            //     reads Extra only for 'schemaRegistry', 'queues' and 'topics', and
-            //     SerialiseEnvironment (above) serialises it wholesale without reading keys.
+            //   • NOTHING INTERPRETS an 'env' key out of DependencySpec.Extra. Before this change
+            //     no reader looked for one — EnvironmentMapper reads Extra only for
+            //     'schemaRegistry', 'queues' and 'topics', and ScenarioRunner.SerialiseEnvironment
+            //     (a different assembly) serialises it wholesale without reading keys.
+            //
+            //   • WHERE 'env' LANDS nevertheless changes one observable thing: KEY-ORDER
+            //     SENSITIVITY. ScenarioRunner.SerialiseEnvironment writes an Extra mapping through
+            //     YamlNodeJsonConverter, which sorts EVERY YamlMappingNode's keys ordinally — so an
+            //     'env' nested inside Extra was key-order INVARIANT. The typed Env is an
+            //     IReadOnlyDictionary<string, string>, which System.Text.Json writes in
+            //     enumeration (i.e. declaration) order, so it is key-order SENSITIVE. Two scenarios
+            //     declaring the same dependency 'env:' with its keys written in different order
+            //     therefore no longer serialise identically, and diverge at RunSuiteAsync's
+            //     shared-environment guard — which sits ABOVE the per-scenario
+            //     DocumentValidator.Validate call, so the suite aborts as EnvironmentError instead
+            //     of each scenario reaching its own schema refusal. DELIBERATELY LEFT AS IS:
+            //     ServiceSpec.Env is the same shape, so a SERVICE 'env:' has been key-order
+            //     sensitive since #159; this is the service side's consistency, exactly as the
+            //     malformed-shape bullet below is. Both properties are pinned side by side in
+            //     EnvironmentHashTests — ComputeEnvironmentHash_SameExtrasDifferentKeyOrder_
+            //     ProducesSameHash for Extra, ComputeEnvironmentHash_SameTypedEnvDifferentKeyOrder_
+            //     ProducesDifferentHash for Env.
             //
             //   • WHAT A MALFORMED 'env' DOES changes. Its malformed shapes now throw here
             //     rather than being copied verbatim into Extra by BuildExtraNode, which accepts

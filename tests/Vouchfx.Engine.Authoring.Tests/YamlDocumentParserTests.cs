@@ -1287,15 +1287,20 @@ public sealed class YamlDocumentParserTests
     [Fact]
     public void Parse_DependencyEnv_IsBoundToTypedField_AndNotLeakedIntoExtra()
     {
-        // Arrange — the motivating cases from #421.
+        // Arrange — two entries, because the assertion needs to distinguish "both bound" from
+        // "one bound". The NAMES are deliberately meaningless: this test exercises the parser,
+        // which reads a name as opaque text, so a realistic-looking name would document a usage
+        // this test has not verified. Real variable names belong on a surface that has checked
+        // them against the image the engine starts — see DependencySpec.Env's own remarks on why
+        // the wrong name is worse than none.
         const string yaml = """
             environment:
               dependencies:
-                mongo:
+                dep:
                   type: mongodb
                   env:
-                    MONGO_INITDB_DATABASE: ledger
-                    MONGO_INITDB_ROOT_USERNAME: root
+                    PARSER_FIXTURE_A: first
+                    PARSER_FIXTURE_B: second
             steps:
               - id: noop
                 type: script.csharp
@@ -1305,11 +1310,11 @@ public sealed class YamlDocumentParserTests
         var doc = YamlDocumentParser.Parse(yaml);
 
         // Assert
-        var dep = doc.Environment!.Dependencies!["mongo"];
+        var dep = doc.Environment!.Dependencies!["dep"];
         Assert.NotNull(dep.Env);
         Assert.Equal(2, dep.Env!.Count);
-        Assert.Equal("ledger", dep.Env["MONGO_INITDB_DATABASE"]);
-        Assert.Equal("root", dep.Env["MONGO_INITDB_ROOT_USERNAME"]);
+        Assert.Equal("first", dep.Env["PARSER_FIXTURE_A"]);
+        Assert.Equal("second", dep.Env["PARSER_FIXTURE_B"]);
         // The half that matters: 'env' is a typed field now, not an extra one.
         Assert.Null(dep.Extra);
     }

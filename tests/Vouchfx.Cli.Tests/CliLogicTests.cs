@@ -492,9 +492,10 @@ public sealed class ScenarioDiscoveryTests : IDisposable
     /// <para>
     /// The control file MEASURES the route the <c>env</c> file used to take rather than asserting
     /// it from memory: it is identical apart from the KEY NAME, carrying the same offending
-    /// scalar value at the same place, and still parses, still builds, and still exposes its
-    /// security declaration. The key name is the entire delta, and the key name is exactly what
-    /// this change made typed.
+    /// scalar value at the same place, and still parses, still builds, still exposes its
+    /// security declaration, and — the assertion that makes this the ROUTE rather than only its
+    /// outcome — still carries the unclaimed key in <see cref="DependencySpec.Extra"/>. The key
+    /// name is the entire delta, and the key name is exactly what this change made typed.
     /// </para>
     /// <para>
     /// PINS THE BEHAVIOUR THAT EXISTS, NOT A DESIRED ONE: it matches what a malformed SERVICE
@@ -537,6 +538,19 @@ public sealed class ScenarioDiscoveryTests : IDisposable
         Assert.Null(untypedKeyResult.ParseError);
         Assert.NotNull(untypedKeyResult.Ast);
         Assert.True(SecuredTargets.Any(untypedKeyResult.Ast!.Environment));
+
+        // The ROUTE, not merely its outcome. Every assertion above would still hold if
+        // BuildExtraNode had DROPPED the unclaimed key rather than sweeping it into Extra, and
+        // the word "Extra" in this test's remarks — and in ParseDependencyMap's — would then be
+        // unverified. Naming the bucket is what makes this a control for where 'env' used to go.
+        var controlDependency = untypedKeyResult.Ast!.Environment!.Dependencies!["pg"];
+        Assert.NotNull(controlDependency.Extra);
+        Assert.True(
+            controlDependency.Extra!.Children.Any(
+                kv => kv.Key is YamlDotNet.RepresentationModel.YamlScalarNode { Value: "notAField" }),
+            "An unclaimed scalar-keyed dependency field must be swept into DependencySpec.Extra "
+                + "by BuildExtraNode — that is the route a dependency 'env:' took before it "
+                + "became a typed field, and this control only measures it by naming it.");
 
         static string SecuredWithScalarValuedDependencyKey(string dependencyKey) =>
             "environment:\n" +

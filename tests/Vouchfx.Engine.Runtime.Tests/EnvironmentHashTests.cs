@@ -5,10 +5,14 @@
 // InvalidOperationException when DependencySpec.Extra is a non-null
 // YamlMappingNode) and GREEN once the YamlNodeJsonConverter is wired in.
 //
-// Seven scenarios:
+// Eight scenarios (the eighth, 2b, added by dependency-env REQ-001):
 //   1. No crash with non-null Extra — the call succeeds and returns a non-empty string.
-//   2. Determinism (key-order invariance) — two equal mappings declared in different key
+//   2. Determinism (key-order invariance) — two equal Extra mappings declared in different key
 //      order produce the SAME hash.
+//  2b. Its counterpart, and the contrast is the point — the TYPED DependencySpec.Env, being a
+//      dictionary serialised in enumeration order rather than a YamlMappingNode normalised by
+//      YamlNodeJsonConverter, is key-order SENSITIVE: the same two entries in the opposite
+//      order produce DIFFERENT hashes.
 //   3. Fidelity (different extras ≠ same hash) — two mappings that differ in a value
 //      produce DIFFERENT hashes.
 //   4. Real authored shape — a kafka dependency with schemaRegistry: true parses through
@@ -65,6 +69,35 @@ public sealed class EnvironmentHashTests
             Seed: null,
             ImageRegistry: null,
             ImagePullPolicy: null);
+
+    /// <summary>
+    /// Builds a minimal <see cref="EnvironmentSpec"/> with one kafka dependency carrying a
+    /// TYPED <see cref="DependencySpec.Env"/> whose entries are inserted in the order given.
+    /// Insertion order is what matters here: a <see cref="Dictionary{TKey,TValue}"/> built by
+    /// additions alone enumerates in insertion order, and that enumeration order is precisely
+    /// what <see cref="System.Text.Json.JsonSerializer"/> writes.
+    /// </summary>
+    private static EnvironmentSpec KafkaEnvWithTypedEnv(params (string Key, string Value)[] entries)
+    {
+        var env = new Dictionary<string, string>(System.StringComparer.Ordinal);
+        foreach (var (key, value) in entries)
+        {
+            env[key] = value;
+        }
+
+        return new EnvironmentSpec(
+            Services: null,
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["events"] = new DependencySpec(Type: "kafka", Version: null, Extra: null)
+                {
+                    Env = env,
+                },
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+    }
 
     /// <summary>
     /// Builds an <see cref="EnvironmentSpec"/> containing a postgres dependency with no
@@ -140,6 +173,69 @@ public sealed class EnvironmentHashTests
 
         // Assert — the hashes must be identical (key-order invariant).
         Assert.Equal(hashAB, hashBA);
+    }
+
+    // ── Test 2b: The typed Env is the OPPOSITE — key-order SENSITIVE ─────────
+
+    /// <summary>
+    /// The deliberate counterpart to the test directly above, and the reason the two sit
+    /// together: <see cref="DependencySpec.Extra"/> is key-order INVARIANT while
+    /// <see cref="DependencySpec.Env"/> is key-order SENSITIVE. Which property applies to
+    /// which field follows from HOW each is serialised, not from a choice made per test:
+    /// <list type="bullet">
+    ///   <item><description>
+    ///     <c>Extra</c> is a <see cref="YamlMappingNode"/> written by
+    ///     <c>YamlNodeJsonConverter</c>, which sorts every mapping's keys ordinally — hence
+    ///     invariant, as <c>..._SameExtrasDifferentKeyOrder_ProducesSameHash</c> asserts.
+    ///   </description></item>
+    ///   <item><description>
+    ///     <c>Env</c> is an <see cref="IReadOnlyDictionary{TKey,TValue}"/> written by
+    ///     <see cref="System.Text.Json.JsonSerializer"/> in enumeration — i.e. declaration —
+    ///     order, which no converter normalises; hence sensitive.
+    ///   </description></item>
+    /// </list>
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// PINS THE BEHAVIOUR THAT EXISTS, AND IT IS THE INTENDED ONE. Moving <c>env</c> out of
+    /// <c>Extra</c> into a typed field (dependency-env REQ-001) moved this property with it.
+    /// <see cref="ServiceSpec.Env"/> is the same shape, so a SERVICE <c>env:</c> has been
+    /// key-order sensitive since #159; a dependency <c>env:</c> now matches it rather than
+    /// being the one env map in the language with different equality semantics.
+    /// </para>
+    /// <para>
+    /// It is not a hash-only detail: <c>RunSuiteAsync</c> compares this exact string
+    /// ordinally to validate the shared-environment assumption, ABOVE the per-scenario
+    /// <c>DocumentValidator.Validate</c> call, so two scenarios whose dependency <c>env:</c>
+    /// differs only in key order abort the whole suite as EnvironmentError, and
+    /// <c>WatchRunner</c> restarts the topology on a save that merely reorders two keys.
+    /// Changing that is a deliberate decision to be taken with this test in front of it —
+    /// which is why the test exists.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void ComputeEnvironmentHash_SameTypedEnvDifferentKeyOrder_ProducesDifferentHash()
+    {
+        // Arrange — the same two entries, declared in opposite order. Neither name is one a
+        // provider or the engine sets; they exist only to be distinguishable when sorted.
+        var envAB = KafkaEnvWithTypedEnv(("A", "1"), ("B", "2"));
+        var envBA = KafkaEnvWithTypedEnv(("B", "2"), ("A", "1"));
+
+        // Act
+        var hashAB = ScenarioRunner.ComputeEnvironmentHash(envAB);
+        var hashBA = ScenarioRunner.ComputeEnvironmentHash(envBA);
+
+        // Assert — different, and the message carries both so a future flip is self-explaining.
+        Assert.False(
+            hashAB == hashBA,
+            "DependencySpec.Env is expected to be key-order SENSITIVE (System.Text.Json writes a "
+                + "dictionary in enumeration order and no converter normalises it), unlike "
+                + $"DependencySpec.Extra.{System.Environment.NewLine}AB = {hashAB}"
+                + $"{System.Environment.NewLine}BA = {hashBA}");
+
+        // And the difference is exactly the key order — both spellings are present in both.
+        Assert.Contains("\"A\":\"1\"", hashAB, System.StringComparison.Ordinal);
+        Assert.Contains("\"B\":\"2\"", hashBA, System.StringComparison.Ordinal);
     }
 
     // ── Test 3: Fidelity — different extras → different hashes ───────────────
