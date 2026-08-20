@@ -795,9 +795,17 @@ public static class YamlDocumentParser
             var env = ParseEnvMap(depMapping, "Dependency", keyScalar.Value);
 
             // Collect any extra fields (everything except 'type', 'version', 'image',
-            // 'security' and 'env') into a new mapping node so provider resource
-            // contributors can bind them. 'security' is excluded here because it is
-            // now explicitly bound above, exactly like 'image'/'version'/'type'; 'env'
+            // 'security' and 'env') into a new mapping node, so that a dependency field no
+            // typed field claims is PRESERVED rather than dropped on the floor. It is not a
+            // provider extension point, whatever it looks like: EnvironmentMapper is its only
+            // reader today — see the first bullet below — and no provider can become one,
+            // because DependencySpec lives in Vouchfx.Engine.Authoring, which neither
+            // Vouchfx.Sdk nor Vouchfx.Engine.Abstractions (the two assemblies a provider
+            // references) depends on. IResourceContributor<TModel>.Resources takes the
+            // provider's own STEP model, not a dependency's Extra node.
+            //
+            // 'security' is excluded here because it is now explicitly bound above, exactly
+            // like 'image'/'version'/'type'; 'env'
             // joins them for the same reason (dependency-env REQ-001): Extra is the untyped
             // bucket for fields that no typed field claims, and 'env' now has one. (The
             // environment hash moves for every existing suite either way, because
@@ -827,10 +835,18 @@ public static class YamlDocumentParser
             //     IReadOnlyDictionary<string, string>, which System.Text.Json writes in
             //     enumeration (i.e. declaration) order, so it is key-order SENSITIVE. Two scenarios
             //     declaring the same dependency 'env:' with its keys written in different order
-            //     therefore no longer serialise identically, and diverge at RunSuiteAsync's
-            //     shared-environment guard — which sits ABOVE the per-scenario
-            //     DocumentValidator.Validate call, so the suite aborts as EnvironmentError instead
-            //     of each scenario reaching its own schema refusal. DELIBERATELY LEFT AS IS:
+            //     therefore no longer serialise identically, and that divergence surfaces at BOTH
+            //     consumers of the hash, not one. (a) RunSuiteAsync's shared-environment guard —
+            //     which sits ABOVE the per-scenario DocumentValidator.Validate call, so the suite
+            //     aborts as EnvironmentError instead of each scenario reaching its own schema
+            //     refusal. (b) WATCH MODE: WatchRunner.Compile derives its topology-reuse key from
+            //     this same function, and WatchCompileResult.EnvironmentHash is the SOLE input to
+            //     WatchSession's reuse-vs-rebuild decision (an ordinal comparison), so a save that
+            //     merely REORDERS two 'env:' keys tears the topology down and rebuilds it. That is
+            //     the slow, silent half of this property — it costs a container restart per save
+            //     rather than a visible error — which is why it is written down here rather than
+            //     left to be rediscovered.
+            //     BOTH ARE DELIBERATELY LEFT AS IS:
             //     ServiceSpec.Env is the same shape, so a SERVICE 'env:' has been key-order
             //     sensitive since #159; this is the service side's consistency, exactly as the
             //     malformed-shape bullet below is. Both properties are pinned side by side in

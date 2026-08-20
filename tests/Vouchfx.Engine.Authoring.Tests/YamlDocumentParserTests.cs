@@ -1322,7 +1322,13 @@ public sealed class YamlDocumentParserTests
     [Fact]
     public void Parse_DependencyEnv_AlongsideTypeVersionAndImage_AllFourAreBoundToTypedFields()
     {
-        // Arrange — every typed dependency field declared at once.
+        // Arrange — every typed dependency field declared at once. The env NAME is meaningless
+        // for the same reason as the mongo fixture above: this test proves only that the parser
+        // routes each key to its typed field, so a real variable name here would be an
+        // illustration with no observable effect: the edition-selecting variable this fixture
+        // named before merely restated the edition the image already launches when it is unset.
+        // (The name is described rather than spelled so that a future grep for it does not land
+        // on this line and read it as a usage.)
         const string yaml = """
             environment:
               dependencies:
@@ -1331,7 +1337,7 @@ public sealed class YamlDocumentParserTests
                   version: "2022-latest"
                   image: nexus.example.com/mirror/mssql
                   env:
-                    MSSQL_PID: Developer
+                    PARSER_FIXTURE_A: first
             steps:
               - id: noop
                 type: script.csharp
@@ -1346,19 +1352,26 @@ public sealed class YamlDocumentParserTests
         Assert.Equal("2022-latest", dep.Version);
         Assert.Equal("nexus.example.com/mirror/mssql", dep.Image);
         Assert.NotNull(dep.Env);
-        Assert.Equal("Developer", dep.Env!["MSSQL_PID"]);
+        Assert.Equal("first", dep.Env!["PARSER_FIXTURE_A"]);
         Assert.Null(dep.Extra);
     }
 
     /// <summary>
-    /// Excluding <c>env</c> from the <c>Extra</c> bucket must remove exactly that one key —
-    /// a genuinely provider-specific field declared alongside it still reaches the resource
-    /// contributors through <see cref="DependencySpec.Extra"/>, unchanged.
+    /// Excluding <c>env</c> from the <c>Extra</c> bucket must remove exactly that one key — an
+    /// unclaimed field declared alongside it (here <c>schemaRegistry</c>, which
+    /// <c>EnvironmentMapper</c> reads) is still preserved in <see cref="DependencySpec.Extra"/>,
+    /// unchanged.
     /// </summary>
     [Fact]
     public void Parse_DependencyEnv_UnrelatedExtraKey_StillLandsInExtra()
     {
-        // Arrange
+        // Arrange — the env NAME is meaningless, per the mongo fixture above. What this fixture
+        // named before was worse than merely unverified: it was a broker-side ZooKeeper
+        // connection setting, and Aspire 13.4.2's AddKafka — which EnvironmentMapper calls for
+        // type: kafka — starts confluentinc/confluent-local, a KRaft image with no ZooKeeper at
+        // all (that variable family occurs nowhere in Aspire.Hosting.Kafka.dll). It documented a
+        // topology this engine cannot stand up. The name is described rather than spelled so a
+        // future grep for it does not land here and read it as a usage.
         const string yaml = """
             environment:
               dependencies:
@@ -1366,7 +1379,7 @@ public sealed class YamlDocumentParserTests
                   type: kafka
                   schemaRegistry: true
                   env:
-                    KAFKA_ZOOKEEPER_CONNECT: "zookeeper:2181"
+                    PARSER_FIXTURE_A: first
             steps:
               - id: noop
                 type: script.csharp
@@ -1378,7 +1391,7 @@ public sealed class YamlDocumentParserTests
         // Assert
         var dep = doc.Environment!.Dependencies!["events"];
         Assert.NotNull(dep.Env);
-        Assert.Equal("zookeeper:2181", dep.Env!["KAFKA_ZOOKEEPER_CONNECT"]);
+        Assert.Equal("first", dep.Env!["PARSER_FIXTURE_A"]);
 
         Assert.NotNull(dep.Extra);
         var extraKeys = dep.Extra!.Children.Keys

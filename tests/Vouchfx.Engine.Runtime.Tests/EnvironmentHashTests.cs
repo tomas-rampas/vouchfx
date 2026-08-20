@@ -74,8 +74,12 @@ public sealed class EnvironmentHashTests
     /// Builds a minimal <see cref="EnvironmentSpec"/> with one kafka dependency carrying a
     /// TYPED <see cref="DependencySpec.Env"/> whose entries are inserted in the order given.
     /// Insertion order is what matters here: a <see cref="Dictionary{TKey,TValue}"/> built by
-    /// additions alone enumerates in insertion order, and that enumeration order is precisely
-    /// what <see cref="System.Text.Json.JsonSerializer"/> writes.
+    /// additions alone IS OBSERVED TO enumerate in insertion order, and that enumeration order
+    /// is precisely what <see cref="System.Text.Json.JsonSerializer"/> writes. "Observed", not
+    /// "guaranteed": Microsoft documents <c>Dictionary</c>'s enumeration order as unspecified,
+    /// so this is a property of the runtime under test rather than of the contract. The pin is
+    /// worth having either way — a runtime that changed it would turn this test red, which is
+    /// the notification wanted.
     /// </summary>
     private static EnvironmentSpec KafkaEnvWithTypedEnv(params (string Key, string Value)[] entries)
     {
@@ -233,9 +237,15 @@ public sealed class EnvironmentHashTests
                 + $"DependencySpec.Extra.{System.Environment.NewLine}AB = {hashAB}"
                 + $"{System.Environment.NewLine}BA = {hashBA}");
 
-        // And the difference is exactly the key order — both spellings are present in both.
-        Assert.Contains("\"A\":\"1\"", hashAB, System.StringComparison.Ordinal);
-        Assert.Contains("\"B\":\"2\"", hashBA, System.StringComparison.Ordinal);
+        // And the difference is exactly the key order — BOTH pairs are present in BOTH strings,
+        // which is what excludes the alternative explanation ("the difference is content, not
+        // order"). Checking one pair per string would not: a serialiser that dropped the second
+        // entry of each map would leave the inequality above intact and still pass.
+        foreach (var hash in new[] { hashAB, hashBA })
+        {
+            Assert.Contains("\"A\":\"1\"", hash, System.StringComparison.Ordinal);
+            Assert.Contains("\"B\":\"2\"", hash, System.StringComparison.Ordinal);
+        }
     }
 
     // ── Test 3: Fidelity — different extras → different hashes ───────────────
