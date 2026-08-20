@@ -242,20 +242,8 @@ public sealed record DependencySpec(
     /// Optional environment-variable mapping for this dependency's container
     /// (dependency-env spec, REQ-001) — the managed-resource counterpart to
     /// <see cref="ServiceSpec.Env"/>, by which a managed dependency whose image is configured
-    /// through environment variables will be configurable — e.g. <c>MSSQL_PID</c>, which the
-    /// <c>mcr.microsoft.com/mssql/server</c> entrypoint reads at startup to select the edition
-    /// it launches, on the image the engine's own <c>AddSqlServer</c> mapping starts.
-    /// <para>
-    /// That example is deliberately the ONLY one. A variable earns a place here only once it
-    /// has been checked against the image the engine actually starts — that the image's own
-    /// entrypoint reads it, that Aspire's resource builder does not already set it (a name
-    /// Aspire sets is the worst thing to document, because an author copying it lands on a
-    /// silent overwrite), and that it has an observable effect on the started container. One
-    /// verified example is worth more than two plausible ones: three earlier candidates each
-    /// failed one of those three tests — a Bitnami name the image never reads, a name Aspire
-    /// sets itself, and a name whose effect is conditional on init scripts the engine never
-    /// mounts.
-    /// </para>
+    /// through environment variables will be configurable — e.g. <c>MSSQL_PID</c>, on the
+    /// image the engine's own <c>AddSqlServer</c> mapping starts.
     /// <para>
     /// <strong>Its accepted VALUES are tag-dependent, which is the same rot one level down.</strong>
     /// <c>Developer</c> is listed for the <c>2022-latest</c> image Aspire 13.4.2 pins; the ver17
@@ -269,33 +257,20 @@ public sealed record DependencySpec(
     /// moves — and re-check it by running the image, which is what would settle it.
     /// </para>
     /// <para>
-    /// <strong>Not yet applied.</strong> Nothing reads this field in the release that
-    /// introduces it: the orchestration-layer mapper that applies it (dependency-env REQ-003)
-    /// and the schema property that makes it reachable from a validated document (REQ-002)
-    /// arrive in a later release. Until then a dependency <c>env:</c> is refused
-    /// at validation by <c>$defs/dependency</c>'s <c>additionalProperties: false</c>, so
-    /// the only callers that can observe a non-<see langword="null"/> value here are the
-    /// parse paths that bind a document without validating it against the schema.
-    /// </para>
-    /// <para>
     /// <see langword="null"/> when the dependency declares no <c>env:</c> block, which is
-    /// the shape every suite written before this field has and whose behaviour is
-    /// unchanged. An empty <c>env: {}</c> yields an EMPTY dictionary here rather than
-    /// <see langword="null"/> — unlike <see cref="ServiceSpec.Env"/>, whose empty spelling
-    /// the parser collapses to <see langword="null"/> — so "declared, empty" stays
-    /// distinguishable from "not declared".
+    /// the shape every suite written before this field has. An empty <c>env: {}</c> yields
+    /// an EMPTY dictionary here rather than <see langword="null"/> — unlike
+    /// <see cref="ServiceSpec.Env"/>, whose empty spelling the parser collapses to
+    /// <see langword="null"/> — so "declared, empty" stays distinguishable from
+    /// "not declared".
     /// </para>
     /// </summary>
     /// <remarks>
     /// <para>
     /// Each value is retained here as its literal raw scalar text, exactly as
     /// <see cref="ServiceSpec.Env"/>'s is; this record applies no coercion and no
-    /// validation of the value's CONTENT, and performs no reference resolution. What a
-    /// value's text is allowed to CONTAIN, and which variable names are reserved because
-    /// the engine itself sets them for a dependency's <c>type</c>, will be rules of the
-    /// orchestration-layer mapper that consumes this field, and will be stated by that
-    /// mapper's own documentation rather than here — this record deliberately describes only
-    /// what it itself does.
+    /// validation of the value's CONTENT, and performs no reference resolution — this
+    /// record deliberately describes only what it itself does.
     /// </para>
     /// <para>
     /// An init-only property for the same binary-compatibility reason as

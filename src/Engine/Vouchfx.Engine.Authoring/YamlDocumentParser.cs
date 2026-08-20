@@ -798,77 +798,31 @@ public static class YamlDocumentParser
             // 'security' and 'env') into a new mapping node, so that a dependency field no
             // typed field claims is PRESERVED rather than dropped on the floor. It is not a
             // provider extension point, whatever it looks like: EnvironmentMapper is its only
-            // reader today — see the first bullet below — and no provider can become one,
+            // reader today — see the bullet below — and no provider can become one,
             // because DependencySpec lives in Vouchfx.Engine.Authoring, which neither
             // Vouchfx.Sdk nor Vouchfx.Engine.Abstractions (the two assemblies a provider
             // references) depends on. IResourceContributor<TModel>.Resources takes the
             // provider's own STEP model, not a dependency's Extra node.
             //
             // 'security' is excluded here because it is now explicitly bound above, exactly
-            // like 'image'/'version'/'type'; 'env'
-            // joins them for the same reason (dependency-env REQ-001): Extra is the untyped
-            // bucket for fields that no typed field claims, and 'env' now has one. (The
-            // environment hash moves for every existing suite either way, because
-            // DependencySpec gained an Env property that ScenarioRunner.SerialiseEnvironment writes —
-            // "Env":null — whether or not one was declared; that hash never leaves the
-            // process, so it is not the reason for either choice.)
-            //
-            // Parsing the key at all is live only where a document is bound WITHOUT being
-            // validated against the schema, since $defs/dependency still refuses 'env'
-            // outright: WatchRunner.Compile, ScenarioDiscovery.ParseFile and SuiteSetLoader
-            // in this repo's product code, plus any out-of-repo caller, because Parse is
-            // public on a packable assembly. The shipped caller that looks like it belongs on
-            // that list, Vouchfx.Sdk.Testing.ProviderTestHarness, does NOT: it schema-validates
-            // and returns Halted BEFORE it parses. Nor do ScenarioRunner or ScenarioValidator,
-            // for the same reason. Three consequences, stated so the next reader need not
-            // re-derive them:
+            // like 'image'/'version'/'type'; 'env' joins them for the same reason
+            // (dependency-env REQ-001): Extra is the untyped bucket for fields that no typed
+            // field claims, and 'env' now has one. (The environment hash moves for every
+            // existing suite that declares at least one dependency either way, because
+            // DependencySpec gained an Env property that ScenarioRunner.SerialiseEnvironment
+            // writes — "Env":null — whether or not one was declared; that hash never leaves
+            // the process, so it is not the reason for either choice.)
             //
             //   • NOTHING INTERPRETS an 'env' key out of DependencySpec.Extra. Before this change
             //     no reader looked for one — EnvironmentMapper reads Extra only for
             //     'schemaRegistry', 'queues' and 'topics', and ScenarioRunner.SerialiseEnvironment
             //     (a different assembly) serialises it wholesale without reading keys.
             //
-            //   • WHERE 'env' LANDS nevertheless changes one observable thing: KEY-ORDER
-            //     SENSITIVITY. ScenarioRunner.SerialiseEnvironment writes an Extra mapping through
-            //     YamlNodeJsonConverter, which sorts EVERY YamlMappingNode's keys ordinally — so an
-            //     'env' nested inside Extra was key-order INVARIANT. The typed Env is an
-            //     IReadOnlyDictionary<string, string>, which System.Text.Json writes in
-            //     enumeration (i.e. declaration) order, so it is key-order SENSITIVE. Two scenarios
-            //     declaring the same dependency 'env:' with its keys written in different order
-            //     therefore no longer serialise identically, and that divergence surfaces at BOTH
-            //     consumers of the hash, not one. (a) RunSuiteAsync's shared-environment guard —
-            //     which sits ABOVE the per-scenario DocumentValidator.Validate call, so the suite
-            //     aborts as EnvironmentError instead of each scenario reaching its own schema
-            //     refusal. (b) WATCH MODE: WatchRunner.Compile derives its topology-reuse key from
-            //     this same function, and WatchCompileResult.EnvironmentHash is the SOLE input to
-            //     WatchSession's reuse-vs-rebuild decision (an ordinal comparison), so a save that
-            //     merely REORDERS two 'env:' keys tears the topology down and rebuilds it. That is
-            //     the slow, silent half of this property — it costs a container restart per save
-            //     rather than a visible error — which is why it is written down here rather than
-            //     left to be rediscovered.
-            //     BOTH ARE DELIBERATELY LEFT AS IS:
-            //     ServiceSpec.Env is the same shape, so a SERVICE 'env:' has been key-order
-            //     sensitive since #159; this is the service side's consistency, exactly as the
-            //     malformed-shape bullet below is. Both properties are pinned side by side in
-            //     EnvironmentHashTests — ComputeEnvironmentHash_SameExtrasDifferentKeyOrder_
-            //     ProducesSameHash for Extra, ComputeEnvironmentHash_SameTypedEnvDifferentKeyOrder_
-            //     ProducesDifferentHash for Env.
-            //
-            //   • WHAT A MALFORMED 'env' DOES changes. Its malformed shapes now throw here
-            //     rather than being copied verbatim into Extra by BuildExtraNode, which accepts
-            //     any scalar-KEYED child whatever the value's node type. On the discovery path
-            //     that is a reclassification, not just a new error site: such a document used to
-            //     bind and build a full ScenarioAst (AstBuilder never inspects the environment)
-            //     and was refused later at the runner's schema door with its security abort
-            //     recorded; it now throws inside ScenarioDiscovery.ParseFile's FIRST try —
-            //     failure class 3, which deliberately sets no RecoveredDocument — and RunCommand
-            //     feeds SecurityAssurance only from failures that carry one. So a suite declaring
-            //     'security:' beside a malformed dependency 'env:' moves from "refused,
-            //     declaration recorded" to "parse failure, declaration silently dropped".
-            //     DELIBERATELY LEFT AS IS: that is exactly what a malformed SERVICE 'env:' has
-            //     done since #159, so this is the service side's consistency rather than a new
-            //     failure mode, and it sits inside issue #411's acknowledged residual. Pinned by
-            //     CliLogicTests.Discover_MalformedDependencyEnv_IsClassThreeAndRecoversNothing.
+            // Two consequences of 'env' moving from Extra into a typed field — key-order
+            // sensitivity, and what a malformed 'env' does to a security declaration on the
+            // discovery path — are analysed beside the tests that pin them:
+            // EnvironmentHashTests.ComputeEnvironmentHash_SameTypedEnvDifferentKeyOrder_ProducesDifferentHash
+            // and CliLogicTests.Discover_MalformedDependencyEnv_IsClassThreeAndRecoversNothing.
             YamlMappingNode? extra = BuildExtraNode(depMapping, "type", "version", "image", "security", "env");
 
             dict[keyScalar.Value] = new DependencySpec(type, version, extra)
