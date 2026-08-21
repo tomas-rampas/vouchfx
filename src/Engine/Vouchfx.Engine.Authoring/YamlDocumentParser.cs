@@ -666,13 +666,10 @@ public static class YamlDocumentParser
     /// applied here (the YAML-scalar-coercion gotcha this parser is elsewhere careful about).
     /// This includes YAML's explicit null: MEASURED against the pinned YamlDotNet 16.3.0
     /// representation model, <c>FOO: ~</c> reads back as the literal one-character text
-    /// <c>~</c> for a service and a dependency alike; this reader refuses neither. For a
-    /// SERVICE it is the JSON Schema layer — whose <c>env</c> value type is
-    /// <c>string | integer | number | boolean</c> — that refuses that spelling. For a
-    /// DEPENDENCY there is no <c>env</c> schema yet, so the schema refuses the whole <c>env</c>
-    /// KEY rather than that spelling of a value, and <c>$defs/dependency</c> gains the same
-    /// value-type shape in the schema change that follows this one (dependency-env REQ-002).
-    /// Reference resolution (<c>${conn:name}</c> / <c>${conn:name.part}</c> /
+    /// <c>~</c> for a service and a dependency alike; this reader refuses neither. It is the
+    /// JSON Schema layer — whose <c>env</c> value type is
+    /// <c>string | integer | number | boolean</c> on a service and a dependency alike — that
+    /// refuses that spelling. Reference resolution (<c>${conn:name}</c> / <c>${conn:name.part}</c> /
     /// <c>${env:NAME}</c>), the rejection of <c>${secret:...}</c> (§17), and the
     /// dependency-only refusals (a variable name the engine itself sets for that dependency's
     /// type; <c>${conn:}</c> on a dependency at all) are the orchestration-layer mapper's job

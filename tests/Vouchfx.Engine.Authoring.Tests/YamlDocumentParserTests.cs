@@ -1243,10 +1243,9 @@ public sealed class YamlDocumentParserTests
     // (dependency-env spec, REQ-001 / EDGE-001 / EDGE-002).
     //
     // These tests drive YamlDocumentParser DIRECTLY rather than through
-    // DocumentValidator, deliberately: $defs/dependency is 'additionalProperties: false'
-    // until the schema itself gains 'env' (REQ-002, a separate change), so a
-    // schema-mediated route would refuse the document before the parser ever saw it.
-    // The parser is the layer under test here.
+    // DocumentValidator, deliberately: the parser is the layer under test here, so
+    // routing through the schema would put a second layer's verdict between the
+    // assertion and the reader it is about.
     // -------------------------------------------------------------------------
 
     [Fact]
@@ -1443,8 +1442,8 @@ public sealed class YamlDocumentParserTests
     /// dependency path alike — this parser rejects neither, it retains both verbatim, exactly
     /// as it retains every other raw scalar. The rejection EDGE-001 requires is the JSON
     /// Schema's ('env' values are typed 'string | integer | number | boolean', which admits no
-    /// null), and $defs/dependency gains that shape in the schema change that follows this
-    /// one; mirroring the service rules here therefore means mirroring this retention, not
+    /// null), a shape $defs/dependency now carries too; mirroring the service rules here
+    /// therefore means mirroring this retention, not
     /// inventing a parser-level refusal the service path does not have. Asserted as a PAIR so
     /// that if either path ever starts folding '~' to null, the two go red together rather
     /// than diverging silently.

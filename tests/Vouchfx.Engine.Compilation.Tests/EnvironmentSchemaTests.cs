@@ -718,6 +718,143 @@ public sealed class EnvironmentSchemaTests
             e.Message.Contains("[type]", System.StringComparison.Ordinal));
     }
 
+    // ── Dependency 'env' (dependency-env REQ-002 / EDGE-001, schema tier) ───
+    //
+    // $defs/dependency gains an 'env' map whose value-shape rules mirror
+    // $defs/service's exactly: a quoted string, a bare numeric and a bare
+    // boolean are accepted, an explicit null is rejected. The null rejection is
+    // a SCHEMA rule, not a parser rule — YamlDocumentParser.ParseEnvMap retains
+    // '~' as the literal one-character text for a dependency exactly as it does
+    // for a service, so absent this 'type' restriction no layer would refuse it
+    // and the variable would silently reach the container as the string '~'.
+
+    [Fact]
+    public void Dependency_EnvStringValue_IsAccepted()
+    {
+        const string yaml = """
+            environment:
+              dependencies:
+                db:
+                  type: postgres
+                  env:
+                    FOO: "bar"
+            steps:
+              - id: noop
+                type: noop.echo
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.True(result.IsValid,
+            $"Expected valid but got: {string.Join("; ", result.Errors.Select(e => $"{e.InstanceLocation}: {e.Message}"))}");
+    }
+
+    [Fact]
+    public void Dependency_EnvBareNumericValue_IsAccepted()
+    {
+        const string yaml = """
+            environment:
+              dependencies:
+                db:
+                  type: postgres
+                  env:
+                    RETRY_COUNT: 3
+            steps:
+              - id: noop
+                type: noop.echo
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.True(result.IsValid,
+            $"Expected valid but got: {string.Join("; ", result.Errors.Select(e => $"{e.InstanceLocation}: {e.Message}"))}");
+    }
+
+    [Fact]
+    public void Dependency_EnvBareBooleanValue_IsAccepted()
+    {
+        const string yaml = """
+            environment:
+              dependencies:
+                db:
+                  type: postgres
+                  env:
+                    FEATURE_FLAG: true
+            steps:
+              - id: noop
+                type: noop.echo
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.True(result.IsValid,
+            $"Expected valid but got: {string.Join("; ", result.Errors.Select(e => $"{e.InstanceLocation}: {e.Message}"))}");
+    }
+
+    /// <summary>
+    /// The value-type union is ["string","integer","number","boolean"], but the
+    /// three accepted shapes above exercise only string, integer and boolean —
+    /// deleting "number" from that union reddens none of them. A bare float
+    /// pins it: SchemaResources' scalar type resolver hands 1.5 to the
+    /// validator as a JSON number, which 'integer' refuses.
+    /// </summary>
+    [Fact]
+    public void Dependency_EnvBareFloatValue_IsAccepted()
+    {
+        const string yaml = """
+            environment:
+              dependencies:
+                db:
+                  type: postgres
+                  env:
+                    SAMPLE_RATE: 1.5
+            steps:
+              - id: noop
+                type: noop.echo
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.True(result.IsValid,
+            $"Expected valid but got: {string.Join("; ", result.Errors.Select(e => $"{e.InstanceLocation}: {e.Message}"))}");
+    }
+
+    /// <summary>
+    /// An explicit YAML null must be rejected on a dependency for the same
+    /// reason it is on a service — and, critically, for the RIGHT reason.
+    /// </summary>
+    /// <remarks>
+    /// Before $defs/dependency carried 'env' at all, this document was already
+    /// refused — but as "[additionalProperties] Unknown property 'env' on
+    /// dependency 'db'", the right verdict for entirely the wrong reason.
+    /// Asserting BOTH the instance location (the offending VALUE, not the 'env'
+    /// key) and the '[type]' keyword is what distinguishes "the schema has no
+    /// 'env' on a dependency" from "the schema has 'env' and refuses null in
+    /// it" — the whole content of this change.
+    /// </remarks>
+    [Fact]
+    public void Dependency_EnvExplicitNullValue_IsRejected()
+    {
+        const string yaml = """
+            environment:
+              dependencies:
+                db:
+                  type: postgres
+                  env:
+                    FOO: ~
+            steps:
+              - id: noop
+                type: noop.echo
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.False(result.IsValid, "An explicit null env value must be rejected — the parser would set it to the literal string '~', never what an author means.");
+        Assert.Contains(result.Errors, e =>
+            e.InstanceLocation == "/environment/dependencies/db/env/FOO" &&
+            e.Message.Contains("[type]", System.StringComparison.Ordinal));
+    }
+
     [Fact]
     public void Service_HttpPortQuotedString_IsAccepted()
     {
