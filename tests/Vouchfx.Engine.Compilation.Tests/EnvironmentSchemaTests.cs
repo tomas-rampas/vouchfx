@@ -60,6 +60,7 @@
 // corpus-level safety net (via DocumentValidator, the composed path an
 // author's suite actually hits) that these unit tests complement.
 using System.Linq;
+using System.Text.Json.Nodes;
 using Vouchfx.Engine.Compilation.Schema;
 using Xunit;
 
@@ -853,6 +854,98 @@ public sealed class EnvironmentSchemaTests
         Assert.Contains(result.Errors, e =>
             e.InstanceLocation == "/environment/dependencies/db/env/FOO" &&
             e.Message.Contains("[type]", System.StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// EDGE-001 (dependency-env): a dependency <c>env</c> value accepts exactly the
+    /// value shapes a service <c>env</c> value accepts. This is the only assertion
+    /// anywhere that compares the two — everything else that states the parity states
+    /// it in prose.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The duplication being guarded is DELIBERATE and correct:
+    /// <c>$defs/dependency.properties.env</c>'s value rules are an inline COPY of
+    /// <c>$defs/service.properties.env</c>'s rather than a shared <c>$defs</c> both
+    /// sides <c>$ref</c>, because leaving the service subtree byte-identical is what
+    /// keeps the dependency addition purely ADDITIVE, and therefore legal under the v1
+    /// schema freeze. That <c>$comment</c> says exactly this; nothing enforced it.
+    /// </para>
+    /// <para>
+    /// Why the copy can drift silently: the dependency <c>env</c> tests above pin the
+    /// dependency side's own contract in isolation, and <c>SchemaFreezeTests</c> pins
+    /// the whole composed document byte-for-byte — but a DELIBERATE widening of the
+    /// SERVICE union regenerates that golden and says nothing at all about the twin
+    /// left behind. This repo has already run one sweep of precisely that shape: the
+    /// T2a scalar-coercion tranche moved every Core provider's string-valued map to
+    /// <c>["string","integer","number","boolean"]</c> in a single pass (see
+    /// <c>SchemaAcceptedCorpusTests</c>' retired-tranche remarks). The next such sweep
+    /// is the event that would quietly break EDGE-001; this test turns it into a red
+    /// build instead.
+    /// </para>
+    /// <para>
+    /// Scoped DELIBERATELY to <c>additionalProperties</c> — the value shape — and not
+    /// to the whole <c>env</c> subschema: the two <c>description</c>/<c>$comment</c>
+    /// values differ on purpose (the dependency description states only what is true
+    /// today and names none of the service-only reference forms), so a whole-subschema
+    /// comparison would have been red from the moment it was written.
+    /// </para>
+    /// <para>
+    /// Compared as DATA, never as text: keyword sets as ordinal-sorted sequences, an
+    /// array-valued keyword (the type union) as a SET, every other keyword via
+    /// <see cref="JsonNode.DeepEquals"/>. A reordered union or reflowed whitespace is
+    /// not drift and must not redden this.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void DependencyEnvValueShape_MatchesServiceEnvValueShapeExactly()
+    {
+        // The same root-language schema text YamlSchemaValidator validates every other
+        // document in this class against — SchemaResources is its own loader.
+        var root = JsonNode.Parse(SchemaResources.ReadRootLanguageSchemaJson())!.AsObject();
+
+        var service = EnvValueSchema(root, "service");
+        var dependency = EnvValueSchema(root, "dependency");
+
+        var serviceKeywords = service.Select(p => p.Key).OrderBy(k => k, System.StringComparer.Ordinal).ToList();
+        var dependencyKeywords = dependency.Select(p => p.Key).OrderBy(k => k, System.StringComparer.Ordinal).ToList();
+
+        // Guards a vacuous pass: two EMPTY subschemas would agree trivially.
+        Assert.NotEmpty(serviceKeywords);
+        Assert.Equal(serviceKeywords, dependencyKeywords);
+
+        foreach (var keyword in serviceKeywords)
+        {
+            var serviceValue = service[keyword];
+            var dependencyValue = dependency[keyword];
+
+            if (serviceValue is JsonArray serviceUnion && dependencyValue is JsonArray dependencyUnion)
+            {
+                Assert.Equal(AsSet(serviceUnion), AsSet(dependencyUnion));
+                continue;
+            }
+
+            Assert.True(
+                JsonNode.DeepEquals(serviceValue, dependencyValue),
+                $"'{keyword}' has drifted between the service and dependency 'env' value schemas: " +
+                $"service={serviceValue?.ToJsonString() ?? "<absent>"}, " +
+                $"dependency={dependencyValue?.ToJsonString() ?? "<absent>"}.");
+        }
+
+        static JsonObject EnvValueSchema(JsonObject schemaRoot, string definition)
+        {
+            var node = schemaRoot["$defs"]?[definition]?["properties"]?["env"]?["additionalProperties"];
+            Assert.True(node is JsonObject,
+                $"$defs/{definition}/properties/env/additionalProperties is missing or is not an object — " +
+                "this parity test would otherwise pass vacuously.");
+            return (JsonObject)node!;
+        }
+
+        // Order-insensitive, whitespace-insensitive rendering of a type union.
+        static string AsSet(JsonArray union) =>
+            string.Join(
+                ",",
+                union.Select(v => v?.ToJsonString() ?? "null").OrderBy(v => v, System.StringComparer.Ordinal));
     }
 
     [Fact]

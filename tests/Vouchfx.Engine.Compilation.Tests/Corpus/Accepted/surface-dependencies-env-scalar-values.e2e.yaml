@@ -14,10 +14,11 @@
 #
 # Variable-name caveat, for anyone copying this fixture: it exercises SCALAR
 # SHAPES only (quoted string, bare integer, bare boolean) and never starts a
-# container, so the names below are illustrative. Only MSSQL_PID carries
-# end-to-end verification that the image's entrypoint actually reads it;
-# MSSQL_MEMORY_LIMIT_MB and MSSQL_AGENT_ENABLED are plausible but are NOT
-# asserted anywhere to be honoured by the image.
+# container, so the names below are illustrative and none is asserted anywhere
+# to be honoured by the image. MSSQL_PID is the one the spec argues for, and
+# only on documentation-derived grounds: it is documented for the image the
+# engine starts, and measured to be set by neither Aspire's SqlServer resource
+# nor the engine. Nobody has run the image and watched it take effect.
 metadata:
   name: surface-dependencies-env-scalar-values
 environment:
