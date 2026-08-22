@@ -604,24 +604,21 @@ public static class EnvironmentMapper
     /// is safe to invoke against any <see cref="IDistributedApplicationBuilder"/>.
     /// </returns>
     /// <exception cref="ArgumentException">
-    /// Thrown by this method's own eager, pre-<see cref="MappedTopology.Configure"/> validation.
-    /// The causes, in the order the passes run:
-    /// <list type="bullet">
-    /// <item><description>a service spec has both <see cref="ServiceSpec.Image"/> and
-    /// <see cref="ServiceSpec.Project"/> set, or neither;</description></item>
-    /// <item><description>a dependency type is unrecognised;</description></item>
-    /// <item><description>a service <c>env:</c> value carries a <c>${secret:...}</c> reference,
-    /// or a <c>${conn:...}</c> reference that names an unknown dependency, an
-    /// <c>azureservicebus</c> dependency, or an unsupported <c>.part</c> accessor;</description></item>
-    /// <item><description>a DEPENDENCY <c>env:</c> value carries a <c>${conn:...}</c> reference at
-    /// all — a managed dependency is a connection SOURCE, not a consumer (REQ-003);</description></item>
-    /// <item><description>a DEPENDENCY <c>env:</c> value carries a <c>${secret:...}</c> reference
-    /// (REQ-003, §17: a container's environment is the wrong PLACE for a secret);</description></item>
-    /// <item><description>a DEPENDENCY <c>env:</c> KEY names a variable the engine sets for that
-    /// dependency's own <c>type:</c> (REQ-004; see <see cref="s_engineSetEnvKeys"/>);</description></item>
-    /// <item><description>an <c>imagePullPolicy</c> value is unrecognised;</description></item>
-    /// <item><description>a declared server artefact cannot be resolved (REQ-016).</description></item>
-    /// </list>
+    /// Thrown by <b>every</b> eager, pre-<see cref="MappedTopology.Configure"/> authoring check in
+    /// this method — service and dependency shape, image and version resolution,
+    /// <c>imagePullPolicy</c>, <c>security.endpoint</c> and health-check port selection, the
+    /// service and dependency <c>env:</c> reference rules, the dependency engine-set-name refusal
+    /// (REQ-004, see <see cref="s_engineSetEnvKeys"/>), and server-artefact resolution (REQ-016).
+    /// <para>
+    /// That is stated as a property rather than enumerated deliberately. An earlier revision of
+    /// this tag listed eight causes "in the order the passes run"; the list was short by five and
+    /// the ordering claim was wrong (env-level <c>imagePullPolicy</c> parses BEFORE both
+    /// <c>env:</c> passes, not after them). A closed-looking enumeration on a contract
+    /// <c>ScenarioRunner</c> catches against is worse than no enumeration, because it invites a
+    /// reader to treat an absent cause as impossible — and nothing makes the list go red when a
+    /// ninth check is added. If you need the current set, grep this method for <c>throw new
+    /// ArgumentException</c>; that answer cannot go stale.
+    /// </para>
     /// Every one of these is an authoring fault, which is why <c>ScenarioRunner</c> classifies an
     /// <see cref="ArgumentException"/> out of this method as Inconclusive rather than
     /// EnvironmentError (§12.1).

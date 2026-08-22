@@ -722,7 +722,42 @@ public sealed class DependencyEnvCensusTests
     /// <c>WaitFor(…)</c> that happens to behave identically — is reported unresolved rather than
     /// assumed, which is the difference between this and simply walking every <c>.</c> in the
     /// chain.
-    /// </remarks>
+    /// <para>
+    /// <b>Known limits.</b>  Accepting a bespoke attribution engine at all is defensible only if
+    /// its residuals are written down rather than discovered, so here they are — four, of which
+    /// exactly ONE is fail-open:
+    /// </para>
+    /// <list type="number">
+    /// <item><description>
+    /// <b>Local resolution is textual, not control-flow — and this one FAILS OPEN.</b>
+    /// <see cref="ResolveLocal"/> takes the textually-nearest preceding assignment, so given
+    /// <c>if (c) { b = builder.AddContainer(sidecarName, …); } else { b = builder.AddContainer(name, …); }</c>
+    /// followed by <c>b = b.WithEnvironment("X", "y");</c> it resolves to whichever branch is
+    /// written later.  If that is the sidecar, an engine-set variable on an AUTHOR-ADDRESSABLE
+    /// container is excluded from the census silently — precisely the outcome this file exists to
+    /// make impossible.  Nothing in <c>EnvironmentMapper</c> is shaped that way today; if a
+    /// registration ever branches like that, this is the assumption that breaks.
+    /// </description></item>
+    /// <item><description>
+    /// <b>The <c>With…</c> identity rule is a naming convention, not a semantic fact.</b>  A future
+    /// extension named <c>WithX</c> that returned a DIFFERENT builder would be walked through as
+    /// identity and its write mis-attributed.  Narrower than treating every non-<c>Add</c> call as
+    /// transparent, but not zero.
+    /// </description></item>
+    /// <item><description>
+    /// <b>Verbatim and raw string literals are accepted as variable names.</b>  <c>@"FOO"</c> and
+    /// <c>"""FOO"""</c> both pass, because <c>Token.ValueText</c> reads through to the exact value;
+    /// interpolated and UTF-8 literals are still refused.  A deliberate widening over the scanner
+    /// this replaced, on the grounds that refusing a knowable name would be a false failure.
+    /// </description></item>
+    /// <item><description>
+    /// <b>There is no semantic model.</b>  <see cref="InvokedMethodName"/> matches
+    /// <c>WithEnvironment</c> by spelling, and a registration argument named <c>name</c> is
+    /// trusted by spelling, so a local shadowing <c>name</c> would be read as author-addressable.
+    /// Unchanged from the predecessor and not fixed here: closing it means compiling the engine
+    /// assembly inside this test, which is disproportionate to what it buys.
+    /// </description></item>
+    /// </list>
     private static (ResourceOwner Kind, string Detail) ResolveOwner(
         EngineSource source, ExpressionSyntax receiver, RegistrationBlock block, int depth)
     {

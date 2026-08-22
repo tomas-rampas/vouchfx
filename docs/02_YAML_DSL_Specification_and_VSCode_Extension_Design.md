@@ -410,10 +410,11 @@ Four rules apply to the values; the second and the fourth differ from a service'
   any container starts, naming the variable, the dependency and the type. The check is per type — a
   name reserved for `elasticsearch` is unreserved on `postgres`. The engine relies on those values to
   bring the dependency up in the shape every scenario shares, and on `minio` they are the credentials
-  `${conn:…}` advertises to every other scenario consuming that dependency. Like the `${env:…}` and
-  `${conn:…}` rules above, this check runs only on the `run` path and is **invisible to `vouchfx
+  `${conn:…}` advertises to every other scenario consuming that dependency. Like **every** rule above
+  — `${secret:…}` included — this check runs only on the `run` path and is **invisible to `vouchfx
   validate`**, which never builds a topology; the refusal is reported as **Inconclusive** (§12.1), so
-  it exits **0** by default unless the caller passes `--fail-on-inconclusive`.
+  it exits **0** by default unless the caller passes `--fail-on-inconclusive`, or unless the suite
+  declares `security:` and earns the unconditional non-zero exit described in §3.2.6b.
 
 Variables set by Aspire internally, rather than by the engine, are not detected and will silently take
 the author's value instead; a dependency's own image may also read variables neither the engine nor
