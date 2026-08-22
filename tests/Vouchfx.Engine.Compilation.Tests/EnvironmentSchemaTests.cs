@@ -857,10 +857,10 @@ public sealed class EnvironmentSchemaTests
     }
 
     /// <summary>
-    /// EDGE-001 (dependency-env): a dependency <c>env</c> value accepts exactly the
-    /// value shapes a service <c>env</c> value accepts. This is the only assertion
-    /// anywhere that compares the two — everything else that states the parity states
-    /// it in prose.
+    /// EDGE-001 (dependency-env): a dependency <c>env</c> map constrains an instance
+    /// exactly as a service <c>env</c> map does — the same keywords, including the
+    /// accepted value shapes. This is the only assertion anywhere that compares the
+    /// two — everything else that states the parity states it in prose.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -884,61 +884,93 @@ public sealed class EnvironmentSchemaTests
     /// build instead.
     /// </para>
     /// <para>
-    /// Scoped DELIBERATELY to <c>additionalProperties</c> — the value shape — and not
-    /// to the whole <c>env</c> subschema: the two <c>description</c>/<c>$comment</c>
-    /// values differ on purpose (the dependency description states only what is true
-    /// today and names none of the service-only reference forms), so a whole-subschema
-    /// comparison would have been red from the moment it was written.
+    /// Rooted at the whole <c>env</c> subschema, NOT at its <c>additionalProperties</c>.
+    /// The earlier form descended to the value shape before comparing keyword sets, so a
+    /// keyword added as a SIBLING of <c>additionalProperties</c> on one side — the
+    /// name-level keywords <c>propertyNames</c>, <c>minProperties</c>, <c>maxProperties</c>
+    /// most plausibly, since reserved-name work is a name-level rule — propagated nowhere
+    /// and left this test green. The <c>description</c>/<c>$comment</c> divergence that
+    /// motivated the narrower scope is handled by EXCLUDING those two keys instead: both
+    /// are pure annotations with no assertion effect in draft 2020-12, and the two subtrees
+    /// state deliberately different prose (the dependency description names the
+    /// <c>${conn:...}</c>/<c>${secret:...}</c> refusals that do not apply to a service).
+    /// Everything that constrains an instance is compared.
     /// </para>
     /// <para>
-    /// Compared as DATA, never as text: keyword sets as ordinal-sorted sequences, an
-    /// array-valued keyword (the type union) as a SET, every other keyword via
-    /// <see cref="JsonNode.DeepEquals"/>. A reordered union or reflowed whitespace is
-    /// not drift and must not redden this.
+    /// Compared as DATA, never as text: keyword sets as ordinal-sorted sequences, a
+    /// nested subschema recursively on the same terms, an array-valued keyword (the
+    /// type union) as a SET, every other keyword via <see cref="JsonNode.DeepEquals"/>.
+    /// A reordered union or reflowed whitespace is not drift and must not redden this.
+    /// The set treatment applies to EVERY array-valued keyword, not only the type
+    /// union; no order-significant array keyword (<c>prefixItems</c>) appears in either
+    /// subtree, and one added later would have its order tolerated here.
     /// </para>
     /// </remarks>
     [Fact]
-    public void DependencyEnvValueShape_MatchesServiceEnvValueShapeExactly()
+    public void DependencyEnvSchema_MatchesServiceEnvSchemaExactly()
     {
         // The same root-language schema text YamlSchemaValidator validates every other
         // document in this class against — SchemaResources is its own loader.
         var root = JsonNode.Parse(SchemaResources.ReadRootLanguageSchemaJson())!.AsObject();
 
-        var service = EnvValueSchema(root, "service");
-        var dependency = EnvValueSchema(root, "dependency");
+        var service = EnvSchema(root, "service");
+        var dependency = EnvSchema(root, "dependency");
 
-        var serviceKeywords = service.Select(p => p.Key).OrderBy(k => k, System.StringComparer.Ordinal).ToList();
-        var dependencyKeywords = dependency.Select(p => p.Key).OrderBy(k => k, System.StringComparer.Ordinal).ToList();
+        // Guards a vacuous pass: two subschemas carrying nothing but the excluded
+        // annotations would agree trivially. Asserted at the ROOT only — a nested
+        // subschema is legitimately allowed to be empty.
+        Assert.NotEmpty(AssertingKeywords(service));
 
-        // Guards a vacuous pass: two EMPTY subschemas would agree trivially.
-        Assert.NotEmpty(serviceKeywords);
-        Assert.Equal(serviceKeywords, dependencyKeywords);
+        AssertSubschemasMatch("$defs/{service,dependency}/properties/env", service, dependency);
 
-        foreach (var keyword in serviceKeywords)
+        static JsonObject EnvSchema(JsonObject schemaRoot, string definition)
         {
-            var serviceValue = service[keyword];
-            var dependencyValue = dependency[keyword];
-
-            if (serviceValue is JsonArray serviceUnion && dependencyValue is JsonArray dependencyUnion)
-            {
-                Assert.Equal(AsSet(serviceUnion), AsSet(dependencyUnion));
-                continue;
-            }
-
-            Assert.True(
-                JsonNode.DeepEquals(serviceValue, dependencyValue),
-                $"'{keyword}' has drifted between the service and dependency 'env' value schemas: " +
-                $"service={serviceValue?.ToJsonString() ?? "<absent>"}, " +
-                $"dependency={dependencyValue?.ToJsonString() ?? "<absent>"}.");
-        }
-
-        static JsonObject EnvValueSchema(JsonObject schemaRoot, string definition)
-        {
-            var node = schemaRoot["$defs"]?[definition]?["properties"]?["env"]?["additionalProperties"];
+            var node = schemaRoot["$defs"]?[definition]?["properties"]?["env"];
             Assert.True(node is JsonObject,
-                $"$defs/{definition}/properties/env/additionalProperties is missing or is not an object — " +
+                $"$defs/{definition}/properties/env is missing or is not an object — " +
                 "this parity test would otherwise pass vacuously.");
             return (JsonObject)node!;
+        }
+
+        // Every keyword that constrains an instance: 'description' and '$comment' are
+        // pure annotations (draft 2020-12 §7.7/§8.3 — no assertion effect), and the two
+        // subtrees state deliberately different prose in both.
+        static string[] AssertingKeywords(JsonObject schema) =>
+            schema
+                .Select(p => p.Key)
+                .Where(k => k != "description" && k != "$comment")
+                .OrderBy(k => k, System.StringComparer.Ordinal)
+                .ToArray();
+
+        static void AssertSubschemasMatch(string path, JsonObject service, JsonObject dependency)
+        {
+            var serviceKeywords = AssertingKeywords(service);
+            Assert.Equal(serviceKeywords, AssertingKeywords(dependency));
+
+            foreach (var keyword in serviceKeywords)
+            {
+                var serviceValue = service[keyword];
+                var dependencyValue = dependency[keyword];
+                var keywordPath = $"{path}/{keyword}";
+
+                if (serviceValue is JsonObject serviceNested && dependencyValue is JsonObject dependencyNested)
+                {
+                    AssertSubschemasMatch(keywordPath, serviceNested, dependencyNested);
+                    continue;
+                }
+
+                if (serviceValue is JsonArray serviceUnion && dependencyValue is JsonArray dependencyUnion)
+                {
+                    Assert.Equal(AsSet(serviceUnion), AsSet(dependencyUnion));
+                    continue;
+                }
+
+                Assert.True(
+                    JsonNode.DeepEquals(serviceValue, dependencyValue),
+                    $"'{keywordPath}' has drifted between the service and dependency 'env' schemas: " +
+                    $"service={serviceValue?.ToJsonString() ?? "<absent>"}, " +
+                    $"dependency={dependencyValue?.ToJsonString() ?? "<absent>"}.");
+            }
         }
 
         // Order-insensitive, whitespace-insensitive rendering of a type union.
