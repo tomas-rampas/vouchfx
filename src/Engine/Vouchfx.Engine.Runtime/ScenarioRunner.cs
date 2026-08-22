@@ -795,13 +795,17 @@ public static class ScenarioRunner
             // validation (SuiteTopology.StartAsync's Step 1, called before HeadlessTopology.
             // StartAsync/DCP is ever reached — see that method's Step 1 comment: "Map is pure
             // ... let them propagate as-is"). Map()'s Configure CLOSURE also carries a few
-            // defensive ArgumentException throws of its own (e.g. ResolveDependencyEnvAccess's
-            // internal-error fallback, RequirePasswordParameter) — those run LATER, inside
+            // defensive throws of its own, reachable only by defect (e.g.
+            // ResolveDependencyEnvAccess's internal-error fallback, RequirePasswordParameter,
+            // BuildEnvExpression's unresolved-${conn:} ArgumentException, and
+            // ResolveDependencyEnvTarget's InvalidOperationException when a dependency type
+            // registers no container of its own name) — those run LATER, inside
             // HeadlessTopology.StartAsync's own try/catch (SuiteTopology.cs Step 2), which wraps
             // ANY exception as OrchestrationException before it ever reaches this method; they
             // are therefore unreachable by construction here (ValidateEnvValue's eager checks,
-            // and the CURRENT Aspire.Hosting.Redis/.Nats behaviour of always provisioning a
-            // password parameter, already prevent them from firing in practice) and would
+            // the dependency-env census gate, and the CURRENT Aspire.Hosting.Redis/.Nats
+            // behaviour of always provisioning a password parameter, already prevent them from
+            // firing in practice) and would
             // correctly surface as EnvironmentError via the OrchestrationException catch below,
             // not this one — a genuine, if never-yet-observed, infrastructure/engine fault.
             var now = DateTimeOffset.UtcNow;

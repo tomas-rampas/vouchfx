@@ -1,0 +1,35 @@
+# Surface coverage: environment.dependencies.*.env accepts the same three
+# scalar shapes environment.services.*.env does — a quoted string, a bare
+# (unquoted) numeric, and a bare (unquoted) boolean (dependency-env REQ-002 /
+# EDGE-001). $defs/dependency.properties.env carries its own inline copy of
+# the service's value-shape rules (string/integer/number/boolean) rather than
+# a shared $defs both sides $ref, so that the frozen service subtree stays
+# byte-identical and the addition is purely additive under the v1 schema
+# freeze. Every value reaches the container as raw text: a bare 8080 or true
+# arrives from YamlDotNet as the scalar string "8080"/"true", exactly what a
+# container's environment variable needs, and no numeric/boolean coercion is
+# applied. An explicit null ('FOO: ~') is the one scalar spelling the schema
+# refuses — asserted in EnvironmentSchemaTests, not here, since this corpus
+# holds accepted documents only.
+#
+# Variable-name caveat, for anyone copying this fixture: it exercises SCALAR
+# SHAPES only (quoted string, bare integer, bare boolean) and never starts a
+# container, so the names below are illustrative and none is asserted anywhere
+# to be honoured by the image. MSSQL_PID is the one the spec argues for, and
+# only on documentation-derived grounds: it is documented for the image the
+# engine starts, and measured to be set by neither Aspire's SqlServer resource
+# nor the engine. Nobody has run the image and watched it take effect.
+metadata:
+  name: surface-dependencies-env-scalar-values
+environment:
+  dependencies:
+    db:
+      type: sqlserver
+      env:
+        MSSQL_PID: "Developer"
+        MSSQL_MEMORY_LIMIT_MB: 2048
+        MSSQL_AGENT_ENABLED: true
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step: this fixture exercises the dependency env scalar-value shapes only."

@@ -60,6 +60,7 @@
 // corpus-level safety net (via DocumentValidator, the composed path an
 // author's suite actually hits) that these unit tests complement.
 using System.Linq;
+using System.Text.Json.Nodes;
 using Vouchfx.Engine.Compilation.Schema;
 using Xunit;
 
@@ -716,6 +717,267 @@ public sealed class EnvironmentSchemaTests
         Assert.Contains(result.Errors, e =>
             e.InstanceLocation == "/environment/services/app/env/FOO" &&
             e.Message.Contains("[type]", System.StringComparison.Ordinal));
+    }
+
+    // ── Dependency 'env' (dependency-env REQ-002 / EDGE-001, schema tier) ───
+    //
+    // $defs/dependency gains an 'env' map whose value-shape rules mirror
+    // $defs/service's exactly: a quoted string, a bare numeric and a bare
+    // boolean are accepted, an explicit null is rejected. The null rejection is
+    // a SCHEMA rule, not a parser rule — YamlDocumentParser.ParseEnvMap retains
+    // '~' as the literal one-character text for a dependency exactly as it does
+    // for a service, so absent this 'type' restriction no layer would refuse it
+    // and the variable would silently reach the container as the string '~'.
+
+    [Fact]
+    public void Dependency_EnvStringValue_IsAccepted()
+    {
+        const string yaml = """
+            environment:
+              dependencies:
+                db:
+                  type: postgres
+                  env:
+                    FOO: "bar"
+            steps:
+              - id: noop
+                type: noop.echo
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.True(result.IsValid,
+            $"Expected valid but got: {string.Join("; ", result.Errors.Select(e => $"{e.InstanceLocation}: {e.Message}"))}");
+    }
+
+    [Fact]
+    public void Dependency_EnvBareNumericValue_IsAccepted()
+    {
+        const string yaml = """
+            environment:
+              dependencies:
+                db:
+                  type: postgres
+                  env:
+                    RETRY_COUNT: 3
+            steps:
+              - id: noop
+                type: noop.echo
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.True(result.IsValid,
+            $"Expected valid but got: {string.Join("; ", result.Errors.Select(e => $"{e.InstanceLocation}: {e.Message}"))}");
+    }
+
+    [Fact]
+    public void Dependency_EnvBareBooleanValue_IsAccepted()
+    {
+        const string yaml = """
+            environment:
+              dependencies:
+                db:
+                  type: postgres
+                  env:
+                    FEATURE_FLAG: true
+            steps:
+              - id: noop
+                type: noop.echo
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.True(result.IsValid,
+            $"Expected valid but got: {string.Join("; ", result.Errors.Select(e => $"{e.InstanceLocation}: {e.Message}"))}");
+    }
+
+    /// <summary>
+    /// The value-type union is ["string","integer","number","boolean"], but the
+    /// three accepted shapes above exercise only string, integer and boolean —
+    /// deleting "number" from that union reddens none of them. A bare float
+    /// pins it: SchemaResources' scalar type resolver hands 1.5 to the
+    /// validator as a JSON number, which 'integer' refuses.
+    /// </summary>
+    [Fact]
+    public void Dependency_EnvBareFloatValue_IsAccepted()
+    {
+        const string yaml = """
+            environment:
+              dependencies:
+                db:
+                  type: postgres
+                  env:
+                    SAMPLE_RATE: 1.5
+            steps:
+              - id: noop
+                type: noop.echo
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.True(result.IsValid,
+            $"Expected valid but got: {string.Join("; ", result.Errors.Select(e => $"{e.InstanceLocation}: {e.Message}"))}");
+    }
+
+    /// <summary>
+    /// An explicit YAML null must be rejected on a dependency for the same
+    /// reason it is on a service — and, critically, for the RIGHT reason.
+    /// </summary>
+    /// <remarks>
+    /// Before $defs/dependency carried 'env' at all, this document was already
+    /// refused — but as "[additionalProperties] Unknown property 'env' on
+    /// dependency 'db'", the right verdict for entirely the wrong reason.
+    /// Asserting BOTH the instance location (the offending VALUE, not the 'env'
+    /// key) and the '[type]' keyword is what distinguishes "the schema has no
+    /// 'env' on a dependency" from "the schema has 'env' and refuses null in
+    /// it" — the whole content of this change.
+    /// </remarks>
+    [Fact]
+    public void Dependency_EnvExplicitNullValue_IsRejected()
+    {
+        const string yaml = """
+            environment:
+              dependencies:
+                db:
+                  type: postgres
+                  env:
+                    FOO: ~
+            steps:
+              - id: noop
+                type: noop.echo
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.False(result.IsValid, "An explicit null env value must be rejected — the parser would set it to the literal string '~', never what an author means.");
+        Assert.Contains(result.Errors, e =>
+            e.InstanceLocation == "/environment/dependencies/db/env/FOO" &&
+            e.Message.Contains("[type]", System.StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// EDGE-001 (dependency-env): a dependency <c>env</c> map constrains an instance
+    /// exactly as a service <c>env</c> map does — the same keywords, including the
+    /// accepted value shapes. This is the only assertion anywhere that compares the
+    /// two — everything else that states the parity states it in prose.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The duplication being guarded is DELIBERATE and correct:
+    /// <c>$defs/dependency.properties.env</c>'s value rules are an inline COPY of
+    /// <c>$defs/service.properties.env</c>'s rather than a shared <c>$defs</c> both
+    /// sides <c>$ref</c>, because leaving the service subtree byte-identical is what
+    /// keeps the dependency addition purely ADDITIVE, and therefore legal under the v1
+    /// schema freeze. That <c>$comment</c> says exactly this; nothing enforced it.
+    /// </para>
+    /// <para>
+    /// Why the copy can drift silently: the dependency <c>env</c> tests above pin the
+    /// dependency side's own contract in isolation, and <c>SchemaFreezeTests</c> pins
+    /// the whole composed document byte-for-byte — but a DELIBERATE widening of the
+    /// SERVICE union regenerates that golden and says nothing at all about the twin
+    /// left behind. This repo has already run one sweep of precisely that shape: the
+    /// T2a scalar-coercion tranche moved every Core provider's string-valued map to
+    /// <c>["string","integer","number","boolean"]</c> in a single pass (see
+    /// <c>SchemaAcceptedCorpusTests</c>' retired-tranche remarks). The next such sweep
+    /// is the event that would quietly break EDGE-001; this test turns it into a red
+    /// build instead.
+    /// </para>
+    /// <para>
+    /// Rooted at the whole <c>env</c> subschema, NOT at its <c>additionalProperties</c>.
+    /// The earlier form descended to the value shape before comparing keyword sets, so a
+    /// keyword added as a SIBLING of <c>additionalProperties</c> on one side — the
+    /// name-level keywords <c>propertyNames</c>, <c>minProperties</c>, <c>maxProperties</c>
+    /// most plausibly, since reserved-name work is a name-level rule — propagated nowhere
+    /// and left this test green. The <c>description</c>/<c>$comment</c> divergence that
+    /// motivated the narrower scope is handled by EXCLUDING those two keys instead: both
+    /// are pure annotations with no assertion effect in draft 2020-12, and the two subtrees
+    /// state deliberately different prose (the dependency description names the
+    /// <c>${conn:...}</c>/<c>${secret:...}</c> refusals that do not apply to a service).
+    /// Everything that constrains an instance is compared.
+    /// </para>
+    /// <para>
+    /// Compared as DATA, never as text: keyword sets as ordinal-sorted sequences, a
+    /// nested subschema recursively on the same terms, an array-valued keyword (the
+    /// type union) as a SET, every other keyword via <see cref="JsonNode.DeepEquals"/>.
+    /// A reordered union or reflowed whitespace is not drift and must not redden this.
+    /// The set treatment applies to EVERY array-valued keyword, not only the type
+    /// union; no order-significant array keyword (<c>prefixItems</c>) appears in either
+    /// subtree, and one added later would have its order tolerated here.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void DependencyEnvSchema_MatchesServiceEnvSchemaExactly()
+    {
+        // The same root-language schema text YamlSchemaValidator validates every other
+        // document in this class against — SchemaResources is its own loader.
+        var root = JsonNode.Parse(SchemaResources.ReadRootLanguageSchemaJson())!.AsObject();
+
+        var service = EnvSchema(root, "service");
+        var dependency = EnvSchema(root, "dependency");
+
+        // Guards a vacuous pass: two subschemas carrying nothing but the excluded
+        // annotations would agree trivially. Asserted at the ROOT only — a nested
+        // subschema is legitimately allowed to be empty.
+        Assert.NotEmpty(AssertingKeywords(service));
+
+        AssertSubschemasMatch("$defs/{service,dependency}/properties/env", service, dependency);
+
+        static JsonObject EnvSchema(JsonObject schemaRoot, string definition)
+        {
+            var node = schemaRoot["$defs"]?[definition]?["properties"]?["env"];
+            Assert.True(node is JsonObject,
+                $"$defs/{definition}/properties/env is missing or is not an object — " +
+                "this parity test would otherwise pass vacuously.");
+            return (JsonObject)node!;
+        }
+
+        // Every keyword that constrains an instance: 'description' and '$comment' are
+        // pure annotations (draft 2020-12 §7.7/§8.3 — no assertion effect), and the two
+        // subtrees state deliberately different prose in both.
+        static string[] AssertingKeywords(JsonObject schema) =>
+            schema
+                .Select(p => p.Key)
+                .Where(k => k != "description" && k != "$comment")
+                .OrderBy(k => k, System.StringComparer.Ordinal)
+                .ToArray();
+
+        static void AssertSubschemasMatch(string path, JsonObject service, JsonObject dependency)
+        {
+            var serviceKeywords = AssertingKeywords(service);
+            Assert.Equal(serviceKeywords, AssertingKeywords(dependency));
+
+            foreach (var keyword in serviceKeywords)
+            {
+                var serviceValue = service[keyword];
+                var dependencyValue = dependency[keyword];
+                var keywordPath = $"{path}/{keyword}";
+
+                if (serviceValue is JsonObject serviceNested && dependencyValue is JsonObject dependencyNested)
+                {
+                    AssertSubschemasMatch(keywordPath, serviceNested, dependencyNested);
+                    continue;
+                }
+
+                if (serviceValue is JsonArray serviceUnion && dependencyValue is JsonArray dependencyUnion)
+                {
+                    Assert.Equal(AsSet(serviceUnion), AsSet(dependencyUnion));
+                    continue;
+                }
+
+                Assert.True(
+                    JsonNode.DeepEquals(serviceValue, dependencyValue),
+                    $"'{keywordPath}' has drifted between the service and dependency 'env' schemas: " +
+                    $"service={serviceValue?.ToJsonString() ?? "<absent>"}, " +
+                    $"dependency={dependencyValue?.ToJsonString() ?? "<absent>"}.");
+            }
+        }
+
+        // Order-insensitive, whitespace-insensitive rendering of a type union.
+        static string AsSet(JsonArray union) =>
+            string.Join(
+                ",",
+                union.Select(v => v?.ToJsonString() ?? "null").OrderBy(v => v, System.StringComparer.Ordinal));
     }
 
     [Fact]

@@ -72,7 +72,11 @@ public sealed record EnvironmentSpec(
 /// under <see cref="EnvironmentSpec.Dependencies"/>; the orchestration-layer mapper resolves these to
 /// Aspire-native, container-network values (never the host-published endpoint) via a
 /// <c>ReferenceExpression</c>.  <see langword="null"/> when the service declares no
-/// <c>env:</c> block.
+/// <c>env:</c> block — and, unlike <see cref="DependencySpec.Env"/>, ALSO
+/// <see langword="null"/> for an empty <c>env: {}</c>, which the parser deliberately
+/// collapses so that spelling stays indistinguishable from absent. The asymmetry is
+/// deliberate: the change that added the dependency counterpart was fenced against altering
+/// service <c>env:</c> behaviour in any way, so the collapse this field has always had stayed.
 /// </param>
 public sealed record ServiceSpec(
     string? Image,
@@ -233,4 +237,37 @@ public sealed record DependencySpec(
     /// <see cref="Image"/> — see its own remarks.
     /// </remarks>
     public SecuritySpec? Security { get; init; }
+
+    /// <summary>
+    /// Optional environment-variable mapping for this dependency's container
+    /// (dependency-env spec, REQ-001) — the managed-resource counterpart to
+    /// <see cref="ServiceSpec.Env"/>, by which a managed dependency whose image is configured
+    /// through environment variables will be configurable — e.g. <c>MSSQL_PID</c>, on the
+    /// image the engine's own <c>AddSqlServer</c> mapping starts.
+    /// <para>
+    /// <see langword="null"/> when the dependency declares no <c>env:</c> block, which is
+    /// the shape every suite written before this field has. An empty <c>env: {}</c> yields
+    /// an EMPTY dictionary here rather than <see langword="null"/> — unlike
+    /// <see cref="ServiceSpec.Env"/>, whose empty spelling the parser collapses to
+    /// <see langword="null"/> — so "declared, empty" stays distinguishable from
+    /// "not declared".
+    /// </para>
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Each value is retained here as its literal raw scalar text, exactly as
+    /// <see cref="ServiceSpec.Env"/>'s is; this record applies no coercion and no
+    /// validation of the value's CONTENT, and performs no reference resolution — this
+    /// record deliberately describes only what it itself does.
+    /// </para>
+    /// <para>
+    /// An init-only property for the same binary-compatibility reason as
+    /// <see cref="Image"/> — see its own remarks: this record lives in a packable
+    /// assembly (<c>Vouchfx.Engine.Authoring</c> is <c>IsPackable=true</c>), and inserting
+    /// a new positional parameter would change the primary constructor's parameter
+    /// order/arity and the compiler-generated <c>Deconstruct</c> — a binary-breaking
+    /// change for any already-compiled caller. An init-only property is purely additive.
+    /// </para>
+    /// </remarks>
+    public IReadOnlyDictionary<string, string>? Env { get; init; }
 }

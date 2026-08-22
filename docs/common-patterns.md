@@ -407,7 +407,7 @@ steps:
 
 Both `{webhook-listener}` (loopback, for host-local consumers) and `{webhook-listener_container}` (host-gateway, for containerised consumers) are available in `Vars`. The engine automatically configures each containerised service with `--add-host=host.docker.internal:host-gateway`, making the container-form addresses reachable.
 
-**See also:** [docs/02 §3.2.6](02_YAML_DSL_Specification_and_VSCode_Extension_Design.md#326-configuring-the-system-under-test) for the complete specification of `env`, connection parts, and validation rules. For real-world worked examples, see the [vouchfx-samples](https://github.com/tomas-rampas/vouchfx-samples) repository.
+**See also:** [docs/02 §3.2.6](02_YAML_DSL_Specification_and_VSCode_Extension_Design.md#326-configuring-the-system-under-test) for the complete specification of a service's `env`, connection parts, and validation rules, and [§3.2.6c](02_YAML_DSL_Specification_and_VSCode_Extension_Design.md#326c-configuring-a-managed-dependency) for a managed dependency's. For real-world worked examples, see the [vouchfx-samples](https://github.com/tomas-rampas/vouchfx-samples) repository.
 
 ---
 

@@ -851,6 +851,69 @@ public sealed class SecuredEndpointProbeTests : IDisposable
     }
 
     /// <summary>
+    /// dependency-env EDGE-008: a secured <c>kafka</c> dependency that ALSO carries an unrelated
+    /// <c>env:</c> entry still confirms its probe, at the same level and with the same claimed
+    /// identity as the arm directly above — <c>env:</c> and <c>security:</c> are independent.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Deliberately the SAME listener, the same profile and the same accessor as
+    /// <see cref="Confirm_KafkaTargetRequiringAClientCertificate_ConfirmsAnAuthenticatedRoundTrip"/>,
+    /// so the only difference between the two is the <c>env:</c> map.  A drop to
+    /// <c>TransportOnly</c>, or a failure, could then only be attributable to it.
+    /// </para>
+    /// <para>
+    /// <b>Which tier this is, and which it is not.</b>  The probe takes a host, a port and the
+    /// resolved security configuration, so this arm covers the whole of what EDGE-008 asserts
+    /// about CONFIRMATION with no Docker at all.  What it does not cover is whether a real broker
+    /// container, started with both an author <c>env:</c> map and engine-injected server
+    /// artefacts, still presents the expected listener — that needs the Docker tier, and belongs
+    /// with the existing <c>requires=docker</c> mTLS suite rather than here.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task Confirm_SecuredKafkaDependencyCarryingAnUnrelatedEnvEntry_StillConfirms()
+    {
+        var (port, serving, listener) = ListenTls(tls => ServeKafkaApiVersions(tls), ClientAuth.Required);
+
+        try
+        {
+            var environment = new EnvironmentSpec(
+                Services: null,
+                Dependencies: new Dictionary<string, DependencySpec>(StringComparer.Ordinal)
+                {
+                    ["events"] = new DependencySpec("kafka", null, null)
+                    {
+                        Security = Profile("mtls"),
+                        Env = new Dictionary<string, string>(StringComparer.Ordinal)
+                        {
+                            ["VOUCHFX_DEP_PROBE"] = "unrelated",
+                        },
+                    },
+                },
+                Seed: null,
+                ImageRegistry: null,
+                ImagePullPolicy: null);
+
+            var confirmations = await ProbeAsync(
+                environment,
+                Staged("events", "localhost", port),
+                new FakeAccessor().With(
+                    "events", "mtls", new FakeMaterial(_bed, withClientIdentity: true, declareCa: true)));
+
+            var confirmation = Assert.Single(confirmations);
+            Assert.Equal(SecurityConfirmationLevel.AuthenticatedRoundTrip, confirmation.Level);
+            Assert.Equal("kafka", confirmation.TargetKind);
+            Assert.True(confirmation.ClientIdentityResolved);
+        }
+        finally
+        {
+            listener.Stop();
+            await serving;
+        }
+    }
+
+    /// <summary>
     /// <strong>The differential.</strong> A broker that answers the mutual-TLS round trip perfectly
     /// — valid certificate, chain satisfied, <c>errorCode=0</c> — but whose listener does not
     /// REQUIRE a client certificate must fail closed, because it would accept an anonymous client

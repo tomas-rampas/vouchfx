@@ -330,7 +330,8 @@ public static class YamlDocumentParser
             var pullPolicy = GetScalar(serviceMapping, "imagePullPolicy");
             var httpPortRaw = GetScalar(serviceMapping, "httpPort");
             int? httpPort = httpPortRaw is not null && int.TryParse(httpPortRaw, NumberStyles.None, CultureInfo.InvariantCulture, out var p) ? p : null;
-            var env = ParseEnvMap(serviceMapping, keyScalar.Value);
+            // Pinned by Parse_Env_EmptyMap_CollapsesToNullOnAServiceButIsRetainedOnADependency.
+            var env = CollapseEmptyEnvToNull(ParseEnvMap(serviceMapping, "Service", keyScalar.Value));
             var security = ParseSecurity(serviceMapping, "Service", keyScalar.Value);
             var (ports, pinnedHostPorts) = ParseServicePorts(serviceMapping, keyScalar.Value);
             var healthCheck = ParseHealthCheck(serviceMapping);
@@ -628,26 +629,69 @@ public static class YamlDocumentParser
     }
 
     /// <summary>
-    /// Parses a service's optional <c>env:</c> mapping (SUT configuration surface) into a
-    /// strongly-typed <c>string -&gt; string</c> dictionary.
+    /// Parses a service's or dependency's optional <c>env:</c> mapping (the container
+    /// configuration surface) into a strongly-typed <c>string -&gt; string</c> dictionary.
     /// </summary>
+    /// <param name="ownerMapping">The service's or dependency's own YAML mapping node.</param>
+    /// <param name="ownerLabel">
+    /// <c>"Service"</c> or <c>"Dependency"</c> — the subject noun spliced into this method's
+    /// diagnostics, exactly as <see cref="ParseSecurity"/> does with its own label. WIDENED
+    /// rather than forked (dependency-env spec, REQ-001): this is generic
+    /// mapping-to-dictionary logic that had only the noun <c>"Service"</c> baked into it, and
+    /// two copies of it would be two places for the value-shape rules to drift apart. The
+    /// service diagnostics are byte-identical to their pre-widening form for
+    /// <c>ownerLabel: "Service"</c>, which is the constraint that widening had to meet.
+    /// </param>
+    /// <param name="ownerName">The service's or dependency's logical (map-key) name.</param>
+    /// <returns>
+    /// <see langword="null"/> when the owner declares no <c>env:</c> key at all; otherwise the
+    /// declared mapping — INCLUDING an empty dictionary for an empty <c>env: {}</c>, so
+    /// "declared, empty" stays distinguishable from "not declared" (dependency-env EDGE-002).
+    /// <para>
+    /// THIS READER'S CONTRACT IS NOT WHAT EVERY CALLER SHIPS: <see cref="ParseServiceMap"/>
+    /// deliberately re-collapses an empty dictionary back to <see langword="null"/> for a
+    /// SERVICE (via <see cref="CollapseEmptyEnvToNull"/>), because changing service
+    /// <c>env:</c> behaviour in any way is out of scope for dependency-env — the change that
+    /// widened this reader. That collapse is the caller's rule, not
+    /// this reader's; both halves are pinned by
+    /// <c>Parse_Env_EmptyMap_CollapsesToNullOnAServiceButIsRetainedOnADependency</c>, so
+    /// neither this <c>&lt;returns&gt;</c> nor that call site can be "tidied" into agreement
+    /// with the other without a test going red.
+    /// </para>
+    /// </returns>
     /// <remarks>
     /// Every value is retained in its RAW scalar form — a bare <c>8080</c> or <c>true</c>
     /// arrives from YamlDotNet as a scalar string ("8080"/"true"), which is exactly the
     /// literal text a container's environment variable needs; no numeric/boolean coercion is
     /// applied here (the YAML-scalar-coercion gotcha this parser is elsewhere careful about).
-    /// Reference resolution (<c>${conn:name}</c> / <c>${conn:name.part}</c>) and
-    /// <c>${secret:...}</c> rejection are the orchestration-layer mapper's job (§17) — this
-    /// parser only extracts the literal text.
+    /// This includes YAML's explicit null: MEASURED against the pinned YamlDotNet 16.3.0
+    /// representation model, <c>FOO: ~</c> reads back as the literal one-character text
+    /// <c>~</c> for a service and a dependency alike; this reader refuses neither. It is the
+    /// JSON Schema layer — whose <c>env</c> value type is
+    /// <c>string | integer | number | boolean</c> on a service and a dependency alike — that
+    /// refuses that spelling. Reference resolution (<c>${conn:name}</c> / <c>${conn:name.part}</c> /
+    /// <c>${env:NAME}</c>), the rejection of <c>${secret:...}</c> (§17), and the
+    /// dependency-only refusal of <c>${conn:}</c> — barred on a dependency at all, since a
+    /// dependency is a connection SOURCE rather than a consumer — are the orchestration-layer
+    /// mapper's job; this parser only extracts the literal text.
+    /// <para>
+    /// This sentence deliberately does NOT list a refusal of engine-set variable names. The
+    /// mapper currently SKIPS such a key, keeping its own value and warning the author; the
+    /// refusal is a later slice. Naming it here before it exists would be the same
+    /// prose-expiry defect <c>156dc2e</c> deleted from this very file, inverted — and this
+    /// assembly is packable with <c>GenerateDocumentationFile</c>, so the claim would ship in
+    /// <c>Vouchfx.Engine.Authoring.xml</c> beside the DLL.
+    /// </para>
     /// </remarks>
     /// <exception cref="YamlParseException">
     /// Thrown when the <c>env:</c> node is present but is not a mapping, when a key is not a
     /// scalar, or when an entry's value is not a scalar (e.g. a nested mapping/sequence where
     /// a plain string is expected).
     /// </exception>
-    private static Dictionary<string, string>? ParseEnvMap(YamlMappingNode serviceMapping, string serviceName)
+    private static Dictionary<string, string>? ParseEnvMap(
+        YamlMappingNode ownerMapping, string ownerLabel, string ownerName)
     {
-        if (!TryGetNode(serviceMapping, "env", out var envNode))
+        if (!TryGetNode(ownerMapping, "env", out var envNode))
         {
             return null;
         }
@@ -655,7 +699,7 @@ public static class YamlDocumentParser
         if (envNode is not YamlMappingNode envMapping)
         {
             throw new YamlParseException(
-                $"Service '{serviceName}' 'env' at line {envNode.Start.Line} must be a mapping of " +
+                $"{ownerLabel} '{ownerName}' 'env' at line {envNode.Start.Line} must be a mapping of " +
                 $"environment-variable name to string value (e.g. 'FOO: \"bar\"'), but found {envNode.NodeType}.",
                 envNode.Start.Line,
                 envNode.Start.Column);
@@ -667,7 +711,7 @@ public static class YamlDocumentParser
             if (key is not YamlScalarNode keyScalar || keyScalar.Value is null)
             {
                 throw new YamlParseException(
-                    $"Service '{serviceName}' 'env' key at line {key.Start.Line} must be a scalar " +
+                    $"{ownerLabel} '{ownerName}' 'env' key at line {key.Start.Line} must be a scalar " +
                     $"environment-variable name, but found {key.NodeType}.",
                     key.Start.Line,
                     key.Start.Column);
@@ -676,7 +720,7 @@ public static class YamlDocumentParser
             if (value is not YamlScalarNode valueScalar || valueScalar.Value is null)
             {
                 throw new YamlParseException(
-                    $"Service '{serviceName}' env entry '{keyScalar.Value}' at line {value.Start.Line} " +
+                    $"{ownerLabel} '{ownerName}' env entry '{keyScalar.Value}' at line {value.Start.Line} " +
                     $"must be a scalar string value, but found {value.NodeType}.",
                     value.Start.Line,
                     value.Start.Column);
@@ -685,8 +729,24 @@ public static class YamlDocumentParser
             dict[keyScalar.Value] = valueScalar.Value;
         }
 
-        return dict.Count > 0 ? dict : null;
+        return dict;
     }
+
+    /// <summary>
+    /// Collapses an empty <c>env: {}</c> back to <see langword="null"/> so that, on a SERVICE,
+    /// the empty spelling stays indistinguishable from a service that declared no <c>env:</c>
+    /// at all.
+    /// </summary>
+    /// <remarks>
+    /// The SERVICE call site's rule, deliberately NOT <see cref="ParseEnvMap"/>'s — that reader
+    /// retains an empty declaration so a DEPENDENCY can distinguish "declared, empty" from "not
+    /// declared" (dependency-env EDGE-002), and changing service <c>env:</c> behaviour in any
+    /// way is out of scope for that change. Named rather than inlined so the rule describes
+    /// itself and cannot drift from a comment; both halves of the asymmetry are pinned by
+    /// <c>Parse_Env_EmptyMap_CollapsesToNullOnAServiceButIsRetainedOnADependency</c>.
+    /// </remarks>
+    private static Dictionary<string, string>? CollapseEmptyEnvToNull(Dictionary<string, string>? env)
+        => env is { Count: > 0 } ? env : null;
 
     private static Dictionary<string, DependencySpec>? ParseDependencyMap(YamlMappingNode environment)
     {
@@ -737,14 +797,45 @@ public static class YamlDocumentParser
             var version = GetScalarOrPlainNull(depMapping, "version");
             var image = GetScalarOrPlainNull(depMapping, "image");
             var security = ParseSecurity(depMapping, "Dependency", keyScalar.Value);
+            var env = ParseEnvMap(depMapping, "Dependency", keyScalar.Value);
 
             // Collect any extra fields (everything except 'type', 'version', 'image',
-            // and 'security') into a new mapping node so provider resource
-            // contributors can bind them. 'security' is excluded here because it is
-            // now explicitly bound above, exactly like 'image'/'version'/'type'.
-            YamlMappingNode? extra = BuildExtraNode(depMapping, "type", "version", "image", "security");
+            // 'security' and 'env') into a new mapping node, so that a dependency field no
+            // typed field claims is PRESERVED rather than dropped on the floor. It is not a
+            // provider extension point, whatever it looks like: EnvironmentMapper is its only
+            // reader today — see the bullet below — and no provider can become one,
+            // because DependencySpec lives in Vouchfx.Engine.Authoring, which neither
+            // Vouchfx.Sdk nor Vouchfx.Engine.Abstractions (the two assemblies a provider
+            // references) depends on. IResourceContributor<TModel>.Resources takes the
+            // provider's own STEP model, not a dependency's Extra node.
+            //
+            // 'security' is excluded here because it is now explicitly bound above, exactly
+            // like 'image'/'version'/'type'; 'env' joins them for the same reason
+            // (dependency-env REQ-001): Extra is the untyped bucket for fields that no typed
+            // field claims, and 'env' now has one. (The environment hash moves for every
+            // existing suite that declares at least one dependency either way, because
+            // DependencySpec gained an Env property that ScenarioRunner.SerialiseEnvironment
+            // writes — "Env":null — whether or not one was declared; that hash never leaves
+            // the process, so it is not the reason for either choice.)
+            //
+            //   • NOTHING INTERPRETS an 'env' key out of DependencySpec.Extra. Before this change
+            //     no reader looked for one — EnvironmentMapper reads Extra only for
+            //     'schemaRegistry', 'queues' and 'topics', and ScenarioRunner.SerialiseEnvironment
+            //     (a different assembly) serialises it wholesale without reading keys.
+            //
+            // Two consequences of 'env' moving from Extra into a typed field — key-order
+            // sensitivity, and what a malformed 'env' does to a security declaration on the
+            // discovery path — are analysed beside the tests that pin them:
+            // EnvironmentHashTests.ComputeEnvironmentHash_SameTypedEnvDifferentKeyOrder_ProducesDifferentHash
+            // and CliLogicTests.Discover_MalformedDependencyEnv_IsClassThreeAndRecoversNothing.
+            YamlMappingNode? extra = BuildExtraNode(depMapping, "type", "version", "image", "security", "env");
 
-            dict[keyScalar.Value] = new DependencySpec(type, version, extra) { Image = image, Security = security };
+            dict[keyScalar.Value] = new DependencySpec(type, version, extra)
+            {
+                Image = image,
+                Security = security,
+                Env = env,
+            };
         }
 
         return dict.Count > 0 ? dict : null;
