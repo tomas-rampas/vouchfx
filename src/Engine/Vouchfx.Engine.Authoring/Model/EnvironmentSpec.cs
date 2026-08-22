@@ -245,18 +245,6 @@ public sealed record DependencySpec(
     /// through environment variables will be configurable — e.g. <c>MSSQL_PID</c>, on the
     /// image the engine's own <c>AddSqlServer</c> mapping starts.
     /// <para>
-    /// <strong>Its accepted VALUES are tag-dependent, which is the same rot one level down.</strong>
-    /// <c>Developer</c> is listed for the <c>2022-latest</c> image Aspire 13.4.2 pins; the ver17
-    /// (2025) edition table no longer lists it, listing <c>StandardDeveloper</c> and
-    /// <c>EnterpriseDeveloper</c> instead. Note what that is and is not evidence of: it is a fact
-    /// about the published TABLE, not about what a 2025 image rejects — the same ver17 page's own
-    /// Docker example still passes <c>MSSQL_PID='Developer'</c> against <c>2025-latest</c>. So the
-    /// risk that a future Aspire bump leaves this variable correct and its value stale is
-    /// INFERRED from the documentation, not observed: nobody has run a 2025 image with this value
-    /// and watched what it does. Re-check the value, not just the name, whenever the pinned tag
-    /// moves — and re-check it by running the image, which is what would settle it.
-    /// </para>
-    /// <para>
     /// <see langword="null"/> when the dependency declares no <c>env:</c> block, which is
     /// the shape every suite written before this field has. An empty <c>env: {}</c> yields
     /// an EMPTY dictionary here rather than <see langword="null"/> — unlike

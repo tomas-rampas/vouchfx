@@ -257,7 +257,7 @@ Supported dependency kinds and their available parts are:
 | `dynamodb` | `host`, `port` |
 | `minio` | `host`, `port` |
 
-Unknown dependency names or parts result in a validation error before the topology is started, reported as **Inconclusive** — the test never ran, consistent with the §12.1 treatment of schema and secret-reference authoring failures. **Secrets (`${secret:…}`) are not supported in this `env` map** — a container's environment variables are fixed when it starts and are readable by anyone who can run `docker inspect` against it, so a resolved secret value written here would be exposed to every reader of the container's configuration. The prohibition is scoped to this map rather than to the `environment` section as a whole: one environment-level field does take a `${secret:…}` reference — `security.clientKeyPassword`, on a declared service or a `kafka` dependency (§3.2.6b), whose resolved value the engine uses to open a private key in its own process and never writes into a container. A system under test that needs real credentials at runtime should obtain them through its own configuration mechanism; the managed-dependency credentials reachable through `${conn:…}` are ephemeral, Aspire-generated test values, not §17 secrets. **Environment variables set this way are visible via `docker inspect`** — this is inherent to how container environments work and is not a platform defect. Authors should treat service-visible environment variables as non-confidential; use `${secret:…}` references and the redaction mechanisms in §17 for any credentials that require protection. Literal braces in `env` values — JSON fragments, `${OTHER_VAR}`-style self-expansion placeholders that are not `${conn:…}`, `${secret:…}`, or `${env:…}` references — are passed through to the container verbatim. `${env:NAME}` resolution is honoured only in a service's own `env:` values; the same token written inside `image:` or `project:` is not recognised and is passed through literally. Note also that `Environment.GetEnvironmentVariable` is case-insensitive on Windows and case-sensitive on Linux, so a `${env:path}` reference that resolves locally (matching a variable named `PATH`) can fail — naming the variable — in a Linux CI run that defines only `PATH`.
+Unknown dependency names or parts result in a validation error before the topology is started, reported as **Inconclusive** — the test never ran, consistent with the §12.1 treatment of schema and secret-reference authoring failures. **Secrets (`${secret:…}`) are not supported in this `env` map** — a container's environment variables are fixed when it starts and are readable by anyone who can run `docker inspect` against it, so a resolved secret value written here would be exposed to every reader of the container's configuration. The prohibition is scoped to this map rather than to the `environment` section as a whole: one environment-level field does take a `${secret:…}` reference — `security.clientKeyPassword`, on a declared service or a `kafka` dependency (§3.2.6b), whose resolved value the engine uses to open a private key in its own process and never writes into a container. A system under test that needs real credentials at runtime should obtain them through its own configuration mechanism; the managed-dependency credentials reachable through `${conn:…}` are ephemeral, Aspire-generated test values, not §17 secrets. **Environment variables set this way are visible via `docker inspect`** — this is inherent to how container environments work and is not a platform defect. Authors should treat service-visible environment variables as non-confidential; use `${secret:…}` references and the redaction mechanisms in §17 for any credentials that require protection. Literal braces in `env` values — JSON fragments, `${OTHER_VAR}`-style self-expansion placeholders that are not `${conn:…}`, `${secret:…}`, or `${env:…}` references — are passed through to the container verbatim. `${env:NAME}` resolution is honoured in a service's own `env:` values and in a managed dependency's (§3.2.6c); the same token written inside `image:` or `project:` is not recognised and is passed through literally. Note also that `Environment.GetEnvironmentVariable` is case-insensitive on Windows and case-sensitive on Linux, so a `${env:path}` reference that resolves locally (matching a variable named `PATH`) can fail — naming the variable — in a Linux CI run that defines only `PATH`.
 
 Additionally, image-form services automatically receive the Docker host gateway alias (`--add-host=host.docker.internal:host-gateway`), allowing containerised services to reach listeners on the host. When a webhook listener variable is staged (see §5.5), it is made available to the consumer SUT both as `{<listener>}` (host loopback address, used by host-local steps) and as `{<listener>_container}` (the host-gateway form, suitable for passing to containerised services as a callback URL). Declaring two webhook listeners whose names collide through this aliasing (a listener named `x` alongside one named `x_container`) is a validation error; author-declared `variables:` follow the usual forward-only assignment rules and are not checked against the synthesised alias. A host resource sharing its name with a declared service — a listener named `orders-api` alongside `environment.services.orders-api` — is likewise a validation error naming both: the two would otherwise stage into the same key, and a step targeting that name would silently reach the engine's own listener instead of the system under test.
 
@@ -368,6 +368,48 @@ A `profile: tls` target that speaks Kafka therefore reports `AuthenticatedRoundT
 A confirmation failure is an environment error that **breaks CI whether or not `--fail-on-env-error` was passed** (exit 3), and a `security` declaration that a refusal starting no container left unconfirmed breaks CI with neither gating flag in exactly the same way — but at whichever code that run's own verdict names, 4 for an Inconclusive verdict and 3 for an EnvironmentError one, so a refusal is not automatically the 3 above. Read that clause literally in both halves: nothing downstream of the refusal runs, so that refusal validates nothing and confirms nothing — and it makes no difference whether what stopped the run was about security at all; but a **scenario** refused this way beside siblings whose confirmation probe *did* confirm every declared target leaves the suite at exit 0, because the run then holds a confirmation of *that scenario's own* declaration — a suite's scenarios must declare a byte-identical `environment` block, so what the probe confirmed is what the refused scenario declared. **Read `scenario` there exactly as strictly as it is written, because a document and a scenario are different things here.** A document that parsed and was then refused *before it became a scenario* — an unknown step type, a duplicate step id, anything the suite builder rejects — gets no such carve-out: nothing downstream of it ran and nothing established that its `environment` block is the one the topology started from, so its declaration is confirmed by nothing and it reddens the run whatever its siblings went on to confirm. The instances named next are causes of a refusal, and each one lands in whichever of those two classes the refused file belongs to. A certificate path that escapes the suite directory, a schema error *anywhere* in the document, an unresolvable `script.csharp` `file:`, a `${conn:…}` naming no dependency, a `clientKeyPassword` that is not one whole `${secret:…}` reference, a protocol conflict, or scenarios that resolve their declared security paths against different directories — all are instances, and the rule holds for causes not named here. A rejection located **at or inside** the declaration counts even when the declaration is malformed enough that no block binds at all: `security: mtls` — the profile name written where the block belongs — reddens the run rather than passing as a document that declared nothing. A topology that comes **up** and then fails its health gate is not an instance: a run whose *only* fault is that gate still exits 0, and the gate failure never clears a refusal the run already recorded. Every *other* environment error raises nothing of its own, so a run whose only fault is one of them still exits 0 by default. See `docs/ci-integration.md` for the CI-facing treatment and the exit code each outcome carries.
 
 Finally, the engine does not *serve* TLS. Declaring `security` fixes the endpoint's scheme and the client's trust material; the system under test terminates TLS itself, using server-side material its author supplies — either baked into the image, or declared as `serverArtifacts` and copied into the container by the engine (above).
+
+#### 3.2.6c Configuring a managed dependency
+
+A dependency declared under `environment.dependencies` may carry its own `env` map, for a managed
+resource whose image is configured through environment variables. Values follow the same shapes a
+service's `env` accepts: a quoted string, or a bare numeric or boolean YAML scalar retained as its
+literal text. An explicit null (`FOO: ~`) is rejected.
+
+```yaml
+environment:
+  dependencies:
+    billing-db:
+      type: sqlserver
+      env:
+        MSSQL_PID: Developer
+```
+
+Three rules apply to the values, and they differ from a service's:
+
+- **`${env:NAME}` is supported**, on the same contract as a service's: resolved from the engine
+  process's own environment at topology-build time, before the container starts. An unset variable
+  fails the suite naming it; a variable explicitly set empty is honoured as-is.
+- **`${conn:…}` is refused**, naming the reference. A dependency is a connection *source*, not a
+  consumer. Barring it removes self-reference and inter-dependency cycles outright, so there is no
+  build-order graph to reason about and no cycle to diagnose.
+- **`${secret:…}` is refused**, for the same reason it is refused in a service's `env`: a container's
+  environment is the wrong *place* for a secret whenever it would resolve, because anyone who can run
+  `docker inspect` reads it. Configure the dependency's consumer to resolve the secret itself.
+
+Some variables are set by the engine itself for a given dependency type — `minio`'s root credentials,
+`elasticsearch`'s discovery and heap settings, and the `azureservicebus` emulator's SQL wiring. These
+are load-bearing: they are what `${conn:…}` advertises to every other scenario consuming that
+dependency. An `env` entry naming one of them is **ignored, with a warning** — the engine's own value
+is kept. Variables set by Aspire internally, rather than by the engine, are not detected and will
+silently take the author's value instead; a dependency's own image may also read variables neither
+the engine nor Aspire knows about.
+
+> **Key order is significant.** A dependency's `env` map participates in the environment hash in the
+> order its keys are written. Two scenarios that share an `environment` block but spell the same
+> dependency `env` keys in a different order are treated as divergent and abort the suite as an
+> **Environment error**; in watch mode, a save that merely reorders two keys tears the topology down
+> and rebuilds it. Keep the key order identical across scenarios that share an environment.
 
 #### 3.2.7 Test doubles
 
