@@ -4851,4 +4851,550 @@ public sealed class EnvironmentMapperTests
 
         Assert.Equal("bus-sr", Assert.Single(names));
     }
+
+    // -----------------------------------------------------------------------
+    // dependency-env (spec REQ-003 / REQ-005 / EDGE-006): a managed dependency's
+    // own `env:` mapping.
+    //
+    // The all-thirteen merge gate lives in its own file, DependencyEnvCensusTests,
+    // because it enumerates the type list out of the JSON Schema. What follows is
+    // everything the census cannot say: which construction SHAPE each of the two
+    // named cases stands for, the two refusals, and the engine-set skip.
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// Reads the text of a resolved environment-variable value regardless of which overload
+    /// wrote it: the engine's own registrations use <c>WithEnvironment(string, string)</c> and
+    /// land a plain <see cref="string"/>, whereas an author's <c>env:</c> goes through
+    /// <c>ApplyEnv</c> and lands a <see cref="ReferenceExpression"/>.  A test that asserts
+    /// "the engine's value survived" has to read both.
+    /// </summary>
+    private static string EnvValueText(object envVarValue) => envVarValue switch
+    {
+        ReferenceExpression expression => expression.ValueExpression,
+        string text => text,
+        _ => envVarValue.ToString() ?? string.Empty,
+    };
+
+    /// <summary>
+    /// Builds a one-dependency environment from real YAML, maps it, and returns the mapper's
+    /// warnings alongside the resolved environment variables of the container named
+    /// <paramref name="dependencyName"/> — the dependency's OWN container, never a sidecar and
+    /// never the <c>AddDatabase</c> child.
+    /// </summary>
+    private static async Task<(Dictionary<string, object> Vars, IReadOnlyList<string> Warnings)>
+        MapDependencyAndResolveEnvAsync(string yaml, string dependencyName)
+    {
+        var mapped = EnvironmentMapper.Map(ParseEnvironment(yaml));
+        var builder = CreateBuilder();
+        mapped.Configure(builder);
+
+        var target = Assert.Single(
+            builder.Resources.OfType<ContainerResource>(), r => r.Name == dependencyName);
+
+        return (await ResolveEnvVarsAsync(target), mapped.Warnings);
+    }
+
+    /// <summary>
+    /// <b>Shape 1 of 2 — the Aspire <c>AddXxx</c>-backed shape</b>, for which <c>postgres</c>
+    /// stands (so do <c>sqlserver</c>, <c>mysql</c> and <c>mongodb</c>; the census covers all
+    /// four).  This is the shape a naive implementation gets WRONG: the builder the mapper
+    /// retains for a postgres dependency is the <c>AddDatabase</c> CHILD
+    /// (<c>PostgresDatabaseResource</c>, named <c>ordersdb</c>), which is not a container and
+    /// does not implement <c>IResourceWithEnvironment</c> at all — so applying <c>env:</c> to the
+    /// retained builder does not compile, let alone work.  The variable must reach the SERVER
+    /// container, the one named exactly as the author declared the dependency.
+    /// </summary>
+    [Fact]
+    public async Task Map_DependencyEnv_AspireAddXxxShape_Postgres_ReachesTheServerContainer()
+    {
+        const string yaml = """
+            metadata:
+              name: dep-env-postgres
+            environment:
+              dependencies:
+                orders:
+                  type: postgres
+                  env:
+                    VOUCHFX_DEP_PROBE: applied
+            steps:
+              - id: noop
+                type: script.csharp
+                code: "// Filler step."
+            """;
+
+        var (vars, warnings) = await MapDependencyAndResolveEnvAsync(yaml, "orders");
+
+        Assert.Equal("applied", EnvValueText(vars["VOUCHFX_DEP_PROBE"]));
+        Assert.Empty(warnings);
+    }
+
+    /// <summary>
+    /// <b>Shape 2 of 2 — the <c>AddContainer</c>-backed shape</b>, for which <c>minio</c> stands
+    /// (so do <c>mailpit</c>, <c>dynamodb</c> and <c>azureservicebus</c>).  Here the retained
+    /// builder IS the container, so the naive implementation happens to work — which is exactly
+    /// why the postgres case above is the other half of the pair rather than a second example of
+    /// the same thing.  minio is also one of the three types that carries engine-set names, so it
+    /// is where the skip rule is observable; that half is pinned separately below.
+    /// </summary>
+    [Fact]
+    public async Task Map_DependencyEnv_AddContainerShape_Minio_ReachesTheContainer()
+    {
+        const string yaml = """
+            metadata:
+              name: dep-env-minio
+            environment:
+              dependencies:
+                blobs:
+                  type: minio
+                  env:
+                    VOUCHFX_DEP_PROBE: applied
+            steps:
+              - id: noop
+                type: script.csharp
+                code: "// Filler step."
+            """;
+
+        var (vars, warnings) = await MapDependencyAndResolveEnvAsync(yaml, "blobs");
+
+        Assert.Equal("applied", EnvValueText(vars["VOUCHFX_DEP_PROBE"]));
+        Assert.Empty(warnings);
+    }
+
+    /// <summary>
+    /// REQ-003: a <c>${conn:...}</c> reference inside a DEPENDENCY's <c>env:</c> is REFUSED,
+    /// naming the reference — a managed dependency is a connection SOURCE, not a consumer
+    /// (decision 2).  Refusing it removes self-reference and inter-dependency cycles outright,
+    /// which is the whole reason this engine needs no build-order graph and no cycle detector.
+    /// </summary>
+    /// <remarks>
+    /// Asserted on the MESSAGE, not the exception type alone.  Without the refusal the value
+    /// tokenises as a <c>ConnRef</c> and either throws <c>KeyNotFoundException</c> from a table
+    /// built from services only — a §12.1 taxonomy break, an authoring fault reported as an
+    /// Environment error — or, worse, silently works.
+    /// </remarks>
+    [Fact]
+    public void Map_DependencyEnv_ConnReference_IsRefusedNamingTheReference()
+    {
+        const string yaml = """
+            metadata:
+              name: dep-env-conn
+            environment:
+              dependencies:
+                orders:
+                  type: postgres
+                cache:
+                  type: redis
+                  env:
+                    UPSTREAM: "${conn:orders}"
+            steps:
+              - id: noop
+                type: script.csharp
+                code: "// Filler step."
+            """;
+
+        var environment = ParseEnvironment(yaml);
+
+        var ex = Assert.Throws<ArgumentException>(() => EnvironmentMapper.Map(environment));
+
+        Assert.Contains("Dependency 'cache'", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("env entry 'UPSTREAM'", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("${conn:orders}", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("connection SOURCE, not a consumer", ex.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// REQ-003: a <c>${secret:...}</c> reference inside a DEPENDENCY's <c>env:</c> is REFUSED,
+    /// on the service rule's own reasoning (§17): a container's environment is the wrong PLACE
+    /// for a secret, because anyone who can run <c>docker inspect</c> reads it.
+    /// </summary>
+    /// <remarks>
+    /// Without this check the sigil matches NEITHER token pattern, so the value becomes a plain
+    /// literal and <c>${secret:vault/db/pw}</c> is written into the container verbatim.  §17's
+    /// invariant would survive by accident — the value is never resolved — but the author would
+    /// see a green suite and believe the secret had been delivered.
+    /// </remarks>
+    [Fact]
+    public void Map_DependencyEnv_SecretReference_IsRefused()
+    {
+        const string yaml = """
+            metadata:
+              name: dep-env-secret
+            environment:
+              dependencies:
+                orders:
+                  type: postgres
+                  env:
+                    ADMIN_PW: "${secret:vault/db/pw}"
+            steps:
+              - id: noop
+                type: script.csharp
+                code: "// Filler step."
+            """;
+
+        var environment = ParseEnvironment(yaml);
+
+        var ex = Assert.Throws<ArgumentException>(() => EnvironmentMapper.Map(environment));
+
+        Assert.Contains("Dependency 'orders'", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("env entry 'ADMIN_PW'", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("wrong PLACE for a secret", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("docker inspect", ex.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// REQ-003, ORDERING: the two dependency rules meet on one key, and the REFUSAL wins.  A
+    /// <c>${secret:...}</c> written on a RESERVED name throws; it is not swallowed by the
+    /// engine-set skip and downgraded to a warning.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Neither existing test can see this.  The secret refusal above uses <c>postgres</c>, an
+    /// unreserved type, so the two rules never meet there; the skip theory uses no references at
+    /// all.  Today the ordering holds structurally — <c>Map</c> runs the eager
+    /// <c>ValidateEnvValue</c> pass over every dependency BEFORE it partitions any <c>env:</c>
+    /// map — but "structurally" is exactly the guarantee a refactor deletes without noticing.
+    /// </para>
+    /// <para>
+    /// And REQ-004 is that refactor: it turns the partition's <c>continue</c> into a
+    /// <c>throw</c>, at which point collapsing the two dependency loops into one is the obvious
+    /// tidy.  Do it in the wrong order and a <c>${secret:vault/...}</c> on
+    /// <c>MINIO_ROOT_PASSWORD</c> is skipped with a warning and no diagnostic — the author is
+    /// told their variable was ignored, never that they put a secret in a container's
+    /// environment.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void Map_DependencyEnv_SecretReferenceOnAReservedKey_IsRefusedRatherThanSkipped()
+    {
+        const string yaml = """
+            metadata:
+              name: dep-env-secret-on-reserved
+            environment:
+              dependencies:
+                blobs:
+                  type: minio
+                  env:
+                    MINIO_ROOT_PASSWORD: "${secret:vault/db/pw}"
+            steps:
+              - id: noop
+                type: script.csharp
+                code: "// Filler step."
+            """;
+
+        var environment = ParseEnvironment(yaml);
+
+        var ex = Assert.Throws<ArgumentException>(() => EnvironmentMapper.Map(environment));
+
+        Assert.Contains("Dependency 'blobs'", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("env entry 'MINIO_ROOT_PASSWORD'", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("wrong PLACE for a secret", ex.Message, StringComparison.Ordinal);
+    }
+
+    // The service side's own guard against this slice's `ownerLabel` widening is
+    // Map_ServiceEnv_SecretReference_MessageIsByteIdenticalToPreFeatureWording, above: it pins
+    // the full service message as an exact string and is UNCHANGED by this feature. A second,
+    // weaker restatement here would only be a place for the two to drift.
+
+    /// <summary>
+    /// The interim engine-wins rule (REQ-003's "Consequence" decision): an <c>env:</c> key the
+    /// engine sets for that dependency's own <c>type:</c> is NOT applied, the engine's value
+    /// survives, and the skip is WARNED rather than silent.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Engine-wins is NOT achievable by ordering.  Aspire's <c>WithEnvironment</c> registers an
+    /// <c>EnvironmentCallbackAnnotation</c>; the callbacks run in registration order into ONE
+    /// dictionary, so the LAST write wins and a post-<c>Build</c> author write would replace the
+    /// engine's value.  It is delivered by never writing the key at all.
+    /// </para>
+    /// <para>
+    /// <b>One row per reserved name — all nine.</b>  The guard goes live at this merge and stays
+    /// unpoliced until REQ-004's census, so a sampled subset would leave six of the nine names
+    /// resting on a hand-verified table.  Two of the six the sample omitted are
+    /// <c>MINIO_ROOT_PASSWORD</c> and <c>MSSQL_SA_PASSWORD</c> — the credential-bearing pair the
+    /// entire engine-wins argument is about, and therefore the two least defensible to leave
+    /// unpinned.  What is still REQ-004's and not this slice's is the per-type BOTH-directions
+    /// matrix (every reserved name proved unreserved on every other type).
+    /// </para>
+    /// <para>
+    /// A silent skip is the failure mode this feature exists to avoid reproducing: the author
+    /// writes a variable, the suite goes green, and nothing happened.  The warning assertion is
+    /// therefore not decoration.
+    /// </para>
+    /// <para>
+    /// <b>The warning must not echo the author's VALUE.</b>  Two of these nine names carry a
+    /// password, so a future edit that appends the rejected value "for helpfulness" would leak
+    /// author-supplied credential material into stderr and into
+    /// <c>MappedTopology.Warnings</c>.  Nothing else in this file pins that, so the
+    /// <c>DoesNotContain</c> below does.
+    /// </para>
+    /// <para>
+    /// That assertion constrains the <c>authorValue</c> column: a value that occurs in the
+    /// diagnostic by COINCIDENCE would fail the row without any leak.  Hence
+    /// <c>AUTHOR_DECLINED</c> on <c>ACCEPT_EULA</c> rather than the bare <c>N</c> an author would
+    /// really write — <c>N</c> is a substring of <c>IGNORED</c>.  A future rewording of the
+    /// warning that happens to contain one of these values fails LOUDLY rather than silently, so
+    /// the constraint costs a rename and never a missed leak.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [InlineData("elasticsearch", "discovery.type", "multi-node", "single-node")]
+    [InlineData("elasticsearch", "xpack.security.enabled", "true", "false")]
+    [InlineData("elasticsearch", "ES_JAVA_OPTS", "-Xmx8g", "-Xms512m -Xmx512m")]
+    [InlineData(
+        "elasticsearch", "cluster.routing.allocation.disk.threshold_enabled", "true", "false")]
+    [InlineData("minio", "MINIO_ROOT_USER", "attacker", "vouchfx-minio")]
+    [InlineData("minio", "MINIO_ROOT_PASSWORD", "attacker-password", "vouchfx-minio-secret")]
+    [InlineData("azureservicebus", "ACCEPT_EULA", "AUTHOR_DECLINED", "Y")]
+    [InlineData(
+        "azureservicebus", "MSSQL_SA_PASSWORD", "attacker-sa-password", "Str0ng!P@ssword#1")]
+    [InlineData("azureservicebus", "SQL_SERVER", "attacker-sql-host", "dep-sqledge")]
+    public async Task Map_DependencyEnv_EngineSetKey_IsSkippedWithAWarning_AndTheEngineValueSurvives(
+        string type,
+        string reservedKey,
+        string authorValue,
+        string engineValue)
+    {
+        var yaml = $"""
+            metadata:
+              name: dep-env-reserved
+            environment:
+              dependencies:
+                dep:
+                  type: {type}
+                  env:
+                    "{reservedKey}": "{authorValue}"
+            steps:
+              - id: noop
+                type: script.csharp
+                code: "// Filler step."
+            """;
+
+        var (vars, warnings) = await MapDependencyAndResolveEnvAsync(yaml, "dep");
+
+        Assert.Equal(engineValue, EnvValueText(vars[reservedKey]));
+
+        var warning = Assert.Single(warnings);
+        Assert.Contains($"Dependency 'dep' (type '{type}')", warning, StringComparison.Ordinal);
+        Assert.Contains($"env entry '{reservedKey}'", warning, StringComparison.Ordinal);
+        Assert.Contains("IGNORED", warning, StringComparison.Ordinal);
+
+        // The NAME and the fact of the skip, never the VALUE — see the remarks above.  Two of
+        // these nine reserved names are passwords, and this warning is written to stderr.
+        Assert.DoesNotContain(authorValue, warning, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The other half of the skip, without which it degrades to "dependency <c>env:</c> does
+    /// nothing on these three types": a NON-reserved key on one of the three types that carries
+    /// reserved names is still applied, and raises no warning.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The <c>postgres</c> row additionally pins that the table is keyed PER TYPE rather than
+    /// being a global denylist — <c>ES_JAVA_OPTS</c> is reserved on <c>elasticsearch</c> and
+    /// unreserved everywhere else, so a lookup that ignored the type would swallow it here.
+    /// </para>
+    /// <para>
+    /// The <c>es_java_opts</c> row pins that the skip matches ORDINALLY: on
+    /// <c>elasticsearch</c>, where <c>ES_JAVA_OPTS</c> IS reserved, the differently-cased name is
+    /// a legitimately distinct Linux environment variable and must still be applied.  Measured:
+    /// flip the per-type name set's comparer inside <c>s_engineSetEnvKeys</c> to
+    /// <see cref="StringComparer.OrdinalIgnoreCase"/> and this row — and, of the twenty-two
+    /// <c>Map_DependencyEnv</c> tests, only this row — goes red, on the author's variable never
+    /// being applied at all.  Without it that flip is silent: the variable is swallowed, a
+    /// spurious warning is emitted, and every other test stays green.  This is NOT a claim to
+    /// satisfy EDGE-005, whose acceptance asks for both directions and belongs to REQ-004's
+    /// slice; it pins the comparer that governs the skip shipping HERE.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [InlineData("elasticsearch", "VOUCHFX_DEP_PROBE")]
+    [InlineData("minio", "VOUCHFX_DEP_PROBE")]
+    [InlineData("azureservicebus", "VOUCHFX_DEP_PROBE")]
+    [InlineData("postgres", "ES_JAVA_OPTS")]
+    [InlineData("elasticsearch", "es_java_opts")]
+    public async Task Map_DependencyEnv_NonReservedKey_IsStillApplied(string type, string key)
+    {
+        var yaml = $"""
+            metadata:
+              name: dep-env-unreserved
+            environment:
+              dependencies:
+                dep:
+                  type: {type}
+                  env:
+                    "{key}": applied
+            steps:
+              - id: noop
+                type: script.csharp
+                code: "// Filler step."
+            """;
+
+        var (vars, warnings) = await MapDependencyAndResolveEnvAsync(yaml, "dep");
+
+        Assert.Equal("applied", EnvValueText(vars[key]));
+        Assert.Empty(warnings);
+    }
+
+    /// <summary>
+    /// REQ-005: <c>${env:NAME}</c> resolves from the ENGINE PROCESS's environment at
+    /// topology-build time, exactly as it does for a service.
+    /// </summary>
+    /// <remarks>
+    /// The explicitly-EMPTY half is deliberately not asserted here, on the SERVICE side's
+    /// existing reasoning and not a new judgement: see the NOTE above
+    /// <c>Map_ServiceEnv_SecretReference_MessageIsByteIdenticalToPreFeatureWording</c>.
+    /// <c>Environment.SetEnvironmentVariable(name, "")</c> deletes the variable rather than
+    /// setting it empty, so a test built on it would silently re-prove the UNSET path.  The
+    /// dependency path adds nothing here to reason about: it reaches the identical
+    /// <c>ValidateEnvValue</c> / <c>BuildEnvExpression</c> branches, whose guard is
+    /// <c>is null</c> and never <c>string.IsNullOrEmpty</c>.
+    /// </remarks>
+    [Fact]
+    public async Task Map_DependencyEnv_EnvVarReference_ResolvesFromTheEngineProcessEnvironment()
+    {
+        const string setName = "VOUCHFX_DEP_ENV_SET";
+        const string yaml = """
+            metadata:
+              name: dep-env-envref
+            environment:
+              dependencies:
+                dep:
+                  type: redis
+                  env:
+                    REGION: "prefix-${env:VOUCHFX_DEP_ENV_SET}-suffix"
+            steps:
+              - id: noop
+                type: script.csharp
+                code: "// Filler step."
+            """;
+
+        Environment.SetEnvironmentVariable(setName, "eu-west-1");
+        try
+        {
+            var (vars, warnings) = await MapDependencyAndResolveEnvAsync(yaml, "dep");
+
+            Assert.Equal("prefix-eu-west-1-suffix", EnvValueText(vars["REGION"]));
+            Assert.Empty(warnings);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(setName, null);
+        }
+    }
+
+    /// <summary>
+    /// REQ-005: a MISSING <c>${env:NAME}</c> is refused by <c>Map</c> itself, naming the
+    /// variable.  That is what this test ASSERTS, and the name says only that.
+    /// </summary>
+    /// <remarks>
+    /// REQ-005 also wants "before any container starts", and that half is an ARGUMENT here, not
+    /// an assertion — deliberately, because there is no observable state a second assertion could
+    /// interrogate.  The throw comes out of <c>Map</c>, <c>Map</c> takes no builder, and the ONLY
+    /// thing that adds a resource to a builder is the <c>Configure</c> delegate <c>Map</c> would
+    /// have returned.  A <c>Map</c> that throws hands back no delegate, so there is nothing to run
+    /// and nothing that could have run earlier.  A test name promising an assertion that does not
+    /// exist is what this method used to be called.
+    /// </remarks>
+    [Fact]
+    public void Map_DependencyEnv_MissingEnvVarReference_IsRefusedByMapNamingTheVariable()
+    {
+        const string missingName = "VOUCHFX_DEP_ENV_DEFINITELY_UNSET_XYZ";
+        const string yaml = """
+            metadata:
+              name: dep-env-envref-missing
+            environment:
+              dependencies:
+                dep:
+                  type: redis
+                  env:
+                    REGION: "${env:VOUCHFX_DEP_ENV_DEFINITELY_UNSET_XYZ}"
+            steps:
+              - id: noop
+                type: script.csharp
+                code: "// Filler step."
+            """;
+
+        Environment.SetEnvironmentVariable(missingName, null);
+        var environment = ParseEnvironment(yaml);
+
+        var ex = Assert.Throws<ArgumentException>(() => EnvironmentMapper.Map(environment));
+
+        Assert.Contains("Dependency 'dep'", ex.Message, StringComparison.Ordinal);
+        Assert.Contains(missingName, ex.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// EDGE-006: setting <c>env:</c> on a dependency MUST NOT change what <c>${conn:dep}</c>
+    /// resolves to for its consumers.  The same service, against the same dependency, produces a
+    /// byte-identical connection EXPRESSION with and without an unrelated <c>env:</c> entry on
+    /// that dependency.
+    /// </summary>
+    /// <remarks>
+    /// <b>Scope, stated rather than implied.</b>  This compares
+    /// <c>ReferenceExpression.ValueExpression</c> — the unresolved format string
+    /// (<c>{orders.connectionString};Database=ordersdb</c>) — not a resolved connection string,
+    /// which would need a live container.  So it would NOT detect a change that swapped the
+    /// underlying <c>IValueProvider</c> for a different one bearing the same name.  It is the
+    /// strongest no-Docker proxy available for EDGE-006, and that is what it is being used as.
+    /// </remarks>
+    [Fact]
+    public async Task Map_DependencyEnv_DoesNotChangeWhatConnResolvesForAConsumingService()
+    {
+        const string withoutEnv = """
+            metadata:
+              name: edge-006-without
+            environment:
+              services:
+                api:
+                  image: myorg/api:1.0
+                  env:
+                    ConnectionStrings__orders: "${conn:orders}"
+              dependencies:
+                orders:
+                  type: postgres
+            steps:
+              - id: noop
+                type: script.csharp
+                code: "// Filler step."
+            """;
+        const string withEnv = """
+            metadata:
+              name: edge-006-with
+            environment:
+              services:
+                api:
+                  image: myorg/api:1.0
+                  env:
+                    ConnectionStrings__orders: "${conn:orders}"
+              dependencies:
+                orders:
+                  type: postgres
+                  env:
+                    VOUCHFX_DEP_PROBE: unrelated
+            steps:
+              - id: noop
+                type: script.csharp
+                code: "// Filler step."
+            """;
+
+        var baseline = await ResolveServiceConnAsync(withoutEnv);
+        var withDependencyEnv = await ResolveServiceConnAsync(withEnv);
+
+        Assert.Equal("{orders.connectionString};Database=ordersdb", baseline);
+        Assert.Equal(baseline, withDependencyEnv);
+    }
+
+    private static async Task<string> ResolveServiceConnAsync(string yaml)
+    {
+        var mapped = EnvironmentMapper.Map(ParseEnvironment(yaml));
+        var builder = CreateBuilder();
+        mapped.Configure(builder);
+
+        var api = builder.Resources.OfType<ContainerResource>().Single(r => r.Name == "api");
+        var vars = await ResolveEnvVarsAsync(api);
+        return EnvValueText(vars["ConnectionStrings__orders"]);
+    }
 }

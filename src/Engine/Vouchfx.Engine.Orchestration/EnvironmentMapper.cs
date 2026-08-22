@@ -85,7 +85,29 @@ public sealed record MappedTopology(
     Action<IDistributedApplicationBuilder> Configure,
     Func<DistributedApplication, CancellationToken, Task<IReadOnlyDictionary<string, object>>> ResolveServices,
     IReadOnlyList<string> HealthGateResourceNames,
-    IReadOnlyList<string> DependencyNames);
+    IReadOnlyList<string> DependencyNames)
+{
+    /// <summary>
+    /// Non-fatal, author-facing diagnostics raised by <see cref="EnvironmentMapper.Map"/> —
+    /// currently only the dependency-<c>env:</c> engine-set-name skip (dependency-env spec,
+    /// REQ-003 / the "Consequence" decision of 2026-08-22). Empty on every other path.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is a STRUCTURED mirror of a message <see cref="EnvironmentMapper.Map"/> has already
+    /// written to <see cref="Console.Error"/>; it exists so a test (and, later, a renderer) can
+    /// assert on the diagnostic without capturing process-global console state. There is exactly
+    /// one source for each message string — see <c>EnvironmentMapper.RecordSkipWarning</c>.
+    /// </para>
+    /// <para>
+    /// An init-only property rather than a positional parameter: a new positional parameter would
+    /// change this record's primary-constructor arity and its compiler-generated
+    /// <c>Deconstruct</c>, and both existing construction sites in <c>Map</c> name their arguments
+    /// positionally.
+    /// </para>
+    /// </remarks>
+    public IReadOnlyList<string> Warnings { get; init; } = Array.Empty<string>();
+}
 
 /// <summary>
 /// Maps the parsed <see cref="EnvironmentSpec"/> block to an Aspire resource graph.
@@ -1024,7 +1046,50 @@ public static class EnvironmentMapper
 
             foreach (var (envKey, envValue) in spec.Env)
             {
-                ValidateEnvValue(serviceName, envKey, envValue, env.Dependencies ?? new Dictionary<string, DependencySpec>());
+                ValidateEnvValue(
+                    "Service",
+                    serviceName,
+                    envKey,
+                    envValue,
+                    env.Dependencies ?? new Dictionary<string, DependencySpec>(),
+                    connectionReferencesSupported: true);
+            }
+        }
+
+        // dependency-env REQ-003: the SAME eager pass for every managed dependency's `env:`, in
+        // the same place and on the same terms, because ApplyEnv and ValidateEnvValue are
+        // UNCONNECTED paths — ApplyEnv calls BuildEnvExpression directly and never reaches this
+        // method, so wiring only the apply path would ship both refusals silently absent.
+        //
+        // Two rules differ from the service arm, and both are refusals rather than resolutions:
+        //   * `${conn:...}` is refused outright (decision 2) — a dependency is a connection
+        //     SOURCE, not a consumer.
+        //   * `${secret:...}` is refused for the service's own reason (§17): a container's
+        //     environment is the wrong PLACE for a secret, because anyone who can run
+        //     `docker inspect` reads it. Without this check the sigil matches NEITHER token
+        //     pattern, so the value becomes a Literal and the raw text `${secret:vault/db/pw}`
+        //     is written into the container verbatim — a green suite in which the secret was
+        //     never delivered.
+        // `${env:NAME}` behaves exactly as it does for a service, from this same pass.
+        //
+        // Engine-set names are NOT refused here — that is REQ-004's job. They are skipped, with a
+        // warning, below; see s_engineSetEnvKeys.
+        foreach (var (dependencyName, spec) in env.Dependencies ?? new Dictionary<string, DependencySpec>())
+        {
+            if (spec.Env is null)
+            {
+                continue;
+            }
+
+            foreach (var (envKey, envValue) in spec.Env)
+            {
+                ValidateEnvValue(
+                    "Dependency",
+                    dependencyName,
+                    envKey,
+                    envValue,
+                    env.Dependencies ?? new Dictionary<string, DependencySpec>(),
+                    connectionReferencesSupported: false);
             }
         }
 
@@ -1034,6 +1099,60 @@ public static class EnvironmentMapper
         var imageRegistry = env.ImageRegistry;
         var services = env.Services ?? new Dictionary<string, ServiceSpec>();
         var dependencies = env.Dependencies ?? new Dictionary<string, DependencySpec>();
+
+        // dependency-env REQ-003: partition every dependency's `env:` into the keys this mapper
+        // will actually apply and the engine-set names it will SKIP, eagerly — the inputs are
+        // spec.Type and the key set, both known here, so there is no reason to defer it into the
+        // Configure closure and every reason not to (Map() is eager by discipline, and the
+        // warning must reach the author even on a run that never gets as far as a container).
+        //
+        // Aspire's WithEnvironment is LAST-WRITE-WINS, so applying the author's map after the
+        // registration lambda would let it replace an engine value the engine also advertises to
+        // every OTHER scenario through `${conn:...}`. Engine-wins is delivered by never writing
+        // the key. The skip is INTERIM: REQ-004 (T4) turns it into a refusal.
+        var warnings = new List<string>();
+        var dependencyEnvToApply = new Dictionary<string, IReadOnlyDictionary<string, string>>(
+            StringComparer.Ordinal);
+        foreach (var (name, spec) in dependencies)
+        {
+            if (spec.Env is not { Count: > 0 })
+            {
+                continue;
+            }
+
+            if (!s_engineSetEnvKeys.TryGetValue(spec.Type, out var reservedForType))
+            {
+                // The ten types this mapper sets nothing on: apply the author's map verbatim.
+                dependencyEnvToApply[name] = spec.Env;
+                continue;
+            }
+
+            var applied = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var (key, value) in spec.Env)
+            {
+                if (reservedForType.Contains(key))
+                {
+                    // NEVER a silent skip. An author who writes ES_JAVA_OPTS and gets a green
+                    // suite in which nothing happened is the schema-acceptance-is-not-execution
+                    // failure this feature exists to avoid reproducing.
+                    RecordWarning(
+                        warnings,
+                        $"Dependency '{name}' (type '{spec.Type}') declares env entry '{key}', " +
+                        "which the engine sets itself for this dependency type. The engine's " +
+                        "value is kept and the declared one is IGNORED — a dependency's " +
+                        "engine-set variables carry the connection details every '${conn:" +
+                        $"{name}}}' consumer resolves, so overriding one would break other " +
+                        "scenarios rather than only this dependency. Remove the entry, or " +
+                        "declare the backend as a service with 'image:' if you need full " +
+                        "control of its environment.");
+                    continue;
+                }
+
+                applied[key] = value;
+            }
+
+            dependencyEnvToApply[name] = applied;
+        }
 
         // Effective per-service pull policy: the service's own override when set (parsed, and
         // validated, right here — the only place a service-level imagePullPolicy is parsed), else
@@ -1130,6 +1249,23 @@ public static class EnvironmentMapper
                 // it there. Applied to the RETAINED builder — the dependency's own resource, not
                 // a sidecar — since that is the container whose entrypoint reads the artefact.
                 ServerArtifactInjection.Apply(retained, dependencyArtifacts[name], "dependencies", name);
+
+                // dependency-env REQ-003. Applied to the dependency's OWN container, resolved by
+                // name — deliberately NOT to `retained`, which for the four database-backed types
+                // is the AddDatabase child and does not implement IResourceWithEnvironment.
+                // The map here is already partitioned: engine-set names were dropped (with a
+                // warning) in Map's eager pass, and s_noEnvAccess is safe because that same pass
+                // refused every `${conn:...}` on a dependency outright.
+                if (dependencyEnvToApply.TryGetValue(name, out var dependencyEnv) &&
+                    dependencyEnv.Count > 0)
+                {
+                    ApplyEnv(
+                        "Dependency",
+                        name,
+                        ResolveDependencyEnvTarget(builder, name, spec.Type),
+                        dependencyEnv,
+                        s_noEnvAccess);
+                }
             }
 
             // SUT configuration surface: build the per-dependency container-native accessor
@@ -1271,7 +1407,7 @@ public static class EnvironmentMapper
                     foreach (var depBuilder in mostSpecificDependencyResources)
                         containerBuilder = containerBuilder.WaitFor(depBuilder);
 
-                    ApplyEnv(name, containerBuilder, spec.Env, envAccessByDependency);
+                    ApplyEnv("Service", name, containerBuilder, spec.Env, envAccessByDependency);
 
                     // REQ-016: copy declared server artefacts into the system under test's own
                     // container — the server certificate/key a TLS-terminating SUT presents, the
@@ -1317,7 +1453,7 @@ public static class EnvironmentMapper
                     foreach (var depBuilder in mostSpecificDependencyResources)
                         projectBuilder = projectBuilder.WaitFor(depBuilder);
 
-                    ApplyEnv(name, projectBuilder, spec.Env, envAccessByDependency);
+                    ApplyEnv("Service", name, projectBuilder, spec.Env, envAccessByDependency);
                 }
             }
         };
@@ -1363,7 +1499,10 @@ public static class EnvironmentMapper
             Configure: configure,
             ResolveServices: resolveServices,
             HealthGateResourceNames: healthGateNames,
-            DependencyNames: dependencies.Keys.ToList());
+            DependencyNames: dependencies.Keys.ToList())
+        {
+            Warnings = warnings,
+        };
     }
 
     /// <summary>
@@ -1573,23 +1712,131 @@ public static class EnvironmentMapper
         };
 
     /// <summary>
+    /// The environment-variable NAMES this mapper's own dependency registrations set, keyed by
+    /// dependency <c>type:</c> — the author-addressable half of the dependency-env spec's
+    /// "The reserved set" table (nine names across three types).  A dependency <c>env:</c> key
+    /// listed here for its own type is NOT applied, so the engine's value survives.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Why a skip and not an ordering.</b>  Aspire's <c>WithEnvironment</c> registers an
+    /// <c>EnvironmentCallbackAnnotation</c>; the callbacks run in registration order and write
+    /// into ONE dictionary, so the LAST write wins.  Applying the author's map after
+    /// <c>DependencyRegistration.Build</c> therefore lets the author silently replace an engine
+    /// value that the engine also advertises to every other scenario through
+    /// <c>${conn:...}</c>.  "Engine wins" is delivered by never writing the key at all.
+    /// </para>
+    /// <para>
+    /// <b>NAMES only, never values.</b>  Each engine value keeps a single source in its own
+    /// registration lambda above; only the name is duplicated here, which is exactly what
+    /// REQ-004's census test is designed to police.
+    /// </para>
+    /// <para>
+    /// <b>Per type, not global.</b>  A name reserved for <c>elasticsearch</c> is unreserved on
+    /// <c>postgres</c>.  The ten types with no entry here skip nothing.
+    /// </para>
+    /// <para>
+    /// <b>Matching is ordinal and case-sensitive</b>, because container environment variables are
+    /// case-sensitive on Linux: folding case would suppress a legitimately distinct variable.
+    /// That is a property of THIS SKIP, pinned by the <c>es_java_opts</c> row of
+    /// <c>Map_DependencyEnv_NonReservedKey_IsStillApplied</c>: flip the per-type NAME set's
+    /// comparer below (the <see cref="HashSet{T}"/> one — not the outer type-keyed
+    /// <see cref="Dictionary{TKey, TValue}"/>'s, which governs <c>type:</c> lookup) to
+    /// <see cref="StringComparer.OrdinalIgnoreCase"/> and, measured, exactly that one row of the
+    /// twenty-two <c>Map_DependencyEnv</c> tests goes red.  It is deliberately NOT cited as
+    /// EDGE-005: that spec item is about the applied path and asks for both directions to be
+    /// asserted, which is REQ-004's slice, not this one.
+    /// </para>
+    /// <para>
+    /// <b>Boundary.</b>  This covers what THIS FILE sets.  Aspire's own <c>AddPostgres</c> /
+    /// <c>AddRedis</c> / <c>AddSqlServer</c> (and the images themselves) set variables that never
+    /// appear in this source; colliding with one of those is not detected here.
+    /// </para>
+    /// <para>
+    /// The kafka schema-registry and azureservicebus SQL sidecars also receive engine-set
+    /// variables, but they are named <c>&lt;name&gt;-sr</c> / <c>&lt;name&gt;-sqledge</c> — names
+    /// no author can write — and a dependency's <c>env:</c> never reaches them.  They are
+    /// deliberately absent so a later reader does not "complete" this table with unreachable
+    /// names.
+    /// </para>
+    /// <para>
+    /// Declared as a concrete <see cref="Dictionary{TKey, TValue}"/> rather than
+    /// <c>IReadOnlyDictionary</c> because this project enforces CA1859 as an error; the values
+    /// stay <see cref="IReadOnlySet{T}"/>, which CA1859 does not object to.
+    /// </para>
+    /// </remarks>
+    private static readonly Dictionary<string, IReadOnlySet<string>> s_engineSetEnvKeys =
+        new Dictionary<string, IReadOnlySet<string>>(StringComparer.Ordinal)
+        {
+            ["elasticsearch"] = new HashSet<string>(StringComparer.Ordinal)
+            {
+                "discovery.type",
+                "xpack.security.enabled",
+                "ES_JAVA_OPTS",
+                "cluster.routing.allocation.disk.threshold_enabled",
+            },
+            ["minio"] = new HashSet<string>(StringComparer.Ordinal)
+            {
+                "MINIO_ROOT_USER",
+                "MINIO_ROOT_PASSWORD",
+            },
+            ["azureservicebus"] = new HashSet<string>(StringComparer.Ordinal)
+            {
+                "ACCEPT_EULA",
+                "MSSQL_SA_PASSWORD",
+                "SQL_SERVER",
+            },
+        };
+
+    /// <summary>
+    /// The empty <c>${conn:...}</c> accessor table passed to <see cref="ApplyEnv"/> for a
+    /// DEPENDENCY's own <c>env:</c> — a dependency is a connection source, not a consumer, so
+    /// <see cref="ValidateEnvValue"/> has already refused every <c>${conn:...}</c> reference by
+    /// the time this is used.  Shared so the common path allocates nothing.
+    /// </summary>
+    private static readonly IReadOnlyDictionary<string, DependencyEnvAccess> s_noEnvAccess =
+        new Dictionary<string, DependencyEnvAccess>(StringComparer.Ordinal);
+
+    /// <summary>
     /// Validates every <c>${conn:...}</c> / <c>${secret:...}</c> reference in a single
-    /// service <c>env:</c> value, throwing <see cref="ArgumentException"/> on the first
-    /// problem found.  Called eagerly, before any builder mutation (mirrors the
+    /// service or dependency <c>env:</c> value, throwing <see cref="ArgumentException"/> on
+    /// the first problem found.  Called eagerly, before any builder mutation (mirrors the
     /// service-shape and dependency-type validation above).
     /// </summary>
+    /// <param name="ownerLabel">
+    /// <c>"Service"</c> or <c>"Dependency"</c> — the subject NOUN of every diagnostic this
+    /// method raises, mirroring the same widening <c>YamlDocumentParser.ParseEnvMap</c> received.
+    /// With <c>"Service"</c> the messages below are byte-identical to the ones this method raised
+    /// before dependency <c>env:</c> existed; changing service <c>env:</c> behaviour in any way,
+    /// diagnostics included, is out of scope for that feature.
+    /// </param>
+    /// <param name="ownerName">The owning service's or dependency's logical (map-key) name.</param>
+    /// <param name="connectionReferencesSupported">
+    /// <see langword="true"/> for a SERVICE, whose <c>env:</c> may consume
+    /// <c>${conn:name[.part]}</c>; <see langword="false"/> for a DEPENDENCY, where any
+    /// <c>${conn:...}</c> is REFUSED outright, naming the reference.  A managed dependency is a
+    /// connection SOURCE, not a consumer (dependency-env decision 2): barring the reference here
+    /// removes self-reference and inter-dependency cycles, so the engine needs no build-order
+    /// graph and no cycle detector.  It is deliberately a refusal rather than a lookup — strictly
+    /// simpler than the service-side resolution, and it must not be relaxed later, because a
+    /// reference that genuinely WORKED on a released engine could not be withdrawn inside v1.x.
+    /// </param>
     /// <exception cref="ArgumentException">
     /// Thrown when the value contains a <c>${secret:...}</c> reference (§17 — a container's
     /// environment is the wrong PLACE for a secret, whatever moment it would resolve at),
+    /// contains a <c>${conn:...}</c> reference while
+    /// <paramref name="connectionReferencesSupported"/> is <see langword="false"/>,
     /// names an unknown dependency,
     /// names an <c>azureservicebus</c> dependency (unsupported by <c>env:</c> in v1), or uses
     /// an unsupported <c>.part</c> accessor for the referenced dependency's kind.
     /// </exception>
     private static void ValidateEnvValue(
-        string serviceName,
+        string ownerLabel,
+        string ownerName,
         string envKey,
         string envValue,
-        IReadOnlyDictionary<string, DependencySpec> dependencies)
+        IReadOnlyDictionary<string, DependencySpec> dependencies,
+        bool connectionReferencesSupported)
     {
         // Sigil-PRESENCE check (mirrors SecretReference.ValidateField, §17), not a well-formed-
         // token regex match: env: supports NO secret references at all, not even well-formed
@@ -1611,7 +1858,7 @@ public static class EnvironmentMapper
         if (envValue.Contains(SecretReference.Sigil, StringComparison.Ordinal))
         {
             throw new ArgumentException(
-                $"Service '{serviceName}' env entry '{envKey}' references a ${{secret:...}} value. " +
+                $"{ownerLabel} '{ownerName}' env entry '{envKey}' references a ${{secret:...}} value. " +
                 "A container's environment is the wrong PLACE for a secret, whenever it would " +
                 "resolve (§17): baking a secret into a container's environment would expose it " +
                 "via 'docker inspect' and corrupt the reproducibility envelope (which hashes the " +
@@ -1625,10 +1872,27 @@ public static class EnvironmentMapper
             var depName = m.Groups[1].Value;
             var part = m.Groups[2].Success ? m.Groups[2].Value : null;
 
+            // dependency-env decision 2: on a DEPENDENCY this is refused before the name is even
+            // looked up, so an author writing '${conn:nosuch}' is told the construct is not
+            // available here rather than being told the name is unknown — the second message
+            // would imply that declaring the dependency would have made it work.
+            if (!connectionReferencesSupported)
+            {
+                throw new ArgumentException(
+                    $"{ownerLabel} '{ownerName}' env entry '{envKey}' references '{m.Value}'. " +
+                    "A managed dependency is a connection SOURCE, not a consumer: " +
+                    "'${conn:...}' is supported only in a service's own 'env:' values. Barring " +
+                    "it on a dependency removes self-reference and inter-dependency cycles " +
+                    "outright, so the engine needs no build-order graph and no cycle detector. " +
+                    "Configure the value literally, via '${env:NAME}', or move the consumer into " +
+                    "'environment.services'.",
+                    nameof(envValue));
+            }
+
             if (!dependencies.TryGetValue(depName, out var depSpec))
             {
                 throw new ArgumentException(
-                    $"Service '{serviceName}' env entry '{envKey}' references unknown dependency " +
+                    $"{ownerLabel} '{ownerName}' env entry '{envKey}' references unknown dependency " +
                     $"'{depName}' via '{m.Value}'. Declared dependencies: " +
                     (dependencies.Count == 0
                         ? "(none)."
@@ -1639,7 +1903,7 @@ public static class EnvironmentMapper
             if (string.Equals(depSpec.Type, "azureservicebus", StringComparison.Ordinal))
             {
                 throw new ArgumentException(
-                    $"Service '{serviceName}' env entry '{envKey}' references dependency " +
+                    $"{ownerLabel} '{ownerName}' env entry '{envKey}' references dependency " +
                     $"'{depName}' of type 'azureservicebus', which env: references do not support " +
                     "in v1 (the emulator has no stable container-native connection-string " +
                     "resolution path yet). Wire the SUT's Service Bus connection another way.",
@@ -1649,7 +1913,7 @@ public static class EnvironmentMapper
             if (part is not null && !GetSupportedEnvParts(depSpec.Type).Contains(part))
             {
                 throw new ArgumentException(
-                    $"Service '{serviceName}' env entry '{envKey}' references unsupported part " +
+                    $"{ownerLabel} '{ownerName}' env entry '{envKey}' references unsupported part " +
                     $"'{part}' of dependency '{depName}' (type '{depSpec.Type}'). Supported parts: " +
                     $"{string.Join(", ", GetSupportedEnvParts(depSpec.Type).OrderBy(p => p, StringComparer.Ordinal))}.",
                     nameof(envValue));
@@ -1671,7 +1935,7 @@ public static class EnvironmentMapper
             if (!wellFormed.Success || wellFormed.Index != sigil.Index)
             {
                 throw new ArgumentException(
-                    $"Service '{serviceName}' env entry '{envKey}' contains a '${{env:...}}'-" +
+                    $"{ownerLabel} '{ownerName}' env entry '{envKey}' contains a '${{env:...}}'-" +
                     $"shaped token at position {sigil.Index} that is not well-formed. An " +
                     "'env:' reference must exactly match '${env:NAME}' — a case-sensitive, " +
                     "lower-case 'env:' sigil (never 'ENV:'/'Env:'), immediately followed by a " +
@@ -1697,7 +1961,7 @@ public static class EnvironmentMapper
             if (Environment.GetEnvironmentVariable(varName) is null)
             {
                 throw new ArgumentException(
-                    $"Service '{serviceName}' env entry '{envKey}' references '{m.Value}', but the " +
+                    $"{ownerLabel} '{ownerName}' env entry '{envKey}' references '{m.Value}', but the " +
                     $"engine process has no environment variable named '{varName}' (EDGE-008). Set " +
                     $"'{varName}' before running the suite, or set it to an explicit empty value if " +
                     "that is genuinely what the service should receive.",
@@ -2097,16 +2361,23 @@ public static class EnvironmentMapper
     /// splicing literal spans and dependency parts (or the whole connection, for a bare
     /// <c>${conn:name}</c> reference) via <see cref="ReferenceExpressionBuilder"/>.
     /// </summary>
-    /// <param name="serviceName">
-    /// The owning service's own name, used ONLY to build a matching, fail-closed
-    /// <see cref="ArgumentException"/> message (G-M1) if <paramref name="envKey"/>'s value
-    /// somehow reaches this method referencing an unset <c>${env:NAME}</c> variable — see
-    /// the <c>EnvVar</c> case's own remarks below.
+    /// <param name="ownerLabel">
+    /// <c>"Service"</c> or <c>"Dependency"</c> — the subject noun of the fail-closed messages
+    /// below, matching <see cref="ValidateEnvValue"/>'s own widening so a throw from either pass
+    /// names the same subject.
     /// </param>
-    /// <param name="envKey">The service's own env-map key <paramref name="value"/> is bound to.</param>
+    /// <param name="ownerName">
+    /// The owning service's or dependency's own name, used ONLY to build a matching, fail-closed
+    /// <see cref="ArgumentException"/> message (G-M1) if <paramref name="envKey"/>'s value
+    /// somehow reaches this method referencing an unset <c>${env:NAME}</c> variable, or a
+    /// <c>${conn:...}</c> dependency with no resolved accessor — see each case's own remarks
+    /// below.
+    /// </param>
+    /// <param name="envKey">The owner's own env-map key <paramref name="value"/> is bound to.</param>
     /// <param name="value">The raw env value text to tokenise and splice.</param>
     private static ReferenceExpression BuildEnvExpression(
-        string serviceName,
+        string ownerLabel,
+        string ownerName,
         string envKey,
         string value,
         IReadOnlyDictionary<string, DependencyEnvAccess> envAccessByDependency)
@@ -2146,7 +2417,7 @@ public static class EnvironmentMapper
                     // whatever ran before it.
                     var envVarValue = Environment.GetEnvironmentVariable(token.Name!)
                         ?? throw new ArgumentException(
-                            $"Service '{serviceName}' env entry '{envKey}' references " +
+                            $"{ownerLabel} '{ownerName}' env entry '{envKey}' references " +
                             $"'${{env:{token.Name}}}', but the engine process has no environment " +
                             $"variable named '{token.Name}' (EDGE-008). Set '{token.Name}' before " +
                             "running the suite, or set it to an explicit empty value if that is " +
@@ -2156,7 +2427,39 @@ public static class EnvironmentMapper
                     break;
 
                 case EnvValueTokenKind.ConnRef:
-                    var access = envAccessByDependency[token.Name!];
+                    // FAIL-CLOSED, for the same reason the ${env:NAME} branch directly above
+                    // argues for itself. What the TryGetValue buys, stated exactly: a bare indexer
+                    // here throws an opaque KeyNotFoundException that names nothing, and this
+                    // turns the same defect into a LOCATED authoring diagnostic naming the owner,
+                    // the env key and the reference. That is the whole of the gain.
+                    //
+                    // IT DOES NOT REPAIR THE §12.1 VERDICT CLASS, and an earlier draft of this
+                    // comment asserted that it did. Measured: BuildEnvExpression is reachable only
+                    // from ApplyEnv, only from inside the Configure closure, and
+                    // SuiteTopology.StartAsync wraps HeadlessTopology.StartAsync in
+                    // `catch (Exception ex)` → OrchestrationException without ever consulting the
+                    // exception type (ScenarioRunner's own ArgumentException catch states the same
+                    // thing in its own words). Old throw and new throw therefore surface
+                    // identically, as an Environment error. Do not read this seam as taxonomy-safe.
+                    //
+                    // The PRIMARY refusal is a DIFFERENT seam and is untouched by any of this:
+                    // ValidateEnvValue refuses every ${conn:...} on a dependency eagerly, thrown
+                    // from Map itself and NOT from the closure, so the taxonomy argument for that
+                    // refusal stands on its own. This layer is defence-in-depth for the paths that
+                    // bypass the eager pass — a direct unit test, or a future refactor that drops
+                    // or reorders it — where the author would otherwise get an unnamed
+                    // KeyNotFoundException in place of a diagnostic.
+                    if (!envAccessByDependency.TryGetValue(token.Name!, out var access))
+                    {
+                        throw new ArgumentException(
+                            $"{ownerLabel} '{ownerName}' env entry '{envKey}' references " +
+                            $"'${{conn:{token.Name}}}', but no connection accessor was resolved " +
+                            $"for dependency '{token.Name}'. A '${{conn:...}}' reference is " +
+                            "supported only in a service's own 'env:' values, and only for a " +
+                            "dependency declared in the same 'environment' block.",
+                            nameof(value));
+                    }
+
                     var part = token.Part switch
                     {
                         null => (object)access.FullConnection,
@@ -2200,18 +2503,115 @@ public static class EnvironmentMapper
     }
 
     /// <summary>
-    /// Applies a service's <c>env:</c> mapping (if any) to <paramref name="builder"/> via
-    /// <c>WithEnvironment(name, ReferenceExpression)</c> — works identically for image-form
-    /// (<see cref="ContainerResource"/>) and project-form (<c>ProjectResource</c>) services,
-    /// both of which implement <see cref="IResourceWithEnvironment"/>.
+    /// Records a non-fatal, author-facing diagnostic: appends it to
+    /// <see cref="MappedTopology.Warnings"/>'s backing list AND writes it to
+    /// <see cref="Console.Error"/>, from ONE message source.
     /// </summary>
-    /// <param name="serviceName">
-    /// The owning service's own name — threaded through to <see cref="BuildEnvExpression"/>
-    /// so a fail-closed <c>${env:NAME}</c> throw (G-M1) can name the same service/key
-    /// <see cref="ValidateEnvValue"/>'s own eager-pass throw would have named.
+    /// <remarks>
+    /// <para>
+    /// <b>Why this shape, stated plainly rather than dressed up.</b>  This engine has no
+    /// author-facing warning channel at all: <c>src/Engine</c> contains no <c>ILogger</c> call
+    /// site (<c>HeadlessTopology</c> only configures log-level FILTERS, and its own comment
+    /// records why an ad-hoc logger call is not worth the CA1848 ceremony), no console write, and
+    /// <c>IStepEventSink</c> is a step-scoped contract frozen at v1 that lives in an assembly
+    /// <c>Vouchfx.Engine.Orchestration</c> cannot reach a sink for — <see cref="Map"/> is a static
+    /// method with no sink parameter.  Inventing a diagnostics subsystem is out of proportion to
+    /// one interim skip that REQ-004 turns into a throw.
+    /// </para>
+    /// <para>
+    /// So: the console write is what actually reaches the author (stderr, never stdout, which the
+    /// terminal renderer owns), and the recorded string is what a test — and, later, a renderer —
+    /// can assert on without capturing process-global console state.  One message, two
+    /// destinations; the message itself is written once, here.
+    /// </para>
+    /// </remarks>
+    private static void RecordWarning(List<string> warnings, string message)
+    {
+        warnings.Add(message);
+        Console.Error.WriteLine("vouchfx: warning: " + message);
+    }
+
+    /// <summary>
+    /// Resolves the resource builder a managed dependency's own <c>env:</c> is applied to: the
+    /// single <see cref="ContainerResource"/> named exactly the declared dependency name.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Not the retained builder.</b>  For the four database-backed types (<c>postgres</c>,
+    /// <c>sqlserver</c>, <c>mysql</c>, <c>mongodb</c>) the retained builder is the
+    /// <c>AddDatabase</c> CHILD, which is not a container and does not implement
+    /// <see cref="IResourceWithEnvironment"/> at all — measured, so this is not a matter of
+    /// taste: <c>PostgresDatabaseResource</c> reports <c>container=False withEnv=False</c>, and
+    /// <c>IResourceBuilder&lt;out T&gt;</c> is covariant, so it converts UP and never back down.
+    /// </para>
+    /// <para>
+    /// <b>Why by name.</b>  Measured across all thirteen dependency types: the resource named
+    /// exactly the declared dependency name is a <see cref="ContainerResource"/> implementing
+    /// <see cref="IResourceWithEnvironment"/>, and there is exactly one of it.  The two sidecars
+    /// carry distinct names (<c>&lt;name&gt;-sr</c>, <c>&lt;name&gt;-sqledge</c>), so name
+    /// equality cannot reach them.  The alternative — a third element on
+    /// <c>DependencyRegistration.Build</c>'s tuple — is thirteen more hand-maintained entries with
+    /// no compiler check that any of them names a container, on a tuple whose EXISTING two
+    /// elements are already the wrong resource for four of the thirteen.
+    /// </para>
+    /// <para>
+    /// <b>Call it INSIDE the dependency loop.</b>  That loop runs before the services loop, so no
+    /// service container exists yet and a service sharing a dependency's name cannot be matched.
+    /// </para>
+    /// <para>
+    /// The <c>SingleOrDefault(...) ?? throw</c> asserts the name→resource invariant rather than
+    /// assuming it, so a fourteenth dependency type whose registration breaks it fails loudly at
+    /// topology-build time instead of silently no-op'ing the author's <c>env:</c>.  The
+    /// <c>DependencyEnvCensusTests</c> gate catches it earlier still, in CI.
+    /// </para>
+    /// </remarks>
+    private static IResourceBuilder<ContainerResource> ResolveDependencyEnvTarget(
+        IDistributedApplicationBuilder builder,
+        string name,
+        string type)
+    {
+        var resource = builder.Resources
+            .OfType<ContainerResource>()
+            .SingleOrDefault(r => string.Equals(r.Name, name, StringComparison.Ordinal))
+            ?? throw new InvalidOperationException(
+                $"Dependency '{name}' (type '{type}') registered no container resource of its " +
+                "own name, so its 'env:' mapping cannot be applied. This is an ENGINE defect, " +
+                "not an authoring one: every dependency type must register exactly one container " +
+                "named exactly the declared dependency name.");
+
+        return builder.CreateResourceBuilder(resource);
+    }
+
+    /// <summary>
+    /// Applies a service's or managed dependency's <c>env:</c> mapping (if any) to
+    /// <paramref name="builder"/> via <c>WithEnvironment(name, ReferenceExpression)</c> — works
+    /// identically for image-form (<see cref="ContainerResource"/>) and project-form
+    /// (<c>ProjectResource</c>) services and for a dependency's own container resource, all of
+    /// which implement <see cref="IResourceWithEnvironment"/>.
+    /// </summary>
+    /// <param name="ownerLabel">
+    /// <c>"Service"</c> or <c>"Dependency"</c> — threaded through to
+    /// <see cref="BuildEnvExpression"/> alongside <paramref name="ownerName"/>.
+    /// </param>
+    /// <param name="ownerName">
+    /// The owning service's or dependency's own name — threaded through to
+    /// <see cref="BuildEnvExpression"/> so a fail-closed <c>${env:NAME}</c> throw (G-M1) can name
+    /// the same subject/key <see cref="ValidateEnvValue"/>'s own eager-pass throw would have
+    /// named.
+    /// </param>
+    /// <param name="builder">The resource whose environment the mapping is written to.</param>
+    /// <param name="env">
+    /// The mapping to apply, or <see langword="null"/> when the owner declared none.  For a
+    /// DEPENDENCY this is already partitioned by <see cref="Map"/>'s eager pass — engine-set
+    /// names have been dropped (with a warning) and never reach here.
+    /// </param>
+    /// <param name="envAccessByDependency">
+    /// The <c>${conn:...}</c> accessor table, or <see cref="s_noEnvAccess"/> for a DEPENDENCY,
+    /// whose <c>${conn:...}</c> references <see cref="ValidateEnvValue"/> has already refused.
     /// </param>
     private static void ApplyEnv<T>(
-        string serviceName,
+        string ownerLabel,
+        string ownerName,
         IResourceBuilder<T> builder,
         IReadOnlyDictionary<string, string>? env,
         IReadOnlyDictionary<string, DependencyEnvAccess> envAccessByDependency)
@@ -2222,7 +2622,7 @@ public static class EnvironmentMapper
 
         foreach (var (key, value) in env)
         {
-            var expression = BuildEnvExpression(serviceName, key, value, envAccessByDependency);
+            var expression = BuildEnvExpression(ownerLabel, ownerName, key, value, envAccessByDependency);
             builder.WithEnvironment(key, expression);
         }
     }
