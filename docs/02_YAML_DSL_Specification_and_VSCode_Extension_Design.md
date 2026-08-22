@@ -382,17 +382,20 @@ environment:
     billing-db:
       type: sqlserver
       env:
-        MSSQL_PID: Developer
+        MSSQL_COLLATION: Latin1_General_CS_AS
 ```
 
-That example is derived from the image's published documentation, not from a run: `MSSQL_PID` is
-documented for the SQL Server image the engine starts, and neither Aspire nor the engine sets it, but
-nobody has started that image with this value and watched the edition change. Treat any variable you
-put here the same way — a container accepts every environment variable and ignores the ones it does
-not know, so a suite is green whether the setting did anything or nothing. The engine cannot tell you
-which.
+That example is measured, not merely documented: started against the SQL Server image the engine
+brings up (`mcr.microsoft.com/mssql/server:2022-latest`), `MSSQL_COLLATION` moves the collation
+reported by `SERVERPROPERTY('Collation')` off its `SQL_Latin1_General_CP1_CI_AS` default to the
+declared value, and neither Aspire nor the engine sets it — Aspire sets only `ACCEPT_EULA` and
+`MSSQL_SA_PASSWORD` on this resource. Do not treat any other variable as verified on that strength
+without repeating the exercise: a container accepts every environment variable and ignores the ones
+it does not know, so a suite is green whether the setting did anything or nothing, and the engine
+cannot tell you which. The tag above is Aspire's own default rather than an engine pin, so it can
+move underneath a measurement taken against it.
 
-Three rules apply to the values; only the second differs from a service's:
+Four rules apply to the values; the second and the fourth differ from a service's:
 
 - **`${env:NAME}` is supported**, on the same contract as a service's: resolved from the engine
   process's own environment at topology-build time, before the container starts. An unset variable
@@ -403,16 +406,15 @@ Three rules apply to the values; only the second differs from a service's:
 - **`${secret:…}` is refused**, for the same reason it is refused in a service's `env`: a container's
   environment is the wrong *place* for a secret whenever it would resolve, because anyone who can run
   `docker inspect` reads it. Configure the dependency's consumer to resolve the secret itself.
+- **Names the engine sets for this dependency type are refused** at validation, before any container
+  starts, naming the variable, the dependency and the type. The check is per type — a name reserved
+  for `elasticsearch` is unreserved on `postgres`. Some variables are load-bearing: the engine relies
+  on them to bring the dependency up in the shape every scenario shares, and some of them carry what
+  `${conn:…}` advertises to every other scenario consuming that dependency.
 
-Some variables are set by the engine itself for a given dependency type — `minio`'s root credentials,
-`elasticsearch`'s discovery and heap settings, and the `azureservicebus` emulator's SQL wiring. These
-are load-bearing: the engine relies on them to bring the dependency up in the shape every scenario
-shares, and some of them — `minio`'s credentials — carry what `${conn:…}` advertises to every other
-scenario consuming that dependency. An `env` entry naming one of them is **ignored, with a warning**
-— the engine's own value is kept. **This will become a validation error in a future release**, so do
-not build on the current permissiveness. Variables set by Aspire internally, rather than by the
-engine, are not detected and will silently take the author's value instead; a dependency's own image
-may also read variables neither the engine nor Aspire knows about.
+Variables set by Aspire internally, rather than by the engine, are not detected and will silently take
+the author's value instead; a dependency's own image may also read variables neither the engine nor
+Aspire knows about.
 
 > **Key order is significant.** A dependency's `env` map participates in the environment hash in the
 > order its keys are written. Two scenarios that share an `environment` block but spell the same
