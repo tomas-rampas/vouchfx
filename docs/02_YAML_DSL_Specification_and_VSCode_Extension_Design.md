@@ -385,7 +385,14 @@ environment:
         MSSQL_PID: Developer
 ```
 
-Three rules apply to the values, and they differ from a service's:
+That example is derived from the image's published documentation, not from a run: `MSSQL_PID` is
+documented for the SQL Server image the engine starts, and neither Aspire nor the engine sets it, but
+nobody has started that image with this value and watched the edition change. Treat any variable you
+put here the same way — a container accepts every environment variable and ignores the ones it does
+not know, so a suite is green whether the setting did anything or nothing. The engine cannot tell you
+which.
+
+Three rules apply to the values; only the second differs from a service's:
 
 - **`${env:NAME}` is supported**, on the same contract as a service's: resolved from the engine
   process's own environment at topology-build time, before the container starts. An unset variable
