@@ -671,9 +671,17 @@ public static class YamlDocumentParser
     /// <c>string | integer | number | boolean</c> on a service and a dependency alike — that
     /// refuses that spelling. Reference resolution (<c>${conn:name}</c> / <c>${conn:name.part}</c> /
     /// <c>${env:NAME}</c>), the rejection of <c>${secret:...}</c> (§17), and the
-    /// dependency-only refusals (a variable name the engine itself sets for that dependency's
-    /// type; <c>${conn:}</c> on a dependency at all) are the orchestration-layer mapper's job
-    /// — this parser only extracts the literal text.
+    /// dependency-only refusal of <c>${conn:}</c> — barred on a dependency at all, since a
+    /// dependency is a connection SOURCE rather than a consumer — are the orchestration-layer
+    /// mapper's job; this parser only extracts the literal text.
+    /// <para>
+    /// This sentence deliberately does NOT list a refusal of engine-set variable names. The
+    /// mapper currently SKIPS such a key, keeping its own value and warning the author; the
+    /// refusal is a later slice. Naming it here before it exists would be the same
+    /// prose-expiry defect <c>156dc2e</c> deleted from this very file, inverted — and this
+    /// assembly is packable with <c>GenerateDocumentationFile</c>, so the claim would ship in
+    /// <c>Vouchfx.Engine.Authoring.xml</c> beside the DLL.
+    /// </para>
     /// </remarks>
     /// <exception cref="YamlParseException">
     /// Thrown when the <c>env:</c> node is present but is not a mapping, when a key is not a
