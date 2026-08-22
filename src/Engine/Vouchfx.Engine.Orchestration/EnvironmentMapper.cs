@@ -604,9 +604,27 @@ public static class EnvironmentMapper
     /// is safe to invoke against any <see cref="IDistributedApplicationBuilder"/>.
     /// </returns>
     /// <exception cref="ArgumentException">
-    /// Thrown when a service spec has both <see cref="ServiceSpec.Image"/> and
-    /// <see cref="ServiceSpec.Project"/> set, when a dependency type is unrecognised, or when a
-    /// declared server artefact cannot be resolved (REQ-016).
+    /// Thrown by this method's own eager, pre-<see cref="MappedTopology.Configure"/> validation.
+    /// The causes, in the order the passes run:
+    /// <list type="bullet">
+    /// <item><description>a service spec has both <see cref="ServiceSpec.Image"/> and
+    /// <see cref="ServiceSpec.Project"/> set, or neither;</description></item>
+    /// <item><description>a dependency type is unrecognised;</description></item>
+    /// <item><description>a service <c>env:</c> value carries a <c>${secret:...}</c> reference,
+    /// or a <c>${conn:...}</c> reference that names an unknown dependency, an
+    /// <c>azureservicebus</c> dependency, or an unsupported <c>.part</c> accessor;</description></item>
+    /// <item><description>a DEPENDENCY <c>env:</c> value carries a <c>${conn:...}</c> reference at
+    /// all — a managed dependency is a connection SOURCE, not a consumer (REQ-003);</description></item>
+    /// <item><description>a DEPENDENCY <c>env:</c> value carries a <c>${secret:...}</c> reference
+    /// (REQ-003, §17: a container's environment is the wrong PLACE for a secret);</description></item>
+    /// <item><description>a DEPENDENCY <c>env:</c> KEY names a variable the engine sets for that
+    /// dependency's own <c>type:</c> (REQ-004; see <see cref="s_engineSetEnvKeys"/>);</description></item>
+    /// <item><description>an <c>imagePullPolicy</c> value is unrecognised;</description></item>
+    /// <item><description>a declared server artefact cannot be resolved (REQ-016).</description></item>
+    /// </list>
+    /// Every one of these is an authoring fault, which is why <c>ScenarioRunner</c> classifies an
+    /// <see cref="ArgumentException"/> out of this method as Inconclusive rather than
+    /// EnvironmentError (§12.1).
     /// </exception>
     public static MappedTopology Map(
         EnvironmentSpec? env,
@@ -1054,10 +1072,19 @@ public static class EnvironmentMapper
         // check is the separate loop below, over the same dependencies; see s_engineSetEnvKeys.
         //
         // The two loops are deliberately NOT collapsed into one. This pass runs to completion
-        // first, so a `${secret:...}` written ON a reserved name throws the SECRET diagnostic —
-        // the author is told they put a secret in a container's environment, which is the more
-        // serious of the two faults — rather than the collision one. Pinned by
-        // Map_DependencyEnv_SecretReferenceOnAReservedKey_ReportsTheSecretFaultNotTheCollision.
+        // first — over EVERY dependency, before the reserved-name loop sees its first one — so a
+        // document carrying both faults throws the SECRET diagnostic: the author is told they put
+        // a secret in a container's environment, which is the more serious of the two faults,
+        // rather than merely that a variable is not theirs to set.
+        //
+        // Pinned by two tests, both of which declare a reserved-but-clean key BEFORE the
+        // secret-bearing one so that a collapsed loop reports the COLLISION and goes red — within
+        // one dependency by
+        // Map_DependencyEnv_SecretReferenceOnAReservedKey_ReportsTheSecretFaultNotTheCollision,
+        // and across two by
+        // Map_DependencyEnv_ReservedCollisionOnAnEarlierDependency_StillReportsTheSecretFault
+        // (which is what makes THIS pass's "every dependency first" span, not merely its
+        // per-key precedence, the thing under test).
         foreach (var (dependencyName, spec) in env.Dependencies ?? new Dictionary<string, DependencySpec>())
         {
             if (spec.Env is null)
@@ -1123,16 +1150,29 @@ public static class EnvironmentMapper
                     // nine reserved names are passwords, and a diagnostic that echoed the
                     // rejected value would put author-supplied credential material into every
                     // log and report that carries the failure.
+                    //
+                    // The credential clause is SCOPED TO minio, and that scope is measured, not
+                    // stylistic. Only MINIO_ROOT_USER/MINIO_ROOT_PASSWORD are spliced into a
+                    // connection string `${conn:...}` hands to other scenarios (see the "minio"
+                    // registration's depConnBuilders lambda above). elasticsearch's four names are
+                    // host/port-only (s_hostPortOnlyParts), and the azureservicebus emulator's
+                    // connection string is a fixed
+                    // 'Endpoint=sb://…;SharedAccessKey=SAS_KEY_VALUE;…' in which none of ACCEPT_EULA
+                    // / MSSQL_SA_PASSWORD / SQL_SERVER appears. An unscoped "some of them carry the
+                    // credentials" handed an elasticsearch author refused for ES_JAVA_OPTS an
+                    // argument with no bearing on their case. The load-bearing clause — "the shape
+                    // every scenario shares" — is true for all nine and carries the message alone.
+                    // Matches the wording shipped in the DSL spec, common-patterns and CHANGELOG.
                     throw new ArgumentException(
                         $"Dependency '{name}' (type '{spec.Type}') declares env entry '{key}', " +
                         "which the engine sets itself for this dependency type. That entry is " +
                         "REFUSED: the engine relies on its engine-set variables to bring this " +
-                        "dependency up in the shape every scenario shares, and some of them " +
-                        "carry the credentials " +
-                        "${conn:<dependency>} advertises to every other scenario consuming it, " +
-                        "so honouring an override would break other scenarios rather than only " +
-                        "this one. Remove the entry, or declare the backend as a service with " +
-                        "'image:' if you need full control of its environment.",
+                        "dependency up in the shape every scenario shares — and on 'minio' they " +
+                        "are the credentials ${conn:<dependency>} advertises to every other " +
+                        "scenario consuming it — so honouring an override would break other " +
+                        "scenarios rather than only this one. Remove the entry, or declare the " +
+                        "backend as a service with 'image:' if you need full control of its " +
+                        "environment.",
                         nameof(env));
                 }
             }

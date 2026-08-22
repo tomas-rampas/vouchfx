@@ -5043,9 +5043,21 @@ public sealed class EnvironmentMapperTests
     }
 
     /// <summary>
-    /// REQ-003, ORDERING: the two dependency rules meet on one key, and BOTH now refuse — so
-    /// what this pins is WHICH refusal the author is shown.  A <c>${secret:...}</c> written on a
-    /// RESERVED name reports the secret fault, not the reserved-name collision.
+    /// The declaration order the two ORDERING rows below assert on their parsed inputs —
+    /// <c>static readonly</c> rather than inline literals only because this project enforces
+    /// CA1861 as an error.
+    /// </summary>
+    private static readonly string[] s_reservedThenSecretKeyOrder =
+        { "MINIO_ROOT_USER", "MINIO_ROOT_PASSWORD" };
+
+    /// <inheritdoc cref="s_reservedThenSecretKeyOrder"/>
+    private static readonly string[] s_collisionThenSecretDependencyOrder = { "blobs", "orders" };
+
+    /// <summary>
+    /// REQ-003, ORDERING: the two dependency rules meet in one document, and BOTH now refuse — so
+    /// what this pins is WHICH refusal the author is shown.  A <c>${secret:...}</c> reports the
+    /// secret fault even when a reserved-name collision is sitting in the same <c>env:</c> map,
+    /// DECLARED FIRST.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -5059,10 +5071,26 @@ public sealed class EnvironmentMapperTests
     /// <para>
     /// REQ-004 was that refactor, and it deliberately did NOT collapse the two dependency loops
     /// into one, which is the obvious tidy now that the second one throws rather than
-    /// <c>continue</c>s.  Collapse them and a <c>${secret:vault/...}</c> on
-    /// <c>MINIO_ROOT_PASSWORD</c> reports the reserved-name collision — the author is told their
-    /// variable is not theirs to set, never that they put a secret in a container's environment,
-    /// which is the more serious of the two faults and the one a security reviewer needs to see.
+    /// <c>continue</c>s.  Collapse them and the author is told their variable is not theirs to
+    /// set, never that they put a secret in a container's environment — the more serious of the
+    /// two faults and the one a security reviewer needs to see.
+    /// </para>
+    /// <para>
+    /// <b>Why TWO keys, in THIS order.</b>  A single dependency carrying a single
+    /// secret-on-a-reserved-name key does NOT discriminate: the natural collapse runs the secret
+    /// check and the collision check in that sequence FOR EACH KEY, so with one key it still
+    /// reports the secret and the test stays green while the invariant is gone.  The
+    /// reserved-but-CLEAN <c>MINIO_ROOT_USER</c> declared FIRST is what makes the row bite — under
+    /// a collapsed loop that key is reached first, passes the secret check, and throws the
+    /// COLLISION, so <c>wrong PLACE for a secret</c> is absent and this test goes red.  MEASURED:
+    /// collapsing the two loops fails this test with
+    /// <c>Assert.Contains() Failure: Sub-string not found</c> on that clause.
+    /// </para>
+    /// <para>
+    /// The whole row rests on <c>env:</c> keys reaching <c>Map</c> in DECLARATION order, so that
+    /// premise is asserted here rather than assumed: <c>YamlDocumentParser.ParseEnvMap</c> fills an
+    /// insert-only <c>Dictionary&lt;string, string&gt;</c> (<see cref="StringComparer.Ordinal"/>)
+    /// from <c>YamlMappingNode.Children</c>, which is document-ordered.
     /// </para>
     /// </remarks>
     [Fact]
@@ -5076,6 +5104,7 @@ public sealed class EnvironmentMapperTests
                 blobs:
                   type: minio
                   env:
+                    MINIO_ROOT_USER: attacker
                     MINIO_ROOT_PASSWORD: "${secret:vault/db/pw}"
             steps:
               - id: noop
@@ -5085,11 +5114,81 @@ public sealed class EnvironmentMapperTests
 
         var environment = ParseEnvironment(yaml);
 
+        // The premise this test rests on, measured rather than assumed: the reserved-but-clean
+        // key really does arrive ahead of the secret-bearing one.
+        Assert.Equal<IEnumerable<string>>(
+            s_reservedThenSecretKeyOrder,
+            environment.Dependencies!["blobs"].Env!.Keys);
+
         var ex = Assert.Throws<ArgumentException>(() => EnvironmentMapper.Map(environment));
 
         Assert.Contains("Dependency 'blobs'", ex.Message, StringComparison.Ordinal);
         Assert.Contains("env entry 'MINIO_ROOT_PASSWORD'", ex.Message, StringComparison.Ordinal);
         Assert.Contains("wrong PLACE for a secret", ex.Message, StringComparison.Ordinal);
+
+        // Negative half — without it a collapsed loop that happened to mention both faults would
+        // pass. The collision diagnostic's own distinctive clause must be absent.
+        Assert.DoesNotContain("REFUSED", ex.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "env entry 'MINIO_ROOT_USER'", ex.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// REQ-003, ORDERING — the CROSS-DEPENDENCY half.  The eager <c>ValidateEnvValue</c> pass
+    /// spans EVERY dependency before the reserved-name loop sees its first one, so a secret on
+    /// dependency B is reported even though a reserved-name collision sits on dependency A,
+    /// declared first.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The one-dependency row above cannot see this property.  A collapse that kept the secret
+    /// check strictly ahead of the collision check WITHIN a dependency — but interleaved the two
+    /// per dependency — would satisfy that row and still break here, reporting <c>blobs</c>'s
+    /// collision and never <c>orders</c>'s secret.  What is under test is the SPAN of the first
+    /// pass, not merely its per-key precedence.
+    /// </para>
+    /// <para>
+    /// Same premise, same treatment: <c>YamlDocumentParser.ParseDependencyMap</c> fills an
+    /// insert-only ordinal <c>Dictionary</c> from the document's own dependency order, so
+    /// <c>blobs</c> genuinely precedes <c>orders</c>, and that is asserted rather than assumed.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void Map_DependencyEnv_ReservedCollisionOnAnEarlierDependency_StillReportsTheSecretFault()
+    {
+        const string yaml = """
+            metadata:
+              name: dep-env-secret-after-collision
+            environment:
+              dependencies:
+                blobs:
+                  type: minio
+                  env:
+                    MINIO_ROOT_USER: attacker
+                orders:
+                  type: postgres
+                  env:
+                    ADMIN_PW: "${secret:vault/db/pw}"
+            steps:
+              - id: noop
+                type: script.csharp
+                code: "// Filler step."
+            """;
+
+        var environment = ParseEnvironment(yaml);
+
+        Assert.Equal<IEnumerable<string>>(
+            s_collisionThenSecretDependencyOrder,
+            environment.Dependencies!.Keys);
+
+        var ex = Assert.Throws<ArgumentException>(() => EnvironmentMapper.Map(environment));
+
+        Assert.Contains("Dependency 'orders'", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("env entry 'ADMIN_PW'", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("wrong PLACE for a secret", ex.Message, StringComparison.Ordinal);
+
+        Assert.DoesNotContain("REFUSED", ex.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("Dependency 'blobs'", ex.Message, StringComparison.Ordinal);
     }
 
     // The service side's own guard against this slice's `ownerLabel` widening is
@@ -5143,6 +5242,18 @@ public sealed class EnvironmentMapperTests
     /// to contain one of these values fails LOUDLY rather than silently, so the constraint costs
     /// a rename and never a missed leak.
     /// </para>
+    /// <para>
+    /// <b>The credential clause is SCOPED to <c>minio</c>, and this theory holds it there.</b>
+    /// Only <c>MINIO_ROOT_USER</c>/<c>MINIO_ROOT_PASSWORD</c> are spliced into a connection string
+    /// <c>${conn:...}</c> hands to other scenarios.  <c>elasticsearch</c>'s four names are
+    /// host/port-only, and the <c>azureservicebus</c> emulator's connection string is a fixed
+    /// <c>Endpoint=sb://…;SharedAccessKey=SAS_KEY_VALUE;…</c> containing none of its three — so an
+    /// unscoped "some of them carry the credentials" was untrue for SEVEN of these nine names and
+    /// handed an <c>elasticsearch</c> author refused for <c>ES_JAVA_OPTS</c> an argument with no
+    /// bearing on their case.  Both clauses are asserted on every row: the scoped credential
+    /// aside, and the load-bearing one — "the shape every scenario shares" — which is what is
+    /// actually true for all nine and carries the message alone.
+    /// </para>
     /// </remarks>
     [Theory]
     [InlineData("elasticsearch", "discovery.type", "multi-node")]
@@ -5173,6 +5284,21 @@ public sealed class EnvironmentMapperTests
         Assert.Contains(
             "declare the backend as a service with 'image:'", ex.Message, StringComparison.Ordinal);
 
+        // The clause that is true for all nine, and carries the refusal on its own.
+        Assert.Contains(
+            "bring this dependency up in the shape every scenario shares",
+            ex.Message,
+            StringComparison.Ordinal);
+
+        // The credential aside, SCOPED to minio — see the remarks. Asserted verbatim so a future
+        // edit that re-broadens it to "some of them carry the credentials" goes red on all nine
+        // rows rather than shipping a claim untrue for seven of them.
+        Assert.Contains(
+            "and on 'minio' they are the credentials ${conn:<dependency>} advertises to every "
+                + "other scenario consuming it",
+            ex.Message,
+            StringComparison.Ordinal);
+
         // The NAME and the fact of the refusal, never the VALUE — see the remarks above.  Two of
         // these nine reserved names are passwords.
         Assert.DoesNotContain(authorValue, ex.Message, StringComparison.Ordinal);
@@ -5188,9 +5314,13 @@ public sealed class EnvironmentMapperTests
     /// Without this direction the check degrades to a global denylist, which is a different and
     /// wrong feature: <c>MSSQL_SA_PASSWORD</c> is the <c>azureservicebus</c> emulator's SQL
     /// wiring and means nothing to <c>elasticsearch</c>, and an author configuring the latter has
-    /// every right to a variable of that name.  Twenty-seven rows rather than nine because a
-    /// single non-reserving type per name could not tell a per-type table from one keyed by
-    /// nothing at all.
+    /// every right to a variable of that name.  Twenty-seven rows rather than nine for a narrower
+    /// reason than "proving the table is per-type": ONE non-reserving type per name already does
+    /// that, because under a global denylist the single row
+    /// <c>[postgres, "discovery.type"]</c> expects the key applied, gets it refused, and goes red.
+    /// What the full matrix buys is detection of a PARTIALLY over-broad table — a name reserved
+    /// for its own type and, by a copy-paste slip, for one other as well, which any single
+    /// non-reserving row would miss whenever it happened to pick a third type.
     /// </remarks>
     [Theory]
     [InlineData("minio", "discovery.type")]
