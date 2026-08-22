@@ -111,7 +111,7 @@ environment:
       type: redis
 ```
 
-Vouchfx stands up each dependency, waits for it to be healthy, applies any `seed`, and then makes it available to your steps. Each dependency has a default image and tag pinned by the Aspire module (e.g., Aspire pins PostgreSQL 18.3). Authors can override this with a per-dependency `version:` field (to change only the tag) or `image:` field (to replace the entire image reference), and can redirect wholesale with `imageRegistry` at the environment level. Steps reference dependencies by their logical name (e.g., `target: orders-db`).
+Vouchfx stands up each dependency, waits for it to be healthy, applies any `seed`, and then makes it available to your steps. Each dependency has a default image and tag pinned by the Aspire module (e.g., Aspire pins PostgreSQL 18.3). Authors can override this with a per-dependency `version:` field (to change only the tag) or `image:` field (to replace the entire image reference), and can redirect wholesale with `imageRegistry` at the environment level. A dependency may also carry an `env:` map to configure its container — see [Configuring a managed dependency with environment variables](#configuring-a-managed-dependency-with-environment-variables) below. Steps reference dependencies by their logical name (e.g., `target: orders-db`).
 
 #### seed
 
@@ -161,12 +161,12 @@ environment:
 - **Values follow the same syntax as service `env`**: bare numeric and boolean YAML scalars are retained as literal text; explicit null (`FOO: ~`) is rejected.
 - **`${env:NAME}` is supported** — resolved from the engine process's environment at topology-build time. An unset variable fails the suite by name.
 - **`${conn:…}` and `${secret:…}` are refused** — a dependency is a connection source, not a consumer, and container environment is readable via `docker inspect`.
-- **Names the engine sets for that dependency type are refused** — the engine relies on those values to bring the dependency up in the shape every scenario shares, and some of them carry what `${conn:…}` advertises to every other scenario consuming it. The refusal happens at validation, before any container starts, and names the variable, the dependency and the type. The check is per type, so a name reserved for one type is unreserved on another.
+- **Names the engine sets for that dependency type are refused** — the engine relies on those values to bring the dependency up in the shape every scenario shares, and on `minio` they are the credentials `${conn:…}` advertises to every other scenario consuming it. The refusal happens when the topology is built, before any container starts, and names the variable, the dependency and the type. The check is per type, so a name reserved for one type is unreserved on another. It runs only on the `run` path — `vouchfx validate` never builds a topology and will not report it — and is reported as **Inconclusive**, which exits 0 unless you pass `--fail-on-inconclusive`.
 - **Key order is significant** — two scenarios with the same dependency `env` keys in different order are treated as divergent and abort the suite as an **Environment error**.
 
 The example shows a measurable outcome: `MSSQL_COLLATION: Latin1_General_CS_AS` is read by the SQL Server image and changes the reported collation from the default `SQL_Latin1_General_CP1_CI_AS`. Neither Aspire nor the engine sets this variable. Remember that a container accepts every environment variable and silently ignores ones it does not recognise, so always verify against the documentation for the dependency image you are using.
 
-The refusal covers what the **engine** sets, not what Aspire sets. The engine reserves no names on `sqlserver` at all, so on this type every key an author writes is applied — including `ACCEPT_EULA` and `MSSQL_SA_PASSWORD`, which Aspire itself sets and which will therefore be silently overridden rather than refused.
+The refusal covers what the **engine** sets, not what Aspire sets. The engine reserves no names on `sqlserver` at all, so on this type every key an author writes is applied and wins the last write — including `ACCEPT_EULA` and `MSSQL_SA_PASSWORD`, which Aspire itself sets. Treat that as a hazard rather than a capability: `${conn:billing-db}` is built from the password Aspire generated, so overriding `MSSQL_SA_PASSWORD` desynchronises the running container from the connection string every consumer is handed. What that failure then looks like is not documented here because it has not been measured.
 
 ### variables
 

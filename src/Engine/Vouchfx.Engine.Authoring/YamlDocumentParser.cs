@@ -675,12 +675,11 @@ public static class YamlDocumentParser
     /// dependency is a connection SOURCE rather than a consumer — are the orchestration-layer
     /// mapper's job; this parser only extracts the literal text.
     /// <para>
-    /// This sentence deliberately does NOT list a refusal of engine-set variable names. The
-    /// mapper currently SKIPS such a key, keeping its own value and warning the author; the
-    /// refusal is a later slice. Naming it here before it exists would be the same
-    /// prose-expiry defect <c>156dc2e</c> deleted from this very file, inverted — and this
-    /// assembly is packable with <c>GenerateDocumentationFile</c>, so the claim would ship in
-    /// <c>Vouchfx.Engine.Authoring.xml</c> beside the DLL.
+    /// The mapper additionally refuses a key naming a variable the engine itself sets for that
+    /// dependency's <c>type:</c>, and that refusal is likewise none of this parser's business —
+    /// it needs the key's literal text either way. Note that this assembly is packable with
+    /// <c>GenerateDocumentationFile</c>, so anything asserted here ships in
+    /// <c>Vouchfx.Engine.Authoring.xml</c> beside the DLL; keep it to what this method does.
     /// </para>
     /// </remarks>
     /// <exception cref="YamlParseException">

@@ -15,10 +15,11 @@
 # Variable-name caveat, for anyone copying this fixture: it exercises SCALAR
 # SHAPES only (quoted string, bare integer, bare boolean) and never starts a
 # container, so the names below are illustrative and none is asserted anywhere
-# to be honoured by the image. MSSQL_PID is the one the spec argues for, and
-# only on documentation-derived grounds: it is documented for the image the
-# engine starts, and measured to be set by neither Aspire's SqlServer resource
-# nor the engine. Nobody has run the image and watched it take effect.
+# to be honoured by the image. Do not copy a name from here expecting it to do
+# anything: the variable the docs demonstrate with is MSSQL_COLLATION, measured
+# against the image the engine starts, and MSSQL_PID below is retained only
+# because it is a legal scalar — setting it to Developer was measured to be
+# byte-identical to setting nothing, since Developer is that image's default.
 metadata:
   name: surface-dependencies-env-scalar-values
 environment:

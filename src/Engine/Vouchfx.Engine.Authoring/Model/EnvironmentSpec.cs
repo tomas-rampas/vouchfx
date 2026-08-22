@@ -242,7 +242,7 @@ public sealed record DependencySpec(
     /// Optional environment-variable mapping for this dependency's container
     /// (dependency-env spec, REQ-001) — the managed-resource counterpart to
     /// <see cref="ServiceSpec.Env"/>, by which a managed dependency whose image is configured
-    /// through environment variables will be configurable — e.g. <c>MSSQL_PID</c>, on the
+    /// through environment variables is configurable — e.g. <c>MSSQL_COLLATION</c>, on the
     /// image the engine's own <c>AddSqlServer</c> mapping starts.
     /// <para>
     /// <see langword="null"/> when the dependency declares no <c>env:</c> block, which is

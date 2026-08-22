@@ -406,11 +406,14 @@ Four rules apply to the values; the second and the fourth differ from a service'
 - **`${secret:…}` is refused**, for the same reason it is refused in a service's `env`: a container's
   environment is the wrong *place* for a secret whenever it would resolve, because anyone who can run
   `docker inspect` reads it. Configure the dependency's consumer to resolve the secret itself.
-- **Names the engine sets for this dependency type are refused** at validation, before any container
-  starts, naming the variable, the dependency and the type. The check is per type — a name reserved
-  for `elasticsearch` is unreserved on `postgres`. Some variables are load-bearing: the engine relies
-  on them to bring the dependency up in the shape every scenario shares, and some of them carry what
-  `${conn:…}` advertises to every other scenario consuming that dependency.
+- **Names the engine sets for this dependency type are refused** when the topology is built, before
+  any container starts, naming the variable, the dependency and the type. The check is per type — a
+  name reserved for `elasticsearch` is unreserved on `postgres`. The engine relies on those values to
+  bring the dependency up in the shape every scenario shares, and on `minio` they are the credentials
+  `${conn:…}` advertises to every other scenario consuming that dependency. Like the `${env:…}` and
+  `${conn:…}` rules above, this check runs only on the `run` path and is **invisible to `vouchfx
+  validate`**, which never builds a topology; the refusal is reported as **Inconclusive** (§12.1), so
+  it exits **0** by default unless the caller passes `--fail-on-inconclusive`.
 
 Variables set by Aspire internally, rather than by the engine, are not detected and will silently take
 the author's value instead; a dependency's own image may also read variables neither the engine nor
