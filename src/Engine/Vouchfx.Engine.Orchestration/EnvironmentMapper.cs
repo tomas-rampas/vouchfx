@@ -1139,9 +1139,10 @@ public static class EnvironmentMapper
                         warnings,
                         $"Dependency '{name}' (type '{spec.Type}') declares env entry '{key}', " +
                         "which the engine sets itself for this dependency type. The engine's " +
-                        "value is kept and the declared one is IGNORED — a dependency's " +
-                        "engine-set variables carry the connection details every '${conn:" +
-                        $"{name}}}' consumer resolves, so overriding one would break other " +
+                        "value is kept and the declared one is IGNORED — the engine relies on " +
+                        "its engine-set variables to bring this dependency up in the shape " +
+                        "every scenario shares, and some of them carry the credentials " +
+                        $"'${{conn:{name}}}' advertises, so overriding one would break other " +
                         "scenarios rather than only this dependency. Remove the entry, or " +
                         "declare the backend as a service with 'image:' if you need full " +
                         "control of its environment.");
