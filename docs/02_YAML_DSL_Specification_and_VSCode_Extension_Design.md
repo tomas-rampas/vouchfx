@@ -407,12 +407,12 @@ Three rules apply to the values; only the second differs from a service's:
 Some variables are set by the engine itself for a given dependency type — `minio`'s root credentials,
 `elasticsearch`'s discovery and heap settings, and the `azureservicebus` emulator's SQL wiring. These
 are load-bearing: the engine relies on them to bring the dependency up in the shape every scenario
-shares, and some of them — `minio`'s credentials, the emulator's SQL password — carry what
-`${conn:…}` advertises to every other scenario consuming that dependency. An `env` entry naming one
-of them is **ignored, with a warning** — the engine's own value is kept. **This will become a
-validation error in a future release**, so do not build on the current permissiveness. Variables set by Aspire internally, rather than by the engine, are not detected and will
-silently take the author's value instead; a dependency's own image may also read variables neither
-the engine nor Aspire knows about.
+shares, and some of them — `minio`'s credentials — carry what `${conn:…}` advertises to every other
+scenario consuming that dependency. An `env` entry naming one of them is **ignored, with a warning**
+— the engine's own value is kept. **This will become a validation error in a future release**, so do
+not build on the current permissiveness. Variables set by Aspire internally, rather than by the
+engine, are not detected and will silently take the author's value instead; a dependency's own image
+may also read variables neither the engine nor Aspire knows about.
 
 > **Key order is significant.** A dependency's `env` map participates in the environment hash in the
 > order its keys are written. Two scenarios that share an `environment` block but spell the same

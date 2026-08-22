@@ -1141,8 +1141,7 @@ public static class EnvironmentMapper
                         "which the engine sets itself for this dependency type. The engine's " +
                         "value is kept and the declared one is IGNORED — the engine relies on " +
                         "its engine-set variables to bring this dependency up in the shape " +
-                        "every scenario shares, and some of them carry the credentials " +
-                        $"'${{conn:{name}}}' advertises, so overriding one would break other " +
+                        "every scenario shares, so overriding one would break other " +
                         "scenarios rather than only this dependency. Remove the entry, or " +
                         "declare the backend as a service with 'image:' if you need full " +
                         "control of its environment.");
