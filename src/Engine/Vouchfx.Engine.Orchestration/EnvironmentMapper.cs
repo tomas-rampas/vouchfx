@@ -616,8 +616,12 @@ public static class EnvironmentMapper
     /// <c>env:</c> passes, not after them). A closed-looking enumeration on a contract
     /// <c>ScenarioRunner</c> catches against is worse than no enumeration, because it invites a
     /// reader to treat an absent cause as impossible — and nothing makes the list go red when a
-    /// ninth check is added. If you need the current set, grep this method for <c>throw new
-    /// ArgumentException</c>; that answer cannot go stale.
+    /// ninth check is added. If you need the current set, grep for <c>throw new
+    /// ArgumentException</c> in this method AND in the validators it calls — <c>ValidateEnvValue</c>
+    /// and <c>ParseImagePullPolicy</c> here, and <c>ServerArtifactInjection</c> in its own file.
+    /// This method's own body raises none of the <c>env:</c>-reference, <c>imagePullPolicy</c> or
+    /// server-artefact faults directly, so grepping it alone would miss three of the categories
+    /// named above.
     /// </para>
     /// Every one of these is an authoring fault, which is why <c>ScenarioRunner</c> classifies an
     /// <see cref="ArgumentException"/> out of this method as Inconclusive rather than

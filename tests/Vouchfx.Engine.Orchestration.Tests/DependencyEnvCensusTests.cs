@@ -758,6 +758,7 @@ public sealed class DependencyEnvCensusTests
     /// assembly inside this test, which is disproportionate to what it buys.
     /// </description></item>
     /// </list>
+    /// </remarks>
     private static (ResourceOwner Kind, string Detail) ResolveOwner(
         EngineSource source, ExpressionSyntax receiver, RegistrationBlock block, int depth)
     {
