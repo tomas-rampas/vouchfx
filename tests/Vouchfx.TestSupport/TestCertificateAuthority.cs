@@ -1007,11 +1007,26 @@ internal static class TestCertificateStoreSweep
         }
     }
 
+    /// <remarks>
+    /// De-duplicated, and not defensively: a bed legitimately lists the SAME certificate twice.
+    /// <c>IssueLeaf</c> hands back a certificate and a PKCS#12-reloaded <c>Loadable</c> copy of it,
+    /// and <c>TestTwoTierBed</c> captures both (<c>ServerLeaf</c> and <c>ServerLeafWithKey</c>) —
+    /// a thumbprint is computed over the certificate DER, so the private key does not change it
+    /// and the two entries are identical. Without the distinct, each such pair costs a second
+    /// <c>Find</c>, a second <c>Remove</c> whose target is already gone, and a second live handle
+    /// to dispose.
+    /// <para>
+    /// Empty thumbprints are dropped for the same reason rather than passed to <c>Find</c>, which
+    /// is a lookup nothing can usefully match.
+    /// </para>
+    /// </remarks>
     private static X509Certificate2Collection Matching(X509Store store, IReadOnlyList<string> thumbprints)
     {
         var matches = new X509Certificate2Collection();
 
-        foreach (var thumbprint in thumbprints)
+        foreach (var thumbprint in thumbprints
+            .Where(t => !string.IsNullOrEmpty(t))
+            .Distinct(StringComparer.OrdinalIgnoreCase))
         {
             matches.AddRange(
                 store.Certificates.Find(X509FindType.FindByThumbprint, thumbprint, validOnly: false));
