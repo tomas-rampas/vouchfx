@@ -12,7 +12,7 @@
 #
 # Keyless signing and publishing model — no long-lived private key or API key stored as a secret
 # --------------------------------------------------------------------------------------------------
-#   1. SLSA provenance (actions/attest-build-provenance@v4.1.1, SHA-pinned)
+#   1. SLSA provenance (actions/attest-build-provenance, SHA-pinned below)
 #      GitHub OIDC token → signed attestation stored with the repo.
 #      Verify:  gh attestation verify <file> --repo tomas-rampas/vouchfx
 #
