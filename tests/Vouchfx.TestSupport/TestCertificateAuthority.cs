@@ -976,12 +976,27 @@ internal static class TestCertificateStoreSweep
                 return;
             }
 
-            using var store = new X509Store(StoreName.CertificateAuthority, location);
-            store.Open(OpenFlags.ReadWrite);
-
-            foreach (var certificate in cached)
+            // Find() hands back fresh X509Certificate2 instances, each owning its own native
+            // CertContext handle, so they must be disposed once removal is done — a sweep that
+            // leaked handles while closing a certificate leak would be a poor joke. Disposal is
+            // in a finally because Remove itself can throw (the unelevated machine store), and
+            // the handles must go back either way.
+            try
             {
-                store.Remove(certificate);
+                using var store = new X509Store(StoreName.CertificateAuthority, location);
+                store.Open(OpenFlags.ReadWrite);
+
+                foreach (var certificate in cached)
+                {
+                    store.Remove(certificate);
+                }
+            }
+            finally
+            {
+                foreach (var certificate in cached)
+                {
+                    certificate.Dispose();
+                }
             }
         }
         catch (Exception ex) when (
