@@ -15,6 +15,7 @@
 // builds its own SecuritySpec from them.
 using System.Formats.Asn1;
 using System.Net;
+using System.Security;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 
@@ -719,7 +720,21 @@ public sealed class TestCertificateBed : IDisposable
         ServerCertificate = serverCertificate;
         ClientAuthOnlyServerCertificate = clientAuthOnlyServerCertificate;
         NoEkuServerCertificate = noEkuServerCertificate;
+
+        // See TestTwoTierBed's copy of this: thumbprints captured while the certificates are
+        // alive, so Dispose can remove this bed's own cached copies and only those. Measured on
+        // this bed the sweep finds nothing — its anchor is a self-signed ROOT, and CryptoAPI
+        // caches INTERMEDIATES — so this is the leak staying shut rather than the leak closing.
+        _ownThumbprints = new[]
+        {
+            CaCertificate.Thumbprint,
+            ServerCertificate.Thumbprint,
+            ClientAuthOnlyServerCertificate.Thumbprint,
+            NoEkuServerCertificate.Thumbprint,
+        };
     }
+
+    private readonly string[] _ownThumbprints;
 
     /// <summary>
     /// A leaf from the SAME anchor, for <c>localhost</c>, carrying <c>EKU = clientAuth</c> ONLY.
@@ -766,6 +781,7 @@ public sealed class TestCertificateBed : IDisposable
         NoEkuServerCertificate.Dispose();
 
         TestCertificateBedPaths.DeleteQuietly(SuiteDirectory);
+        TestCertificateStoreSweep.RemoveCachedCopies(_ownThumbprints);
     }
 }
 
@@ -788,7 +804,23 @@ public sealed class TestTwoTierBed : IDisposable
         IntermediateCertificate = intermediate;
         ServerLeaf = serverLeaf;
         ServerLeafWithKey = serverLeafWithKey;
+
+        // Captured while the certificates are alive, because a disposed X509Certificate2 cannot be
+        // asked for its thumbprint — and because these strings are what makes the sweep in
+        // Dispose match this bed's own material and nothing else. The intermediate is the one
+        // MEASURED to be cached (it is the only certificate here a chain builder is handed as a
+        // path link); the other three cost nothing to list and mean a future test that hands one
+        // of them to a chain builder does not reopen this leak.
+        _ownThumbprints = new[]
+        {
+            RootCertificate.Thumbprint,
+            IntermediateCertificate.Thumbprint,
+            ServerLeaf.Thumbprint,
+            ServerLeafWithKey.Thumbprint,
+        };
     }
+
+    private readonly string[] _ownThumbprints;
 
     /// <summary>The temporary directory holding <c>ca.pem</c> (the ROOT, not the intermediate).</summary>
     public string SuiteDirectory { get; }
@@ -813,6 +845,7 @@ public sealed class TestTwoTierBed : IDisposable
         ServerLeaf.Dispose();
         ServerLeafWithKey.Dispose();
         TestCertificateBedPaths.DeleteQuietly(SuiteDirectory);
+        TestCertificateStoreSweep.RemoveCachedCopies(_ownThumbprints);
     }
 }
 
@@ -828,7 +861,14 @@ public sealed class TestAiaBed : IDisposable
         SuiteDirectory = suiteDirectory;
         RootCertificate = root;
         LeafWithAuthorityInfoAccess = leaf;
+
+        // See TestTwoTierBed's copy of this. The intermediate this bed's leaf was issued by is
+        // deliberately ABSENT — the whole point of the fixture — so it is not the bed's to remove
+        // and is not listed; what the sweep covers is the material the bed does hold.
+        _ownThumbprints = new[] { RootCertificate.Thumbprint, LeafWithAuthorityInfoAccess.Thumbprint };
     }
+
+    private readonly string[] _ownThumbprints;
 
     /// <summary>The temporary directory holding <c>ca.pem</c>.</summary>
     public string SuiteDirectory { get; }
@@ -845,6 +885,7 @@ public sealed class TestAiaBed : IDisposable
         RootCertificate.Dispose();
         LeafWithAuthorityInfoAccess.Dispose();
         TestCertificateBedPaths.DeleteQuietly(SuiteDirectory);
+        TestCertificateStoreSweep.RemoveCachedCopies(_ownThumbprints);
     }
 }
 
@@ -860,5 +901,137 @@ internal static class TestCertificateBedPaths
         {
             // A leftover temp directory is not worth failing a test over.
         }
+    }
+}
+
+/// <summary>
+/// Removes the copies of a bed's own certificates that Windows leaves behind in the
+/// intermediate-CA stores, matching on THUMBPRINT alone.
+/// </summary>
+/// <remarks>
+/// <para>
+/// <strong>Why anything is left behind at all.</strong> Nothing here installs a certificate. When
+/// <see cref="X509Chain.Build"/> runs on Windows, CryptoAPI CACHES the intermediates it encounters
+/// while assembling a path — including one handed to it through
+/// <see cref="X509ChainPolicy.ExtraStore"/> — into the <c>CA</c> store, so the next build can find
+/// it without going back to the network. The two-tier fixture supplies exactly such an
+/// intermediate, so every run of it deposits one. Measured on this repository: one
+/// <c>CN=Vouchfx Test Issuing Intermediate</c> per run of Vouchfx.Engine.Runtime.Tests, and 175
+/// accumulated copies once produced two failures that read as environmental for several sessions
+/// before the cause was found. The cure is therefore a teardown sweep, not a change to what the
+/// fixture installs.
+/// </para>
+/// <para>
+/// <strong>Why the match is by thumbprint and never by subject.</strong> Every bed mints a FRESH
+/// intermediate under the same common name, and xUnit runs test classes in parallel. A
+/// subject-matched sweep would delete a concurrently-running bed's cached intermediate, and
+/// removing one mid-run can make another test's chain build fail — which would trade a cosmetic
+/// leak for an intermittent suite. A thumbprint identifies one certificate, so a bed can only ever
+/// remove its own.
+/// </para>
+/// <para>
+/// <strong>Why every failure is swallowed.</strong> Writing to <c>LocalMachine\CA</c> needs
+/// elevation, which a test process usually lacks — this happens to be where the cached copy lands
+/// when the process IS elevated, which is why both locations are swept. A teardown that threw
+/// would turn the leak into a red suite, which is strictly worse than the leak. The catch is
+/// narrowed to the three types a store operation can raise rather than left bare, so a genuine
+/// defect in this method still surfaces.
+/// </para>
+/// </remarks>
+internal static class TestCertificateStoreSweep
+{
+    /// <summary>
+    /// Removes any certificate whose thumbprint appears in <paramref name="thumbprints"/> from the
+    /// current user's and the local machine's intermediate-CA stores. No-op off Windows, where
+    /// nothing performs this caching.
+    /// </summary>
+    internal static void RemoveCachedCopies(IReadOnlyList<string> thumbprints)
+    {
+        if (!OperatingSystem.IsWindows() || thumbprints.Count == 0)
+        {
+            return;
+        }
+
+        RemoveFrom(StoreLocation.CurrentUser, thumbprints);
+        RemoveFrom(StoreLocation.LocalMachine, thumbprints);
+    }
+
+    private static void RemoveFrom(StoreLocation location, IReadOnlyList<string> thumbprints)
+    {
+        try
+        {
+            // Read first, and open for writing only when there is something to remove. Opening a
+            // machine store for WRITING fails without elevation, so probing read-only keeps the
+            // usual case — a bed whose certificates were never cached — free of both the failed
+            // open and the exception it raises.
+            X509Certificate2Collection cached;
+            using (var probe = new X509Store(StoreName.CertificateAuthority, location))
+            {
+                probe.Open(OpenFlags.ReadOnly);
+                cached = Matching(probe, thumbprints);
+            }
+
+            if (cached.Count == 0)
+            {
+                return;
+            }
+
+            // Find() hands back fresh X509Certificate2 instances, each owning its own native
+            // CertContext handle, so they must be disposed once removal is done — a sweep that
+            // leaked handles while closing a certificate leak would be a poor joke. Disposal is
+            // in a finally because Remove itself can throw (the unelevated machine store), and
+            // the handles must go back either way.
+            try
+            {
+                using var store = new X509Store(StoreName.CertificateAuthority, location);
+                store.Open(OpenFlags.ReadWrite);
+
+                foreach (var certificate in cached)
+                {
+                    store.Remove(certificate);
+                }
+            }
+            finally
+            {
+                foreach (var certificate in cached)
+                {
+                    certificate.Dispose();
+                }
+            }
+        }
+        catch (Exception ex) when (
+            ex is CryptographicException or UnauthorizedAccessException or SecurityException)
+        {
+            // Best effort: an unelevated process cannot write the machine store, and a cached
+            // copy nobody could remove is a cosmetic leak. Failing here would be the real damage.
+        }
+    }
+
+    /// <remarks>
+    /// De-duplicated, and not defensively: a bed legitimately lists the SAME certificate twice.
+    /// <c>IssueLeaf</c> hands back a certificate and a PKCS#12-reloaded <c>Loadable</c> copy of it,
+    /// and <c>TestTwoTierBed</c> captures both (<c>ServerLeaf</c> and <c>ServerLeafWithKey</c>) —
+    /// a thumbprint is computed over the certificate DER, so the private key does not change it
+    /// and the two entries are identical. Without the distinct, each such pair costs a second
+    /// <c>Find</c>, a second <c>Remove</c> whose target is already gone, and a second live handle
+    /// to dispose.
+    /// <para>
+    /// Empty thumbprints are dropped for the same reason rather than passed to <c>Find</c>, which
+    /// is a lookup nothing can usefully match.
+    /// </para>
+    /// </remarks>
+    private static X509Certificate2Collection Matching(X509Store store, IReadOnlyList<string> thumbprints)
+    {
+        var matches = new X509Certificate2Collection();
+
+        foreach (var thumbprint in thumbprints
+            .Where(t => !string.IsNullOrEmpty(t))
+            .Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            matches.AddRange(
+                store.Certificates.Find(X509FindType.FindByThumbprint, thumbprint, validOnly: false));
+        }
+
+        return matches;
     }
 }
