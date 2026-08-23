@@ -4853,13 +4853,14 @@ public sealed class EnvironmentMapperTests
     }
 
     // -----------------------------------------------------------------------
-    // dependency-env (spec REQ-003 / REQ-005 / EDGE-006): a managed dependency's
-    // own `env:` mapping.
+    // dependency-env (spec REQ-003 / REQ-004 / REQ-005 / EDGE-005 / EDGE-006): a
+    // managed dependency's own `env:` mapping.
     //
-    // The all-thirteen merge gate lives in its own file, DependencyEnvCensusTests,
-    // because it enumerates the type list out of the JSON Schema. What follows is
-    // everything the census cannot say: which construction SHAPE each of the two
-    // named cases stands for, the two refusals, and the engine-set skip.
+    // The all-thirteen merge gate and the engine-set-name census both live in their
+    // own file, DependencyEnvCensusTests, because they read the schema and this
+    // mapper's own source. What follows is everything those cannot say: which
+    // construction SHAPE each of the two named cases stands for, the three refusals
+    // (${conn:}, ${secret:}, engine-set name), and the both-directions matrix.
     // -----------------------------------------------------------------------
 
     /// <summary>
@@ -4877,12 +4878,11 @@ public sealed class EnvironmentMapperTests
     };
 
     /// <summary>
-    /// Builds a one-dependency environment from real YAML, maps it, and returns the mapper's
-    /// warnings alongside the resolved environment variables of the container named
-    /// <paramref name="dependencyName"/> — the dependency's OWN container, never a sidecar and
-    /// never the <c>AddDatabase</c> child.
+    /// Builds a one-dependency environment from real YAML, maps it, and returns the resolved
+    /// environment variables of the container named <paramref name="dependencyName"/> — the
+    /// dependency's OWN container, never a sidecar and never the <c>AddDatabase</c> child.
     /// </summary>
-    private static async Task<(Dictionary<string, object> Vars, IReadOnlyList<string> Warnings)>
+    private static async Task<Dictionary<string, object>>
         MapDependencyAndResolveEnvAsync(string yaml, string dependencyName)
     {
         var mapped = EnvironmentMapper.Map(ParseEnvironment(yaml));
@@ -4892,7 +4892,7 @@ public sealed class EnvironmentMapperTests
         var target = Assert.Single(
             builder.Resources.OfType<ContainerResource>(), r => r.Name == dependencyName);
 
-        return (await ResolveEnvVarsAsync(target), mapped.Warnings);
+        return await ResolveEnvVarsAsync(target);
     }
 
     /// <summary>
@@ -4923,10 +4923,9 @@ public sealed class EnvironmentMapperTests
                 code: "// Filler step."
             """;
 
-        var (vars, warnings) = await MapDependencyAndResolveEnvAsync(yaml, "orders");
+        var vars = await MapDependencyAndResolveEnvAsync(yaml, "orders");
 
         Assert.Equal("applied", EnvValueText(vars["VOUCHFX_DEP_PROBE"]));
-        Assert.Empty(warnings);
     }
 
     /// <summary>
@@ -4934,8 +4933,10 @@ public sealed class EnvironmentMapperTests
     /// (so do <c>mailpit</c>, <c>dynamodb</c> and <c>azureservicebus</c>).  Here the retained
     /// builder IS the container, so the naive implementation happens to work — which is exactly
     /// why the postgres case above is the other half of the pair rather than a second example of
-    /// the same thing.  minio is also one of the three types that carries engine-set names, so it
-    /// is where the skip rule is observable; that half is pinned separately below.
+    /// the same thing.  minio is also one of the three types that carries engine-set names, and
+    /// this row is the proof that carrying them does not make the whole type inert: a
+    /// non-reserved key on minio is applied like any other.  The refusal half is pinned
+    /// separately below.
     /// </summary>
     [Fact]
     public async Task Map_DependencyEnv_AddContainerShape_Minio_ReachesTheContainer()
@@ -4955,10 +4956,9 @@ public sealed class EnvironmentMapperTests
                 code: "// Filler step."
             """;
 
-        var (vars, warnings) = await MapDependencyAndResolveEnvAsync(yaml, "blobs");
+        var vars = await MapDependencyAndResolveEnvAsync(yaml, "blobs");
 
         Assert.Equal("applied", EnvValueText(vars["VOUCHFX_DEP_PROBE"]));
-        Assert.Empty(warnings);
     }
 
     /// <summary>
@@ -5043,29 +5043,58 @@ public sealed class EnvironmentMapperTests
     }
 
     /// <summary>
-    /// REQ-003, ORDERING: the two dependency rules meet on one key, and the REFUSAL wins.  A
-    /// <c>${secret:...}</c> written on a RESERVED name throws; it is not swallowed by the
-    /// engine-set skip and downgraded to a warning.
+    /// The declaration order the two ORDERING rows below assert on their parsed inputs —
+    /// <c>static readonly</c> rather than inline literals only because this project enforces
+    /// CA1861 as an error.
+    /// </summary>
+    private static readonly string[] s_reservedThenSecretKeyOrder =
+        { "MINIO_ROOT_USER", "MINIO_ROOT_PASSWORD" };
+
+    /// <inheritdoc cref="s_reservedThenSecretKeyOrder"/>
+    private static readonly string[] s_collisionThenSecretDependencyOrder = { "blobs", "orders" };
+
+    /// <summary>
+    /// REQ-003, ORDERING: the two dependency rules meet in one document, and BOTH now refuse — so
+    /// what this pins is WHICH refusal the author is shown.  A <c>${secret:...}</c> reports the
+    /// secret fault even when a reserved-name collision is sitting in the same <c>env:</c> map,
+    /// DECLARED FIRST.
     /// </summary>
     /// <remarks>
     /// <para>
     /// Neither existing test can see this.  The secret refusal above uses <c>postgres</c>, an
-    /// unreserved type, so the two rules never meet there; the skip theory uses no references at
-    /// all.  Today the ordering holds structurally — <c>Map</c> runs the eager
-    /// <c>ValidateEnvValue</c> pass over every dependency BEFORE it partitions any <c>env:</c>
-    /// map — but "structurally" is exactly the guarantee a refactor deletes without noticing.
+    /// unreserved type, so the two rules never meet there; the reserved-name theory uses no
+    /// references at all.  The ordering holds structurally — <c>Map</c> runs the eager
+    /// <c>ValidateEnvValue</c> pass over every dependency BEFORE the separate loop that checks
+    /// reserved names — but "structurally" is exactly the guarantee a refactor deletes without
+    /// noticing.
     /// </para>
     /// <para>
-    /// And REQ-004 is that refactor: it turns the partition's <c>continue</c> into a
-    /// <c>throw</c>, at which point collapsing the two dependency loops into one is the obvious
-    /// tidy.  Do it in the wrong order and a <c>${secret:vault/...}</c> on
-    /// <c>MINIO_ROOT_PASSWORD</c> is skipped with a warning and no diagnostic — the author is
-    /// told their variable was ignored, never that they put a secret in a container's
-    /// environment.
+    /// REQ-004 was that refactor, and it deliberately did NOT collapse the two dependency loops
+    /// into one, which is the obvious tidy now that the second one throws rather than
+    /// <c>continue</c>s.  Collapse them and the author is told their variable is not theirs to
+    /// set, never that they put a secret in a container's environment — the more serious of the
+    /// two faults and the one a security reviewer needs to see.
+    /// </para>
+    /// <para>
+    /// <b>Why TWO keys, in THIS order.</b>  A single dependency carrying a single
+    /// secret-on-a-reserved-name key does NOT discriminate: the natural collapse runs the secret
+    /// check and the collision check in that sequence FOR EACH KEY, so with one key it still
+    /// reports the secret and the test stays green while the invariant is gone.  The
+    /// reserved-but-CLEAN <c>MINIO_ROOT_USER</c> declared FIRST is what makes the row bite — under
+    /// a collapsed loop that key is reached first, passes the secret check, and throws the
+    /// COLLISION, so <c>wrong PLACE for a secret</c> is absent and this test goes red.  MEASURED:
+    /// collapsing the two loops fails this test with
+    /// <c>Assert.Contains() Failure: Sub-string not found</c> on that clause.
+    /// </para>
+    /// <para>
+    /// The whole row rests on <c>env:</c> keys reaching <c>Map</c> in DECLARATION order, so that
+    /// premise is asserted here rather than assumed: <c>YamlDocumentParser.ParseEnvMap</c> fills an
+    /// insert-only <c>Dictionary&lt;string, string&gt;</c> (<see cref="StringComparer.Ordinal"/>)
+    /// from <c>YamlMappingNode.Children</c>, which is document-ordered.
     /// </para>
     /// </remarks>
     [Fact]
-    public void Map_DependencyEnv_SecretReferenceOnAReservedKey_IsRefusedRatherThanSkipped()
+    public void Map_DependencyEnv_SecretReferenceOnAReservedKey_ReportsTheSecretFaultNotTheCollision()
     {
         const string yaml = """
             metadata:
@@ -5075,6 +5104,7 @@ public sealed class EnvironmentMapperTests
                 blobs:
                   type: minio
                   env:
+                    MINIO_ROOT_USER: attacker
                     MINIO_ROOT_PASSWORD: "${secret:vault/db/pw}"
             steps:
               - id: noop
@@ -5084,11 +5114,81 @@ public sealed class EnvironmentMapperTests
 
         var environment = ParseEnvironment(yaml);
 
+        // The premise this test rests on, measured rather than assumed: the reserved-but-clean
+        // key really does arrive ahead of the secret-bearing one.
+        Assert.Equal<IEnumerable<string>>(
+            s_reservedThenSecretKeyOrder,
+            environment.Dependencies!["blobs"].Env!.Keys);
+
         var ex = Assert.Throws<ArgumentException>(() => EnvironmentMapper.Map(environment));
 
         Assert.Contains("Dependency 'blobs'", ex.Message, StringComparison.Ordinal);
         Assert.Contains("env entry 'MINIO_ROOT_PASSWORD'", ex.Message, StringComparison.Ordinal);
         Assert.Contains("wrong PLACE for a secret", ex.Message, StringComparison.Ordinal);
+
+        // Negative half — without it a collapsed loop that happened to mention both faults would
+        // pass. The collision diagnostic's own distinctive clause must be absent.
+        Assert.DoesNotContain("REFUSED", ex.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "env entry 'MINIO_ROOT_USER'", ex.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// REQ-003, ORDERING — the CROSS-DEPENDENCY half.  The eager <c>ValidateEnvValue</c> pass
+    /// spans EVERY dependency before the reserved-name loop sees its first one, so a secret on
+    /// dependency B is reported even though a reserved-name collision sits on dependency A,
+    /// declared first.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The one-dependency row above cannot see this property.  A collapse that kept the secret
+    /// check strictly ahead of the collision check WITHIN a dependency — but interleaved the two
+    /// per dependency — would satisfy that row and still break here, reporting <c>blobs</c>'s
+    /// collision and never <c>orders</c>'s secret.  What is under test is the SPAN of the first
+    /// pass, not merely its per-key precedence.
+    /// </para>
+    /// <para>
+    /// Same premise, same treatment: <c>YamlDocumentParser.ParseDependencyMap</c> fills an
+    /// insert-only ordinal <c>Dictionary</c> from the document's own dependency order, so
+    /// <c>blobs</c> genuinely precedes <c>orders</c>, and that is asserted rather than assumed.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void Map_DependencyEnv_ReservedCollisionOnAnEarlierDependency_StillReportsTheSecretFault()
+    {
+        const string yaml = """
+            metadata:
+              name: dep-env-secret-after-collision
+            environment:
+              dependencies:
+                blobs:
+                  type: minio
+                  env:
+                    MINIO_ROOT_USER: attacker
+                orders:
+                  type: postgres
+                  env:
+                    ADMIN_PW: "${secret:vault/db/pw}"
+            steps:
+              - id: noop
+                type: script.csharp
+                code: "// Filler step."
+            """;
+
+        var environment = ParseEnvironment(yaml);
+
+        Assert.Equal<IEnumerable<string>>(
+            s_collisionThenSecretDependencyOrder,
+            environment.Dependencies!.Keys);
+
+        var ex = Assert.Throws<ArgumentException>(() => EnvironmentMapper.Map(environment));
+
+        Assert.Contains("Dependency 'orders'", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("env entry 'ADMIN_PW'", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("wrong PLACE for a secret", ex.Message, StringComparison.Ordinal);
+
+        Assert.DoesNotContain("REFUSED", ex.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("Dependency 'blobs'", ex.Message, StringComparison.Ordinal);
     }
 
     // The service side's own guard against this slice's `ownerLabel` widening is
@@ -5097,146 +5197,243 @@ public sealed class EnvironmentMapperTests
     // weaker restatement here would only be a place for the two to drift.
 
     /// <summary>
-    /// The interim engine-wins rule (REQ-003's "Consequence" decision): an <c>env:</c> key the
-    /// engine sets for that dependency's own <c>type:</c> is NOT applied, the engine's value
-    /// survives, and the skip is WARNED rather than silent.
+    /// REQ-004: an <c>env:</c> key the engine sets for that dependency's own <c>type:</c> is
+    /// REFUSED, and the message names all three of the variable, the dependency and the type.
     /// </summary>
     /// <remarks>
     /// <para>
     /// Engine-wins is NOT achievable by ordering.  Aspire's <c>WithEnvironment</c> registers an
     /// <c>EnvironmentCallbackAnnotation</c>; the callbacks run in registration order into ONE
     /// dictionary, so the LAST write wins and a post-<c>Build</c> author write would replace the
-    /// engine's value.  It is delivered by never writing the key at all.
+    /// engine's value.  T3 delivered engine-wins by never writing the key, warning as it dropped
+    /// it; this slice tightens that to a refusal, because a variable an author declared and the
+    /// engine discarded is the schema-acceptance-is-not-execution failure this feature exists to
+    /// avoid reproducing — the author writes a variable, the suite goes green, and nothing
+    /// happened.
     /// </para>
     /// <para>
-    /// <b>One row per reserved name — all nine.</b>  The guard goes live at this merge and stays
-    /// unpoliced until REQ-004's census, so a sampled subset would leave six of the nine names
-    /// resting on a hand-verified table.  Two of the six the sample omitted are
-    /// <c>MINIO_ROOT_PASSWORD</c> and <c>MSSQL_SA_PASSWORD</c> — the credential-bearing pair the
-    /// entire engine-wins argument is about, and therefore the two least defensible to leave
-    /// unpinned.  What is still REQ-004's and not this slice's is the per-type BOTH-directions
-    /// matrix (every reserved name proved unreserved on every other type).
+    /// <b>REQ-004 also wants "before any container starts", and that half is an ARGUMENT here,
+    /// not an assertion</b> — the same discipline, and for the same reason, as
+    /// <c>Map_DependencyEnv_MissingEnvVarReference_IsRefusedByMapNamingTheVariable</c> below.
+    /// The throw comes out of <c>Map</c>, <c>Map</c> takes no builder, and the ONLY thing that
+    /// adds a resource to a builder is the <c>Configure</c> delegate <c>Map</c> would have
+    /// returned.  A <c>Map</c> that throws hands back no delegate, so there is nothing to run and
+    /// nothing that could have run earlier.  Inventing an assertion that interrogates no real
+    /// state would be worse than saying so.
     /// </para>
     /// <para>
-    /// A silent skip is the failure mode this feature exists to avoid reproducing: the author
-    /// writes a variable, the suite goes green, and nothing happened.  The warning assertion is
-    /// therefore not decoration.
+    /// <b>One row per reserved name — all nine</b>, so a canonicalisation that silently drops one
+    /// goes red.  Two of the nine are <c>MINIO_ROOT_PASSWORD</c> and <c>MSSQL_SA_PASSWORD</c>, the
+    /// credential-bearing pair the whole engine-wins argument is about.
     /// </para>
     /// <para>
-    /// <b>The warning must not echo the author's VALUE.</b>  Two of these nine names carry a
-    /// password, so a future edit that appends the rejected value "for helpfulness" would leak
-    /// author-supplied credential material into stderr and into
-    /// <c>MappedTopology.Warnings</c>.  Nothing else in this file pins that, so the
-    /// <c>DoesNotContain</c> below does.
+    /// <b>The refusal must not echo the author's VALUE.</b>  Two of these nine names carry a
+    /// password, so a future edit that appended the rejected value "for helpfulness" would put
+    /// author-supplied credential material into every log and report that carries the failure.
+    /// Nothing else in this file pins that, so the <c>DoesNotContain</c> below does.
     /// </para>
     /// <para>
     /// That assertion constrains the <c>authorValue</c> column: a value that occurs in the
-    /// diagnostic by COINCIDENCE would fail the row without any leak.  Hence
-    /// <c>AUTHOR_DECLINED</c> on <c>ACCEPT_EULA</c> rather than the bare <c>N</c> an author would
-    /// really write — <c>N</c> is a substring of <c>IGNORED</c>.  A future rewording of the
-    /// warning that happens to contain one of these values fails LOUDLY rather than silently, so
-    /// the constraint costs a rename and never a missed leak.
+    /// diagnostic by COINCIDENCE would fail the row without any leak.  Every value below was
+    /// re-derived against the refusal wording this slice ships and none of them occurs in it.
+    /// The one that needs a sentinel rather than the realistic value is <c>ACCEPT_EULA</c>, whose
+    /// real-world declining value is the bare <c>N</c> — a single character any wording is liable
+    /// to contain — so <c>AUTHOR_DECLINED</c> stands in for it.  A future rewording that happens
+    /// to contain one of these values fails LOUDLY rather than silently, so the constraint costs
+    /// a rename and never a missed leak.
+    /// </para>
+    /// <para>
+    /// <b>The credential clause is SCOPED to <c>minio</c>, and this theory holds it there.</b>
+    /// Only <c>MINIO_ROOT_USER</c>/<c>MINIO_ROOT_PASSWORD</c> are spliced into a connection string
+    /// <c>${conn:...}</c> hands to other scenarios.  <c>elasticsearch</c>'s four names are
+    /// host/port-only, and the <c>azureservicebus</c> emulator's connection string is a fixed
+    /// <c>Endpoint=sb://…;SharedAccessKey=SAS_KEY_VALUE;…</c> containing none of its three — so an
+    /// unscoped "some of them carry the credentials" was untrue for SEVEN of these nine names and
+    /// handed an <c>elasticsearch</c> author refused for <c>ES_JAVA_OPTS</c> an argument with no
+    /// bearing on their case.  Both clauses are asserted on every row: the scoped credential
+    /// aside, and the load-bearing one — "the shape every scenario shares" — which is what is
+    /// actually true for all nine and carries the message alone.
     /// </para>
     /// </remarks>
     [Theory]
-    [InlineData("elasticsearch", "discovery.type", "multi-node", "single-node")]
-    [InlineData("elasticsearch", "xpack.security.enabled", "true", "false")]
-    [InlineData("elasticsearch", "ES_JAVA_OPTS", "-Xmx8g", "-Xms512m -Xmx512m")]
-    [InlineData(
-        "elasticsearch", "cluster.routing.allocation.disk.threshold_enabled", "true", "false")]
-    [InlineData("minio", "MINIO_ROOT_USER", "attacker", "vouchfx-minio")]
-    [InlineData("minio", "MINIO_ROOT_PASSWORD", "attacker-password", "vouchfx-minio-secret")]
-    [InlineData("azureservicebus", "ACCEPT_EULA", "AUTHOR_DECLINED", "Y")]
-    [InlineData(
-        "azureservicebus", "MSSQL_SA_PASSWORD", "attacker-sa-password", "Str0ng!P@ssword#1")]
-    [InlineData("azureservicebus", "SQL_SERVER", "attacker-sql-host", "dep-sqledge")]
-    public async Task Map_DependencyEnv_EngineSetKey_IsSkippedWithAWarning_AndTheEngineValueSurvives(
+    [InlineData("elasticsearch", "discovery.type", "multi-node")]
+    [InlineData("elasticsearch", "xpack.security.enabled", "true")]
+    [InlineData("elasticsearch", "ES_JAVA_OPTS", "-Xmx8g")]
+    [InlineData("elasticsearch", "cluster.routing.allocation.disk.threshold_enabled", "true")]
+    [InlineData("minio", "MINIO_ROOT_USER", "attacker")]
+    [InlineData("minio", "MINIO_ROOT_PASSWORD", "attacker-password")]
+    [InlineData("azureservicebus", "ACCEPT_EULA", "AUTHOR_DECLINED")]
+    [InlineData("azureservicebus", "MSSQL_SA_PASSWORD", "attacker-sa-password")]
+    [InlineData("azureservicebus", "SQL_SERVER", "attacker-sql-host")]
+    public void Map_DependencyEnv_EngineSetKey_IsRefusedNamingVariableDependencyAndType(
         string type,
         string reservedKey,
-        string authorValue,
-        string engineValue)
+        string authorValue)
     {
-        var yaml = $"""
-            metadata:
-              name: dep-env-reserved
-            environment:
-              dependencies:
-                dep:
-                  type: {type}
-                  env:
-                    "{reservedKey}": "{authorValue}"
-            steps:
-              - id: noop
-                type: script.csharp
-                code: "// Filler step."
-            """;
+        var environment = ParseEnvironment(DependencyEnvYaml(type, reservedKey, authorValue));
 
-        var (vars, warnings) = await MapDependencyAndResolveEnvAsync(yaml, "dep");
+        var ex = Assert.Throws<ArgumentException>(() => EnvironmentMapper.Map(environment));
 
-        Assert.Equal(engineValue, EnvValueText(vars[reservedKey]));
+        // All three of variable, dependency and type.
+        Assert.Contains($"env entry '{reservedKey}'", ex.Message, StringComparison.Ordinal);
+        Assert.Contains($"Dependency 'dep' (type '{type}')", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("REFUSED", ex.Message, StringComparison.Ordinal);
 
-        var warning = Assert.Single(warnings);
-        Assert.Contains($"Dependency 'dep' (type '{type}')", warning, StringComparison.Ordinal);
-        Assert.Contains($"env entry '{reservedKey}'", warning, StringComparison.Ordinal);
-        Assert.Contains("IGNORED", warning, StringComparison.Ordinal);
+        // The escape hatch: an author who genuinely needs full control of the backend's
+        // environment is told where to get it, rather than only that they may not have it here.
+        Assert.Contains(
+            "declare the backend as a service with 'image:'", ex.Message, StringComparison.Ordinal);
 
-        // The NAME and the fact of the skip, never the VALUE — see the remarks above.  Two of
-        // these nine reserved names are passwords, and this warning is written to stderr.
-        Assert.DoesNotContain(authorValue, warning, StringComparison.Ordinal);
+        // The clause that is true for all nine, and carries the refusal on its own.
+        Assert.Contains(
+            "bring this dependency up in the shape every scenario shares",
+            ex.Message,
+            StringComparison.Ordinal);
+
+        // The credential aside, SCOPED to minio — see the remarks. Asserted verbatim so a future
+        // edit that re-broadens it to "some of them carry the credentials" goes red on all nine
+        // rows rather than shipping a claim untrue for seven of them.
+        Assert.Contains(
+            "and on 'minio' they are the credentials ${conn:<dependency>} advertises to every "
+                + "other scenario consuming it",
+            ex.Message,
+            StringComparison.Ordinal);
+
+        // The NAME and the fact of the refusal, never the VALUE — see the remarks above.  Two of
+        // these nine reserved names are passwords.
+        Assert.DoesNotContain(authorValue, ex.Message, StringComparison.Ordinal);
     }
 
     /// <summary>
-    /// The other half of the skip, without which it degrades to "dependency <c>env:</c> does
-    /// nothing on these three types": a NON-reserved key on one of the three types that carries
-    /// reserved names is still applied, and raises no warning.
+    /// REQ-004, the other direction — <b>the full per-type matrix</b>.  Every one of the nine
+    /// reserved names is applied normally on every type that does NOT reserve it: the three
+    /// reserved-bearing types against each other, plus <c>postgres</c> standing for the ten types
+    /// that reserve nothing.
+    /// </summary>
+    /// <remarks>
+    /// Without this direction the check degrades to a global denylist, which is a different and
+    /// wrong feature: <c>MSSQL_SA_PASSWORD</c> is the <c>azureservicebus</c> emulator's SQL
+    /// wiring and means nothing to <c>elasticsearch</c>, and an author configuring the latter has
+    /// every right to a variable of that name.  Twenty-seven rows rather than nine for a narrower
+    /// reason than "proving the table is per-type": ONE non-reserving type per name already does
+    /// that, because under a global denylist the single row
+    /// <c>[postgres, "discovery.type"]</c> expects the key applied, gets it refused, and goes red.
+    /// What the full matrix buys is detection of a PARTIALLY over-broad table — a name reserved
+    /// for its own type and, by a copy-paste slip, for one other as well, which any single
+    /// non-reserving row would miss whenever it happened to pick a third type.
+    /// </remarks>
+    [Theory]
+    [InlineData("minio", "discovery.type")]
+    [InlineData("azureservicebus", "discovery.type")]
+    [InlineData("postgres", "discovery.type")]
+    [InlineData("minio", "xpack.security.enabled")]
+    [InlineData("azureservicebus", "xpack.security.enabled")]
+    [InlineData("postgres", "xpack.security.enabled")]
+    [InlineData("minio", "ES_JAVA_OPTS")]
+    [InlineData("azureservicebus", "ES_JAVA_OPTS")]
+    [InlineData("postgres", "ES_JAVA_OPTS")]
+    [InlineData("minio", "cluster.routing.allocation.disk.threshold_enabled")]
+    [InlineData("azureservicebus", "cluster.routing.allocation.disk.threshold_enabled")]
+    [InlineData("postgres", "cluster.routing.allocation.disk.threshold_enabled")]
+    [InlineData("elasticsearch", "MINIO_ROOT_USER")]
+    [InlineData("azureservicebus", "MINIO_ROOT_USER")]
+    [InlineData("postgres", "MINIO_ROOT_USER")]
+    [InlineData("elasticsearch", "MINIO_ROOT_PASSWORD")]
+    [InlineData("azureservicebus", "MINIO_ROOT_PASSWORD")]
+    [InlineData("postgres", "MINIO_ROOT_PASSWORD")]
+    [InlineData("elasticsearch", "ACCEPT_EULA")]
+    [InlineData("minio", "ACCEPT_EULA")]
+    [InlineData("postgres", "ACCEPT_EULA")]
+    [InlineData("elasticsearch", "MSSQL_SA_PASSWORD")]
+    [InlineData("minio", "MSSQL_SA_PASSWORD")]
+    [InlineData("postgres", "MSSQL_SA_PASSWORD")]
+    [InlineData("elasticsearch", "SQL_SERVER")]
+    [InlineData("minio", "SQL_SERVER")]
+    [InlineData("postgres", "SQL_SERVER")]
+    public async Task Map_DependencyEnv_ReservedNameOnATypeThatDoesNotReserveIt_IsStillApplied(
+        string type,
+        string reservedElsewhere)
+    {
+        var vars = await MapDependencyAndResolveEnvAsync(
+            DependencyEnvYaml(type, reservedElsewhere, "applied"), "dep");
+
+        Assert.Equal("applied", EnvValueText(vars[reservedElsewhere]));
+    }
+
+    /// <summary>
+    /// The other half of the refusal, without which it degrades to "dependency <c>env:</c> does
+    /// nothing on these three types": an ordinary, non-reserved key on one of the three types
+    /// that carries reserved names is applied like any other.
+    /// </summary>
+    [Theory]
+    [InlineData("elasticsearch")]
+    [InlineData("minio")]
+    [InlineData("azureservicebus")]
+    public async Task Map_DependencyEnv_NonReservedKey_IsStillApplied(string type)
+    {
+        var vars = await MapDependencyAndResolveEnvAsync(
+            DependencyEnvYaml(type, "VOUCHFX_DEP_PROBE", "applied"), "dep");
+
+        Assert.Equal("applied", EnvValueText(vars["VOUCHFX_DEP_PROBE"]));
+    }
+
+    /// <summary>
+    /// EDGE-005: reserved-name matching is case-sensitive and EXACT, asserted in BOTH directions
+    /// on the one type where the two spellings are distinguishable — <c>ES_JAVA_OPTS</c> on
+    /// <c>elasticsearch</c> is refused, <c>es_java_opts</c> on <c>elasticsearch</c> is applied.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The <c>postgres</c> row additionally pins that the table is keyed PER TYPE rather than
-    /// being a global denylist — <c>ES_JAVA_OPTS</c> is reserved on <c>elasticsearch</c> and
-    /// unreserved everywhere else, so a lookup that ignored the type would swallow it here.
+    /// Container environment variables are case-sensitive on Linux, so <c>es_java_opts</c> is a
+    /// legitimately distinct variable and a case-folded guard would refuse it.  Both halves are
+    /// asserted here, in one place, because either alone permits the wrong comparer: the refusal
+    /// alone is satisfied by <see cref="StringComparer.OrdinalIgnoreCase"/>, and the applied case
+    /// alone is satisfied by a guard that reserves nothing at all.
     /// </para>
     /// <para>
-    /// The <c>es_java_opts</c> row pins that the skip matches ORDINALLY: on
-    /// <c>elasticsearch</c>, where <c>ES_JAVA_OPTS</c> IS reserved, the differently-cased name is
-    /// a legitimately distinct Linux environment variable and must still be applied.  Measured:
-    /// flip the per-type name set's comparer inside <c>s_engineSetEnvKeys</c> to
-    /// <see cref="StringComparer.OrdinalIgnoreCase"/> and this row — and, of the twenty-two
-    /// <c>Map_DependencyEnv</c> tests, only this row — goes red, on the author's variable never
-    /// being applied at all.  Without it that flip is silent: the variable is swallowed, a
-    /// spurious warning is emitted, and every other test stays green.  This is NOT a claim to
-    /// satisfy EDGE-005, whose acceptance asks for both directions and belongs to REQ-004's
-    /// slice; it pins the comparer that governs the skip shipping HERE.
+    /// Measured on the T3 skip this refusal replaced: flip the per-type name set's comparer
+    /// inside <c>s_engineSetEnvKeys</c> (the <see cref="HashSet{T}"/> one, not the outer
+    /// type-keyed dictionary's, which governs <c>type:</c> lookup) to
+    /// <see cref="StringComparer.OrdinalIgnoreCase"/> and exactly the lower-case half of this
+    /// test goes red.
     /// </para>
     /// </remarks>
-    [Theory]
-    [InlineData("elasticsearch", "VOUCHFX_DEP_PROBE")]
-    [InlineData("minio", "VOUCHFX_DEP_PROBE")]
-    [InlineData("azureservicebus", "VOUCHFX_DEP_PROBE")]
-    [InlineData("postgres", "ES_JAVA_OPTS")]
-    [InlineData("elasticsearch", "es_java_opts")]
-    public async Task Map_DependencyEnv_NonReservedKey_IsStillApplied(string type, string key)
+    [Fact]
+    public async Task Map_DependencyEnv_ReservedNameMatchIsCaseSensitive_InBothDirections()
     {
-        var yaml = $"""
-            metadata:
-              name: dep-env-unreserved
-            environment:
-              dependencies:
-                dep:
-                  type: {type}
-                  env:
-                    "{key}": applied
-            steps:
-              - id: noop
-                type: script.csharp
-                code: "// Filler step."
-            """;
+        // Refused: the exact spelling the engine sets.
+        var refused = ParseEnvironment(
+            DependencyEnvYaml("elasticsearch", "ES_JAVA_OPTS", "-Xmx8g"));
 
-        var (vars, warnings) = await MapDependencyAndResolveEnvAsync(yaml, "dep");
+        var ex = Assert.Throws<ArgumentException>(() => EnvironmentMapper.Map(refused));
+        Assert.Contains("env entry 'ES_JAVA_OPTS'", ex.Message, StringComparison.Ordinal);
 
-        Assert.Equal("applied", EnvValueText(vars[key]));
-        Assert.Empty(warnings);
+        // Applied: a differently-cased, genuinely distinct Linux environment variable.
+        var vars = await MapDependencyAndResolveEnvAsync(
+            DependencyEnvYaml("elasticsearch", "es_java_opts", "-Xmx8g"), "dep");
+
+        Assert.Equal("-Xmx8g", EnvValueText(vars["es_java_opts"]));
     }
+
+    /// <summary>
+    /// A one-dependency suite named <c>dep</c> carrying a single <c>env:</c> entry — the shape
+    /// every reserved-name row above and below shares.
+    /// </summary>
+    private static string DependencyEnvYaml(string type, string key, string value) =>
+        $"""
+        metadata:
+          name: dep-env-matrix
+        environment:
+          dependencies:
+            dep:
+              type: {type}
+              env:
+                "{key}": "{value}"
+        steps:
+          - id: noop
+            type: script.csharp
+            code: "// Filler step."
+        """;
 
     /// <summary>
     /// REQ-005: <c>${env:NAME}</c> resolves from the ENGINE PROCESS's environment at
@@ -5274,10 +5471,9 @@ public sealed class EnvironmentMapperTests
         Environment.SetEnvironmentVariable(setName, "eu-west-1");
         try
         {
-            var (vars, warnings) = await MapDependencyAndResolveEnvAsync(yaml, "dep");
+            var vars = await MapDependencyAndResolveEnvAsync(yaml, "dep");
 
             Assert.Equal("prefix-eu-west-1-suffix", EnvValueText(vars["REGION"]));
-            Assert.Empty(warnings);
         }
         finally
         {

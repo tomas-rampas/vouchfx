@@ -85,29 +85,7 @@ public sealed record MappedTopology(
     Action<IDistributedApplicationBuilder> Configure,
     Func<DistributedApplication, CancellationToken, Task<IReadOnlyDictionary<string, object>>> ResolveServices,
     IReadOnlyList<string> HealthGateResourceNames,
-    IReadOnlyList<string> DependencyNames)
-{
-    /// <summary>
-    /// Non-fatal, author-facing diagnostics raised by <see cref="EnvironmentMapper.Map"/> —
-    /// currently only the dependency-<c>env:</c> engine-set-name skip (dependency-env spec,
-    /// REQ-003 / the "Consequence" decision of 2026-08-22). Empty on every other path.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// This is a STRUCTURED mirror of a message <see cref="EnvironmentMapper.Map"/> has already
-    /// written to <see cref="Console.Error"/>; it exists so a test (and, later, a renderer) can
-    /// assert on the diagnostic without capturing process-global console state. There is exactly
-    /// one source for each message string — see <c>EnvironmentMapper.RecordSkipWarning</c>.
-    /// </para>
-    /// <para>
-    /// An init-only property rather than a positional parameter: a new positional parameter would
-    /// change this record's primary-constructor arity and its compiler-generated
-    /// <c>Deconstruct</c>, and both existing construction sites in <c>Map</c> name their arguments
-    /// positionally.
-    /// </para>
-    /// </remarks>
-    public IReadOnlyList<string> Warnings { get; init; } = Array.Empty<string>();
-}
+    IReadOnlyList<string> DependencyNames);
 
 /// <summary>
 /// Maps the parsed <see cref="EnvironmentSpec"/> block to an Aspire resource graph.
@@ -626,9 +604,28 @@ public static class EnvironmentMapper
     /// is safe to invoke against any <see cref="IDistributedApplicationBuilder"/>.
     /// </returns>
     /// <exception cref="ArgumentException">
-    /// Thrown when a service spec has both <see cref="ServiceSpec.Image"/> and
-    /// <see cref="ServiceSpec.Project"/> set, when a dependency type is unrecognised, or when a
-    /// declared server artefact cannot be resolved (REQ-016).
+    /// Thrown by <b>every</b> eager, pre-<see cref="MappedTopology.Configure"/> authoring check in
+    /// this method — service and dependency shape, image and version resolution,
+    /// <c>imagePullPolicy</c>, <c>security.endpoint</c> and health-check port selection, the
+    /// service and dependency <c>env:</c> reference rules, the dependency engine-set-name refusal
+    /// (REQ-004, see <see cref="s_engineSetEnvKeys"/>), and server-artefact resolution (REQ-016).
+    /// <para>
+    /// That is stated as a property rather than enumerated deliberately. An earlier revision of
+    /// this tag listed eight causes "in the order the passes run"; the list was short by five and
+    /// the ordering claim was wrong (env-level <c>imagePullPolicy</c> parses BEFORE both
+    /// <c>env:</c> passes, not after them). A closed-looking enumeration on a contract
+    /// <c>ScenarioRunner</c> catches against is worse than no enumeration, because it invites a
+    /// reader to treat an absent cause as impossible — and nothing makes the list go red when a
+    /// ninth check is added. If you need the current set, grep for <c>throw new
+    /// ArgumentException</c> in this method AND in the validators it calls — <c>ValidateEnvValue</c>
+    /// and <c>ParseImagePullPolicy</c> here, and <c>ServerArtifactInjection</c> in its own file.
+    /// This method's own body raises none of the <c>env:</c>-reference, <c>imagePullPolicy</c> or
+    /// server-artefact faults directly, so grepping it alone would miss three of the categories
+    /// named above.
+    /// </para>
+    /// Every one of these is an authoring fault, which is why <c>ScenarioRunner</c> classifies an
+    /// <see cref="ArgumentException"/> out of this method as Inconclusive rather than
+    /// EnvironmentError (§12.1).
     /// </exception>
     public static MappedTopology Map(
         EnvironmentSpec? env,
@@ -1072,8 +1069,23 @@ public static class EnvironmentMapper
         //     never delivered.
         // `${env:NAME}` behaves exactly as it does for a service, from this same pass.
         //
-        // Engine-set names are NOT refused here — that is REQ-004's job. They are skipped, with a
-        // warning, below; see s_engineSetEnvKeys.
+        // Engine-set names are not refused HERE, but they ARE refused: the per-type reserved-name
+        // check is the separate loop below, over the same dependencies; see s_engineSetEnvKeys.
+        //
+        // The two loops are deliberately NOT collapsed into one. This pass runs to completion
+        // first — over EVERY dependency, before the reserved-name loop sees its first one — so a
+        // document carrying both faults throws the SECRET diagnostic: the author is told they put
+        // a secret in a container's environment, which is the more serious of the two faults,
+        // rather than merely that a variable is not theirs to set.
+        //
+        // Pinned by two tests, both of which declare a reserved-but-clean key BEFORE the
+        // secret-bearing one so that a collapsed loop reports the COLLISION and goes red — within
+        // one dependency by
+        // Map_DependencyEnv_SecretReferenceOnAReservedKey_ReportsTheSecretFaultNotTheCollision,
+        // and across two by
+        // Map_DependencyEnv_ReservedCollisionOnAnEarlierDependency_StillReportsTheSecretFault
+        // (which is what makes THIS pass's "every dependency first" span, not merely its
+        // per-key precedence, the thing under test).
         foreach (var (dependencyName, spec) in env.Dependencies ?? new Dictionary<string, DependencySpec>())
         {
             if (spec.Env is null)
@@ -1100,17 +1112,23 @@ public static class EnvironmentMapper
         var services = env.Services ?? new Dictionary<string, ServiceSpec>();
         var dependencies = env.Dependencies ?? new Dictionary<string, DependencySpec>();
 
-        // dependency-env REQ-003: partition every dependency's `env:` into the keys this mapper
-        // will actually apply and the engine-set names it will SKIP, eagerly — the inputs are
-        // spec.Type and the key set, both known here, so there is no reason to defer it into the
-        // Configure closure and every reason not to (Map() is eager by discipline, and the
-        // warning must reach the author even on a run that never gets as far as a container).
+        // dependency-env REQ-004: REFUSE every dependency `env:` key the engine sets for that
+        // dependency's own `type:`, eagerly — the inputs are spec.Type and the key set, both known
+        // here, so there is no reason to defer it into the Configure closure and every reason not
+        // to (Map() is eager by discipline, and the refusal must reach the author on a run that
+        // never gets as far as a container).
         //
-        // Aspire's WithEnvironment is LAST-WRITE-WINS, so applying the author's map after the
-        // registration lambda would let it replace an engine value the engine also advertises to
-        // every OTHER scenario through `${conn:...}`. Engine-wins is delivered by never writing
-        // the key. The skip is INTERIM: REQ-004 (T4) turns it into a refusal.
-        var warnings = new List<string>();
+        // Why a refusal and not an ordering. Aspire's WithEnvironment is LAST-WRITE-WINS, so
+        // applying the author's map after the registration lambda would let it replace an engine
+        // value the engine also advertises to every OTHER scenario through `${conn:...}`. The
+        // interim shipped in T3 delivered engine-wins by silently dropping the key with a warning;
+        // an author who writes ES_JAVA_OPTS and gets a green suite in which nothing happened is
+        // the schema-acceptance-is-not-execution failure this feature exists to avoid reproducing,
+        // so the entry is now refused outright and the suite never starts a container.
+        //
+        // ArgumentException out of Map is classified Inconclusive (§12.1: an authoring fault, not
+        // an infrastructure one) by ScenarioRunner — the same classification every other eager
+        // authoring check in this method gets, and no new machinery.
         var dependencyEnvToApply = new Dictionary<string, IReadOnlyDictionary<string, string>>(
             StringComparer.Ordinal);
         foreach (var (name, spec) in dependencies)
@@ -1120,38 +1138,49 @@ public static class EnvironmentMapper
                 continue;
             }
 
-            if (!s_engineSetEnvKeys.TryGetValue(spec.Type, out var reservedForType))
+            if (s_engineSetEnvKeys.TryGetValue(spec.Type, out var reservedForType))
             {
-                // The ten types this mapper sets nothing on: apply the author's map verbatim.
-                dependencyEnvToApply[name] = spec.Env;
-                continue;
-            }
-
-            var applied = new Dictionary<string, string>(StringComparer.Ordinal);
-            foreach (var (key, value) in spec.Env)
-            {
-                if (reservedForType.Contains(key))
+                foreach (var key in spec.Env.Keys)
                 {
-                    // NEVER a silent skip. An author who writes ES_JAVA_OPTS and gets a green
-                    // suite in which nothing happened is the schema-acceptance-is-not-execution
-                    // failure this feature exists to avoid reproducing.
-                    RecordWarning(
-                        warnings,
-                        $"Dependency '{name}' (type '{spec.Type}') declares env entry '{key}', " +
-                        "which the engine sets itself for this dependency type. The engine's " +
-                        "value is kept and the declared one is IGNORED — the engine relies on " +
-                        "its engine-set variables to bring this dependency up in the shape " +
-                        "every scenario shares, so overriding one would break other " +
-                        "scenarios rather than only this dependency. Remove the entry, or " +
-                        "declare the backend as a service with 'image:' if you need full " +
-                        "control of its environment.");
-                    continue;
-                }
+                    if (!reservedForType.Contains(key))
+                    {
+                        continue;
+                    }
 
-                applied[key] = value;
+                    // The author's VALUE is deliberately absent from this message: two of the
+                    // nine reserved names are passwords, and a diagnostic that echoed the
+                    // rejected value would put author-supplied credential material into every
+                    // log and report that carries the failure.
+                    //
+                    // The credential clause is SCOPED TO minio, and that scope is measured, not
+                    // stylistic. Only MINIO_ROOT_USER/MINIO_ROOT_PASSWORD are spliced into a
+                    // connection string `${conn:...}` hands to other scenarios (see the "minio"
+                    // registration's depConnBuilders lambda above). elasticsearch's four names are
+                    // host/port-only (s_hostPortOnlyParts), and the azureservicebus emulator's
+                    // connection string is a fixed
+                    // 'Endpoint=sb://…;SharedAccessKey=SAS_KEY_VALUE;…' in which none of ACCEPT_EULA
+                    // / MSSQL_SA_PASSWORD / SQL_SERVER appears. An unscoped "some of them carry the
+                    // credentials" handed an elasticsearch author refused for ES_JAVA_OPTS an
+                    // argument with no bearing on their case. The load-bearing clause — "the shape
+                    // every scenario shares" — is true for all nine and carries the message alone.
+                    // Matches the wording shipped in the DSL spec, common-patterns and CHANGELOG.
+                    throw new ArgumentException(
+                        $"Dependency '{name}' (type '{spec.Type}') declares env entry '{key}', " +
+                        "which the engine sets itself for this dependency type. That entry is " +
+                        "REFUSED: the engine relies on its engine-set variables to bring this " +
+                        "dependency up in the shape every scenario shares — and on 'minio' they " +
+                        "are the credentials ${conn:<dependency>} advertises to every other " +
+                        "scenario consuming it — so honouring an override would break other " +
+                        "scenarios rather than only this one. Remove the entry, or declare the " +
+                        "backend as a service with 'image:' if you need full control of its " +
+                        "environment.",
+                        nameof(env));
+                }
             }
 
-            dependencyEnvToApply[name] = applied;
+            // Nothing is dropped any more: every key that survives the refusal above is applied
+            // verbatim, on the ten types with no reserved names and the three with them alike.
+            dependencyEnvToApply[name] = spec.Env;
         }
 
         // Effective per-service pull policy: the service's own override when set (parsed, and
@@ -1253,9 +1282,9 @@ public static class EnvironmentMapper
                 // dependency-env REQ-003. Applied to the dependency's OWN container, resolved by
                 // name — deliberately NOT to `retained`, which for the four database-backed types
                 // is the AddDatabase child and does not implement IResourceWithEnvironment.
-                // The map here is already partitioned: engine-set names were dropped (with a
-                // warning) in Map's eager pass, and s_noEnvAccess is safe because that same pass
-                // refused every `${conn:...}` on a dependency outright.
+                // The map here has already cleared Map's eager passes: an engine-set name for
+                // this dependency's type refused the suite outright (REQ-004), and s_noEnvAccess
+                // is safe because the same passes refused every `${conn:...}` on a dependency.
                 if (dependencyEnvToApply.TryGetValue(name, out var dependencyEnv) &&
                     dependencyEnv.Count > 0)
                 {
@@ -1499,10 +1528,7 @@ public static class EnvironmentMapper
             Configure: configure,
             ResolveServices: resolveServices,
             HealthGateResourceNames: healthGateNames,
-            DependencyNames: dependencies.Keys.ToList())
-        {
-            Warnings = warnings,
-        };
+            DependencyNames: dependencies.Keys.ToList());
     }
 
     /// <summary>
@@ -1715,16 +1741,20 @@ public static class EnvironmentMapper
     /// The environment-variable NAMES this mapper's own dependency registrations set, keyed by
     /// dependency <c>type:</c> — the author-addressable half of the dependency-env spec's
     /// "The reserved set" table (nine names across three types).  A dependency <c>env:</c> key
-    /// listed here for its own type is NOT applied, so the engine's value survives.
+    /// listed here for its own type is REFUSED (REQ-004): <see cref="Map"/> throws before any
+    /// container starts, naming the variable, the dependency and the type.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <b>Why a skip and not an ordering.</b>  Aspire's <c>WithEnvironment</c> registers an
+    /// <b>Why a refusal and not an ordering.</b>  Aspire's <c>WithEnvironment</c> registers an
     /// <c>EnvironmentCallbackAnnotation</c>; the callbacks run in registration order and write
     /// into ONE dictionary, so the LAST write wins.  Applying the author's map after
     /// <c>DependencyRegistration.Build</c> therefore lets the author silently replace an engine
     /// value that the engine also advertises to every other scenario through
-    /// <c>${conn:...}</c>.  "Engine wins" is delivered by never writing the key at all.
+    /// <c>${conn:...}</c>, and no ordering of the two writes can deliver "engine wins".  T3
+    /// delivered it by never writing the key (a warned skip); REQ-004 tightened that to a refusal,
+    /// because a variable an author declared and the engine silently discarded is the
+    /// schema-acceptance-is-not-execution shape this feature exists to avoid reproducing.
     /// </para>
     /// <para>
     /// <b>NAMES only, never values.</b>  Each engine value keeps a single source in its own
@@ -1733,19 +1763,18 @@ public static class EnvironmentMapper
     /// </para>
     /// <para>
     /// <b>Per type, not global.</b>  A name reserved for <c>elasticsearch</c> is unreserved on
-    /// <c>postgres</c>.  The ten types with no entry here skip nothing.
+    /// <c>postgres</c>.  The ten types with no entry here reserve nothing, and every one of the
+    /// nine names is asserted APPLIED on a type that does not reserve it — without that half the
+    /// check would degrade to a global denylist.
     /// </para>
     /// <para>
-    /// <b>Matching is ordinal and case-sensitive</b>, because container environment variables are
-    /// case-sensitive on Linux: folding case would suppress a legitimately distinct variable.
-    /// That is a property of THIS SKIP, pinned by the <c>es_java_opts</c> row of
-    /// <c>Map_DependencyEnv_NonReservedKey_IsStillApplied</c>: flip the per-type NAME set's
-    /// comparer below (the <see cref="HashSet{T}"/> one — not the outer type-keyed
+    /// <b>Matching is ordinal and case-sensitive</b> (EDGE-005), because container environment
+    /// variables are case-sensitive on Linux: folding case would refuse a legitimately distinct
+    /// variable.  Both directions are asserted — <c>es_java_opts</c> on <c>elasticsearch</c> is
+    /// applied, <c>ES_JAVA_OPTS</c> on <c>elasticsearch</c> is refused.  Flip the per-type NAME
+    /// set's comparer below (the <see cref="HashSet{T}"/> one — not the outer type-keyed
     /// <see cref="Dictionary{TKey, TValue}"/>'s, which governs <c>type:</c> lookup) to
-    /// <see cref="StringComparer.OrdinalIgnoreCase"/> and, measured, exactly that one row of the
-    /// twenty-two <c>Map_DependencyEnv</c> tests goes red.  It is deliberately NOT cited as
-    /// EDGE-005: that spec item is about the applied path and asks for both directions to be
-    /// asserted, which is REQ-004's slice, not this one.
+    /// <see cref="StringComparer.OrdinalIgnoreCase"/> and the lower-case row goes red.
     /// </para>
     /// <para>
     /// <b>Boundary.</b>  This covers what THIS FILE sets.  Aspire's own <c>AddPostgres</c> /
@@ -2503,35 +2532,6 @@ public static class EnvironmentMapper
     }
 
     /// <summary>
-    /// Records a non-fatal, author-facing diagnostic: appends it to
-    /// <see cref="MappedTopology.Warnings"/>'s backing list AND writes it to
-    /// <see cref="Console.Error"/>, from ONE message source.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// <b>Why this shape, stated plainly rather than dressed up.</b>  This engine has no
-    /// author-facing warning channel at all: <c>src/Engine</c> contains no <c>ILogger</c> call
-    /// site (<c>HeadlessTopology</c> only configures log-level FILTERS, and its own comment
-    /// records why an ad-hoc logger call is not worth the CA1848 ceremony), no console write, and
-    /// <c>IStepEventSink</c> is a step-scoped contract frozen at v1 that lives in an assembly
-    /// <c>Vouchfx.Engine.Orchestration</c> cannot reach a sink for — <see cref="Map"/> is a static
-    /// method with no sink parameter.  Inventing a diagnostics subsystem is out of proportion to
-    /// one interim skip that REQ-004 turns into a throw.
-    /// </para>
-    /// <para>
-    /// So: the console write is what actually reaches the author (stderr, never stdout, which the
-    /// terminal renderer owns), and the recorded string is what a test — and, later, a renderer —
-    /// can assert on without capturing process-global console state.  One message, two
-    /// destinations; the message itself is written once, here.
-    /// </para>
-    /// </remarks>
-    private static void RecordWarning(List<string> warnings, string message)
-    {
-        warnings.Add(message);
-        Console.Error.WriteLine("vouchfx: warning: " + message);
-    }
-
-    /// <summary>
     /// Resolves the resource builder a managed dependency's own <c>env:</c> is applied to: the
     /// single <see cref="ContainerResource"/> named exactly the declared dependency name.
     /// </summary>
@@ -2602,8 +2602,8 @@ public static class EnvironmentMapper
     /// <param name="builder">The resource whose environment the mapping is written to.</param>
     /// <param name="env">
     /// The mapping to apply, or <see langword="null"/> when the owner declared none.  For a
-    /// DEPENDENCY this is already partitioned by <see cref="Map"/>'s eager pass — engine-set
-    /// names have been dropped (with a warning) and never reach here.
+    /// DEPENDENCY it has already cleared <see cref="Map"/>'s eager passes — an engine-set name
+    /// for that dependency's type refused the suite outright, so none reaches here.
     /// </param>
     /// <param name="envAccessByDependency">
     /// The <c>${conn:...}</c> accessor table, or <see cref="s_noEnvAccess"/> for a DEPENDENCY,
