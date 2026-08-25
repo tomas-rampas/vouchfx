@@ -93,12 +93,16 @@ environment:
         ES_JAVA_OPTS: "-Xms2g -Xmx2g"       # ✅ applied — nothing reserves it on postgres
 ```
 
-The check is per type, not a global denylist. What you get on the refused line, before any container starts:
+The check is per type, not a global denylist. The diagnostic on the refused line, in full, before any container starts:
 
 ```
 Dependency 'search' (type 'elasticsearch') declares env entry 'ES_JAVA_OPTS', which the
-engine sets itself for this dependency type. That entry is REFUSED: … Remove the entry, or
-declare the backend as a service with 'image:' if you need full control of its environment.
+engine sets itself for this dependency type. That entry is REFUSED: the engine relies on
+its engine-set variables to bring this dependency up in the shape every scenario shares —
+and on 'minio' they are the credentials ${conn:<dependency>} advertises to every other
+scenario consuming it — so honouring an override would break other scenarios rather than
+only this one. Remove the entry, or declare the backend as a service with 'image:' if you
+need full control of its environment.
 ```
 
 That last clause is the escape hatch. If you genuinely need to own every variable on a backend, declare it under `services:` with an `image:` — you then get full control, and full responsibility for its wiring.
