@@ -93,7 +93,7 @@ environment:
         ES_JAVA_OPTS: "-Xms2g -Xmx2g"       # ✅ applied — nothing reserves it on postgres
 ```
 
-The check is per type, not a global denylist. The diagnostic on the refused line, in full, before any container starts:
+The check is per type, not a global denylist. The whole diagnostic on the refused line, before any container starts — the engine emits it as a single line, wrapped here to fit:
 
 ```
 Dependency 'search' (type 'elasticsearch') declares env entry 'ES_JAVA_OPTS', which the
