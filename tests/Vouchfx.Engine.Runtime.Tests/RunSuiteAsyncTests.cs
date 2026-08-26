@@ -264,9 +264,31 @@ public sealed class RunSuiteAsyncTests
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The two halves of <c>Assure</c> read the document through DIFFERENT parsers — the walk
-    /// through YamlDotNet's RepresentationModel, the schema door through YamlDotNet's deserialiser
-    /// — and a RepresentationModel key lookup compares a scalar's TAG as well as its value. An
+    /// <strong>The ORIGINAL anchoring argument is now obsolete, and the guarantee is not.</strong>
+    /// This row was written because the two halves of <c>Assure</c> read the document through
+    /// DIFFERENT parsers whose key lookups disagreed: an explicitly tagged root key
+    /// (<c>!!str environment:</c>) bound no environment for the walk while the schema still
+    /// reported an error AT the declared block, so skipping validation on a null environment would
+    /// have answered <c>SecurityAssurance.None</c> — exit 0 on a rejected security declaration,
+    /// the hole issue #411 closed. #417 removed that disagreement at its source, so this input no
+    /// longer demonstrates it.
+    /// </para>
+    /// <para>
+    /// <strong>It still demonstrates the contract, for a reason that was always the stronger
+    /// one:</strong> the walk seeing an <c>environment</c> block does not mean the walk can
+    /// adjudicate the <c>security</c> node inside it. The schema door is the engine's only
+    /// spelling of "this declaration is rejected", and <c>Assure</c> must therefore call it
+    /// unconditionally — which is exactly what the two assertions at the foot of this test pin.
+    /// Do not re-derive the skip from the walk's result under any phrasing.
+    /// </para>
+    /// <para>
+    /// Retained rather than deleted BECAUSE its premise moved: a row whose setup no longer
+    /// reproduces the original hazard, but whose guarantee is unchanged, is the row most likely to
+    /// be quietly dropped in a later cleanup. The historical account above is why it stays.
+    /// </para>
+    /// <para>
+    /// Superseded detail, kept for the record: a RepresentationModel key lookup compared a
+    /// scalar's TAG as well as its value. An
     /// explicitly tagged root key (<c>!!str environment:</c>) therefore binds no environment for
     /// the walk while the schema still reports an error AT the declared block. Skipping the
     /// validation on a null environment would answer <c>SecurityAssurance.None</c> for this
@@ -293,8 +315,13 @@ public sealed class RunSuiteAsyncTests
         var registry = StepKindRegistry.BuildAndFreeze(ProviderAssemblies);
         var document = YamlDocumentParser.Parse(yaml);
 
-        // The walk sees nothing: this is exactly the input the proposed skip would have keyed on.
-        Assert.Null(document.Environment);
+        // THE WALK NOW SEES THE BLOCK, and that is #417's fix, not a regression in this row.
+        // This assertion used to be `Assert.Null(document.Environment)` — it pinned the DIVERGENCE
+        // as its premise: the RepresentationModel lookup compared a scalar's tag as well as its
+        // value, so an explicitly tagged root key bound nothing for the walk while the schema's own
+        // front-end saw the block. YamlDocumentParser.TryGetNode now compares keys by value, which
+        // is what YAML means, so both front-ends agree and the premise is simply false.
+        Assert.NotNull(document.Environment);
 
         // …and it is genuinely an unbuilt document — parsed, then refused by AstBuilder.
         Assert.ThrowsAny<Exception>(() => AstBuilder.Build(document, registry));

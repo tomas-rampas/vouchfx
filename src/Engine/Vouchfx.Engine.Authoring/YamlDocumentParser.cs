@@ -1191,10 +1191,37 @@ public static class YamlDocumentParser
     /// </summary>
     private static bool TryGetNode(YamlMappingNode mapping, string key, out YamlNode node)
     {
-        var scalarKey = new YamlScalarNode(key);
-        if (mapping.Children.TryGetValue(scalarKey, out node!))
+        // COMPARED BY VALUE, NEVER BY NODE IDENTITY (#417).
+        //
+        // YamlScalarNode's equality includes its Tag, and `new YamlScalarNode(key)` carries the
+        // non-specific tag `?`. A document writing an explicitly tagged key — `!!str environment:`,
+        // legal YAML, tag `tag:yaml.org,2002:str` — therefore did not match, and the whole block
+        // bound as ABSENT. Meanwhile the schema validator's front-end (the YamlDotNet deserialiser,
+        // via SchemaResources.ConvertYamlToJsonDocument) does not compare tags, saw the block, and
+        // reported errors inside it. One half of the engine said the block was missing; the other
+        // said it was present and malformed.
+        //
+        // Value comparison is what YAML itself means, not a workaround: a plain `environment`
+        // resolves to tag:yaml.org,2002:str, so the two spellings are the SAME key and the tag is
+        // no part of a string key's identity. BuildExtraNode above already compares this way, so
+        // this makes one file agree with itself as well as with the other front-end.
+        //
+        // THE HAZARD THIS REMOVES IS A REASONING ONE, and it is why this was worth fixing rather
+        // than pinning. With the two front-ends disagreeing, any future code reasoning "the parser
+        // found no X, so the schema cannot have an error under X" is wrong — and wrong invisibly.
+        // A reviewer proposed exactly that optimisation on UnbuiltDocument.Assure's unconditional
+        // schema call; with the skip applied the CLI suite still passed 513/513.
+        //
+        // O(n) over a mapping's children rather than O(1). These mappings hold a handful of keys
+        // (four at the document root), so the scan is not measurable against correctness.
+        foreach (var (candidate, candidateValue) in mapping.Children)
         {
-            return true;
+            if (candidate is YamlScalarNode { Value: { } candidateKey }
+                && string.Equals(candidateKey, key, StringComparison.Ordinal))
+            {
+                node = candidateValue;
+                return true;
+            }
         }
 
         node = null!;
