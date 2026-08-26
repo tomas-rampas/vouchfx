@@ -232,6 +232,10 @@ public sealed class HtmlRenderer
                             var scenarioId = GetStr(envelope, "scenarioId") ?? "(unknown)";
                             var scenario = model.GetOrAddScenario(envelope.RunId, scenarioId);
                             scenario.Verdict = GetStr(envelope, "verdict");
+
+                            // #372. Read tolerantly (§14): absent on an ordinary pass and on any
+                            // stream an older engine wrote, in which case nothing is rendered.
+                            scenario.Message = GetStr(envelope, "message");
                             scenario.DurationMs = GetLong(envelope, "durationMs");
                             scenario.Counts = ReadCounts(envelope);
                             break;
@@ -350,6 +354,9 @@ public sealed class HtmlRenderer
         // is defence-in-depth so an ORPHAN .verdict span — one outside any verdict-X
         // ancestor — never renders as default-on-default and loses contrast (WCAG 1.4.3).
         output.WriteLine(".verdict { font-weight: 700; font-family: monospace; padding: 0.05rem 0.4rem; border-radius: 3px; color: #1a1a1a; background: #f0f0f0; }");
+        // #372: the scenario-level cause. Monospace and wrapping, because it is engine diagnostic
+        // text that can be long and can carry a YAML path; pre-wrap keeps its own line breaks.
+        output.WriteLine(".scenario-message { font-family: monospace; font-size: 0.9rem; white-space: pre-wrap; overflow-wrap: anywhere; background: #f7f7f7; border-left: 3px solid #cccccc; padding: 0.4rem 0.6rem; margin: 0.5rem 0; }");
         // verdict-pass: solid left rule + check symbol via ::before, dark-on-light text.
         output.WriteLine(".verdict-pass { border-left-color: #1b7f3b; }");
         output.WriteLine(".verdict-pass .verdict { color: #0f5d29; background: #e6f4ea; }");
@@ -463,6 +470,21 @@ public sealed class HtmlRenderer
             HtmlEscape(scenario.ScenarioId),
             HtmlEscape(scenario.Verdict ?? "(unknown)"),
             HtmlEscape(durationSuffix)));
+
+        // #372: the engine's own cause, rendered beside the verdict. A scenario refused before
+        // the topology has NO steps, so without this the section was a heading and nothing else —
+        // the HTML report existing precisely so a maintainer need not read console logs.
+        //
+        // HtmlEscape, not DisplaySanitiser: the text may echo author-controlled YAML, and escaping
+        // is what makes it inert in THIS format. It is already scrubbed of secrets by the producer
+        // before it was stamped onto the record.
+        if (!string.IsNullOrEmpty(scenario.Message))
+        {
+            output.WriteLine(string.Format(
+                CultureInfo.InvariantCulture,
+                "<p class=\"scenario-message\">{0}</p>",
+                HtmlEscape(scenario.Message)));
+        }
 
         foreach (var step in scenario.Steps)
         {
@@ -1123,6 +1145,9 @@ public sealed class HtmlRenderer
         public long? DurationMs { get; set; }
 
         public (int Pass, int Fail, int EnvError, int Inconclusive) Counts { get; set; }
+
+        /// <summary>The scenario-level cause, when the stream carried one (#372).</summary>
+        public string? Message { get; set; }
 
         public List<StepModel> Steps { get; } = new();
     }

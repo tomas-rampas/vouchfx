@@ -2330,6 +2330,23 @@ public static class ScenarioRunner
                     ScenarioId = name,
                     Verdict = earlyVerdict!.Value,
                     Counts = CountsFor(earlyVerdict.Value),
+
+                    // #372: the cause reaches the WRITTEN artefacts, not only the terminal.
+                    //
+                    // Carried whether or not the terminal print below is suppressed. Suppression
+                    // exists so ONE suite-level fact is not printed N times; it says nothing about
+                    // whether the record should carry the cause, and every scenario stamped with a
+                    // suite-level abort has exactly that text as its own cause. Passing
+                    // `alreadyPrintedMessage` here instead would blank the artefact for precisely
+                    // the runs that most need explaining.
+                    //
+                    // NOT sanitised: DisplaySanitiser is terminal hygiene (control bytes, ANSI
+                    // sequences) and the renderers do their own escaping for their own formats —
+                    // JunitXmlRenderer XML-escapes, HtmlRenderer HTML-escapes. Sanitising here
+                    // would corrupt the text for both. It IS already scrubbed of secrets: every
+                    // producer of an EarlyMessage scrubs through the run ledger before stamping,
+                    // which is the property that matters on a channel written to disk.
+                    Message = string.IsNullOrEmpty(earlyMessage) ? null : earlyMessage,
                 }),
             };
 

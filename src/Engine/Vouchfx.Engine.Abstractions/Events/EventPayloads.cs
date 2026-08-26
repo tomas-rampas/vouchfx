@@ -542,6 +542,46 @@ public sealed record ScenarioCompletedEvent
     /// </summary>
     [JsonPropertyName("counts")]
     public required VerdictCounts Counts { get; init; }
+
+    /// <summary>
+    /// The scenario-level cause, when the engine has one to give: a schema rejection, a
+    /// secret-reference failure, a security preflight refusal, a suite-level abort stamped onto
+    /// every scenario it affected. Omitted from the wire when <see langword="null"/>, which is
+    /// every ordinary pass.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Additive, optional, and a deliberate change to the frozen v1 event-wire contract
+    /// (#372).</strong> The freeze forbids renaming a property, changing a CLR type, or changing a
+    /// <c>[JsonPropertyName]</c> — all of which break every consumer. It does not forbid adding an
+    /// optional field: §14 requires renderers to tolerate unknown fields, so an older consumer
+    /// reading a stream carrying this simply does not see it, and a stream with nothing to report
+    /// is byte-identical to before because <c>null</c> is omitted. The golden gate exists to make
+    /// such a change deliberate rather than to forbid it, and its line was regenerated through the
+    /// documented flag with the one-line diff reviewed.
+    /// </para>
+    /// <para>
+    /// <strong>Why the artefacts needed it.</strong> Before this, no written channel carried a
+    /// scenario-level cause at all: <c>EarlyMessage</c> had exactly one consumer — the terminal —
+    /// while JUnit's message was built from the scenario id, verdict token and counts, and the
+    /// HTML renderer read a message only from <c>environment-error</c> events. A maintainer
+    /// triaging from a JUnit publisher UI — the artefact existing precisely so they need not read
+    /// console logs — saw <c>Scenario 'a' INCONCLUSIVE (pass=0 fail=0 …)</c> and could not tell a
+    /// suite the engine REJECTED from one whose scenarios were legitimately skipped.
+    /// </para>
+    /// <para>
+    /// <strong>This is not the <c>scenarioId</c>-on-step-events precedent.</strong> That one was
+    /// frozen OUT deliberately and must stay out: the renderer's <c>(runId,stepId)</c> cache
+    /// already disambiguates aggregated streams, so it was redundant. This field is not
+    /// obtainable from anything else on the wire.
+    /// </para>
+    /// <para>
+    /// Carries text that may originate in author-controlled YAML, so producers scrub it through
+    /// the run's secret ledger BEFORE it reaches this record, exactly as the terminal path does.
+    /// </para>
+    /// </remarks>
+    [JsonPropertyName("message")]
+    public string? Message { get; init; }
 }
 
 // ---------------------------------------------------------------------------

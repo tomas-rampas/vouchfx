@@ -1111,27 +1111,33 @@ public sealed class RunSuiteAsyncTests
             Assert.Contains("errors=\"1\"", xml, StringComparison.Ordinal);
             Assert.Contains("<testcase name=\"secured-suite\"", xml, StringComparison.Ordinal);
 
-            // #407's acceptance has two halves and only one is deliverable HERE.
-            //
-            // The artefacts now EXIST — asserted above, and that is this fix. They do not yet NAME
-            // the failure, and that is not an oversight in this change: the cause IS stamped onto
-            // every scenario's record, but as CompleteWithoutTopologyAsync's own remarks state,
-            // `EarlyMessage` has exactly one consumer (its terminal-suppression check) and
-            // `ScenarioCompletedEvent` carries no message field, so NO artefact channel carries a
-            // scenario-level message at all. That is #372, and it is shared by all four seams
-            // rather than peculiar to this one — the three sibling tests above assert artefact
-            // existence and shape for exactly the same reason.
-            //
-            // Asserting the marker in the JUnit XML would be worse than failing: its
-            // <error message> is a deliberate shape-only summary (verdict token, scenario id,
-            // counts) because §17 bars observations and values from the renderers, so a passing
-            // assertion there would pin a §17 violation. When #372 lands, the naming assertion
-            // belongs on the stream, and this comment is the note to add it.
+            // #407's acceptance, BOTH halves. The artefacts exist (above) and they NAME the
+            // failure (here) — the second half arriving with #372, which added the optional
+            // `message` field to ScenarioCompletedEvent and taught both renderers to read it.
+            // Before that, no artefact channel carried a scenario-level message for ANY of the
+            // four seams, so this row could only assert the terminal.
             var eventLines = File.ReadAllLines(eventsPath);
             Assert.Contains(eventLines, line => line.Contains("scenario-started", StringComparison.Ordinal));
             Assert.Contains(eventLines, line => line.Contains("scenario-completed", StringComparison.Ordinal));
 
-            // The cause DOES reach the terminal, which is the one channel that carries it today.
+            // The cause reaches the WRITTEN stream, which is the artefact a CI job archives.
+            Assert.Contains(
+                eventLines,
+                line => line.Contains("scenario-completed", StringComparison.Ordinal)
+                        && line.Contains(TopologyFailureMarker, StringComparison.Ordinal));
+
+            // …and the JUnit report, which is what a publisher UI shows a maintainer. Parsed
+            // rather than substring-matched: the renderer XML-escapes, so the document holds
+            // `&apos;` where the marker has an apostrophe (this marker has none, but the
+            // surrounding message can) and a raw substring assertion would be fragile.
+            var errorMessage = System.Xml.Linq.XDocument.Load(junitPath)
+                .Descendants("error")
+                .Single()
+                .Attribute("message")!
+                .Value;
+            Assert.Contains(TopologyFailureMarker, errorMessage, StringComparison.Ordinal);
+
+            // Still on the terminal too, exactly once.
             Assert.Contains(TopologyFailureMarker, sw.ToString(), StringComparison.Ordinal);
 
             // Verdict and assurance are UNCHANGED by the reroute — only the artefacts are new.
