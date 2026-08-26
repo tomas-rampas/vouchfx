@@ -1292,7 +1292,7 @@ public static class ScenarioRunner
                 // THE SCENARIO LIST IS BUILT FROM THE PARAMETERS, NOT FROM `compilations`, and that
                 // is forced rather than chosen: this guard runs ABOVE the compilation loop, so
                 // there is nothing compiled to stamp. Moving the guard below that loop would have
-                // let it share StampInconclusiveWhereUnjudged with its neighbours — and would have
+                // let it share StampWhereUnjudged with its neighbours — and would have
                 // changed which diagnostic an author sees first, trading a reporting gap for a
                 // behaviour change. The list is therefore synthesised here, in declaration order,
                 // with the suite-level verdict and cause on every scenario, which is exactly what
@@ -1501,12 +1501,12 @@ public static class ScenarioRunner
             // Issue #266, Item 4: the message splices scenario names straight from untrusted YAML.
             // Printed HERE, once, for the suite; the completion path is told what was printed so it
             // does not repeat it when it walks the per-scenario messages (see MAJOR-3's note on
-            // StampInconclusiveWhereUnjudged).
+            // StampWhereUnjudged).
             await output.WriteLineAsync(DisplaySanitiser.SanitiseForDisplay(divergence))
                 .ConfigureAwait(false);
 
             return await CompleteWithoutTopologyAsync(
-                    StampInconclusiveWhereUnjudged(compilations, divergence),
+                    StampWhereUnjudged(compilations, Verdict.Inconclusive, divergence),
                     WithUnbuiltDocuments(assurance.Refusing(SecurityAbortKind.AuthoringFault)),
                     output,
                     decorate,
@@ -1618,7 +1618,7 @@ public static class ScenarioRunner
             // shared-`environment` divergence door above — same defect, same reason it takes
             // unsecured scenarios to see it.
             return await CompleteWithoutTopologyAsync(
-                    StampInconclusiveWhereUnjudged(compilations, protocolConflict),
+                    StampWhereUnjudged(compilations, Verdict.Inconclusive, protocolConflict),
                     WithUnbuiltDocuments(assurance.Refusing(SecurityAbortKind.AuthoringFault)),
                     output,
                     decorate,
@@ -1734,9 +1734,17 @@ public static class ScenarioRunner
             // `runSecretLedger`. DisplaySanitiser alone would not redact it: it neutralises
             // control bytes and ANSI sequences, so an ordinary printable passphrase passes
             // through unchanged.
-            await output.WriteLineAsync(
-                DisplaySanitiser.SanitiseForDisplay(
-                    runSecretLedger.Scrub($"RunSuiteAsync: topology failed to start — {oex.Message}")))
+            // SCRUBBED here, SANITISED at the print — the two are not interchangeable and the
+            // split matches the protocol-conflict seam above. Scrubbing is the security
+            // requirement (REQ-010): it removes a resolved `clientKeyPassword` that reached
+            // oex.Info.Detail, and the stamped cause below carries this text onto every scenario
+            // record, into --junit/--html/--events, so it must be scrubbed BEFORE it is stamped.
+            // Sanitising is display hygiene (#266 Item 4) — it neutralises control bytes and ANSI
+            // sequences for a terminal, and would not redact an ordinary printable passphrase.
+            var topologyFailure =
+                runSecretLedger.Scrub($"RunSuiteAsync: topology failed to start — {oex.Message}");
+
+            await output.WriteLineAsync(DisplaySanitiser.SanitiseForDisplay(topologyFailure))
                 .ConfigureAwait(false);
 
             // REQ-018: AT THIS CATCH, the classified kind on the exception is the whole
@@ -1755,16 +1763,43 @@ public static class ScenarioRunner
             // `Refusing` keeps the more consequential refusal, so a scenario already refused at a
             // compile-time door does not have its record overwritten by a topology that then
             // failed to come up.
-            var errVerdicts = compilations
-                .Select(c => (c.ScenarioName, Verdict.EnvironmentError))
-                .ToList();
-            return new SuiteResult(Verdict.EnvironmentError, errVerdicts)
-            {
-                Assurance = WithUnbuiltDocuments(assurance.Refusing(
-                    oex.Info.Kind == OrchestrationErrorKind.SecurityConfirmation
-                        ? SecurityAbortKind.ProbeUnconfirmed
-                        : SecurityAbortKind.TopologyUnavailable)),
-            };
+            // RETURNED THROUGH CompleteWithoutTopologyAsync, NOT AS A BARE SuiteResult (#407).
+            // This was the LAST of the four instances of the defect the two seams above diagnosed:
+            // a bare return skips the ScenarioStarted/Completed events, the --events-stream pump,
+            // the terminal render and FileReportWriter.WriteFileReports. Measured on a suite whose
+            // topology fails its health gate with --junit/--html/--events all requested: no
+            // `Scenario '<id>' started` line and not one of the three artefacts written.
+            //
+            // It mattered more here than at the other seams once a secured suite began exiting 3
+            // on this path: a red build sitting beside an empty results directory reads as a broken
+            // runner rather than a real refusal, so the failure was correct but unattributable.
+            //
+            // Verdict and exit code are UNCHANGED, exactly as at the seams above — the aggregate
+            // over N EnvironmentErrors is EnvironmentError, which is what the bare return said.
+            // Only the artefacts now exist. The stamp carries the suite-level cause onto every
+            // scenario that has no more specific message of its own, and `alreadyPrintedMessage`
+            // tells the completion path this text already reached the terminal, so the print above
+            // is not duplicated.
+            //
+            // The classified kind on the exception still decides the refusal, untouched: an
+            // unhealthy container, an unpullable image and an unrelated seed failure all record
+            // TopologyUnavailable and still exit 0 by default. That is #390, deliberately open —
+            // this change is about what a run REPORTS, not about what it exits.
+            return await CompleteWithoutTopologyAsync(
+                    StampWhereUnjudged(compilations, Verdict.EnvironmentError, topologyFailure),
+                    WithUnbuiltDocuments(assurance.Refusing(
+                        oex.Info.Kind == OrchestrationErrorKind.SecurityConfirmation
+                            ? SecurityAbortKind.ProbeUnconfirmed
+                            : SecurityAbortKind.TopologyUnavailable)),
+                    output,
+                    decorate,
+                    diffLookup,
+                    htmlReportPath,
+                    junitReportPath,
+                    eventsReportPath,
+                    eventsStreamPath,
+                    alreadyPrintedMessage: topologyFailure)
+                .ConfigureAwait(false);
         }
         finally
         {
@@ -2216,7 +2251,7 @@ public static class ScenarioRunner
     /// a verdict rather than that being read off the compilation loop: the all-early-verdict guard
     /// above; the two suite-level guards — base-directory divergence and protocol conflict — which
     /// STAMP Inconclusive onto the scenarios that compiled cleanly before calling (see
-    /// <see cref="StampInconclusiveWhereUnjudged"/>); and the shared-<c>environment</c> divergence
+    /// <see cref="StampWhereUnjudged"/>); and the shared-<c>environment</c> divergence
     /// guard, which runs ABOVE the compilation loop and therefore SYNTHESISES the whole list (see
     /// <see cref="EveryScenarioRefusedBeforeCompilation"/>). A caller that leaves an <c>EarlyVerdict</c>
     /// null gets an <see cref="InvalidOperationException"/> here, deliberately — <c>earlyVerdict</c>
@@ -2403,7 +2438,7 @@ public static class ScenarioRunner
     /// <param name="cause">The suite-level diagnostic, stamped as every scenario's own cause.</param>
     /// <remarks>
     /// <para>
-    /// The sibling of <see cref="StampInconclusiveWhereUnjudged"/> for the one guard that runs
+    /// The sibling of <see cref="StampWhereUnjudged"/> for the one guard that runs
     /// ABOVE the compilation loop (the shared-<c>environment</c> divergence guard) and therefore has
     /// no compilations to stamp. It is a separate helper rather than a parameterised stamp because
     /// the two take different inputs — that one refines a list, this one builds one — and because
@@ -2496,7 +2531,7 @@ public static class ScenarioRunner
         PipelineResult? Pipeline,
         Verdict? EarlyVerdict,
         string? EarlyMessage,
-        string? ScenarioBaseDirectory)> StampInconclusiveWhereUnjudged(
+        string? ScenarioBaseDirectory)> StampWhereUnjudged(
         IReadOnlyList<(
             string ScenarioName,
             ScenarioAst Ast,
@@ -2504,6 +2539,7 @@ public static class ScenarioRunner
             Verdict? EarlyVerdict,
             string? EarlyMessage,
             string? ScenarioBaseDirectory)> compilations,
+        Verdict verdict,
         string cause)
     {
         var stamped = new List<(
@@ -2521,7 +2557,7 @@ public static class ScenarioRunner
                 : (compilation.ScenarioName,
                    compilation.Ast,
                    compilation.Pipeline,
-                   Verdict.Inconclusive,
+                   verdict,
                    cause,
                    compilation.ScenarioBaseDirectory));
         }

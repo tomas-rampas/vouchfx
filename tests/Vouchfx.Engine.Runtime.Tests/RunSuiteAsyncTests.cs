@@ -1006,6 +1006,123 @@ public sealed class RunSuiteAsyncTests
         }
     }
 
+    private static readonly string[] s_topologyFailureScenarioNames = { "secured-suite" };
+
+    /// <summary>
+    /// The FOURTH and last instance of the artefact gap (#407), at the
+    /// <c>OrchestrationException</c> catch — the one seam the three fixes above left behind.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// MEASURED RED FIRST: a suite whose topology fails to start printed the topology marker and
+    /// returned a bare <see cref="SuiteResult"/>, so no <c>ScenarioStarted</c>/<c>Completed</c>
+    /// events reached the stream and none of <c>--junit</c>/<c>--html</c>/<c>--events</c> was
+    /// written. It mattered more here than at the other three seams once a secured suite began
+    /// exiting 3 on this path: a red build beside an empty results directory reads as a broken
+    /// runner rather than a real refusal, so the failure was correct but unattributable.
+    /// </para>
+    /// <para>
+    /// Reaches a failed topology WITHOUT Docker by the same means as the rows below: the suite
+    /// pins a host port this test process is holding, so EDGE-012's bind pre-flight throws an
+    /// <c>OrchestrationException</c> of kind <c>Provision</c> inside <c>StartAsync</c> — after Map,
+    /// before Aspire or DCP. The listener binds port 0, so the port is allocated rather than
+    /// hard-coded and this row cannot collide with an ephemeral allocation (#377/#431).
+    /// </para>
+    /// <para>
+    /// Verdict and exit code are deliberately NOT asserted as changed: the aggregate over N
+    /// EnvironmentErrors is EnvironmentError, which is what the bare return already said. This
+    /// pins the artefacts, and that the cause reaches them — #407's acceptance is explicit that a
+    /// test asserting only the exit code would not cover it.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task RunSuiteAsync_TopologyFailsToStart_WritesEveryRequestedReport()
+    {
+        var squatter = new TcpListener(IPAddress.Loopback, 0);
+        squatter.Start();
+        var heldPort = ((IPEndPoint)squatter.LocalEndpoint).Port;
+
+        var suiteDirectory = Directory.CreateTempSubdirectory("vouchfx-topology-failure-reports-");
+        try
+        {
+            File.WriteAllText(Path.Combine(suiteDirectory.FullName, "client.pem"), "placeholder");
+            File.WriteAllText(Path.Combine(suiteDirectory.FullName, "client.key"), "placeholder");
+
+            var junitPath = Path.Combine(suiteDirectory.FullName, "results.xml");
+            var htmlPath = Path.Combine(suiteDirectory.FullName, "report.html");
+            var eventsPath = Path.Combine(suiteDirectory.FullName, "events.jsonl");
+
+            var yaml = SecuredSuitePinning(heldPort);
+            var registry = StepKindRegistry.BuildAndFreeze(ProviderAssemblies);
+            var ast = AstBuilder.Build(YamlDocumentParser.Parse(yaml), registry);
+            var scenarios = new[] { ast };
+            var yamls = new[] { yaml };
+
+            var sw = new StringWriter();
+            var result = await ScenarioRunner.RunSuiteAsync(
+                scenarios: scenarios,
+                scenarioNames: s_topologyFailureScenarioNames,
+                yamlTexts: yamls,
+                providerAssemblies: ProviderAssemblies,
+                appHostAssemblyName: AppHostAssemblyName,
+                output: sw,
+                htmlReportPath: htmlPath,
+                junitReportPath: junitPath,
+                eventsReportPath: eventsPath,
+                seedBaseDirectory: suiteDirectory.FullName);
+
+            Assert.True(
+                File.Exists(junitPath),
+                "A topology that fails to start must still write the requested JUnit report — "
+                + "this seam exits non-zero for a secured suite.");
+            Assert.True(File.Exists(htmlPath), "…and the requested HTML report.");
+            Assert.True(File.Exists(eventsPath), "…and the requested events stream.");
+
+            // The scenario is present and carries EnvironmentError — JUnit's <error> primitive.
+            var xml = File.ReadAllText(junitPath);
+            Assert.Contains("tests=\"1\"", xml, StringComparison.Ordinal);
+            Assert.Contains("errors=\"1\"", xml, StringComparison.Ordinal);
+            Assert.Contains("<testcase name=\"secured-suite\"", xml, StringComparison.Ordinal);
+
+            // #407's acceptance has two halves and only one is deliverable HERE.
+            //
+            // The artefacts now EXIST — asserted above, and that is this fix. They do not yet NAME
+            // the failure, and that is not an oversight in this change: the cause IS stamped onto
+            // every scenario's record, but as CompleteWithoutTopologyAsync's own remarks state,
+            // `EarlyMessage` has exactly one consumer (its terminal-suppression check) and
+            // `ScenarioCompletedEvent` carries no message field, so NO artefact channel carries a
+            // scenario-level message at all. That is #372, and it is shared by all four seams
+            // rather than peculiar to this one — the three sibling tests above assert artefact
+            // existence and shape for exactly the same reason.
+            //
+            // Asserting the marker in the JUnit XML would be worse than failing: its
+            // <error message> is a deliberate shape-only summary (verdict token, scenario id,
+            // counts) because §17 bars observations and values from the renderers, so a passing
+            // assertion there would pin a §17 violation. When #372 lands, the naming assertion
+            // belongs on the stream, and this comment is the note to add it.
+            var eventLines = File.ReadAllLines(eventsPath);
+            Assert.Contains(eventLines, line => line.Contains("scenario-started", StringComparison.Ordinal));
+            Assert.Contains(eventLines, line => line.Contains("scenario-completed", StringComparison.Ordinal));
+
+            // The cause DOES reach the terminal, which is the one channel that carries it today.
+            Assert.Contains(TopologyFailureMarker, sw.ToString(), StringComparison.Ordinal);
+
+            // Verdict and assurance are UNCHANGED by the reroute — only the artefacts are new.
+            Assert.Equal(Verdict.EnvironmentError, result.Verdict);
+            Assert.Single(result.ScenarioVerdicts);
+
+            // One print, not two: the completion path is told the marker already reached the
+            // terminal, so it emits no duplicate.
+            var rendered = sw.ToString();
+            Assert.Equal(1, CountOccurrences(rendered, TopologyFailureMarker));
+        }
+        finally
+        {
+            squatter.Stop();
+            suiteDirectory.Delete(recursive: true);
+        }
+    }
+
     /// <summary>Counts non-overlapping occurrences of <paramref name="needle"/>.</summary>
     private static int CountOccurrences(string haystack, string needle)
     {
