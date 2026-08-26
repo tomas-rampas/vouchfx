@@ -204,22 +204,66 @@ public sealed class ComputeExitCodeTests
                 failOnInconclusive: false));
     }
 
-    // ── Mixed set (at least one scenario parsed and ran): TODAY'S behaviour, captured and
-    // pinned unchanged — the new #278 branch above must NOT engage once parsedCount > 0. ──
+    // ── Mixed set (at least one scenario parsed and ran): a parse failure reddens it, exactly
+    // as an all-failure set. #425 — one rule, not two keyed on whether a sibling parsed. ──
 
     [Fact]
-    public void MixedSet_PassingParsedScenario_DefaultFlags_ReturnsSuccess_UnchangedFromToday()
+    public void MixedSet_PassingParsedScenario_DefaultFlags_ReturnsInconclusive_BecauseAFileWasUnread()
     {
-        // Captures today's (arguably surprising, but explicitly out of scope for #278)
-        // behaviour: a mixed set whose parsed scenario(s) all Pass still folds the parse
-        // failure in as Inconclusive (AggregateVerdict), which then maps to Success by
-        // default (ExitCodes.FromVerdict) because --fail-on-inconclusive was not passed.
+        // THIS TEST USED TO ASSERT ExitCodes.Success, and its own comment called that
+        // "arguably surprising, but explicitly out of scope for #278" — the surprise was
+        // recorded at the time and left standing. #425 is where it stopped being out of scope.
+        //
+        // The old behaviour: a mixed set whose parsed scenarios all Pass folded the parse
+        // failure in as Inconclusive (AggregateVerdict), which then mapped to Success by default
+        // (ExitCodes.FromVerdict) because --fail-on-inconclusive was not passed. So `run tests/`
+        // over a directory holding one good file and one malformed one exited 0, having never
+        // read the malformed one.
+        //
+        // #278's rule already said an unparseable suite must never look clean to CI. That
+        // reasoning never depended on whether a SIBLING parsed — the file was unread either way
+        // — so the rule now keys on the parse failure itself rather than on parsedCount.
         Assert.Equal(
-            ExitCodes.Success,
+            ExitCodes.Inconclusive,
             RunCommand.ComputeExitCode(
                 parsedCount: 1,
                 parseFailureCount: 1,
                 Verdict.Pass,
+                failOnEnvironmentError: false,
+                failOnInconclusive: false));
+    }
+
+    [Fact]
+    public void MixedSet_FailingParsedScenario_StillReturnsTestFailure_NotInconclusive()
+    {
+        // The new rule replaces ONLY Success. A Fail outranks a parse failure by precedence
+        // (ScenarioRunner.VerdictPrecedence: Fail 2 > Inconclusive 1), so AggregateVerdict keeps
+        // Fail and the run still exits 1 — a real defect must not be reported as "could not
+        // determine" merely because a sibling file was also malformed.
+        Assert.Equal(
+            ExitCodes.TestFailure,
+            RunCommand.ComputeExitCode(
+                parsedCount: 1,
+                parseFailureCount: 1,
+                Verdict.Fail,
+                failOnEnvironmentError: false,
+                failOnInconclusive: false));
+    }
+
+    [Fact]
+    public void NoParseFailures_GenuineExecutionInconclusive_StillExitsZeroByDefault()
+    {
+        // The §12.1 distinction the fix rests on, pinned from the other side: a scenario that DID
+        // run and could not conclude (timeout / partition outlasted grace / upstream capture
+        // unmet) stays opt-in-gated and still exits 0 by default. Only an UNREAD FILE is treated
+        // as never-clean. Without this row, a future "simplification" that reddened every
+        // Inconclusive would pass the suite above while silently breaking the taxonomy.
+        Assert.Equal(
+            ExitCodes.Success,
+            RunCommand.ComputeExitCode(
+                parsedCount: 1,
+                parseFailureCount: 0,
+                Verdict.Inconclusive,
                 failOnEnvironmentError: false,
                 failOnInconclusive: false));
     }

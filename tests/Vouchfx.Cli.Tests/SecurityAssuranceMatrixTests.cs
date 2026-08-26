@@ -759,7 +759,7 @@ public sealed class SecurityAssuranceMatrixTests : IDisposable
     [Theory]
     [InlineData(null)]
     [InlineData(1)]
-    public async Task Row09b_UnsecuredUnbuildableBesideAParseableSibling_ExitsSuccess(int? parallel)
+    public async Task Row09b_UnsecuredUnbuildableBesideAParseableSibling_ExitsInconclusiveOnTheUnreadFile(int? parallel)
     {
         var dir = WriteMixedBrokenSuite(
             $"r09b-plain-{Tag(parallel)}", securityBlock: null, UnknownStepTypeSteps);
@@ -772,7 +772,11 @@ public sealed class SecurityAssuranceMatrixTests : IDisposable
         Assert.Contains("step 'call'", rendered, StringComparison.Ordinal);
 
         Assert.DoesNotContain("declares a 'security' block", rendered, StringComparison.Ordinal);
-        Assert.Equal(ExitCodes.Success, exitCode);
+        // #425: exit 4, not 0. The unread file is what reddens this, NOT the security question
+        // — the "declares a 'security' block" notice is still absent, and the assertion above
+        // pins that. A document the engine could not read is never reported as clean, whether or
+        // not anything in the run mentions security.
+        Assert.Equal(ExitCodes.Inconclusive, exitCode);
     }
 
     /// <summary>
@@ -862,7 +866,7 @@ public sealed class SecurityAssuranceMatrixTests : IDisposable
     [Theory]
     [InlineData(null)]
     [InlineData(1)]
-    public async Task Row09d_SchemaErrorOutsideAnyDeclaration_ExitsSuccess(int? parallel)
+    public async Task Row09d_SchemaErrorOutsideAnyDeclaration_ExitsInconclusiveOnTheUnreadFile(int? parallel)
     {
         var dir = WriteMixedBrokenSuite(
             $"r09d-control-{Tag(parallel)}", securityBlock: null, UnknownStepTypeSteps);
@@ -873,7 +877,11 @@ public sealed class SecurityAssuranceMatrixTests : IDisposable
 
         Assert.Contains("no registered provider", rendered, StringComparison.Ordinal);
         Assert.DoesNotContain("declares a 'security' block", rendered, StringComparison.Ordinal);
-        Assert.Equal(ExitCodes.Success, exitCode);
+        // #425: exit 4, not 0. The unread file is what reddens this, NOT the security question
+        // — the "declares a 'security' block" notice is still absent, and the assertion above
+        // pins that. A document the engine could not read is never reported as clean, whether or
+        // not anything in the run mentions security.
+        Assert.Equal(ExitCodes.Inconclusive, exitCode);
     }
 
     /// <summary>
@@ -935,32 +943,36 @@ public sealed class SecurityAssuranceMatrixTests : IDisposable
     }
 
     /// <summary>
-    /// <strong>Row 09c asserts a KNOWN-OPEN gap, deliberately, exactly as Row 09b used to.</strong>
-    /// Issue #411's amended acceptance closes ONE of the four discovery failure classes: the class
-    /// where <c>YamlDocumentParser.Parse</c> SUCCEEDED and only <c>AstBuilder.Build</c> threw, so a
-    /// bound environment exists to recover. Here the YAML itself is malformed, so nothing binds at
-    /// all — no declaration exists to fold — and the suite still exits 0 with no security notice
-    /// while the file plainly asserts <c>mtls</c>. The oversized-file and unreadable-file classes
-    /// are the same shape and are left open for the same reason.
+    /// <strong>Row 09c pinned #425's gap, and now pins its closure.</strong> A malformed
+    /// <c>.e2e.yaml</c> that plainly asserts <c>mtls</c>, beside a parseable sibling, used to exit
+    /// <c>0</c> with no security notice: the YAML binds nothing, so no declaration exists to fold
+    /// into the assurance, and the ordinary mixed-set path mapped the resulting Inconclusive to
+    /// Success because <c>--fail-on-inconclusive</c> was not passed.
     /// <para>
-    /// The residual is PINNED rather than described because a measured row is worth more than
-    /// prose. The schema door Row 09d leans on is NOT available here, and that is the whole reason
-    /// this class stays open while that one closed: the door needs a document tree to locate an
-    /// error in, and these three classes have none — malformed YAML produces no tree, and an
-    /// unreadable or oversized file produces no text at all (<c>YamlText</c> is empty by
-    /// construction). What is left is a raw-YAML scan for a <c>security:</c> key — a SECOND
-    /// spelling of "does this document declare security" that can disagree with both the canonical
-    /// AST walk and that door, which <c>SecuredTargets</c>' own header and
-    /// <see cref="Vouchfx.Engine.Runtime.SecurityAbortKind.SecurityDeclarationRejected"/>'s remarks
-    /// both forbid. Failing CLOSED instead is not available either: it would redden every unsecured
-    /// suite that merely contains an unreadable file. If those classes are ever closed, THIS TEST
-    /// GOES RED and is inverted the way Row 09b just was.
+    /// <strong>What closed it is not what this row predicted, and the difference is the point.</strong>
+    /// This test used to argue the only two available fixes were both unacceptable: a raw-YAML scan
+    /// for a <c>security:</c> key — a second spelling of "does this document declare security",
+    /// forbidden by <c>SecuredTargets</c>' own header and by
+    /// <see cref="Vouchfx.Engine.Runtime.SecurityAbortKind.SecurityDeclarationRejected"/>'s
+    /// remarks — or failing closed, "which would redden every unsecured suite that merely contains
+    /// an unreadable file". Both readings assumed the fix had to answer the SECURITY question.
+    /// </para>
+    /// <para>
+    /// It did not. <c>RunCommand.ComputeExitCode</c> now treats any parse failure as never-clean,
+    /// so this file reddens the run because it could not be READ — a fact available without
+    /// parsing it, without scanning it, and without asking what it declared. The security notice
+    /// is still absent and this row still asserts that, because nothing here confirms or refuses a
+    /// declaration; the assurance machinery is untouched. The consequence the old rationale called
+    /// unacceptable — an unsecured suite containing an unreadable file now reddens — was accepted
+    /// deliberately: an unread file is a deterministic authoring fault, and #278 already held that
+    /// CI must never see an unparseable suite reported as clean. Rows 09b and 09d are that same
+    /// consequence, pinned on the unsecured and schema arms.
     /// </para>
     /// </summary>
     [Theory]
     [InlineData(null)]
     [InlineData(1)]
-    public async Task Row09c_SecuredMalformedYamlBesideAParseableSibling_ExitsSuccessWithNoNotice(
+    public async Task Row09c_SecuredMalformedYamlBesideAParseableSibling_ExitsInconclusiveOnTheUnreadFile(
         int? parallel)
     {
         var dir = WriteMixedBrokenSuite(
@@ -975,9 +987,12 @@ public sealed class SecurityAssuranceMatrixTests : IDisposable
         Assert.DoesNotContain("no registered provider", rendered, StringComparison.Ordinal);
         Assert.Contains("step 'call'", rendered, StringComparison.Ordinal);
 
-        // …and the gap: no notice, green build.
+        // Still NO security notice: the fix does not answer the security question, and claiming
+        // it did would be the second spelling this row's own rationale forbids.
         Assert.DoesNotContain("declares a 'security' block", rendered, StringComparison.Ordinal);
-        Assert.Equal(ExitCodes.Success, exitCode);
+
+        // …and no longer a green build. This is the #425 assertion.
+        Assert.Equal(ExitCodes.Inconclusive, exitCode);
     }
 
     // ── Row 10: base-directory divergence ─────────────────────────────────────────────────
