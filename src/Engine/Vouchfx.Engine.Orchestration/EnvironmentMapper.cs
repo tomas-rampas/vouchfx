@@ -1884,7 +1884,22 @@ public static class EnvironmentMapper
         // itself never rested on the timing claim: what makes a container's environment wrong for
         // a secret is that anyone who can run `docker inspect` reads it, which is true at every
         // moment. Do not reintroduce a resolution-moment argument here.
-        if (envValue.Contains(SecretReference.Sigil, StringComparison.Ordinal))
+        // CASE-INSENSITIVE, and deliberately so (#428). `${SECRET:vault/db/pw}` used to
+        // reach the container as opaque literal text: SecretReference.Sigil is lower-case
+        // and this comparison was Ordinal, so the wrong-case attempt matched nothing and
+        // passed straight through. No value leaked — nothing in the engine resolves
+        // `${SECRET:` either — but the author believes they wrote a secret reference, the
+        // suite is green, and the container holds the literal string. That is the exact
+        // argument s_envSigilPattern already carries for its own IgnoreCase, and it applies
+        // here verbatim. Widening is safe in a way it would NOT be on a secret-SUPPORTING
+        // field: env: accepts no secret reference in any case, well-formed or not, so a
+        // case-insensitive match can only ever turn a silent pass-through into a refusal.
+        // The MESSAGE is deliberately unchanged: it is pinned byte-identical by
+        // Map_ServiceEnv_SecretReference_MessageIsByteIdenticalToPreFeatureWording and
+        // mirrored in the DSL spec and CHANGELOG. "references a ${secret:...} value"
+        // names the fault correctly whatever case the author typed, so widening the
+        // match needed no wording change to stay accurate.
+        if (envValue.Contains(SecretReference.Sigil, StringComparison.OrdinalIgnoreCase))
         {
             throw new ArgumentException(
                 $"{ownerLabel} '{ownerName}' env entry '{envKey}' references a ${{secret:...}} value. " +

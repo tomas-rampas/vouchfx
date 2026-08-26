@@ -1207,10 +1207,21 @@ jobs:
           if gh release view "$TAG" > /dev/null 2>&1; then
             echo "Release $TAG already exists — skipping create"
           else
-            gh release create "$TAG" \
-              --title "vouchfx $TAG" \
-              --generate-notes \
-              --draft
+            # SemVer 2.0.0 section 9: everything after the first '-' is a
+            # pre-release identifier, so v1.0.0-rc.5 is a pre-release and
+            # v1.0.0 is not.  Deriving the flag from the tag rather than from
+            # a workflow input keeps the two from ever disagreeing.
+            #
+            # Without --prerelease every rc draft was created as a FULL
+            # release (#388): on publish it becomes "Latest" on the repo
+            # front page, `gh release view --json isLatest` reports it as
+            # such, and anything watching for a stable release sees an rc.
+            # The tag then has to be corrected by hand after the fact.
+            create_flags=(--title "vouchfx $TAG" --generate-notes --draft)
+            case "$TAG" in
+              *-*) create_flags+=(--prerelease) ;;
+            esac
+            gh release create "$TAG" "${create_flags[@]}"
           fi
 
       # Attach all artifacts to the release.  --clobber replaces any file

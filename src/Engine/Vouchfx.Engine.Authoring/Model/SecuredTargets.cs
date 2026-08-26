@@ -18,6 +18,7 @@
 using System.Buffers.Binary;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
+using System.Text;
 using Vouchfx.Engine.Abstractions.Secrets;
 
 namespace Vouchfx.Engine.Authoring.Model;
@@ -32,7 +33,50 @@ namespace Vouchfx.Engine.Authoring.Model;
 /// <c>AppliesTo</c> takes.
 /// </param>
 /// <param name="Security">The declared block itself, never <see langword="null"/>.</param>
-public readonly record struct SecuredTarget(string Name, string Kind, SecuritySpec Security);
+public readonly record struct SecuredTarget(string Name, string Kind, SecuritySpec Security)
+{
+    /// <summary>
+    /// Redacts <see cref="Security"/> out of <c>ToString()</c> (#428's sibling, #408).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The compiler-generated <c>ToString()</c> expands every member, and one of them is a whole
+    /// <see cref="SecuritySpec"/> — whose own remarks state the hazard in as many words: never
+    /// interpolate a <see cref="SecuritySpec"/> whole into a diagnostic, event or report, because
+    /// its <c>ToString()</c> prints <see cref="SecuritySpec.ClientKeyPassword"/>. This record is
+    /// precisely such an interpolation. Measured against the built assembly with a canary in that
+    /// field, the default gave:
+    /// <code>
+    /// SecuredTarget { Name = api, Kind = service, Security = SecuritySpec
+    ///   { Profile = mtls, ..., ClientKeyPassword = P@ssw0rd-LEAK-CANARY } }
+    /// </code>
+    /// </para>
+    /// <para>
+    /// <b>Why an explicit override here, when <see cref="SecuritySpec"/> deliberately refuses
+    /// one.</b> That refusal rests on completeness: an override must enumerate every member, so a
+    /// future field would be silently dropped from a diagnostic — a worse trap than the hazard it
+    /// closes. The argument does not transfer, because it is about the wrong failure direction.
+    /// For a REDACTION guard, a dropped member discloses LESS, never more; the drift is fail-safe
+    /// rather than fail-open. What remains — a genuinely diagnostic future member going unprinted
+    /// — is closed by the census test that pins this record's member count, so adding a fourth
+    /// forces a conscious decision here rather than a silent omission.
+    /// </para>
+    /// <para>
+    /// Deliberately prints a marker rather than nothing: an absent member reads as "there is no
+    /// security block", which is a different and misleading claim.
+    /// </para>
+    /// </remarks>
+    private readonly bool PrintMembers(StringBuilder builder)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+
+        builder.Append("Name = ").Append(Name)
+               .Append(", Kind = ").Append(Kind)
+               .Append(", Security = <redacted>");
+
+        return true;
+    }
+}
 
 /// <summary>
 /// The identity of ONE declaration: its target name, plus a digest of everything the
