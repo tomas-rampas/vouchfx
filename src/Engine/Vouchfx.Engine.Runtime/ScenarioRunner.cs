@@ -82,6 +82,28 @@ public sealed record SuiteResult(
     IReadOnlyList<(string ScenarioName, Verdict Verdict)> ScenarioVerdicts)
 {
     /// <summary>
+    /// <see langword="false"/> when the suite was refused before any topology was built, so no
+    /// container started and no step ran (#369). <see langword="true"/> by default, which every
+    /// construction outside the without-topology completion path keeps.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Set by <c>CompleteWithoutTopologyAsync</c> and nowhere else, deliberately: that method IS
+    /// the set of paths that never reached a topology, so this is a property of the route rather
+    /// than a hand-maintained list of doors — the shape <c>Assurance</c>'s own remarks describe
+    /// going stale three times before it was derived instead of enumerated.
+    /// </para>
+    /// <para>
+    /// <strong>It is not "the topology failed".</strong> A topology that fails to START also
+    /// executes nothing, and reaches this same completion path since #407 — but it arrives
+    /// carrying <see cref="Verdict.EnvironmentError"/>, and the exit rule that consumes this is
+    /// scoped to <see cref="Verdict.Inconclusive"/> for exactly that reason. Widening it to every
+    /// verdict would silently close #390, which is deliberately open because doing so would
+    /// redden every suite whose unrelated container was slow to come up.
+    /// </para>
+    /// </remarks>
+    public bool ExecutedAnyScenario { get; init; } = true;
+    /// <summary>
     /// What this suite established about the <c>security</c> blocks it declared: what was declared,
     /// what REQ-005's probe confirmed, and which door (if any) refused
     /// (security-assurance-derivation, REQ-001).
@@ -1698,14 +1720,13 @@ public static class ScenarioRunner
             // OrchestrationException instead, via the catch below.
             // Issue #266, Item 4: aex.Message can echo untrusted YAML content back
             // verbatim — sanitise before writing.
-            await output.WriteLineAsync(
-                DisplaySanitiser.SanitiseForDisplay(
-                    $"RunSuiteAsync: environment configuration error — {aex.Message}"))
+            var environmentFault =
+                $"RunSuiteAsync: environment configuration error — {aex.Message}";
+
+            await output.WriteLineAsync(DisplaySanitiser.SanitiseForDisplay(environmentFault))
                 .ConfigureAwait(false);
 
-            var inconclusiveVerdicts = compilations
-                .Select(c => (c.ScenarioName, Verdict.Inconclusive))
-                .ToList();
+
             // The boundary is "no container started", not "before the StartAsync call": Map is
             // eager and runs ahead of DCP, so this refusal starts nothing and is an authoring
             // fault like every pre-topology one. It used to carry the accumulated flag through
@@ -1713,11 +1734,34 @@ public static class ScenarioRunner
             //
             // The wrap here is pinned by the `EnvironmentMapperArgumentFault` row of the theory
             // named at the shared-`environment` divergence door above.
-            return new SuiteResult(Verdict.Inconclusive, inconclusiveVerdicts)
-            {
-                Assurance = WithUnbuiltDocuments(
-                    assurance.Refusing(SecurityAbortKind.AuthoringFault)),
-            };
+            // RETURNED THROUGH CompleteWithoutTopologyAsync, NOT AS A BARE SuiteResult. This was
+            // the last bare return of the four the #407 family covers, and it needed the same
+            // treatment for the same reason: a bare return skips the ScenarioStarted/Completed
+            // events, the --events-stream pump, the terminal render and
+            // FileReportWriter.WriteFileReports, so a CI job got a verdict with no artefacts
+            // describing it.
+            //
+            // It also carries #369's answer for free. This catch's own boundary — stated two
+            // paragraphs above as "no container started, not before the StartAsync call" — is
+            // exactly ExecutedAnyScenario being false, and the completion path sets it because
+            // that path IS the without-topology route. Nothing here has to remember to.
+            //
+            // Measured before this: `${conn:typo}` exited 0 under a bare `run` and 4 under
+            // `--parallel 1`, because the parallel runner derives the same answer from its event
+            // buffers while this return said nothing at all. A sequential/parallel divergence on
+            // an exit code is a defect class this codebase has been bitten by before.
+            return await CompleteWithoutTopologyAsync(
+                    StampWhereUnjudged(compilations, Verdict.Inconclusive, environmentFault),
+                    WithUnbuiltDocuments(assurance.Refusing(SecurityAbortKind.AuthoringFault)),
+                    output,
+                    decorate,
+                    diffLookup,
+                    htmlReportPath,
+                    junitReportPath,
+                    eventsReportPath,
+                    eventsStreamPath,
+                    alreadyPrintedMessage: environmentFault)
+                .ConfigureAwait(false);
         }
         catch (OrchestrationException oex)
         {
@@ -2375,6 +2419,11 @@ public static class ScenarioRunner
         return new SuiteResult(suiteAggregate, results)
         {
             Assurance = assurance,
+
+            // #369: this method IS the without-topology path — no container started and no step
+            // ran on any route that reaches here. Set once, at the one place that is true, rather
+            // than enumerated door by door.
+            ExecutedAnyScenario = false,
         };
     }
 

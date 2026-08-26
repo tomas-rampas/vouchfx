@@ -362,9 +362,14 @@ public sealed class RunPathRootExecuteTests : IDisposable
     /// reference failure.
     /// </summary>
     [Theory]
-    [InlineData(false, ExitCodes.Success, null)]
+    // #369: the two ungated rows moved from Success to Inconclusive. A step-level secret-
+    // reference failure is refused before any topology is built, so nothing executed — and the
+    // gate is now irrelevant to this shape rather than decisive, which is why all four rows
+    // agree. The theory still earns its name: what it asserts is that this fault is NOT carved
+    // out by the security rule, and the notice assertion below is what shows that.
+    [InlineData(false, ExitCodes.Inconclusive, null)]
     [InlineData(true, ExitCodes.Inconclusive, null)]
-    [InlineData(false, ExitCodes.Success, 1)]
+    [InlineData(false, ExitCodes.Inconclusive, 1)]
     [InlineData(true, ExitCodes.Inconclusive, 1)]
     public async Task ExecuteAsync_UnknownSecretSourceInAStep_IsNotCarvedOut(
         bool failOnInconclusive, int expectedExitCode, int? parallel)
@@ -839,7 +844,7 @@ public sealed class RunPathRootExecuteTests : IDisposable
     [Theory]
     [InlineData(null)]
     [InlineData(1)]
-    public async Task ExecuteAsync_UnsecuredSuiteWithTheSameSchemaError_StillExitsZero(int? parallel)
+    public async Task ExecuteAsync_UnsecuredSuiteWithTheSameSchemaError_ExitsInconclusiveWithNoSecurityNotice(int? parallel)
     {
         var file = Path.Combine(_root, "unsecured-schema.e2e.yaml");
         File.WriteAllText(
@@ -858,7 +863,12 @@ public sealed class RunPathRootExecuteTests : IDisposable
         var exitCode = await ExecuteAtParallelismAsync(file, parallel, sw);
         var rendered = sw.ToString();
 
-        Assert.Equal(ExitCodes.Success, exitCode);
+        // #369: 4, not 0. This row exists to prove the SECURITY broadening is not collateral
+        // damage on an unsecured suite, and it still proves exactly that — via the notice, which
+        // is the mechanism, rather than via the exit code, which was only ever a proxy for it.
+        // The suite is schema-rejected before any topology is built, so nothing executed, and a
+        // run in which nothing executed is never a clean pass whatever it declared.
+        Assert.Equal(ExitCodes.Inconclusive, exitCode);
         Assert.Contains("method", rendered, StringComparison.Ordinal);
         Assert.DoesNotContain("declares a 'security' block", rendered, StringComparison.Ordinal);
     }

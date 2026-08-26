@@ -448,8 +448,19 @@ public sealed class ScriptCsharpProviderTests : IDisposable
         var result = _provider.Validate(model, ctx);
 
         Assert.False(result.IsValid);
+
+        // THIS ROW USED TO REQUIRE `_root` IN THE MESSAGE — the resolved absolute host path —
+        // and that is the disclosure #357 removed. It is now asserted absent. The declared path
+        // stays, because it is the actionable half and the resolved form never was: the same
+        // change, with the same measured outcome, that slice D made to SecurityMaterialException.
+        //
+        // It matters because the audience is wider than whoever runs the suite (a compile-time
+        // ValidationResult.Failure ships to CI artefacts and dashboards) and because it cannot be
+        // redacted downstream: ScenarioRunner.ScrubDiagnostic is ResolvedSecrets.Scrub, a targeted
+        // net over values the run's SecretAccessor actually revealed, which never covers a path.
         Assert.Contains(result.Errors, e =>
-            e.Contains("does-not-exist.csx", StringComparison.Ordinal) &&
+            e.Contains("does-not-exist.csx", StringComparison.Ordinal));
+        Assert.DoesNotContain(result.Errors, e =>
             e.Contains(_root, StringComparison.Ordinal));
     }
 
@@ -870,5 +881,48 @@ public sealed class ScriptCsharpProviderTests : IDisposable
     {
         var assembled = CsxAssembler.Assemble(new[] { (stepId, fragment) });
         return RoslynScriptCompiler.CompileOnce(assembled.CsxSource);
+    }
+
+    /// <summary>
+    /// #357: the file-not-found diagnostic must not disclose the resolved absolute host path.
+    /// </summary>
+    /// <remarks>
+    /// It cannot be redacted downstream: <c>ScenarioRunner.ScrubDiagnostic</c> is
+    /// <c>ResolvedSecrets.Scrub</c>, a targeted net over values the run's <c>SecretAccessor</c>
+    /// actually revealed, so a filesystem path is never covered by it. And the audience is wider
+    /// than whoever runs the suite — a compile-time <c>ValidationResult.Failure</c> lands in a
+    /// scenario diagnostic that ships to CI artefacts and dashboards.
+    /// <para>
+    /// The DECLARED path is retained, because it is the actionable half; the resolved form never
+    /// was. Same fix, same reasoning, as slice D applied to <c>SecurityMaterialException</c>'s
+    /// <c>clientCert</c>/<c>clientKey</c>/<c>caCert</c> messages.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void Validate_MissingFile_NamesTheDeclaredPathButNotTheResolvedOne()
+    {
+        var suiteDirectory = Directory.CreateTempSubdirectory("vouchfx-357-").FullName;
+        try
+        {
+            var model = new ScriptCsharpModel(Code: null, File: "missing/helper.csx");
+
+            var result = _provider.Validate(model, new StubProjectContext(suiteDirectory));
+
+            Assert.False(result.IsValid);
+            var message = string.Join(" ", result.Errors);
+
+            // The declared path survives — the diagnostic stays actionable.
+            Assert.Contains("missing/helper.csx", message, StringComparison.Ordinal);
+
+            // The resolved absolute path does not appear, in whole or in part. Asserting on the
+            // SUITE DIRECTORY rather than on the literal "resolved to" wording is deliberate:
+            // a reworded message that still interpolated the absolute path would pass a
+            // wording assertion and fail this one, which is the property that matters.
+            Assert.DoesNotContain(suiteDirectory, message, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Directory.Delete(suiteDirectory, recursive: true);
+        }
     }
 }

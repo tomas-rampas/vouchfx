@@ -896,6 +896,28 @@ public sealed class HtmlRenderer
                     builder.Append("&#39;");
                     break;
                 default:
+                    // Drop the C0 control characters (#371), mirroring what the JUnit renderer's
+                    // XmlEscape has always done — the two now treat the same input the same way.
+                    //
+                    // MEASURED: `ESC[31m` in an author-controlled `metadata.name` reached the
+                    // written report as a RAW 0x1b byte. Entity-escaping the five markup
+                    // characters is not enough on its own, because a control byte is not markup:
+                    // it passes through untouched and is re-interpreted downstream. A report
+                    // `cat`-ed in a terminal replays the ANSI sequence, which can recolour or
+                    // rewrite surrounding text and misrepresent a verdict, and the raw bytes sit
+                    // in an artefact a CI job archives and other tools read.
+                    //
+                    // TAB/LF/CR are KEPT — they are legitimate layout in a diagnostic, and the
+                    // `.scenario-message` rule renders them with `white-space: pre-wrap`.
+                    //
+                    // The two BMP non-characters are dropped here as well. They are not an HTML
+                    // hazard the way they are an XML-1.0 violation, but one rule stated once
+                    // beats two rules that agree today and drift later.
+                    if (IsForbiddenReportCharacter(ch))
+                    {
+                        break;
+                    }
+
                     builder.Append(ch);
                     break;
             }
@@ -903,6 +925,19 @@ public sealed class HtmlRenderer
 
         return builder.ToString();
     }
+
+    /// <summary>
+    /// The characters no written report carries through verbatim (#371): the C0 controls below
+    /// <c>U+0020</c> except TAB/LF/CR, and the two BMP non-characters.
+    /// </summary>
+    /// <remarks>
+    /// Byte-for-byte the predicate <c>JunitXmlRenderer.IsForbiddenXmlCharacter</c> applies. They
+    /// are not shared through a common helper because these renderers are deliberately
+    /// independent — but they must not diverge, which is asserted rather than trusted.
+    /// </remarks>
+    private static bool IsForbiddenReportCharacter(char ch)
+        => (ch < ' ' && ch is not ('\t' or '\n' or '\r'))
+           || ch is (char)0xFFFE or (char)0xFFFF;
 
     // -------------------------------------------------------------------------
     // Verdict → CSS class.

@@ -990,6 +990,11 @@ internal static class RunCommand
 
         Verdict suiteVerdict = Verdict.Pass;
         SecurityAssurance? securityAssurance = null;
+
+        // #369. Captured beside the assurance and for the same reason: the SuiteResult is
+        // scoped to the block below, while the exit-code decision is made after it. True until
+        // a run says otherwise, so a path producing no SuiteResult is unaffected.
+        var executedAnyScenario = true;
         if (parsed.Count > 0)
         {
             var asts = parsed.Select(p => p.Ast!).ToList();
@@ -1101,6 +1106,7 @@ internal static class RunCommand
             // sniffed out of the event stream — the whole point of the carve-out is that the
             // verdict is UNCHANGED and cannot distinguish this case.
             securityAssurance = result.Assurance;
+            executedAnyScenario = result.ExecutedAnyScenario;
         }
 
         // Emit telemetry from the SAME buffered event stream the renderers consumed (S10-G-04).
@@ -1143,7 +1149,10 @@ internal static class RunCommand
         // set is unconditionally Inconclusive, never gated behind --fail-on-inconclusive).
         return ComputeExitCode(
             parsed.Count, failures.Count, suiteVerdict, failOnEnvironmentError, failOnInconclusive,
-            securityAssurance);
+            securityAssurance,
+            // #369: false only when the runner returned through its without-topology completion
+            // path, so no container started and no step ran.
+            executedAnyScenario: executedAnyScenario);
     }
 
     /// <summary>
@@ -1272,7 +1281,8 @@ internal static class RunCommand
         Verdict suiteVerdict,
         bool failOnEnvironmentError,
         bool failOnInconclusive,
-        SecurityAssurance? securityAssurance = null)
+        SecurityAssurance? securityAssurance = null,
+        bool executedAnyScenario = true)
     {
         var aggregate = AggregateVerdict(suiteVerdict, parseFailureCount);
         var code = ExitCodes.FromVerdict(
@@ -1308,9 +1318,38 @@ internal static class RunCommand
         // declaring mTLS now exits non-zero because it was unreadable, not because of anything
         // it declared — so no raw-YAML scan for a `security:` key is needed (DiscoveredScenario.
         // RecoveredDocument refuses one, twice, with reasons) and SecurityAssurance is untouched.
-        return parseFailureCount > 0 && code == ExitCodes.Success
-            ? ExitCodes.Inconclusive
-            : code;
+        if (parseFailureCount > 0 && code == ExitCodes.Success)
+        {
+            return ExitCodes.Inconclusive;
+        }
+
+        // A run in which NOTHING EXECUTED is never a clean Success either (#369).
+        //
+        // The rule above closed "did the YAML parse". This closes the category the design never
+        // named: a suite that parsed FINE and was then refused before any topology was built — a
+        // schema rejection, a secret-reference failure, a malformed `env:`, the both-families
+        // protocol conflict. Every one starts no container and runs no step, and every one exited
+        // 0 by default. As #369 puts it: the distinction the code drew was "did the YAML parse",
+        // but the distinction its own remarks argued for was "did anything execute".
+        //
+        // SCOPED TO Inconclusive, AND THAT SCOPE IS THE WHOLE CARE OF THIS CHANGE. A topology
+        // that fails to START also executes nothing and reaches the same completion path since
+        // #407 — but it carries EnvironmentError, which keeps its own `--fail-on-env-error` gate
+        // and is untouched here. Widening this to every verdict would silently close #390, which
+        // is deliberately open precisely because it would redden every suite whose UNRELATED
+        // container was slow to come up. An authoring fault the engine refused is not the same
+        // event as an environment that did not come up, and this line is where that stays true.
+        //
+        // A scenario that DID run and could not conclude — timeout, partition outlasted grace,
+        // upstream capture unmet — still exits 0 by default, because it executed.
+        if (!executedAnyScenario
+            && aggregate == Verdict.Inconclusive
+            && code == ExitCodes.Success)
+        {
+            return ExitCodes.Inconclusive;
+        }
+
+        return code;
     }
 
     /// <summary>

@@ -23,6 +23,16 @@ public sealed class ScenarioMessageArtefactTests
         "RunSuiteAsync: scenario 'b' declares a different environment; all scenarios in a suite "
         + "must share one topology.";
 
+    /// <summary>CA1861 is an error here, so the two character sets are fields (#371).</summary>
+    private static readonly char[] s_droppedControls = { '\u0000', '\u0001', '\u001b', '\u001f' };
+
+    /// <summary>The three C0 controls a written report keeps.</summary>
+    /// <summary>Dropped and kept controls interleaved with ordinary text.</summary>
+    private static readonly char[] s_mixedControlPayload =
+        { 'a', '\u0000', '\u0001', '\t', '\n', '\r', '\u001b', '\u001f', 'z' };
+
+    private static readonly char[] s_keptWhitespace = { '\t', '\n', '\r' };
+
     private static string Line<T>(T payload) => EventStreamJson.ToLine(payload);
 
     private static string[] StreamWithMessage() => new[]
@@ -204,4 +214,120 @@ public sealed class ScenarioMessageArtefactTests
     }
 
 
+
+    /// <summary>
+    /// #371: a raw C0 control character in author-controlled text must not reach the written
+    /// HTML report. Measured before the fix with <c>ESC[31m</c> in <c>metadata.name</c>:
+    /// <c>contains ESC (0x1b) : True</c>.
+    /// </summary>
+    /// <remarks>
+    /// Entity-escaping the five markup characters is not enough on its own — a control byte is
+    /// not markup, so it passed through untouched and was re-interpreted downstream. A report
+    /// <c>cat</c>-ed in a terminal replays the ANSI sequence, which can recolour or rewrite the
+    /// surrounding text and misrepresent a verdict.
+    /// </remarks>
+    [Fact]
+    public void Html_DropsRawC0ControlCharacters()
+    {
+        var hostile = new[]
+        {
+            Line(new ScenarioStartedEvent { RunId = "run-1", ScenarioId = "a" }),
+            Line(new ScenarioCompletedEvent
+            {
+                RunId = "run-1",
+                ScenarioId = "a",
+                Verdict = Verdict.Fail,
+                Counts = new VerdictCounts { Fail = 1 },
+                Message = "before\u001b[31mRED\u001b[0mafter",
+            }),
+        };
+
+        var html = RenderHtml(hostile);
+
+        Assert.DoesNotContain('\u001b', html);
+
+        // The surrounding text survives — this drops CONTROL BYTES, it does not truncate, and
+        // it does not strip whole ANSI sequences. Only U+001B is a control character; the "[31m"
+        // that follows it is ordinary printable text. Removing the escape byte is precisely what
+        // neutralises the sequence — the residue can no longer be interpreted as one, and a
+        // renderer that deleted the visible characters too would be silently rewriting an
+        // author's diagnostic.
+        Assert.Contains("before[31mRED[0mafter", html, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// TAB/LF/CR are legitimate layout in a diagnostic and are KEPT, which is the half of the
+    /// rule a blanket "strip everything below U+0020" would have broken silently.
+    /// </summary>
+    [Fact]
+    public void Html_KeepsTheThreePermittedWhitespaceControls()
+    {
+        var withWhitespace = new[]
+        {
+            Line(new ScenarioStartedEvent { RunId = "run-1", ScenarioId = "a" }),
+            Line(new ScenarioCompletedEvent
+            {
+                RunId = "run-1",
+                ScenarioId = "a",
+                Verdict = Verdict.Fail,
+                Counts = new VerdictCounts { Fail = 1 },
+                Message = "line one\nline\ttwo",
+            }),
+        };
+
+        var html = RenderHtml(withWhitespace);
+
+        Assert.Contains("line one\nline\ttwo", html, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The two renderers must agree about which characters a written report drops. Their
+    /// predicates are duplicated deliberately — the renderers are independent of each other — so
+    /// the agreement is asserted rather than trusted to survive an edit to one of them.
+    /// </summary>
+    [Fact]
+    public void BothRenderers_DropTheSameControlCharacters()
+    {
+        var payload = new string(s_mixedControlPayload);
+
+        var stream = new[]
+        {
+            Line(new ScenarioStartedEvent { RunId = "run-1", ScenarioId = "a" }),
+            Line(new ScenarioCompletedEvent
+            {
+                RunId = "run-1",
+                ScenarioId = "a",
+                Verdict = Verdict.Fail,
+                Counts = new VerdictCounts { Fail = 1 },
+                Message = payload,
+            }),
+        };
+
+        // The ELEMENT BODY, not the message attribute. The renderer writes the same text into
+        // both, but XML attribute-value normalisation (XML 1.0 §3.3.3) replaces TAB, LF and CR
+        // with spaces inside an attribute — so the attribute can never evidence what the renderer
+        // did with whitespace, only what the parser did to it. The body preserves them.
+        var rawJunit = RenderJunit(stream);
+        var junitMessage = XDocument.Parse(rawJunit)
+            .Descendants("failure")
+            .Single()
+            .Value;
+        var html = RenderHtml(stream);
+
+        foreach (var dropped in s_droppedControls)
+        {
+            Assert.DoesNotContain(dropped, junitMessage);
+            Assert.DoesNotContain(dropped, html);
+        }
+
+        // Asserted against the RAW rendered text, not the parsed document. XML line-ending
+        // normalisation (XML 1.0 §2.11) rewrites CR in content, and attribute-value normalisation
+        // (§3.3.3) rewrites TAB/LF/CR inside attributes — both are the PARSER's behaviour. Going
+        // through XDocument would therefore report a CR the renderer really did emit as missing,
+        // and the test would be pinning someone else's contract instead of this renderer's.
+        foreach (var kept in s_keptWhitespace)
+        {
+            Assert.Contains(kept, rawJunit);
+        }
+    }
 }

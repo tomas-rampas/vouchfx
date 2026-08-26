@@ -185,7 +185,7 @@ public sealed class SecurityAssuranceMatrixTests : IDisposable
             cancellationToken: default);
 
     // ── Row 1: a schema error anywhere ────────────────────────────────────────────────────
-    //   secured 4 → 4    unsecured 0, unchanged
+    //   secured 4 → 4    unsecured 0 → 4 (#369: nothing executed; NOT a security refusal)
 
     [Theory]
     [InlineData(null)]
@@ -206,7 +206,7 @@ public sealed class SecurityAssuranceMatrixTests : IDisposable
     [Theory]
     [InlineData(null)]
     [InlineData(1)]
-    public async Task Row01_SchemaErrorAnywhere_Unsecured_ExitsSuccess(int? parallel)
+    public async Task Row01_SchemaErrorAnywhere_Unsecured_ExitsInconclusiveWithNoSecurityNotice(int? parallel)
     {
         var file = WriteSuite(
             $"r01-plain-{Tag(parallel)}",
@@ -216,7 +216,19 @@ public sealed class SecurityAssuranceMatrixTests : IDisposable
         var exitCode = await RunAsync(file, parallel, sw);
 
         Assert.Contains("method", sw.ToString(), StringComparison.Ordinal);
-        Assert.Equal(ExitCodes.Success, exitCode);
+        // #369: exit 4, not 0 — and the reason is NOT security. A suite refused before any
+        // topology was built executed nothing, and a run in which nothing executed is never a
+        // clean pass. The security notice below is what still proves the carve-out did not reach
+        // this unsecured suite.
+        //
+        // THIS ROW'S DISCRIMINATOR MOVED, DELIBERATELY. The pair used to read "secured 4,
+        // unsecured 0" and carried its whole proof in the exit code; with both now 4 that proof
+        // would have evaporated silently, leaving a row that passes while testing nothing. The
+        // notice is the better signal anyway: it asserts the MECHANISM (did the security
+        // derivation refuse this run) rather than a proxy for it.
+        Assert.DoesNotContain(
+            "declares a 'security' block", sw.ToString(), StringComparison.Ordinal);
+        Assert.Equal(ExitCodes.Inconclusive, exitCode);
     }
 
     // ── Row 2: a security preflight fault ─────────────────────────────────────────────────
@@ -325,7 +337,7 @@ public sealed class SecurityAssuranceMatrixTests : IDisposable
     [Theory]
     [InlineData(null)]
     [InlineData(1)]
-    public async Task Row05_StepSecretFaultAlone_Unsecured_ExitsSuccess(int? parallel)
+    public async Task Row05_StepSecretFaultAlone_Unsecured_ExitsInconclusiveWithNoSecurityNotice(int? parallel)
     {
         var file = WriteSuite(
             $"r05-plain-{Tag(parallel)}",
@@ -335,7 +347,19 @@ public sealed class SecurityAssuranceMatrixTests : IDisposable
         var exitCode = await RunAsync(file, parallel, sw);
 
         Assert.Contains("step 'call'", sw.ToString(), StringComparison.Ordinal);
-        Assert.Equal(ExitCodes.Success, exitCode);
+        // #369: exit 4, not 0 — and the reason is NOT security. A suite refused before any
+        // topology was built executed nothing, and a run in which nothing executed is never a
+        // clean pass. The security notice below is what still proves the carve-out did not reach
+        // this unsecured suite.
+        //
+        // THIS ROW'S DISCRIMINATOR MOVED, DELIBERATELY. The pair used to read "secured 4,
+        // unsecured 0" and carried its whole proof in the exit code; with both now 4 that proof
+        // would have evaporated silently, leaving a row that passes while testing nothing. The
+        // notice is the better signal anyway: it asserts the MECHANISM (did the security
+        // derivation refuse this run) rather than a proxy for it.
+        Assert.DoesNotContain(
+            "declares a 'security' block", sw.ToString(), StringComparison.Ordinal);
+        Assert.Equal(ExitCodes.Inconclusive, exitCode);
     }
 
     // ── Row 6: an unresolvable `script.csharp file:` ALONE ────────────────────────────────
@@ -409,7 +433,7 @@ public sealed class SecurityAssuranceMatrixTests : IDisposable
     [Theory]
     [InlineData(null)]
     [InlineData(1)]
-    public async Task Row06_UnresolvableScriptFile_Unsecured_ExitsSuccess(int? parallel)
+    public async Task Row06_UnresolvableScriptFile_Unsecured_ExitsInconclusiveWithNoSecurityNotice(int? parallel)
     {
         var file = WriteSuite(
             $"r06-plain-{Tag(parallel)}",
@@ -419,7 +443,19 @@ public sealed class SecurityAssuranceMatrixTests : IDisposable
         var exitCode = await RunAsync(file, parallel, sw);
 
         Assert.Contains("no-such-helper.csx", sw.ToString(), StringComparison.Ordinal);
-        Assert.Equal(ExitCodes.Success, exitCode);
+        // #369: exit 4, not 0 — and the reason is NOT security. A suite refused before any
+        // topology was built executed nothing, and a run in which nothing executed is never a
+        // clean pass. The security notice below is what still proves the carve-out did not reach
+        // this unsecured suite.
+        //
+        // THIS ROW'S DISCRIMINATOR MOVED, DELIBERATELY. The pair used to read "secured 4,
+        // unsecured 0" and carried its whole proof in the exit code; with both now 4 that proof
+        // would have evaporated silently, leaving a row that passes while testing nothing. The
+        // notice is the better signal anyway: it asserts the MECHANISM (did the security
+        // derivation refuse this run) rather than a proxy for it.
+        Assert.DoesNotContain(
+            "declares a 'security' block", sw.ToString(), StringComparison.Ordinal);
+        Assert.Equal(ExitCodes.Inconclusive, exitCode);
     }
 
     // ── Row 7: `${conn:typo}` — EnvironmentMapper.Map's ArgumentException ─────────────────
@@ -452,7 +488,7 @@ public sealed class SecurityAssuranceMatrixTests : IDisposable
     [Theory]
     [InlineData(null)]
     [InlineData(1)]
-    public async Task Row07_UnknownConnReference_Unsecured_ExitsSuccess(int? parallel)
+    public async Task Row07_UnknownConnReference_Unsecured_ExitsInconclusiveWithNoSecurityNotice(int? parallel)
     {
         var file = WriteSuite(
             $"r07-plain-{Tag(parallel)}",
@@ -462,7 +498,19 @@ public sealed class SecurityAssuranceMatrixTests : IDisposable
         var exitCode = await RunAsync(file, parallel, sw);
 
         Assert.Contains("unknown dependency", sw.ToString(), StringComparison.Ordinal);
-        Assert.Equal(ExitCodes.Success, exitCode);
+        // #369: exit 4, not 0 — and the reason is NOT security. A suite refused before any
+        // topology was built executed nothing, and a run in which nothing executed is never a
+        // clean pass. The security notice below is what still proves the carve-out did not reach
+        // this unsecured suite; the exit code no longer discriminates, so the mechanism does.
+        //
+        // This row also measured the sequential/parallel divergence the same change closed: the
+        // `${conn:typo}` fault exited 0 under a bare run and 4 under `--parallel 1`, because the
+        // parallel runner derived "nothing executed" from its event buffers while the sequential
+        // ArgumentException catch returned a bare SuiteResult that said nothing. Both now route
+        // through the one without-topology completion path.
+        Assert.DoesNotContain(
+            "declares a 'security' block", sw.ToString(), StringComparison.Ordinal);
+        Assert.Equal(ExitCodes.Inconclusive, exitCode);
     }
 
     // ── Row 8a: a protocol conflict inside ONE scenario ───────────────────────────────────
@@ -490,7 +538,7 @@ public sealed class SecurityAssuranceMatrixTests : IDisposable
     [Theory]
     [InlineData(null)]
     [InlineData(1)]
-    public async Task Row08a_ProtocolConflictInOneScenario_Unsecured_ExitsSuccess(int? parallel)
+    public async Task Row08a_ProtocolConflictInOneScenario_Unsecured_ExitsInconclusiveWithNoSecurityNotice(int? parallel)
     {
         var file = WriteSuite(
             $"r08a-plain-{Tag(parallel)}",
@@ -500,7 +548,19 @@ public sealed class SecurityAssuranceMatrixTests : IDisposable
         var exitCode = await RunAsync(file, parallel, sw);
 
         Assert.Contains("one endpoint value per target", sw.ToString(), StringComparison.Ordinal);
-        Assert.Equal(ExitCodes.Success, exitCode);
+        // #369: exit 4, not 0 — and the reason is NOT security. A suite refused before any
+        // topology was built executed nothing, and a run in which nothing executed is never a
+        // clean pass. The security notice below is what still proves the carve-out did not reach
+        // this unsecured suite.
+        //
+        // THIS ROW'S DISCRIMINATOR MOVED, DELIBERATELY. The pair used to read "secured 4,
+        // unsecured 0" and carried its whole proof in the exit code; with both now 4 that proof
+        // would have evaporated silently, leaving a row that passes while testing nothing. The
+        // notice is the better signal anyway: it asserts the MECHANISM (did the security
+        // derivation refuse this run) rather than a proxy for it.
+        Assert.DoesNotContain(
+            "declares a 'security' block", sw.ToString(), StringComparison.Ordinal);
+        Assert.Equal(ExitCodes.Inconclusive, exitCode);
     }
 
     // ── Row 8b: the SUITE-LEVEL protocol conflict ─────────────────────────────────────────
@@ -575,7 +635,7 @@ public sealed class SecurityAssuranceMatrixTests : IDisposable
     }
 
     [Fact]
-    public async Task Row08b_SuiteLevelProtocolConflict_Unsecured_ExitsSuccess()
+    public async Task Row08b_SuiteLevelProtocolConflict_Unsecured_ExitsInconclusiveWithNoSecurityNotice()
     {
         var dir = WriteSplitFamilySuite("r08b-plain", securityBlock: null);
 
@@ -583,7 +643,19 @@ public sealed class SecurityAssuranceMatrixTests : IDisposable
         var exitCode = await RunAsync(dir, parallel: null, sw);
 
         Assert.Contains("one endpoint value per target", sw.ToString(), StringComparison.Ordinal);
-        Assert.Equal(ExitCodes.Success, exitCode);
+        // #369: exit 4, not 0 — and the reason is NOT security. A suite refused before any
+        // topology was built executed nothing, and a run in which nothing executed is never a
+        // clean pass. The security notice below is what still proves the carve-out did not reach
+        // this unsecured suite.
+        //
+        // THIS ROW'S DISCRIMINATOR MOVED, DELIBERATELY. The pair used to read "secured 4,
+        // unsecured 0" and carried its whole proof in the exit code; with both now 4 that proof
+        // would have evaporated silently, leaving a row that passes while testing nothing. The
+        // notice is the better signal anyway: it asserts the MECHANISM (did the security
+        // derivation refuse this run) rather than a proxy for it.
+        Assert.DoesNotContain(
+            "declares a 'security' block", sw.ToString(), StringComparison.Ordinal);
+        Assert.Equal(ExitCodes.Inconclusive, exitCode);
     }
 
     // ── Row 9: a document that fails discovery, ALONE ─────────────────────────────────────

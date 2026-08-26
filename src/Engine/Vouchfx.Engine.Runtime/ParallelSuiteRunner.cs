@@ -709,9 +709,39 @@ public static class ParallelSuiteRunner
         return new SuiteResult(aggregate, perScenario)
         {
             Assurance = assurance,
+
+            // #369, and DERIVED rather than flagged. The sequential path can set this from the
+            // route it took, because CompleteWithoutTopologyAsync IS its without-topology path.
+            // There is no such single route here: under --parallel every slot owns its OWN
+            // topology, so "did anything execute" is a property of the whole fan-out and not of
+            // any one return.
+            //
+            // A step event is the evidence, because it exists if and only if a step ran. Reading
+            // it off the same concatenated buffer the renderers consume also means this answer
+            // cannot disagree with the artefacts, which is the property a second flag would have
+            // been free to break.
+            //
+            // The sequential/parallel DIVERGENCE is the point: without this, `--parallel 1` on a
+            // suite refused before any topology exited 0 while the identical bare run exited 4.
+            // This codebase has measured that exact shape before and treats it as its own defect
+            // class, not as a nuance.
+            ExecutedAnyScenario = allBuffers.Exists(ContainsStepEvent),
         };
     }
 
+    /// <summary>
+    /// Whether an event line is a <c>step-started</c> record — the evidence that a step actually
+    /// ran (#369).
+    /// </summary>
+    /// <remarks>
+    /// A substring test over the serialised line rather than a parse: this runs once per event on
+    /// a hot path, the token is emitted by <c>EventStreamJson</c> with fixed property ordering and
+    /// no whitespace, and a false positive would need the literal <c>"type":"step-started"</c>
+    /// inside another field's value — which would still mean a step event was described. The
+    /// constant is referenced, never spelled, so a rename moves this with it.
+    /// </remarks>
+    private static bool ContainsStepEvent(string eventLine) =>
+        eventLine.Contains("\"type\":\"" + EventTypes.StepStarted + "\"", StringComparison.Ordinal);
     /// <summary>
     /// Builds the minimal event buffer for a scenario that was cancelled before completion: a
     /// scenario-started + scenario-completed pair with verdict <see cref="Verdict.Inconclusive"/>

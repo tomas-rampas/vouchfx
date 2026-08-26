@@ -250,6 +250,79 @@ public sealed class ComputeExitCodeTests
                 failOnInconclusive: false));
     }
 
+    /// <summary>
+    /// #369: a suite that PARSED fine but never executed a step exits non-zero. The third
+    /// category the design never named — a schema rejection, a secret-reference failure, a
+    /// malformed <c>env:</c>, the both-families protocol conflict — all abort before any topology
+    /// is built, and all exited 0 by default.
+    /// </summary>
+    [Fact]
+    public void NothingExecuted_InconclusiveSuite_ReturnsInconclusive()
+    {
+        Assert.Equal(
+            ExitCodes.Inconclusive,
+            RunCommand.ComputeExitCode(
+                parsedCount: 1,
+                parseFailureCount: 0,
+                Verdict.Inconclusive,
+                failOnEnvironmentError: false,
+                failOnInconclusive: false,
+                securityAssurance: null,
+                executedAnyScenario: false));
+    }
+
+    /// <summary>
+    /// The fence that keeps #369 from silently closing #390. A topology that fails to START also
+    /// executes nothing and reaches the same completion path since #407 — but it carries
+    /// <see cref="Verdict.EnvironmentError"/>, which keeps its own <c>--fail-on-env-error</c>
+    /// gate. Without this row, widening the rule to every verdict would pass the test above while
+    /// reddening every suite whose UNRELATED container was slow to come up.
+    /// </summary>
+    [Fact]
+    public void NothingExecuted_EnvironmentError_StillHonoursItsOwnGate()
+    {
+        Assert.Equal(
+            ExitCodes.Success,
+            RunCommand.ComputeExitCode(
+                parsedCount: 1,
+                parseFailureCount: 0,
+                Verdict.EnvironmentError,
+                failOnEnvironmentError: false,
+                failOnInconclusive: false,
+                securityAssurance: null,
+                executedAnyScenario: false));
+
+        Assert.Equal(
+            ExitCodes.EnvironmentError,
+            RunCommand.ComputeExitCode(
+                parsedCount: 1,
+                parseFailureCount: 0,
+                Verdict.EnvironmentError,
+                failOnEnvironmentError: true,
+                failOnInconclusive: false,
+                securityAssurance: null,
+                executedAnyScenario: false));
+    }
+
+    /// <summary>
+    /// The other half of the same fence, from the executing side: a scenario that DID run and
+    /// could not conclude still exits 0 by default. Only "nothing executed" is treated as
+    /// never-clean.
+    /// </summary>
+    [Fact]
+    public void SomethingExecuted_InconclusiveSuite_StillExitsZeroByDefault()
+    {
+        Assert.Equal(
+            ExitCodes.Success,
+            RunCommand.ComputeExitCode(
+                parsedCount: 1,
+                parseFailureCount: 0,
+                Verdict.Inconclusive,
+                failOnEnvironmentError: false,
+                failOnInconclusive: false,
+                securityAssurance: null,
+                executedAnyScenario: true));
+    }
     [Fact]
     public void NoParseFailures_GenuineExecutionInconclusive_StillExitsZeroByDefault()
     {
