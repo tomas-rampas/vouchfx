@@ -27,6 +27,11 @@
 // arrived on 2026-08-27, when the maintainer overturned the completeness objection that had
 // kept the root unguarded through two rounds of per-holder fixes; `SecuritySpec`'s own remarks
 // carry that decision and the argument for it.
+//
+// `Withhold` then took a second kind of caller (#353): the two untyped `Extra` buckets, on
+// `SecuritySpec` and `DependencySpec`. Both were guarded in ONE change rather than one per site,
+// because that is the whole lesson of the three rounds above — a per-site guard is a rule the
+// next site has to remember, and this file exists so that it is not.
 using System.Text;
 
 namespace Vouchfx.Engine.Authoring.Model;
@@ -46,11 +51,11 @@ internal static class RecordSecurityPrinting
     internal const string RedactedMarker = "<redacted>";
 
     /// <summary>
-    /// The value to hand <see cref="Print"/> for a member whose own TEXT is the secret-bearing
+    /// The value to hand <see cref="Print"/> for a member whose own VALUE is the secret-bearing
     /// thing: <see cref="RedactedMarker"/> when it is declared, <see langword="null"/> — which
     /// prints empty — when it is not.
     /// </summary>
-    /// <param name="declared">The member's declared text, or <see langword="null"/>.</param>
+    /// <param name="declared">The member's declared value, or <see langword="null"/>.</param>
     /// <remarks>
     /// <para>
     /// <strong>Why the root needs this and cannot use <see cref="Print"/>'s own test.</strong>
@@ -61,7 +66,10 @@ internal static class RecordSecurityPrinting
     /// <c>clientCert</c> and <c>clientKey</c> printed beside it. Which member carries the secret
     /// is knowledge only the declaring record has, so the declaring record states it — here,
     /// at the call site, rather than by a name test this file would have to keep in step with a
-    /// property name.
+    /// property name. The parameter is GENERIC for the same reason this is not a
+    /// type test: what the withheld member happens to be typed as is not the criterion — the two
+    /// <c>Extra</c> buckets, both <c>YamlMappingNode</c>, route through here beside the
+    /// <see langword="string"/> passphrase.
     /// </para>
     /// <para>
     /// The <see langword="null"/>/declared split is the same one <see cref="Print"/> draws for a
@@ -70,17 +78,50 @@ internal static class RecordSecurityPrinting
     /// <see cref="RedactedMarker"/> asserts a passphrase that is being withheld.
     /// </para>
     /// <para>
-    /// The withholding is UNCONDITIONAL, and that is not over-caution. On a schema-validated
-    /// path the text is a <c>${secret:}</c> REFERENCE, which §17 permits quoting — but only once
-    /// <c>SecretReference.ValidateSecretBearingField</c> has RETURNED TRUE, and that method needs
-    /// the run's secret-source list. A <c>ToString()</c> has no such list, the parser is
-    /// deliberately lenient enough to bind a literal passphrase, and
-    /// <c>SecretReference.TryParse</c> alone is not the proof — see
-    /// <see cref="SecuritySpec.ClientKeyPassword"/>'s own remarks for why that shortcut
-    /// reproduces a disclosure defect.
+    /// <strong>Generic over reference types rather than over <see cref="object"/>.</strong> The
+    /// parameter was <see langword="string"/> while <see cref="SecuritySpec.ClientKeyPassword"/>
+    /// was the only caller; #353 added the two <c>Extra</c> buckets
+    /// (<see cref="SecuritySpec.Extra"/>, <see cref="DependencySpec.Extra"/>), both YAML mapping
+    /// nodes, bringing the call sites to three. Nothing here
+    /// inspects the value — the marker is chosen on PRESENCE alone — so one spelling serves them
+    /// all.
+    /// </para>
+    /// <para>
+    /// <strong>The <c>class</c> constraint is load-bearing, and <see cref="object"/> would not
+    /// have been free.</strong> A non-nullable value type boxes to a non-null reference, so
+    /// <c>Withhold(false)</c> or <c>Withhold(0)</c> would print
+    /// <see cref="RedactedMarker"/> for a member that is merely DEFAULT — destroying the
+    /// absent-versus-withheld distinction the paragraphs above defend, and doing it silently.
+    /// The constraint makes the compiler refuse that call instead. A future secret-bearing member
+    /// of nullable value type needs a sibling overload taking <c>T?</c> where <c>T : struct</c>,
+    /// never a widening back to <see cref="object"/>.
+    /// </para>
+    /// <para>
+    /// <strong>The withholding is UNCONDITIONAL for every caller, and the argument is not one
+    /// argument.</strong> It is the same conclusion reached twice, from opposite starting points,
+    /// and stating only the first would leave the buckets' guard unjustified.
+    /// </para>
+    /// <para>
+    /// For <see cref="SecuritySpec.ClientKeyPassword"/> the schema DOES constrain the text: on a
+    /// schema-validated path it is a <c>${secret:}</c> REFERENCE, which §17 permits quoting — but
+    /// only once <c>SecretReference.ValidateSecretBearingField</c> has RETURNED TRUE, and that
+    /// method needs the run's secret-source list. A <c>ToString()</c> has no such list, the parser
+    /// is deliberately lenient enough to bind a literal passphrase anyway, and
+    /// <c>SecretReference.TryParse</c> alone is not the proof — see that property's own remarks
+    /// for why the shortcut reproduces a disclosure defect. So: constrained, but not PROVABLY so
+    /// from here.
+    /// </para>
+    /// <para>
+    /// For <see cref="SecuritySpec.Extra"/> and <see cref="DependencySpec.Extra"/> there is no
+    /// such constraint to appeal to and the conclusion is stronger, not weaker. A bucket holds
+    /// precisely the keys no typed member claims, so no <c>pattern</c> governs its contents and
+    /// nothing in the record's own type says what a value is. Both buckets are
+    /// <see langword="null"/> on every schema-valid document today, which makes the guard cost
+    /// nothing in the ordinary case and says nothing whatever about the case it exists for.
     /// </para>
     /// </remarks>
-    internal static object? Withhold(string? declared) =>
+    internal static object? Withhold<T>(T? declared)
+        where T : class =>
         declared is null ? null : RedactedMarker;
 
     /// <summary>

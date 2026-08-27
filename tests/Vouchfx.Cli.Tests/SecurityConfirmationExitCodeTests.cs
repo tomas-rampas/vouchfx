@@ -708,6 +708,12 @@ public sealed class SecurityConfirmationExitCodeTests
             "ClientKey",
             "ClientKeyPassword",
             "Endpoint",
+
+            // #353. DELIBERATELY NOT an input to DigestOf: the bucket holds unconstrained
+            // author text with no SecretReference gate over it, which is the same §17 reason a
+            // bare literal passphrase stays out of that hash. IdentityOf's remarks carry the
+            // scope limit this creates and the condition for revisiting it.
+            "Extra",
             "Profile",
             "ServerArtifacts");
 
@@ -740,7 +746,9 @@ public sealed class SecurityConfirmationExitCodeTests
             + string.Join(", ", declared) + ", this census expects "
             + string.Join(", ", expected) + ". SecuredTargets.DigestOf enumerates its inputs BY "
             + "HAND — add the field there (and a row to the identity tests in this file), or two "
-            + "declarations differing only in it share one identity (#415).");
+            + "declarations differing only in it share one identity (#415). Excluding it instead "
+            + "is a decision, not a default: record the reason beside this census entry and in "
+            + "IdentityOf's scope limits, as SecuritySpec.Extra does.");
     }
 
     /// <summary>

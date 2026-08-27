@@ -366,6 +366,18 @@ public static class SecuredTargets
     /// whole <c>ServiceSpec</c> rather than the <c>SecuritySpec</c> this walk yields.
     /// </para>
     /// <para>
+    /// <strong>Third scope limit: <see cref="SecuritySpec.Extra"/> is NOT an input.</strong> That
+    /// bucket (#353) retains every <c>security</c> key the parser binds to no typed member, so two
+    /// declarations differing ONLY there share one identity. Not reachable today for a document the
+    /// engine accepts: <c>$defs/security</c> closes with <c>"unevaluatedProperties": false</c> and
+    /// no profile fragment contributing a field has shipped, so on every schema-valid document the
+    /// bucket is <see langword="null"/> and contributes nothing to distinguish. It is left out
+    /// rather than hashed because its content is unconstrained author text with no
+    /// <c>SecretReference</c> gate over it — the same §17 argument that keeps a bare literal
+    /// passphrase out of this hash, below. Whoever ships the first profile fragment must revisit
+    /// this alongside deciding what the bucket carries.
+    /// </para>
+    /// <para>
     /// JSON was the alternative and is rejected for two reasons. Its determinism would rest on
     /// <c>JsonSerializerOptions</c> defaults and on reflected property order — properties of the
     /// serialiser rather than of this file, free to move under a runtime upgrade and taking every

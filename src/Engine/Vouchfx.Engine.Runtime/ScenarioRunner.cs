@@ -25,6 +25,8 @@
 //     CompositeScenarioIsolation / NullScenarioIsolation) between each.
 //   • SuiteResult — aggregate record for RunSuiteAsync callers.
 using System.Reflection;
+using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Vouchfx.Engine.Abstractions;
@@ -2206,14 +2208,26 @@ public static class ScenarioRunner
                 //
                 // What it misses is that the byte-identical gate compares the parsed AST
                 // (SerialiseEnvironment over ScenarioAst.Environment), not the YAML. The SCHEMA
-                // door fires on a shape the AST cannot carry: `$defs/security` closes with
-                // `unevaluatedProperties: false`, so an unknown key inside ONE scenario's
-                // `security` block is a schema error located inside that block — while SecuritySpec
-                // has no catch-all member, so the key is dropped and both scenarios' ASTs serialise
-                // identically. The environment gate therefore passes, that scenario alone takes an
-                // early verdict at the schema branch of the compilation loop (recording a refusal),
-                // the all-early guard does not fire because a sibling scenario is still runnable,
-                // and the suite runs to this return carrying it.
+                // door fires on shapes the AST cannot carry, and one is enough: a $defs/security
+                // property declared with a NON-SCALAR value (`caCert: {}`) is a schema error
+                // located inside that block, while GetScalar yields null for it and the key is on
+                // ParseSecurity's exclusion list, so it reaches no member and no bucket either.
+                // A scenario declaring it is therefore AST-indistinguishable from a sibling that
+                // declares no `caCert` at all. The environment gate passes, that scenario alone
+                // takes an early verdict at the schema branch of the compilation loop (recording a
+                // refusal), the all-early guard does not fire because a sibling is still runnable,
+                // and the suite runs to this return carrying it. Measured, not reasoned about:
+                // SchemaSecuritySurfaceClosureTests
+                // .ASecurityPropertyWithANonScalarValue_IsSchemaRejectedAndInvisibleInTheAst.
+                //
+                // THIS EXAMPLE USED TO BE AN UNKNOWN KEY (`$defs/security` closes with
+                // `unevaluatedProperties: false`, and SecuritySpec had no catch-all member, so the
+                // key was dropped). #353 gave SecuritySpec an `Extra` bucket, so an unknown key now
+                // SURVIVES into the AST, the two scenarios diverge, and that suite takes the
+                // shared-environment door above instead. That door carries its own
+                // `assurance.Refusing(AuthoringFault)`, so the invariant is intact either way and
+                // only the route changed — but the argument for THIS assignment needed a shape
+                // #353 did not close, and the one above is it.
                 //
                 // So this is not defence in depth: it is the path REQ-018 takes for a mixed suite,
                 // and dropping it would report exit 0 on a rejected security declaration.
@@ -2921,18 +2935,49 @@ public static class ScenarioRunner
     /// declares none (an empty topology).
     /// </param>
     /// <returns>
-    /// A stable string key derived from the same serialisation
-    /// <see cref="RunSuiteAsync"/> uses for its shared-environment check, so the two can
-    /// never disagree about what counts as "the same environment".  An empty string for a
-    /// <see langword="null"/> environment.
+    /// An uppercase hex SHA-256 over the same serialisation <see cref="RunSuiteAsync"/> uses for
+    /// its shared-environment check, so the two can never disagree about what counts as "the same
+    /// environment".  An empty string for a <see langword="null"/> environment.
     /// </returns>
     /// <remarks>
-    /// Reuses the private <see cref="SerialiseEnvironment"/> helper — the SAME canonical
-    /// form the suite runner already compares for its shared-topology assumption — so the
-    /// reuse decision here and the suite's equality check are guaranteed consistent.
+    /// <para>
+    /// Derived from the private <see cref="SerialiseEnvironment"/> helper — the SAME canonical
+    /// form the suite runner already compares for its shared-topology assumption — so the reuse
+    /// decision here and the suite's equality check are guaranteed consistent.
+    /// </para>
+    /// <para>
+    /// <strong>It DIGESTS that form rather than returning it, and the name was the honest one
+    /// before this method was (#353, review round two).</strong> It used to return the serialised
+    /// JSON itself: plaintext, carrying <c>"ClientKeyPassword"</c> with whatever the author
+    /// declared and, since #353, the two untyped <c>Extra</c> buckets beside it. A
+    /// <see langword="public"/> method returning declared secret material under a name that
+    /// promises a digest is a disclosure waiting for the first caller who trusts the name; #353
+    /// did not create it but did enlarge its payload.
+    /// </para>
+    /// <para>
+    /// <strong>Behaviour-preserving, which is why it could be fixed here rather than filed.</strong>
+    /// Every consumer of this value compares it and does nothing else — verified call site by call
+    /// site: <see cref="RunSuiteAsync"/>'s shared-environment guard (one
+    /// <c>string.Equals</c>, and its divergence message names the scenario, never the JSON), and
+    /// watch mode's reuse decision (<c>WatchRunner</c> hands it to <c>WatchCompileResult</c>, whose
+    /// get-only property <c>WatchSession</c> reads for exactly one ordinal <c>string.Equals</c>).
+    /// No persistence, no file write, no event field, no rendered line. A digest therefore answers
+    /// every question the plaintext answered.
+    /// </para>
+    /// <para>
+    /// The bytes are the string's UTF-16 code units REINTERPRETED, not transcoded. An
+    /// <see cref="System.Text.Encoding"/> applies a replacement fallback to an unpaired surrogate,
+    /// mapping two distinct strings onto one. That collision is measured rather than theoretical
+    /// elsewhere in this repository — <c>SecuredTargets.IdentityOf</c> hashes UTF-16 code units
+    /// for exactly this reason, and a CLI test pins a <c>caCert</c> differing only by a lone
+    /// surrogate. Reinterpreting cannot collide, so this method need not establish whether the
+    /// serialiser can emit one.
+    /// </para>
     /// </remarks>
     public static string ComputeEnvironmentHash(EnvironmentSpec? environment) =>
-        SerialiseEnvironment(environment);
+        SerialiseEnvironment(environment) is { Length: > 0 } json
+            ? Convert.ToHexString(SHA256.HashData(MemoryMarshal.AsBytes(json.AsSpan())))
+            : string.Empty;
 
     /// <summary>
     /// Builds the per-topology isolation for watch mode (S08-C-01) via
@@ -4045,11 +4090,23 @@ public static class ScenarioRunner
     /// <summary>
     /// <see cref="JsonSerializerOptions"/> used by <see cref="SerialiseEnvironment"/>.
     /// Allocated once (static initialiser) to avoid repeated reflection overhead.
-    /// Registers <see cref="YamlNodeJsonConverter"/> so that a
-    /// <see cref="DependencySpec.Extra"/> field (type <see cref="YamlMappingNode"/>)
-    /// is serialised to a deterministic JSON object rather than throwing
-    /// <see cref="InvalidOperationException"/> (S11-B-02).
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Registers <see cref="YamlNodeJsonConverter"/> so that a <see cref="YamlMappingNode"/> in the
+    /// serialised graph becomes a deterministic JSON object rather than throwing
+    /// <see cref="InvalidOperationException"/> (S11-B-02).
+    /// </para>
+    /// <para>
+    /// <strong>TWO structurally independent properties depend on this registration, not one.</strong>
+    /// <see cref="DependencySpec.Extra"/> is the one it was added for (S11-B-02);
+    /// <see cref="SecuritySpec.Extra"/> (#353) is the second, reached through a service's or
+    /// dependency's <c>security</c> block instead. Narrowing this registration to the dependency
+    /// path — a plausible cleanup while the prose named only that property — would break the
+    /// security path on the watch loop, where <c>WatchRunner</c> serialises BEFORE schema
+    /// validation and the parser is lenient where the schema is closed.
+    /// </para>
+    /// </remarks>
     private static readonly JsonSerializerOptions s_envSerialiserOptions =
         new() { Converters = { new YamlNodeJsonConverter() } };
 
@@ -4059,12 +4116,12 @@ public static class ScenarioRunner
     /// Returns an empty string for a <see langword="null"/> environment.
     /// </summary>
     /// <remarks>
-    /// Uses <see cref="s_envSerialiserOptions"/> which registers
-    /// <see cref="YamlNodeJsonConverter"/> — required because
-    /// <see cref="DependencySpec.Extra"/> is a <see cref="YamlMappingNode"/> that
-    /// <see cref="JsonSerializer"/> cannot handle without a custom converter (S11-B-02).
-    /// Mapping keys within each <see cref="DependencySpec.Extra"/> block are emitted in
-    /// ordinal sort order, so two Extra mappings that contain the same pairs in different
+    /// Uses <see cref="s_envSerialiserOptions"/>, which registers
+    /// <see cref="YamlNodeJsonConverter"/> — required because a <see cref="YamlMappingNode"/>
+    /// is a type <see cref="JsonSerializer"/> cannot handle without a custom converter
+    /// (S11-B-02), and TWO properties in this graph are one: <see cref="DependencySpec.Extra"/>
+    /// and <see cref="SecuritySpec.Extra"/> (#353). Mapping keys within any such node are
+    /// emitted in ordinal sort order, so two Extra mappings that contain the same pairs in different
     /// declaration order produce identical JSON.  Top-level <c>Services</c> and
     /// <c>Dependencies</c> collections are serialised by STJ in enumeration order and
     /// retain their YAML declaration order (which is stable: it comes from the same parsed

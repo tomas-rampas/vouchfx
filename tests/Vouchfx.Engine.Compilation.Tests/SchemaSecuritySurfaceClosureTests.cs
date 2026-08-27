@@ -19,14 +19,15 @@
 //      JSON Schema 2020-12 — kept alive here as a JsonSchema.Net-upgrade regression guard,
 //      exactly as SchemaStepSurfaceClosureTests' own finding-2 guard does for $defs/step.
 //
-// And one thing it records rather than proves (m4, second peer-review round): the seam stops
-// AT THE SCHEMA. Finding 1 shows a composed profile fragment's own field validating; nothing
-// downstream can then read it, because YamlDocumentParser.ParseSecurity binds a fixed set of
-// keys into SecuritySpec, which carries no Extra bucket (DependencySpec does). Until that additive
-// fix lands, REQ-020 buys authoring-time extensibility only — see
-// SecuritySpec_HasNoExtraBucket_SoAComposedProfileFieldIsDroppedAfterValidation at the foot of
-// this file, which fails the day the bucket appears.
+// And one thing that used to stop at the schema and no longer does (#353). Finding 1 shows a
+// composed profile fragment's own field validating; until the fix, nothing downstream could read
+// it, because YamlDocumentParser.ParseSecurity bound a fixed set of keys into SecuritySpec and
+// that record had no Extra bucket (DependencySpec did). It has one now, and
+// AComposedProfileFragmentField_SurvivesParsingIntoTheExtraBucket at the foot of this file proves
+// the survival by round-tripping such a field through the real parser rather than by reflecting
+// over the record's shape.
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using System.Text.Json;
@@ -38,6 +39,7 @@ using Vouchfx.Engine.Compilation.Schema;
 using Vouchfx.Sdk;
 using Vouchfx.Steps.Script.Csharp;
 using Xunit;
+using YamlDotNet.RepresentationModel;
 
 namespace Vouchfx.Engine.Compilation.Tests;
 
@@ -404,58 +406,75 @@ public sealed class SchemaSecuritySurfaceClosureTests
         Assert.Single(result.Errors);
     }
 
-    // ── Where the REQ-020 seam STOPS: the schema layer, and no further ────────────────
+    // ── Where the REQ-020 seam reaches: through the schema and into the model ─────────
 
     /// <summary>
-    /// m4 (peer review, fix round 2): REQ-020's composed-profile-fragment seam is proven at the
-    /// SCHEMA layer by Finding 1 above — and the NEXT layer silently drops the data.
-    /// <c>YamlDocumentParser.ParseSecurity</c> reads a fixed set of keys and binds them into
-    /// <see cref="SecuritySpec"/>, which — unlike its sibling
-    /// <see cref="Vouchfx.Engine.Authoring.Model.DependencySpec"/> — has no <c>Extra</c> bucket.
-    /// So a composed profile fragment's own field validates and is then discarded before any
-    /// consumer can see it: today the seam is authoring-time only.
+    /// #353: REQ-020's composed-profile-fragment seam is proven at the SCHEMA layer by Finding 1
+    /// above, and this row proves the NEXT layer keeps the data. A <c>security</c> key
+    /// <c>YamlDocumentParser.ParseSecurity</c> binds to no typed member survives parsing into
+    /// <see cref="SecuritySpec.Extra"/>, readable there rather than discarded.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// This is recorded, not fixed. Fixing it is purely additive (an init-only property on an
-    /// UNFROZEN Authoring record — <see cref="SecuritySpec"/>'s own remarks already state the
-    /// init-only-never-positional rule that makes it safe), so nothing is lost by deferring it
-    /// until a second profile exists to define what the bucket should carry. What was NOT
-    /// acceptable was leaving the limit unrecorded: every other statement about REQ-020 in this
-    /// repository describes the seam as working, with nothing anywhere saying it stops at the
-    /// schema.
+    /// This row replaces the reflection-only assertion that preceded it — which pinned the
+    /// bucket's ABSENCE, with <c>DependencySpec</c> as a can-detect-a-bucket control. Inverting
+    /// that assertion would have proved only that a property called <c>Extra</c> exists, which is
+    /// not the behaviour #353 is about: a bucket the parser never fills is the same drop with an
+    /// extra member. So the round trip is through the real parser. The
+    /// can-detect-a-bucket control that assertion carried moved to its own row below, where it
+    /// still controls something (that the shape this bucket was modelled on has not moved) rather
+    /// than sitting inside a test named for a parser round trip.
     /// </para>
     /// <para>
-    /// Asserted by REFLECTION over the record's own members rather than by round-tripping a
-    /// fragment field, because there is no shipped profile fragment to round-trip: the real
-    /// schema rejects an unknown key inside <c>security</c> (that is Finding 1's whole point),
-    /// so the only way to observe the drop today is to look at what the model CAN hold. The
-    /// <c>DependencySpec</c> half of the assertion is the control — it proves this test can
-    /// detect a bucket when one exists, so the <c>SecuritySpec</c> half is not vacuous — and the
-    /// test flips the moment the bucket is added, which is exactly when this note needs
-    /// rewriting.
+    /// The fixture is parsed but deliberately NOT validated: the real schema refuses an unknown
+    /// key inside <c>security</c> (Finding 1's whole point — the seam is for a field a composed
+    /// profile fragment CONTRIBUTES, and no such fragment has shipped), while the parser is
+    /// lenient by design. That asymmetry is what makes the bucket observable today, and it is
+    /// exactly the state a contributed field would arrive in once a fragment does ship.
     /// </para>
     /// </remarks>
     [Fact]
-    public void SecuritySpec_HasNoExtraBucket_SoAComposedProfileFieldIsDroppedAfterValidation()
+    public void AComposedProfileFragmentField_SurvivesParsingIntoTheExtraBucket()
     {
-        static bool HasExtraBucket(Type recordType) =>
-            recordType.GetProperties(BindingFlags.Public | BindingFlags.Instance)
-                .Any(p => p.Name == "Extra");
+        const string yaml = """
+            environment:
+              dependencies:
+                events:
+                  type: kafka
+                  security:
+                    profile: acme.spiffe
+                    endpoint: 9093
+                    trustDomain: spiffe://acme.example
+            steps:
+              - id: noop
+                type: script.csharp
+                code: "// noop"
+            """;
 
-        Assert.True(HasExtraBucket(typeof(Vouchfx.Engine.Authoring.Model.DependencySpec)),
-            "Control: DependencySpec is expected to carry an 'Extra' bucket — if it no longer " +
-            "does, this test can no longer detect one and the SecuritySpec assertion below " +
-            "proves nothing.");
+        var document = YamlDocumentParser.Parse(yaml);
+        var security = document.Environment?.Dependencies?["events"].Security;
 
-        Assert.False(HasExtraBucket(typeof(SecuritySpec)),
-            "SecuritySpec has GAINED an 'Extra' bucket. That is the additive fix this test " +
-            "documents as deferred — good news, but it means REQ-020's seam no longer stops at " +
-            "the schema, so update this test, SchemaSecuritySurfaceClosureTests' own header, and " +
-            "the CHANGELOG entry that records the limit.");
+        Assert.NotNull(security);
 
-        // The fixed keys ParseSecurity reads, pinned so a further fixed key added without an
-        // Extra bucket still leaves this note accurate about the shape it describes.
+        // The typed members the parser DOES bind are unaffected — the bucket takes what is left
+        // over, never a key a member claims.
+        Assert.Equal("acme.spiffe", security!.Profile);
+        Assert.Equal("9093", security.Endpoint);
+
+        Assert.NotNull(security.Extra);
+        Assert.True(
+            security.Extra!.Children.TryGetValue(new YamlScalarNode("trustDomain"), out var value),
+            "A 'security' key ParseSecurity binds to no typed member must be readable from " +
+            "SecuritySpec.Extra. Finding it absent means the field validated (once a profile " +
+            "fragment declares it) and was then dropped before any consumer could see it — the " +
+            "state #353 closed. Bind it in ParseSecurity's BuildExtraNode call.");
+        Assert.Equal("spiffe://acme.example", ((YamlScalarNode)value).Value);
+
+        // The bucket holds ONLY the unbound key: were an exclusion missing from that call, a
+        // bound key would appear here as well as in its typed member and nothing else would say so.
+        Assert.Single(security.Extra.Children);
+
+        // And the member census, which notices any member VANISHING from the record.
         var declared = typeof(SecuritySpec)
             .GetProperties(BindingFlags.Public | BindingFlags.Instance)
             .Select(p => p.Name)
@@ -464,6 +483,192 @@ public sealed class SchemaSecuritySurfaceClosureTests
             .ToList();
 
         Assert.Equal(s_securitySpecMembers, declared);
+    }
+
+    /// <summary>
+    /// <see cref="Vouchfx.Engine.Authoring.Model.DependencySpec"/> still carries the <c>Extra</c>
+    /// bucket <see cref="SecuritySpec.Extra"/> was modelled on (#353) — same type, same
+    /// null-not-empty contract, same ordinal key comparison.
+    /// </summary>
+    /// <remarks>
+    /// Its own row rather than a preamble to the round-trip test above, where it was a leftover
+    /// control for an assertion that no longer exists. If the dependency bucket is ever retyped or
+    /// removed, the security bucket's own documentation — which describes it as that record's
+    /// counterpart throughout — needs revisiting, and this is what says so.
+    /// </remarks>
+    [Fact]
+    public void TheDependencyBucketSecuritysIsModelledOn_StillExists()
+    {
+        var extra = typeof(Vouchfx.Engine.Authoring.Model.DependencySpec)
+            .GetProperty("Extra", BindingFlags.Public | BindingFlags.Instance);
+
+        Assert.NotNull(extra);
+        Assert.Equal(
+            typeof(SecuritySpec).GetProperty("Extra", BindingFlags.Public | BindingFlags.Instance)!
+                .PropertyType,
+            extra!.PropertyType);
+    }
+
+    /// <summary>
+    /// The direction the round-trip test cannot see: a key named in <c>ParseSecurity</c>'s
+    /// EXCLUSION list that the method does not actually bind is dropped by both halves — excluded
+    /// from the bucket, and read into no member — which is the accept-and-drop state #353 closed,
+    /// silently reopened for one key.
+    /// </summary>
+    /// <remarks>
+    /// Derived, not hand-listed: the exclusion list is exercised through the parser by declaring
+    /// each <c>$defs/security</c> property ALONE and asserting the result is observable somewhere
+    /// — in a typed member or in the bucket. A spurious name in that list fails here for the key
+    /// that lost its binding, naming it.
+    /// </remarks>
+    [Fact]
+    public void EverySecuritySchemaProperty_IsObservableAfterParsing_InAMemberOrInTheBucket()
+    {
+        var registry = MinimalRegistry();
+        var composedJson = SchemaComposer.ComposeSchemaJson(registry);
+        var schemaProperties = JsonNode.Parse(composedJson)!.AsObject()["$defs"]!["security"]!
+            .AsObject()["properties"]!.AsObject()
+            .Select(property => property.Key)
+            .OrderBy(key => key, StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.NotEmpty(schemaProperties);
+
+        // A type-appropriate value per key, so each declaration is one the parser can bind.
+        // Keyed by the schema property name, and the fixture is asserted COMPLETE below rather
+        // than trusted, so a new property cannot slip past with no value of its own.
+        var values = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["profile"] = "mtls",
+            ["endpoint"] = "9093",
+            ["caCert"] = "./certs/ca.pem",
+            ["clientCert"] = "./certs/client.pem",
+            ["clientKey"] = "./certs/client.key",
+            ["clientKeyPassword"] = "\"${secret:env/PASS}\"",
+            ["serverArtifacts"] = "\n          - source: ./certs/broker.jks\n            target: /etc/broker.jks",
+        };
+
+        var missing = schemaProperties.Where(key => !values.ContainsKey(key)).ToArray();
+        Assert.True(
+            missing.Length == 0,
+            "$defs/security declares " + string.Join(", ", missing) + ", for which this test has " +
+            "no fixture value. Add one — otherwise the key is not exercised and a spurious " +
+            "exclusion for it would go unnoticed.");
+
+        foreach (var key in schemaProperties)
+        {
+            var yaml = $"""
+                environment:
+                  dependencies:
+                    events:
+                      type: kafka
+                      security:
+                        {key}: {values[key]}
+                steps:
+                  - id: noop
+                    type: script.csharp
+                    code: "// noop"
+                """;
+
+            var security = YamlDocumentParser.Parse(yaml)
+                .Environment?.Dependencies?["events"].Security;
+
+            Assert.True(
+                security is not null,
+                $"A 'security' block declaring only '{key}' produced no SecuritySpec at all.");
+
+            var member = typeof(SecuritySpec)
+                .GetProperty(ToPascalCase(key), BindingFlags.Public | BindingFlags.Instance);
+
+            var boundToAMember = member?.GetValue(security) is not null;
+            var boundToTheBucket = security!.Extra is not null
+                && security.Extra!.Children.ContainsKey(new YamlScalarNode(key));
+
+            Assert.True(
+                boundToAMember || boundToTheBucket,
+                $"'{key}' is declared by $defs/security and reaches NEITHER a SecuritySpec member " +
+                "NOR the Extra bucket after parsing — it is dropped. The likeliest cause is a " +
+                "name in ParseSecurity's BuildExtraNode exclusion list that the method does not " +
+                "actually bind: excluding a key it does not read is the accept-and-drop state " +
+                "#353 closed, reopened for this one key.");
+        }
+    }
+
+    /// <summary>
+    /// The residual #353's bucket does NOT close, pinned because a comment elsewhere depends on
+    /// it: a <c>$defs/security</c> property declared with a NON-SCALAR value is rejected by the
+    /// schema and is invisible in the AST — <c>GetScalar</c> yields <see langword="null"/> for it,
+    /// and the key is on <c>ParseSecurity</c>'s exclusion list so it never reaches
+    /// <see cref="SecuritySpec.Extra"/> either.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Load-bearing for <c>ScenarioRunner</c>'s normal-completion return, whose reachability
+    /// argument needs a shape the SCHEMA rejects inside one scenario's <c>security</c> block while
+    /// both scenarios' ASTs still serialise identically — otherwise the shared-environment gate
+    /// aborts the suite first and the mixed-suite path it defends is never taken.
+    /// </para>
+    /// <para>
+    /// That argument used to name an UNKNOWN key, which #353 closed: an unknown key now lands in
+    /// <see cref="SecuritySpec.Extra"/> and the two ASTs diverge. This row is the replacement
+    /// shape, and it is measured rather than reasoned about — the comment was rewritten to name
+    /// it only after this test passed.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void ASecurityPropertyWithANonScalarValue_IsSchemaRejectedAndInvisibleInTheAst()
+    {
+        const string offending = """
+            environment:
+              dependencies:
+                events:
+                  type: kafka
+                  security:
+                    profile: tls
+                    endpoint: 9093
+                    caCert: {}
+            steps:
+              - id: noop
+                type: script.csharp
+                code: "// noop"
+            """;
+
+        // The sibling that declares no caCert at all — the other half of the mixed suite.
+        const string benign = """
+            environment:
+              dependencies:
+                events:
+                  type: kafka
+                  security:
+                    profile: tls
+                    endpoint: 9093
+            steps:
+              - id: noop
+                type: script.csharp
+                code: "// noop"
+            """;
+
+        var registry = MinimalRegistry();
+
+        // Half one: the schema REJECTS it, with an error located inside the security block.
+        var validation = DocumentValidator.Validate(offending, registry);
+        Assert.False(validation.IsValid);
+        Assert.Contains(
+            validation.Errors,
+            error => error.InstanceLocation.Contains("/security/", StringComparison.Ordinal));
+
+        // Half two: the AST cannot carry it — neither in the typed member nor in the bucket.
+        var offendingSecurity = YamlDocumentParser.Parse(offending)
+            .Environment!.Dependencies!["events"].Security;
+        var benignSecurity = YamlDocumentParser.Parse(benign)
+            .Environment!.Dependencies!["events"].Security;
+
+        Assert.NotNull(offendingSecurity);
+        Assert.Null(offendingSecurity!.CaCert);
+        Assert.Null(offendingSecurity.Extra);
+
+        // And therefore indistinguishable from the sibling that never declared the key.
+        Assert.Equal(benignSecurity, offendingSecurity);
     }
 
     // ── The accept-and-drop hole, closed mechanically ─────────────────────────────────
@@ -531,8 +736,6 @@ public sealed class SchemaSecuritySurfaceClosureTests
             "INIT-ONLY property (never a positional parameter — see SecuritySpec's own remarks " +
             "on binary compatibility) and bind it in YamlDocumentParser.ParseSecurity.");
 
-        static string ToPascalCase(string camelCase) =>
-            char.ToUpperInvariant(camelCase[0]) + camelCase[1..];
     }
 
     /// <summary>
@@ -658,13 +861,46 @@ public sealed class SchemaSecuritySurfaceClosureTests
 
         Assert.NotNull(security);
 
+        // Swept over the members the SCHEMA declares, derived by the same mechanical
+        // camelCase-to-PascalCase map the sibling test above uses — never a hand-written
+        // exclusion list. That scoping is what this test's own subject requires: it asks whether
+        // ParseSecurity READS every schema property, and a member no schema property maps to has
+        // no key for the fixture to declare. SecuritySpec.Extra (#353) is the live case — the
+        // bucket exists precisely for keys $defs/security does NOT declare, so on a schema-VALID
+        // fixture it is null by construction, and the fixture must stay schema-valid for the
+        // non-vacuity check above to mean anything.
+        var schemaMembers = schemaProperties.Select(ToPascalCase).ToHashSet(StringComparer.Ordinal);
+
         var unread = typeof(SecuritySpec)
             .GetProperties(BindingFlags.Public | BindingFlags.Instance)
-            .Where(property => property.Name != "EqualityContract")
+            .Where(property => schemaMembers.Contains(property.Name))
             .Where(property => property.GetValue(security) is null)
             .Select(property => property.Name)
             .OrderBy(name => name, StringComparer.Ordinal)
             .ToArray();
+
+        // Non-vacuity: an empty or mis-derived schemaMembers would sweep nothing and pass.
+        Assert.Equal(schemaProperties.Length, schemaMembers.Count);
+        Assert.Contains("ClientKeyPassword", schemaMembers);
+
+        // And every mapped name must be a REAL member, or it drops out of the sweep above
+        // silently and the accept-and-drop hole reopens GREEN (#353, review round two). The two
+        // guards above prove the map is injective and that one name maps; neither proves that a
+        // future $defs/security property whose member is not spelled
+        // char.ToUpperInvariant(k[0]) + k[1..] is caught rather than skipped.
+        var declaredMemberNames = typeof(SecuritySpec)
+            .GetProperties(BindingFlags.Public | BindingFlags.Instance)
+            .Select(property => property.Name)
+            .ToHashSet(StringComparer.Ordinal);
+
+        Assert.All(
+            schemaMembers,
+            member => Assert.True(
+                declaredMemberNames.Contains(member),
+                "$defs/security declares a property mapping to SecuritySpec." + member + ", which "
+                + "is not a member of that record. The sweep below is scoped to mapped names, so "
+                + "this one would be SKIPPED rather than reported — reconcile the name (or the "
+                + "map) rather than exempting it."));
 
         Assert.True(
             unread.Length == 0,
@@ -676,14 +912,29 @@ public sealed class SchemaSecuritySurfaceClosureTests
     }
 
     /// <summary>
-    /// The fixed set of keys <c>YamlDocumentParser.ParseSecurity</c> binds, ordinally sorted.
-    /// <c>ClientKeyPassword</c> joined that set on 2026-08-11 (client-key-password spec,
-    /// REQ-003) as an INIT-ONLY property — one more FIXED key, deliberately not an
-    /// <c>Extra</c> bucket, so the closure this class documents is unchanged in kind.
+    /// The camelCase-to-PascalCase map from a <c>$defs/security</c> property name to its
+    /// <see cref="SecuritySpec"/> member name.
+    /// </summary>
+    /// <remarks>
+    /// ONE map, shared by the two tests that use it, because they are two halves of one claim
+    /// (schema → member exists; member → parser reads it) and a divergence between two copies
+    /// would surface as the second test accusing <c>ParseSecurity</c> of not reading a key that
+    /// the first had already mapped differently. It was two identical local functions until
+    /// #353's review round two.
+    /// </remarks>
+    private static string ToPascalCase(string camelCase) =>
+        char.ToUpperInvariant(camelCase[0]) + camelCase[1..];
+
+    /// <summary>
+    /// <see cref="SecuritySpec"/>'s members, ordinally sorted: the six keys
+    /// <c>YamlDocumentParser.ParseSecurity</c> binds positionally, plus the two init-only
+    /// properties — <c>ClientKeyPassword</c> (client-key-password spec, REQ-003) and
+    /// <c>Extra</c>, the untyped bucket for every <c>security</c> key no member above claims
+    /// (#353).
     /// </summary>
     private static readonly string[] s_securitySpecMembers =
     {
-        "CaCert", "ClientCert", "ClientKey", "ClientKeyPassword", "Endpoint", "Profile",
+        "CaCert", "ClientCert", "ClientKey", "ClientKeyPassword", "Endpoint", "Extra", "Profile",
         "ServerArtifacts",
     };
 }

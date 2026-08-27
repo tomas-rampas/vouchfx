@@ -243,6 +243,11 @@ public sealed record ServiceSpec(
 /// <param name="Extra">
 /// Raw YAML mapping node retaining any additional provider-specific fields.
 /// <see langword="null"/> when no extra fields are present.
+/// <para>
+/// <strong>Withheld from <c>ToString()</c> unconditionally</strong> (#353): the parser applies no
+/// shape to what lands here, so a literal passphrase can, and a <c>ToString()</c> cannot prove
+/// otherwise. See this record's <c>PrintMembers</c> for the render shape.
+/// </para>
 /// </param>
 public sealed record DependencySpec(
     string Type,
@@ -320,22 +325,36 @@ public sealed record DependencySpec(
     public IReadOnlyDictionary<string, string>? Env { get; init; }
 
     /// <summary>
-    /// Withholds <see cref="Security"/> from <c>ToString()</c> (#408), printing every other
-    /// member exactly as the compiler-generated <c>PrintMembers</c> did.
+    /// Withholds <see cref="Security"/> and <see cref="Extra"/> from <c>ToString()</c>, printing
+    /// every other member exactly as the compiler-generated <c>PrintMembers</c> did.
     /// </summary>
     /// <remarks>
-    /// The sibling of <see cref="ServiceSpec"/>'s own override, for the same measured defect and
-    /// the same reasons — see it, and <see cref="RecordSecurityPrinting"/>, for the argument.
+    /// <para>
+    /// The <see cref="Security"/> half is the sibling of <see cref="ServiceSpec"/>'s own override
+    /// (#408), for the same measured defect and the same reasons — see it, and
+    /// <see cref="RecordSecurityPrinting"/>, for the argument.
+    /// </para>
+    /// <para>
+    /// <strong>The <see cref="Extra"/> half is #353's, and it is the same rule reaching one
+    /// surface later.</strong> This bucket holds whatever key no typed member above claims, so the
+    /// parser applies no shape to its contents and it can carry a literal passphrase — the argument
+    /// <see cref="SecuritySpec.Extra"/> states for its own bucket, true word for word of this one.
+    /// Measured with a canary before the guard: <c>DependencySpec { …, Extra = { {
+    /// vendorPassphrase, &lt;canary&gt; } }, … }</c>. The withholding is unconditional and the
+    /// absent-versus-withheld distinction survives, exactly as it does one level down.
+    /// </para>
+    /// <para>
     /// Every member of this record is listed below, an obligation pinned by
     /// <c>SecuritySpecDisclosureTests.DependencySpec_HasExactlyTheMembersPrintMembersEnumerates</c>
     /// rather than by review.
+    /// </para>
     /// </remarks>
     private bool PrintMembers(StringBuilder builder) =>
         RecordSecurityPrinting.Print(
             builder,
             (nameof(Type), Type),
             (nameof(Version), Version),
-            (nameof(Extra), Extra),
+            (nameof(Extra), RecordSecurityPrinting.Withhold(Extra)),
             (nameof(Image), Image),
             (nameof(Security), Security),
             (nameof(Env), Env));

@@ -15,9 +15,11 @@
 //     • YamlScalarNode   — a leaf string value
 //     • YamlMappingNode  — a key→value map (key and value are both YamlNode)
 //     • YamlSequenceNode — an ordered list of YamlNode
-//   System.Text.Json cannot serialise any of them (no default converter exists) and
-//   throws InvalidOperationException when it encounters a non-null YamlMappingNode held
-//   by DependencySpec.Extra.
+//   System.Text.Json cannot serialise any of them (no default converter exists) and throws
+//   InvalidOperationException on any non-null YamlMappingNode it encounters. TWO properties in
+//   the serialised environment graph are one: DependencySpec.Extra (the property this converter
+//   was written for, S11-B-02) and SecuritySpec.Extra (#353), which is reached through a
+//   service's or dependency's `security` block and is structurally independent of the first.
 //
 //   This converter handles YamlNode (the abstract base) and all three subtypes via a
 //   single Write implementation:
@@ -31,9 +33,8 @@
 //     • YamlSequenceNode→ JSON array (elements written recursively)
 //     • any other type → JSON null (defensive; no other concrete subtypes exist today)
 //
-//   Mapping keys are sorted with StringComparer.Ordinal so that two DependencySpec.Extra
-//   mappings that contain the same key-value pairs but in different declaration order
-//   produce byte-for-byte identical JSON.  This sort applies only to YamlMappingNode
+//   Mapping keys are sorted with StringComparer.Ordinal so that two mappings that contain the
+//   same key-value pairs but in different declaration order produce byte-for-byte identical JSON.  This sort applies only to YamlMappingNode
 //   (i.e. Extra blocks); the top-level Services/Dependencies collections are C# lists
 //   serialised by STJ in enumeration order and retain their YAML declaration order.
 //
@@ -59,10 +60,11 @@ namespace Vouchfx.Engine.Runtime.Serialisation;
 /// <remarks>
 /// <para>
 /// Registered on the <see cref="JsonSerializerOptions"/> used by
-/// <c>ScenarioRunner.SerialiseEnvironment</c> so that a
-/// <see cref="DependencySpec.Extra"/> field (type <see cref="YamlMappingNode"/>)
-/// is serialised correctly rather than throwing
-/// <see cref="InvalidOperationException"/> (S11-B-02).
+/// <c>ScenarioRunner.SerialiseEnvironment</c> so that a <see cref="YamlMappingNode"/> in that
+/// graph is serialised correctly rather than throwing
+/// <see cref="InvalidOperationException"/> (S11-B-02). Two properties depend on the
+/// registration — <see cref="DependencySpec.Extra"/> and <see cref="SecuritySpec.Extra"/>
+/// (#353) — so it may not be narrowed to either one's path.
 /// </para>
 /// <para>
 /// Mapping keys are emitted in ordinal sort order to guarantee that two structurally
