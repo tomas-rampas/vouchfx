@@ -66,6 +66,13 @@ internal static class SeedFixtures
         var resolvedPath = Path.GetFullPath(Path.Combine(baseDirectory, relativePath));
         if (!File.Exists(resolvedPath))
         {
+            // The resolved path in this message does NOT reach a written artefact, and that is
+            // the only reason it is allowed to stand where every sibling diagnostic had its
+            // resolved half removed (#357's rule). This throw has exactly one caller,
+            // ScenarioRunner.HashFixtureOrNull, which catches FileNotFoundException and swallows
+            // it — so the string is unreachable rather than merely terminal-only. If a second
+            // caller ever appears, or that catch stops swallowing, this becomes a disclosure on
+            // the same channel as the rest and must lose its resolved half too.
             throw new FileNotFoundException(
                 $"seed fixture file not found: '{resolvedPath}'.",
                 resolvedPath);

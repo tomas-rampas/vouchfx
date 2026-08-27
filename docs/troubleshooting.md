@@ -418,7 +418,7 @@ vouchfx distinguishes four outcomes (see `docs/01` §12.1 for the full taxonomy)
 | **Pass** | All assertions passed. | A test runs end-to-end and all steps succeed. | 0 (success) |
 | **Fail** | An assertion failed — a genuine product defect. | `expect: { status: 200 }` but the API returned 500. | 1 (always breaks CI) |
 | **EnvironmentError** | Infrastructure problem, not a product defect. | Docker daemon unreachable, image pull fails, seed SQL fails. | 0 by default; 3 if `--fail-on-env-error` |
-| **Inconclusive** | The engine could not decide; the assertion may pass if retried. | A RETRY step's polling window expires; a capture expression fails to match. | 0 by default; 4 if `--fail-on-inconclusive`; unconditionally 4 if the run produced no verdict |
+| **Inconclusive** | The engine could not decide; the assertion may pass if retried. | A RETRY step's polling window expires; a capture expression fails to match. | 0 by default; 4 if `--fail-on-inconclusive`; breaks CI on any parse failure, or when nothing executed |
 
 **Why the distinction?**
 
@@ -430,7 +430,7 @@ In microservices, infrastructure is often brittle. A test might fail not because
 
 By default, **only Fail breaks CI**. This reduces false positives and keeps developers focused on real defects, not infrastructure flakiness.
 
-**Two deliberate exceptions break CI regardless of the gating flags.** First: a suite that declares a `security:` block the engine could not confirm exits non-zero with **neither** `--fail-on-env-error` nor `--fail-on-inconclusive` set — at whichever code that run's own verdict names, 3 or 4. That includes a secured `.e2e.yaml` the engine parsed and then refused for its contents (an unknown step type, a duplicate step id): such a file never becomes a scenario, so nothing ever confirmed its declaration, and it now reddens the run even when its siblings came up and confirmed the same target. The run prints a line on **stdout** saying the exit is the security rule's doing, so a job that reads only `results.xml` sees a bare non-zero exit with no explanation. Fix the file the run names. Second: a run that produced no verdict — either because every scenario failed to parse or because the suite was parsed but then refused before any scenario executed — exits 4 (Inconclusive) unconditionally. See [CI integration](ci-integration.md) for the full rule and the code each outcome carries.
+**Two deliberate exceptions break CI regardless of the gating flags.** First: a suite that declares a `security:` block the engine could not confirm exits non-zero with **neither** `--fail-on-env-error` nor `--fail-on-inconclusive` set — at whichever code that run's own verdict names, 3 or 4. That includes a secured `.e2e.yaml` the engine parsed and then refused for its contents (an unknown step type, a duplicate step id): such a file never becomes a scenario, so nothing ever confirmed its declaration, and it now reddens the run even when its siblings came up and confirmed the same target. The run prints a line on **stdout** saying the exit is the security rule's doing, so a job that reads only `results.xml` sees a bare non-zero exit with no explanation. Fix the file the run names. Second: any parse failure, or a run in which nothing executed — either because every scenario failed to parse or because the suite was parsed but then refused before any scenario executed — exits 4 (Inconclusive) unconditionally. See [CI integration](ci-integration.md) for the full rule and the code each outcome carries.
 
 **Opt into stricter gating with flags:**
 ```bash

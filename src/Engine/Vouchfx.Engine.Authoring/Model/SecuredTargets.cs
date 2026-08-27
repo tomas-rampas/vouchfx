@@ -36,7 +36,7 @@ namespace Vouchfx.Engine.Authoring.Model;
 public readonly record struct SecuredTarget(string Name, string Kind, SecuritySpec Security)
 {
     /// <summary>
-    /// Redacts <see cref="Security"/> out of <c>ToString()</c> (#428's sibling, #408).
+    /// Redacts <see cref="Security"/> out of <c>ToString()</c> (#408).
     /// </summary>
     /// <remarks>
     /// <para>

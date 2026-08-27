@@ -582,7 +582,8 @@ public sealed record ScenarioCompletedEvent
     /// </para>
     /// <para>
     /// The SECRET half is now discharged by the engine, structurally rather than by convention:
-    /// every <c>ScenarioCompletedEvent</c> the engine emits is constructed in one place,
+    /// every <c>ScenarioCompletedEvent</c> <c>Vouchfx.Engine.Runtime</c> emits is constructed in
+    /// one place,
     /// <c>Vouchfx.Engine.Runtime.StepEventBuilder.ScenarioCompletedLine</c>, which scrubs the
     /// message through the <c>ResolvedSecretLedger</c> its caller hands it. That ledger is a
     /// REQUIRED parameter, so a producer holding one cannot omit the scrub by forgetting, and a

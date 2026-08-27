@@ -27,19 +27,26 @@ a product defect:
 | **1** | **Fail** — one or more scenarios failed (a genuine defect) | **Always** | `run` only |
 | **2** | UsageError — unrecognised option, bad arguments, missing path | Always | All commands |
 | **3** | EnvironmentError (run) or catalogue error (tools) — unhealthy container, image-pull/seed failure, or incomplete provider metadata | Only when opted in (`run`) — **except** an unconfirmable `security:` declaration, which always breaks CI (see below) | `run` with `--fail-on-env-error`; `list`, `schema`, `validate`, `scaffold`, `plan` on metadata failure |
-| **4** | Inconclusive — timeout, partition outlasted grace, unmet capture; or the run produced no verdict | Only when opted in — **except** an unconfirmable `security:` declaration, which always breaks CI (see below) | `run` with `--fail-on-inconclusive`; `run` unconditionally if the suite produced no verdict |
+| **4** | Inconclusive — timeout, partition outlasted grace, unmet capture; or the run hit a parse failure or executed nothing | Only when opted in — **except** an unconfirmable `security:` declaration, which always breaks CI (see below) | `run` with `--fail-on-inconclusive`; `run` unconditionally on any parse failure, or when nothing executed |
 | **5** | Gaps found — the Planner detected at least one coverage or vocabulary gap AND the caller opted in | Only when opted in | `plan` with `--fail-on-gap` |
 
 The distinction lets CI systems handle each outcome independently: fail the build on a product `Fail`,
 page on-call for `EnvironmentError`, and escalate `Inconclusive` to reliability engineering.
 
-**Unconditional exceptions.** Two outcomes break CI whatever the opt-in flags say.
+**Unconditional exceptions.** Three rules break CI whatever the opt-in flags say. Two of them concern
+a run that never reached a verdict worth reporting; the third concerns a security declaration the
+engine could not confirm.
 
-A `run` that **produced no verdict** — because every discovered scenario failed to parse (malformed
-YAML, unknown step types across the board), or because the suite parsed fine but was then refused
-before any container started (schema error, unresolvable secret reference, malformed dependency
-`env:`, protocol conflict) — is classified Inconclusive and exits 4 regardless of the opt-in flag.
-This matches the behaviour of `vouchfx validate`.
+**Any parse failure** — a malformed document, a file the runner cannot read, one over the 1 MiB cap.
+This does not require that *every* scenario failed: one unreadable file beside a suite that otherwise
+passes still exits 4, because the engine cannot say what that file would have asserted. It matches
+the behaviour of `vouchfx validate`.
+
+**A run in which nothing executed** — the suite parsed fine and was then refused before any container
+started: a schema error, an unresolvable secret reference, a malformed dependency `env:`, a protocol
+conflict. A scenario that *did* run and could not conclude — a timeout, a partition outlasting its
+grace, an unmet upstream capture — is not this case, and stays gated behind
+`--fail-on-inconclusive`.
 
 A suite that declares a `security:` block the engine **cannot confirm** exits non-zero with no
 `--fail-on-env-error` and no `--fail-on-inconclusive`.
@@ -199,7 +206,7 @@ so a job that reads only the machine-readable artefacts sees a bare non-zero exi
   here too.
 
   Three consequences, in the order a pipeline will meet them. **A filter matching only unbuildable
-  files now exits 4** because the run produced no verdict, with no `security:` block anywhere in
+  files now exits 4** because the run hit a parse failure or executed nothing, with no `security:` block anywhere in
   the picture — measured on the built CLI: a directory of one `nightly`-tagged unbuildable file with
   no `security:` block and one untagged sibling exits **4** under `run <dir> --tag nightly`, where the
   same command previously selected nothing and returned **0**. **In a mixed selection the file folds
@@ -209,7 +216,7 @@ so a job that reads only the machine-readable artefacts sees a bare non-zero exi
   **carrying the tag itself**, beside a **likewise-tagged** sibling refused at a compile-time door,
   exits **4** with the security line under `run <dir> --tag smoke`, matching the bare `run`. Both
   files must carry the tag: the security line is printed only when at least one document parsed, so
-  tagging the unbuildable file alone still exits 4 — but because the run produced no verdict, which
+  tagging the unbuildable file alone still exits 4 — but because the run hit a parse failure or executed nothing, which
   is the general rule reached the same way as a pre-execution refusal.
 
   Note where the tag has to be. The change only bites when the **unbuildable file itself** carries

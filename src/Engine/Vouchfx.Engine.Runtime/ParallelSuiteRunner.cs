@@ -736,11 +736,29 @@ public static class ParallelSuiteRunner
     /// ran (#369).
     /// </summary>
     /// <remarks>
-    /// A substring test over the serialised line rather than a parse: this runs once per event on
-    /// a hot path, the token is emitted by <c>EventStreamJson</c> with fixed property ordering and
-    /// no whitespace, and a false positive would need the literal <c>"type":"step-started"</c>
-    /// inside another field's value — which would still mean a step event was described. The
-    /// constant is referenced, never spelled, so a rename moves this with it.
+    /// A substring test over the serialised line rather than a parse. What makes that safe is the
+    /// SERIALISER, not the shape of the data: <c>EventStreamJson.Options</c> is frozen with
+    /// <c>WriteIndented = false</c> (pinned by <c>EventEnvelopeTests.ToLine_Output_ContainsNoEmbeddedNewlines</c>,
+    /// since an indented writer emits newlines between members), and STJ's encoder escapes a
+    /// <c>"</c> inside any string value as <c>"</c>. So the needle cannot re-form inside a
+    /// field's value even when an author plants it there deliberately — measured, with a service
+    /// property named exactly <c>"type":"step-started"</c>, whose schema diagnostic reaches this
+    /// buffer's <c>message</c> and does NOT flip the exit code.
+    /// <para>
+    /// Do not defend this by arguing a false positive "would still mean a step event was
+    /// described" — that was the original reasoning and it does not hold: a schema error is not a
+    /// step event, and this predicate decides an exit code (#369). The escaping is the guarantee;
+    /// the coupling to it is pinned by
+    /// <c>NothingExecutedExitCodeParityTests.ExecuteAsync_RefusalDiagnosticQuotingTheStepEventToken_StillExitsInconclusive</c>.
+    /// </para>
+    /// <para>
+    /// A structured read is viable if that coupling ever becomes inconvenient: this runs after
+    /// <c>TerminalRenderer.Render</c> and <c>FileReportWriter.WriteFileReports</c> have each
+    /// already deserialised the same buffer, so there is no hot path here to protect. It would
+    /// need <c>FromLine</c>'s per-line malformed-input tolerance, which those renderers have and
+    /// this call site does not.
+    /// </para>
+    /// The constant is referenced, never spelled, so a rename moves this with it.
     /// </remarks>
     private static bool ContainsStepEvent(string eventLine) =>
         eventLine.Contains("\"type\":\"" + EventTypes.StepStarted + "\"", StringComparison.Ordinal);
