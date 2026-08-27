@@ -1302,7 +1302,17 @@ internal static class RunCommand
         //
         // Stating it once subsumes #278 rather than competing with it: with parsedCount == 0 the
         // aggregate is Inconclusive, FromVerdict maps that to Success when ungated, and this
-        // returns Inconclusive — the same 4, still regardless of failOnInconclusive.
+        // returns Inconclusive — #278's own answer, reached by the general rule.
+        //
+        // THE PROPERTY THIS GUARD ENFORCES IS "A PARSE FAILURE NEVER EXITS 0", NOT "A PARSE
+        // FAILURE EXITS 4". The narrower reading is what the retracted trailing clause here ("the
+        // same 4, still regardless of failOnInconclusive") invited: it was true in its own scope
+        // — with parsedCount == 0 the aggregate can only be Inconclusive, so all four
+        // gate/assurance combinations do land on 4 — and false the moment it is read as a
+        // statement about parse failures generally, which is how it was in fact read. The guard
+        // is conditioned on `code == ExitCodes.Success`, so it never overrides a code some other
+        // rule already chose: with one parsed sibling that Fails the run still exits 1, and with
+        // one whose topology fails under --fail-on-env-error it still exits 3.
         //
         // It deliberately does NOT touch a genuine execution-time Inconclusive from a scenario
         // that DID run (timeout / partition outlasted grace / upstream capture unmet). Those stay

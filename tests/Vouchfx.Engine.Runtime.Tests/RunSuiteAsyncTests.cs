@@ -570,9 +570,17 @@ public sealed class RunSuiteAsyncTests
 
             var rendered = sw.ToString();
 
-            // The preflight fired and named the field and the resolved path (REQ-004).
+            // The preflight fired and named the field and the DECLARED path (REQ-004, as
+            // superseded by BLOCKER B2). This assertion used to be
+            // `Assert.Contains(suiteDirectory, rendered)` — the resolved path standing in as
+            // evidence that the preflight had run. That evidence was itself the disclosure once
+            // #372/#407 carried the same text into the written artefacts, so the same fact is now
+            // established by the message's own wording, and the absence of the host path is
+            // asserted alongside it.
             Assert.Contains("clientCert", rendered, StringComparison.Ordinal);
-            Assert.Contains(suiteDirectory, rendered, StringComparison.Ordinal);
+            Assert.Contains("./certs/client.pem", rendered, StringComparison.Ordinal);
+            Assert.Contains("relative to the suite directory", rendered, StringComparison.Ordinal);
+            Assert.DoesNotContain(suiteDirectory, rendered, StringComparison.OrdinalIgnoreCase);
 
             // …and the topology build was never reached.
             Assert.DoesNotContain(PreTopologyMarker, rendered, StringComparison.Ordinal);

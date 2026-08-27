@@ -225,7 +225,16 @@ internal static class SeedApplier
         // Resolve every SQL file path and verify existence BEFORE opening any
         // connection — a missing file is an Environment error that must not require
         // a live database to detect (the no-docker test relies on this).
-        var resolvedPaths = new List<string>(sqlFiles.Count);
+        //
+        // THE DECLARED NAME IS CARRIED ALONGSIDE THE RESOLVED PATH, and that is the whole reason
+        // this is a pair rather than a bare path (#357's rule, extended). A ProvisionError's
+        // detail becomes an OrchestrationException message, which reaches the §14
+        // environment-error event and — on the suite path — is stamped onto every scenario's
+        // ScenarioCompletedEvent.message, so it lands in the event stream, the JUnit `message`
+        // attribute and the HTML report. `resolvedPath` is an absolute host path and no scrubber
+        // covers one. Diagnostics below therefore name the DECLARED file; only the filesystem
+        // calls take the resolved one.
+        var files = new List<(string Declared, string Resolved)>(sqlFiles.Count);
         foreach (var sqlFile in sqlFiles)
         {
             var resolvedPath = Path.GetFullPath(Path.Combine(seedBaseDirectory, sqlFile));
@@ -233,13 +242,13 @@ internal static class SeedApplier
             {
                 throw ProvisionError(
                     resourceName: dependencyName,
-                    detail: $"seed SQL file not found: '{resolvedPath}'.");
+                    detail: $"seed SQL file not found: '{sqlFile}', relative to the suite directory.");
             }
 
-            resolvedPaths.Add(resolvedPath);
+            files.Add((sqlFile, resolvedPath));
         }
 
-        await ApplyDependencyAsync(dependencyName, relationalKind, connectionString, resolvedPaths, ct)
+        await ApplyDependencyAsync(dependencyName, relationalKind, connectionString, files, ct)
             .ConfigureAwait(false);
     }
 
@@ -260,7 +269,7 @@ internal static class SeedApplier
         string dependencyName,
         RelationalStoreKind relationalKind,
         string connectionString,
-        IReadOnlyList<string> resolvedPaths,
+        IReadOnlyList<(string Declared, string Resolved)> files,
         CancellationToken ct)
     {
         var connection = CreateRelationalConnection(relationalKind, connectionString);
@@ -279,7 +288,7 @@ internal static class SeedApplier
                     inner: ex);
             }
 
-            foreach (var resolvedPath in resolvedPaths)
+            foreach (var (declaredPath, resolvedPath) in files)
             {
                 string sqlText;
                 try
@@ -290,7 +299,7 @@ internal static class SeedApplier
                 {
                     throw ProvisionError(
                         resourceName: dependencyName,
-                        detail: $"seed could not read SQL file '{resolvedPath}': " +
+                        detail: $"seed could not read SQL file '{declaredPath}': " +
                                 $"{TrimDetail(ex.Message)}",
                         inner: ex);
                 }
@@ -344,7 +353,7 @@ internal static class SeedApplier
                 {
                     throw ProvisionError(
                         resourceName: dependencyName,
-                        detail: $"seed SQL file '{resolvedPath}' failed against dependency " +
+                        detail: $"seed SQL file '{declaredPath}' failed against dependency " +
                                 $"'{dependencyName}': {TrimDetail(ex.Message)}",
                         inner: ex);
                 }

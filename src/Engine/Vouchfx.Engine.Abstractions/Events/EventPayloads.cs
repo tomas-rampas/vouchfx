@@ -576,8 +576,28 @@ public sealed record ScenarioCompletedEvent
     /// obtainable from anything else on the wire.
     /// </para>
     /// <para>
-    /// Carries text that may originate in author-controlled YAML, so producers scrub it through
-    /// the run's secret ledger BEFORE it reaches this record, exactly as the terminal path does.
+    /// <strong>A written channel, and what is and is not guaranteed about it.</strong> This text
+    /// is archived in the event stream, the JUnit <c>message</c> attribute and the HTML report, so
+    /// two things must never reach it: a resolved secret value, and an absolute host path.
+    /// </para>
+    /// <para>
+    /// The SECRET half is now discharged by the engine, structurally rather than by convention:
+    /// every <c>ScenarioCompletedEvent</c> the engine emits is constructed in one place,
+    /// <c>Vouchfx.Engine.Runtime.StepEventBuilder.ScenarioCompletedLine</c>, which scrubs the
+    /// message through the <c>ResolvedSecretLedger</c> its caller hands it. That ledger is a
+    /// REQUIRED parameter, so a producer holding one cannot omit the scrub by forgetting, and a
+    /// producer with none writes <c>null</c> on purpose. A source-scanning CI gate
+    /// (<c>SecretObservationLeakPenetrationTests
+    /// .EveryScenarioCompletedEmission_InRuntime_GoesThroughTheStampingChokepoint</c>) keeps it
+    /// the only construction site. This replaced a per-producer obligation that was measured
+    /// half-kept: <c>RunSuiteAsync</c>'s <c>OrchestrationException</c> catch scrubbed and its
+    /// <c>ArgumentException</c> catch did not.
+    /// </para>
+    /// <para>
+    /// The PATH half is not, and cannot be: nothing covers a filesystem path, and no scrubber can
+    /// remove one after the fact. It stays the producer's obligation, pinned for the one shape
+    /// that has been measured leaking by
+    /// <c>SecurityDiagnosticPathDisclosureTests</c>.
     /// </para>
     /// </remarks>
     [JsonPropertyName("message")]

@@ -1008,6 +1008,87 @@ public sealed class SecretObservationLeakPenetrationTests
     }
 
     /// <summary>
+    /// Every <c>ScenarioCompletedEvent</c> the Runtime assembly emits must be built by
+    /// <c>StepEventBuilder.ScenarioCompletedLine</c>, the single place the resolved-secret scrub
+    /// is applied to a scenario-level cause.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The sibling of <see cref="EveryEnvironmentErrorEmission_InRuntime_GoesThroughTheScrubbingChokepoint"/>,
+    /// for the other written channel that can carry a resolved value, and written for the same
+    /// reason: TWELVE construction sites were twelve ways to forget one, and one of them had
+    /// been forgotten. <c>RunSuiteAsync</c>'s <c>ArgumentException</c> catch stamped its
+    /// <c>environmentFault</c> unscrubbed while its <c>OrchestrationException</c> sibling thirty
+    /// lines below scrubbed <c>topologyFailure</c> — and since #372 that text is written to the
+    /// events stream, the JUnit <c>message</c> attribute and the HTML report, none of which any
+    /// later scrubber can reach.
+    /// </para>
+    /// <para>
+    /// Asserts the PROPERTY rather than the count, so a thirteenth producer added tomorrow fails
+    /// here instead of shipping a second unscrubbed channel.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void EveryScenarioCompletedEmission_InRuntime_GoesThroughTheStampingChokepoint()
+    {
+        var runtimeRoot = Path.Combine(
+            RepositoryRoot(), "src", "Engine", "Vouchfx.Engine.Runtime");
+        var chokepointFile = Path.Combine(runtimeRoot, "StepEventBuilder.cs");
+
+        var sep = Path.DirectorySeparatorChar;
+        var sources = Directory
+            .GetFiles(runtimeRoot, "*.cs", SearchOption.AllDirectories)
+            .Where(p => !p.Contains($"{sep}bin{sep}", StringComparison.Ordinal)
+                     && !p.Contains($"{sep}obj{sep}", StringComparison.Ordinal))
+            .ToList();
+
+        Assert.Contains(chokepointFile, sources);
+
+        var chokepointEmissions = 0;
+        foreach (var file in sources)
+        {
+            var source = File.ReadAllText(file);
+            var emissions = Regex.Matches(source, @"new ScenarioCompletedEvent\b").ToList();
+            if (emissions.Count == 0)
+            {
+                continue;
+            }
+
+            Assert.True(
+                file == chokepointFile,
+                $"'{Path.GetFileName(file)}' constructs a ScenarioCompletedEvent. Only "
+                + "StepEventBuilder.ScenarioCompletedLine may — it is the single place the "
+                + "resolved-secret scrub is applied to a scenario-level cause "
+                + "(client-key-password REQ-010, #372). A construction elsewhere in this "
+                + "assembly bypasses the scrub and puts a resolved passphrase into the events "
+                + "stream, the JUnit message attribute and the HTML report.");
+
+            var declarations = Regex.Matches(
+                    source,
+                    @"^    (?:private|internal|public)[^\r\n=]*?\b(\w+)\(",
+                    RegexOptions.Multiline)
+                .Select(m => (Index: m.Index, Name: m.Groups[1].Value))
+                .ToList();
+
+            foreach (var emission in emissions)
+            {
+                var containing = declarations.LastOrDefault(d => d.Index < emission.Index);
+                Assert.True(
+                    containing.Name == "ScenarioCompletedLine",
+                    $"A ScenarioCompletedEvent is constructed in '{containing.Name}' at "
+                    + $"character offset {emission.Index}. It may only be constructed in "
+                    + "StepEventBuilder.ScenarioCompletedLine, which scrubs the message through "
+                    + "the ledger its caller hands it.");
+            }
+
+            chokepointEmissions += emissions.Count;
+        }
+
+        // Not vacuous: the chokepoint really does construct one.
+        Assert.True(chokepointEmissions > 0);
+    }
+
+    /// <summary>
     /// Every secret scope the runner builds must be given the run's ledger.
     /// <para>
     /// This covers the PLUMBING, which no Docker-free test can otherwise reach: the probe scope

@@ -26,12 +26,14 @@ public sealed class ScenarioMessageArtefactTests
     /// <summary>CA1861 is an error here, so the two character sets are fields (#371).</summary>
     private static readonly char[] s_droppedControls = { '\u0000', '\u0001', '\u001b', '\u001f' };
 
-    /// <summary>The three C0 controls a written report keeps.</summary>
-    /// <summary>Dropped and kept controls interleaved with ordinary text.</summary>
+    /// <summary>
+    /// Dropped and kept controls interleaved with ordinary text. The four dropped controls sit
+    /// BETWEEN the surviving characters, so what a correct renderer leaves behind is the single
+    /// contiguous run <c>a</c> TAB LF CR <c>z</c> — the string
+    /// <see cref="BothRenderers_DropTheSameControlCharacters"/> asserts.
+    /// </summary>
     private static readonly char[] s_mixedControlPayload =
         { 'a', '\u0000', '\u0001', '\t', '\n', '\r', '\u001b', '\u001f', 'z' };
-
-    private static readonly char[] s_keptWhitespace = { '\t', '\n', '\r' };
 
     private static string Line<T>(T payload) => EventStreamJson.ToLine(payload);
 
@@ -325,9 +327,24 @@ public sealed class ScenarioMessageArtefactTests
         // (§3.3.3) rewrites TAB/LF/CR inside attributes — both are the PARSER's behaviour. Going
         // through XDocument would therefore report a CR the renderer really did emit as missing,
         // and the test would be pinning someone else's contract instead of this renderer's.
-        foreach (var kept in s_keptWhitespace)
-        {
-            Assert.Contains(kept, rawJunit);
-        }
+        //
+        // ONE CONTIGUOUS PROBE, not three per-character ones (m1), and the measurement that
+        // retired the old form is worth stating exactly rather than rounding off.
+        //
+        // MEASURED, by rendering this same document with a payload of just { 'a', 'z' } — no
+        // control character anywhere in it:
+        //   • the LF and CR probes both still PASSED. Environment.NewLine is CRLF on Windows and
+        //     the renderer writes line by line, so its own line breaks satisfy both probes
+        //     wherever they fall. Those two rows could not have failed here.
+        //   • the TAB probe FAILED, so that row was doing real work: the renderer indents with
+        //     spaces, and the only TAB in the file is the one the payload contributes.
+        // Two of the three rows were therefore inert, which is exactly the shape that reads as
+        // coverage and is not.
+        //
+        // The replacement subsumes all three and adds what none of them could: the surviving
+        // payload is CONTIGUOUS — 'a', the three kept controls, 'z', with the four dropped ones
+        // removed from between them — so this asserts the renderer both KEPT the three and kept
+        // them IN PLACE, which no character-appears-anywhere probe can.
+        Assert.Contains("a\t\n\rz", rawJunit, StringComparison.Ordinal);
     }
 }

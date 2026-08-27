@@ -41,41 +41,55 @@ public readonly record struct SecuredTarget(string Name, string Kind, SecuritySp
     /// <remarks>
     /// <para>
     /// The compiler-generated <c>ToString()</c> expands every member, and one of them is a whole
-    /// <see cref="SecuritySpec"/> — whose own remarks state the hazard in as many words: never
-    /// interpolate a <see cref="SecuritySpec"/> whole into a diagnostic, event or report, because
-    /// its <c>ToString()</c> prints <see cref="SecuritySpec.ClientKeyPassword"/>. This record is
-    /// precisely such an interpolation. Measured against the built assembly with a canary in that
-    /// field, the default gave:
+    /// <see cref="SecuritySpec"/> — which, at the time, printed
+    /// <see cref="SecuritySpec.ClientKeyPassword"/> in full. Measured against the built assembly
+    /// with a canary in that field, the default gave:
     /// <code>
     /// SecuredTarget { Name = api, Kind = service, Security = SecuritySpec
     ///   { Profile = mtls, ..., ClientKeyPassword = P@ssw0rd-LEAK-CANARY } }
     /// </code>
+    /// <see cref="SecuritySpec"/> has withheld that member from its own <c>ToString()</c> since
+    /// 2026-08-27, so this override is now the second line rather than the only one. It stays:
+    /// a record that names a target does not need to render the target's certificate paths and
+    /// endpoint, and the narrower rendering is what keeps a future diagnostic honest if the root
+    /// guard is ever narrowed.
     /// </para>
     /// <para>
-    /// <b>Why an explicit override here, when <see cref="SecuritySpec"/> deliberately refuses
-    /// one.</b> That refusal rests on completeness: an override must enumerate every member, so a
-    /// future field would be silently dropped from a diagnostic — a worse trap than the hazard it
-    /// closes. The argument does not transfer, because it is about the wrong failure direction.
-    /// For a REDACTION guard, a dropped member discloses LESS, never more; the drift is fail-safe
-    /// rather than fail-open. What remains — a genuinely diagnostic future member going unprinted
-    /// — is closed by the census test that pins this record's member count, so adding a fourth
-    /// forces a conscious decision here rather than a silent omission.
+    /// <b>Why an explicit override is acceptable at all.</b> The objection is completeness: an
+    /// override must enumerate every member, so a future field would go unprinted. For a
+    /// REDACTION guard the drift is fail-safe rather than fail-open — a dropped member discloses
+    /// LESS, never more — and what remains, a genuinely diagnostic future member going unprinted,
+    /// is closed by the census test that pins this record's member count, so adding a fourth
+    /// forces a conscious decision here rather than a silent omission. That census is also what
+    /// <see cref="SecuritySpec"/>'s own guard now rests on; this record had the answer two rounds
+    /// before the root adopted it.
     /// </para>
     /// <para>
-    /// Deliberately prints a marker rather than nothing: an absent member reads as "there is no
-    /// security block", which is a different and misleading claim.
+    /// The rule itself lives in <see cref="RecordSecurityPrinting"/> rather than here.
+    /// <strong>This override used to spell it out inline, and that is precisely how the defect
+    /// survived its first fix:</strong> #408 guarded this record and left
+    /// <see cref="ServiceSpec.Security"/> and <see cref="DependencySpec.Security"/> — its two
+    /// siblings, holding the same type — disclosing a canary <c>clientKeyPassword</c> in full.
+    /// A guard written out per site is a rule every site has to remember; routed through the
+    /// helper it is a rule about the VALUE'S TYPE, applied wherever a <see cref="SecuritySpec"/>
+    /// turns up.
+    /// </para>
+    /// <para>
+    /// <strong>One rendering changed with that move, deliberately.</strong> The inline form
+    /// appended the marker unconditionally, so a <c>default(SecuredTarget)</c> — which this record
+    /// struct permits, and which <see cref="SecuredTargets.IdentityOf"/> already handles explicitly
+    /// — claimed a security block it does not have. The helper redacts a
+    /// <see cref="SecuritySpec"/> and prints a <see langword="null"/> as empty, so that struct now
+    /// renders <c>Security = </c>. Every target <see cref="SecuredTargets.Enumerate"/> yields
+    /// carries a non-null block and still renders the marker.
     /// </para>
     /// </remarks>
-    private readonly bool PrintMembers(StringBuilder builder)
-    {
-        ArgumentNullException.ThrowIfNull(builder);
-
-        builder.Append("Name = ").Append(Name)
-               .Append(", Kind = ").Append(Kind)
-               .Append(", Security = <redacted>");
-
-        return true;
-    }
+    private readonly bool PrintMembers(StringBuilder builder) =>
+        RecordSecurityPrinting.Print(
+            builder,
+            (nameof(Name), Name),
+            (nameof(Kind), Kind),
+            (nameof(Security), Security));
 }
 
 /// <summary>

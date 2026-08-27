@@ -81,12 +81,85 @@ public sealed class YamlKeyIdentityTests
     /// removed: a throwing parse produces no document at all, so nothing downstream can reason
     /// from a half-read one. Recorded because the issue asks for a row either way.
     /// </summary>
+    /// <remarks>
+    /// The refusal on THIS spelling is YamlDotNet's own — its loader compares key nodes and both
+    /// of these are identical — so the message asserted below is the loader's, reached through
+    /// <c>Parse</c>'s wrapping catch. The next row covers the spelling the loader lets past.
+    /// </remarks>
     [Fact]
     public void Parse_DuplicateTopLevelKey_IsRefusedOutrightRatherThanBindingOne()
     {
         var duplicate = PlainKey + "\nenvironment:\n  services: {}\n";
 
-        Assert.ThrowsAny<Exception>(() => YamlDocumentParser.Parse(duplicate));
+        var error = Assert.Throws<YamlParseException>(() => YamlDocumentParser.Parse(duplicate));
+
+        Assert.Contains("Duplicate key", error.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The row #417 was missing, and the reason its first round did not close the divergence it
+    /// named: two <c>environment</c> keys differing ONLY by tag. YamlDotNet's own duplicate check
+    /// is scalar-node equality, and that includes the tag, so it loads this document without a
+    /// word — measured on the pinned version, <c>"environment":</c> and <c>'environment':</c>
+    /// beside a plain one ARE both refused by the loader, leaving an explicit <c>!!str</c> as the
+    /// one spelling that gets through.
+    /// </summary>
+    /// <remarks>
+    /// Measured on the build before <c>RequireUniqueMappingKeys</c>, over exactly this document:
+    /// <c>Parse</c> returned a document binding the FIRST occurrence (<c>services: [tagged]</c>),
+    /// while <c>DocumentValidator.Validate</c> reported <c>[additionalProperties] Unknown property
+    /// 'totallyBogusKey' on service 'plain'</c> — an error inside the SECOND, which the parser
+    /// never saw. The parser scans forward and takes the first match; the validator's front-end is
+    /// last-wins. Refusing the document is what makes the two agree, and it is why the fix is a
+    /// refusal rather than a tie-break: choosing a winner would have moved the disagreement to
+    /// which winner, not ended it.
+    /// </remarks>
+    [Fact]
+    public void Parse_TagDistinguishedDuplicateTopLevelKey_IsRefusedRatherThanBindingTheFirst()
+    {
+        const string TagDistinguishedDuplicate = """
+            !!str environment:
+              services: { tagged: { image: myorg/tagged:1.0 } }
+            environment:
+              services: { plain: { image: myorg/plain:1.0, totallyBogusKey: 1 } }
+            steps:
+              - id: noop
+                type: script.csharp
+                code: "// Filler step."
+            """;
+
+        var error = Assert.Throws<YamlParseException>(
+            () => YamlDocumentParser.Parse(TagDistinguishedDuplicate));
+
+        Assert.Contains("Duplicate key 'environment'", error.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The same shape NESTED, on a key the parser never looks up by name: two service names under
+    /// <c>services</c>, differing only by tag. This is pinned separately because it fixes the
+    /// SCOPE of the guard — the walk covers every mapping in the document, not only the keys
+    /// <c>TryGetNode</c> is asked for. Narrowing it to the lookup would leave this one binding
+    /// silently (measured before the guard: the parser kept the LAST <c>api</c>, dropping the
+    /// other without a diagnostic).
+    /// </summary>
+    [Fact]
+    public void Parse_TagDistinguishedDuplicateNestedKey_IsRefusedToo()
+    {
+        const string DuplicateServiceName = """
+            environment:
+              services:
+                !!str api: { image: myorg/tagged-api:1.0 }
+                api: { image: myorg/plain-api:1.0 }
+            steps:
+              - id: noop
+                type: script.csharp
+                code: "// Filler step."
+            """;
+
+        var error = Assert.Throws<YamlParseException>(
+            () => YamlDocumentParser.Parse(DuplicateServiceName));
+
+        Assert.Contains("Duplicate key 'api'", error.Message, StringComparison.Ordinal);
     }
 
     /// <summary>

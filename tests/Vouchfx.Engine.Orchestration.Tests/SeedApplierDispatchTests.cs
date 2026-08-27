@@ -144,7 +144,15 @@ public sealed class SeedApplierDispatchTests
             // relational kind) — never the NIT-1 "not supported" mismatch message.
             Assert.DoesNotContain("is not supported for its declared type", ex.Info.Detail, StringComparison.Ordinal);
             Assert.Contains("seed SQL file not found", ex.Info.Detail, StringComparison.Ordinal);
-            Assert.Contains(missing, ex.Info.Detail, StringComparison.Ordinal);
+            Assert.Contains("'seed.sql'", ex.Info.Detail, StringComparison.Ordinal);
+
+            // BLOCKER B2: this detail becomes an OrchestrationException message, reaches the §14
+            // environment-error event (built four lines below) and, on the suite path, is stamped
+            // onto every scenario's ScenarioCompletedEvent.message. The declared name is the
+            // actionable half; the resolved absolute path is a host-layout disclosure into an
+            // archived artefact, so the assertion that it is PRESENT was inverted rather than
+            // dropped.
+            Assert.DoesNotContain(missing, ex.Info.Detail, StringComparison.OrdinalIgnoreCase);
             Assert.Equal(OrchestrationErrorKind.Provision, ex.Info.Kind);
             Assert.Equal("orders-db", ex.Info.ResourceName);
 

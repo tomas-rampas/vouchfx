@@ -241,15 +241,15 @@ public enum SecurityAbortKind
 /// </para>
 /// <para>
 /// <strong>IDENTITIES, not the <c>SecuritySpec</c> values they carry — and the narrowing is a
-/// disclosure boundary, not a taste.</strong> <c>SecuredTarget</c> is a record struct holding the
-/// whole <c>SecuritySpec</c>, so its compiler-generated <c>ToString()</c> expands a declared
-/// <c>clientKeyPassword</c> literal verbatim — measured:
-/// <c>SecuredTarget { Name = api, …, ClientKeyPassword = … }</c>. <c>SecuritySpec</c>'s own header
-/// states the rule in as many words ("never interpolate a <c>SecuritySpec</c> whole into a
-/// diagnostic, event or report"), and a record that holds an array of them is exactly that with no
-/// guard: nothing today interpolates this record, and the next diagnostic to interpolate it would
-/// not know it was crossing a line. The specs are therefore not carried at all rather than carried
-/// carefully.
+/// disclosure boundary, not a taste.</strong> When this was decided, both ends of the chain were
+/// unguarded: <c>SecuredTarget</c> is a record struct holding the whole <c>SecuritySpec</c>, and
+/// its compiler-generated <c>ToString()</c> expanded a declared <c>clientKeyPassword</c> literal
+/// verbatim — measured: <c>SecuredTarget { Name = api, …, ClientKeyPassword = … }</c>. Both ends
+/// have since been guarded (#408 at the holder, then the root itself on 2026-08-27), so an array
+/// of them would no longer render a passphrase. The narrowing stands regardless, on the reason
+/// that does not depend on anyone else's guard: this record needs a name and a digest to answer
+/// "was THIS declaration confirmed", and carrying more than the predicate reads is a surface
+/// the next diagnostic would not know it was crossing.
 /// </para>
 /// <para>
 /// <strong>An identity is not a widening of that boundary, and issue #415 is why it is not a

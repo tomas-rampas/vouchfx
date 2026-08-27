@@ -78,6 +78,8 @@ public static class YamlDocumentParser
                 root.Start.Column);
         }
 
+        RequireUniqueMappingKeys(rootMapping);
+
         var metadata = ParseMetadata(rootMapping);
         var environment = ParseEnvironment(rootMapping);
         var variables = ParseVariables(rootMapping);
@@ -1186,6 +1188,94 @@ public static class YamlDocumentParser
     }
 
     /// <summary>
+    /// Throws when any mapping reachable from <paramref name="root"/> carries two scalar keys
+    /// with the same value, whatever YAML tag each of them was written with.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// #417, fix round 2. YamlDotNet rejects a duplicate key of its own accord, but the check it
+    /// applies is <see cref="YamlScalarNode"/> equality — which includes the TAG. Measured on the
+    /// pinned YamlDotNet: <c>"environment":</c> and <c>'environment':</c> beside a plain
+    /// <c>environment:</c> ARE both refused by the loader (quoting style is no part of a scalar
+    /// node's identity), so the one spelling that slips through is an EXPLICIT tag —
+    /// <c>!!str environment:</c> beside <c>environment:</c> loads with no complaint at all.
+    /// </para>
+    /// <para>
+    /// That single surviving shape put the two front-ends back in disagreement, which is what the
+    /// first round of #417 set out to end. Measured on the pre-guard build, over a document whose
+    /// two <c>environment</c> blocks each carried a differently-named unknown property:
+    /// <see cref="TryGetNode"/> scans forward and takes the FIRST occurrence, while the schema
+    /// validator's front-end (the YamlDotNet deserialiser, via
+    /// <c>SchemaResources.ConvertYamlToJsonDocument</c>) is last-wins and reported an error only
+    /// under the SECOND. Exactly the two halves of the engine reading two different documents that
+    /// the tag-insensitive key comparison below was introduced to prevent.
+    /// </para>
+    /// <para>
+    /// Refusing the document closes that rather than relocating it: a throwing parse produces no
+    /// <see cref="E2eDocument"/> at all, so no accepted document can hold a mapping whose keys the
+    /// two front-ends would resolve differently. Picking a winner instead would only move the
+    /// disagreement to whichever of first-wins and last-wins the two sides then disagreed about. A
+    /// document that spells one key twice is pathological, not an authoring shape worth binding.
+    /// </para>
+    /// <para>
+    /// The walk is iterative rather than recursive so that nesting depth cannot overflow the stack
+    /// on a hostile document, and it tracks visited nodes by REFERENCE: <see cref="YamlNode"/>
+    /// overrides equality by value, and an alias (<c>*anchor</c>) reuses the same node instance, so
+    /// a value-keyed set would both mis-prune distinct-but-equal subtrees and be the wrong tool for
+    /// terminating on a self-referential one.
+    /// </para>
+    /// </remarks>
+    /// <exception cref="YamlParseException">
+    /// Thrown on the second occurrence of a duplicated key, carrying its line and column.
+    /// </exception>
+    private static void RequireUniqueMappingKeys(YamlNode root)
+    {
+        var pending = new Stack<YamlNode>();
+        var visited = new HashSet<object>(ReferenceEqualityComparer.Instance);
+        pending.Push(root);
+
+        while (pending.Count > 0)
+        {
+            var current = pending.Pop();
+            if (!visited.Add(current))
+            {
+                continue;
+            }
+
+            switch (current)
+            {
+                case YamlMappingNode mapping:
+                    var keysSeen = new HashSet<string>(StringComparer.Ordinal);
+                    foreach (var (key, value) in mapping.Children)
+                    {
+                        if (key is YamlScalarNode { Value: { } keyText } && !keysSeen.Add(keyText))
+                        {
+                            throw new YamlParseException(
+                                $"Duplicate key '{keyText}' at line {key.Start.Line}, column {key.Start.Column}: " +
+                                "a mapping may not spell the same key twice, even when the two spellings carry " +
+                                "different YAML tags (for example '!!str name:' alongside 'name:').",
+                                key.Start.Line,
+                                key.Start.Column);
+                        }
+
+                        pending.Push(key);
+                        pending.Push(value);
+                    }
+
+                    break;
+
+                case YamlSequenceNode sequence:
+                    foreach (var item in sequence.Children)
+                    {
+                        pending.Push(item);
+                    }
+
+                    break;
+            }
+        }
+    }
+
+    /// <summary>
     /// Tries to retrieve the child node for <paramref name="key"/> from
     /// <paramref name="mapping"/>.
     /// </summary>
@@ -1203,14 +1293,18 @@ public static class YamlDocumentParser
         //
         // Value comparison is what YAML itself means, not a workaround: a plain `environment`
         // resolves to tag:yaml.org,2002:str, so the two spellings are the SAME key and the tag is
-        // no part of a string key's identity. BuildExtraNode above already compares this way, so
-        // this makes one file agree with itself as well as with the other front-end.
+        // no part of a string key's identity. BuildExtraNode above already compares this way.
         //
-        // THE HAZARD THIS REMOVES IS A REASONING ONE, and it is why this was worth fixing rather
-        // than pinning. With the two front-ends disagreeing, any future code reasoning "the parser
-        // found no X, so the schema cannot have an error under X" is wrong — and wrong invisibly.
-        // A reviewer proposed exactly that optimisation on UnbuiltDocument.Assure's unconditional
-        // schema call; with the skip applied the CLI suite still passed 513/513.
+        // The scan below takes the FIRST match. That is not a tie-break rule, because no mapping
+        // can reach here holding two value-equal keys: RequireUniqueMappingKeys refuses the whole
+        // document up front. See its remarks — a first-match scan on its own left the two
+        // front-ends disagreeing, since the validator's is last-wins.
+        //
+        // THE HAZARD BOTH HALVES REMOVE IS A REASONING ONE, and it is why this was worth fixing
+        // rather than pinning. With the two front-ends disagreeing, any future code reasoning "the
+        // parser found no X, so the schema cannot have an error under X" is wrong — and wrong
+        // invisibly. A reviewer proposed exactly that optimisation on UnbuiltDocument.Assure's
+        // unconditional schema call; with the skip applied the CLI suite still passed 513/513.
         //
         // O(n) over a mapping's children rather than O(1). These mappings hold a handful of keys
         // (four at the document root), so the scan is not measurable against correctness.

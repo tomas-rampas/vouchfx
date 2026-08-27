@@ -46,18 +46,72 @@ internal static class StepEventBuilder
         });
 
     /// <summary>
-    /// Builds a <c>scenario-completed</c> line.
+    /// Builds a <c>scenario-completed</c> line, scrubbing <paramref name="message"/> through
+    /// <paramref name="ledger"/> on the way in.  <strong>The single place in this assembly that
+    /// constructs a <see cref="ScenarioCompletedEvent"/></strong>, pinned by
+    /// <c>SecretObservationLeakPenetrationTests
+    /// .EveryScenarioCompletedEmission_InRuntime_GoesThroughTheStampingChokepoint</c>.
     /// </summary>
+    /// <param name="ledger">
+    /// The run's resolved-secret ledger, or <see langword="null"/> when the caller holds none
+    /// (a door reached before any accessor exists, or the <c>--watch</c> compile seam, which
+    /// declines the scrub deliberately — see <c>ScenarioRunner.TryCompileForRun</c>).
+    /// </param>
+    /// <param name="message">
+    /// The scenario-level cause, or <see langword="null"/> when there is none.  Empty is
+    /// normalised to <see langword="null"/> so an empty string is never serialised as a cause.
+    /// </param>
+    /// <remarks>
+    /// <para>
+    /// <strong>Scrubbing lives HERE, not at the call sites, because two call sites disagreeing
+    /// about whether to scrub is what produced the leak this shape removes.</strong>  Measured:
+    /// <c>RunSuiteAsync</c>'s <c>OrchestrationException</c> catch scrubbed its
+    /// <c>topologyFailure</c> before stamping while its <c>ArgumentException</c> sibling thirty
+    /// lines above stamped <c>environmentFault</c> raw, so a resolved <c>clientKeyPassword</c>
+    /// folded into an <c>ArgumentException</c> message reached the events stream, the JUnit
+    /// <c>message</c> attribute and the HTML report — all written to disk and unreachable by any
+    /// later scrubber.  A caller can now forget only to PASS the ledger, which is a required
+    /// parameter it must write <c>null</c> into on purpose.
+    /// </para>
+    /// <para>
+    /// This is deliberately the same shape as <c>ScenarioRunner.EnvironmentErrorLine</c> — the
+    /// sibling chokepoint for the other written channel that can carry a resolved value — down to
+    /// the nullable-ledger parameter and the source-scanning gate that enforces it.
+    /// </para>
+    /// <para>
+    /// <strong>Scrubbing twice is harmless.</strong>  Several callers scrub the same text at the
+    /// point they BUILD it, because the terminal print and the stamp must be the same string (the
+    /// <c>alreadyPrintedMessage</c> suppression in <c>CompleteWithoutTopologyAsync</c> compares
+    /// them ordinally).  <c>Scrub</c> replaces exact occurrences of recorded values, so a second
+    /// pass over already-scrubbed text finds nothing and returns it unchanged.
+    /// </para>
+    /// <para>
+    /// <strong>Not display-sanitised, deliberately.</strong>  <c>DisplaySanitiser</c> is terminal
+    /// hygiene; the renderers escape for their own formats (JUnit XML-escapes, HTML HTML-escapes)
+    /// and sanitising here would corrupt the text for both.
+    /// </para>
+    /// </remarks>
     internal static string ScenarioCompletedLine(
-        string runId, DateTimeOffset timestamp, string scenarioId, Verdict verdict, VerdictCounts counts)
-        => EventStreamJson.ToLine(new ScenarioCompletedEvent
+        string runId,
+        DateTimeOffset timestamp,
+        string scenarioId,
+        Verdict verdict,
+        VerdictCounts counts,
+        ResolvedSecretLedger? ledger,
+        string? message)
+    {
+        var cause = string.IsNullOrEmpty(message) ? null : ledger?.Scrub(message) ?? message;
+
+        return EventStreamJson.ToLine(new ScenarioCompletedEvent
         {
             RunId = runId,
             Timestamp = timestamp,
             ScenarioId = scenarioId,
             Verdict = verdict,
             Counts = counts,
+            Message = string.IsNullOrEmpty(cause) ? null : cause,
         });
+    }
 
     /// <summary>
     /// Builds a <c>reproducibility-envelope</c> line from an already-assembled

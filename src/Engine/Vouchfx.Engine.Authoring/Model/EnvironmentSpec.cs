@@ -3,6 +3,7 @@
 // Strongly-typed records for the optional `environment` top-level section of a
 // .e2e.yaml file (docs/02 §3.2).
 
+using System.Text;
 using YamlDotNet.RepresentationModel;
 
 namespace Vouchfx.Engine.Authoring.Model;
@@ -165,6 +166,53 @@ public sealed record ServiceSpec(
     /// <see cref="Security"/> — see its own remarks.
     /// </remarks>
     public HealthCheckSpec? HealthCheck { get; init; }
+
+    /// <summary>
+    /// Withholds <see cref="Security"/> from <c>ToString()</c> (#408), printing every other
+    /// member exactly as the compiler-generated <c>PrintMembers</c> did.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The compiler-generated <c>ToString()</c> expands every member, and one of them is a whole
+    /// <see cref="SecuritySpec"/> — which, at the time, printed
+    /// <see cref="SecuritySpec.ClientKeyPassword"/> in full. Measured against the built assembly
+    /// with a canary in that field, the default gave:
+    /// <code>
+    /// ServiceSpec { Image = img:1, ..., Security = SecuritySpec
+    ///   { Profile = mtls, ..., ClientKeyPassword = P@ssw0rd-LEAK-CANARY }, ... }
+    /// </code>
+    /// </para>
+    /// <para>
+    /// #408 was fixed at <see cref="SecuredTarget"/> and only there, leaving this record and
+    /// <see cref="DependencySpec"/> — the two OTHER holders of the same type — disclosing the
+    /// canary in full. The rule accordingly lives in <see cref="RecordSecurityPrinting"/> now, and
+    /// applies to any member whose value is a <see cref="SecuritySpec"/>; see that type for why a
+    /// hand-written override is acceptable for a redaction guard. <see cref="SecuritySpec"/> has
+    /// withheld its own passphrase since 2026-08-27, so this override is the second line rather
+    /// than the only one, and it stays for the same reason a redacted block is a better rendering
+    /// here than an expanded one.
+    /// </para>
+    /// <para>
+    /// <strong>Every member of this record is listed below, and that obligation is pinned by a
+    /// test rather than by review:</strong> a hand-written <c>PrintMembers</c> cannot enumerate a
+    /// member that does not exist yet, so
+    /// <c>SecuritySpecDisclosureTests.ServiceSpec_HasExactlyTheMembersPrintMembersEnumerates</c>
+    /// fails the moment one is added, forcing a conscious decision about whether it belongs in the
+    /// rendering.
+    /// </para>
+    /// </remarks>
+    private bool PrintMembers(StringBuilder builder) =>
+        RecordSecurityPrinting.Print(
+            builder,
+            (nameof(Image), Image),
+            (nameof(Project), Project),
+            (nameof(ImagePullPolicy), ImagePullPolicy),
+            (nameof(HttpPort), HttpPort),
+            (nameof(Env), Env),
+            (nameof(Security), Security),
+            (nameof(Ports), Ports),
+            (nameof(PinnedHostPorts), PinnedHostPorts),
+            (nameof(HealthCheck), HealthCheck));
 }
 
 /// <summary>
@@ -270,4 +318,25 @@ public sealed record DependencySpec(
     /// </para>
     /// </remarks>
     public IReadOnlyDictionary<string, string>? Env { get; init; }
+
+    /// <summary>
+    /// Withholds <see cref="Security"/> from <c>ToString()</c> (#408), printing every other
+    /// member exactly as the compiler-generated <c>PrintMembers</c> did.
+    /// </summary>
+    /// <remarks>
+    /// The sibling of <see cref="ServiceSpec"/>'s own override, for the same measured defect and
+    /// the same reasons — see it, and <see cref="RecordSecurityPrinting"/>, for the argument.
+    /// Every member of this record is listed below, an obligation pinned by
+    /// <c>SecuritySpecDisclosureTests.DependencySpec_HasExactlyTheMembersPrintMembersEnumerates</c>
+    /// rather than by review.
+    /// </remarks>
+    private bool PrintMembers(StringBuilder builder) =>
+        RecordSecurityPrinting.Print(
+            builder,
+            (nameof(Type), Type),
+            (nameof(Version), Version),
+            (nameof(Extra), Extra),
+            (nameof(Image), Image),
+            (nameof(Security), Security),
+            (nameof(Env), Env));
 }

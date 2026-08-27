@@ -2874,11 +2874,11 @@ public static class EnvironmentMapper
     /// CS1574 cannot fire. There is exactly one <c>Map</c>, so the bare form is unambiguous and
     /// cannot rot the same way again.
     /// </para>
-    /// A malformed value fails HERE, with a message naming it, rather than inside
+    /// A malformed value fails HERE, once, rather than inside
     /// <see cref="ServerArtifactInjection.Plan"/> once per declared artefact — the fault is in the
     /// base directory itself, not in any one author-declared field, and the two deserve different
     /// diagnostics. Mirrors <c>EnvironmentSecurityValidator.Validate</c>'s own guard around the
-    /// same call.
+    /// same call. The diagnostic names the ARGUMENT, never its value; see the throw site.
     /// </remarks>
     private static string ResolveSuiteDirectory(string? suiteDirectory)
     {
@@ -2892,8 +2892,17 @@ public static class EnvironmentMapper
         }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
         {
+            // THE VALUE IS NOT ECHOED (#357's rule, extended). Unlike the author-declared paths
+            // elsewhere in this feature, `candidate` has no declared/resolved split to fall back
+            // on — it IS an absolute host path in every production caller — and a Map()-time
+            // ArgumentException reaches ScenarioRunner's catch, which stamps its text onto every
+            // scenario's ScenarioCompletedEvent.message and so into the event stream, the JUnit
+            // report and the HTML report. `paramName` names the offending argument and the inner
+            // exception carries the fault, which is what the caller (an engine embedder, never a
+            // suite author — the CLI's suite directory is the parent of an already-resolved
+            // discovered file, so GetFullPath cannot throw on it) needs to act.
             throw new ArgumentException(
-                $"suite directory '{candidate}' is not a valid path ({ex.Message}).",
+                $"the suite directory is not a valid path ({ex.Message}).",
                 nameof(suiteDirectory),
                 ex);
         }

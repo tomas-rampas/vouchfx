@@ -540,7 +540,8 @@ public static class ParallelSuiteRunner
         catch (OperationCanceledException)
         {
             slotVerdicts[index] = Verdict.Inconclusive;
-            slotBuffers[index] = BuildCancelledBuffer(scenarioName);
+            slotBuffers[index] = BuildCancelledBuffer(
+                scenarioName, "Cancelled before this scenario started; no topology was built.");
             // Cancellation is not a REFUSAL: the engine did not reject the declaration, it never
             // got to it. No refusal recorded ⇒ nothing raised, which is the behaviour that shipped.
             slotAssurances[index] = SecurityAssurance.None.Declaring(declared);
@@ -588,7 +589,8 @@ public static class ParallelSuiteRunner
             // The external token cancelled this scenario mid-flight.  A cancelled scenario is
             // Inconclusive, NEVER Fail (§12.1) — the engine could not determine correctness.
             slotVerdicts[index] = Verdict.Inconclusive;
-            slotBuffers[index] = BuildCancelledBuffer(scenarioName);
+            slotBuffers[index] = BuildCancelledBuffer(
+                scenarioName, "Cancelled while this scenario was running.");
             slotAssurances[index] = SecurityAssurance.None.Declaring(declared);
             livePump?.PostRange(slotBuffers[index]);
         }
@@ -610,7 +612,7 @@ public static class ParallelSuiteRunner
                 DisplaySanitiser.SanitiseForDisplay(
                     $"[environment-error] scenario '{scenarioName}' did not complete: {ex.GetType().Name}"));
             slotVerdicts[index] = Verdict.EnvironmentError;
-            slotBuffers[index] = BuildEnvironmentErrorBuffer(scenarioName);
+            slotBuffers[index] = BuildEnvironmentErrorBuffer(scenarioName, ex.GetType().Name);
             // An engine fault escaping the core is not a refusal of the declaration either — it is
             // the same class as a topology that would not come up, and raises nothing.
             slotAssurances[index] = SecurityAssurance.None
@@ -747,7 +749,13 @@ public static class ParallelSuiteRunner
     /// scenario-started + scenario-completed pair with verdict <see cref="Verdict.Inconclusive"/>
     /// (§12.1 — a cancelled scenario is Inconclusive, never Fail).
     /// </summary>
-    private static List<string> BuildCancelledBuffer(string scenarioName)
+    /// <param name="cause">
+    /// Which of the two cancellation moments this was (#372).  Both are cancellations, but they
+    /// are not the same fact and an artefact reader cannot tell them apart from a bare
+    /// Inconclusive: one scenario never started, the other was stopped mid-flight with a topology
+    /// already up.
+    /// </param>
+    private static List<string> BuildCancelledBuffer(string scenarioName, string cause)
     {
         var runId = Guid.NewGuid().ToString("n");
         var now = DateTimeOffset.UtcNow;
@@ -759,14 +767,18 @@ public static class ParallelSuiteRunner
                 Timestamp = now,
                 ScenarioId = scenarioName,
             }),
-            EventStreamJson.ToLine(new ScenarioCompletedEvent
-            {
-                RunId = runId,
-                Timestamp = now,
-                ScenarioId = scenarioName,
-                Verdict = Verdict.Inconclusive,
-                Counts = new VerdictCounts { Inconclusive = 1 },
-            }),
+
+            // No ledger: this buffer is synthesised by the fan-out itself, which owns no secret
+            // accessor — the per-scenario one lives inside the core that never ran or was
+            // abandoned — and the text is a fixed literal with nothing interpolated into it.
+            StepEventBuilder.ScenarioCompletedLine(
+                runId,
+                now,
+                scenarioName,
+                Verdict.Inconclusive,
+                new VerdictCounts { Inconclusive = 1 },
+                ledger: null,
+                cause),
         };
     }
 
@@ -777,7 +789,13 @@ public static class ParallelSuiteRunner
     /// outcome only; the caller writes the exception TYPE name (never the message — §17) to the
     /// slot's raw diagnostic writer.
     /// </summary>
-    private static List<string> BuildEnvironmentErrorBuffer(string scenarioName)
+    /// <param name="exceptionTypeName">
+    /// The escaping exception's TYPE name, never its message (§17) — the same half the slot's raw
+    /// writer gets. Stamped so the written artefacts name the fault too (#372): before this a
+    /// slot that crashed produced a bare EnvironmentError in --junit/--html/--events and the only
+    /// clue was a terminal line the artefacts do not carry.
+    /// </param>
+    private static List<string> BuildEnvironmentErrorBuffer(string scenarioName, string exceptionTypeName)
     {
         var runId = Guid.NewGuid().ToString("n");
         var now = DateTimeOffset.UtcNow;
@@ -789,14 +807,17 @@ public static class ParallelSuiteRunner
                 Timestamp = now,
                 ScenarioId = scenarioName,
             }),
-            EventStreamJson.ToLine(new ScenarioCompletedEvent
-            {
-                RunId = runId,
-                Timestamp = now,
-                ScenarioId = scenarioName,
-                Verdict = Verdict.EnvironmentError,
-                Counts = new VerdictCounts { EnvError = 1 },
-            }),
+
+            // No ledger, and no message to scrub against one: the exception's own message is
+            // deliberately NOT carried here (§17), only its type name.
+            StepEventBuilder.ScenarioCompletedLine(
+                runId,
+                now,
+                scenarioName,
+                Verdict.EnvironmentError,
+                new VerdictCounts { EnvError = 1 },
+                ledger: null,
+                $"Scenario did not complete: {exceptionTypeName}."),
         };
     }
 }

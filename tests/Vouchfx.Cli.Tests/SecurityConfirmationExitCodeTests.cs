@@ -401,11 +401,12 @@ public sealed class SecurityConfirmationExitCodeTests
     /// <summary>
     /// <strong>The record carries a NAME and a DIGEST, so no diagnostic built from it can disclose a
     /// passphrase.</strong> <c>SecuredTarget</c> is a record struct holding the whole
-    /// <c>SecuritySpec</c>, whose compiler-generated <c>ToString()</c> prints
-    /// <c>ClientKeyPassword</c> — measured, verbatim. <c>SecuritySpec</c>'s own header states the
-    /// rule ("never interpolate a <c>SecuritySpec</c> whole into a diagnostic, event or report"),
-    /// and an assurance holding an ARRAY of them was exactly that with no guard: no site leaks it
-    /// today, and the next site to render this record would not know it was crossing a line.
+    /// <c>SecuritySpec</c>, and when this row was written the compiler-generated <c>ToString()</c>
+    /// of both printed <c>ClientKeyPassword</c> — measured, verbatim. Both have since been guarded
+    /// (#408 at the holder, the root itself on 2026-08-27), so this row no longer stands on the
+    /// absence of a guard elsewhere. It stands on the record's own shape: an assurance holding an
+    /// ARRAY of specs would carry more than the predicate reads, and the next site to render it
+    /// would not know it was crossing a line.
     /// <para>
     /// <strong>Renamed for issue #415</strong> from
     /// <c>Declaring_KeepsTargetNamesOnly_SoNoDeclaredSecretCanBeRendered</c>: the record stopped
