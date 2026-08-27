@@ -6,6 +6,8 @@
 // dependency kind and every service — there is no per-kind restriction, unlike
 // e.g. Kafka's `schemaRegistry` or Azure Service Bus's `queues`/`topics`.
 
+using System.Text;
+
 namespace Vouchfx.Engine.Authoring.Model;
 
 /// <summary>
@@ -128,12 +130,11 @@ public sealed record SecuritySpec(
     /// the value.
     /// </para>
     /// <para>
-    /// This record's compiler-generated <c>ToString()</c> prints this property, so never
-    /// interpolate a <see cref="SecuritySpec"/> whole into a diagnostic, event or report —
-    /// name the field you need. Deliberately NOT closed by a hand-written
-    /// <c>PrintMembers</c> override: an explicit override must enumerate all seven members, so
-    /// a future eighth field would be silently dropped from <c>ToString()</c> — a worse drift
-    /// trap than the hazard it closes.
+    /// <strong>Withheld from <c>ToString()</c>.</strong> This record's own
+    /// <see cref="PrintMembers"/> renders this property as
+    /// <c>ClientKeyPassword = &lt;redacted&gt;</c> when it is declared and as
+    /// <c>ClientKeyPassword = </c> when it is not; every sibling member prints unchanged. See
+    /// that method for the render shape and for the decision that put it there.
     /// </para>
     /// <para>
     /// Declared as an init-only property rather than a positional record parameter, per
@@ -143,6 +144,70 @@ public sealed record SecuritySpec(
     /// </para>
     /// </remarks>
     public string? ClientKeyPassword { get; init; }
+
+    /// <summary>
+    /// Withholds <see cref="ClientKeyPassword"/> from <c>ToString()</c>, printing every other
+    /// member exactly as the compiler-generated <c>PrintMembers</c> did.
+    /// </summary>
+    /// <param name="builder">The builder the generated <c>ToString()</c> hands this method.</param>
+    /// <returns><see langword="true"/>, since this record always prints at least one member.</returns>
+    /// <remarks>
+    /// <para>
+    /// <strong>This record used to refuse this guard on completeness grounds, and that refusal
+    /// was overturned by maintainer decision on 2026-08-27.</strong> The objection was that a
+    /// hand-written override cannot enumerate a member that does not exist yet, and would
+    /// therefore drop a future field from <c>ToString()</c> without anything saying so. Its
+    /// unstated premise — that nothing would say so — is what fails.
+    /// <c>SecuritySpecDisclosureTests.SecuritySpec_HasExactlyTheMembersPrintMembersEnumerates</c>
+    /// pins this record's printable-member set, so a member added here turns a test red instead
+    /// of disappearing from a diagnostic. That is the answer <see cref="SecuredTarget"/> had
+    /// already adopted, in this same assembly, for this same objection; the old reasoning is
+    /// recorded here rather than deleted so the next reader can see which step of it was wrong.
+    /// </para>
+    /// <para>
+    /// <strong>What the refusal cost while it stood is measured, not supposed.</strong> It made
+    /// this record a live disclosure that every holder had to remember to guard, and holders
+    /// were fixed one at a time: #408 guarded <see cref="SecuredTarget"/>, a peer review then
+    /// measured the identical canary surviving at <see cref="ServiceSpec.Security"/> and
+    /// <see cref="DependencySpec.Security"/>, and a second fix guarded those two. Two rounds of
+    /// per-holder fixes, neither able to close the class, because the thing being disclosed was
+    /// never the holder.
+    /// </para>
+    /// <para>
+    /// <strong>The render shape: the passphrase alone is withheld, not the block.</strong>
+    /// Rendering the whole record as one marker would answer the disclosure by destroying the
+    /// diagnostic — which profile, which endpoint, which certificate paths is precisely what a
+    /// reader of one of these needs, and none of it is secret. So the six other members print
+    /// verbatim and only this one is replaced. It cannot be confused with "no security block":
+    /// the type name and every sibling member still render, and the absent-versus-withheld
+    /// distinction is drawn at this level exactly as <see cref="RecordSecurityPrinting.Print"/>
+    /// draws it one level up — <see langword="null"/> prints empty (a true claim: the key is
+    /// unencrypted), a declared value prints
+    /// <see cref="RecordSecurityPrinting.RedactedMarker"/>.
+    /// </para>
+    /// <para>
+    /// The withholding routes through <see cref="RecordSecurityPrinting.Withhold"/> rather than
+    /// through <see cref="RecordSecurityPrinting.Print"/>'s own type test, because that test
+    /// recognises a HOLDER's member by its value's type and this property's type is
+    /// <see langword="string"/> — see that method for why the declaring record has to be the one
+    /// that says which member is secret-bearing.
+    /// </para>
+    /// <para>
+    /// Member order below is the compiler's: the six positional parameters in declaration order,
+    /// then this init-only property. An unredacted member therefore renders byte-for-byte as it
+    /// did before this guard existed.
+    /// </para>
+    /// </remarks>
+    private bool PrintMembers(StringBuilder builder) =>
+        RecordSecurityPrinting.Print(
+            builder,
+            (nameof(Profile), Profile),
+            (nameof(Endpoint), Endpoint),
+            (nameof(CaCert), CaCert),
+            (nameof(ClientCert), ClientCert),
+            (nameof(ClientKey), ClientKey),
+            (nameof(ServerArtifacts), ServerArtifacts),
+            (nameof(ClientKeyPassword), RecordSecurityPrinting.Withhold(ClientKeyPassword)));
 }
 
 /// <summary>

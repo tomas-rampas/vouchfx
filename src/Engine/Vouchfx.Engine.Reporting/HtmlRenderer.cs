@@ -232,6 +232,10 @@ public sealed class HtmlRenderer
                             var scenarioId = GetStr(envelope, "scenarioId") ?? "(unknown)";
                             var scenario = model.GetOrAddScenario(envelope.RunId, scenarioId);
                             scenario.Verdict = GetStr(envelope, "verdict");
+
+                            // #372. Read tolerantly (§14): absent on an ordinary pass and on any
+                            // stream an older engine wrote, in which case nothing is rendered.
+                            scenario.Message = GetStr(envelope, "message");
                             scenario.DurationMs = GetLong(envelope, "durationMs");
                             scenario.Counts = ReadCounts(envelope);
                             break;
@@ -350,6 +354,9 @@ public sealed class HtmlRenderer
         // is defence-in-depth so an ORPHAN .verdict span — one outside any verdict-X
         // ancestor — never renders as default-on-default and loses contrast (WCAG 1.4.3).
         output.WriteLine(".verdict { font-weight: 700; font-family: monospace; padding: 0.05rem 0.4rem; border-radius: 3px; color: #1a1a1a; background: #f0f0f0; }");
+        // #372: the scenario-level cause. Monospace and wrapping, because it is engine diagnostic
+        // text that can be long and can carry a YAML path; pre-wrap keeps its own line breaks.
+        output.WriteLine(".scenario-message { font-family: monospace; font-size: 0.9rem; white-space: pre-wrap; overflow-wrap: anywhere; background: #f7f7f7; border-left: 3px solid #cccccc; padding: 0.4rem 0.6rem; margin: 0.5rem 0; }");
         // verdict-pass: solid left rule + check symbol via ::before, dark-on-light text.
         output.WriteLine(".verdict-pass { border-left-color: #1b7f3b; }");
         output.WriteLine(".verdict-pass .verdict { color: #0f5d29; background: #e6f4ea; }");
@@ -463,6 +470,21 @@ public sealed class HtmlRenderer
             HtmlEscape(scenario.ScenarioId),
             HtmlEscape(scenario.Verdict ?? "(unknown)"),
             HtmlEscape(durationSuffix)));
+
+        // #372: the engine's own cause, rendered beside the verdict. A scenario refused before
+        // the topology has NO steps, so without this the section was a heading and nothing else —
+        // the HTML report existing precisely so a maintainer need not read console logs.
+        //
+        // HtmlEscape, not DisplaySanitiser: the text may echo author-controlled YAML, and escaping
+        // is what makes it inert in THIS format. It is already scrubbed of secrets by the producer
+        // before it was stamped onto the record.
+        if (!string.IsNullOrEmpty(scenario.Message))
+        {
+            output.WriteLine(string.Format(
+                CultureInfo.InvariantCulture,
+                "<p class=\"scenario-message\">{0}</p>",
+                HtmlEscape(scenario.Message)));
+        }
 
         foreach (var step in scenario.Steps)
         {
@@ -874,6 +896,28 @@ public sealed class HtmlRenderer
                     builder.Append("&#39;");
                     break;
                 default:
+                    // Drop the C0 control characters (#371), mirroring what the JUnit renderer's
+                    // XmlEscape has always done — the two now treat the same input the same way.
+                    //
+                    // MEASURED: `ESC[31m` in an author-controlled `metadata.name` reached the
+                    // written report as a RAW 0x1b byte. Entity-escaping the five markup
+                    // characters is not enough on its own, because a control byte is not markup:
+                    // it passes through untouched and is re-interpreted downstream. A report
+                    // `cat`-ed in a terminal replays the ANSI sequence, which can recolour or
+                    // rewrite surrounding text and misrepresent a verdict, and the raw bytes sit
+                    // in an artefact a CI job archives and other tools read.
+                    //
+                    // TAB/LF/CR are KEPT — they are legitimate layout in a diagnostic, and the
+                    // `.scenario-message` rule renders them with `white-space: pre-wrap`.
+                    //
+                    // The two BMP non-characters are dropped here as well. They are not an HTML
+                    // hazard the way they are an XML-1.0 violation, but one rule stated once
+                    // beats two rules that agree today and drift later.
+                    if (IsForbiddenReportCharacter(ch))
+                    {
+                        break;
+                    }
+
                     builder.Append(ch);
                     break;
             }
@@ -881,6 +925,19 @@ public sealed class HtmlRenderer
 
         return builder.ToString();
     }
+
+    /// <summary>
+    /// The characters no written report carries through verbatim (#371): the C0 controls below
+    /// <c>U+0020</c> except TAB/LF/CR, and the two BMP non-characters.
+    /// </summary>
+    /// <remarks>
+    /// Byte-for-byte the predicate <c>JunitXmlRenderer.IsForbiddenXmlCharacter</c> applies. They
+    /// are not shared through a common helper because these renderers are deliberately
+    /// independent — but they must not diverge, which is asserted rather than trusted.
+    /// </remarks>
+    private static bool IsForbiddenReportCharacter(char ch)
+        => (ch < ' ' && ch is not ('\t' or '\n' or '\r'))
+           || ch is (char)0xFFFE or (char)0xFFFF;
 
     // -------------------------------------------------------------------------
     // Verdict → CSS class.
@@ -1123,6 +1180,9 @@ public sealed class HtmlRenderer
         public long? DurationMs { get; set; }
 
         public (int Pass, int Fail, int EnvError, int Inconclusive) Counts { get; set; }
+
+        /// <summary>The scenario-level cause, when the stream carried one (#372).</summary>
+        public string? Message { get; set; }
 
         public List<StepModel> Steps { get; } = new();
     }

@@ -420,12 +420,10 @@ internal static class EnvironmentSecurityValidator
         //   environment.dependencies.broker.security.clientKey: file '${secret:env/CLIENT_KEY}'
         //     not found (resolved to '...\probe\${secret:env\CLIENT_KEY}').
         //
-        // Two defects, and the second is the worse one. It blamed the FILESYSTEM for a misuse of
-        // reference syntax; and the '/' inside the token was consumed as a directory separator by
-        // Path.GetFullPath, so the echoed path was split across a directory boundary that could
-        // never have existed — even an author who suspected the sigil got a garbled echo back.
-        // Going first is what removes both: no resolved path is ever computed for such a value,
-        // so none can be echoed.
+        // That message blamed the FILESYSTEM for a misuse of reference syntax, and this check
+        // going first is what removes the wrong diagnosis: no path is resolved for such a value
+        // at all. (The echoed resolved path in the quotation above is history — the containment
+        // and existence messages below no longer carry one; see their own note.)
         //
         // The ordering against the ROOTED check below is OBSERVABLE, not merely nominal, and the
         // colliding input is reachable from YAML: `clientKey: "/etc/${secret:env/CLIENT_KEY}"` is
@@ -575,12 +573,23 @@ internal static class EnvironmentSecurityValidator
         // containment error, never a "found"/"not found" one. declaredPath is guaranteed
         // relative at this point (the rooted check above already returned otherwise), so
         // this is a genuine '..'-escape, not the rooted-path case.
+        // NO RESOLVED PATH, AND NO RESOLVED SUITE DIRECTORY, IN EITHER MESSAGE BELOW (#357's
+        // rule, extended here). Both are absolute host paths. A ValidationFailure.Message from
+        // this validator becomes ProviderPipeline's Failure.Message, then ScenarioRunner's
+        // EarlyMessage, then ScenarioCompletedEvent.message — the §14 stream, the JUnit `message`
+        // attribute and the HTML report, all of which are archived and uploaded. Nothing can
+        // redact them there: ScenarioRunner.ScrubDiagnostic is ResolvedSecrets.Scrub, a targeted
+        // net over values the run's SecretAccessor actually revealed, and a filesystem path is
+        // never one of those.
+        //
+        // The declared text is the author's own input and stays. Naming the CONCEPT the path
+        // resolves against — "the suite directory" — keeps a relative path diagnosable without
+        // disclosing where the suite sits on the host, which is the same shape ScriptCsharpProvider
+        // uses for `script.csharp: file '…' not found, relative to the suite directory.`
         if (!IsContainedWithin(resolvedPath, resolvedSuiteDirectory))
         {
             return new ValidationFailure(
-                $"{fieldPath}: '{declaredPath}' resolves outside the suite directory " +
-                $"(resolved to '{resolvedPath}', which is not contained within " +
-                $"'{resolvedSuiteDirectory}').")
+                $"{fieldPath}: '{declaredPath}' resolves outside the suite directory.")
             {
                 IsSecurityPreflight = true,
             };
@@ -589,7 +598,7 @@ internal static class EnvironmentSecurityValidator
         if (!File.Exists(resolvedPath))
         {
             return new ValidationFailure(
-                $"{fieldPath}: file '{declaredPath}' not found (resolved to '{resolvedPath}').")
+                $"{fieldPath}: file '{declaredPath}' not found, relative to the suite directory.")
             {
                 IsSecurityPreflight = true,
             };

@@ -42,6 +42,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Encodings.Web;
 
 namespace Vouchfx.Engine.Abstractions.Secrets;
@@ -152,6 +153,10 @@ public sealed class ResolvedSecretLedger
     /// upper-case hex (<c>+</c>), matching what the serialiser writes.
     /// </para>
     /// </remarks>
+    // Non-null in, non-null out: the null/empty guard below returns `text` itself, and every
+    // other path returns a replaced copy. Stating that contract here rather than forcing each
+    // caller to suppress a false CS8604 (#407 hit this stamping a scrubbed cause).
+    [return: NotNullIfNotNull(nameof(text))]
     public string? Scrub(string? text)
     {
         if (string.IsNullOrEmpty(text))

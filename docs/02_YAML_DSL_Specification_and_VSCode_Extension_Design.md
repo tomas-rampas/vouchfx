@@ -71,6 +71,22 @@ This section defines the top-level shape of a test file. A file carries the conv
 
 *Table 3.1 — The four top-level sections of an .e2e.yaml file.*
 
+**A mapping may not spell the same key twice.** A document that does is refused at parse time, naming
+the duplicate and its line and column, and the refusal applies to every mapping in the file — two
+`environment` keys at the top level, two services of the same name under `services`. (Two *steps*
+sharing an `id` are a separate check, made later by the suite builder, with its own message and its
+own exit path.)
+
+YAML itself already requires keys to be unique. What this adds is that the engine no longer relies on
+YamlDotNet's tag-sensitive notion of key identity, under which `!!str environment:` and `environment:`
+are distinct nodes and both survive the loader. That was the last spelling able to give the parser and
+the schema validator different answers about what a document contains: the parser bound one occurrence
+while the validator inspected the other, and nothing reported the disagreement. A differently *quoted*
+key (`"environment":` against `environment:`) was already refused, so a well-formed document sees no
+change. Keys are compared by their text, so two keys whose text matches are refused even in the rare
+case where YAML's own type resolution would distinguish them — `!!str 1:` beside `1:`. That is
+deliberate, and it fails closed.
+
 ### 3.1 The metadata section
 
 The metadata section carries information about the test rather than instructions to the engine. Its fields feed reporting dashboards and let the runner select a subset of tests — for example, only those tagged as a smoke test, or only those owned by a particular team. None of it affects execution.
@@ -412,9 +428,11 @@ Four rules apply to the values; the second and the fourth differ from a service'
   bring the dependency up in the shape every scenario shares, and on `minio` they are the credentials
   `${conn:…}` advertises to every other scenario consuming that dependency. Like **every** rule above
   — `${secret:…}` included — this check runs only on the `run` path and is **invisible to `vouchfx
-  validate`**, which never builds a topology; the refusal is reported as **Inconclusive** (§12.1), so
-  it exits **0** by default unless the caller passes `--fail-on-inconclusive`, or unless the suite
-  declares `security:` and earns the unconditional non-zero exit described in §3.2.6b.
+  validate`**, which never builds a topology; the refusal is reported as **Inconclusive** (§12.1), and
+  because it starts no container and runs no step it **never lets the run exit 0** — with or without
+  `--fail-on-inconclusive` (#369). It exits 4 unless another rule has already chosen a non-zero code,
+  and a suite declaring `security:` earns the non-zero exit described in §3.2.6b by that rule
+  instead.
 
 Variables set by Aspire internally, rather than by the engine, are not detected and will silently take
 the author's value instead; a dependency's own image may also read variables neither the engine nor
@@ -1528,11 +1546,11 @@ The positional `<path>` argument specifies the directory to search for scenarios
 
 | Exit code | Meaning | How to trigger |
 |---|---|---|
-| 0 | Success — all scenarios passed, or only environment errors / inconclusive (the default, **only `Fail` breaks CI by default**). | Default. All scenarios Pass, or only EnvironmentError / Inconclusive and no opt-in flags set. |
+| 0 | Success — all scenarios passed, or only environment errors / inconclusive (the default, **only `Fail` breaks CI by default**). Three exceptions ignore the flags — see §16.4 of `docs/01`: any parse failure, an Inconclusive suite refused before anything ran, and an unconfirmable `security:` declaration. | Default. All scenarios Pass, or only EnvironmentError / Inconclusive and no opt-in flags set, and none of the three exceptions applies. |
 | 1 | Test failure — at least one scenario failed (the test assertions did not hold). | Default; always exits 1 on Fail. |
 | 2 | Usage error (bad arguments, missing directory, invalid `--changed-since` ref, or unrecognised option). | The CLI's usage-error code. It also covers System.CommandLine parse errors (e.g. an unrecognised option): SCL itself returns exit 1 for those, and the CLI remaps that to 2 (see #269). |
 | 3 | Environment error — the aggregate verdict was EnvironmentError and the author opted in. | Set `--fail-on-env-error` to exit 3 instead of 0 when infrastructure breaks (container fails to start, tunnel collapses, etc.). |
-| 4 | Inconclusive — the aggregate verdict was Inconclusive and the author opted in. | Set `--fail-on-inconclusive` to exit 4 instead of 0 on timeout or unmet capture dependency. |
+| 4 | Inconclusive — the aggregate verdict was Inconclusive and the author opted in, OR one of the two no-verdict rules applied. | Set `--fail-on-inconclusive` to exit 4 instead of 0 on timeout or unmet capture dependency; a parse failure, or an Inconclusive suite refused before anything ran, exits 4 without it. |
 
 Examples:
 

@@ -5043,6 +5043,97 @@ public sealed class EnvironmentMapperTests
     }
 
     /// <summary>
+    /// #428: the sigil is matched CASE-INSENSITIVELY, so <c>${SECRET:...}</c> is refused exactly
+    /// as <c>${secret:...}</c> is — on both the dependency and the service surface.
+    /// </summary>
+    /// <remarks>
+    /// Red before the fix: <see cref="SecretReference.Sigil"/> is lower-case and the comparison
+    /// was <see cref="StringComparison.Ordinal"/>, so a wrong-case attempt matched nothing and
+    /// reached the container as opaque literal text. No value ever leaked — nothing in the engine
+    /// resolves <c>${SECRET:</c> either — but the author believes they wrote a secret reference,
+    /// the suite is green, and the container holds the literal string. That is the same argument
+    /// <c>s_envSigilPattern</c> already carries for its own <c>IgnoreCase</c>.
+    /// <para>
+    /// Widening is only safe because <c>env:</c> accepts NO secret reference in any case,
+    /// well-formed or not: the match can therefore only ever turn a silent pass-through into a
+    /// refusal, never reject something previously delivered. It would NOT be safe on a
+    /// secret-SUPPORTING field, where a case-insensitive sigil would have to agree with
+    /// <see cref="SecretReference"/>'s own case-sensitive token pattern.
+    /// </para>
+    /// <para>
+    /// The mixed-case rows matter as much as the fully-upper one: a single wrong character is the
+    /// realistic typo, and an implementation that upper-cased the whole haystack before an
+    /// ordinal compare would pass "${SECRET:" while still failing "${Secret:".
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [InlineData("${SECRET:vault/db/pw}")]
+    [InlineData("${Secret:vault/db/pw}")]
+    [InlineData("${sEcReT:vault/db/pw}")]
+    public void Map_DependencyEnv_SecretReferenceInAnyCase_IsRefused(string secretToken)
+    {
+        var yaml = $"""
+            metadata:
+              name: dep-env-secret-case
+            environment:
+              dependencies:
+                orders:
+                  type: postgres
+                  env:
+                    ADMIN_PW: "{secretToken}"
+            steps:
+              - id: noop
+                type: script.csharp
+                code: "// Filler step."
+            """;
+
+        var environment = ParseEnvironment(yaml);
+
+        var ex = Assert.Throws<ArgumentException>(() => EnvironmentMapper.Map(environment));
+
+        Assert.Contains("Dependency 'orders'", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("env entry 'ADMIN_PW'", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("wrong PLACE for a secret", ex.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// #428, service surface: the same widening applies there, and the service message stays the
+    /// pinned pre-feature wording (see
+    /// <c>Map_ServiceEnv_SecretReference_MessageIsByteIdenticalToPreFeatureWording</c>) — widening
+    /// WHAT is matched deliberately changed nothing about WHAT IS SAID, because "references a
+    /// ${secret:...} value" names the fault correctly whatever case the author typed.
+    /// </summary>
+    [Fact]
+    public void Map_ServiceEnv_SecretReferenceInUpperCase_IsRefused_WithTheUnchangedMessage()
+    {
+        var env = new EnvironmentSpec(
+            Services: new Dictionary<string, ServiceSpec>
+            {
+                ["api"] = new ServiceSpec(
+                    Image: "myorg/api:1.0",
+                    Project: null,
+                    ImagePullPolicy: null,
+                    HttpPort: null,
+                    Env: new Dictionary<string, string> { ["P"] = "${SECRET:vault/db-password}" }),
+            },
+            Dependencies: null,
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var ex = Assert.Throws<ArgumentException>(() => EnvironmentMapper.Map(env));
+
+        Assert.Equal(
+            "Service 'api' env entry 'P' references a ${secret:...} value. " +
+            "A container's environment is the wrong PLACE for a secret, whenever it would " +
+            "resolve (§17): baking a secret into a container's environment would expose it " +
+            "via 'docker inspect' and corrupt the reproducibility envelope (which hashes the " +
+            "reference, never the value). Configure the SUT to resolve the secret itself " +
+            "instead. (Parameter 'envValue')",
+            ex.Message);
+    }
+
+    /// <summary>
     /// The declaration order the two ORDERING rows below assert on their parsed inputs —
     /// <c>static readonly</c> rather than inline literals only because this project enforces
     /// CA1861 as an error.

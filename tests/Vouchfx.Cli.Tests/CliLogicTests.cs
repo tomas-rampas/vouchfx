@@ -204,22 +204,181 @@ public sealed class ComputeExitCodeTests
                 failOnInconclusive: false));
     }
 
-    // ── Mixed set (at least one scenario parsed and ran): TODAY'S behaviour, captured and
-    // pinned unchanged — the new #278 branch above must NOT engage once parsedCount > 0. ──
+    // ── The cell the documentation kept describing wrongly: a parse failure beside an
+    // EnvironmentError sibling. ──
+    //
+    // Three separate review rounds produced prose paraphrasing #425's guard as "yields to a
+    // verdict that outranks it". VerdictPrecedence ranks EnvironmentError (3) ABOVE Inconclusive
+    // (1), so that paraphrase predicts the environment error wins and the run exits 0 ungated.
+    // It does not: the guard is conditioned on the CODE so far, not on the verdict, and an
+    // ungated EnvironmentError maps to Success — so the guard fires and the run exits 4.
+    //
+    // The distinction is invisible until this exact combination is written down, which is why it
+    // survived three rounds of review of the prose and none of the code. Pinning it here means
+    // the next person to paraphrase the rule has a row to check the paraphrase against.
 
     [Fact]
-    public void MixedSet_PassingParsedScenario_DefaultFlags_ReturnsSuccess_UnchangedFromToday()
+    public void ParseFailure_BesideAnUngatedEnvironmentError_ReturnsInconclusive_NotSuccess()
     {
-        // Captures today's (arguably surprising, but explicitly out of scope for #278)
-        // behaviour: a mixed set whose parsed scenario(s) all Pass still folds the parse
-        // failure in as Inconclusive (AggregateVerdict), which then maps to Success by
-        // default (ExitCodes.FromVerdict) because --fail-on-inconclusive was not passed.
         Assert.Equal(
-            ExitCodes.Success,
+            ExitCodes.Inconclusive,
+            RunCommand.ComputeExitCode(
+                parsedCount: 1,
+                parseFailureCount: 1,
+                Verdict.EnvironmentError,
+                failOnEnvironmentError: false,
+                failOnInconclusive: false));
+    }
+
+    [Fact]
+    public void ParseFailure_BesideAGatedEnvironmentError_ReturnsEnvironmentError_TheCodeAlreadyChosen()
+    {
+        // The other half of the same rule, and the one that makes the first non-vacuous: once
+        // --fail-on-env-error has chosen a non-zero code, the parse-failure guard does NOT
+        // override it. "Never exits 0" is the property; "exits 4" is not.
+        Assert.Equal(
+            ExitCodes.EnvironmentError,
+            RunCommand.ComputeExitCode(
+                parsedCount: 1,
+                parseFailureCount: 1,
+                Verdict.EnvironmentError,
+                failOnEnvironmentError: true,
+                failOnInconclusive: false));
+    }
+
+    // ── Mixed set (at least one scenario parsed and ran): a parse failure reddens it, exactly
+    // as an all-failure set. #425 — one rule, not two keyed on whether a sibling parsed. ──
+
+    [Fact]
+    public void MixedSet_PassingParsedScenario_DefaultFlags_ReturnsInconclusive_BecauseAFileWasUnread()
+    {
+        // THIS TEST USED TO ASSERT ExitCodes.Success, and its own comment called that
+        // "arguably surprising, but explicitly out of scope for #278" — the surprise was
+        // recorded at the time and left standing. #425 is where it stopped being out of scope.
+        //
+        // The old behaviour: a mixed set whose parsed scenarios all Pass folded the parse
+        // failure in as Inconclusive (AggregateVerdict), which then mapped to Success by default
+        // (ExitCodes.FromVerdict) because --fail-on-inconclusive was not passed. So `run tests/`
+        // over a directory holding one good file and one malformed one exited 0, having never
+        // read the malformed one.
+        //
+        // #278's rule already said an unparseable suite must never look clean to CI. That
+        // reasoning never depended on whether a SIBLING parsed — the file was unread either way
+        // — so the rule now keys on the parse failure itself rather than on parsedCount.
+        Assert.Equal(
+            ExitCodes.Inconclusive,
             RunCommand.ComputeExitCode(
                 parsedCount: 1,
                 parseFailureCount: 1,
                 Verdict.Pass,
+                failOnEnvironmentError: false,
+                failOnInconclusive: false));
+    }
+
+    [Fact]
+    public void MixedSet_FailingParsedScenario_StillReturnsTestFailure_NotInconclusive()
+    {
+        // The new rule replaces ONLY Success. A Fail outranks a parse failure by precedence
+        // (ScenarioRunner.VerdictPrecedence: Fail 2 > Inconclusive 1), so AggregateVerdict keeps
+        // Fail and the run still exits 1 — a real defect must not be reported as "could not
+        // determine" merely because a sibling file was also malformed.
+        Assert.Equal(
+            ExitCodes.TestFailure,
+            RunCommand.ComputeExitCode(
+                parsedCount: 1,
+                parseFailureCount: 1,
+                Verdict.Fail,
+                failOnEnvironmentError: false,
+                failOnInconclusive: false));
+    }
+
+    /// <summary>
+    /// #369: a suite that PARSED fine but never executed a step exits non-zero. The third
+    /// category the design never named — a schema rejection, a secret-reference failure, a
+    /// malformed <c>env:</c>, the both-families protocol conflict — all abort before any topology
+    /// is built, and all exited 0 by default.
+    /// </summary>
+    [Fact]
+    public void NothingExecuted_InconclusiveSuite_ReturnsInconclusive()
+    {
+        Assert.Equal(
+            ExitCodes.Inconclusive,
+            RunCommand.ComputeExitCode(
+                parsedCount: 1,
+                parseFailureCount: 0,
+                Verdict.Inconclusive,
+                failOnEnvironmentError: false,
+                failOnInconclusive: false,
+                securityAssurance: null,
+                executedAnyScenario: false));
+    }
+
+    /// <summary>
+    /// The fence that keeps #369 from silently closing #390. A topology that fails to START also
+    /// executes nothing and reaches the same completion path since #407 — but it carries
+    /// <see cref="Verdict.EnvironmentError"/>, which keeps its own <c>--fail-on-env-error</c>
+    /// gate. Without this row, widening the rule to every verdict would pass the test above while
+    /// reddening every suite whose UNRELATED container was slow to come up.
+    /// </summary>
+    [Fact]
+    public void NothingExecuted_EnvironmentError_StillHonoursItsOwnGate()
+    {
+        Assert.Equal(
+            ExitCodes.Success,
+            RunCommand.ComputeExitCode(
+                parsedCount: 1,
+                parseFailureCount: 0,
+                Verdict.EnvironmentError,
+                failOnEnvironmentError: false,
+                failOnInconclusive: false,
+                securityAssurance: null,
+                executedAnyScenario: false));
+
+        Assert.Equal(
+            ExitCodes.EnvironmentError,
+            RunCommand.ComputeExitCode(
+                parsedCount: 1,
+                parseFailureCount: 0,
+                Verdict.EnvironmentError,
+                failOnEnvironmentError: true,
+                failOnInconclusive: false,
+                securityAssurance: null,
+                executedAnyScenario: false));
+    }
+
+    /// <summary>
+    /// The other half of the same fence, from the executing side: a scenario that DID run and
+    /// could not conclude still exits 0 by default. Only "nothing executed" is treated as
+    /// never-clean.
+    /// </summary>
+    [Fact]
+    public void SomethingExecuted_InconclusiveSuite_StillExitsZeroByDefault()
+    {
+        Assert.Equal(
+            ExitCodes.Success,
+            RunCommand.ComputeExitCode(
+                parsedCount: 1,
+                parseFailureCount: 0,
+                Verdict.Inconclusive,
+                failOnEnvironmentError: false,
+                failOnInconclusive: false,
+                securityAssurance: null,
+                executedAnyScenario: true));
+    }
+    [Fact]
+    public void NoParseFailures_GenuineExecutionInconclusive_StillExitsZeroByDefault()
+    {
+        // The §12.1 distinction the fix rests on, pinned from the other side: a scenario that DID
+        // run and could not conclude (timeout / partition outlasted grace / upstream capture
+        // unmet) stays opt-in-gated and still exits 0 by default. Only an UNREAD FILE is treated
+        // as never-clean. Without this row, a future "simplification" that reddened every
+        // Inconclusive would pass the suite above while silently breaking the taxonomy.
+        Assert.Equal(
+            ExitCodes.Success,
+            RunCommand.ComputeExitCode(
+                parsedCount: 1,
+                parseFailureCount: 0,
+                Verdict.Inconclusive,
                 failOnEnvironmentError: false,
                 failOnInconclusive: false));
     }

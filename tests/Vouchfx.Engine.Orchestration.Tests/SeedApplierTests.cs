@@ -165,8 +165,23 @@ public sealed class SeedApplierTests
         }
     }
 
+    /// <summary>
+    /// A relative seed path missing under the base directory is a Provision error naming the
+    /// DECLARED path — never the resolved absolute one (BLOCKER B2, extending #357's rule).
+    /// </summary>
+    /// <remarks>
+    /// This test used to be <c>…_NamesResolvedAbsolutePath</c>, asserting the resolved path was
+    /// present and using it as proof that the relative path had been combined with
+    /// <c>seedBaseDirectory</c>. A <c>ProvisionError</c> detail becomes an
+    /// <c>OrchestrationException</c> message, which reaches the §14 environment-error event and —
+    /// on the suite path — is stamped onto every scenario's <c>ScenarioCompletedEvent.message</c>,
+    /// so the proof was itself a host-path disclosure into archived artefacts. The combination is
+    /// still proved, and by a stronger probe than a substring: the sibling test above shows this
+    /// same relative path resolving to a file that EXISTS under the base directory and getting far
+    /// enough to attempt a connection, which no un-combined path could do.
+    /// </remarks>
     [Fact]
-    public async Task ApplyAsync_RelativePath_MissingUnderBaseDir_NamesResolvedAbsolutePath()
+    public async Task ApplyAsync_RelativePath_MissingUnderBaseDir_NamesDeclaredPathOnly()
     {
         // Arrange — a relative path that does NOT exist under the base directory.
         var baseDir = Path.Combine(Path.GetTempPath(), "vouchfx-seed-" + Guid.NewGuid().ToString("n"));
@@ -177,13 +192,18 @@ public sealed class SeedApplierTests
             var expectedFull = Path.GetFullPath(Path.Combine(baseDir, relative));
             var seed = SeedWith(DepName, relative);
 
-            // Act + Assert — the detail names the RESOLVED absolute path (proving the
-            // relative path was combined with seedBaseDirectory).
             var ex = await Assert.ThrowsAsync<OrchestrationException>(() =>
                 Apply(seed, Discovered(), Types(), baseDir));
 
             Assert.Equal(OrchestrationErrorKind.Provision, ex.Info.Kind);
-            Assert.Contains(expectedFull, ex.Info.Detail, StringComparison.Ordinal);
+
+            // The declared path and the base it resolves against, as a concept.
+            Assert.Contains(relative, ex.Info.Detail, StringComparison.Ordinal);
+            Assert.Contains("relative to the suite directory", ex.Info.Detail, StringComparison.Ordinal);
+
+            // …and no absolute host path.
+            Assert.DoesNotContain(expectedFull, ex.Info.Detail, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain(baseDir, ex.Info.Detail, StringComparison.OrdinalIgnoreCase);
         }
         finally
         {

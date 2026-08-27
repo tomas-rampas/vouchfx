@@ -63,6 +63,7 @@ record StepCompletedEvent
 record ScenarioCompletedEvent
   property System.Collections.Generic.IReadOnlyDictionary<System.String,System.String> CorrelationIds [wire=correlationIds] [init]
   property Vouchfx.Engine.Abstractions.Events.VerdictCounts Counts [wire=counts] [required] [init]
+  property System.String Message [wire=message] [init]
   property System.String RunId [wire=runId] [required] [init]
   property System.String ScenarioId [wire=scenarioId] [required] [init]
   property System.String SchemaVersion [wire=schemaVersion] [init]

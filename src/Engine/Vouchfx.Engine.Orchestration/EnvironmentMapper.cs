@@ -1884,7 +1884,22 @@ public static class EnvironmentMapper
         // itself never rested on the timing claim: what makes a container's environment wrong for
         // a secret is that anyone who can run `docker inspect` reads it, which is true at every
         // moment. Do not reintroduce a resolution-moment argument here.
-        if (envValue.Contains(SecretReference.Sigil, StringComparison.Ordinal))
+        // CASE-INSENSITIVE, and deliberately so (#428). `${SECRET:vault/db/pw}` used to
+        // reach the container as opaque literal text: SecretReference.Sigil is lower-case
+        // and this comparison was Ordinal, so the wrong-case attempt matched nothing and
+        // passed straight through. No value leaked — nothing in the engine resolves
+        // `${SECRET:` either — but the author believes they wrote a secret reference, the
+        // suite is green, and the container holds the literal string. That is the exact
+        // argument s_envSigilPattern already carries for its own IgnoreCase, and it applies
+        // here verbatim. Widening is safe in a way it would NOT be on a secret-SUPPORTING
+        // field: env: accepts no secret reference in any case, well-formed or not, so a
+        // case-insensitive match can only ever turn a silent pass-through into a refusal.
+        // The MESSAGE is deliberately unchanged: it is pinned byte-identical by
+        // Map_ServiceEnv_SecretReference_MessageIsByteIdenticalToPreFeatureWording and
+        // mirrored in the DSL spec and CHANGELOG. "references a ${secret:...} value"
+        // names the fault correctly whatever case the author typed, so widening the
+        // match needed no wording change to stay accurate.
+        if (envValue.Contains(SecretReference.Sigil, StringComparison.OrdinalIgnoreCase))
         {
             throw new ArgumentException(
                 $"{ownerLabel} '{ownerName}' env entry '{envKey}' references a ${{secret:...}} value. " +
@@ -2859,11 +2874,11 @@ public static class EnvironmentMapper
     /// CS1574 cannot fire. There is exactly one <c>Map</c>, so the bare form is unambiguous and
     /// cannot rot the same way again.
     /// </para>
-    /// A malformed value fails HERE, with a message naming it, rather than inside
+    /// A malformed value fails HERE, once, rather than inside
     /// <see cref="ServerArtifactInjection.Plan"/> once per declared artefact — the fault is in the
     /// base directory itself, not in any one author-declared field, and the two deserve different
     /// diagnostics. Mirrors <c>EnvironmentSecurityValidator.Validate</c>'s own guard around the
-    /// same call.
+    /// same call. The diagnostic names the ARGUMENT, never its value; see the throw site.
     /// </remarks>
     private static string ResolveSuiteDirectory(string? suiteDirectory)
     {
@@ -2877,8 +2892,17 @@ public static class EnvironmentMapper
         }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
         {
+            // THE VALUE IS NOT ECHOED (#357's rule, extended). Unlike the author-declared paths
+            // elsewhere in this feature, `candidate` has no declared/resolved split to fall back
+            // on — it IS an absolute host path in every production caller — and a Map()-time
+            // ArgumentException reaches ScenarioRunner's catch, which stamps its text onto every
+            // scenario's ScenarioCompletedEvent.message and so into the event stream, the JUnit
+            // report and the HTML report. `paramName` names the offending argument and the inner
+            // exception carries the fault, which is what the caller (an engine embedder, never a
+            // suite author — the CLI's suite directory is the parent of an already-resolved
+            // discovered file, so GetFullPath cannot throw on it) needs to act.
             throw new ArgumentException(
-                $"suite directory '{candidate}' is not a valid path ({ex.Message}).",
+                $"the suite directory is not a valid path ({ex.Message}).",
                 nameof(suiteDirectory),
                 ex);
         }

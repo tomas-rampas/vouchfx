@@ -92,11 +92,15 @@ backoff (Polly v8) — authors never write `Thread.Sleep`.
 - **Four verdicts, never three.** **Pass**, **Fail**, **Environment error** (unhealthy container,
   image-pull or seed failure) and **Inconclusive** (timeout, unmet capture) stay distinct through the
   taxonomy, the reports and the exit codes. **Only `Fail` breaks CI by default** — conflating an
-  environment error with a defect destroys trust in the tool. The one deliberate exception serves the
-  same argument rather than retracting it: a suite that declares a `security:` block the engine cannot
+  environment error with a defect destroys trust in the tool. Two deliberate exceptions serve that
+  same argument rather than retracting it. A suite that declares a `security:` block the engine cannot
   confirm exits non-zero whatever the flags say, because that is an assertion the author wrote, not an
   infrastructure flake, and treating it as opt-in-only would hand a team who forgot a flag a green
-  pipeline on a security suite that verified nothing.
+  pipeline on a security suite that verified nothing. Any parse failure, and an Inconclusive suite
+  refused before any scenario ran, do the same, for the same reason: a document the engine could not
+  read, or a suite it refused outright, verified nothing either. A run that executed nothing because
+  its topology never came up is an environment error, keeps that verdict's own gate, and still exits
+  0 by default — the distinction the taxonomy exists to protect.
 - **One event stream, many renderers.** A schema-versioned JSON Lines stream is the single substrate;
   the terminal, HTML, JUnit XML and `--events` outputs are all renderings of it, so they can never
   disagree. Each retry attempt is recorded individually, making a polling timeline renderable without
@@ -169,13 +173,19 @@ in `Vouchfx.Engine.Compilation` and `Vouchfx.Engine.Planning` instead of shellin
 | `1` | **Fail** — a genuine defect | **Always** |
 | `2` | UsageError — bad option, missing path | Always |
 | `3` | EnvironmentError | Only with `--fail-on-env-error` — except an unconfirmable `security:` declaration |
-| `4` | Inconclusive | Only with `--fail-on-inconclusive` — except an unconfirmable `security:` declaration |
+| `4` | Inconclusive | Only with `--fail-on-inconclusive` — except a parse failure, an Inconclusive suite refused before anything ran, or an unconfirmable `security:` declaration |
 | `5` | Gaps found | Only with `vouchfx plan --fail-on-gap` |
 
-Two exceptions are unconditional. A run in which *every* discovered scenario fails to parse exits 4.
-And a suite declaring a `security:` block the engine cannot confirm exits non-zero with neither gating
-flag set, at whichever code the run's own verdict names — 3 for an EnvironmentError, 4 for an
-Inconclusive. Every other environment error still exits 0 by default; see
+Three exceptions ignore the gating flags. **Any parse failure** — one unreadable or malformed file is
+enough, whether or not a sibling parsed. **An Inconclusive suite refused before any scenario ran** —
+a schema error, an unresolvable secret reference, a malformed dependency `env:`. And **a suite
+declaring a `security:` block the engine cannot confirm**, at whichever code the run's own verdict
+names — 3 for an EnvironmentError, 4 for an Inconclusive.
+
+Each is stated as "never exits 0" rather than "exits 4": none overrides a code another rule already
+chose, so a failing scenario still takes the run to 1. A run that executed nothing but carries an
+`EnvironmentError` — a topology that never came up — is outside all three and still exits 0 by
+default, as does every other environment error. See
 [CI integration](https://vouchfx.io/ci-integration/) for the full breakdown.
 
 Full CLI coverage — every flag, the report formats, graceful shutdown for programmatic hosts — is in

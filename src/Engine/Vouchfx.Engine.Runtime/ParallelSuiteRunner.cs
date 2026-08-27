@@ -540,7 +540,8 @@ public static class ParallelSuiteRunner
         catch (OperationCanceledException)
         {
             slotVerdicts[index] = Verdict.Inconclusive;
-            slotBuffers[index] = BuildCancelledBuffer(scenarioName);
+            slotBuffers[index] = BuildCancelledBuffer(
+                scenarioName, "Cancelled before this scenario started; no topology was built.");
             // Cancellation is not a REFUSAL: the engine did not reject the declaration, it never
             // got to it. No refusal recorded ⇒ nothing raised, which is the behaviour that shipped.
             slotAssurances[index] = SecurityAssurance.None.Declaring(declared);
@@ -588,7 +589,8 @@ public static class ParallelSuiteRunner
             // The external token cancelled this scenario mid-flight.  A cancelled scenario is
             // Inconclusive, NEVER Fail (§12.1) — the engine could not determine correctness.
             slotVerdicts[index] = Verdict.Inconclusive;
-            slotBuffers[index] = BuildCancelledBuffer(scenarioName);
+            slotBuffers[index] = BuildCancelledBuffer(
+                scenarioName, "Cancelled while this scenario was running.");
             slotAssurances[index] = SecurityAssurance.None.Declaring(declared);
             livePump?.PostRange(slotBuffers[index]);
         }
@@ -610,7 +612,7 @@ public static class ParallelSuiteRunner
                 DisplaySanitiser.SanitiseForDisplay(
                     $"[environment-error] scenario '{scenarioName}' did not complete: {ex.GetType().Name}"));
             slotVerdicts[index] = Verdict.EnvironmentError;
-            slotBuffers[index] = BuildEnvironmentErrorBuffer(scenarioName);
+            slotBuffers[index] = BuildEnvironmentErrorBuffer(scenarioName, ex.GetType().Name);
             // An engine fault escaping the core is not a refusal of the declaration either — it is
             // the same class as a topology that would not come up, and raises nothing.
             slotAssurances[index] = SecurityAssurance.None
@@ -709,15 +711,92 @@ public static class ParallelSuiteRunner
         return new SuiteResult(aggregate, perScenario)
         {
             Assurance = assurance,
+
+            // #369, and DERIVED rather than flagged. The sequential path can set this from the
+            // route it took, because CompleteWithoutTopologyAsync IS its without-topology path.
+            // There is no such single route here: under --parallel every slot owns its OWN
+            // topology, so "did anything execute" is a property of the whole fan-out and not of
+            // any one return.
+            //
+            // A step event is the evidence, because it exists if and only if a step ran. Reading
+            // it off the same concatenated buffer the renderers consume also means this answer
+            // cannot disagree with the artefacts, which is the property a second flag would have
+            // been free to break.
+            //
+            // The sequential/parallel DIVERGENCE is the point: without this, `--parallel 1` on a
+            // suite refused before any topology exited 0 while the identical bare run exited 4.
+            // This codebase has measured that exact shape before and treats it as its own defect
+            // class, not as a nuance.
+            ExecutedAnyScenario = allBuffers.Exists(ContainsStepEvent),
         };
     }
 
+    /// <summary>
+    /// Whether an event line is a <c>step-started</c> record — the evidence that a step actually
+    /// ran (#369).
+    /// </summary>
+    /// <remarks>
+    /// A substring test over the serialised line rather than a parse. What makes that safe is the
+    /// SERIALISER, not the shape of the data: <c>EventStreamJson.Options</c> is frozen with
+    /// <c>WriteIndented = false</c> (pinned by <c>EventEnvelopeTests.ToLine_Output_ContainsNoEmbeddedNewlines</c>,
+    /// since an indented writer emits newlines between members), and STJ's encoder escapes a
+    /// quote inside any string value. So the needle cannot re-form inside a field's VALUE even
+    /// when an author plants it there deliberately — measured, with a service property named
+    /// exactly <c>"type":"step-started"</c>, whose schema diagnostic reaches this buffer's
+    /// <c>message</c> and does NOT flip the exit code.
+    /// <para>
+    /// That guarantee covers values, not property NAMES: the needle also forms from any serialised
+    /// object carrying a member literally named <c>type</c> whose value is <c>step-started</c>.
+    /// Such an object IS reachable — <c>StepAttemptEvent.Observation</c> and
+    /// <c>StepCompletedEvent.Observation</c> are <c>JsonElement?</c>, assigned on the produce side
+    /// from <c>ScenarioRunner.BuildStepObservation</c>, and a <c>JsonElement</c> serialises
+    /// property names verbatim, so SUT-controlled content can form the needle.
+    /// <para>
+    /// <strong>What makes that harmless is WHERE it can appear, not that it cannot.</strong>
+    /// <c>Observation</c> rides only on step events, so a needle formed inside one sits on a line
+    /// that already IS a step event — the predicate's answer is right for the wrong reason, but it
+    /// is right. The hazard would become real the day a <c>JsonElement</c>, or any member carrying
+    /// unescaped property names, is added to a NON-step event. If that happens, this predicate
+    /// must become a structured read before that event ships.
+    /// </para>
+    /// <para>
+    /// The two other candidates are closed for the reason the previous draft gave:
+    /// <c>CorrelationIds</c> is declared but never assigned anywhere in <c>src/</c>, so
+    /// <c>WhenWritingNull</c> omits it, and <c>Extra</c> is <c>[JsonExtensionData]</c> populated
+    /// only on <c>FromLine</c>. That enumeration was incomplete when first written, which is worth
+    /// recording: the point of this remark is that the ORIGINAL defence was incomplete, and it was
+    /// replaced once by another incomplete one.
+    /// </para>
+    /// <para>
+    /// Do not defend this by arguing a false positive "would still mean a step event was
+    /// described" — that was the original reasoning and it does not hold: a schema error is not a
+    /// step event, and this predicate decides an exit code (#369). The escaping is the guarantee;
+    /// the coupling to it is pinned by
+    /// <c>NothingExecutedExitCodeParityTests.ExecuteAsync_RefusalDiagnosticQuotingTheStepEventToken_StillExitsInconclusive</c>.
+    /// </para>
+    /// <para>
+    /// A structured read is viable if that coupling ever becomes inconvenient: this runs after
+    /// <c>TerminalRenderer.Render</c> and <c>FileReportWriter.WriteFileReports</c> have each
+    /// already deserialised the same buffer, so there is no hot path here to protect. It would
+    /// need <c>FromLine</c>'s per-line malformed-input tolerance, which those renderers have and
+    /// this call site does not.
+    /// </para>
+    /// The constant is referenced, never spelled, so a rename moves this with it.
+    /// </remarks>
+    private static bool ContainsStepEvent(string eventLine) =>
+        eventLine.Contains("\"type\":\"" + EventTypes.StepStarted + "\"", StringComparison.Ordinal);
     /// <summary>
     /// Builds the minimal event buffer for a scenario that was cancelled before completion: a
     /// scenario-started + scenario-completed pair with verdict <see cref="Verdict.Inconclusive"/>
     /// (§12.1 — a cancelled scenario is Inconclusive, never Fail).
     /// </summary>
-    private static List<string> BuildCancelledBuffer(string scenarioName)
+    /// <param name="cause">
+    /// Which of the two cancellation moments this was (#372).  Both are cancellations, but they
+    /// are not the same fact and an artefact reader cannot tell them apart from a bare
+    /// Inconclusive: one scenario never started, the other was stopped mid-flight with a topology
+    /// already up.
+    /// </param>
+    private static List<string> BuildCancelledBuffer(string scenarioName, string cause)
     {
         var runId = Guid.NewGuid().ToString("n");
         var now = DateTimeOffset.UtcNow;
@@ -729,14 +808,18 @@ public static class ParallelSuiteRunner
                 Timestamp = now,
                 ScenarioId = scenarioName,
             }),
-            EventStreamJson.ToLine(new ScenarioCompletedEvent
-            {
-                RunId = runId,
-                Timestamp = now,
-                ScenarioId = scenarioName,
-                Verdict = Verdict.Inconclusive,
-                Counts = new VerdictCounts { Inconclusive = 1 },
-            }),
+
+            // No ledger: this buffer is synthesised by the fan-out itself, which owns no secret
+            // accessor — the per-scenario one lives inside the core that never ran or was
+            // abandoned — and the text is a fixed literal with nothing interpolated into it.
+            StepEventBuilder.ScenarioCompletedLine(
+                runId,
+                now,
+                scenarioName,
+                Verdict.Inconclusive,
+                new VerdictCounts { Inconclusive = 1 },
+                ledger: null,
+                cause),
         };
     }
 
@@ -747,7 +830,13 @@ public static class ParallelSuiteRunner
     /// outcome only; the caller writes the exception TYPE name (never the message — §17) to the
     /// slot's raw diagnostic writer.
     /// </summary>
-    private static List<string> BuildEnvironmentErrorBuffer(string scenarioName)
+    /// <param name="exceptionTypeName">
+    /// The escaping exception's TYPE name, never its message (§17) — the same half the slot's raw
+    /// writer gets. Stamped so the written artefacts name the fault too (#372): before this a
+    /// slot that crashed produced a bare EnvironmentError in --junit/--html/--events and the only
+    /// clue was a terminal line the artefacts do not carry.
+    /// </param>
+    private static List<string> BuildEnvironmentErrorBuffer(string scenarioName, string exceptionTypeName)
     {
         var runId = Guid.NewGuid().ToString("n");
         var now = DateTimeOffset.UtcNow;
@@ -759,14 +848,17 @@ public static class ParallelSuiteRunner
                 Timestamp = now,
                 ScenarioId = scenarioName,
             }),
-            EventStreamJson.ToLine(new ScenarioCompletedEvent
-            {
-                RunId = runId,
-                Timestamp = now,
-                ScenarioId = scenarioName,
-                Verdict = Verdict.EnvironmentError,
-                Counts = new VerdictCounts { EnvError = 1 },
-            }),
+
+            // No ledger, and no message to scrub against one: the exception's own message is
+            // deliberately NOT carried here (§17), only its type name.
+            StepEventBuilder.ScenarioCompletedLine(
+                runId,
+                now,
+                scenarioName,
+                Verdict.EnvironmentError,
+                new VerdictCounts { EnvError = 1 },
+                ledger: null,
+                $"Scenario did not complete: {exceptionTypeName}."),
         };
     }
 }

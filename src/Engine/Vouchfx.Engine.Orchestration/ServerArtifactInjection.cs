@@ -114,11 +114,17 @@ internal static class ServerArtifactInjection
             // daemon: a file that vanished between validation and topology build would otherwise
             // surface as an opaque container-start failure, which is the exact substitution
             // REQ-004 exists to prevent.
+            //
+            // NO RESOLVED PATH IN THE MESSAGE (#357's rule, extended). `resolvedSource` is an
+            // absolute host path and this ArgumentException's text is carried into the written
+            // artefacts, not just the terminal. The declared text is the author's own input and
+            // is the actionable half; naming the directory it resolves AGAINST keeps a relative
+            // path diagnosable without disclosing the host layout.
             if (!File.Exists(resolvedSource))
             {
                 throw new ArgumentException(
-                    $"{fieldPath}.source: file '{artifacts[i].Source}' not found (resolved to "
-                    + $"'{resolvedSource}').",
+                    $"{fieldPath}.source: file '{artifacts[i].Source}' not found, relative to "
+                    + "the suite directory.",
                     nameof(security));
             }
 

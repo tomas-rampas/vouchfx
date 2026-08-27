@@ -64,9 +64,12 @@ public sealed record SecretReferenceDigest(
 /// <para>
 /// <see cref="Reference"/> is the fixture's non-sensitive relative path / label
 /// (the same string the author wrote in the <c>seed</c> block); <see cref="ContentHash"/>
-/// is its content hash as computed by the seed pipeline
-/// (<c>SeedFixtures.ComputeContentHash</c>), so the envelope and the seed applier
-/// agree on what a fixture's hash is.
+/// is its content hash as computed by <c>SeedFixtures.ComputeContentHash</c>.
+/// <strong>The envelope is that method's only production consumer</strong> — the seed
+/// applier does not call it, doing its own existence check instead — so an older
+/// claim here that "the envelope and the seed applier agree on what a fixture's hash
+/// is" described a shared caller that does not exist. See <c>SeedFixtures</c>'s own
+/// remarks; do not restore the shared-caller premise without a call site to cite.
 /// </para>
 /// </remarks>
 /// <param name="Reference">

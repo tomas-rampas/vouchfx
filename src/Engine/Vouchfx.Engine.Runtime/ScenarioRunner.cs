@@ -82,6 +82,28 @@ public sealed record SuiteResult(
     IReadOnlyList<(string ScenarioName, Verdict Verdict)> ScenarioVerdicts)
 {
     /// <summary>
+    /// <see langword="false"/> when the suite was refused before any topology was built, so no
+    /// container started and no step ran (#369). <see langword="true"/> by default, which every
+    /// construction outside the without-topology completion path keeps.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Set by <c>CompleteWithoutTopologyAsync</c> and nowhere else, deliberately: that method IS
+    /// the set of paths that never reached a topology, so this is a property of the route rather
+    /// than a hand-maintained list of doors — the shape <c>Assurance</c>'s own remarks describe
+    /// going stale three times before it was derived instead of enumerated.
+    /// </para>
+    /// <para>
+    /// <strong>It is not "the topology failed".</strong> A topology that fails to START also
+    /// executes nothing, and reaches this same completion path since #407 — but it arrives
+    /// carrying <see cref="Verdict.EnvironmentError"/>, and the exit rule that consumes this is
+    /// scoped to <see cref="Verdict.Inconclusive"/> for exactly that reason. Widening it to every
+    /// verdict would silently close #390, which is deliberately open because doing so would
+    /// redden every suite whose unrelated container was slow to come up.
+    /// </para>
+    /// </remarks>
+    public bool ExecutedAnyScenario { get; init; } = true;
+    /// <summary>
     /// What this suite established about the <c>security</c> blocks it declared: what was declared,
     /// what REQ-005's probe confirmed, and which door (if any) refused
     /// (security-assurance-derivation, REQ-001).
@@ -518,14 +540,18 @@ public static class ScenarioRunner
                 ScenarioId = scenarioName,
             }));
 
-            buffer.Add(EventStreamJson.ToLine(new ScenarioCompletedEvent
-            {
-                RunId = runId,
-                Timestamp = DateTimeOffset.UtcNow,
-                ScenarioId = scenarioName,
-                Verdict = Verdict.Inconclusive,
-                Counts = new VerdictCounts { Inconclusive = 1 },
-            }));
+            // #372 stamped at THIS seam too. The terminal keeps one line per error below; the
+            // record carries them joined, in the same shape TryCompileForRun's schema door
+            // already joins its own list, because the record has one message field and an author
+            // triaging from a JUnit publisher needs every error the door found, not the first.
+            buffer.Add(StepEventBuilder.ScenarioCompletedLine(
+                runId,
+                DateTimeOffset.UtcNow,
+                scenarioName,
+                Verdict.Inconclusive,
+                new VerdictCounts { Inconclusive = 1 },
+                runSecretLedger,
+                string.Join("; ", validationResult.Errors.Select(e => e.Message))));
 
             foreach (var error in validationResult.Errors)
             {
@@ -582,19 +608,23 @@ public static class ScenarioRunner
                 ScenarioId = scenarioName,
             }));
 
-            buffer.Add(EventStreamJson.ToLine(new ScenarioCompletedEvent
-            {
-                RunId = runId,
-                Timestamp = DateTimeOffset.UtcNow,
-                ScenarioId = scenarioName,
-                Verdict = Verdict.Inconclusive,
-                Counts = new VerdictCounts { Inconclusive = 1 },
-            }));
+            var parseFault = $"Parse / AST error: {ex.Message}";
+
+            buffer.Add(StepEventBuilder.ScenarioCompletedLine(
+                runId,
+                DateTimeOffset.UtcNow,
+                scenarioName,
+                Verdict.Inconclusive,
+                new VerdictCounts { Inconclusive = 1 },
+                runSecretLedger,
+                parseFault));
 
             // Issue #266, Item 4: ex.Message can echo untrusted YAML/AST-builder text back
-            // verbatim — sanitise it before it reaches the terminal/CI log.
+            // verbatim — sanitise it before it reaches the terminal/CI log. The RECORD above
+            // carries the unsanitised text deliberately (#372): sanitising is terminal hygiene,
+            // and the renderers escape for their own formats.
             await output.WriteLineAsync(
-                DisplaySanitiser.SanitiseForDisplay($"Parse / AST error: {ex.Message}"))
+                DisplaySanitiser.SanitiseForDisplay(parseFault))
                 .ConfigureAwait(false);
 
             livePump?.PostRange(buffer);
@@ -692,19 +722,20 @@ public static class ScenarioRunner
                 Timestamp = nowAuthoring,
                 ScenarioId = scenarioName,
             }));
-            buffer.Add(EventStreamJson.ToLine(new ScenarioCompletedEvent
-            {
-                RunId = runId,
-                Timestamp = nowAuthoring,
-                ScenarioId = scenarioName,
-                Verdict = Verdict.Inconclusive,
-                Counts = new VerdictCounts { Inconclusive = 1 },
-            }));
+            var authoringFault =
+                JoinAuthoringFaults(pipelineResult.Failure?.Message, stepSecretFault);
+            buffer.Add(StepEventBuilder.ScenarioCompletedLine(
+                runId,
+                nowAuthoring,
+                scenarioName,
+                Verdict.Inconclusive,
+                new VerdictCounts { Inconclusive = 1 },
+                runSecretLedger,
+                authoringFault));
             // Issue #266, Item 4: both halves can echo untrusted YAML content (a step id, a field
             // value, a secret reference) back verbatim — sanitise before writing.
             await output.WriteLineAsync(
-                DisplaySanitiser.SanitiseForDisplay(
-                    JoinAuthoringFaults(pipelineResult.Failure?.Message, stepSecretFault)))
+                DisplaySanitiser.SanitiseForDisplay(authoringFault))
                 .ConfigureAwait(false);
             livePump?.PostRange(buffer);
 
@@ -815,18 +846,27 @@ public static class ScenarioRunner
                 Timestamp = now,
                 ScenarioId = scenarioName,
             }));
-            buffer.Add(EventStreamJson.ToLine(new ScenarioCompletedEvent
-            {
-                RunId = runId,
-                Timestamp = now,
-                ScenarioId = scenarioName,
-                Verdict = Verdict.Inconclusive,
-                Counts = new VerdictCounts { Inconclusive = 1 },
-            }));
+            // Scrubbed AT CONSTRUCTION, not only at the stamp: this catch sits INSIDE the try
+            // that builds the probe's security accessor and calls StartAsync, so a
+            // `clientKeyPassword` may already have resolved into `runSecretLedger` by the time an
+            // ArgumentException escapes. The stamping chokepoint below scrubs the record; this
+            // scrub is what covers the TERMINAL write, and building the text once means the two
+            // channels can never carry different redactions. DisplaySanitiser alone would not do
+            // it — an ordinary printable passphrase passes through it unchanged.
+            var environmentFault =
+                runSecretLedger.Scrub($"Environment configuration error: {aex.Message}")!;
+            buffer.Add(StepEventBuilder.ScenarioCompletedLine(
+                runId,
+                now,
+                scenarioName,
+                Verdict.Inconclusive,
+                new VerdictCounts { Inconclusive = 1 },
+                runSecretLedger,
+                environmentFault));
             // Issue #266, Item 4: aex.Message can echo untrusted YAML content (an
             // environment.services/dependencies reference) back verbatim — sanitise.
             await output.WriteLineAsync(
-                DisplaySanitiser.SanitiseForDisplay($"Environment configuration error: {aex.Message}"))
+                DisplaySanitiser.SanitiseForDisplay(environmentFault))
                 .ConfigureAwait(false);
             livePump?.PostRange(buffer);
 
@@ -856,14 +896,22 @@ public static class ScenarioRunner
             // into the probe-failure text). `runSecretLedger` is the ledger the probe recorded
             // into, so this is where that value is caught.
             buffer.Add(EnvironmentErrorLine(runSecretLedger, oex.Info, runId, now));
-            buffer.Add(EventStreamJson.ToLine(new ScenarioCompletedEvent
-            {
-                RunId = runId,
-                Timestamp = now,
-                ScenarioId = scenarioName,
-                Verdict = Verdict.EnvironmentError,
-                Counts = new VerdictCounts { EnvError = 1 },
-            }));
+
+            // #372 stamped here too, and it is NOT a duplicate of the environment-error line
+            // above: that record is what the HTML renderer reads for its own environment-error
+            // section, while JUnit's `message` attribute and the events stream's scenario-level
+            // cause come from THIS one. Before this, the `--parallel` spelling of a topology that
+            // would not come up wrote a scenario record with no cause while the suite path (since
+            // #407) wrote one — the same document, two artefacts. Scrubbed by the chokepoint
+            // against the ledger the probe recorded into.
+            buffer.Add(StepEventBuilder.ScenarioCompletedLine(
+                runId,
+                now,
+                scenarioName,
+                Verdict.EnvironmentError,
+                new VerdictCounts { EnvError = 1 },
+                runSecretLedger,
+                oex.Message));
             livePump?.PostRange(buffer);
 
             // REQ-018: exactly ONE cause of an Environment error exits non-zero without
@@ -1292,7 +1340,7 @@ public static class ScenarioRunner
                 // THE SCENARIO LIST IS BUILT FROM THE PARAMETERS, NOT FROM `compilations`, and that
                 // is forced rather than chosen: this guard runs ABOVE the compilation loop, so
                 // there is nothing compiled to stamp. Moving the guard below that loop would have
-                // let it share StampInconclusiveWhereUnjudged with its neighbours — and would have
+                // let it share StampWhereUnjudged with its neighbours — and would have
                 // changed which diagnostic an author sees first, trading a reporting gap for a
                 // behaviour change. The list is therefore synthesised here, in declaration order,
                 // with the suite-level verdict and cause on every scenario, which is exactly what
@@ -1324,6 +1372,7 @@ public static class ScenarioRunner
                         junitReportPath,
                         eventsReportPath,
                         eventsStreamPath,
+                        runSecretLedger: null,
                         alreadyPrintedMessage: divergentEnvironment)
                     .ConfigureAwait(false);
             }
@@ -1444,7 +1493,8 @@ public static class ScenarioRunner
                     htmlReportPath,
                     junitReportPath,
                     eventsReportPath,
-                    eventsStreamPath)
+                    eventsStreamPath,
+                    runSecretLedger: null)
                 .ConfigureAwait(false);
         }
 
@@ -1501,12 +1551,12 @@ public static class ScenarioRunner
             // Issue #266, Item 4: the message splices scenario names straight from untrusted YAML.
             // Printed HERE, once, for the suite; the completion path is told what was printed so it
             // does not repeat it when it walks the per-scenario messages (see MAJOR-3's note on
-            // StampInconclusiveWhereUnjudged).
+            // StampWhereUnjudged).
             await output.WriteLineAsync(DisplaySanitiser.SanitiseForDisplay(divergence))
                 .ConfigureAwait(false);
 
             return await CompleteWithoutTopologyAsync(
-                    StampInconclusiveWhereUnjudged(compilations, divergence),
+                    StampWhereUnjudged(compilations, Verdict.Inconclusive, divergence),
                     WithUnbuiltDocuments(assurance.Refusing(SecurityAbortKind.AuthoringFault)),
                     output,
                     decorate,
@@ -1515,6 +1565,7 @@ public static class ScenarioRunner
                     junitReportPath,
                     eventsReportPath,
                     eventsStreamPath,
+                    runSecretLedger: null,
                     alreadyPrintedMessage: divergence)
                 .ConfigureAwait(false);
         }
@@ -1618,7 +1669,7 @@ public static class ScenarioRunner
             // shared-`environment` divergence door above — same defect, same reason it takes
             // unsecured scenarios to see it.
             return await CompleteWithoutTopologyAsync(
-                    StampInconclusiveWhereUnjudged(compilations, protocolConflict),
+                    StampWhereUnjudged(compilations, Verdict.Inconclusive, protocolConflict),
                     WithUnbuiltDocuments(assurance.Refusing(SecurityAbortKind.AuthoringFault)),
                     output,
                     decorate,
@@ -1627,6 +1678,7 @@ public static class ScenarioRunner
                     junitReportPath,
                     eventsReportPath,
                     eventsStreamPath,
+                    runSecretLedger: null,
                     alreadyPrintedMessage: protocolConflict)
                 .ConfigureAwait(false);
         }
@@ -1696,16 +1748,31 @@ public static class ScenarioRunner
             // Map's eager, pre-Configure validation; Map's Configure-closure defensive throws
             // (unreachable by construction given that same eager validation) would surface as
             // OrchestrationException instead, via the catch below.
+            // SCRUBBED here, SANITISED at the print — the same composition, in the same order,
+            // as the OrchestrationException sibling below, and it is a BLOCKER fix rather than
+            // tidiness. This text is stamped onto every scenario record by the return below, so
+            // since #372 it lands in the events stream, the JUnit `message` attribute and the
+            // HTML report; a `clientKeyPassword` that resolved through `probeSecrets` (which
+            // records into `runSecretLedger`) and then folded into an ArgumentException message
+            // was written to all three, unscrubbed and unrecoverable. DisplaySanitiser does not
+            // redact it — it neutralises control bytes and ANSI sequences, so an ordinary
+            // printable passphrase passed straight through.
+            //
+            // Scrubbing HERE as well as at the stamping chokepoint is deliberate, not
+            // belt-and-braces: the terminal write below and the stamp must be the SAME string,
+            // because `alreadyPrintedMessage` compares them ordinally to suppress the duplicate
+            // print. Scrub is idempotent (it replaces exact occurrences of recorded values), so
+            // the chokepoint's own pass over this text finds nothing left to remove.
+            //
             // Issue #266, Item 4: aex.Message can echo untrusted YAML content back
             // verbatim — sanitise before writing.
-            await output.WriteLineAsync(
-                DisplaySanitiser.SanitiseForDisplay(
-                    $"RunSuiteAsync: environment configuration error — {aex.Message}"))
+            var environmentFault = runSecretLedger.Scrub(
+                $"RunSuiteAsync: environment configuration error — {aex.Message}")!;
+
+            await output.WriteLineAsync(DisplaySanitiser.SanitiseForDisplay(environmentFault))
                 .ConfigureAwait(false);
 
-            var inconclusiveVerdicts = compilations
-                .Select(c => (c.ScenarioName, Verdict.Inconclusive))
-                .ToList();
+
             // The boundary is "no container started", not "before the StartAsync call": Map is
             // eager and runs ahead of DCP, so this refusal starts nothing and is an authoring
             // fault like every pre-topology one. It used to carry the accumulated flag through
@@ -1713,11 +1780,35 @@ public static class ScenarioRunner
             //
             // The wrap here is pinned by the `EnvironmentMapperArgumentFault` row of the theory
             // named at the shared-`environment` divergence door above.
-            return new SuiteResult(Verdict.Inconclusive, inconclusiveVerdicts)
-            {
-                Assurance = WithUnbuiltDocuments(
-                    assurance.Refusing(SecurityAbortKind.AuthoringFault)),
-            };
+            // RETURNED THROUGH CompleteWithoutTopologyAsync, NOT AS A BARE SuiteResult. This was
+            // the last bare return of the four the #407 family covers, and it needed the same
+            // treatment for the same reason: a bare return skips the ScenarioStarted/Completed
+            // events, the --events-stream pump, the terminal render and
+            // FileReportWriter.WriteFileReports, so a CI job got a verdict with no artefacts
+            // describing it.
+            //
+            // It also carries #369's answer for free. This catch's own boundary — stated two
+            // paragraphs above as "no container started, not before the StartAsync call" — is
+            // exactly ExecutedAnyScenario being false, and the completion path sets it because
+            // that path IS the without-topology route. Nothing here has to remember to.
+            //
+            // Measured before this: `${conn:typo}` exited 0 under a bare `run` and 4 under
+            // `--parallel 1`, because the parallel runner derives the same answer from its event
+            // buffers while this return said nothing at all. A sequential/parallel divergence on
+            // an exit code is a defect class this codebase has been bitten by before.
+            return await CompleteWithoutTopologyAsync(
+                    StampWhereUnjudged(compilations, Verdict.Inconclusive, environmentFault),
+                    WithUnbuiltDocuments(assurance.Refusing(SecurityAbortKind.AuthoringFault)),
+                    output,
+                    decorate,
+                    diffLookup,
+                    htmlReportPath,
+                    junitReportPath,
+                    eventsReportPath,
+                    eventsStreamPath,
+                    runSecretLedger,
+                    alreadyPrintedMessage: environmentFault)
+                .ConfigureAwait(false);
         }
         catch (OrchestrationException oex)
         {
@@ -1734,9 +1825,17 @@ public static class ScenarioRunner
             // `runSecretLedger`. DisplaySanitiser alone would not redact it: it neutralises
             // control bytes and ANSI sequences, so an ordinary printable passphrase passes
             // through unchanged.
-            await output.WriteLineAsync(
-                DisplaySanitiser.SanitiseForDisplay(
-                    runSecretLedger.Scrub($"RunSuiteAsync: topology failed to start — {oex.Message}")))
+            // SCRUBBED here, SANITISED at the print — the two are not interchangeable and the
+            // split matches the protocol-conflict seam above. Scrubbing is the security
+            // requirement (REQ-010): it removes a resolved `clientKeyPassword` that reached
+            // oex.Info.Detail, and the stamped cause below carries this text onto every scenario
+            // record, into --junit/--html/--events, so it must be scrubbed BEFORE it is stamped.
+            // Sanitising is display hygiene (#266 Item 4) — it neutralises control bytes and ANSI
+            // sequences for a terminal, and would not redact an ordinary printable passphrase.
+            var topologyFailure =
+                runSecretLedger.Scrub($"RunSuiteAsync: topology failed to start — {oex.Message}");
+
+            await output.WriteLineAsync(DisplaySanitiser.SanitiseForDisplay(topologyFailure))
                 .ConfigureAwait(false);
 
             // REQ-018: AT THIS CATCH, the classified kind on the exception is the whole
@@ -1755,16 +1854,44 @@ public static class ScenarioRunner
             // `Refusing` keeps the more consequential refusal, so a scenario already refused at a
             // compile-time door does not have its record overwritten by a topology that then
             // failed to come up.
-            var errVerdicts = compilations
-                .Select(c => (c.ScenarioName, Verdict.EnvironmentError))
-                .ToList();
-            return new SuiteResult(Verdict.EnvironmentError, errVerdicts)
-            {
-                Assurance = WithUnbuiltDocuments(assurance.Refusing(
-                    oex.Info.Kind == OrchestrationErrorKind.SecurityConfirmation
-                        ? SecurityAbortKind.ProbeUnconfirmed
-                        : SecurityAbortKind.TopologyUnavailable)),
-            };
+            // RETURNED THROUGH CompleteWithoutTopologyAsync, NOT AS A BARE SuiteResult (#407).
+            // This was the LAST of the four instances of the defect the two seams above diagnosed:
+            // a bare return skips the ScenarioStarted/Completed events, the --events-stream pump,
+            // the terminal render and FileReportWriter.WriteFileReports. Measured on a suite whose
+            // topology fails its health gate with --junit/--html/--events all requested: no
+            // `Scenario '<id>' started` line and not one of the three artefacts written.
+            //
+            // It mattered more here than at the other seams once a secured suite began exiting 3
+            // on this path: a red build sitting beside an empty results directory reads as a broken
+            // runner rather than a real refusal, so the failure was correct but unattributable.
+            //
+            // Verdict and exit code are UNCHANGED, exactly as at the seams above — the aggregate
+            // over N EnvironmentErrors is EnvironmentError, which is what the bare return said.
+            // Only the artefacts now exist. The stamp carries the suite-level cause onto every
+            // scenario that has no more specific message of its own, and `alreadyPrintedMessage`
+            // tells the completion path this text already reached the terminal, so the print above
+            // is not duplicated.
+            //
+            // The classified kind on the exception still decides the refusal, untouched: an
+            // unhealthy container, an unpullable image and an unrelated seed failure all record
+            // TopologyUnavailable and still exit 0 by default. That is #390, deliberately open —
+            // this change is about what a run REPORTS, not about what it exits.
+            return await CompleteWithoutTopologyAsync(
+                    StampWhereUnjudged(compilations, Verdict.EnvironmentError, topologyFailure),
+                    WithUnbuiltDocuments(assurance.Refusing(
+                        oex.Info.Kind == OrchestrationErrorKind.SecurityConfirmation
+                            ? SecurityAbortKind.ProbeUnconfirmed
+                            : SecurityAbortKind.TopologyUnavailable)),
+                    output,
+                    decorate,
+                    diffLookup,
+                    htmlReportPath,
+                    junitReportPath,
+                    eventsReportPath,
+                    eventsStreamPath,
+                    runSecretLedger,
+                    alreadyPrintedMessage: topologyFailure)
+                .ConfigureAwait(false);
         }
         finally
         {
@@ -1837,14 +1964,22 @@ public static class ScenarioRunner
                             Timestamp = now,
                             ScenarioId = name,
                         }));
-                        buffer.Add(EventStreamJson.ToLine(new ScenarioCompletedEvent
-                        {
-                            RunId = runId,
-                            Timestamp = now,
-                            ScenarioId = name,
-                            Verdict = earlyVerdict.Value,
-                            Counts = new VerdictCounts { Inconclusive = 1 },
-                        }));
+                        // #372 AT THE MIXED-SUITE SEAM — the gap #372 left, and the one an author
+                        // is most likely to hit: `vouchfx run tests/` with ONE broken file beside
+                        // runnable siblings does not reach CompleteWithoutTopologyAsync (the
+                        // all-early guard requires EVERY scenario to carry a verdict), so this is
+                        // the only door the broken file passes through. Before this it printed
+                        // `earlyMessage` on the very next line and wrote it to nothing: the same
+                        // document alone in a directory got a JUnit/HTML/events cause and beside a
+                        // sibling got none.
+                        buffer.Add(StepEventBuilder.ScenarioCompletedLine(
+                            runId,
+                            now,
+                            name,
+                            earlyVerdict.Value,
+                            new VerdictCounts { Inconclusive = 1 },
+                            runSecretLedger,
+                            earlyMessage));
                         if (!string.IsNullOrEmpty(earlyMessage))
                         {
                             // Issue #266, Item 4: earlyMessage carries a schema/pipeline/
@@ -1881,14 +2016,21 @@ public static class ScenarioRunner
                         // point the probe and every earlier scenario have already recorded
                         // whatever they resolved.
                         buffer.Add(EnvironmentErrorLine(runSecretLedger, oex.Info, runId, now));
-                        buffer.Add(EventStreamJson.ToLine(new ScenarioCompletedEvent
-                        {
-                            RunId = runId,
-                            Timestamp = now,
-                            ScenarioId = name,
-                            Verdict = Verdict.EnvironmentError,
-                            Counts = new VerdictCounts { EnvError = 1 },
-                        }));
+
+                        // The SAME text the terminal write below carries, built once so the two
+                        // channels cannot diverge; the chokepoint scrubs it against the suite
+                        // ledger exactly as that write does.
+                        var isolationFault =
+                            $"Isolation.BeginScenarioAsync failed for '{name}': {oex.Message}; " +
+                            "aborting suite.";
+                        buffer.Add(StepEventBuilder.ScenarioCompletedLine(
+                            runId,
+                            now,
+                            name,
+                            Verdict.EnvironmentError,
+                            new VerdictCounts { EnvError = 1 },
+                            runSecretLedger,
+                            isolationFault));
                         results.Add((name, Verdict.EnvironmentError));
                         suiteAggregate = Elevate(suiteAggregate, Verdict.EnvironmentError);
                         allBuffers.AddRange(buffer);
@@ -1904,9 +2046,7 @@ public static class ScenarioRunner
                         // value on the terminal/CI log.
                         await output.WriteLineAsync(
                             DisplaySanitiser.SanitiseForDisplay(
-                                runSecretLedger.Scrub(
-                                    $"Isolation.BeginScenarioAsync failed for '{name}': {oex.Message}; " +
-                                    "aborting suite."))).ConfigureAwait(false);
+                                runSecretLedger.Scrub(isolationFault))).ConfigureAwait(false);
                         break;
                     }
 
@@ -2216,7 +2356,7 @@ public static class ScenarioRunner
     /// a verdict rather than that being read off the compilation loop: the all-early-verdict guard
     /// above; the two suite-level guards — base-directory divergence and protocol conflict — which
     /// STAMP Inconclusive onto the scenarios that compiled cleanly before calling (see
-    /// <see cref="StampInconclusiveWhereUnjudged"/>); and the shared-<c>environment</c> divergence
+    /// <see cref="StampWhereUnjudged"/>); and the shared-<c>environment</c> divergence
     /// guard, which runs ABOVE the compilation loop and therefore SYNTHESISES the whole list (see
     /// <see cref="EveryScenarioRefusedBeforeCompilation"/>). A caller that leaves an <c>EarlyVerdict</c>
     /// null gets an <see cref="InvalidOperationException"/> here, deliberately — <c>earlyVerdict</c>
@@ -2237,14 +2377,20 @@ public static class ScenarioRunner
     /// sprung it.
     /// </para>
     /// </remarks>
+    /// <param name="runSecretLedger">
+    /// The suite's resolved-secret ledger, or <see langword="null"/> when the caller holds none.
+    /// The four guards that run ABOVE the topology-build seam pass <see langword="null"/> and that
+    /// is correct rather than lazy: no resolver exists on those paths — the compilation loop
+    /// validates secret REFERENCES and never resolves one — so there is nothing to scrub against.
+    /// The two <c>StartAsync</c> catches hold the real ledger and pass it.
+    /// </param>
     /// <param name="alreadyPrintedMessage">
     /// A suite-level diagnostic the CALLER has already written to <paramref name="output"/>, or
     /// <see langword="null"/> when the caller printed nothing. Any scenario whose
     /// <c>EarlyMessage</c> is ordinally equal to it is skipped for TERMINAL printing only — the
-    /// message stays on the scenario's own record, so it still reaches anything rendered from that
-    /// record (none today: <c>EarlyMessage</c> has exactly one consumer, the suppression check
-    /// below, and <c>ScenarioCompletedEvent</c> carries no message field, so no artefact channel
-    /// carries a scenario-level message — see #372). This is what lets a suite-level fact be
+    /// message stays on the scenario's own record, and since #372 that record IS a rendered
+    /// channel: it reaches the events stream, the JUnit <c>message</c> attribute and the HTML
+    /// report. This is what lets a suite-level fact be
     /// stamped as every affected scenario's cause
     /// while still appearing on the terminal exactly once (MAJOR-3, fix round six). The
     /// all-early-verdict caller passes <see langword="null"/> and is therefore byte-identically
@@ -2266,6 +2412,7 @@ public static class ScenarioRunner
         string? junitReportPath,
         string? eventsReportPath,
         string? eventsStreamPath,
+        ResolvedSecretLedger? runSecretLedger,
         string? alreadyPrintedMessage = null)
     {
         var results = new List<(string ScenarioName, Verdict Verdict)>(compilations.Count);
@@ -2288,14 +2435,30 @@ public static class ScenarioRunner
                     Timestamp = now,
                     ScenarioId = name,
                 }),
-                EventStreamJson.ToLine(new ScenarioCompletedEvent
-                {
-                    RunId = runId,
-                    Timestamp = now,
-                    ScenarioId = name,
-                    Verdict = earlyVerdict!.Value,
-                    Counts = CountsFor(earlyVerdict.Value),
-                }),
+                // #372: the cause reaches the WRITTEN artefacts, not only the terminal.
+                //
+                // Carried whether or not the terminal print below is suppressed. Suppression
+                // exists so ONE suite-level fact is not printed N times; it says nothing about
+                // whether the record should carry the cause, and every scenario stamped with a
+                // suite-level abort has exactly that text as its own cause. Passing
+                // `alreadyPrintedMessage` here instead would blank the artefact for precisely
+                // the runs that most need explaining.
+                //
+                // Scrubbing is the CHOKEPOINT's job now, not this site's and not the producers'.
+                // This site used to assert that every producer of an EarlyMessage had already
+                // scrubbed it; measured, one had not — RunSuiteAsync's ArgumentException catch
+                // stamped `environmentFault` raw while its OrchestrationException sibling thirty
+                // lines below scrubbed `topologyFailure`. Two sites disagreeing about whether to
+                // scrub is the defect, so the obligation moved into
+                // StepEventBuilder.ScenarioCompletedLine, which no stamping caller can bypass.
+                StepEventBuilder.ScenarioCompletedLine(
+                    runId,
+                    now,
+                    name,
+                    earlyVerdict!.Value,
+                    CountsFor(earlyVerdict.Value),
+                    runSecretLedger,
+                    earlyMessage),
             };
 
             // Terminal print, suppressed only for the exact text the caller has already written.
@@ -2323,6 +2486,11 @@ public static class ScenarioRunner
         return new SuiteResult(suiteAggregate, results)
         {
             Assurance = assurance,
+
+            // #369: this method IS the without-topology path — no container started and no step
+            // ran on any route that reaches here. Set once, at the one place that is true, rather
+            // than enumerated door by door.
+            ExecutedAnyScenario = false,
         };
     }
 
@@ -2379,9 +2547,10 @@ public static class ScenarioRunner
     /// runner — and <c>"\n"</c> is the platform-independent answer to that, not an escape from it.
     /// This helper's two call sites are BOTH run-path terminal: one writes straight to the run's
     /// output writer through <c>DisplaySanitiser</c> (which preserves <c>\n</c> and
-    /// strips <c>\r</c>), the other becomes an <c>EarlyMessage</c>, whose only consumers are that
-    /// same terminal print and an ordinal equality check — <c>ScenarioCompletedEvent</c> carries no
-    /// message field, so no artefact channel sees this string at all (#372).
+    /// strips <c>\r</c>), the other becomes an <c>EarlyMessage</c>, which #372 carried onto
+    /// <see cref="ScenarioCompletedEvent.Message"/> — so this string DOES reach the event stream,
+    /// the JUnit <c>message</c> attribute and the HTML report. (An earlier revision of this remark
+    /// said the opposite, and it was true only until #372 landed on this same branch.)
     /// </para>
     /// </remarks>
     private static string JoinAuthoringFaults(string? pipelineFailure, string? stepSecretFault) =>
@@ -2403,7 +2572,7 @@ public static class ScenarioRunner
     /// <param name="cause">The suite-level diagnostic, stamped as every scenario's own cause.</param>
     /// <remarks>
     /// <para>
-    /// The sibling of <see cref="StampInconclusiveWhereUnjudged"/> for the one guard that runs
+    /// The sibling of <see cref="StampWhereUnjudged"/> for the one guard that runs
     /// ABOVE the compilation loop (the shared-<c>environment</c> divergence guard) and therefore has
     /// no compilations to stamp. It is a separate helper rather than a parameterised stamp because
     /// the two take different inputs — that one refines a list, this one builds one — and because
@@ -2475,13 +2644,14 @@ public static class ScenarioRunner
     /// explain itself to anything rendered from it.
     /// </para>
     /// <para>
-    /// <strong>Nothing renders it today</strong> (m4, gatekeeper + spec-compliance, fix round
-    /// seven — the paragraph above implied delivery). Measured: the stamped <c>EarlyMessage</c> has
-    /// exactly one consumer, <see cref="CompleteWithoutTopologyAsync"/>'s terminal-print suppression
-    /// check, and <c>ScenarioCompletedEvent</c> carries no message field, so no artefact channel —
-    /// JUnit, HTML or the event stream — carries a scenario-level message at all (see #372). The
-    /// stamp is therefore correct-by-construction rather than load-bearing: it puts the cause where
-    /// a renderer would read it once one exists, and costs nothing until then.
+    /// <strong>The stamped cause is rendered, and that makes it load-bearing.</strong> #372 carried
+    /// <c>EarlyMessage</c> onto <see cref="ScenarioCompletedEvent.Message"/>, so the text stamped
+    /// here reaches the event stream, the JUnit <c>message</c> attribute and the HTML report as
+    /// well as <see cref="CompleteWithoutTopologyAsync"/>'s terminal-print suppression check.
+    /// Whatever composes a <c>cause</c> for this method owns that channel's constraints — no
+    /// resolved secret value and no absolute host path in the text (see
+    /// <see cref="ScenarioCompletedEvent.Message"/>'s own remarks). An earlier revision of this
+    /// paragraph said nothing rendered it; that was true only until #372 landed on this branch.
     /// </para>
     /// <para>
     /// Stamping the cause is what makes it a duplicate on the TERMINAL, which the caller resolves
@@ -2496,7 +2666,7 @@ public static class ScenarioRunner
         PipelineResult? Pipeline,
         Verdict? EarlyVerdict,
         string? EarlyMessage,
-        string? ScenarioBaseDirectory)> StampInconclusiveWhereUnjudged(
+        string? ScenarioBaseDirectory)> StampWhereUnjudged(
         IReadOnlyList<(
             string ScenarioName,
             ScenarioAst Ast,
@@ -2504,6 +2674,7 @@ public static class ScenarioRunner
             Verdict? EarlyVerdict,
             string? EarlyMessage,
             string? ScenarioBaseDirectory)> compilations,
+        Verdict verdict,
         string cause)
     {
         var stamped = new List<(
@@ -2521,7 +2692,7 @@ public static class ScenarioRunner
                 : (compilation.ScenarioName,
                    compilation.Ast,
                    compilation.Pipeline,
-                   Verdict.Inconclusive,
+                   verdict,
                    cause,
                    compilation.ScenarioBaseDirectory));
         }
@@ -2909,14 +3080,17 @@ public static class ScenarioRunner
                 // seam does not reach. A null caller (every non-watch caller) keeps the
                 // pre-EDGE-007 behaviour.
                 buffer.Add(EnvironmentErrorLine(sharedLedger, oex.Info, runId, nowR));
-                buffer.Add(EventStreamJson.ToLine(new ScenarioCompletedEvent
-                {
-                    RunId = runId,
-                    Timestamp = nowR,
-                    ScenarioId = scenarioName,
-                    Verdict = Verdict.EnvironmentError,
-                    Counts = new VerdictCounts { EnvError = 1 },
-                }));
+
+                // Same ledger, same reason (EDGE-007) — and the same reset failure is now the
+                // scenario's own recorded cause, not only an environment-error record beside it.
+                buffer.Add(StepEventBuilder.ScenarioCompletedLine(
+                    runId,
+                    nowR,
+                    scenarioName,
+                    Verdict.EnvironmentError,
+                    new VerdictCounts { EnvError = 1 },
+                    sharedLedger,
+                    oex.Message));
                 TerminalRenderer.Render(buffer, output, diffLookup);
                 return Verdict.EnvironmentError;
             }
@@ -3019,7 +3193,18 @@ public static class ScenarioRunner
         earlyVerdict = Verdict.Inconclusive;
         earlyMessage = null;
 
-        void EmitInconclusive()
+        // Takes the cause so the record carries it (#372). The message is assigned to the
+        // `earlyMessage` out-parameter by each door BELOW its own emit call, so passing it in
+        // here rather than reading a local afterwards is what stops the two drifting apart.
+        //
+        // `ledger: null` is deliberate, and the reasoning is the one this method's own terminal
+        // sink already records in full at its call site in the watch loop: the three doors below
+        // produce their text from YAML and secret REFERENCES, before any step executes, so it
+        // cannot CONTAIN a resolved value — and scrubbing it against the session-scoped ledger a
+        // `--watch` run accumulates would expose the author's primary diagnostic to
+        // over-redaction (a short or stale recorded value rewriting unrelated substrings for the
+        // rest of the session). The terminal and the record therefore make the same call.
+        void EmitInconclusive(string? cause)
         {
             var now = DateTimeOffset.UtcNow;
             buffer.Add(EventStreamJson.ToLine(new ScenarioStartedEvent
@@ -3028,21 +3213,21 @@ public static class ScenarioRunner
                 Timestamp = now,
                 ScenarioId = scenarioName,
             }));
-            buffer.Add(EventStreamJson.ToLine(new ScenarioCompletedEvent
-            {
-                RunId = runId,
-                Timestamp = now,
-                ScenarioId = scenarioName,
-                Verdict = Verdict.Inconclusive,
-                Counts = new VerdictCounts { Inconclusive = 1 },
-            }));
+            buffer.Add(StepEventBuilder.ScenarioCompletedLine(
+                runId,
+                now,
+                scenarioName,
+                Verdict.Inconclusive,
+                new VerdictCounts { Inconclusive = 1 },
+                ledger: null,
+                cause));
         }
 
         var validationResult = DocumentValidator.Validate(yamlText, registry);
         if (!validationResult.IsValid)
         {
-            EmitInconclusive();
             earlyMessage = string.Join("; ", validationResult.Errors.Select(e => e.Message));
+            EmitInconclusive(earlyMessage);
             return true;
         }
 
@@ -3062,16 +3247,16 @@ public static class ScenarioRunner
         // elsewhere as scoped to `run` and `run --parallel`, which is what they say.
         if (TryValidateSecretReferences(ast, out var secretError, out _))
         {
-            EmitInconclusive();
             earlyMessage = secretError;
+            EmitInconclusive(earlyMessage);
             return true;
         }
 
         var pipelineResult = ProviderPipeline.Compile(ast, registry, SuiteNamespace, seedBaseDirectory);
         if (pipelineResult.Failure is not null)
         {
-            EmitInconclusive();
             earlyMessage = pipelineResult.Failure.Message;
+            EmitInconclusive(earlyMessage);
             return true;
         }
 
@@ -3573,17 +3758,29 @@ public static class ScenarioRunner
                 // author-controlled text reaching this human output stream.
                 var nowSE = DateTimeOffset.UtcNow;
                 buffer.Add(StepEventBuilder.ScenarioStartedLine(runId, nowSE, scenarioName));
+
+                // The record carries the SAME reference-only text the terminal gets (#372),
+                // built once. It is reference-only by construction, so the ledger pass over it
+                // finds nothing — but the ledger is still handed in, because "this particular
+                // text is safe" is not a property a future edit to the format preserves.
+                var secretFault =
+                    "Secret resolution failed (EnvironmentError): " +
+                    $"source '{sre.SecretSource}', path '{sre.SecretPath}'.";
                 var seCompletedLine = StepEventBuilder.ScenarioCompletedLine(
-                    runId, nowSE, scenarioName, Verdict.EnvironmentError, new VerdictCounts { EnvError = 1 });
+                    runId,
+                    nowSE,
+                    scenarioName,
+                    Verdict.EnvironmentError,
+                    new VerdictCounts { EnvError = 1 },
+                    LedgerOf(secretAccessor),
+                    secretFault);
                 buffer.Add(seCompletedLine);
                 // Issue #262: the matching scenario-started was already posted live at the top
                 // of this method; post the completion now so a live tail never sees an orphan.
                 livePump?.Post(seCompletedLine);
 
                 await output.WriteLineAsync(
-                    DisplaySanitiser.SanitiseForDisplay(
-                        "Secret resolution failed (EnvironmentError): " +
-                        $"source '{sre.SecretSource}', path '{sre.SecretPath}'."))
+                    DisplaySanitiser.SanitiseForDisplay(secretFault))
                     .ConfigureAwait(false);
 
                 return Verdict.EnvironmentError;
@@ -3592,14 +3789,28 @@ public static class ScenarioRunner
             {
                 var nowCE = DateTimeOffset.UtcNow;
                 buffer.Add(StepEventBuilder.ScenarioStartedLine(runId, nowCE, scenarioName));
-                var ceCompletedLine = StepEventBuilder.ScenarioCompletedLine(
-                    runId, nowCE, scenarioName, Verdict.Inconclusive, new VerdictCounts { Inconclusive = 1 });
-                buffer.Add(ceCompletedLine);
-                livePump?.Post(ceCompletedLine);
 
+                // Built BEFORE the emit, not after it, so the record can carry it (#372). A CSX
+                // compilation failure is the scenario's cause and belongs in --junit/--html/
+                // --events, not only on the terminal.
                 var diagnosis = ex is ScriptCompilationException sce
                     ? $"CSX compilation failed: {sce.Message}"
                     : $"{ex.GetType().Name}: {ex.Message}";
+
+                // The ledger matters HERE more than anywhere: `ex.Message` is the one free-form
+                // surface a script.csharp body can interpolate a Reveal()ed value into, and this
+                // text is now written to disk. The terminal write below composes the same scrub
+                // through ScrubDiagnostic; both read the accessor's own ledger.
+                var ceCompletedLine = StepEventBuilder.ScenarioCompletedLine(
+                    runId,
+                    nowCE,
+                    scenarioName,
+                    Verdict.Inconclusive,
+                    new VerdictCounts { Inconclusive = 1 },
+                    LedgerOf(secretAccessor),
+                    diagnosis);
+                buffer.Add(ceCompletedLine);
+                livePump?.Post(ceCompletedLine);
 
                 // §17 defence-in-depth (S11-B-01): a secret value resolved during execution
                 // can land verbatim in an exception MESSAGE (e.g. the script.csharp body throws
@@ -3699,8 +3910,18 @@ public static class ScenarioRunner
                 runId, DateTimeOffset.UtcNow, scenarioName, envelope);
             buffer.Add(reproLine);
 
+            // No message: a scenario that RAN has its cause in its step records, and a bare
+            // `message` repeating "one step failed" would add nothing an artefact cannot already
+            // read off the stream. The scenario-level field is for causes that exist only at
+            // scenario level — a refusal, an abort, a topology that never came up.
             var scenarioCompletedLine = StepEventBuilder.ScenarioCompletedLine(
-                runId, DateTimeOffset.UtcNow, scenarioName, aggregate, finalCounts);
+                runId,
+                DateTimeOffset.UtcNow,
+                scenarioName,
+                aggregate,
+                finalCounts,
+                LedgerOf(secretAccessor),
+                message: null);
             buffer.Add(scenarioCompletedLine);
 
             // Issue #262: stream the scenario-completed + reproducibility-envelope framing
@@ -4030,6 +4251,20 @@ public static class ScenarioRunner
         => accessor is SecretAccessor concrete
             ? concrete.ResolvedSecrets.Scrub(text)
             : text;
+
+    /// <summary>
+    /// The <see cref="ResolvedSecretLedger"/> <paramref name="accessor"/> records into, or
+    /// <see langword="null"/> for an accessor that records nothing.
+    /// </summary>
+    /// <remarks>
+    /// Read from the ACCESSOR rather than from the <c>sharedLedger</c> parameter its scope was
+    /// built with, and the difference is load-bearing: a scope built without a shared ledger is
+    /// given one PRIVATE to itself, so on every path where the caller supplies none the accessor
+    /// still accumulates values that a stamped cause must be scrubbed against. Reading the
+    /// parameter would scrub against nothing on exactly those paths.
+    /// </remarks>
+    private static ResolvedSecretLedger? LedgerOf(ISecretAccessor accessor)
+        => accessor is SecretAccessor concrete ? concrete.ResolvedSecrets : null;
 
     /// <summary>
     /// Builds the §14 <c>environment-error</c> event line for <paramref name="info"/>, scrubbing

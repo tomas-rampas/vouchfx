@@ -1,11 +1,11 @@
 // Vouchfx.Engine.Orchestration — SeedFixtures (S05-A-02).
 //
 // Pure helper for the seed pipeline: resolve a fixture file path against the seed
-// base directory and compute its content hash.  Shared so that S05-B-03 (the
-// reproducibility envelope) can reuse the SAME hashing routine to "record the
-// content hash of every applied fixture" (docs/02 §3.2.5) — the seed
-// applier and the envelope MUST agree on what a fixture's hash is, so the routine
-// lives in one place rather than being duplicated.
+// base directory and compute its content hash, so that the reproducibility envelope
+// can "record the content hash of every applied fixture" (docs/02 §3.2.5) through
+// one routine rather than a duplicated one.  Note the envelope is its only
+// production consumer: the seed applier does not call this, despite an older
+// comment here saying the two "MUST agree on what a fixture's hash is".
 //
 // Placement rationale (so B-03 can reuse it): the runner project
 // (Vouchfx.Engine.Runtime) already references Vouchfx.Engine.Orchestration, so a
@@ -29,10 +29,17 @@ namespace Vouchfx.Engine.Orchestration;
 /// <remarks>
 /// <para>
 /// <see cref="ComputeContentHash"/> is the single source of truth for a fixture's
-/// content hash.  The seed applier calls it for <c>sql</c> files — the only seed
-/// kind in the v1 language — and S05-B-03 reuses it to record the content hash of
-/// every applied fixture in the reproducibility envelope (docs/02 §3.2.5) — both
-/// must produce identical hashes, hence one shared routine.
+/// content hash, used to record the content hash of every applied fixture in the
+/// reproducibility envelope (docs/02 §3.2.5).
+/// </para>
+/// <para>
+/// <strong>The seed applier does NOT call it.</strong>  An earlier version of this
+/// remark said it did, for <c>sql</c> files; grep finds no such call site.  The
+/// applier does its own existence check and raises its own
+/// <c>OrchestrationException</c>, which is why the one exception this type throws
+/// reaches no production observer — see <see cref="ComputeContentHash"/>'s own
+/// remarks, and do not restore the shared-caller premise without a call site to
+/// point at.
 /// </para>
 /// </remarks>
 internal static class SeedFixtures
@@ -53,10 +60,15 @@ internal static class SeedFixtures
     /// The 64-character lower-case hex SHA-256 digest of the file's raw bytes.
     /// </returns>
     /// <exception cref="FileNotFoundException">
-    /// Thrown when the resolved fixture file does not exist.  Callers in the seed
-    /// applier map this to an <see cref="OrchestrationException"/>
-    /// (<see cref="OrchestrationErrorKind.Provision"/>) so it surfaces as an
-    /// Environment error (§12.1).
+    /// Thrown when the resolved fixture file does not exist.  <strong>No production caller
+    /// observes it.</strong>  This method has exactly one call site in <c>src/</c> —
+    /// <c>ScenarioRunner.HashFixtureOrNull</c> — which catches this exception and swallows it, so
+    /// a missing fixture is reported by the seed applier's own existence check rather than by this
+    /// throw.  (An earlier version of this remark claimed callers in the seed applier map it to an
+    /// <see cref="OrchestrationException"/>; no such caller exists, and that claim is why the
+    /// message below was allowed to keep a resolved absolute path when every sibling diagnostic
+    /// lost one.)  One test calls it directly and asserts the message, so a change here is not
+    /// silent.
     /// </exception>
     internal static string ComputeContentHash(string baseDirectory, string relativePath)
     {
@@ -66,6 +78,13 @@ internal static class SeedFixtures
         var resolvedPath = Path.GetFullPath(Path.Combine(baseDirectory, relativePath));
         if (!File.Exists(resolvedPath))
         {
+            // The resolved path in this message does NOT reach a written artefact, and that is
+            // the only reason it is allowed to stand where every sibling diagnostic had its
+            // resolved half removed (#357's rule). This throw has exactly one caller,
+            // ScenarioRunner.HashFixtureOrNull, which catches FileNotFoundException and swallows
+            // it — so the string is unreachable rather than merely terminal-only. If a second
+            // caller ever appears, or that catch stops swallowing, this becomes a disclosure on
+            // the same channel as the rest and must lose its resolved half too.
             throw new FileNotFoundException(
                 $"seed fixture file not found: '{resolvedPath}'.",
                 resolvedPath);

@@ -99,8 +99,13 @@ public sealed class SeedFixturesTests
             var expectedFull = Path.GetFullPath(Path.Combine(dir, relative));
 
             // Act + Assert — a missing file raises a clear FileNotFoundException whose
-            // message names the resolved absolute path.  The seed applier maps this to
-            // a Provision (Environment) error.
+            // message names the resolved absolute path.  This test is the ONLY observer of
+            // that message: the single production call site
+            // (ScenarioRunner.HashFixtureOrNull) catches and swallows it, and the seed
+            // applier — contrary to an older comment here — never calls this at all, doing
+            // its own existence check instead.  That is why this message is allowed to keep
+            // a resolved absolute path when every sibling diagnostic lost one (#357): it
+            // reaches no artefact.  If a caller ever observes it, the path must go.
             var ex = Assert.Throws<FileNotFoundException>(
                 () => SeedFixtures.ComputeContentHash(dir, relative));
             Assert.Contains(expectedFull, ex.Message, StringComparison.Ordinal);

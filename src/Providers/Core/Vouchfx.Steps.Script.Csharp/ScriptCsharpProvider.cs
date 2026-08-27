@@ -247,8 +247,20 @@ public sealed class ScriptCsharpProvider
 
             if (!System.IO.File.Exists(resolvedPath))
             {
+                // NO RESOLVED PATH IN THE MESSAGE (#357). `resolvedPath` is an absolute host
+                // path, and this diagnostic ships to CI artefacts and dashboards — a wider
+                // audience than whoever runs the suite. It cannot be redacted downstream either:
+                // ScenarioRunner.ScrubDiagnostic is ResolvedSecrets.Scrub, a targeted net over
+                // values the run's SecretAccessor actually revealed, so a filesystem path is
+                // never covered by it.
+                //
+                // The declared form is the actionable half and the resolved form never was — the
+                // same fix, with the same measured outcome, that slice D applied to
+                // SecurityMaterialException's clientCert/clientKey/caCert messages. Naming the
+                // directory the path resolves AGAINST keeps a relative path diagnosable without
+                // disclosing where the file would have landed.
                 return ValidationResult.Failure(
-                    $"script.csharp: file '{model.File}' not found (resolved to '{resolvedPath}').");
+                    $"script.csharp: file '{model.File}' not found, relative to the suite directory.");
             }
 
             // Size-only check via FileInfo.Length — the content is deliberately NEVER read

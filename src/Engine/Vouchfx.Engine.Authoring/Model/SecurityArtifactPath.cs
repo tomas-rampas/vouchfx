@@ -39,32 +39,20 @@ namespace Vouchfx.Engine.Authoring.Model;
 /// already grants that same author arbitrary C#.
 /// </para>
 /// <para>
-/// <strong>WHICH PATH A DIAGNOSTIC MAY NAME, and why the two rules in this feature are not in
-/// conflict.</strong> This class's diagnostics carry the RESOLVED absolute host path;
-/// <c>SecurityConfigurationAccessor.EnsureContained</c> deliberately carries the DECLARED text
-/// only. The split is by AUDIENCE, not by site, and each half is forced:
+/// <strong>WHICH PATH A DIAGNOSTIC MAY NAME.</strong> The DECLARED text only — the author's own
+/// input — never the resolved absolute path and never the resolved suite directory. That holds at
+/// every stage, validation-time and step-time alike, and it holds for callers not yet written.
 /// </para>
-/// <list type="bullet">
-///   <item><description>
-///     <strong>Validation-time</strong> — this class, <c>EnvironmentSecurityValidator</c> and
-///     <c>ServerArtifactInjection.Plan</c>. Their messages reach the author's own terminal and
-///     nothing else (verified: each is written through <c>TextWriter.WriteLineAsync</c> on the
-///     early-exit / environment-configuration-error path and is never placed in an event line).
-///     REQ-004's acceptance criterion REQUIRES the resolved path here — "fails <c>vouchfx
-///     validate</c> … with a message containing the resolved path" — because "not found" without
-///     the path it looked in is the diagnostic that sends an author hunting.
-///   </description></item>
-///   <item><description>
-///     <strong>Step-time</strong> — <c>SecurityConfigurationAccessor</c>. Its
-///     <c>SecurityMaterialException</c> surfaces through a provider's general catch into
-///     <c>Vars</c> and the §14 event stream, which is archived, uploaded and rendered, and where
-///     no scrubber can redact a host path after the fact. Declared text only.
-///   </description></item>
-/// </list>
 /// <para>
-/// The rule to apply when adding a caller is therefore "name the resolved path if and only if the
-/// message cannot reach the event stream" — not "pick one and use it everywhere", which would
-/// either break REQ-004 or leak host paths into every archived run.
+/// The reason is that a diagnostic's audience is not knowable from its site. A validation-time
+/// message from this class reaches <c>ScenarioCompletedEvent.message</c> by way of
+/// <c>ProviderPipeline</c>'s failure and <c>ScenarioRunner</c>'s early message, and from there the
+/// §14 event stream, the JUnit <c>message</c> attribute and the HTML report — archived, uploaded,
+/// and beyond the reach of any scrubber (<c>ResolvedSecrets.Scrub</c> covers revealed secret
+/// VALUES; a filesystem path is never one). An earlier revision of this comment asserted the
+/// opposite of each such message — that it "is never placed in an event line" — and licensed the
+/// resolved path on that basis. Naming the CONCEPT the path resolves against ("relative to the
+/// suite directory") keeps a relative path diagnosable without disclosing the host layout.
 /// </para>
 /// </remarks>
 public static class SecurityArtifactPath
@@ -158,13 +146,13 @@ public static class SecurityArtifactPath
 
         if (!IsContainedWithin(candidate, resolvedBaseDirectory))
         {
+            // Neither the resolved candidate nor the base directory is named: both are absolute
+            // host paths, and every diagnostic this method returns is prefixed by a caller and
+            // carried into the written artefacts. See this class's remarks.
             return string.Format(
                 CultureInfo.InvariantCulture,
-                "'{0}' resolves outside the suite directory (resolved to '{1}', which is not contained "
-                + "within '{2}').",
-                declaredPath,
-                candidate,
-                resolvedBaseDirectory);
+                "'{0}' resolves outside the suite directory.",
+                declaredPath);
         }
 
         resolvedPath = candidate;

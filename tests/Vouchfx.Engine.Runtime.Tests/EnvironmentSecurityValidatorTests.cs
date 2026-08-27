@@ -161,10 +161,23 @@ public sealed class EnvironmentSecurityValidatorTests : IDisposable
         Assert.Null(result);
     }
 
-    // ── 3. REQ-004(a): a declared-but-missing file fails, naming the field + path ──
+    // ── 3. REQ-004(a): a declared-but-missing file fails, naming the field + DECLARED path ──
 
+    /// <summary>
+    /// REQ-004(a), as superseded by BLOCKER B2 (maintainer decision, 2026-08-26).
+    /// </summary>
+    /// <remarks>
+    /// This test used to be <c>…_FailsNamingFieldAndResolvedPath</c> and asserted the resolved
+    /// absolute path was PRESENT — the original acceptance criterion, written when a
+    /// validation-time diagnostic reached the author's terminal and nothing else. #372/#407 carried
+    /// that text onto <c>ScenarioCompletedEvent.Message</c> and so into the event stream, the JUnit
+    /// report and the HTML report, which made the criterion a host-path disclosure. The assertion
+    /// is inverted rather than deleted: the absence is now the requirement, and
+    /// <c>SecurityDiagnosticPathDisclosureTests</c> pins the same rule end-to-end through the
+    /// written artefacts.
+    /// </remarks>
     [Fact]
-    public void Validate_DeclaredClientCertMissing_FailsNamingFieldAndResolvedPath()
+    public void Validate_DeclaredClientCertMissing_FailsNamingFieldAndDeclaredPathOnly()
     {
         var security = new SecuritySpec("mtls", "9093", null, "./certs/client.pem", "./certs/client-key.pem", null);
         var ast = BuildAst(dependencies: OneDependency("mq", security));
@@ -174,8 +187,18 @@ public sealed class EnvironmentSecurityValidatorTests : IDisposable
 
         Assert.NotNull(result);
         Assert.Contains("environment.dependencies.mq.security.clientCert", result!.Message, StringComparison.Ordinal);
+
+        // The author's own text — the actionable half — is kept.
+        Assert.Contains("./certs/client.pem", result.Message, StringComparison.Ordinal);
+
+        // The base it resolves against is named as a CONCEPT, so a relative path stays diagnosable.
+        Assert.Contains("relative to the suite directory", result.Message, StringComparison.Ordinal);
+
+        // …and neither the resolved file nor the resolved suite directory is disclosed.
         var expectedResolved = Path.GetFullPath(Path.Combine(_suiteDir, "certs", "client.pem"));
-        Assert.Contains(expectedResolved, result.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain(expectedResolved, result.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(_suiteDir, result.Message, StringComparison.OrdinalIgnoreCase);
+
         Assert.True(result.IsSecurityPreflight);
     }
 

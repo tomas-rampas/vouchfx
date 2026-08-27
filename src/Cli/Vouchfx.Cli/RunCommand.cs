@@ -990,6 +990,11 @@ internal static class RunCommand
 
         Verdict suiteVerdict = Verdict.Pass;
         SecurityAssurance? securityAssurance = null;
+
+        // #369. Captured beside the assurance and for the same reason: the SuiteResult is
+        // scoped to the block below, while the exit-code decision is made after it. True until
+        // a run says otherwise, so a path producing no SuiteResult is unaffected.
+        var executedAnyScenario = true;
         if (parsed.Count > 0)
         {
             var asts = parsed.Select(p => p.Ast!).ToList();
@@ -1101,6 +1106,7 @@ internal static class RunCommand
             // sniffed out of the event stream — the whole point of the carve-out is that the
             // verdict is UNCHANGED and cannot distinguish this case.
             securityAssurance = result.Assurance;
+            executedAnyScenario = result.ExecutedAnyScenario;
         }
 
         // Emit telemetry from the SAME buffered event stream the renderers consumed (S10-G-04).
@@ -1143,7 +1149,10 @@ internal static class RunCommand
         // set is unconditionally Inconclusive, never gated behind --fail-on-inconclusive).
         return ComputeExitCode(
             parsed.Count, failures.Count, suiteVerdict, failOnEnvironmentError, failOnInconclusive,
-            securityAssurance);
+            securityAssurance,
+            // #369: false only when the runner returned through its without-topology completion
+            // path, so no container started and no step ran.
+            executedAnyScenario: executedAnyScenario);
     }
 
     /// <summary>
@@ -1237,25 +1246,33 @@ internal static class RunCommand
     /// <returns>The process exit code (see <see cref="ExitCodes"/>).</returns>
     /// <remarks>
     /// <para>
-    /// <strong>Entirely parse-failures</strong> (<paramref name="parsedCount"/> is 0 AND
-    /// <paramref name="parseFailureCount"/> is greater than 0): nothing could be parsed or run
-    /// at all — this is unconditionally <see cref="ExitCodes.Inconclusive"/> (4), REGARDLESS of
-    /// <paramref name="failOnInconclusive"/>. A CI pipeline keying on <c>run</c>'s exit code
-    /// must never see a fully-unparseable suite reported as a clean <see cref="ExitCodes.Success"/>
-    /// — the same reasoning <c>validate</c> already applies unconditionally to an all-invalid
-    /// set. This is deliberately DIFFERENT from a genuine execution-time
-    /// <see cref="Verdict.Inconclusive"/> produced by a scenario that DID run (timeout /
-    /// partition outlasted grace / upstream capture unmet) — THAT case stays opt-in-gated
-    /// below, unchanged.
+    /// <strong>Any parse failure</strong> (<paramref name="parseFailureCount"/> greater than
+    /// 0): the run contains at least one document the engine could not read, and that is never
+    /// reported as a clean <see cref="ExitCodes.Success"/> — a CI pipeline keying on <c>run</c>'s
+    /// exit code must never see an unread file reported as clean. Where the verdict would
+    /// otherwise map to Success it becomes <see cref="ExitCodes.Inconclusive"/> (4), REGARDLESS
+    /// of <paramref name="failOnInconclusive"/>.
     /// </para>
     /// <para>
-    /// <strong>Mixed or fully-parsed set</strong> (<paramref name="parsedCount"/> greater than
-    /// 0): today's existing behaviour, unchanged — fold the parse-failures into
-    /// <paramref name="suiteVerdict"/> via <see cref="AggregateVerdict"/>, then map through
-    /// <see cref="ExitCodes.FromVerdict"/> (opt-in gated for EnvironmentError / Inconclusive).
-    /// <paramref name="parseFailureCount"/> being 0 falls through this SAME branch —
-    /// <see cref="AggregateVerdict"/> is then a no-op — so the no-parse-failure case is also
-    /// unaffected.
+    /// This subsumes #278's entirely-unparseable rule rather than sitting beside it: that rule
+    /// tested <paramref name="parsedCount"/> being 0, so one working file beside a malformed one
+    /// returned the malformed one to the opt-in-gated path and the run exited 0 — the same fault
+    /// and the same verdict as the all-failure case, decided by something unrelated to the fault.
+    /// It also closes #425, without any security-specific exit policy: a malformed document that
+    /// declared mTLS now exits non-zero because it was unreadable.
+    /// </para>
+    /// <para>
+    /// It is deliberately DIFFERENT from a genuine execution-time
+    /// <see cref="Verdict.Inconclusive"/> produced by a scenario that DID run (timeout /
+    /// partition outlasted grace / upstream capture unmet) — THAT case stays opt-in-gated,
+    /// unchanged. A file that could not be read is a deterministic authoring fault, not an
+    /// undetermined outcome.
+    /// </para>
+    /// <para>
+    /// <strong>Every other code is unchanged.</strong> A <see cref="Verdict.Fail"/> outranks a
+    /// parse failure by precedence and still exits 1; an <see cref="Verdict.EnvironmentError"/>
+    /// still exits by its own gate; and <paramref name="parseFailureCount"/> being 0 leaves the
+    /// whole path untouched.
     /// </para>
     /// </remarks>
     internal static int ComputeExitCode(
@@ -1264,16 +1281,85 @@ internal static class RunCommand
         Verdict suiteVerdict,
         bool failOnEnvironmentError,
         bool failOnInconclusive,
-        SecurityAssurance? securityAssurance = null)
+        SecurityAssurance? securityAssurance = null,
+        bool executedAnyScenario = true)
     {
-        if (parsedCount == 0 && parseFailureCount > 0)
+        var aggregate = AggregateVerdict(suiteVerdict, parseFailureCount);
+        var code = ExitCodes.FromVerdict(
+            aggregate, failOnEnvironmentError, failOnInconclusive, securityAssurance);
+
+        // A document the engine could not read is NEVER a clean Success (#425).
+        //
+        // This is one rule where there were two, and the second was #278's: an entirely
+        // unparseable set returned ExitCodes.Inconclusive from its own early branch, on the
+        // reasoning quoted in this method's remarks — a CI pipeline keying on `run`'s exit code
+        // must never see an unparseable suite reported as clean. That reasoning never depended on
+        // whether a SIBLING happened to parse; the file was unread either way. But the branch it
+        // lived in tested `parsedCount == 0`, so adding one working file beside a malformed one
+        // folded the malformed one into the ordinary opt-in-gated Inconclusive path and the run
+        // exited 0. Same fault, same verdict, two exit codes, and the deciding factor was
+        // unrelated to the fault.
+        //
+        // Stating it once subsumes #278 rather than competing with it: with parsedCount == 0 the
+        // aggregate is Inconclusive, FromVerdict maps that to Success when ungated, and this
+        // returns Inconclusive — #278's own answer, reached by the general rule.
+        //
+        // THE PROPERTY THIS GUARD ENFORCES IS "A PARSE FAILURE NEVER EXITS 0", NOT "A PARSE
+        // FAILURE EXITS 4". The narrower reading is what the retracted trailing clause here ("the
+        // same 4, still regardless of failOnInconclusive") invited: it was true in its own scope
+        // — with parsedCount == 0 the aggregate can only be Inconclusive, so all four
+        // gate/assurance combinations do land on 4 — and false the moment it is read as a
+        // statement about parse failures generally, which is how it was in fact read. The guard
+        // is conditioned on `code == ExitCodes.Success`, so it never overrides a code some other
+        // rule already chose: with one parsed sibling that Fails the run still exits 1, and with
+        // one whose topology fails under --fail-on-env-error it still exits 3.
+        //
+        // It deliberately does NOT touch a genuine execution-time Inconclusive from a scenario
+        // that DID run (timeout / partition outlasted grace / upstream capture unmet). Those stay
+        // opt-in-gated, which is the §12.1 distinction this method's remarks already draw: a file
+        // that could not be read is an authoring fault, deterministic and reproducible, not an
+        // undetermined outcome.
+        //
+        // Every other code stands as-is: a Fail outranks a parse failure by precedence
+        // (ScenarioRunner.VerdictPrecedence: Fail 2 > Inconclusive 1) and still exits 1, and an
+        // EnvironmentError still exits by its own gate. Only Success is unreachable here.
+        //
+        // This ALSO closes #425 without a security-specific exit policy. A malformed document
+        // declaring mTLS now exits non-zero because it was unreadable, not because of anything
+        // it declared — so no raw-YAML scan for a `security:` key is needed (DiscoveredScenario.
+        // RecoveredDocument refuses one, twice, with reasons) and SecurityAssurance is untouched.
+        if (parseFailureCount > 0 && code == ExitCodes.Success)
         {
             return ExitCodes.Inconclusive;
         }
 
-        var aggregate = AggregateVerdict(suiteVerdict, parseFailureCount);
-        return ExitCodes.FromVerdict(
-            aggregate, failOnEnvironmentError, failOnInconclusive, securityAssurance);
+        // A run in which NOTHING EXECUTED is never a clean Success either (#369).
+        //
+        // The rule above closed "did the YAML parse". This closes the category the design never
+        // named: a suite that parsed FINE and was then refused before any topology was built — a
+        // schema rejection, a secret-reference failure, a malformed `env:`, the both-families
+        // protocol conflict. Every one starts no container and runs no step, and every one exited
+        // 0 by default. As #369 puts it: the distinction the code drew was "did the YAML parse",
+        // but the distinction its own remarks argued for was "did anything execute".
+        //
+        // SCOPED TO Inconclusive, AND THAT SCOPE IS THE WHOLE CARE OF THIS CHANGE. A topology
+        // that fails to START also executes nothing and reaches the same completion path since
+        // #407 — but it carries EnvironmentError, which keeps its own `--fail-on-env-error` gate
+        // and is untouched here. Widening this to every verdict would silently close #390, which
+        // is deliberately open precisely because it would redden every suite whose UNRELATED
+        // container was slow to come up. An authoring fault the engine refused is not the same
+        // event as an environment that did not come up, and this line is where that stays true.
+        //
+        // A scenario that DID run and could not conclude — timeout, partition outlasted grace,
+        // upstream capture unmet — still exits 0 by default, because it executed.
+        if (!executedAnyScenario
+            && aggregate == Verdict.Inconclusive
+            && code == ExitCodes.Success)
+        {
+            return ExitCodes.Inconclusive;
+        }
+
+        return code;
     }
 
     /// <summary>

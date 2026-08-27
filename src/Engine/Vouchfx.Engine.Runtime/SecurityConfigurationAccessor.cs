@@ -587,11 +587,8 @@ internal sealed class SecurityConfigurationAccessor : ISecurityConfigurationAcce
 
             // Names the DECLARED path only: this message reaches Vars and the §14 event stream
             // through a provider's general catch, where no scrubber can redact a host path. The
-            // validation-time siblings (EnvironmentSecurityValidator, SecurityArtifactPath,
-            // ServerArtifactInjection.Plan) name the RESOLVED path instead, and that is not drift:
-            // their messages reach the author's terminal and nothing else, and REQ-004's acceptance
-            // criterion requires the resolved path there. SecurityArtifactPath's own remarks carry
-            // the full rule and the reason each half is forced.
+            // validation-time siblings now do the same — SecurityArtifactPath's remarks carry the
+            // one rule and why it has no per-site exception.
             throw new SecurityMaterialException(
                 $"{_fieldPathPrefix}.{fieldName}: '{path.Declared}' resolves outside the suite directory.");
         }

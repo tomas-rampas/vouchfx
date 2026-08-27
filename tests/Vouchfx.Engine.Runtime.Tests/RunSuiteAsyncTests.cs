@@ -264,9 +264,31 @@ public sealed class RunSuiteAsyncTests
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The two halves of <c>Assure</c> read the document through DIFFERENT parsers — the walk
-    /// through YamlDotNet's RepresentationModel, the schema door through YamlDotNet's deserialiser
-    /// — and a RepresentationModel key lookup compares a scalar's TAG as well as its value. An
+    /// <strong>The ORIGINAL anchoring argument is now obsolete, and the guarantee is not.</strong>
+    /// This row was written because the two halves of <c>Assure</c> read the document through
+    /// DIFFERENT parsers whose key lookups disagreed: an explicitly tagged root key
+    /// (<c>!!str environment:</c>) bound no environment for the walk while the schema still
+    /// reported an error AT the declared block, so skipping validation on a null environment would
+    /// have answered <c>SecurityAssurance.None</c> — exit 0 on a rejected security declaration,
+    /// the hole issue #411 closed. #417 removed that disagreement at its source, so this input no
+    /// longer demonstrates it.
+    /// </para>
+    /// <para>
+    /// <strong>It still demonstrates the contract, for a reason that was always the stronger
+    /// one:</strong> the walk seeing an <c>environment</c> block does not mean the walk can
+    /// adjudicate the <c>security</c> node inside it. The schema door is the engine's only
+    /// spelling of "this declaration is rejected", and <c>Assure</c> must therefore call it
+    /// unconditionally — which is exactly what the two assertions at the foot of this test pin.
+    /// Do not re-derive the skip from the walk's result under any phrasing.
+    /// </para>
+    /// <para>
+    /// Retained rather than deleted BECAUSE its premise moved: a row whose setup no longer
+    /// reproduces the original hazard, but whose guarantee is unchanged, is the row most likely to
+    /// be quietly dropped in a later cleanup. The historical account above is why it stays.
+    /// </para>
+    /// <para>
+    /// Superseded detail, kept for the record: a RepresentationModel key lookup compared a
+    /// scalar's TAG as well as its value. An
     /// explicitly tagged root key (<c>!!str environment:</c>) therefore binds no environment for
     /// the walk while the schema still reports an error AT the declared block. Skipping the
     /// validation on a null environment would answer <c>SecurityAssurance.None</c> for this
@@ -293,8 +315,13 @@ public sealed class RunSuiteAsyncTests
         var registry = StepKindRegistry.BuildAndFreeze(ProviderAssemblies);
         var document = YamlDocumentParser.Parse(yaml);
 
-        // The walk sees nothing: this is exactly the input the proposed skip would have keyed on.
-        Assert.Null(document.Environment);
+        // THE WALK NOW SEES THE BLOCK, and that is #417's fix, not a regression in this row.
+        // This assertion used to be `Assert.Null(document.Environment)` — it pinned the DIVERGENCE
+        // as its premise: the RepresentationModel lookup compared a scalar's tag as well as its
+        // value, so an explicitly tagged root key bound nothing for the walk while the schema's own
+        // front-end saw the block. YamlDocumentParser.TryGetNode now compares keys by value, which
+        // is what YAML means, so both front-ends agree and the premise is simply false.
+        Assert.NotNull(document.Environment);
 
         // …and it is genuinely an unbuilt document — parsed, then refused by AstBuilder.
         Assert.ThrowsAny<Exception>(() => AstBuilder.Build(document, registry));
@@ -543,9 +570,17 @@ public sealed class RunSuiteAsyncTests
 
             var rendered = sw.ToString();
 
-            // The preflight fired and named the field and the resolved path (REQ-004).
+            // The preflight fired and named the field and the DECLARED path (REQ-004, as
+            // superseded by BLOCKER B2). This assertion used to be
+            // `Assert.Contains(suiteDirectory, rendered)` — the resolved path standing in as
+            // evidence that the preflight had run. That evidence was itself the disclosure once
+            // #372/#407 carried the same text into the written artefacts, so the same fact is now
+            // established by the message's own wording, and the absence of the host path is
+            // asserted alongside it.
             Assert.Contains("clientCert", rendered, StringComparison.Ordinal);
-            Assert.Contains(suiteDirectory, rendered, StringComparison.Ordinal);
+            Assert.Contains("./certs/client.pem", rendered, StringComparison.Ordinal);
+            Assert.Contains("relative to the suite directory", rendered, StringComparison.Ordinal);
+            Assert.DoesNotContain(suiteDirectory, rendered, StringComparison.OrdinalIgnoreCase);
 
             // …and the topology build was never reached.
             Assert.DoesNotContain(PreTopologyMarker, rendered, StringComparison.Ordinal);
@@ -1003,6 +1038,129 @@ public sealed class RunSuiteAsyncTests
         finally
         {
             directory.Delete(recursive: true);
+        }
+    }
+
+    private static readonly string[] s_topologyFailureScenarioNames = { "secured-suite" };
+
+    /// <summary>
+    /// The FOURTH and last instance of the artefact gap (#407), at the
+    /// <c>OrchestrationException</c> catch — the one seam the three fixes above left behind.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// MEASURED RED FIRST: a suite whose topology fails to start printed the topology marker and
+    /// returned a bare <see cref="SuiteResult"/>, so no <c>ScenarioStarted</c>/<c>Completed</c>
+    /// events reached the stream and none of <c>--junit</c>/<c>--html</c>/<c>--events</c> was
+    /// written. It mattered more here than at the other three seams once a secured suite began
+    /// exiting 3 on this path: a red build beside an empty results directory reads as a broken
+    /// runner rather than a real refusal, so the failure was correct but unattributable.
+    /// </para>
+    /// <para>
+    /// Reaches a failed topology WITHOUT Docker by the same means as the rows below: the suite
+    /// pins a host port this test process is holding, so EDGE-012's bind pre-flight throws an
+    /// <c>OrchestrationException</c> of kind <c>Provision</c> inside <c>StartAsync</c> — after Map,
+    /// before Aspire or DCP. The listener binds port 0, so the port is allocated rather than
+    /// hard-coded and this row cannot collide with an ephemeral allocation (#377/#431).
+    /// </para>
+    /// <para>
+    /// Verdict and exit code are deliberately NOT asserted as changed: the aggregate over N
+    /// EnvironmentErrors is EnvironmentError, which is what the bare return already said. This
+    /// pins the artefacts, and that the cause reaches them — #407's acceptance is explicit that a
+    /// test asserting only the exit code would not cover it.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task RunSuiteAsync_TopologyFailsToStart_WritesEveryRequestedReport()
+    {
+        var squatter = new TcpListener(IPAddress.Loopback, 0);
+        squatter.Start();
+        var heldPort = ((IPEndPoint)squatter.LocalEndpoint).Port;
+
+        var suiteDirectory = Directory.CreateTempSubdirectory("vouchfx-topology-failure-reports-");
+        try
+        {
+            File.WriteAllText(Path.Combine(suiteDirectory.FullName, "client.pem"), "placeholder");
+            File.WriteAllText(Path.Combine(suiteDirectory.FullName, "client.key"), "placeholder");
+
+            var junitPath = Path.Combine(suiteDirectory.FullName, "results.xml");
+            var htmlPath = Path.Combine(suiteDirectory.FullName, "report.html");
+            var eventsPath = Path.Combine(suiteDirectory.FullName, "events.jsonl");
+
+            var yaml = SecuredSuitePinning(heldPort);
+            var registry = StepKindRegistry.BuildAndFreeze(ProviderAssemblies);
+            var ast = AstBuilder.Build(YamlDocumentParser.Parse(yaml), registry);
+            var scenarios = new[] { ast };
+            var yamls = new[] { yaml };
+
+            var sw = new StringWriter();
+            var result = await ScenarioRunner.RunSuiteAsync(
+                scenarios: scenarios,
+                scenarioNames: s_topologyFailureScenarioNames,
+                yamlTexts: yamls,
+                providerAssemblies: ProviderAssemblies,
+                appHostAssemblyName: AppHostAssemblyName,
+                output: sw,
+                htmlReportPath: htmlPath,
+                junitReportPath: junitPath,
+                eventsReportPath: eventsPath,
+                seedBaseDirectory: suiteDirectory.FullName);
+
+            Assert.True(
+                File.Exists(junitPath),
+                "A topology that fails to start must still write the requested JUnit report — "
+                + "this seam exits non-zero for a secured suite.");
+            Assert.True(File.Exists(htmlPath), "…and the requested HTML report.");
+            Assert.True(File.Exists(eventsPath), "…and the requested events stream.");
+
+            // The scenario is present and carries EnvironmentError — JUnit's <error> primitive.
+            var xml = File.ReadAllText(junitPath);
+            Assert.Contains("tests=\"1\"", xml, StringComparison.Ordinal);
+            Assert.Contains("errors=\"1\"", xml, StringComparison.Ordinal);
+            Assert.Contains("<testcase name=\"secured-suite\"", xml, StringComparison.Ordinal);
+
+            // #407's acceptance, BOTH halves. The artefacts exist (above) and they NAME the
+            // failure (here) — the second half arriving with #372, which added the optional
+            // `message` field to ScenarioCompletedEvent and taught both renderers to read it.
+            // Before that, no artefact channel carried a scenario-level message for ANY of the
+            // four seams, so this row could only assert the terminal.
+            var eventLines = File.ReadAllLines(eventsPath);
+            Assert.Contains(eventLines, line => line.Contains("scenario-started", StringComparison.Ordinal));
+            Assert.Contains(eventLines, line => line.Contains("scenario-completed", StringComparison.Ordinal));
+
+            // The cause reaches the WRITTEN stream, which is the artefact a CI job archives.
+            Assert.Contains(
+                eventLines,
+                line => line.Contains("scenario-completed", StringComparison.Ordinal)
+                        && line.Contains(TopologyFailureMarker, StringComparison.Ordinal));
+
+            // …and the JUnit report, which is what a publisher UI shows a maintainer. Parsed
+            // rather than substring-matched: the renderer XML-escapes, so the document holds
+            // `&apos;` where the marker has an apostrophe (this marker has none, but the
+            // surrounding message can) and a raw substring assertion would be fragile.
+            var errorMessage = System.Xml.Linq.XDocument.Load(junitPath)
+                .Descendants("error")
+                .Single()
+                .Attribute("message")!
+                .Value;
+            Assert.Contains(TopologyFailureMarker, errorMessage, StringComparison.Ordinal);
+
+            // Still on the terminal too, exactly once.
+            Assert.Contains(TopologyFailureMarker, sw.ToString(), StringComparison.Ordinal);
+
+            // Verdict and assurance are UNCHANGED by the reroute — only the artefacts are new.
+            Assert.Equal(Verdict.EnvironmentError, result.Verdict);
+            Assert.Single(result.ScenarioVerdicts);
+
+            // One print, not two: the completion path is told the marker already reached the
+            // terminal, so it emits no duplicate.
+            var rendered = sw.ToString();
+            Assert.Equal(1, CountOccurrences(rendered, TopologyFailureMarker));
+        }
+        finally
+        {
+            squatter.Stop();
+            suiteDirectory.Delete(recursive: true);
         }
     }
 

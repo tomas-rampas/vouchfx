@@ -381,7 +381,7 @@ File size 1200000 bytes exceeds the 1048576-byte (1 MiB) limit for a single *.e2
 
 The engine enforces two resource-limit bounds before compilation: a maximum of 64 KiB per `script.csharp` step body (inline `code` or referenced `file:`), and 1 MiB per `.e2e.yaml` document. These are sanity bounds to prevent accidentally passing pathologically large files to the compiler, not a defence against deliberate crash or hang attempts — which can occur well under these sizes (e.g. a ~100-character nested string interpolation can hang the parse).
 
-When a limit is exceeded, the scenario is marked **Inconclusive** on `run` (exit code 4 with `--fail-on-inconclusive`), and **invalid** on `validate` (exit code 4). Validation completes normally and names the specific limit — it is not a crash.
+When a limit is exceeded, the scenario is marked **Inconclusive** on `run` and **invalid** on `validate`, exiting 4 on both — with or without `--fail-on-inconclusive`. The document cap is a parse failure (#425) and the script-body cap refuses before any topology is built (#369), so neither can report the run as clean. Validation completes normally and names the specific limit — it is not a crash.
 
 **Fix:**
 
@@ -418,7 +418,7 @@ vouchfx distinguishes four outcomes (see `docs/01` §12.1 for the full taxonomy)
 | **Pass** | All assertions passed. | A test runs end-to-end and all steps succeed. | 0 (success) |
 | **Fail** | An assertion failed — a genuine product defect. | `expect: { status: 200 }` but the API returned 500. | 1 (always breaks CI) |
 | **EnvironmentError** | Infrastructure problem, not a product defect. | Docker daemon unreachable, image pull fails, seed SQL fails. | 0 by default; 3 if `--fail-on-env-error` |
-| **Inconclusive** | The engine could not decide; the assertion may pass if retried. | A RETRY step's polling window expires; a capture expression fails to match. | 0 by default; 4 if `--fail-on-inconclusive`; unconditionally 4 if every scenario fails to parse |
+| **Inconclusive** | The engine could not decide; the assertion may pass if retried. | A RETRY step's polling window expires; a capture expression fails to match. | 0 by default; 4 if `--fail-on-inconclusive`; never 0 on a parse failure, or on an Inconclusive suite refused before anything ran |
 
 **Why the distinction?**
 
@@ -430,7 +430,7 @@ In microservices, infrastructure is often brittle. A test might fail not because
 
 By default, **only Fail breaks CI**. This reduces false positives and keeps developers focused on real defects, not infrastructure flakiness.
 
-**One deliberate exception, and it is the likeliest reason a previously-green pipeline has just gone red.** A suite that declares a `security:` block the engine could not confirm exits non-zero with **neither** gating flag set — at whichever code that run's own verdict names, 3 or 4. That includes a secured `.e2e.yaml` the engine parsed and then refused for its contents (an unknown step type, a duplicate step id): such a file never becomes a scenario, so nothing ever confirmed its declaration, and it now reddens the run even when its siblings came up and confirmed the same target. The run prints a line on **stdout** saying the exit is the security rule's doing, so a job that reads only `results.xml` sees a bare non-zero exit with no explanation. Fix the file the run names. See [CI integration](ci-integration.md) for the full rule and the code each outcome carries.
+**Two deliberate exceptions break CI regardless of the gating flags.** First: a suite that declares a `security:` block the engine could not confirm exits non-zero with **neither** `--fail-on-env-error` nor `--fail-on-inconclusive` set — at whichever code that run's own verdict names, 3 or 4. That includes a secured `.e2e.yaml` the engine parsed and then refused for its contents (an unknown step type, a duplicate step id): such a file never becomes a scenario, so nothing ever confirmed its declaration, and it now reddens the run even when its siblings came up and confirmed the same target. The run prints a line on **stdout** saying the exit is the security rule's doing, so a job that reads only `results.xml` sees a bare non-zero exit with no explanation. Fix the file the run names. Second: any parse failure, or a suite that parsed and was then refused before any scenario executed, never exits 0. Note "never exits 0" rather than "exits 4": both rules are conditioned on the code so far being Success, so neither overrides a code another rule already chose — a parse failure beside a failing scenario exits 1, and beside a gated environment error, 3. And a run that executed nothing but carries an `EnvironmentError` — a topology that never started, or an unsecured suite whose scenarios declared divergent `environment` blocks — is outside the second rule and still exits 0 by default. (A secured suite refused by that same divergence guard exits 3 through the security rule above.) See [CI integration](ci-integration.md) for the full rule and the code each outcome carries.
 
 **Opt into stricter gating with flags:**
 ```bash

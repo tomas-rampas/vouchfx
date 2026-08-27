@@ -159,6 +159,11 @@ public sealed class JunitXmlRenderer
                             scenario.Verdict = GetStr(envelope, "verdict");
                             scenario.DurationMs = GetLong(envelope, "durationMs");
                             scenario.Counts = ReadCounts(envelope);
+
+                            // #372. Absent on every ordinary pass and on any stream written by an
+                            // older engine, which is why it is read tolerantly (§14) rather than
+                            // required — GetStr returns null and the summary below is unchanged.
+                            scenario.Message = GetStr(envelope, "message");
                             break;
                         }
 
@@ -339,7 +344,8 @@ public sealed class JunitXmlRenderer
     /// No observation, captured value, or secret value is ever included (§17).
     /// </summary>
     private static string BuildSummaryMessage(ScenarioModel scenario, string verdictToken)
-        => string.Format(
+    {
+        var summary = string.Format(
             CultureInfo.InvariantCulture,
             "Scenario '{0}' {1} (pass={2} fail={3} envError={4} inconclusive={5})",
             scenario.ScenarioId,
@@ -348,6 +354,20 @@ public sealed class JunitXmlRenderer
             scenario.Counts.Fail,
             scenario.Counts.EnvError,
             scenario.Counts.Inconclusive);
+
+        // #372: the engine's own cause, APPENDED rather than substituted. The shape summary is
+        // what a publisher UI groups and diffs on, so replacing it would break triage that works
+        // today; the cause is what tells a maintainer WHY, which is the whole gap. A stream with
+        // no message renders byte-identically to before.
+        //
+        // This does not weaken the §17 rule stated in this file's header. That rule bars
+        // OBSERVATIONS and captured or resolved VALUES — a response body, a row, a secret. This
+        // is the engine's own refusal text, already scrubbed through the run's secret ledger by
+        // the producer before it was ever stamped onto the record.
+        return string.IsNullOrEmpty(scenario.Message)
+            ? summary
+            : summary + ": " + scenario.Message;
+    }
 
     /// <summary>
     /// Formats a millisecond duration as a JUnit <c>time</c> attribute value: seconds
@@ -557,5 +577,8 @@ public sealed class JunitXmlRenderer
         public long? DurationMs { get; set; }
 
         public (int Pass, int Fail, int EnvError, int Inconclusive) Counts { get; set; }
+
+        /// <summary>The scenario-level cause, when the stream carried one (#372).</summary>
+        public string? Message { get; set; }
     }
 }

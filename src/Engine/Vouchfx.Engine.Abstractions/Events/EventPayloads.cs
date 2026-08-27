@@ -542,6 +542,67 @@ public sealed record ScenarioCompletedEvent
     /// </summary>
     [JsonPropertyName("counts")]
     public required VerdictCounts Counts { get; init; }
+
+    /// <summary>
+    /// The scenario-level cause, when the engine has one to give: a schema rejection, a
+    /// secret-reference failure, a security preflight refusal, a suite-level abort stamped onto
+    /// every scenario it affected. Omitted from the wire when <see langword="null"/>, which is
+    /// every ordinary pass.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Additive, optional, and a deliberate change to the frozen v1 event-wire contract
+    /// (#372).</strong> The freeze forbids renaming a property, changing a CLR type, or changing a
+    /// <c>[JsonPropertyName]</c> — all of which break every consumer. It does not forbid adding an
+    /// optional field: §14 requires renderers to tolerate unknown fields, so an older consumer
+    /// reading a stream carrying this simply does not see it, and a stream with nothing to report
+    /// is byte-identical to before because <c>null</c> is omitted. The golden gate exists to make
+    /// such a change deliberate rather than to forbid it, and its line was regenerated through the
+    /// documented flag with the one-line diff reviewed.
+    /// </para>
+    /// <para>
+    /// <strong>Why the artefacts needed it.</strong> Before this, no written channel carried a
+    /// scenario-level cause at all: <c>EarlyMessage</c> had exactly one consumer — the terminal —
+    /// while JUnit's message was built from the scenario id, verdict token and counts, and the
+    /// HTML renderer read a message only from <c>environment-error</c> events. A maintainer
+    /// triaging from a JUnit publisher UI — the artefact existing precisely so they need not read
+    /// console logs — saw <c>Scenario 'a' INCONCLUSIVE (pass=0 fail=0 …)</c> and could not tell a
+    /// suite the engine REJECTED from one whose scenarios were legitimately skipped.
+    /// </para>
+    /// <para>
+    /// <strong>This is not the <c>scenarioId</c>-on-step-events precedent.</strong> That one was
+    /// frozen OUT deliberately and must stay out: the renderer's <c>(runId,stepId)</c> cache
+    /// already disambiguates aggregated streams, so it was redundant. This field is not
+    /// obtainable from anything else on the wire.
+    /// </para>
+    /// <para>
+    /// <strong>A written channel, and what is and is not guaranteed about it.</strong> This text
+    /// is archived in the event stream, the JUnit <c>message</c> attribute and the HTML report, so
+    /// two things must never reach it: a resolved secret value, and an absolute host path.
+    /// </para>
+    /// <para>
+    /// The SECRET half is now discharged by the engine, structurally rather than by convention:
+    /// every <c>ScenarioCompletedEvent</c> <c>Vouchfx.Engine.Runtime</c> emits is constructed in
+    /// one place,
+    /// <c>Vouchfx.Engine.Runtime.StepEventBuilder.ScenarioCompletedLine</c>, which scrubs the
+    /// message through the <c>ResolvedSecretLedger</c> its caller hands it. That ledger is a
+    /// REQUIRED parameter, so a producer holding one cannot omit the scrub by forgetting, and a
+    /// producer with none writes <c>null</c> on purpose. A source-scanning CI gate
+    /// (<c>SecretObservationLeakPenetrationTests
+    /// .EveryScenarioCompletedEmission_InRuntime_GoesThroughTheStampingChokepoint</c>) keeps it
+    /// the only construction site. This replaced a per-producer obligation that was measured
+    /// half-kept: <c>RunSuiteAsync</c>'s <c>OrchestrationException</c> catch scrubbed and its
+    /// <c>ArgumentException</c> catch did not.
+    /// </para>
+    /// <para>
+    /// The PATH half is not, and cannot be: nothing covers a filesystem path, and no scrubber can
+    /// remove one after the fact. It stays the producer's obligation, pinned for the one shape
+    /// that has been measured leaking by
+    /// <c>SecurityDiagnosticPathDisclosureTests</c>.
+    /// </para>
+    /// </remarks>
+    [JsonPropertyName("message")]
+    public string? Message { get; init; }
 }
 
 // ---------------------------------------------------------------------------
