@@ -71,6 +71,16 @@ This section defines the top-level shape of a test file. A file carries the conv
 
 *Table 3.1 — The four top-level sections of an .e2e.yaml file.*
 
+**A mapping may not spell the same key twice.** A document that does is refused at parse time, naming
+the duplicate and its line and column, and the refusal applies at every level — two `environment`
+keys, two services of the same name, two steps with the same `id`. This is stricter than YAML itself
+requires, deliberately: the engine and the schema validator are two front-ends over one file, and a
+duplicate key gave them licence to disagree about which occurrence the document meant, silently. The
+strictness is also invisible to a well-formed document — quoting a key differently (`"environment":`
+against `environment:`) was already refused by the YAML loader, so the only spelling that used to
+slip through was one distinguished by an explicit YAML tag, such as `!!str environment:`. Such a
+document is now refused rather than bound in part.
+
 ### 3.1 The metadata section
 
 The metadata section carries information about the test rather than instructions to the engine. Its fields feed reporting dashboards and let the runner select a subset of tests — for example, only those tagged as a smoke test, or only those owned by a particular team. None of it affects execution.

@@ -92,11 +92,13 @@ backoff (Polly v8) — authors never write `Thread.Sleep`.
 - **Four verdicts, never three.** **Pass**, **Fail**, **Environment error** (unhealthy container,
   image-pull or seed failure) and **Inconclusive** (timeout, unmet capture) stay distinct through the
   taxonomy, the reports and the exit codes. **Only `Fail` breaks CI by default** — conflating an
-  environment error with a defect destroys trust in the tool. The one deliberate exception serves the
-  same argument rather than retracting it: a suite that declares a `security:` block the engine cannot
+  environment error with a defect destroys trust in the tool. Two deliberate exceptions serve that
+  same argument rather than retracting it. A suite that declares a `security:` block the engine cannot
   confirm exits non-zero whatever the flags say, because that is an assertion the author wrote, not an
   infrastructure flake, and treating it as opt-in-only would hand a team who forgot a flag a green
-  pipeline on a security suite that verified nothing.
+  pipeline on a security suite that verified nothing. A run that produced no verdict at all — any parse
+  failure, or a suite refused before anything executed — does the same, for the same reason: nothing
+  ran, so there is nothing to report as clean.
 - **One event stream, many renderers.** A schema-versioned JSON Lines stream is the single substrate;
   the terminal, HTML, JUnit XML and `--events` outputs are all renderings of it, so they can never
   disagree. Each retry attempt is recorded individually, making a polling timeline renderable without

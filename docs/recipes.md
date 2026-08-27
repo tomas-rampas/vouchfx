@@ -1177,7 +1177,7 @@ The workflow always publishes artifacts (even on failure, via `if: always()`):
 | 0 | Success (Pass, or EnvironmentError/Inconclusive by default) | Yes |
 | 1 | Fail (a genuine product defect) | Always breaks CI |
 | 3 | EnvironmentError (infrastructure breakage) | Only if `fail-on-env-error: true` |
-| 4 | Inconclusive (timeout, unmet captures; or every scenario failed to parse) | Only if `fail-on-inconclusive: true` — but an all-parse-failure run always exits 4 |
+| 4 | Inconclusive (timeout, unmet captures; or the run produced no verdict) | Only if `fail-on-inconclusive: true` — but a run that produced no verdict always exits 4 |
 
 For the full reference, see [CI integration reference § GitHub Actions](ci-integration.md#github-actions) and [`.github/workflows/vouchfx-run.yml`](https://github.com/tomas-rampas/vouchfx/blob/main/.github/workflows/vouchfx-run.yml).
 
