@@ -1274,24 +1274,70 @@ public static class EnvironmentMapper
                 dependencyBuilders[name] = retained;
                 mostSpecificDependencyResources.Add(mostSpecific);
 
-                // REQ-016: the customer's broker image finds its keystore because the engine put
-                // it there. Applied to the RETAINED builder — the dependency's own resource, not
-                // a sidecar — since that is the container whose entrypoint reads the artefact.
-                ServerArtifactInjection.Apply(retained, dependencyArtifacts[name], "dependencies", name);
+                // The dependency's OWN container, resolved by name — the single target BOTH
+                // consumers below need, and deliberately NOT `retained`, which for the four
+                // database-backed types is the AddDatabase child (not a container, and no
+                // IResourceWithEnvironment). Resolved LAZILY: ResolveDependencyContainer carries
+                // a defensive throw of its own, so a dependency that declares neither artefacts
+                // nor env: must never reach it. Must stay INSIDE this loop — see that method's
+                // remarks for the loop-position invariant it depends on.
+                IResourceBuilder<ContainerResource>? dependencyContainer = null;
+                IResourceBuilder<ContainerResource> DependencyContainer() =>
+                    dependencyContainer ??= ResolveDependencyContainer(builder, name, spec.Type);
 
-                // dependency-env REQ-003. Applied to the dependency's OWN container, resolved by
-                // name — deliberately NOT to `retained`, which for the four database-backed types
-                // is the AddDatabase child and does not implement IResourceWithEnvironment.
-                // The map here has already cleared Map's eager passes: an engine-set name for
-                // this dependency's type refused the suite outright (REQ-004), and s_noEnvAccess
-                // is safe because the same passes refused every `${conn:...}` on a dependency.
+                // REQ-016: the customer's broker image finds its keystore because the engine put
+                // it there. Applied to the dependency's own CONTAINER, resolved by name, not to
+                // `retained` (#426).
+                //
+                // WHICH DEPENDENCIES CAN REACH THIS, measured — NOT "all thirteen types", which
+                // is what #426's own body claims after probing Map + Configure directly and so
+                // bypassing every validator. Two independent gates confine `security` on a
+                // dependency to `type: kafka`: REQ-021's schema clause ($defs/dependency's final
+                // allOf, `security: false` for any type that is `not` kafka) and, on the compile
+                // path, SecurityProfileWiringValidator (REQ-022) via ProviderPipeline.Compile.
+                // So on `run`/`validate` the only dependency shape arriving here with artefacts
+                // is a kafka one — the retained kafka builder was already container-typed, and
+                // the pre-existing code was CORRECT for it.
+                //
+                // The retarget therefore is not a repair of a reachable authoring break. It is:
+                // (a) correctness for the shipped kafka path, unchanged in behaviour; (b) defence
+                // for the widening the $defs/security description itself calls "a release
+                // position rather than a permanent one: transport security for the remaining
+                // dependency kinds is a 1.1 capability" — on that day the four database-backed
+                // types would otherwise have thrown; and (c) protection for callers that embed an
+                // EnvironmentSpec directly and never touch the schema, such as the shipped
+                // Vouchfx.Sdk.Testing surface.
+                //
+                // ONE AUTHOR-REACHABLE CALLER TODAY, and it is a divergence, not a repair:
+                // `--watch` (WatchRunner.Compile runs only YamlDocumentParser.Parse + AstBuilder
+                // .Build — no DocumentValidator, no ProviderPipeline, no security validator — then
+                // reaches EnvironmentMapper.Map/Configure). A `postgres` + serverArtifacts
+                // document therefore changed under --watch from "refused at topology build" to
+                // "accepted, files copied, containers started". That widens the watch/run gap
+                // tracked by issue #370 ("--watch starts containers before schema validation and
+                // the pre-topology guards"); it is recorded here rather than papered over, and
+                // #370 owns the fix.
+                //
+                // Guarded on there being something to inject so an artefact-free dependency keeps
+                // today's behaviour exactly: Apply's own early-return meant it never resolved a
+                // container at all.
+                var artifacts = dependencyArtifacts[name];
+                if (artifacts.Count > 0)
+                {
+                    ServerArtifactInjection.Apply(DependencyContainer(), artifacts);
+                }
+
+                // dependency-env REQ-003. The map here has already cleared Map's eager passes: an
+                // engine-set name for this dependency's type refused the suite outright
+                // (REQ-004), and s_noEnvAccess is safe because the same passes refused every
+                // `${conn:...}` on a dependency.
                 if (dependencyEnvToApply.TryGetValue(name, out var dependencyEnv) &&
                     dependencyEnv.Count > 0)
                 {
                     ApplyEnv(
                         "Dependency",
                         name,
-                        ResolveDependencyEnvTarget(builder, name, spec.Type),
+                        DependencyContainer(),
                         dependencyEnv,
                         s_noEnvAccess);
                 }
@@ -1441,8 +1487,7 @@ public static class EnvironmentMapper
                     // REQ-016: copy declared server artefacts into the system under test's own
                     // container — the server certificate/key a TLS-terminating SUT presents, the
                     // mirror of the client material REQ-024 gives the step.
-                    ServerArtifactInjection.Apply(
-                        containerBuilder, serviceArtifacts[name], "services", name);
+                    ServerArtifactInjection.Apply(containerBuilder, serviceArtifacts[name]);
 
                     // Stage the primary endpoint for svc::<name> resolution (ResolveServices /
                     // env: refs).
@@ -2547,8 +2592,10 @@ public static class EnvironmentMapper
     }
 
     /// <summary>
-    /// Resolves the resource builder a managed dependency's own <c>env:</c> is applied to: the
-    /// single <see cref="ContainerResource"/> named exactly the declared dependency name.
+    /// Resolves the resource builder a managed dependency's OWN container-level configuration is
+    /// applied to — its <c>env:</c> mapping and its <c>security.serverArtifacts</c> copies
+    /// (<c>#426</c>) — namely the single <see cref="ContainerResource"/> named exactly the
+    /// declared dependency name.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -2572,15 +2619,25 @@ public static class EnvironmentMapper
     /// <para>
     /// <b>Call it INSIDE the dependency loop.</b>  That loop runs before the services loop, so no
     /// service container exists yet and a service sharing a dependency's name cannot be matched.
+    /// That ordering is the weakest of three defences, not the only one: <c>ProviderPipeline</c>
+    /// refuses a suite whose service and dependency share a name at validation time, and Aspire's
+    /// own <c>AddResource</c> refuses a duplicate resource name (case-insensitively, via
+    /// <c>StringComparers.ResourceName</c>), so the second registration would throw before this
+    /// method ever ran.
     /// </para>
     /// <para>
     /// The <c>SingleOrDefault(...) ?? throw</c> asserts the name→resource invariant rather than
     /// assuming it, so a fourteenth dependency type whose registration breaks it fails loudly at
-    /// topology-build time instead of silently no-op'ing the author's <c>env:</c>.  The
-    /// <c>DependencyEnvCensusTests</c> gate catches it earlier still, in CI.
+    /// topology-build time instead of silently no-op'ing the author's <c>env:</c> or artefact
+    /// copies.  The <c>DependencyEnvCensusTests</c> gate catches it earlier still, in CI.
+    /// </para>
+    /// <para>
+    /// <b>Resolve it only when a consumer needs it</b> — this throw is the reason. A dependency
+    /// declaring neither <c>env:</c> nor <c>security.serverArtifacts</c> must not be exposed to
+    /// it, so both call sites are guarded and share one lazily-resolved local.
     /// </para>
     /// </remarks>
-    private static IResourceBuilder<ContainerResource> ResolveDependencyEnvTarget(
+    private static IResourceBuilder<ContainerResource> ResolveDependencyContainer(
         IDistributedApplicationBuilder builder,
         string name,
         string type)
@@ -2590,9 +2647,10 @@ public static class EnvironmentMapper
             .SingleOrDefault(r => string.Equals(r.Name, name, StringComparison.Ordinal))
             ?? throw new InvalidOperationException(
                 $"Dependency '{name}' (type '{type}') registered no container resource of its " +
-                "own name, so its 'env:' mapping cannot be applied. This is an ENGINE defect, " +
-                "not an authoring one: every dependency type must register exactly one container " +
-                "named exactly the declared dependency name.");
+                "own name, so its own container-level configuration ('env:', " +
+                "'security.serverArtifacts') cannot be applied. This is an ENGINE defect, not an " +
+                "authoring one: every dependency type must register exactly one container named " +
+                "exactly the declared dependency name.");
 
         return builder.CreateResourceBuilder(resource);
     }

@@ -829,7 +829,7 @@ public static class ScenarioRunner
             // defensive throws of its own, reachable only by defect (e.g.
             // ResolveDependencyEnvAccess's internal-error fallback, RequirePasswordParameter,
             // BuildEnvExpression's unresolved-${conn:} ArgumentException, and
-            // ResolveDependencyEnvTarget's InvalidOperationException when a dependency type
+            // ResolveDependencyContainer's InvalidOperationException when a dependency type
             // registers no container of its own name) — those run LATER, inside
             // HeadlessTopology.StartAsync's own try/catch (SuiteTopology.cs Step 2), which wraps
             // ANY exception as OrchestrationException before it ever reaches this method; they
