@@ -316,7 +316,7 @@ public sealed class SecurityAssuranceMatrixTests : IDisposable
     }
 
     // ── Row 5: a step-level secret fault ALONE ────────────────────────────────────────────
-    //   secured ○ → 4    unsecured 0, unchanged
+    //   secured ○ → 4    unsecured 0 → 4 (#369: nothing executed; NOT a security refusal)
 
     [Theory]
     [InlineData(null)]
@@ -363,7 +363,7 @@ public sealed class SecurityAssuranceMatrixTests : IDisposable
     }
 
     // ── Row 6: an unresolvable `script.csharp file:` ALONE ────────────────────────────────
-    //   secured ○ → 4    unsecured 0, unchanged
+    //   secured ○ → 4    unsecured 0 → 4 (#369: nothing executed; NOT a security refusal)
     //
     // ── RETRACTION: THE RULE THIS ROW OVERTURNED ──────────────────────────────────────────
     //
@@ -459,7 +459,7 @@ public sealed class SecurityAssuranceMatrixTests : IDisposable
     }
 
     // ── Row 7: `${conn:typo}` — EnvironmentMapper.Map's ArgumentException ─────────────────
-    //   secured ○ → 4    unsecured 0, unchanged
+    //   secured ○ → 4    unsecured 0 → 4 (#369: nothing executed; NOT a security refusal)
     //
     // The boundary case the spec settles explicitly: this fault arrives INSIDE StartAsync but
     // starts NO container (Map is eager and pure, ahead of DCP), so "before any container started"
@@ -514,7 +514,7 @@ public sealed class SecurityAssuranceMatrixTests : IDisposable
     }
 
     // ── Row 8a: a protocol conflict inside ONE scenario ───────────────────────────────────
-    //   secured ○ → 4    unsecured 0, unchanged
+    //   secured ○ → 4    unsecured 0 → 4 (#369: nothing executed; NOT a security refusal)
     //
     // The per-scenario half of REQ-023's refusal (ProviderPipeline.Compile), reachable on BOTH
     // paths. The suite-level half is Row 8b, which the `--parallel` path has no equivalent of.
@@ -564,7 +564,7 @@ public sealed class SecurityAssuranceMatrixTests : IDisposable
     }
 
     // ── Row 8b: the SUITE-LEVEL protocol conflict ─────────────────────────────────────────
-    //   secured ○ → 4    unsecured 0, unchanged
+    //   secured ○ → 4    unsecured 0 → 4 (#369: nothing executed; NOT a security refusal)
     //
     // The door whose own written rationale this change overturns: "a protocol conflict is an
     // authoring error, not a failure to confirm a security assertion". Under the derived rule the
@@ -823,10 +823,17 @@ public sealed class SecurityAssuranceMatrixTests : IDisposable
     }
 
     /// <summary>
-    /// <strong>Row 09b's unsecured control, and it is the whole proof that the DECLARATION is what
-    /// reddens.</strong> Byte-identical to the row above but for the <c>security</c> block, and it
-    /// must stay at 0: closing #411 by reddening every suite that contains an unbuildable file would
-    /// satisfy the row above and be wrong.
+    /// <strong>Row 09b's unsecured control. The exit code no longer discriminates here — the
+    /// NOTICE does.</strong> Byte-identical to the row above but for the <c>security</c> block.
+    /// <para>
+    /// This row used to assert <c>Success</c>, and its purpose was that a suite reddening without a
+    /// declaration would prove the declaration was not what reddened it. #425 then made any parse
+    /// failure never-clean, so both arms sit at 4 and the code cannot tell them apart. The proof
+    /// moved rather than disappeared: <c>Assert.DoesNotContain("declares a 'security' block")</c>
+    /// below is what now carries it, and it is the assertion to protect. A change that reddens this
+    /// row's exit code is expected; one that makes the security notice print here is the defect
+    /// this row exists to catch.
+    /// </para>
     /// </summary>
     [Theory]
     [InlineData(null)]
@@ -925,10 +932,17 @@ public sealed class SecurityAssuranceMatrixTests : IDisposable
     }
 
     /// <summary>
-    /// <strong>Row 09d's control, and it is what stops the schema arm from degenerating into "any
-    /// unbuildable document reddens".</strong> The same unbuildable file with NO <c>security</c>
-    /// node at all still carries a schema error — it names a step type no provider registers — and
-    /// that error is located at <c>/steps/0/type</c>, not in a declaration. It must stay at 0.
+    /// <strong>Row 09d's control, for the SCHEMA arm specifically.</strong> The same unbuildable
+    /// file with NO <c>security</c> node at all still carries a schema error — it names a step type
+    /// no provider registers — and that error is located at <c>/steps/0/type</c>, not in a
+    /// declaration.
+    /// <para>
+    /// This row used to say it "must stay at 0", to stop the schema arm degenerating into "any
+    /// unbuildable document reddens". #425 IS that degeneration, taken deliberately: a document the
+    /// engine could not read cannot be reported clean whatever it might have asserted. So the exit
+    /// code is 4 on both arms and no longer separates them; what this row still proves is that the
+    /// schema arm does not print a security notice for a document that declared nothing.
+    /// </para>
     /// </summary>
     /// <remarks>
     /// Row 09b's unsecured control asserts the same exit for the same suite; this one asserts it

@@ -381,7 +381,7 @@ File size 1200000 bytes exceeds the 1048576-byte (1 MiB) limit for a single *.e2
 
 The engine enforces two resource-limit bounds before compilation: a maximum of 64 KiB per `script.csharp` step body (inline `code` or referenced `file:`), and 1 MiB per `.e2e.yaml` document. These are sanity bounds to prevent accidentally passing pathologically large files to the compiler, not a defence against deliberate crash or hang attempts — which can occur well under these sizes (e.g. a ~100-character nested string interpolation can hang the parse).
 
-When a limit is exceeded, the scenario is marked **Inconclusive** on `run` (exit code 4 with `--fail-on-inconclusive`), and **invalid** on `validate` (exit code 4). Validation completes normally and names the specific limit — it is not a crash.
+When a limit is exceeded, the scenario is marked **Inconclusive** on `run` and **invalid** on `validate`, exiting 4 on both — with or without `--fail-on-inconclusive`. The document cap is a parse failure (#425) and the script-body cap refuses before any topology is built (#369), so neither can report the run as clean. Validation completes normally and names the specific limit — it is not a crash.
 
 **Fix:**
 
