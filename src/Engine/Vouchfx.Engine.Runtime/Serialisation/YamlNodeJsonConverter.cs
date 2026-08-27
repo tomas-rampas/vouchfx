@@ -34,9 +34,10 @@
 //     • any other type → JSON null (defensive; no other concrete subtypes exist today)
 //
 //   Mapping keys are sorted with StringComparer.Ordinal so that two mappings that contain the
-//   same key-value pairs but in different declaration order produce byte-for-byte identical JSON.  This sort applies only to YamlMappingNode
-//   (i.e. Extra blocks); the top-level Services/Dependencies collections are C# lists
-//   serialised by STJ in enumeration order and retain their YAML declaration order.
+//   same key-value pairs but in different declaration order produce byte-for-byte identical
+//   JSON.  This sort applies only to YamlMappingNode (i.e. Extra blocks); the top-level
+//   Services/Dependencies collections are C# lists serialised by STJ in enumeration order and
+//   retain their YAML declaration order.
 //
 // Registration:
 //   SerialiseEnvironment holds a private static JsonSerializerOptions that registers

@@ -378,6 +378,20 @@ public static class SecuredTargets
     /// this alongside deciding what the bucket carries.
     /// </para>
     /// <para>
+    /// <strong>A MIDDLE PATH EXISTS AND WAS CONSIDERED, so the next reader need not rediscover
+    /// it</strong> (peer-review MINOR). Excluding the bucket's VALUES is what §17 requires;
+    /// excluding it entirely is a strictly stronger choice than that requires. Hashing a presence
+    /// bit plus the bucket's ordinal-sorted KEY NAMES — structural text, not credential material —
+    /// would restore the distinguishability lost above at zero disclosure cost, and
+    /// <see cref="AppendPassphraseDeclaration"/> already demonstrates the shape (a presence bit,
+    /// then a decision bit, then conditionally the text). It is DEFERRED, not rejected on merit:
+    /// anything appended to <see cref="DigestOf"/> changes the digest for EVERY target, including
+    /// the ones carrying no bucket at all, so the change is not local to the case it serves — and
+    /// what the bucket is allowed to carry is itself undecided until a profile fragment ships,
+    /// which leaves "hash the key names" a rule with no set of key names to be about. Both
+    /// decisions belong to whoever ships that fragment, together.
+    /// </para>
+    /// <para>
     /// JSON was the alternative and is rejected for two reasons. Its determinism would rest on
     /// <c>JsonSerializerOptions</c> defaults and on reflected property order — properties of the
     /// serialiser rather than of this file, free to move under a runtime upgrade and taking every

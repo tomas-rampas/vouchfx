@@ -190,8 +190,9 @@ public sealed class ProjectServiceEndpointStagingTests : IDisposable
     /// observation carries only status and expectation, and no event record has a field for it.
     /// An undisclosed downgrade is the part that makes it a finding; the CHOICE itself is
     /// endorsed, because preferring https would fail the dev-certificate handshake and land as an
-    /// EnvironmentError, which exits 0 by default (#390) — a green build over a step that
-    /// verified nothing.
+    /// EnvironmentError, which exits 0 unless the caller passes <c>--fail-on-env-error</c>
+    /// (§12.1's base rule, not #390 — that issue is about a run that executed nothing, and this
+    /// step runs) — a green build over a step that verified nothing.
     /// </para>
     /// <para>
     /// The notice is terminal-only for now: every EXISTING free-text field reaching
@@ -214,6 +215,48 @@ public sealed class ProjectServiceEndpointStagingTests : IDisposable
 
         // Asserted on FIELDS, not on wording: the notice is a typed record precisely so a test
         // does not pin an English sentence as the contract.
+        var notice = Assert.Single(mapped.EndpointSelectionNotices);
+        Assert.Equal("api", notice.ServiceName);
+        Assert.Equal("http", notice.SelectedEndpoint);
+        Assert.Equal("https", notice.RejectedEndpoint);
+    }
+
+    /// <summary>
+    /// <c>Configure</c> is IDEMPOTENT in what it publishes: invoking it twice yields the same
+    /// notice count as invoking it once.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The three dictionaries the closure captures are written by keyed assignment and so were
+    /// already idempotent; <c>endpointSelectionNotices</c> is a list whose only write is an
+    /// <c>Add</c>, so before the <c>Clear</c> at the top of the closure a second invocation
+    /// doubled every notice. Nothing invokes it twice in production today — HeadlessTopology
+    /// calls it once — so this pins a property rather than repairing a live defect, and it is the
+    /// property that stops the next caller (or the next test) discovering the inconsistency the
+    /// hard way.
+    /// </para>
+    /// <para>
+    /// A FRESH builder for the second call, deliberately: re-running the closure over the SAME
+    /// builder would re-add resources under names it already holds, which is a different question
+    /// from the one asked here.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void ConfigureInvokedTwice_DoesNotDuplicateTheTransportDowngradeNotice()
+    {
+        var csproj = CreateProjectFixture("https://localhost:7333;http://localhost:5333");
+        var mapped = EnvironmentMapper.Map(
+            EnvWithProject("api", csproj), endpointConsumingTargets: Targeting("api"));
+
+        mapped.Configure(CreateBuilder());
+        var afterOne = mapped.EndpointSelectionNotices.Count;
+
+        mapped.Configure(CreateBuilder());
+
+        Assert.Equal(1, afterOne);
+        Assert.Equal(afterOne, mapped.EndpointSelectionNotices.Count);
+
+        // Still the SAME notice, not a survivor of a clear that dropped the real one.
         var notice = Assert.Single(mapped.EndpointSelectionNotices);
         Assert.Equal("api", notice.ServiceName);
         Assert.Equal("http", notice.SelectedEndpoint);

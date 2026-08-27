@@ -1356,6 +1356,20 @@ public static class EnvironmentMapper
         // ----------------------------------------------------------------
         Action<IDistributedApplicationBuilder> configure = builder =>
         {
+            // IDEMPOTENCE, to match the neighbours (peer-review MINOR). The three captured
+            // dictionaries — serviceEndpoints, dependencyBuilders, depConnBuilders — are written
+            // by KEYED ASSIGNMENT, so a second invocation of this closure overwrites rather than
+            // accumulates. endpointSelectionNotices is a List and its only write is an Add, so
+            // without this Clear a second Configure DOUBLES every notice the author sees —
+            // measured by deleting the line and re-running the pin below, which then reports
+            // "Expected: 1 / Actual: 2".
+            // There is exactly ONE production invocation today — HeadlessTopology's
+            // `configureResources?.Invoke(builder)`, reached from SuiteTopology — so this closes a
+            // latent inconsistency rather than a live defect. Pinned by
+            // ProjectServiceEndpointStagingTests
+            // .ConfigureInvokedTwice_DoesNotDuplicateTheTransportDowngradeNotice.
+            endpointSelectionNotices.Clear();
+
             var mostSpecificDependencyResources = new List<IResourceBuilder<IResource>>();
 
             foreach (var (name, spec) in dependencies)
@@ -1665,7 +1679,11 @@ public static class EnvironmentMapper
                     // FOLLOW THE COUNTERFACTUAL, because it is the actual justification and it is
                     // worse than "the request fails". Preferring "https" would fail the dev-cert
                     // handshake → HttpRequestException → the step is classified EnvironmentError,
-                    // and an EnvironmentError that ran nothing EXITS 0 by default (#390). The
+                    // and EnvironmentError maps to exit 0 unless the caller passes
+                    // `--fail-on-env-error` — §12.1's BASE rule, the one ExitCodes.FromVerdict
+                    // implements, and NOT #390, which this note used to cite. #390 is about a run
+                    // that EXECUTED NOTHING; the step in this counterfactual runs, reaches the
+                    // listener and fails the handshake, so the base rule is the whole reason. The
                     // author would get a green build over a step that verified nothing. Plaintext
                     // at least exercises the application, and it is not the EDGE-004 bypass the
                     // image-form secured rule guards against: EDGE-004 is a suite that ASSERTED

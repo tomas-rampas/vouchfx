@@ -2224,10 +2224,23 @@ public static class ScenarioRunner
                 // `unevaluatedProperties: false`, and SecuritySpec had no catch-all member, so the
                 // key was dropped). #353 gave SecuritySpec an `Extra` bucket, so an unknown key now
                 // SURVIVES into the AST, the two scenarios diverge, and that suite takes the
-                // shared-environment door above instead. That door carries its own
-                // `assurance.Refusing(AuthoringFault)`, so the invariant is intact either way and
-                // only the route changed — but the argument for THIS assignment needed a shape
-                // #353 did not close, and the one above is it.
+                // shared-environment door above instead.
+                //
+                // "ONLY THE ROUTE CHANGED" IS WHAT THIS NOTE USED TO SAY, AND IT UNDERSTATED IT
+                // (peer-review MINOR). The shared-environment guard sits ABOVE the compilation
+                // loop, so it pre-empts per-scenario schema validation entirely: the whole suite
+                // now aborts EnvironmentError with "declares a different environment block than
+                // the first scenario", where before the sibling RAN and the offending scenario
+                // alone took the schema door with a located error naming the key and a
+                // Verdict.Inconclusive of its own. The author's first diagnostic and the
+                // suite-level verdict both moved. What did NOT move is the only thing this
+                // assignment is responsible for: both doors call `assurance.Refusing(...)`, so a
+                // suite that declares `security` exits non-zero on either route.
+                // Whether the environment gate ought to run AFTER schema validation is a separate
+                // question about gate ordering; nothing here changes that ordering.
+                //
+                // The argument for THIS assignment therefore needed a shape #353 did not close,
+                // and the one above is it.
                 //
                 // So this is not defence in depth: it is the path REQ-018 takes for a mixed suite,
                 // and dropping it would report exit 0 on a rejected security declaration.
@@ -2956,22 +2969,33 @@ public static class ScenarioRunner
     /// </para>
     /// <para>
     /// <strong>Behaviour-preserving, which is why it could be fixed here rather than filed.</strong>
-    /// Every consumer of this value compares it and does nothing else — verified call site by call
-    /// site: <see cref="RunSuiteAsync"/>'s shared-environment guard (one
-    /// <c>string.Equals</c>, and its divergence message names the scenario, never the JSON), and
-    /// watch mode's reuse decision (<c>WatchRunner</c> hands it to <c>WatchCompileResult</c>, whose
-    /// get-only property <c>WatchSession</c> reads for exactly one ordinal <c>string.Equals</c>).
-    /// No persistence, no file write, no event field, no rendered line. A digest therefore answers
-    /// every question the plaintext answered.
+    /// This method has exactly ONE call site outside tests — <c>WatchRunner.Compile</c> — and that
+    /// chain compares the value and does nothing else: <c>WatchRunner</c> hands it to
+    /// <c>WatchCompileResult</c>, whose get-only <c>EnvironmentHash</c> property <c>WatchSession</c>
+    /// reads for exactly one ordinal <c>string.Equals</c> against the hash of the topology it is
+    /// keeping. No persistence, no file write, no event field, no rendered line. A digest therefore
+    /// answers every question the plaintext answered.
     /// </para>
     /// <para>
-    /// The bytes are the string's UTF-16 code units REINTERPRETED, not transcoded. An
-    /// <see cref="System.Text.Encoding"/> applies a replacement fallback to an unpaired surrogate,
-    /// mapping two distinct strings onto one. That collision is measured rather than theoretical
-    /// elsewhere in this repository — <c>SecuredTargets.IdentityOf</c> hashes UTF-16 code units
-    /// for exactly this reason, and a CLI test pins a <c>caCert</c> differing only by a lone
-    /// surrogate. Reinterpreting cannot collide, so this method need not establish whether the
-    /// serialiser can emit one.
+    /// <strong><see cref="RunSuiteAsync"/>'s shared-environment guard is NOT a consumer of this
+    /// value</strong>, and this note claimed it was until review measured the call sites. That
+    /// guard calls the private <see cref="SerialiseEnvironment"/> helper directly and compares the
+    /// PLAINTEXT JSON, so it neither gained nor lost anything here. What the two share is the
+    /// SERIALISATION, not this method's return value — which is exactly what the consistency
+    /// claimed above rests on, and is the whole of the relationship.
+    /// </para>
+    /// <para>
+    /// The bytes are the string's UTF-16 code units REINTERPRETED, not transcoded — for
+    /// consistency with <c>SecuredTargets.IdentityOf</c>, which hashes code units because it takes
+    /// RAW declared strings and an <see cref="System.Text.Encoding"/> replacement fallback there
+    /// really does map two distinct <c>caCert</c> values onto one (a CLI test pins a pair differing
+    /// only by a lone surrogate). That reason does not transfer to THIS input and must not be
+    /// restated as if it did: the text arriving here has already been through
+    /// <see cref="JsonSerializer"/>, which substitutes U+FFFD for an unpaired surrogate itself —
+    /// measured, two field values differing only in WHICH lone high surrogate they carry both
+    /// serialise to one identical JSON string, the surrogate replaced before this method is
+    /// reached. The collision is collapsed upstream, so the choice here buys uniformity rather
+    /// than injectivity.
     /// </para>
     /// </remarks>
     public static string ComputeEnvironmentHash(EnvironmentSpec? environment) =>
