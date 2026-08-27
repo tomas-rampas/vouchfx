@@ -530,9 +530,9 @@ vouchfx distinguishes four outcomes (see `docs/01` §12.1):
 | **Pass** | All assertions passed. | Exit 0 (success) |
 | **Fail** | An assertion failed — a genuine product defect. | Exit 1 (always breaks CI) |
 | **EnvironmentError** | Infrastructure problem (unhealthy container, image-pull failure, seed failure). | Exit 0 by default; Exit 3 if `--fail-on-env-error` |
-| **Inconclusive** | Engine could not decide (timeout on a RETRY step, unmet capture, partition); or the run hit a parse failure or executed nothing (any unreadable or malformed file, whether or not a sibling parsed; or a suite refused before execution). | Exit 0 by default; Exit 4 if `--fail-on-inconclusive` (unconditional when no verdict produced) |
+| **Inconclusive** | Engine could not decide (timeout on a RETRY step, unmet capture, partition); or the run hit a parse failure or executed nothing (any unreadable or malformed file, whether or not a sibling parsed; or a suite refused before execution). | Exit 0 by default; Exit 4 if `--fail-on-inconclusive`; never 0 on a parse failure, or on an Inconclusive suite refused before anything ran |
 
-By default, **only Fail breaks CI** — environment errors and inconclusive results exit 0. Two exceptions break CI regardless of the gating flags: (1) an unconfirmable `security:` declaration, and (2) any parse failure, or a run in which nothing executed (parse failures, or pre-execution refusals). This distinction lets your CI system handle each outcome independently: fail the build on a product defect, page on-call for infrastructure breakage, and escalate inconclusive results to reliability engineering.
+By default, **only Fail breaks CI** — environment errors and inconclusive results exit 0. Two exceptions break CI regardless of the gating flags: (1) an unconfirmable `security:` declaration, and (2) any parse failure, or an Inconclusive suite refused before any scenario executed. A run that executed nothing but carries an `EnvironmentError` — a topology that never came up — is not the second case and still exits 0 by default. This distinction lets your CI system handle each outcome independently: fail the build on a product defect, page on-call for infrastructure breakage, and escalate inconclusive results to reliability engineering.
 
 ### `continueOnFailure`
 

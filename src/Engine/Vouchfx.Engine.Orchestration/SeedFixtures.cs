@@ -53,10 +53,15 @@ internal static class SeedFixtures
     /// The 64-character lower-case hex SHA-256 digest of the file's raw bytes.
     /// </returns>
     /// <exception cref="FileNotFoundException">
-    /// Thrown when the resolved fixture file does not exist.  Callers in the seed
-    /// applier map this to an <see cref="OrchestrationException"/>
-    /// (<see cref="OrchestrationErrorKind.Provision"/>) so it surfaces as an
-    /// Environment error (§12.1).
+    /// Thrown when the resolved fixture file does not exist.  <strong>No production caller
+    /// observes it.</strong>  This method has exactly one call site in <c>src/</c> —
+    /// <c>ScenarioRunner.HashFixtureOrNull</c> — which catches this exception and swallows it, so
+    /// a missing fixture is reported by the seed applier's own existence check rather than by this
+    /// throw.  (An earlier version of this remark claimed callers in the seed applier map it to an
+    /// <see cref="OrchestrationException"/>; no such caller exists, and that claim is why the
+    /// message below was allowed to keep a resolved absolute path when every sibling diagnostic
+    /// lost one.)  One test calls it directly and asserts the message, so a change here is not
+    /// silent.
     /// </exception>
     internal static string ComputeContentHash(string baseDirectory, string relativePath)
     {

@@ -27,15 +27,16 @@ a product defect:
 | **1** | **Fail** — one or more scenarios failed (a genuine defect) | **Always** | `run` only |
 | **2** | UsageError — unrecognised option, bad arguments, missing path | Always | All commands |
 | **3** | EnvironmentError (run) or catalogue error (tools) — unhealthy container, image-pull/seed failure, or incomplete provider metadata | Only when opted in (`run`) — **except** an unconfirmable `security:` declaration, which always breaks CI (see below) | `run` with `--fail-on-env-error`; `list`, `schema`, `validate`, `scaffold`, `plan` on metadata failure |
-| **4** | Inconclusive — timeout, partition outlasted grace, unmet capture; or the run hit a parse failure or executed nothing | Only when opted in — **except** an unconfirmable `security:` declaration, which always breaks CI (see below) | `run` with `--fail-on-inconclusive`; `run` unconditionally on any parse failure, or when nothing executed |
+| **4** | Inconclusive — timeout, partition outlasted grace, unmet capture; or the run hit a parse failure or executed nothing | Only when opted in — **except** an unconfirmable `security:` declaration, which always breaks CI (see below) | `run` with `--fail-on-inconclusive`; `run` on any parse failure, or on an Inconclusive suite refused before anything ran, whatever the flags |
 | **5** | Gaps found — the Planner detected at least one coverage or vocabulary gap AND the caller opted in | Only when opted in | `plan` with `--fail-on-gap` |
 
 The distinction lets CI systems handle each outcome independently: fail the build on a product `Fail`,
 page on-call for `EnvironmentError`, and escalate `Inconclusive` to reliability engineering.
 
-**Unconditional exceptions.** Three rules break CI whatever the opt-in flags say. Two of them concern
-a run that never reached a verdict worth reporting; the third concerns a security declaration the
-engine could not confirm.
+**Unconditional exceptions.** Three rules break CI whatever the opt-in flags say: a parse failure, an
+Inconclusive suite refused before anything ran, and a security declaration the engine could not
+confirm. Each is stated below as "never exits 0" rather than "exits 4", because all three yield to a
+verdict that outranks them — a failing sibling still takes the run to 1.
 
 **Any parse failure** — a malformed document, a file the runner cannot read, one over the 1 MiB cap.
 This does not require that *every* scenario failed: one unreadable file beside a suite that otherwise
@@ -206,7 +207,7 @@ so a job that reads only the machine-readable artefacts sees a bare non-zero exi
   here too.
 
   Three consequences, in the order a pipeline will meet them. **A filter matching only unbuildable
-  files now exits 4** because the run hit a parse failure or executed nothing, with no `security:` block anywhere in
+  files now exits 4** through the parse-failure rule, with no `security:` block anywhere in
   the picture — measured on the built CLI: a directory of one `nightly`-tagged unbuildable file with
   no `security:` block and one untagged sibling exits **4** under `run <dir> --tag nightly`, where the
   same command previously selected nothing and returned **0**. **In a mixed selection the file folds
@@ -216,8 +217,8 @@ so a job that reads only the machine-readable artefacts sees a bare non-zero exi
   **carrying the tag itself**, beside a **likewise-tagged** sibling refused at a compile-time door,
   exits **4** with the security line under `run <dir> --tag smoke`, matching the bare `run`. Both
   files must carry the tag: the security line is printed only when at least one document parsed, so
-  tagging the unbuildable file alone still exits 4 — but because the run hit a parse failure or executed nothing, which
-  is the general rule reached the same way as a pre-execution refusal.
+  tagging the unbuildable file alone still exits 4 — but through the parse-failure rule above rather
+  than the security one, a different rule reaching the same code.
 
   Note where the tag has to be. The change only bites when the **unbuildable file itself** carries
   the filtered tag or owner; a document whose recovered metadata genuinely does not match is still

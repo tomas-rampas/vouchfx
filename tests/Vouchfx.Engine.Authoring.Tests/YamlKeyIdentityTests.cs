@@ -163,6 +163,41 @@ public sealed class YamlKeyIdentityTests
     }
 
     /// <summary>
+    /// The one shape where this guard is stricter than YAML itself, pinned because
+    /// <c>docs/02</c> §3 now PROMISES it to authors.
+    /// </summary>
+    /// <remarks>
+    /// Keys are compared by their scalar TEXT, so <c>!!str 1</c> and <c>1</c> collide even though
+    /// YAML's core schema resolves them to different types — a string and an integer — and would
+    /// call them distinct keys. That is deliberate and fails closed: the alternative is to
+    /// reimplement YAML's type resolution inside the guard, which would reintroduce exactly the
+    /// class of parser/validator disagreement the guard exists to remove. Refusing a document no
+    /// sane author writes is the cheaper error.
+    /// </remarks>
+    [Fact]
+    public void Parse_TextIdenticalKeysDifferingOnlyByResolvedType_AreRefused()
+    {
+        const string TypeDistinguishedDuplicate = """
+            environment:
+              services:
+                api:
+                  image: myorg/api:1.0
+                  env:
+                    !!str 1: "as-a-string"
+                    1: "as-an-integer"
+            steps:
+              - id: noop
+                type: script.csharp
+                code: "// Filler step."
+            """;
+
+        var error = Assert.Throws<YamlParseException>(
+            () => YamlDocumentParser.Parse(TypeDistinguishedDuplicate));
+
+        Assert.Contains("Duplicate key '1'", error.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// The control, and it is what makes the rows above mean something: the shapes #417 measured
     /// as ALREADY agreeing must keep agreeing. A scalar, sequence or null <c>environment:</c>
     /// binds no <c>EnvironmentSpec</c> — two segments short of a security match — and that is

@@ -96,9 +96,11 @@ backoff (Polly v8) — authors never write `Thread.Sleep`.
   same argument rather than retracting it. A suite that declares a `security:` block the engine cannot
   confirm exits non-zero whatever the flags say, because that is an assertion the author wrote, not an
   infrastructure flake, and treating it as opt-in-only would hand a team who forgot a flag a green
-  pipeline on a security suite that verified nothing. Any parse failure, or a run in which nothing
-  executed, does the same, for the same reason: a document the engine could not read, or a suite it
-  refused before anything ran, verified nothing either, so there is nothing to report as clean.
+  pipeline on a security suite that verified nothing. Any parse failure, and an Inconclusive suite
+  refused before any scenario ran, do the same, for the same reason: a document the engine could not
+  read, or a suite it refused outright, verified nothing either. A run that executed nothing because
+  its topology never came up is an environment error, keeps that verdict's own gate, and still exits
+  0 by default — the distinction the taxonomy exists to protect.
 - **One event stream, many renderers.** A schema-versioned JSON Lines stream is the single substrate;
   the terminal, HTML, JUnit XML and `--events` outputs are all renderings of it, so they can never
   disagree. Each retry attempt is recorded individually, making a polling timeline renderable without

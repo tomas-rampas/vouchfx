@@ -740,10 +740,19 @@ public static class ParallelSuiteRunner
     /// SERIALISER, not the shape of the data: <c>EventStreamJson.Options</c> is frozen with
     /// <c>WriteIndented = false</c> (pinned by <c>EventEnvelopeTests.ToLine_Output_ContainsNoEmbeddedNewlines</c>,
     /// since an indented writer emits newlines between members), and STJ's encoder escapes a
-    /// <c>"</c> inside any string value as <c>"</c>. So the needle cannot re-form inside a
-    /// field's value even when an author plants it there deliberately — measured, with a service
-    /// property named exactly <c>"type":"step-started"</c>, whose schema diagnostic reaches this
-    /// buffer's <c>message</c> and does NOT flip the exit code.
+    /// quote inside any string value. So the needle cannot re-form inside a field's VALUE even
+    /// when an author plants it there deliberately — measured, with a service property named
+    /// exactly <c>"type":"step-started"</c>, whose schema diagnostic reaches this buffer's
+    /// <c>message</c> and does NOT flip the exit code.
+    /// <para>
+    /// That guarantee covers values, not property NAMES: the needle would also form from any
+    /// serialised object carrying a member literally named <c>type</c> whose value is
+    /// <c>step-started</c>. No such object is reachable on the produce side today — the only
+    /// dictionary is <c>CorrelationIds</c>, never assigned anywhere in <c>src/</c> and so omitted
+    /// by <c>WhenWritingNull</c>, and <c>Extra</c> is <c>[JsonExtensionData]</c> populated only on
+    /// <c>FromLine</c>. Stated because the point of this remark is that the PREVIOUS defence was
+    /// incomplete, and an incomplete replacement would be the same mistake.
+    /// </para>
     /// <para>
     /// Do not defend this by arguing a false positive "would still mean a step event was
     /// described" — that was the original reasoning and it does not hold: a schema error is not a
