@@ -745,13 +745,27 @@ public static class ParallelSuiteRunner
     /// exactly <c>"type":"step-started"</c>, whose schema diagnostic reaches this buffer's
     /// <c>message</c> and does NOT flip the exit code.
     /// <para>
-    /// That guarantee covers values, not property NAMES: the needle would also form from any
-    /// serialised object carrying a member literally named <c>type</c> whose value is
-    /// <c>step-started</c>. No such object is reachable on the produce side today — the only
-    /// dictionary is <c>CorrelationIds</c>, never assigned anywhere in <c>src/</c> and so omitted
-    /// by <c>WhenWritingNull</c>, and <c>Extra</c> is <c>[JsonExtensionData]</c> populated only on
-    /// <c>FromLine</c>. Stated because the point of this remark is that the PREVIOUS defence was
-    /// incomplete, and an incomplete replacement would be the same mistake.
+    /// That guarantee covers values, not property NAMES: the needle also forms from any serialised
+    /// object carrying a member literally named <c>type</c> whose value is <c>step-started</c>.
+    /// Such an object IS reachable — <c>StepAttemptEvent.Observation</c> and
+    /// <c>StepCompletedEvent.Observation</c> are <c>JsonElement?</c>, assigned on the produce side
+    /// from <c>ScenarioRunner.BuildStepObservation</c>, and a <c>JsonElement</c> serialises
+    /// property names verbatim, so SUT-controlled content can form the needle.
+    /// <para>
+    /// <strong>What makes that harmless is WHERE it can appear, not that it cannot.</strong>
+    /// <c>Observation</c> rides only on step events, so a needle formed inside one sits on a line
+    /// that already IS a step event — the predicate's answer is right for the wrong reason, but it
+    /// is right. The hazard would become real the day a <c>JsonElement</c>, or any member carrying
+    /// unescaped property names, is added to a NON-step event. If that happens, this predicate
+    /// must become a structured read before that event ships.
+    /// </para>
+    /// <para>
+    /// The two other candidates are closed for the reason the previous draft gave:
+    /// <c>CorrelationIds</c> is declared but never assigned anywhere in <c>src/</c>, so
+    /// <c>WhenWritingNull</c> omits it, and <c>Extra</c> is <c>[JsonExtensionData]</c> populated
+    /// only on <c>FromLine</c>. That enumeration was incomplete when first written, which is worth
+    /// recording: the point of this remark is that the ORIGINAL defence was incomplete, and it was
+    /// replaced once by another incomplete one.
     /// </para>
     /// <para>
     /// Do not defend this by arguing a false positive "would still mean a step event was

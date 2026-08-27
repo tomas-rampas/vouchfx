@@ -35,19 +35,31 @@ page on-call for `EnvironmentError`, and escalate `Inconclusive` to reliability 
 
 **Unconditional exceptions.** Three rules break CI whatever the opt-in flags say: a parse failure, an
 Inconclusive suite refused before anything ran, and a security declaration the engine could not
-confirm. Each is stated below as "never exits 0" rather than "exits 4", because all three yield to a
-verdict that outranks them — a failing sibling still takes the run to 1.
+confirm. Each is stated below as "never exits 0" rather than "exits 4", because none overrides a
+code another rule already chose — a failing scenario still takes the run to 1, and a gated
+environment error to 3.
 
 **Any parse failure** — a malformed document, a file the runner cannot read, one over the 1 MiB cap.
 This does not require that *every* scenario failed: one unreadable file beside a suite that otherwise
 passes still exits 4, because the engine cannot say what that file would have asserted. It matches
 the behaviour of `vouchfx validate`.
 
-**A run in which nothing executed** — the suite parsed fine and was then refused before any container
-started: a schema error, an unresolvable secret reference, a malformed dependency `env:`, a protocol
-conflict. A scenario that *did* run and could not conclude — a timeout, a partition outlasting its
-grace, an unmet upstream capture — is not this case, and stays gated behind
-`--fail-on-inconclusive`.
+**An Inconclusive suite refused before anything ran** — the suite parsed fine and was then refused
+before any container started: a schema error, an unresolvable secret reference, a malformed
+dependency `env:`, a protocol conflict.
+
+Read **Inconclusive** in that sentence as load-bearing. A run can execute nothing and still exit 0,
+and one shape does: a refusal carrying an `EnvironmentError` verdict rather than an Inconclusive one
+— a topology that failed to start, or a suite whose scenarios declared divergent `environment`
+blocks. Those keep `EnvironmentError`'s own `--fail-on-env-error` gate and exit 0 without it. The
+distinction is deliberate: an authoring fault the engine refused is not the same event as an
+environment that never came up, and widening this rule to every no-execution run would silently
+close [issue #390](https://github.com/tomas-rampas/vouchfx/issues/390). (A **secured** suite refused
+by the divergence guard is different again — it exits 3 through the security rule below, whatever
+the flags.)
+
+A scenario that *did* run and could not conclude — a timeout, a partition outlasting its grace, an
+unmet upstream capture — is not this case either, and stays gated behind `--fail-on-inconclusive`.
 
 A suite that declares a `security:` block the engine **cannot confirm** exits non-zero with no
 `--fail-on-env-error` and no `--fail-on-inconclusive`.
@@ -166,16 +178,19 @@ so a job that reads only the machine-readable artefacts sees a bare non-zero exi
   run paths: the secured document exits 4 where the unsecured one exits 0.
 - **A scenario whose *YAML itself* cannot be read or parsed** — a malformed document, a file the
   runner cannot read, a file over the 1 MiB document cap. Nothing binds for such a file, so it cannot
-  be shown to declare anything: it never reaches this rule and never prints the security line. Where
-  *every* scenario fails that way the run still exits 4, through the parse rule above rather than
-  this one; beside a parseable sibling it contributes nothing and the suite's answer comes from the
-  siblings alone — measured, a directory pairing a **malformed-YAML** secured file with an unsecured
-  one carrying a step-secret fault exits **0** with no security line, on both run paths. That
-  residual is [issue #411](https://github.com/tomas-rampas/vouchfx/issues/411)'s amended acceptance
-  and is pinned by a test asserting today's behaviour, so closing it turns that test red. Closing it
-  would take a raw-YAML scan for a `security:` key — a second way of asking "does this document
-  declare security" that can disagree with the parsed one — and failing closed instead would redden
-  every unsecured suite that merely contains an unreadable file.
+  be shown to declare anything: it never reaches **this** rule and never prints the security line.
+  It reddens the run anyway, through the parse-failure rule above — whether it is alone, or beside a
+  parseable sibling, and whether or not anything in the suite declares `security:`. A directory
+  pairing a malformed-YAML secured file with an unsecured one carrying a step-secret fault exits
+  **4** on both run paths, with no security line, and it is the parse rule that put it there.
+
+  That is a change. This bullet used to record the pair exiting **0**, as
+  [issue #411](https://github.com/tomas-rampas/vouchfx/issues/411)'s amended acceptance, with the
+  reasoning that failing closed "would redden every unsecured suite that merely contains an
+  unreadable file". That cost was subsequently taken deliberately, under #425: an unreadable file is
+  one the engine could not read, so it cannot report the run as clean regardless of what it might
+  have asserted. `Row09c_SecuredMalformedYamlBesideAParseableSibling_ExitsInconclusiveOnTheUnreadFile`
+  pins the current behaviour.
 
   **A document that parses and is then refused for its *contents* now raises on its own
   declaration**, and that is the half of #411 that closed: an unknown step type, a duplicate step id,

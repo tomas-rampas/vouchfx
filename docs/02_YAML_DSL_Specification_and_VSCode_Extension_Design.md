@@ -428,9 +428,11 @@ Four rules apply to the values; the second and the fourth differ from a service'
   bring the dependency up in the shape every scenario shares, and on `minio` they are the credentials
   `${conn:…}` advertises to every other scenario consuming that dependency. Like **every** rule above
   — `${secret:…}` included — this check runs only on the `run` path and is **invisible to `vouchfx
-  validate`**, which never builds a topology; the refusal is reported as **Inconclusive** (§12.1), so
-  it exits **0** by default unless the caller passes `--fail-on-inconclusive`, or unless the suite
-  declares `security:` and earns the unconditional non-zero exit described in §3.2.6b.
+  validate`**, which never builds a topology; the refusal is reported as **Inconclusive** (§12.1), and
+  because it starts no container and runs no step it **never lets the run exit 0** — with or without
+  `--fail-on-inconclusive` (#369). It exits 4 unless another rule has already chosen a non-zero code,
+  and a suite declaring `security:` earns the non-zero exit described in §3.2.6b by that rule
+  instead.
 
 Variables set by Aspire internally, rather than by the engine, are not detected and will silently take
 the author's value instead; a dependency's own image may also read variables neither the engine nor

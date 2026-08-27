@@ -204,6 +204,48 @@ public sealed class ComputeExitCodeTests
                 failOnInconclusive: false));
     }
 
+    // ── The cell the documentation kept describing wrongly: a parse failure beside an
+    // EnvironmentError sibling. ──
+    //
+    // Three separate review rounds produced prose paraphrasing #425's guard as "yields to a
+    // verdict that outranks it". VerdictPrecedence ranks EnvironmentError (3) ABOVE Inconclusive
+    // (1), so that paraphrase predicts the environment error wins and the run exits 0 ungated.
+    // It does not: the guard is conditioned on the CODE so far, not on the verdict, and an
+    // ungated EnvironmentError maps to Success — so the guard fires and the run exits 4.
+    //
+    // The distinction is invisible until this exact combination is written down, which is why it
+    // survived three rounds of review of the prose and none of the code. Pinning it here means
+    // the next person to paraphrase the rule has a row to check the paraphrase against.
+
+    [Fact]
+    public void ParseFailure_BesideAnUngatedEnvironmentError_ReturnsInconclusive_NotSuccess()
+    {
+        Assert.Equal(
+            ExitCodes.Inconclusive,
+            RunCommand.ComputeExitCode(
+                parsedCount: 1,
+                parseFailureCount: 1,
+                Verdict.EnvironmentError,
+                failOnEnvironmentError: false,
+                failOnInconclusive: false));
+    }
+
+    [Fact]
+    public void ParseFailure_BesideAGatedEnvironmentError_ReturnsEnvironmentError_TheCodeAlreadyChosen()
+    {
+        // The other half of the same rule, and the one that makes the first non-vacuous: once
+        // --fail-on-env-error has chosen a non-zero code, the parse-failure guard does NOT
+        // override it. "Never exits 0" is the property; "exits 4" is not.
+        Assert.Equal(
+            ExitCodes.EnvironmentError,
+            RunCommand.ComputeExitCode(
+                parsedCount: 1,
+                parseFailureCount: 1,
+                Verdict.EnvironmentError,
+                failOnEnvironmentError: true,
+                failOnInconclusive: false));
+    }
+
     // ── Mixed set (at least one scenario parsed and ran): a parse failure reddens it, exactly
     // as an all-failure set. #425 — one rule, not two keyed on whether a sibling parsed. ──
 

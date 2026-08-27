@@ -1,11 +1,11 @@
 // Vouchfx.Engine.Orchestration — SeedFixtures (S05-A-02).
 //
 // Pure helper for the seed pipeline: resolve a fixture file path against the seed
-// base directory and compute its content hash.  Shared so that S05-B-03 (the
-// reproducibility envelope) can reuse the SAME hashing routine to "record the
-// content hash of every applied fixture" (docs/02 §3.2.5) — the seed
-// applier and the envelope MUST agree on what a fixture's hash is, so the routine
-// lives in one place rather than being duplicated.
+// base directory and compute its content hash, so that the reproducibility envelope
+// can "record the content hash of every applied fixture" (docs/02 §3.2.5) through
+// one routine rather than a duplicated one.  Note the envelope is its only
+// production consumer: the seed applier does not call this, despite an older
+// comment here saying the two "MUST agree on what a fixture's hash is".
 //
 // Placement rationale (so B-03 can reuse it): the runner project
 // (Vouchfx.Engine.Runtime) already references Vouchfx.Engine.Orchestration, so a
@@ -29,10 +29,17 @@ namespace Vouchfx.Engine.Orchestration;
 /// <remarks>
 /// <para>
 /// <see cref="ComputeContentHash"/> is the single source of truth for a fixture's
-/// content hash.  The seed applier calls it for <c>sql</c> files — the only seed
-/// kind in the v1 language — and S05-B-03 reuses it to record the content hash of
-/// every applied fixture in the reproducibility envelope (docs/02 §3.2.5) — both
-/// must produce identical hashes, hence one shared routine.
+/// content hash, used to record the content hash of every applied fixture in the
+/// reproducibility envelope (docs/02 §3.2.5).
+/// </para>
+/// <para>
+/// <strong>The seed applier does NOT call it.</strong>  An earlier version of this
+/// remark said it did, for <c>sql</c> files; grep finds no such call site.  The
+/// applier does its own existence check and raises its own
+/// <c>OrchestrationException</c>, which is why the one exception this type throws
+/// reaches no production observer — see <see cref="ComputeContentHash"/>'s own
+/// remarks, and do not restore the shared-caller premise without a call site to
+/// point at.
 /// </para>
 /// </remarks>
 internal static class SeedFixtures
