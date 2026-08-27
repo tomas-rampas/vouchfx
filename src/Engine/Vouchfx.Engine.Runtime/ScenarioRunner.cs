@@ -808,6 +808,13 @@ public static class ScenarioRunner
                 // a customer-supplied broker declared as a SERVICE earns the same authenticated
                 // round trip a `kafka` dependency does. Derived from the AST, never declared.
                 kafkaSpeakingTargets: SuiteProtocolTargets.KafkaSpeaking(ast),
+
+                // #348: the superset of the line above — every target this scenario's steps read a
+                // staged endpoint for, Kafka-family and HTTP-family alike. Derived from the SAME
+                // `ast`, so the two sets cannot disagree about what this scenario addresses. It
+                // decides one thing in the mapper: whether an endpoint-less `project:`-form service
+                // is a refused authoring fault or an untargeted worker service.
+                endpointConsumingTargets: SuiteProtocolTargets.EndpointConsuming(ast),
                 cancellationToken: cancellationToken)
                 .ConfigureAwait(false);
         }
@@ -822,23 +829,31 @@ public static class ScenarioRunner
             // a permanent typo as an infra fault could drive auto-retry/alerting that will never
             // self-heal.
             //
-            // Scope note: this catches ONLY EnvironmentMapper.Map's OWN eager, PRE-Configure
+            // Scope note: this catches EnvironmentMapper.Map's OWN eager, PRE-Configure
             // validation (SuiteTopology.StartAsync's Step 1, called before HeadlessTopology.
             // StartAsync/DCP is ever reached — see that method's Step 1 comment: "Map is pure
-            // ... let them propagate as-is"). Map()'s Configure CLOSURE also carries a few
-            // defensive throws of its own, reachable only by defect (e.g.
-            // ResolveDependencyEnvAccess's internal-error fallback, RequirePasswordParameter,
-            // BuildEnvExpression's unresolved-${conn:} ArgumentException, and
-            // ResolveDependencyContainer's InvalidOperationException when a dependency type
-            // registers no container of its own name) — those run LATER, inside
-            // HeadlessTopology.StartAsync's own try/catch (SuiteTopology.cs Step 2), which wraps
-            // ANY exception as OrchestrationException before it ever reaches this method; they
-            // are therefore unreachable by construction here (ValidateEnvValue's eager checks,
-            // the dependency-env census gate, and the CURRENT Aspire.Hosting.Redis/.Nats
-            // behaviour of always provisioning a password parameter, already prevent them from
-            // firing in practice) and would
-            // correctly surface as EnvironmentError via the OrchestrationException catch below,
-            // not this one — a genuine, if never-yet-observed, infrastructure/engine fault.
+            // ... let them propagate as-is"), PLUS the one authoring fault that can only be
+            // discovered inside the Configure closure and opts back onto this side deliberately:
+            // TopologyAuthoringException, an ArgumentException subclass that SuiteTopology.Step 2
+            // re-throws unwrapped (#348 — a step-TARGETED `project:`-form service whose project
+            // declares no endpoint, which only Aspire can determine, and only after it has built
+            // the resource). Both are the same class of problem as the schema-invalid /
+            // parse-AST / pipeline-compile / secret-reference failures handled above: an author
+            // edits the suite and it goes away.
+            //
+            // Map()'s Configure CLOSURE also carries a few defensive throws of its own, reachable
+            // only by defect (e.g. ResolveDependencyEnvAccess's internal-error fallback,
+            // RequirePasswordParameter, BuildEnvExpression's unresolved-${conn:}
+            // ArgumentException, and ResolveDependencyContainer's InvalidOperationException when
+            // a dependency type registers no container of its own name) — those run LATER, and
+            // SuiteTopology.cs Step 2 wraps every exception except TopologyAuthoringException as
+            // OrchestrationException before it ever reaches this method; they are therefore
+            // unreachable by construction here (ValidateEnvValue's eager checks, the
+            // dependency-env census gate, and the CURRENT Aspire.Hosting.Redis/.Nats behaviour of
+            // always provisioning a password parameter, already prevent them from firing in
+            // practice) and would correctly surface as EnvironmentError via the
+            // OrchestrationException catch below, not this one — a genuine, if never-yet-observed,
+            // infrastructure/engine fault.
             var now = DateTimeOffset.UtcNow;
             buffer.Add(EventStreamJson.ToLine(new ScenarioStartedEvent
             {
@@ -957,6 +972,18 @@ public static class ScenarioRunner
             {
                 await output.WriteLineAsync(
                         DisplaySanitiser.SanitiseForDisplay(confirmation.ToString()))
+                    .ConfigureAwait(false);
+            }
+
+            // #348 (security review): the transport downgrade a project-form service declaring
+            // both schemes incurs. Printed beside the security confirmations because it answers
+            // the same question — what did this run actually talk to, and how — and because that
+            // is the channel available today: no EXISTING v1 event field carries an advisory
+            // about a healthy run, and adding an optional one is deferred to #450 rather than
+            // forbidden. Empty for almost every suite, so ordinary output is unchanged.
+            foreach (var notice in suite.EndpointSelectionNotices)
+            {
+                await output.WriteLineAsync(DisplaySanitiser.SanitiseForDisplay(notice.ToString()))
                     .ConfigureAwait(false);
             }
 
@@ -1733,6 +1760,13 @@ public static class ScenarioRunner
                 // scenarios carrying an early verdict are excluded, and why the two must share one
                 // variable rather than two equal expressions.
                 kafkaSpeakingTargets: SuiteProtocolTargets.KafkaSpeaking(runnableScenarios),
+
+                // #348: the superset, over the SAME `runnableScenarios` list — one variable, for
+                // the reason the note above gives about the protocol-conflict guard. A scenario
+                // carrying an early verdict executes nothing and therefore targets nothing, so it
+                // must not be able to make a project-form service look targeted and get the suite
+                // refused for a step that was never going to run.
+                endpointConsumingTargets: SuiteProtocolTargets.EndpointConsuming(runnableScenarios),
                 cancellationToken: cancellationToken)
                 .ConfigureAwait(false);
         }
@@ -1744,10 +1778,11 @@ public static class ScenarioRunner
             // per-scenario secret-reference / pipeline-compile failures already handled as
             // Inconclusive elsewhere in this loop (via earlyVerdict) — the suite never ran, so
             // every scenario is Inconclusive, NOT EnvironmentError (reserved for genuine
-            // infrastructure faults an author cannot fix by editing the YAML). This catches ONLY
-            // Map's eager, pre-Configure validation; Map's Configure-closure defensive throws
-            // (unreachable by construction given that same eager validation) would surface as
-            // OrchestrationException instead, via the catch below.
+            // infrastructure faults an author cannot fix by editing the YAML). This catches Map's
+            // eager, pre-Configure validation, plus the Configure-closure TopologyAuthoringException
+            // that SuiteTopology.Step 2 re-throws unwrapped (#348); Map's Configure-closure
+            // defensive throws (unreachable by construction given that same eager validation)
+            // would surface as OrchestrationException instead, via the catch below.
             // SCRUBBED here, SANITISED at the print — the same composition, in the same order,
             // as the OrchestrationException sibling below, and it is a BLOCKER fix rather than
             // tidiness. This text is stamped onto every scenario record by the return below, so
@@ -1774,8 +1809,10 @@ public static class ScenarioRunner
 
 
             // The boundary is "no container started", not "before the StartAsync call": Map is
-            // eager and runs ahead of DCP, so this refusal starts nothing and is an authoring
-            // fault like every pre-topology one. It used to carry the accumulated flag through
+            // eager and runs ahead of DCP, and the Configure closure that raises #348's
+            // TopologyAuthoringException runs before builder.Build(), so both refusals start
+            // nothing and are authoring faults like every pre-topology one. It used to carry the
+            // accumulated flag through
             // UNCHANGED — a return that could observe the fault and had no way to record it.
             //
             // The wrap here is pinned by the `EnvironmentMapperArgumentFault` row of the theory
@@ -1915,6 +1952,18 @@ public static class ScenarioRunner
             {
                 await output.WriteLineAsync(
                         DisplaySanitiser.SanitiseForDisplay(confirmation.ToString()))
+                    .ConfigureAwait(false);
+            }
+
+            // #348 (security review): the transport downgrade a project-form service declaring
+            // both schemes incurs. Printed beside the security confirmations because it answers
+            // the same question — what did this run actually talk to, and how — and because that
+            // is the channel available today: no EXISTING v1 event field carries an advisory
+            // about a healthy run, and adding an optional one is deferred to #450 rather than
+            // forbidden. Empty for almost every suite, so ordinary output is unchanged.
+            foreach (var notice in suite.EndpointSelectionNotices)
+            {
+                await output.WriteLineAsync(DisplaySanitiser.SanitiseForDisplay(notice.ToString()))
                     .ConfigureAwait(false);
             }
 
@@ -3029,6 +3078,32 @@ public static class ScenarioRunner
             {
                 await output.WriteLineAsync(
                         DisplaySanitiser.SanitiseForDisplay(confirmation.ToString()))
+                    .ConfigureAwait(false);
+            }
+        }
+
+        // #348 (security review): replayed with the confirmations above and for the same reason —
+        // this topology may be held across many edits, and the transport it selected does not
+        // change until it is rebuilt.
+        //
+        // QUALIFIED IN THE OUTPUT, not merely here, on the same principle as the confirmations
+        // line above: a stale statement is only misleading if nothing tells the reader it is
+        // stale. It is worse for this one. The rebuild trigger is the `environment` hash, and a
+        // project's endpoints come from `Properties/launchSettings.json`, which is not part of the
+        // YAML at all — so an author can delete the https URL, save, and keep being told about a
+        // downgrade that no longer happens, indefinitely.
+        if (topology.EndpointSelectionNotices.Count > 0)
+        {
+            await output.WriteLineAsync(
+                    "transport: selected once when this topology was built, and replayed here — "
+                    + "endpoints are not re-read per re-run. A project's endpoints come from its "
+                    + "launch profile, which is not part of the 'environment' block, so editing "
+                    + "one does not rebuild the topology: restart --watch to re-select.")
+                .ConfigureAwait(false);
+
+            foreach (var notice in topology.EndpointSelectionNotices)
+            {
+                await output.WriteLineAsync(DisplaySanitiser.SanitiseForDisplay(notice.ToString()))
                     .ConfigureAwait(false);
             }
         }

@@ -87,7 +87,8 @@ public sealed class SuiteTopology : IAsyncDisposable
         IReadOnlyList<string> dependencyNames,
         EnvironmentSpec? environment,
         string seedBaseDirectory,
-        IReadOnlyList<SecurityConfirmation> securityConfirmations)
+        IReadOnlyList<SecurityConfirmation> securityConfirmations,
+        IReadOnlyList<EndpointSelectionNotice> endpointSelectionNotices)
     {
         _inner = inner;
         DiscoveredServices = discoveredServices;
@@ -96,6 +97,7 @@ public sealed class SuiteTopology : IAsyncDisposable
         _environment = environment;
         _seedBaseDirectory = seedBaseDirectory;
         SecurityConfirmations = securityConfirmations;
+        EndpointSelectionNotices = endpointSelectionNotices;
     }
 
     /// <summary>
@@ -111,6 +113,20 @@ public sealed class SuiteTopology : IAsyncDisposable
     /// difference between those two is the entire subject of REQ-005.
     /// </remarks>
     public IReadOnlyList<SecurityConfirmation> SecurityConfirmations { get; }
+
+    /// <summary>
+    /// Gets the author-facing notices the mapper raised while selecting endpoints — today, the
+    /// transport downgrade a `project:`-form service declaring BOTH an http and an https endpoint
+    /// incurs (#348). Empty for almost every suite.
+    /// </summary>
+    /// <remarks>
+    /// Surfaced for the same reason, and printed through the same channel, as
+    /// <see cref="SecurityConfirmations"/>: the decision is invisible in the step observation and
+    /// on the event wire, and a run whose traffic silently went plaintext should say so. Terminal
+    /// only for now — no EXISTING v1 event field carries an advisory about a healthy run, and
+    /// adding an optional one is deferred to #450 rather than forbidden.
+    /// </remarks>
+    public IReadOnlyList<EndpointSelectionNotice> EndpointSelectionNotices { get; }
 
     /// <summary>
     /// Gets the flat map of discovered service endpoints and managed-dependency connection strings.
@@ -242,6 +258,26 @@ public sealed class SuiteTopology : IAsyncDisposable
     /// <see langword="null"/> means "no Kafka step targets anything here", which
     /// is correct for a suite with no Kafka steps and for every caller that predates this parameter.
     /// </param>
+    /// <param name="endpointConsumingTargets">
+    /// The declared target names at least one step will read a STAGED ENDPOINT for, as computed by
+    /// <see cref="SuiteProtocolTargets.EndpointConsuming(IEnumerable{Vouchfx.Engine.Authoring.Ast.ScenarioAst})"/>
+    /// — a SUPERSET of <paramref name="kafkaSpeakingTargets"/>. Passed straight through to
+    /// <see cref="EnvironmentMapper.Map"/>, which consults it for one decision only (#348):
+    /// whether an endpoint-less <c>project:</c>-form service is a refused authoring fault or a
+    /// legitimate, unstaged worker service.
+    /// <para>
+    /// <strong>DERIVE IT FROM THE SAME SCENARIOS AS <paramref name="kafkaSpeakingTargets"/>, at the
+    /// same call site.</strong> The two are computed from one input by every production caller;
+    /// deriving them from different scenario sets would let them disagree about what the suite
+    /// addresses. There is no compiler help here — this project sets no
+    /// <c>GenerateDocumentationFile</c>, and both parameters are optional — so a call site that
+    /// passes one and forgets the other compiles silently and simply never refuses. The pairing is
+    /// pinned instead by
+    /// <c>SuiteProtocolTargetsTests.EverySuiteTopologyStartCallSite_PassesBothTargetSets</c>.
+    /// </para>
+    /// <see langword="null"/> is the PERMISSIVE default — no refusal — matching
+    /// <see cref="EnvironmentMapper.Map"/>'s own.
+    /// </param>
     /// <param name="cancellationToken">
     /// Propagated to <see cref="HeadlessTopology.StartAsync"/>, to each
     /// health-gate <c>WaitForResourceHealthyAsync</c> call, to REQ-005's probe, and to the seed
@@ -267,6 +303,13 @@ public sealed class SuiteTopology : IAsyncDisposable
         string? seedBaseDirectory = null,
         ISecurityConfigurationAccessor? securityConfiguration = null,
         IReadOnlySet<string>? kafkaSpeakingTargets = null,
+        // Ahead of cancellationToken, not after it: CA1068 requires the token to be last on an
+        // externally-visible method. Verified before inserting — every call site in src/ and
+        // tests/ passes `cancellationToken:` by name, and a caller that passed it positionally
+        // would fail to compile rather than mis-bind (IReadOnlySet<string> and CancellationToken
+        // do not convert), so the insertion cannot silently change any call's meaning. Same
+        // reasoning, same wording, as RunScenarioAgainstKeptTopologyAsync's own note.
+        IReadOnlySet<string>? endpointConsumingTargets = null,
         CancellationToken cancellationToken = default)
     {
         var gateTimeout = startupTimeout ?? TimeSpan.FromSeconds(120);
@@ -347,7 +390,13 @@ public sealed class SuiteTopology : IAsyncDisposable
         // One set, computed once by the caller from the suite's own steps, so the value a Kafka
         // step reads and the level the probe reports can never disagree about what a target speaks.
         var kafkaTargets = kafkaSpeakingTargets ?? EmptyTargets;
-        var mapped = EnvironmentMapper.Map(environment, resolvedSeedBaseDirectory, kafkaTargets);
+
+        // #348: the superset — every target some step reads a staged endpoint for — reaches Map
+        // only. Its sole decision there is whether an endpoint-less project-form service is a
+        // refused authoring fault or an untargeted worker service; the probe has no use for it.
+        var endpointTargets = endpointConsumingTargets ?? EmptyTargets;
+        var mapped = EnvironmentMapper.Map(
+            environment, resolvedSeedBaseDirectory, kafkaTargets, endpointTargets);
 
         // EDGE-012's bind pre-flight, AFTER Map's eager validation and before any container. The
         // order matters to the author, not to the outcome: a document that is invalid for a plain
@@ -358,8 +407,9 @@ public sealed class SuiteTopology : IAsyncDisposable
         // ----------------------------------------------------------------
         // Step 2: Start the headless Aspire host.
         // HeadlessTopology.StartAsync already disposes itself on failure and re-throws;
-        // we classify that exception as OrchestrationException so callers always receive
-        // a typed Environment-error signal (§12.1) rather than a raw Aspire exception.
+        // we classify that exception as OrchestrationException so callers receive a typed
+        // Environment-error signal (§12.1) rather than a raw Aspire exception. The ONE
+        // exemption is TopologyAuthoringException — see its own catch clause below.
         // ----------------------------------------------------------------
         HeadlessTopology topology;
         try
@@ -372,6 +422,24 @@ public sealed class SuiteTopology : IAsyncDisposable
         catch (OrchestrationException)
         {
             // Already classified — propagate as-is.
+            throw;
+        }
+        catch (TopologyAuthoringException)
+        {
+            // An AUTHORING fault raised from inside Map's Configure closure — the only class of
+            // fault that legitimately escapes there (#348's endpoint-less `project:` service is
+            // the first and, today, the only one). Propagate UNWRAPPED so it reaches
+            // ScenarioRunner's ArgumentException catch and is classified Inconclusive, never
+            // EnvironmentError: reporting an authoring fault as an infrastructure fault is the
+            // one direction §12.1 must not bend, and it also decides the exit code — an
+            // EnvironmentError that executed nothing exits 0 (#390) while an Inconclusive that
+            // executed nothing does not (#369).
+            //
+            // DELIBERATELY NARROW. The blanket wrap below stays exactly as it was for every other
+            // exception escaping the closure — Map's defensive internal-error throws, Aspire's
+            // own FormatException when it materialises a malformed env value, DCP, Docker — all
+            // of which are genuine engine/infrastructure faults and belong in EnvironmentError.
+            // Nothing has started at this point either way: Configure runs before builder.Build().
             throw;
         }
         catch (Exception ex)
@@ -515,7 +583,8 @@ public sealed class SuiteTopology : IAsyncDisposable
                 mapped.DependencyNames,
                 environment,
                 resolvedSeedBaseDirectory,
-                securityConfirmations);
+                securityConfirmations,
+                mapped.EndpointSelectionNotices);
         }
         catch
         {

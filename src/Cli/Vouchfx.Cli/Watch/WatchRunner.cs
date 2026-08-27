@@ -214,6 +214,22 @@ internal static class WatchRunner
                         seedBaseDirectory: suiteDirectory,
                         securityConfiguration: probeSecurity,
                         kafkaSpeakingTargets: SuiteProtocolTargets.KafkaSpeaking(ast),
+
+                        // #348: the superset, from the same `ast`. Threaded HERE and not only in
+                        // ScenarioRunner because `--watch` builds its own topology through this
+                        // seam; omitting it would leave every service permissively unrefused under
+                        // `--watch` while `run` refused, which is exactly the kind of divergence
+                        // between the two paths this file's own history is full of.
+                        endpointConsumingTargets: SuiteProtocolTargets.EndpointConsuming(ast),
+
+                        // RESIDUAL, stated so it is not rediscovered as a regression: the rebuild
+                        // trigger is the ENVIRONMENT hash alone, so a save that adds an http.rest
+                        // step targeting an existing endpoint-less worker leaves the hash
+                        // unchanged, reuses this topology, and never re-runs the refusal — that
+                        // session sees #348's UriFormatException instead of the diagnostic. Plain
+                        // `run` refuses correctly, and saving any `environment` change rebuilds.
+                        // Widening the trigger to the steps is a --watch design change, not this
+                        // fix.
                         cancellationToken: ct).ConfigureAwait(false);
                     isolation = ScenarioRunner.BuildWatchIsolation(topology);
                     return topology;

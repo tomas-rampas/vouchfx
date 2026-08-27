@@ -85,7 +85,49 @@ public sealed record MappedTopology(
     Action<IDistributedApplicationBuilder> Configure,
     Func<DistributedApplication, CancellationToken, Task<IReadOnlyDictionary<string, object>>> ResolveServices,
     IReadOnlyList<string> HealthGateResourceNames,
-    IReadOnlyList<string> DependencyNames);
+    IReadOnlyList<string> DependencyNames)
+{
+    /// <summary>
+    /// A LIVE view of the endpoint <see cref="ResolveServices"/> will read from, per staged
+    /// <c>svc::&lt;name&gt;</c> key — empty until <see cref="Configure"/> has run, because that is
+    /// when the resources it references are built.
+    /// <para>
+    /// NOT one entry per declared service: several dependency kinds stage a <c>svc::</c> key of
+    /// their own here too, so a name in this dictionary is not necessarily an
+    /// <c>environment.services</c> entry. Grep this file for assignments into
+    /// <c>serviceEndpoints</c> to see the current set, rather than trusting a list here — an
+    /// enumeration in this position was wrong on every name it gave, within one revision of
+    /// being written.
+    /// </para>
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>internal</c>, and a test seam by intent. The staging decision itself — WHICH endpoint a
+    /// service resolves to — is otherwise unobservable without Docker: <see cref="ResolveServices"/>
+    /// reads <c>EndpointReference.Url</c>, which throws until <c>StartAsync</c> has allocated a
+    /// host port. Tests previously had to settle for proving the endpoint EXISTS on the resource,
+    /// which cannot distinguish "the mapper staged the right one" from "the mapper staged nothing
+    /// at all" — precisely the defect #348 was, undetected, for the whole project-form branch.
+    /// </para>
+    /// </remarks>
+    internal IReadOnlyDictionary<string, EndpointReference> StagedServiceEndpoints { get; init; }
+        = new Dictionary<string, EndpointReference>(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Author-facing notices raised while <see cref="Configure"/> selected endpoints — today, the
+    /// transport downgrade a `project:`-form service declaring BOTH an http and an https endpoint
+    /// incurs. Empty until <see cref="Configure"/> has run, and empty for almost every suite.
+    /// </summary>
+    /// <remarks>
+    /// Surfaced rather than logged because the mapper has no writer and must not acquire one:
+    /// <c>SuiteTopology</c> republishes this and the runner prints it, exactly as it already does
+    /// for <c>SecurityConfirmations</c>. Terminal-only for now: no EXISTING field on the v1 event
+    /// wire carries an advisory about a healthy run. Adding an optional one is permitted and
+    /// precedented — deferred to #450, not impossible.
+    /// </remarks>
+    internal IReadOnlyList<EndpointSelectionNotice> EndpointSelectionNotices { get; init; }
+        = Array.Empty<EndpointSelectionNotice>();
+}
 
 /// <summary>
 /// Maps the parsed <see cref="EnvironmentSpec"/> block to an Aspire resource graph.
@@ -599,6 +641,25 @@ public static class EnvironmentMapper
     /// <see langword="null"/> means "no Kafka step targets anything here", which is correct for a
     /// suite with no Kafka steps and for every caller that predates this parameter.
     /// </param>
+    /// <param name="endpointConsumingTargets">
+    /// The declared target names at least one step will read a STAGED ENDPOINT for, as computed by
+    /// <see cref="SuiteProtocolTargets.EndpointConsuming(IEnumerable{Vouchfx.Engine.Authoring.Ast.ScenarioAst})"/>
+    /// — a SUPERSET of <paramref name="kafkaSpeakingTargets"/> (it is the union of that set with
+    /// the HTTP-family one). Threaded alongside it, from the same call sites, off the same
+    /// scenarios; the two must always be derived from one input, or they can disagree about what
+    /// the suite addresses.
+    /// <para>
+    /// Consulted for exactly one decision (#348): whether a <c>project:</c>-form service that
+    /// declares no endpoint is a fault or a legitimate worker service. Named by a step → refused
+    /// with an author-facing diagnostic; not named → left unstaged and otherwise untouched, which
+    /// is what a <c>BackgroundService</c> consuming a queue has always needed and still gets.
+    /// </para>
+    /// <para>
+    /// <see langword="null"/> means "no step reads a staged endpoint for anything here", the
+    /// PERMISSIVE answer — chosen deliberately so a direct <see cref="EnvironmentSpec"/> embedder
+    /// that passes nothing gets today's behaviour rather than a refusal it has no way to act on.
+    /// </para>
+    /// </param>
     /// <returns>
     /// A <see cref="MappedTopology"/> whose <see cref="MappedTopology.Configure"/> callback
     /// is safe to invoke against any <see cref="IDistributedApplicationBuilder"/>.
@@ -626,11 +687,24 @@ public static class EnvironmentMapper
     /// Every one of these is an authoring fault, which is why <c>ScenarioRunner</c> classifies an
     /// <see cref="ArgumentException"/> out of this method as Inconclusive rather than
     /// EnvironmentError (§12.1).
+    /// <para>
+    /// <strong>One authoring fault is NOT raised eagerly, and it is the exception to the "every
+    /// eager check" framing above rather than a member of it</strong> (#348): a step-targeted
+    /// <c>project:</c>-form service whose project declares no endpoint is refused from inside the
+    /// <see cref="MappedTopology.Configure"/> closure, because only Aspire can say what endpoints a
+    /// launch profile produces and only after it has built the resource. It throws
+    /// <see cref="TopologyAuthoringException"/> — an <see cref="ArgumentException"/> subclass, so
+    /// the classification above still holds — which <see cref="SuiteTopology.StartAsync"/>
+    /// re-throws unwrapped for exactly that reason. Every OTHER throw from that closure is an
+    /// engine defect or an infrastructure fault and is correctly wrapped as an
+    /// <see cref="OrchestrationException"/>.
+    /// </para>
     /// </exception>
     public static MappedTopology Map(
         EnvironmentSpec? env,
         string? suiteDirectory = null,
-        IReadOnlySet<string>? kafkaSpeakingTargets = null)
+        IReadOnlySet<string>? kafkaSpeakingTargets = null,
+        IReadOnlySet<string>? endpointConsumingTargets = null)
     {
         // ----------------------------------------------------------------
         // Null / empty environment — no resources, no health gates.
@@ -651,6 +725,16 @@ public static class EnvironmentMapper
         // inside the resolver closure, so the staging rule is a plain set lookup at the one place
         // it is applied.
         var kafkaTargets = kafkaSpeakingTargets ?? EmptyProtocolTargets;
+
+        // Transport-downgrade notices raised while Configure runs (security review). Populated
+        // inside the closure, read after it — same lifecycle as serviceEndpoints, and the same
+        // reason it cannot be computed eagerly: it depends on endpoints Aspire discovers.
+        var endpointSelectionNotices = new List<EndpointSelectionNotice>();
+
+        // #348: same treatment, same reason — captured once here so the endpoint-less project-form
+        // refusal inside the Configure closure is a plain set lookup. Empty is the PERMISSIVE
+        // default (nothing is targeted, so nothing is refused); see the parameter's own remarks.
+        var endpointTargets = endpointConsumingTargets ?? EmptyProtocolTargets;
 
         // ----------------------------------------------------------------
         // Validate all service specs eagerly so Map() throws before any builder
@@ -687,13 +771,19 @@ public static class EnvironmentMapper
                 if (spec.Project is not null)
                 {
                     // A project-form service's endpoints come from the project's own launch
-                    // profile, which this engine neither models nor names (see
+                    // profile, which this engine neither models nor names AT AUTHORING TIME (see
                     // ServiceEndpointNaming.DeclaredEndpointNames' own remarks — it returns an
-                    // EMPTY list for a project-form service), so there is no endpoint here for
-                    // REQ-023 to construct with an https scheme and no svc::<name> value is
-                    // staged for one at all. Failing loudly at topology-build time is the only
-                    // honest option: the alternative is a suite that validates, starts, and
-                    // then presents no client certificate to anything.
+                    // EMPTY list for a project-form service), so there is no endpoint HERE, in
+                    // Map's eager pass, for REQ-023 to construct with an https scheme. Failing
+                    // loudly at topology-build time is the only honest option: the alternative is
+                    // a suite that validates, starts, and then presents no client certificate to
+                    // anything.
+                    //
+                    // The services loop below DOES stage a svc::<name> value for a project-form
+                    // service (#348), by reading the endpoints off the resource Aspire has just
+                    // built — but that happens inside the Configure closure, later, and it can
+                    // only report which endpoints Aspire discovered, never make one https. This
+                    // refusal is unaffected by it.
                     throw new ArgumentException(
                         $"Service '{name}' declares 'security' on a 'project'-form service, which this " +
                         "release cannot secure: a project-form service's endpoints are discovered from " +
@@ -1201,8 +1291,10 @@ public static class EnvironmentMapper
         // before StartAsync) and consumed by ResolveServices (which runs once,
         // asynchronously, after StartAsync).
         // ----------------------------------------------------------------
-        // Service name → EndpointReference retained from the container builder's GetEndpoint("http").
-        // Null for project-based services (no HTTP endpoint managed by this mapper).
+        // Service name → the EndpointReference retained from the resource builder's GetEndpoint,
+        // for the ONE endpoint svc::<name> resolves to. Populated for BOTH service forms: an
+        // image-form service's primary endpoint comes from its own declared shape, a project-form
+        // service's from the endpoints Aspire discovered on the built ProjectResource (#348).
         var serviceEndpoints = new Dictionary<string, EndpointReference>(
             StringComparer.Ordinal);
 
@@ -1528,6 +1620,189 @@ public static class EnvironmentMapper
                         projectBuilder = projectBuilder.WaitFor(depBuilder);
 
                     ApplyEnv("Service", name, projectBuilder, spec.Env, envAccessByDependency);
+
+                    // Stage the primary endpoint for svc::<name> resolution — the project-form
+                    // analogue of the image branch's own staging above (#348). Without it a step
+                    // whose `target` names a project-form service read a MISSING key, every
+                    // HTTP-family provider fell back to the empty string, and `new Uri("")` threw
+                    // UriFormatException at execution time — naming neither the service nor the
+                    // cause, after the topology had come up and the step had validated.
+                    //
+                    // READ OFF THE BUILT RESOURCE, not off the ServiceSpec. The image branch knows
+                    // its endpoints because the author declared them; a project's endpoints are
+                    // Aspire's to discover from the project's own launch profile, and
+                    // ServiceEndpointNaming.DeclaredEndpointNames returns an EMPTY list for a
+                    // project-form service for exactly that reason. Measured against the pinned
+                    // Aspire 13.4.2: AddProject(name, csprojPath) attaches its EndpointAnnotations
+                    // SYNCHRONOUSLY, so they are readable here inside Configure, well before
+                    // StartAsync — `Properties/launchSettings.json` with
+                    // `"applicationUrl": "http://localhost:5111"` yields one annotation named
+                    // "http" (UriScheme "http"), an https URL yields "https", both yield both in
+                    // the order the applicationUrl lists them, and two http URLs yield "http" and
+                    // "http2".
+                    var projectEndpoints = projectBuilder.Resource.Annotations
+                        .OfType<EndpointAnnotation>()
+                        .ToList();
+
+                    // Selection rule, project-form: "http", else "https", else the first declared.
+                    //
+                    // Measured, so the common case is on record rather than assumed: a stock
+                    // `dotnet new webapi` ships TWO `commandName: Project` profiles — "http"
+                    // (http only) and "https" (`https://...;http://...`) — and Aspire 13.4.2
+                    // selects the FIRST, so the endpoint set for an unmodified template project is
+                    // exactly one annotation named "http". The rule is therefore unambiguous for
+                    // the shape most project-form services actually have.
+                    //
+                    // PLAINTEXT FIRST where both DO appear (the template's "https" profile chosen
+                    // explicitly, or a hand-written profile listing both). Reasoning, not
+                    // measurement: a project-form service cannot declare `security` at all
+                    // (refused eagerly in the validation loop above), so the engine holds no
+                    // client trust material for one and configures no trust on the step's own
+                    // HttpClient — while the project's https listener is served with whatever
+                    // certificate it arranges for itself, a Kestrel development certificate by
+                    // default.
+                    //
+                    // FOLLOW THE COUNTERFACTUAL, because it is the actual justification and it is
+                    // worse than "the request fails". Preferring "https" would fail the dev-cert
+                    // handshake → HttpRequestException → the step is classified EnvironmentError,
+                    // and an EnvironmentError that ran nothing EXITS 0 by default (#390). The
+                    // author would get a green build over a step that verified nothing. Plaintext
+                    // at least exercises the application, and it is not the EDGE-004 bypass the
+                    // image-form secured rule guards against: EDGE-004 is a suite that ASSERTED
+                    // `security` and then authenticated nothing, whereas a project-form author
+                    // made no security assertion to vouchfx at all — there is no claim here to
+                    // silently falsify.
+                    //
+                    // The choice is not free, though, so it is ANNOUNCED rather than assumed
+                    // acceptable: when the project declares both, the notice below tells the
+                    // author their traffic went plaintext, names both endpoints, and says why.
+                    //
+                    // THE AUTHOR HAS NO OVERRIDE TODAY. `$defs/service`'s project-form clause
+                    // forbids `ports` and `healthCheck` but not `httpPort`, and `spec.HttpPort` is
+                    // read only in the image branch — so the one field that looks like the
+                    // endpoint control is accepted and silently ignored on this form. That is
+                    // pre-existing on main, and giving it meaning (or refusing it) is a language
+                    // change rather than a bug fix; tracked as #448.
+                    //
+                    // "https" is still taken when it is the ONLY endpoint, so an https-only
+                    // project resolves to its one real listener rather than being refused; trust
+                    // is then the author's to arrange, exactly as it is for an image-form service
+                    // that terminates TLS itself. The first-declared fallback mirrors the image
+                    // branch's own "otherwise the FIRST declared port" tie-break and covers any
+                    // name Aspire produces that is neither — measured: two http URLs in one
+                    // applicationUrl yield "http" and "http2".
+                    // MATCHED ON UriScheme, NOT ON Name. Identical behaviour today — Aspire names
+                    // the first endpoint of each scheme after that scheme — but the predicate now
+                    // says what it means. "Prefer the plaintext endpoint" is a statement about
+                    // TRANSPORT, and every argument above is about transport; a name match only
+                    // happened to encode it, and would stop encoding it the moment Aspire named
+                    // an endpoint "http2" (measured: it does, for a second http URL) or a future
+                    // hook named one anything else.
+                    var primaryProjectEndpoint =
+                        projectEndpoints.Find(e => string.Equals(
+                            e.UriScheme, ServiceEndpointNaming.HttpEndpointName, StringComparison.Ordinal))
+                        ?? projectEndpoints.Find(e => string.Equals(
+                            e.UriScheme, ServiceEndpointNaming.HttpsEndpointName, StringComparison.Ordinal))
+                        ?? projectEndpoints.FirstOrDefault();
+
+                    // REPORT THE DOWNGRADE (security review). A project declaring an https
+                    // endpoint whose traffic the engine then sends in plaintext is a decision the
+                    // author must be able to see: nothing else in the run says so — the step
+                    // observation carries only status and expectation, and no event record has a
+                    // field for it. Emitted once per service, naming both endpoints and the
+                    // reason, and ONLY when there was a real choice to make.
+                    //
+                    // Terminal-only, and DEFERRED rather than impossible. Every EXISTING free-text
+                    // field reaching --events/--junit/--html is a scenario-level CAUSE for a
+                    // non-Pass verdict; writing a healthy-run advisory into one would either change
+                    // what a green JUnit test displays or overwrite a real failure cause. A NEW
+                    // optional field is a legitimate route — the v1 freeze forbids renaming,
+                    // retyping and re-wiring properties, not adding an optional one, and #372 added
+                    // ScenarioCompletedEvent.Message exactly that way. That is a deliberate
+                    // wire-contract act and does not belong in a bug-fix branch: tracked as #450.
+                    // This mirrors SecurityConfirmations, which is surfaced off the topology and
+                    // printed for the same reason and through the same channel — and, like it,
+                    // travels as a TYPED record so the wording lives at the print site.
+                    //
+                    // GATED ON THE SERVICE BEING TARGETED. The message says "steps targeting it
+                    // will use PLAINTEXT", which is simply untrue of a worker no step addresses —
+                    // and emitting it there would also spend the notice's credibility on the case
+                    // that has nothing to warn about.
+                    if (endpointTargets.Contains(name)
+                        && primaryProjectEndpoint is not null
+                        && string.Equals(
+                            primaryProjectEndpoint.UriScheme,
+                            ServiceEndpointNaming.HttpEndpointName,
+                            StringComparison.Ordinal)
+                        && projectEndpoints.Find(e => string.Equals(
+                            e.UriScheme,
+                            ServiceEndpointNaming.HttpsEndpointName,
+                            StringComparison.Ordinal)) is { } securedSibling)
+                    {
+                        endpointSelectionNotices.Add(new EndpointSelectionNotice(
+                            ServiceName: name,
+                            SelectedEndpoint: primaryProjectEndpoint.Name,
+                            RejectedEndpoint: securedSibling.Name));
+                    }
+
+                    if (primaryProjectEndpoint is not null)
+                    {
+                        serviceEndpoints[name] = projectBuilder.GetEndpoint(primaryProjectEndpoint.Name);
+                    }
+                    else if (endpointTargets.Contains(name))
+                    {
+                        // FAIL LOUDLY, NAMING THE SERVICE — but ONLY for a service some step will
+                        // actually read a staged endpoint for. That condition is the whole of the
+                        // difference between a fault and a legitimate topology, and refusing
+                        // without it was a worse regression than the bug being fixed: a .NET
+                        // WORKER SERVICE (a BackgroundService consuming Kafka or a queue, no
+                        // applicationUrl, no HTTP listener) declares no endpoint either. That
+                        // shape is schema-legal, has no escape hatch — $defs/service refuses
+                        // 'ports'/'healthCheck' on a project-form service, so its author cannot
+                        // declare a non-HTTP shape the way REQ-008 lets an image-form service —
+                        // and is the canonical thing this product tests: the worker consuming the
+                        // Kafka event in the one business transaction. It started fine before
+                        // #348 and was simply never staged, which is correct, because nothing
+                        // reads svc::<name> for a service no step targets.
+                        //
+                        // FAIL LOUDLY rather than staging something. The two alternatives were
+                        // both worse. Staging GetEndpoint("http") unconditionally is not an
+                        // option: measured, that call does NOT throw on an endpoint-less project
+                        // — it returns an EndpointReference whose Exists is false, which defers
+                        // the failure past StartAsync into the same unattributable shape #348
+                        // exists to remove. Staging only when an endpoint exists leaves a
+                        // TARGETED launch-profile-less project dying with that same
+                        // UriFormatException.
+                        //
+                        // TopologyAuthoringException, not a bare ArgumentException: this throw
+                        // escapes from inside the Configure closure, and SuiteTopology.StartAsync
+                        // wraps ANYTHING else escaping there as OrchestrationException →
+                        // EnvironmentError, which would report an authoring fault as an
+                        // infrastructure one (§12.1's one forbidden direction) and — because an
+                        // EnvironmentError that executed nothing still exits 0 (#390) — hand CI a
+                        // green run over a suite that never started. That type is re-thrown
+                        // unwrapped by StartAsync and lands in ScenarioRunner's ArgumentException
+                        // catch: Inconclusive, nothing executed, non-zero exit (#369).
+                        throw new TopologyAuthoringException(
+                            $"Service '{name}' is declared as a 'project' ('{spec.Project}') and is " +
+                            $"addressed by a step's 'target', but that project declares no endpoint, so " +
+                            $"there is no address to reach '{name}' at. Aspire discovers a project's " +
+                            "endpoints from the launch profile in its 'Properties/launchSettings.json': " +
+                            "add an 'applicationUrl' to that profile (for example " +
+                            "\"applicationUrl\": \"http://localhost:5000\") for an HTTP service, or declare " +
+                            "it as an 'image'-form service — which is also the only form that can expose " +
+                            "a non-HTTP listener such as a broker port, via 'ports:'. A project-form " +
+                            "service that no step targets — a worker consuming a queue, say — needs no " +
+                            "endpoint and is unaffected by this rule.",
+                            nameof(env));
+                    }
+
+                    // else: an endpoint-less project-form service that NO step targets — a worker
+                    // service. Stage nothing, throw nothing, touch nothing: byte-for-byte the
+                    // behaviour it had before #348, which is the behaviour it needs. It is still
+                    // built, still WaitFor's its dependencies, still carries its `env:`, and still
+                    // appears in HealthGateResourceNames; it simply has no svc::<name> entry,
+                    // because nothing would read one.
                 }
             }
         };
@@ -1573,7 +1848,14 @@ public static class EnvironmentMapper
             Configure: configure,
             ResolveServices: resolveServices,
             HealthGateResourceNames: healthGateNames,
-            DependencyNames: dependencies.Keys.ToList());
+            DependencyNames: dependencies.Keys.ToList())
+        {
+            // The SAME dictionary instance the Configure closure writes into and the
+            // ResolveServices closure reads from — not a copy, so it reflects staging as it
+            // happens rather than the empty state at Map's return.
+            StagedServiceEndpoints = serviceEndpoints,
+            EndpointSelectionNotices = endpointSelectionNotices,
+        };
     }
 
     /// <summary>
@@ -2526,10 +2808,12 @@ public static class EnvironmentMapper
                     // comment asserted that it did. Measured: BuildEnvExpression is reachable only
                     // from ApplyEnv, only from inside the Configure closure, and
                     // SuiteTopology.StartAsync wraps HeadlessTopology.StartAsync in
-                    // `catch (Exception ex)` → OrchestrationException without ever consulting the
-                    // exception type (ScenarioRunner's own ArgumentException catch states the same
-                    // thing in its own words). Old throw and new throw therefore surface
-                    // identically, as an Environment error. Do not read this seam as taxonomy-safe.
+                    // `catch (Exception ex)` → OrchestrationException. Since #348 that wrap has
+                    // exactly ONE exemption, and a plain ArgumentException is not it: only
+                    // TopologyAuthoringException is re-thrown unwrapped. Old throw and new throw
+                    // therefore still surface identically, as an Environment error. Do not read
+                    // this seam as taxonomy-safe — and if a future change wants it to be, the fix
+                    // is to raise a TopologyAuthoringException here, not to widen that catch.
                     //
                     // The PRIMARY refusal is a DIFFERENT seam and is untouched by any of this:
                     // ValidateEnvValue refuses every ${conn:...} on a dependency eagerly, thrown
