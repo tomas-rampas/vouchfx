@@ -337,6 +337,11 @@ public static class YamlDocumentParser
             var security = ParseSecurity(serviceMapping, "Service", keyScalar.Value);
             var (ports, pinnedHostPorts) = ParseServicePorts(serviceMapping, keyScalar.Value);
             var healthCheck = ParseHealthCheck(serviceMapping);
+            // Carried VERBATIM — no Trim, no case fold. The name is matched against a
+            // project's discovered endpoints under StringComparison.Ordinal, so normalising it
+            // here would silently change which listener the author selected, and would mask a
+            // mistyped selector the consuming layer is meant to refuse by name.
+            var endpoint = GetScalar(serviceMapping, "endpoint");
 
             dict[keyScalar.Value] = new ServiceSpec(image, project, pullPolicy, httpPort, env)
             {
@@ -344,6 +349,7 @@ public static class YamlDocumentParser
                 Ports = ports,
                 PinnedHostPorts = pinnedHostPorts,
                 HealthCheck = healthCheck,
+                Endpoint = endpoint,
             };
         }
 

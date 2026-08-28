@@ -50,7 +50,7 @@ public sealed class SecuritySpecDisclosureTests
 
     private static readonly string[] s_serviceSpecMembers =
     {
-        "Env", "HealthCheck", "HttpPort", "Image", "ImagePullPolicy",
+        "Endpoint", "Env", "HealthCheck", "HttpPort", "Image", "ImagePullPolicy",
         "PinnedHostPorts", "Ports", "Project", "Security",
     };
 
@@ -350,6 +350,7 @@ public sealed class SecuritySpecDisclosureTests
             Ports = new[] { 9093 },
             PinnedHostPorts = null,
             HealthCheck = null,
+            Endpoint = "https",
         }.ToString();
 
         Assert.Contains("Image = api:1", rendered, StringComparison.Ordinal);
@@ -361,6 +362,7 @@ public sealed class SecuritySpecDisclosureTests
         Assert.Contains("Ports = ", rendered, StringComparison.Ordinal);
         Assert.Contains("PinnedHostPorts = ", rendered, StringComparison.Ordinal);
         Assert.Contains("HealthCheck = ", rendered, StringComparison.Ordinal);
+        Assert.Contains("Endpoint = https", rendered, StringComparison.Ordinal);
     }
 
     /// <summary>The dependency counterpart of the member-preservation check above.</summary>
