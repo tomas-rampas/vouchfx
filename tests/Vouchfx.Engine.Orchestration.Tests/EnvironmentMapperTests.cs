@@ -31,8 +31,18 @@ namespace Vouchfx.Engine.Orchestration.Tests;
 /// These tests exercise the builder phase (resource graph construction) without starting Docker
 /// containers; see the test-strategy note at the top of this file.
 /// </summary>
-public sealed class EnvironmentMapperTests
+public sealed class EnvironmentMapperTests : IDisposable
 {
+    /// <summary>
+    /// Synthesised `project:`-form fixtures, removed when xUnit disposes this class. Creation
+    /// goes through the tracker rather than a local helper so a throw between "directory
+    /// created" and "assertions made" cannot leak one.
+    /// </summary>
+    private readonly ProjectFixtures _fixtures = new();
+
+    /// <inheritdoc />
+    public void Dispose() => _fixtures.Dispose();
+
     // The short name of this test assembly — used for DCP metadata resolution (R-1 finding).
     // Creating the builder + adding resources does not need the DCP process, but the options
     // still require a resolvable AssemblyName for the builder to initialise cleanly.
@@ -174,31 +184,27 @@ public sealed class EnvironmentMapperTests
     /// that references the project), using the string overload AddProject(name, csprojPath).
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Aspire's <c>AddProject(name, path)</c> validates the csproj path exists and reads its
     /// launch-settings JSON at builder time (before <c>StartAsync</c>), so this test uses an
-    /// absolute path to an existing csproj in the solution to avoid a
+    /// absolute path to a csproj that exists on disk to avoid a
     /// <c>DistributedApplicationException</c> during the Configure callback.
     /// The mapper itself is not responsible for the path being valid — that is the author's
     /// concern; this test only asserts the mapper wires the string overload correctly.
+    /// </para>
+    /// <para>
+    /// The csproj is SYNTHESISED rather than pointed at a real one in the tree. It used to resolve
+    /// <c>Vouchfx.Engine.Abstractions.csproj</c> through a five-segment <c>..</c> walk out of the
+    /// test assembly's output directory — a path that silently depends on the repository layout
+    /// and on the build's output depth, and that says nothing about what the test needs. The
+    /// fixture states its own requirements instead.
+    /// </para>
     /// </remarks>
     [Fact]
     public void Map_ServiceWithProject_AddsProject()
     {
-        // Arrange — use a real csproj path that exists in the solution tree so Aspire's
-        // AddProject(name, path) succeeds at builder-configure time (before StartAsync).
-        // Any real .csproj in the solution is sufficient; we pick Abstractions as it is tiny.
-        var realCsproj = Path.GetFullPath(
-            Path.Combine(
-                AppContext.BaseDirectory,
-                "..",
-                "..",
-                "..",
-                "..",
-                "..",
-                "src",
-                "Engine",
-                "Vouchfx.Engine.Abstractions",
-                "Vouchfx.Engine.Abstractions.csproj"));
+        // Arrange
+        var realCsproj = _fixtures.CreateWithHttpEndpoint();
 
         var env = new EnvironmentSpec(
             Services: new Dictionary<string, ServiceSpec>
@@ -3166,11 +3172,7 @@ public sealed class EnvironmentMapperTests
     {
         // Arrange — env: must apply identically to a project-form service (both ContainerResource
         // and ProjectResource implement IResourceWithEnvironment).
-        var realCsproj = Path.GetFullPath(
-            Path.Combine(
-                AppContext.BaseDirectory,
-                "..", "..", "..", "..", "..",
-                "src", "Engine", "Vouchfx.Engine.Abstractions", "Vouchfx.Engine.Abstractions.csproj"));
+        var realCsproj = _fixtures.CreateWithHttpEndpoint();
 
         var env = new EnvironmentSpec(
             Services: new Dictionary<string, ServiceSpec>

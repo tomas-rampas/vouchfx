@@ -8,6 +8,12 @@
 // over the CLASS: two of them enumerate the assembly rather than a list of type names, and
 // therefore cover a fourth holder written after this file.
 //
+// #353 added a third kind of withheld member to the same helper: the two untyped `Extra`
+// buckets, whose contents no schema pattern governs at all. Both were guarded in one change,
+// deliberately — the per-holder history below is the argument against doing it one site at a
+// time, and the first round of #353 guarded `SecuritySpec.Extra` alone while
+// `DependencySpec.Extra` printed a canary in full.
+//
 // The ROOT was guarded on 2026-08-27, when the maintainer overturned the completeness
 // objection in `SecuritySpec`'s own remarks. `SecuritySpec.ToString()` no longer expands
 // `ClientKeyPassword`, so the three per-holder guards are now the SECOND line rather than
@@ -19,13 +25,15 @@ using System.Reflection;
 using System.Text;
 using Vouchfx.Engine.Authoring.Model;
 using Xunit;
+using YamlDotNet.RepresentationModel;
 
 namespace Vouchfx.Engine.Authoring.Tests;
 
 /// <summary>
-/// No <c>ToString()</c> in this assembly may render a declared
-/// <see cref="SecuritySpec.ClientKeyPassword"/> — neither
-/// <see cref="SecuritySpec"/>'s own, nor that of any record holding one.
+/// No <c>ToString()</c> in this assembly may render a member whose contents this assembly cannot
+/// prove non-secret: <see cref="SecuritySpec.ClientKeyPassword"/> and the two untyped buckets,
+/// <see cref="SecuritySpec.Extra"/> and <see cref="DependencySpec.Extra"/> — neither on the
+/// declaring record nor through any record holding one.
 /// </summary>
 public sealed class SecuritySpecDisclosureTests
 {
@@ -37,7 +45,7 @@ public sealed class SecuritySpecDisclosureTests
     private static readonly string[] s_securitySpecMembers =
     {
         "CaCert", "ClientCert", "ClientKey", "ClientKeyPassword",
-        "Endpoint", "Profile", "ServerArtifacts",
+        "Endpoint", "Extra", "Profile", "ServerArtifacts",
     };
 
     private static readonly string[] s_serviceSpecMembers =
@@ -61,6 +69,30 @@ public sealed class SecuritySpecDisclosureTests
     {
         ClientKeyPassword = Canary,
     };
+
+    /// <summary>
+    /// A <see cref="SecuritySpec"/> whose canary sits in the untyped <see cref="SecuritySpec.Extra"/>
+    /// bucket instead of in <see cref="SecuritySpec.ClientKeyPassword"/> — the shape #353's bucket
+    /// makes reachable, and the reason that bucket is withheld unconditionally: the parser applies
+    /// no shape to what lands there, so a passphrase can.
+    /// </summary>
+    private static SecuritySpec ExtraCanarySecurity() => new(
+        Profile: "mtls",
+        Endpoint: "9093",
+        CaCert: null,
+        ClientCert: null,
+        ClientKey: null,
+        ServerArtifacts: null)
+    {
+        Extra = ExtraNode("vendorPassphrase", Canary),
+    };
+
+    private static YamlMappingNode ExtraNode(string key, string value)
+    {
+        var node = new YamlMappingNode();
+        node.Children.Add(new YamlScalarNode(key), new YamlScalarNode(value));
+        return node;
+    }
 
     private static SecuredTarget Target() => new("api", "service", CanarySecurity());
 
@@ -96,13 +128,13 @@ public sealed class SecuritySpecDisclosureTests
             Canary, $"loading {CanarySecurity()}", StringComparison.Ordinal);
 
     /// <summary>
-    /// The passphrase alone is withheld, not the block: which profile, which endpoint and which
-    /// certificate paths are exactly what a reader of one of these needs, and none of them is
-    /// secret. A guard that answered the disclosure by rendering one marker would have cost the
-    /// engine the diagnostic it was protecting.
+    /// The two withheld members are withheld, not the block: which profile, which endpoint and
+    /// which certificate paths are exactly what a reader of one of these needs, and none of them
+    /// is secret. A guard that answered the disclosure by rendering one marker would have cost
+    /// the engine the diagnostic it was protecting.
     /// </summary>
     [Fact]
-    public void SecuritySpec_ToString_StillPrintsEveryMemberButThePassphrase()
+    public void SecuritySpec_ToString_StillPrintsEveryMemberButTheWithheldTwo()
     {
         var rendered = CanarySecurity().ToString();
 
@@ -114,6 +146,65 @@ public sealed class SecuritySpecDisclosureTests
             "ClientCert = ./certs/client.pem", rendered, StringComparison.Ordinal);
         Assert.Contains("ClientKey = ./certs/client.key", rendered, StringComparison.Ordinal);
         Assert.Contains("ServerArtifacts = ", rendered, StringComparison.Ordinal);
+        Assert.Contains("Extra = ", rendered, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// #353's bucket carries whatever key the parser did not bind, so it can carry a passphrase —
+    /// and unlike <see cref="SecuritySpec.ClientKeyPassword"/> there is not even a schema
+    /// <c>pattern</c> over its contents. It is therefore withheld on the same terms.
+    /// </summary>
+    [Fact]
+    public void SecuritySpec_ToString_DoesNotDiscloseTheExtraBucket()
+    {
+        var rendered = ExtraCanarySecurity().ToString();
+
+        Assert.DoesNotContain(Canary, rendered, StringComparison.Ordinal);
+        Assert.Contains("Extra = <redacted>", rendered, StringComparison.Ordinal);
+
+        // Non-vacuity: the bucket's own ToString() must be capable of disclosing the canary,
+        // or the assertion above would pass on a type that never renders its children.
+        Assert.Contains(
+            Canary,
+            ExtraNode("vendorPassphrase", Canary).ToString(),
+            StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The bucket reaches <c>ToString()</c> through the three holders too, and each holder's own
+    /// guard cuts it there — the second line, exactly as for the passphrase.
+    /// </summary>
+    [Fact]
+    public void HoldersOfASecuritySpec_DoNotDiscloseTheExtraBucket()
+    {
+        var service = new ServiceSpec("api:1", null, null, 8080, null)
+        {
+            Security = ExtraCanarySecurity(),
+        };
+        var dependency = new DependencySpec("kafka", "3.7", null)
+        {
+            Security = ExtraCanarySecurity(),
+        };
+        var target = new SecuredTarget("api", "service", ExtraCanarySecurity());
+
+        Assert.DoesNotContain(Canary, service.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain(Canary, dependency.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain(Canary, target.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain(Canary, $"starting {service}", StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// An UNDECLARED bucket prints empty rather than the marker, the same absent-versus-withheld
+    /// distinction the passphrase draws: <c>Extra = &lt;redacted&gt;</c> on a security block that
+    /// declares no unbound key would assert content that does not exist.
+    /// </summary>
+    [Fact]
+    public void AnUndeclaredExtraBucket_RendersAsAbsentRatherThanRedacted()
+    {
+        var rendered = new SecuritySpec("tls", "8443", null, null, null, null).ToString();
+
+        Assert.DoesNotContain("<redacted>", rendered, StringComparison.Ordinal);
+        Assert.Contains("Extra = ", rendered, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -187,6 +278,46 @@ public sealed class SecuritySpecDisclosureTests
         Assert.DoesNotContain(Canary, $"probing {target}", StringComparison.Ordinal);
         Assert.DoesNotContain(Canary, $"starting {service}", StringComparison.Ordinal);
         Assert.DoesNotContain(Canary, $"starting {dependency}", StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// #353's second bucket, and the one that survived the first round of that fix.
+    /// <see cref="DependencySpec.Extra"/> holds whatever dependency key no typed member claims —
+    /// the same unconstrained author text <see cref="SecuritySpec.Extra"/> holds, reached one
+    /// record higher — so it is withheld on the same terms. Measured before the guard:
+    /// <c>DependencySpec { …, Extra = { { vendorPassphrase, P@ssw0rd-LEAK-CANARY } }, … }</c>.
+    /// </summary>
+    [Fact]
+    public void DependencySpec_ToString_DoesNotDiscloseItsOwnExtraBucket()
+    {
+        var rendered = new DependencySpec(
+            "kafka", "3.7", ExtraNode("vendorPassphrase", Canary)).ToString();
+
+        Assert.DoesNotContain(Canary, rendered, StringComparison.Ordinal);
+        Assert.Contains("Extra = <redacted>", rendered, StringComparison.Ordinal);
+
+        // Every other member still renders: the bucket is withheld, not the record.
+        Assert.Contains("Type = kafka", rendered, StringComparison.Ordinal);
+        Assert.Contains("Version = 3.7", rendered, StringComparison.Ordinal);
+
+        // Interpolation is the shape the hazard arrives in.
+        var dependency = new DependencySpec(
+            "kafka", "3.7", ExtraNode("vendorPassphrase", Canary));
+        Assert.DoesNotContain(Canary, $"starting {dependency}", StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The absent-versus-withheld distinction for the dependency bucket: a dependency declaring
+    /// no unclaimed key renders <c>Extra = </c>, never the marker, or a reader concludes there is
+    /// withheld content where there is none.
+    /// </summary>
+    [Fact]
+    public void AnUndeclaredDependencyExtraBucket_RendersAsAbsentRatherThanRedacted()
+    {
+        var rendered = new DependencySpec("kafka", "3.7", null).ToString();
+
+        Assert.DoesNotContain("<redacted>", rendered, StringComparison.Ordinal);
+        Assert.Contains("Extra = ", rendered, StringComparison.Ordinal);
     }
 
     // ── Redaction must not read as absence, and must not eat the other members ───────

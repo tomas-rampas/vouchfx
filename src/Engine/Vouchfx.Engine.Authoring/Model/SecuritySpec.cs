@@ -7,6 +7,7 @@
 // e.g. Kafka's `schemaRegistry` or Azure Service Bus's `queues`/`topics`.
 
 using System.Text;
+using YamlDotNet.RepresentationModel;
 
 namespace Vouchfx.Engine.Authoring.Model;
 
@@ -133,8 +134,8 @@ public sealed record SecuritySpec(
     /// <strong>Withheld from <c>ToString()</c>.</strong> This record's own
     /// <see cref="PrintMembers"/> renders this property as
     /// <c>ClientKeyPassword = &lt;redacted&gt;</c> when it is declared and as
-    /// <c>ClientKeyPassword = </c> when it is not; every sibling member prints unchanged. See
-    /// that method for the render shape and for the decision that put it there.
+    /// <c>ClientKeyPassword = </c> when it is not. See that method for the render shape and
+    /// for the decision that put it there.
     /// </para>
     /// <para>
     /// Declared as an init-only property rather than a positional record parameter, per
@@ -146,8 +147,52 @@ public sealed record SecuritySpec(
     public string? ClientKeyPassword { get; init; }
 
     /// <summary>
-    /// Withholds <see cref="ClientKeyPassword"/> from <c>ToString()</c>, printing every other
-    /// member exactly as the compiler-generated <c>PrintMembers</c> did.
+    /// Raw YAML mapping node retaining every key inside this <c>security</c> block that
+    /// <c>YamlDocumentParser.ParseSecurity</c> does not bind to a member above (#353).
+    /// <see langword="null"/> when the block declares no such key.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The counterpart of <see cref="DependencySpec.Extra"/>, added for the same reason: a
+    /// field no typed member claims is PRESERVED rather than dropped on the floor. REQ-020
+    /// closed <c>$defs/security</c> with <c>"unevaluatedProperties": false</c> so that a
+    /// future security profile can contribute its own fields to the schema without mutating
+    /// a frozen keyword; before this bucket existed such a field validated and was then
+    /// discarded before any consumer could see it.
+    /// </para>
+    /// <para>
+    /// <strong>Nothing reads a KEY out of this bucket</strong>, deliberately — what a
+    /// contributed field means belongs to the profile that defines it, and no second profile
+    /// exists yet.
+    /// </para>
+    /// <para>
+    /// <strong>The two engine surfaces that reduce a whole <c>security</c> declaration to a
+    /// comparable value DISAGREE about this member, and that is the load-bearing fact.</strong>
+    /// <c>Vouchfx.Engine.Runtime.ScenarioRunner.ComputeEnvironmentHash</c> INCLUDES it — it
+    /// serialises the whole <c>environment</c> and digests the result, so two documents differing
+    /// only here get different values. <see cref="SecuredTargets.IdentityOf"/> EXCLUDES it — its
+    /// digest enumerates <see cref="SecuritySpec"/>'s members by hand and this one is deliberately
+    /// not among them, so two declarations differing only here share one identity. See that
+    /// method's remarks for why, and for the condition under which it must be revisited.
+    /// </para>
+    /// <para>
+    /// <strong>Withheld from <c>ToString()</c> unconditionally</strong>, as
+    /// <see cref="ClientKeyPassword"/> is and for the same §17 reason: the parser applies no
+    /// shape to what lands here, so the bucket can hold arbitrary author text — a literal
+    /// passphrase among it — and a <c>ToString()</c> has no way to prove otherwise. See
+    /// <see cref="PrintMembers"/> for the render shape.
+    /// </para>
+    /// <para>
+    /// Declared as an init-only property rather than a positional record parameter, per this
+    /// record's own binary-compatibility rule in the remarks above.
+    /// </para>
+    /// </remarks>
+    public YamlMappingNode? Extra { get; init; }
+
+    /// <summary>
+    /// Withholds <see cref="ClientKeyPassword"/> and <see cref="Extra"/> from
+    /// <c>ToString()</c>, printing every other member exactly as the compiler-generated
+    /// <c>PrintMembers</c> did.
     /// </summary>
     /// <param name="builder">The builder the generated <c>ToString()</c> hands this method.</param>
     /// <returns><see langword="true"/>, since this record always prints at least one member.</returns>
@@ -174,28 +219,29 @@ public sealed record SecuritySpec(
     /// never the holder.
     /// </para>
     /// <para>
-    /// <strong>The render shape: the passphrase alone is withheld, not the block.</strong>
+    /// <strong>The render shape: the secret-bearing members are withheld, not the block.</strong>
     /// Rendering the whole record as one marker would answer the disclosure by destroying the
     /// diagnostic — which profile, which endpoint, which certificate paths is precisely what a
-    /// reader of one of these needs, and none of it is secret. So the six other members print
-    /// verbatim and only this one is replaced. It cannot be confused with "no security block":
-    /// the type name and every sibling member still render, and the absent-versus-withheld
-    /// distinction is drawn at this level exactly as <see cref="RecordSecurityPrinting.Print"/>
-    /// draws it one level up — <see langword="null"/> prints empty (a true claim: the key is
-    /// unencrypted), a declared value prints
-    /// <see cref="RecordSecurityPrinting.RedactedMarker"/>.
+    /// reader of one of these needs, and none of it is secret. So the six positional members
+    /// print verbatim, and the two init-only ones — <see cref="ClientKeyPassword"/> and the
+    /// untyped <see cref="Extra"/> bucket, each able to carry text this record cannot prove
+    /// non-secret — are replaced. It cannot be confused with "no security block": the type name
+    /// and every sibling member still render, and the absent-versus-withheld distinction is
+    /// drawn at this level exactly as <see cref="RecordSecurityPrinting.Print"/> draws it one
+    /// level up — <see langword="null"/> prints empty (a true claim: the member is undeclared),
+    /// a declared value prints <see cref="RecordSecurityPrinting.RedactedMarker"/>.
     /// </para>
     /// <para>
-    /// The withholding routes through <see cref="RecordSecurityPrinting.Withhold"/> rather than
+    /// Both withholdings route through <see cref="RecordSecurityPrinting.Withhold"/> rather than
     /// through <see cref="RecordSecurityPrinting.Print"/>'s own type test, because that test
-    /// recognises a HOLDER's member by its value's type and this property's type is
-    /// <see langword="string"/> — see that method for why the declaring record has to be the one
-    /// that says which member is secret-bearing.
+    /// recognises a HOLDER's member by its value's type and neither of these is typed
+    /// <see cref="SecuritySpec"/> — see that method for why the declaring record has to be the
+    /// one that says which member is secret-bearing.
     /// </para>
     /// <para>
     /// Member order below is the compiler's: the six positional parameters in declaration order,
-    /// then this init-only property. An unredacted member therefore renders byte-for-byte as it
-    /// did before this guard existed.
+    /// then the two init-only properties in theirs. An unredacted member therefore renders
+    /// byte-for-byte as it did before this guard existed.
     /// </para>
     /// </remarks>
     private bool PrintMembers(StringBuilder builder) =>
@@ -207,7 +253,8 @@ public sealed record SecuritySpec(
             (nameof(ClientCert), ClientCert),
             (nameof(ClientKey), ClientKey),
             (nameof(ServerArtifacts), ServerArtifacts),
-            (nameof(ClientKeyPassword), RecordSecurityPrinting.Withhold(ClientKeyPassword)));
+            (nameof(ClientKeyPassword), RecordSecurityPrinting.Withhold(ClientKeyPassword)),
+            (nameof(Extra), RecordSecurityPrinting.Withhold(Extra)));
 }
 
 /// <summary>

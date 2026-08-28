@@ -887,9 +887,39 @@ public static class YamlDocumentParser
         var clientKeyPassword = GetScalar(securityNode, "clientKeyPassword");
         var serverArtifacts = ParseServerArtifacts(securityNode, ownerLabel, ownerName);
 
+        // #353: every key with a SCALAR NAME that this method does not bind above is retained
+        // here rather than dropped on the floor, exactly as ParseDependencyMap retains a
+        // dependency's unclaimed fields (see the exclusion rule stated there). The excluded list is
+        // precisely the seven keys bound above — six scalars plus the 'serverArtifacts' sequence
+        // ParseServerArtifacts reads.
+        //
+        // What it does NOT retain, because BuildExtraNode copies only children whose key is a
+        // scalar with a non-null value: a YAML complex key (a mapping or sequence used AS a key).
+        // Nor does a bound key with a NON-SCALAR value survive anywhere — GetScalar yields null
+        // for it and the key is excluded from here — which is the one remaining shape the schema
+        // can reject while two scenarios' ASTs stay byte-identical (ScenarioRunner's
+        // normal-completion return names it).
+        //
+        // REQ-020 closed $defs/security with "unevaluatedProperties": false so that a future
+        // security profile can contribute its own fields to the schema; a contributed field
+        // used to validate and then vanish before any consumer could see it. Nothing
+        // interprets a KEY out of the bucket — see SecuritySpec.Extra for who reaches it and
+        // how — and no schema-valid document populates it today, because no such profile
+        // fragment has shipped and the closed surface refuses an unknown key.
+        YamlMappingNode? extra = BuildExtraNode(
+            securityNode,
+            "profile",
+            "endpoint",
+            "caCert",
+            "clientCert",
+            "clientKey",
+            "clientKeyPassword",
+            "serverArtifacts");
+
         return new SecuritySpec(profile, endpoint, caCert, clientCert, clientKey, serverArtifacts)
         {
             ClientKeyPassword = clientKeyPassword,
+            Extra = extra,
         };
     }
 

@@ -126,6 +126,8 @@ environment:
     orders-mongo: { type: mongodb, image: "nexus.corp.local/platform/mongo:8.0" }
 ```
 
+**Project-form services and endpoint discovery.** A `project:`-form service that is targeted by a step must declare an `applicationUrl` in its launch profile (`launchSettings.json` on .NET projects), because that is where the engine discovers which endpoints the service exposes. A project-form service that no step targets is unaffected — a worker service with no HTTP endpoint is a legitimate shape and will still start without an application URL. When a project declares both http and https endpoints, the engine stages the plaintext http endpoint: a project-form service cannot declare `security`, so the engine holds no client trust material for its TLS listener, and attempting https would fail the handshake wherever that certificate is not trusted — which includes every CI runner and container — surfacing as an environment error that exits 0 by default. The choice is announced once per run in the terminal.
+
 #### 3.2.1 Container images and registries
 
 Image references in the environment section follow the standard OCI / Docker image format: `[registry-host[:port]/]namespace/repository[:tag|@digest]`. Un-prefixed names resolve through Docker Hub (so `postgres:16` is the official Postgres image); fully-qualified names target any OCI-compliant registry without further configuration (GitHub Container Registry, Azure Container Registry, ECR, GCR, Harbor, Artifactory). Authentication to private registries is handled by the underlying container runtime: a `docker login` beforehand or a CI step that populates the credential store is what enables the pull, and the test platform inherits those credentials transparently.

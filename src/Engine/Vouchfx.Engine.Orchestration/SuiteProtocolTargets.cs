@@ -1,8 +1,14 @@
 // Vouchfx.Engine.Orchestration — SuiteProtocolTargets (authenticated-infrastructure-mtls,
 // slice E — REQ-005, REQ-011).
 //
-// Answers one question for REQ-005's probe: which declared target names is this suite about to
-// speak KAFKA to?
+// Answers two questions about a suite's declared targets, both by classifying its own STEPS.
+//
+//   1. For REQ-005's probe: which target names is this suite about to speak KAFKA to?
+//   2. For EnvironmentMapper's #348 refusal: which target names will ANY step read a staged
+//      endpoint for? (The union of the Kafka and HTTP families — see EndpointConsuming.)
+//
+// The first is the original question and everything below argues for it; the second reuses the
+// same predicates rather than restating the families, so the two cannot drift.
 //
 // WHY THIS EXISTS AT ALL. REQ-005's strong confirmation level — the ApiVersions round trip that
 // separates "the endpoint speaks TLS" from "the endpoint accepted this identity" — is only
@@ -128,15 +134,85 @@ public static class SuiteProtocolTargets
     /// this assembly's <c>InternalsVisibleTo</c> grants — <c>Vouchfx.Cli</c>'s
     /// <c>WatchRunner</c> — so it cannot narrow. This one has no consumer outside the class at all
     /// beyond <c>SuiteProtocolTargetsTests</c>, which sits in <c>Vouchfx.Engine.Runtime.Tests</c>
-    /// and is already granted internals by this project's own csproj; every production read goes
-    /// through <see cref="BothHttpAndKafkaSpeaking"/> in this same class. Narrowing costs nothing
-    /// to reverse: this assembly is not packable (the root <c>Directory.Build.props</c> sets
-    /// <c>IsPackable=false</c> and this project does not opt in) and no golden freeze gate
+    /// and is already granted internals by this project's own csproj; the only production read of
+    /// this METHOD is <see cref="BothHttpAndKafkaSpeaking"/>, in this same class.
+    /// (<see cref="EndpointConsuming(IEnumerable{ScenarioAst})"/> does not call it — it reuses the
+    /// <c>IsHttpStep</c> predicate directly, which is why it can classify both families in one
+    /// pass.) Narrowing costs nothing to reverse: this assembly is not packable (the root
+    /// <c>Directory.Build.props</c> sets <c>IsPackable=false</c> and this project does not opt in)
+    /// and no golden freeze gate
     /// snapshots its public surface, so the visibility is an ordinary design choice rather than a
     /// contract.
     /// </remarks>
     internal static IReadOnlySet<string> HttpSpeaking(IEnumerable<ScenarioAst?>? scenarios) =>
         TargetsOf(scenarios, IsHttpStep);
+
+    /// <summary>
+    /// The set of declared target names that at least one step will read a STAGED ENDPOINT for —
+    /// the union of <see cref="HttpSpeaking(IEnumerable{ScenarioAst})"/> and
+    /// <see cref="KafkaSpeaking(IEnumerable{ScenarioAst})"/>.
+    /// </summary>
+    /// <param name="scenarios">
+    /// The scenarios whose staging this set is about to drive; same scoping rule as
+    /// <see cref="KafkaSpeaking(IEnumerable{ScenarioAst})"/> — pass exactly the set whose staging
+    /// you are protecting, which at the suite seam means the RUNNABLE scenarios.
+    /// </param>
+    /// <returns>An ordinal set of target names; never <see langword="null"/>.</returns>
+    /// <remarks>
+    /// <para>
+    /// <strong>What it is for (#348).</strong> <c>EnvironmentMapper</c> refuses a
+    /// <c>project:</c>-form service that declares no endpoint — but only when a step would
+    /// actually read one for it. A .NET worker service (a <c>BackgroundService</c> consuming
+    /// Kafka or a queue, no <c>applicationUrl</c>, no HTTP listener) is schema-legal, has no
+    /// escape hatch — <c>$defs/service</c> refuses <c>ports</c>/<c>healthCheck</c> on a
+    /// project-form service, so its author cannot declare a non-HTTP shape the way REQ-008 lets
+    /// an image-form service — and is the canonical shape this product exists to test. It must
+    /// keep starting as part of the topology and simply never be staged, exactly as it did before
+    /// that refusal existed. This set is what tells the two cases apart.
+    /// </para>
+    /// <para>
+    /// <strong>Why the union is the right definition, and why it is derived rather than listed
+    /// again.</strong> The five step types behind these two predicates are exactly the step types
+    /// whose emitted CSX reads a <c>svc::</c> key derived from the step's own <c>target</c> — the
+    /// claim <c>SuiteProtocolTargetsTests.ProtocolFamilyLists_CoverEverySvcKeyConsumingStepType</c>
+    /// pins by scanning the provider sources for every spelling of such a read, discounting
+    /// comments and JSON-schema descriptions. So among step types that DECLARE A <c>target</c>,
+    /// "a step will read a staged endpoint for this target" and "this target appears in one of
+    /// those two sets" are the same statement — and reusing the predicates means a sixth
+    /// <c>svc::</c>-consuming step type cannot be added without that existing gate failing and
+    /// this set widening with it. A second, hand-listed copy of the same families would drift
+    /// silently instead.
+    /// </para>
+    /// <para>
+    /// <strong>The <c>target</c>-declaring qualifier is real, and <c>script.csharp</c> is
+    /// deliberately outside it.</strong> That step type has no <c>target</c> field at all and its
+    /// provider documents full ambient access to <c>Vars</c>, so a script reading
+    /// <c>Vars["svc::worker"]</c> is unclassifiable by this mechanism — no scan of declared
+    /// targets can see it. The consequence is bounded and is not a wrong-endpoint reach: such a
+    /// script gets a hard miss on its own line, naming the key it asked for, rather than the
+    /// silent empty-string base URL #348 was about.
+    /// </para>
+    /// <para>
+    /// A DEPENDENCY name CAN appear in this set, and that is normal rather than a flaw: an
+    /// <c>mq-publish.kafka</c> step targeting a declared <c>kafka</c> dependency is the ordinary
+    /// case, and the union inherits it from <see cref="KafkaSpeaking(IEnumerable{ScenarioAst})"/>.
+    /// (The intersection helper below can exclude dependencies because all three HTTP-family
+    /// providers reject one outright, REQ-012 as narrowed — that argument belongs there, not
+    /// here.) It is harmless: the mapper consults this set only from inside its SERVICES loop,
+    /// keyed on a declared service name, so a dependency name in it is never looked up.
+    /// </para>
+    /// </remarks>
+    public static IReadOnlySet<string> EndpointConsuming(IEnumerable<ScenarioAst?>? scenarios) =>
+        TargetsOf(scenarios, static step => IsHttpStep(step) || IsKafkaStep(step));
+
+    /// <summary>
+    /// The set for a single scenario — the single-scenario call sites' convenience over
+    /// <see cref="EndpointConsuming(IEnumerable{ScenarioAst})"/>.
+    /// </summary>
+    /// <param name="scenario">The scenario, or <see langword="null"/>.</param>
+    /// <returns>An ordinal set of target names; never <see langword="null"/>.</returns>
+    public static IReadOnlySet<string> EndpointConsuming(ScenarioAst? scenario) =>
+        EndpointConsuming(new[] { scenario });
 
     /// <summary>
     /// The declared target names addressed by BOTH an HTTP-family step and a Kafka-family step —

@@ -25,6 +25,8 @@
 //     CompositeScenarioIsolation / NullScenarioIsolation) between each.
 //   • SuiteResult — aggregate record for RunSuiteAsync callers.
 using System.Reflection;
+using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Vouchfx.Engine.Abstractions;
@@ -808,6 +810,13 @@ public static class ScenarioRunner
                 // a customer-supplied broker declared as a SERVICE earns the same authenticated
                 // round trip a `kafka` dependency does. Derived from the AST, never declared.
                 kafkaSpeakingTargets: SuiteProtocolTargets.KafkaSpeaking(ast),
+
+                // #348: the superset of the line above — every target this scenario's steps read a
+                // staged endpoint for, Kafka-family and HTTP-family alike. Derived from the SAME
+                // `ast`, so the two sets cannot disagree about what this scenario addresses. It
+                // decides one thing in the mapper: whether an endpoint-less `project:`-form service
+                // is a refused authoring fault or an untargeted worker service.
+                endpointConsumingTargets: SuiteProtocolTargets.EndpointConsuming(ast),
                 cancellationToken: cancellationToken)
                 .ConfigureAwait(false);
         }
@@ -822,23 +831,31 @@ public static class ScenarioRunner
             // a permanent typo as an infra fault could drive auto-retry/alerting that will never
             // self-heal.
             //
-            // Scope note: this catches ONLY EnvironmentMapper.Map's OWN eager, PRE-Configure
+            // Scope note: this catches EnvironmentMapper.Map's OWN eager, PRE-Configure
             // validation (SuiteTopology.StartAsync's Step 1, called before HeadlessTopology.
             // StartAsync/DCP is ever reached — see that method's Step 1 comment: "Map is pure
-            // ... let them propagate as-is"). Map()'s Configure CLOSURE also carries a few
-            // defensive throws of its own, reachable only by defect (e.g.
-            // ResolveDependencyEnvAccess's internal-error fallback, RequirePasswordParameter,
-            // BuildEnvExpression's unresolved-${conn:} ArgumentException, and
-            // ResolveDependencyEnvTarget's InvalidOperationException when a dependency type
-            // registers no container of its own name) — those run LATER, inside
-            // HeadlessTopology.StartAsync's own try/catch (SuiteTopology.cs Step 2), which wraps
-            // ANY exception as OrchestrationException before it ever reaches this method; they
-            // are therefore unreachable by construction here (ValidateEnvValue's eager checks,
-            // the dependency-env census gate, and the CURRENT Aspire.Hosting.Redis/.Nats
-            // behaviour of always provisioning a password parameter, already prevent them from
-            // firing in practice) and would
-            // correctly surface as EnvironmentError via the OrchestrationException catch below,
-            // not this one — a genuine, if never-yet-observed, infrastructure/engine fault.
+            // ... let them propagate as-is"), PLUS the one authoring fault that can only be
+            // discovered inside the Configure closure and opts back onto this side deliberately:
+            // TopologyAuthoringException, an ArgumentException subclass that SuiteTopology.Step 2
+            // re-throws unwrapped (#348 — a step-TARGETED `project:`-form service whose project
+            // declares no endpoint, which only Aspire can determine, and only after it has built
+            // the resource). Both are the same class of problem as the schema-invalid /
+            // parse-AST / pipeline-compile / secret-reference failures handled above: an author
+            // edits the suite and it goes away.
+            //
+            // Map()'s Configure CLOSURE also carries a few defensive throws of its own, reachable
+            // only by defect (e.g. ResolveDependencyEnvAccess's internal-error fallback,
+            // RequirePasswordParameter, BuildEnvExpression's unresolved-${conn:}
+            // ArgumentException, and ResolveDependencyContainer's InvalidOperationException when
+            // a dependency type registers no container of its own name) — those run LATER, and
+            // SuiteTopology.cs Step 2 wraps every exception except TopologyAuthoringException as
+            // OrchestrationException before it ever reaches this method; they are therefore
+            // unreachable by construction here (ValidateEnvValue's eager checks, the
+            // dependency-env census gate, and the CURRENT Aspire.Hosting.Redis/.Nats behaviour of
+            // always provisioning a password parameter, already prevent them from firing in
+            // practice) and would correctly surface as EnvironmentError via the
+            // OrchestrationException catch below, not this one — a genuine, if never-yet-observed,
+            // infrastructure/engine fault.
             var now = DateTimeOffset.UtcNow;
             buffer.Add(EventStreamJson.ToLine(new ScenarioStartedEvent
             {
@@ -957,6 +974,18 @@ public static class ScenarioRunner
             {
                 await output.WriteLineAsync(
                         DisplaySanitiser.SanitiseForDisplay(confirmation.ToString()))
+                    .ConfigureAwait(false);
+            }
+
+            // #348 (security review): the transport downgrade a project-form service declaring
+            // both schemes incurs. Printed beside the security confirmations because it answers
+            // the same question — what did this run actually talk to, and how — and because that
+            // is the channel available today: no EXISTING v1 event field carries an advisory
+            // about a healthy run, and adding an optional one is deferred to #450 rather than
+            // forbidden. Empty for almost every suite, so ordinary output is unchanged.
+            foreach (var notice in suite.EndpointSelectionNotices)
+            {
+                await output.WriteLineAsync(DisplaySanitiser.SanitiseForDisplay(notice.ToString()))
                     .ConfigureAwait(false);
             }
 
@@ -1733,6 +1762,13 @@ public static class ScenarioRunner
                 // scenarios carrying an early verdict are excluded, and why the two must share one
                 // variable rather than two equal expressions.
                 kafkaSpeakingTargets: SuiteProtocolTargets.KafkaSpeaking(runnableScenarios),
+
+                // #348: the superset, over the SAME `runnableScenarios` list — one variable, for
+                // the reason the note above gives about the protocol-conflict guard. A scenario
+                // carrying an early verdict executes nothing and therefore targets nothing, so it
+                // must not be able to make a project-form service look targeted and get the suite
+                // refused for a step that was never going to run.
+                endpointConsumingTargets: SuiteProtocolTargets.EndpointConsuming(runnableScenarios),
                 cancellationToken: cancellationToken)
                 .ConfigureAwait(false);
         }
@@ -1744,10 +1780,11 @@ public static class ScenarioRunner
             // per-scenario secret-reference / pipeline-compile failures already handled as
             // Inconclusive elsewhere in this loop (via earlyVerdict) — the suite never ran, so
             // every scenario is Inconclusive, NOT EnvironmentError (reserved for genuine
-            // infrastructure faults an author cannot fix by editing the YAML). This catches ONLY
-            // Map's eager, pre-Configure validation; Map's Configure-closure defensive throws
-            // (unreachable by construction given that same eager validation) would surface as
-            // OrchestrationException instead, via the catch below.
+            // infrastructure faults an author cannot fix by editing the YAML). This catches Map's
+            // eager, pre-Configure validation, plus the Configure-closure TopologyAuthoringException
+            // that SuiteTopology.Step 2 re-throws unwrapped (#348); Map's Configure-closure
+            // defensive throws (unreachable by construction given that same eager validation)
+            // would surface as OrchestrationException instead, via the catch below.
             // SCRUBBED here, SANITISED at the print — the same composition, in the same order,
             // as the OrchestrationException sibling below, and it is a BLOCKER fix rather than
             // tidiness. This text is stamped onto every scenario record by the return below, so
@@ -1774,8 +1811,10 @@ public static class ScenarioRunner
 
 
             // The boundary is "no container started", not "before the StartAsync call": Map is
-            // eager and runs ahead of DCP, so this refusal starts nothing and is an authoring
-            // fault like every pre-topology one. It used to carry the accumulated flag through
+            // eager and runs ahead of DCP, and the Configure closure that raises #348's
+            // TopologyAuthoringException runs before builder.Build(), so both refusals start
+            // nothing and are authoring faults like every pre-topology one. It used to carry the
+            // accumulated flag through
             // UNCHANGED — a return that could observe the fault and had no way to record it.
             //
             // The wrap here is pinned by the `EnvironmentMapperArgumentFault` row of the theory
@@ -1915,6 +1954,18 @@ public static class ScenarioRunner
             {
                 await output.WriteLineAsync(
                         DisplaySanitiser.SanitiseForDisplay(confirmation.ToString()))
+                    .ConfigureAwait(false);
+            }
+
+            // #348 (security review): the transport downgrade a project-form service declaring
+            // both schemes incurs. Printed beside the security confirmations because it answers
+            // the same question — what did this run actually talk to, and how — and because that
+            // is the channel available today: no EXISTING v1 event field carries an advisory
+            // about a healthy run, and adding an optional one is deferred to #450 rather than
+            // forbidden. Empty for almost every suite, so ordinary output is unchanged.
+            foreach (var notice in suite.EndpointSelectionNotices)
+            {
+                await output.WriteLineAsync(DisplaySanitiser.SanitiseForDisplay(notice.ToString()))
                     .ConfigureAwait(false);
             }
 
@@ -2157,14 +2208,39 @@ public static class ScenarioRunner
                 //
                 // What it misses is that the byte-identical gate compares the parsed AST
                 // (SerialiseEnvironment over ScenarioAst.Environment), not the YAML. The SCHEMA
-                // door fires on a shape the AST cannot carry: `$defs/security` closes with
-                // `unevaluatedProperties: false`, so an unknown key inside ONE scenario's
-                // `security` block is a schema error located inside that block — while SecuritySpec
-                // has no catch-all member, so the key is dropped and both scenarios' ASTs serialise
-                // identically. The environment gate therefore passes, that scenario alone takes an
-                // early verdict at the schema branch of the compilation loop (recording a refusal),
-                // the all-early guard does not fire because a sibling scenario is still runnable,
-                // and the suite runs to this return carrying it.
+                // door fires on shapes the AST cannot carry, and one is enough: a $defs/security
+                // property declared with a NON-SCALAR value (`caCert: {}`) is a schema error
+                // located inside that block, while GetScalar yields null for it and the key is on
+                // ParseSecurity's exclusion list, so it reaches no member and no bucket either.
+                // A scenario declaring it is therefore AST-indistinguishable from a sibling that
+                // declares no `caCert` at all. The environment gate passes, that scenario alone
+                // takes an early verdict at the schema branch of the compilation loop (recording a
+                // refusal), the all-early guard does not fire because a sibling is still runnable,
+                // and the suite runs to this return carrying it. Measured, not reasoned about:
+                // SchemaSecuritySurfaceClosureTests
+                // .ASecurityPropertyWithANonScalarValue_IsSchemaRejectedAndInvisibleInTheAst.
+                //
+                // THIS EXAMPLE USED TO BE AN UNKNOWN KEY (`$defs/security` closes with
+                // `unevaluatedProperties: false`, and SecuritySpec had no catch-all member, so the
+                // key was dropped). #353 gave SecuritySpec an `Extra` bucket, so an unknown key now
+                // SURVIVES into the AST, the two scenarios diverge, and that suite takes the
+                // shared-environment door above instead.
+                //
+                // "ONLY THE ROUTE CHANGED" IS WHAT THIS NOTE USED TO SAY, AND IT UNDERSTATED IT
+                // (peer-review MINOR). The shared-environment guard sits ABOVE the compilation
+                // loop, so it pre-empts per-scenario schema validation entirely: the whole suite
+                // now aborts EnvironmentError with "declares a different environment block than
+                // the first scenario", where before the sibling RAN and the offending scenario
+                // alone took the schema door with a located error naming the key and a
+                // Verdict.Inconclusive of its own. The author's first diagnostic and the
+                // suite-level verdict both moved. What did NOT move is the only thing this
+                // assignment is responsible for: both doors call `assurance.Refusing(...)`, so a
+                // suite that declares `security` exits non-zero on either route.
+                // Whether the environment gate ought to run AFTER schema validation is a separate
+                // question about gate ordering; nothing here changes that ordering.
+                //
+                // The argument for THIS assignment therefore needed a shape #353 did not close,
+                // and the one above is it.
                 //
                 // So this is not defence in depth: it is the path REQ-018 takes for a mixed suite,
                 // and dropping it would report exit 0 on a rejected security declaration.
@@ -2872,18 +2948,60 @@ public static class ScenarioRunner
     /// declares none (an empty topology).
     /// </param>
     /// <returns>
-    /// A stable string key derived from the same serialisation
-    /// <see cref="RunSuiteAsync"/> uses for its shared-environment check, so the two can
-    /// never disagree about what counts as "the same environment".  An empty string for a
-    /// <see langword="null"/> environment.
+    /// An uppercase hex SHA-256 over the same serialisation <see cref="RunSuiteAsync"/> uses for
+    /// its shared-environment check, so the two can never disagree about what counts as "the same
+    /// environment".  An empty string for a <see langword="null"/> environment.
     /// </returns>
     /// <remarks>
-    /// Reuses the private <see cref="SerialiseEnvironment"/> helper — the SAME canonical
-    /// form the suite runner already compares for its shared-topology assumption — so the
-    /// reuse decision here and the suite's equality check are guaranteed consistent.
+    /// <para>
+    /// Derived from the private <see cref="SerialiseEnvironment"/> helper — the SAME canonical
+    /// form the suite runner already compares for its shared-topology assumption — so the reuse
+    /// decision here and the suite's equality check are guaranteed consistent.
+    /// </para>
+    /// <para>
+    /// <strong>It DIGESTS that form rather than returning it, and the name was the honest one
+    /// before this method was (#353, review round two).</strong> It used to return the serialised
+    /// JSON itself: plaintext, carrying <c>"ClientKeyPassword"</c> with whatever the author
+    /// declared and, since #353, the two untyped <c>Extra</c> buckets beside it. A
+    /// <see langword="public"/> method returning declared secret material under a name that
+    /// promises a digest is a disclosure waiting for the first caller who trusts the name; #353
+    /// did not create it but did enlarge its payload.
+    /// </para>
+    /// <para>
+    /// <strong>Behaviour-preserving, which is why it could be fixed here rather than filed.</strong>
+    /// This method has exactly ONE call site outside tests — <c>WatchRunner.Compile</c> — and that
+    /// chain compares the value and does nothing else: <c>WatchRunner</c> hands it to
+    /// <c>WatchCompileResult</c>, whose get-only <c>EnvironmentHash</c> property <c>WatchSession</c>
+    /// reads for exactly one ordinal <c>string.Equals</c> against the hash of the topology it is
+    /// keeping. No persistence, no file write, no event field, no rendered line. A digest therefore
+    /// answers every question the plaintext answered.
+    /// </para>
+    /// <para>
+    /// <strong><see cref="RunSuiteAsync"/>'s shared-environment guard is NOT a consumer of this
+    /// value</strong>, and this note claimed it was until review measured the call sites. That
+    /// guard calls the private <see cref="SerialiseEnvironment"/> helper directly and compares the
+    /// PLAINTEXT JSON, so it neither gained nor lost anything here. What the two share is the
+    /// SERIALISATION, not this method's return value — which is exactly what the consistency
+    /// claimed above rests on, and is the whole of the relationship.
+    /// </para>
+    /// <para>
+    /// The bytes are the string's UTF-16 code units REINTERPRETED, not transcoded — for
+    /// consistency with <c>SecuredTargets.IdentityOf</c>, which hashes code units because it takes
+    /// RAW declared strings and an <see cref="System.Text.Encoding"/> replacement fallback there
+    /// really does map two distinct <c>caCert</c> values onto one (a CLI test pins a pair differing
+    /// only by a lone surrogate). That reason does not transfer to THIS input and must not be
+    /// restated as if it did: the text arriving here has already been through
+    /// <see cref="JsonSerializer"/>, which substitutes U+FFFD for an unpaired surrogate itself —
+    /// measured, two field values differing only in WHICH lone high surrogate they carry both
+    /// serialise to one identical JSON string, the surrogate replaced before this method is
+    /// reached. The collision is collapsed upstream, so the choice here buys uniformity rather
+    /// than injectivity.
+    /// </para>
     /// </remarks>
     public static string ComputeEnvironmentHash(EnvironmentSpec? environment) =>
-        SerialiseEnvironment(environment);
+        SerialiseEnvironment(environment) is { Length: > 0 } json
+            ? Convert.ToHexString(SHA256.HashData(MemoryMarshal.AsBytes(json.AsSpan())))
+            : string.Empty;
 
     /// <summary>
     /// Builds the per-topology isolation for watch mode (S08-C-01) via
@@ -3029,6 +3147,32 @@ public static class ScenarioRunner
             {
                 await output.WriteLineAsync(
                         DisplaySanitiser.SanitiseForDisplay(confirmation.ToString()))
+                    .ConfigureAwait(false);
+            }
+        }
+
+        // #348 (security review): replayed with the confirmations above and for the same reason —
+        // this topology may be held across many edits, and the transport it selected does not
+        // change until it is rebuilt.
+        //
+        // QUALIFIED IN THE OUTPUT, not merely here, on the same principle as the confirmations
+        // line above: a stale statement is only misleading if nothing tells the reader it is
+        // stale. It is worse for this one. The rebuild trigger is the `environment` hash, and a
+        // project's endpoints come from `Properties/launchSettings.json`, which is not part of the
+        // YAML at all — so an author can delete the https URL, save, and keep being told about a
+        // downgrade that no longer happens, indefinitely.
+        if (topology.EndpointSelectionNotices.Count > 0)
+        {
+            await output.WriteLineAsync(
+                    "transport: selected once when this topology was built, and replayed here — "
+                    + "endpoints are not re-read per re-run. A project's endpoints come from its "
+                    + "launch profile, which is not part of the 'environment' block, so editing "
+                    + "one does not rebuild the topology: restart --watch to re-select.")
+                .ConfigureAwait(false);
+
+            foreach (var notice in topology.EndpointSelectionNotices)
+            {
+                await output.WriteLineAsync(DisplaySanitiser.SanitiseForDisplay(notice.ToString()))
                     .ConfigureAwait(false);
             }
         }
@@ -3970,11 +4114,23 @@ public static class ScenarioRunner
     /// <summary>
     /// <see cref="JsonSerializerOptions"/> used by <see cref="SerialiseEnvironment"/>.
     /// Allocated once (static initialiser) to avoid repeated reflection overhead.
-    /// Registers <see cref="YamlNodeJsonConverter"/> so that a
-    /// <see cref="DependencySpec.Extra"/> field (type <see cref="YamlMappingNode"/>)
-    /// is serialised to a deterministic JSON object rather than throwing
-    /// <see cref="InvalidOperationException"/> (S11-B-02).
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Registers <see cref="YamlNodeJsonConverter"/> so that a <see cref="YamlMappingNode"/> in the
+    /// serialised graph becomes a deterministic JSON object rather than throwing
+    /// <see cref="InvalidOperationException"/> (S11-B-02).
+    /// </para>
+    /// <para>
+    /// <strong>TWO structurally independent properties depend on this registration, not one.</strong>
+    /// <see cref="DependencySpec.Extra"/> is the one it was added for (S11-B-02);
+    /// <see cref="SecuritySpec.Extra"/> (#353) is the second, reached through a service's or
+    /// dependency's <c>security</c> block instead. Narrowing this registration to the dependency
+    /// path — a plausible cleanup while the prose named only that property — would break the
+    /// security path on the watch loop, where <c>WatchRunner</c> serialises BEFORE schema
+    /// validation and the parser is lenient where the schema is closed.
+    /// </para>
+    /// </remarks>
     private static readonly JsonSerializerOptions s_envSerialiserOptions =
         new() { Converters = { new YamlNodeJsonConverter() } };
 
@@ -3984,12 +4140,12 @@ public static class ScenarioRunner
     /// Returns an empty string for a <see langword="null"/> environment.
     /// </summary>
     /// <remarks>
-    /// Uses <see cref="s_envSerialiserOptions"/> which registers
-    /// <see cref="YamlNodeJsonConverter"/> — required because
-    /// <see cref="DependencySpec.Extra"/> is a <see cref="YamlMappingNode"/> that
-    /// <see cref="JsonSerializer"/> cannot handle without a custom converter (S11-B-02).
-    /// Mapping keys within each <see cref="DependencySpec.Extra"/> block are emitted in
-    /// ordinal sort order, so two Extra mappings that contain the same pairs in different
+    /// Uses <see cref="s_envSerialiserOptions"/>, which registers
+    /// <see cref="YamlNodeJsonConverter"/> — required because a <see cref="YamlMappingNode"/>
+    /// is a type <see cref="JsonSerializer"/> cannot handle without a custom converter
+    /// (S11-B-02), and TWO properties in this graph are one: <see cref="DependencySpec.Extra"/>
+    /// and <see cref="SecuritySpec.Extra"/> (#353). Mapping keys within any such node are
+    /// emitted in ordinal sort order, so two Extra mappings that contain the same pairs in different
     /// declaration order produce identical JSON.  Top-level <c>Services</c> and
     /// <c>Dependencies</c> collections are serialised by STJ in enumeration order and
     /// retain their YAML declaration order (which is stable: it comes from the same parsed

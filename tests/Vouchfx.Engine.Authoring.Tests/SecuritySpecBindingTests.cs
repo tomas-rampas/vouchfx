@@ -8,10 +8,15 @@
 //     time — and this layer is authoring-surface only; and
 //   • the primary constructor still takes exactly six parameters (see the arity guard at the
 //     foot of this file for why that number is load-bearing).
+//
+// It has since gained the parser half of #353's `Extra` bucket, in two rows: one pinning that no
+// BOUND key reaches the bucket (the whole typed surface leaves it null), and one pinning that a
+// key differing from a bound one only in CASE does reach it, because the comparison is ordinal.
 
 using System.Reflection;
 using Vouchfx.Engine.Authoring.Model;
 using Xunit;
+using YamlDotNet.RepresentationModel;
 
 namespace Vouchfx.Engine.Authoring.Tests;
 
@@ -170,6 +175,94 @@ public sealed class SecuritySpecBindingTests
         var doc = YamlDocumentParser.Parse(yaml);
 
         Assert.Equal("hunter2", doc.Environment!.Services!["app"].Security!.ClientKeyPassword);
+    }
+
+    /// <summary>
+    /// #353: a <c>security</c> block declaring the WHOLE typed surface and nothing else leaves
+    /// <see cref="SecuritySpec.Extra"/> <see langword="null"/>.
+    /// </summary>
+    /// <remarks>
+    /// The other half of the bucket's correctness, and the half a round-trip test cannot see: if
+    /// <c>ParseSecurity</c>'s exclusion list ever falls behind the keys it binds, the missed key
+    /// lands in the untyped bucket AS WELL AS in its typed member, and every assertion about the
+    /// typed member still passes. Declaring all seven keys here means one omission from that list
+    /// reddens this row. <c>BuildExtraNode</c> returns <see langword="null"/> rather than an empty
+    /// node for an empty result, so "no unbound key" and "no bucket" are the same state — matching
+    /// <see cref="DependencySpec.Extra"/> exactly.
+    /// </remarks>
+    [Fact]
+    public void Parse_SecurityBlockDeclaringOnlyBoundKeys_LeavesExtraNull()
+    {
+        const string yaml = """
+            environment:
+              services:
+                app:
+                  image: myorg/app:1.0
+                  security:
+                    profile: mtls
+                    endpoint: 8443
+                    caCert: certs/ca.pem
+                    clientCert: certs/client.pem
+                    clientKey: certs/client.key
+                    clientKeyPassword: "${secret:env/CLIENT_KEY_PASS}"
+                    serverArtifacts:
+                      - source: certs/broker.jks
+                        target: /etc/kafka/secrets/broker.jks
+            steps:
+              - id: s1
+                type: script.csharp
+                code: "// no-op"
+            """;
+
+        var doc = YamlDocumentParser.Parse(yaml);
+
+        var security = doc.Environment!.Services!["app"].Security;
+        Assert.NotNull(security);
+        Assert.Null(security!.Extra);
+
+        // Non-vacuity: the fixture must actually declare the whole surface, or a null bucket
+        // proves only that the keys it omitted were omitted.
+        Assert.NotNull(security.Profile);
+        Assert.NotNull(security.Endpoint);
+        Assert.NotNull(security.CaCert);
+        Assert.NotNull(security.ClientCert);
+        Assert.NotNull(security.ClientKey);
+        Assert.NotNull(security.ClientKeyPassword);
+        Assert.NotNull(security.ServerArtifacts);
+    }
+
+    /// <summary>
+    /// #353: the key comparison is ORDINAL, matching <see cref="DependencySpec.Extra"/>'s. A
+    /// differently-cased spelling of a bound key is NOT that key, so it lands in the bucket
+    /// rather than being silently accepted as the typed field.
+    /// </summary>
+    [Fact]
+    public void Parse_SecurityKeyDifferingOnlyInCase_LandsInExtra_NotInTheTypedMember()
+    {
+        const string yaml = """
+            environment:
+              services:
+                app:
+                  image: myorg/app:1.0
+                  security:
+                    profile: tls
+                    endpoint: 8443
+                    CaCert: certs/ca.pem
+            steps:
+              - id: s1
+                type: script.csharp
+                code: "// no-op"
+            """;
+
+        var doc = YamlDocumentParser.Parse(yaml);
+
+        var security = doc.Environment!.Services!["app"].Security;
+        Assert.NotNull(security);
+        Assert.Null(security!.CaCert);
+        Assert.NotNull(security.Extra);
+        Assert.Equal(
+            "certs/ca.pem",
+            ((YamlScalarNode)security.Extra!.Children[new YamlScalarNode("CaCert")]).Value);
     }
 
     /// <summary>

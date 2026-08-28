@@ -146,6 +146,203 @@ public sealed class EnvironmentHashTests
             "ComputeEnvironmentHash must return a non-empty string for a non-null environment.");
     }
 
+    /// <summary>
+    /// #353 put a second <see cref="YamlMappingNode"/> on this path —
+    /// <see cref="SecuritySpec.Extra"/> — reached through a dependency's <c>security</c> block
+    /// rather than through <see cref="DependencySpec.Extra"/>. Two environments differing ONLY in
+    /// that bucket must produce different hashes: the bucket has to survive serialisation, and
+    /// its content has to reach the digest.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Load-bearing on the WATCH path specifically. <c>WatchRunner</c> computes this hash
+    /// immediately after <c>YamlDocumentParser.Parse</c> and BEFORE any schema validation, and
+    /// the parser is lenient where the schema is closed — so a document carrying an unbound
+    /// <c>security</c> key reaches this serialiser even though the schema would refuse it. A
+    /// throw here would surface as a parse failure on a document the engine was about to reject
+    /// for an unrelated and correctly-stated reason.
+    /// </para>
+    /// <para>
+    /// <strong>Why this is measured rather than inferred from the sibling row above, corrected in
+    /// #353's review round two.</strong> It is NOT that converter resolution differs per property
+    /// — measured, it does not: <c>YamlNodeJsonConverter</c> is registered in <c>Converters</c>
+    /// and selected by its <c>CanConvert</c> (<c>typeof(YamlNode).IsAssignableFrom</c>), and
+    /// both buckets are <c>YamlMappingNode?</c> with no <c>[JsonConverter]</c> attribute, so the
+    /// two resolve identically by construction. What is NOT identical by construction is
+    /// REACHABILITY: the sibling row proves a node held directly by a dependency survives, and
+    /// says nothing about one held two records deeper, behind a member the digest's own sibling
+    /// (<c>SecuredTargets.IdentityOf</c>) deliberately does not read.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void ComputeEnvironmentHash_WithNonNullSecurityExtra_DoesNotThrow_ReturnsNonEmpty()
+    {
+        var securityExtra = new YamlMappingNode
+        {
+            { new YamlScalarNode("trustDomain"), new YamlScalarNode("spiffe://acme.example") },
+        };
+
+        var env = new EnvironmentSpec(
+            Services: null,
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["events"] = new DependencySpec(Type: "kafka", Version: null, Extra: null)
+                {
+                    Security = new SecuritySpec("acme.spiffe", "9093", null, null, null, null)
+                    {
+                        Extra = securityExtra,
+                    },
+                },
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        // The same environment with an EMPTY bucket, and with none at all: three states that
+        // must not collide, which is the reachability claim stated as a comparison rather than
+        // as a substring of a plaintext payload (#353, review round two — this method now
+        // returns a digest).
+        var withOtherContent = KafkaEnvWithSecurityExtra(
+            ("trustDomain", "spiffe://other.example"));
+        var withoutBucket = KafkaEnvWithSecurityExtra();
+
+        var hash = ScenarioRunner.ComputeEnvironmentHash(env);
+        var hashOther = ScenarioRunner.ComputeEnvironmentHash(withOtherContent);
+        var hashNone = ScenarioRunner.ComputeEnvironmentHash(withoutBucket);
+
+        Assert.False(string.IsNullOrEmpty(hash));
+
+        // The bucket reaches the digest: a change confined to it moves the value. A serialiser
+        // that dropped SecuritySpec.Extra would make all three of these equal.
+        Assert.NotEqual(hashNone, hash);
+        Assert.NotEqual(hashNone, hashOther);
+        Assert.NotEqual(hash, hashOther);
+    }
+
+    /// <summary>
+    /// A kafka dependency whose <c>security</c> block carries the given #353 bucket entries, or
+    /// no bucket at all when none are given.
+    /// </summary>
+    private static EnvironmentSpec KafkaEnvWithSecurityExtra(
+        params (string Key, string Value)[] entries)
+    {
+        YamlMappingNode? extra = null;
+
+        if (entries.Length > 0)
+        {
+            extra = new YamlMappingNode();
+            foreach (var (key, value) in entries)
+            {
+                extra.Children.Add(new YamlScalarNode(key), new YamlScalarNode(value));
+            }
+        }
+
+        return new EnvironmentSpec(
+            Services: null,
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["events"] = new DependencySpec(Type: "kafka", Version: null, Extra: null)
+                {
+                    Security = new SecuritySpec("acme.spiffe", "9093", null, null, null, null)
+                    {
+                        Extra = extra,
+                    },
+                },
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+    }
+
+    /// <summary>
+    /// <c>ComputeEnvironmentHash</c> must not RETURN declared secret material. The environment it
+    /// serialises carries <see cref="SecuritySpec.ClientKeyPassword"/> and the two untyped
+    /// <c>Extra</c> buckets, none of which this engine can prove non-secret.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The row that makes the digest load-bearing (#353, review round two). The three rows above
+    /// assert equality properties that hold of the plaintext JSON just as well as of a digest —
+    /// measured: with the method reverted to <c>return SerialiseEnvironment(environment);</c> the
+    /// whole of this class still passed 9/9. So they pin the CONSISTENCY of the value and say
+    /// nothing about what it discloses, and a later reader could revert the digest for
+    /// simplicity's sake with nothing red.
+    /// </para>
+    /// <para>
+    /// Three canaries rather than one, in the three members whose contents no consumer may assume
+    /// are non-secret. A hex SHA-256 cannot contain any of them; the plaintext contained all
+    /// three.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void ComputeEnvironmentHash_DoesNotReturnDeclaredSecretMaterial()
+    {
+        const string passphraseCanary = "P@ssw0rd-LEAK-CANARY";
+        const string securityBucketCanary = "SECURITY-EXTRA-LEAK-CANARY";
+        const string dependencyBucketCanary = "DEPENDENCY-EXTRA-LEAK-CANARY";
+
+        var dependencyExtra = new YamlMappingNode
+        {
+            { new YamlScalarNode("vendorSecret"), new YamlScalarNode(dependencyBucketCanary) },
+        };
+        var securityExtra = new YamlMappingNode
+        {
+            { new YamlScalarNode("vendorSecret"), new YamlScalarNode(securityBucketCanary) },
+        };
+
+        var env = new EnvironmentSpec(
+            Services: null,
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["events"] = new DependencySpec(Type: "kafka", Version: null, Extra: dependencyExtra)
+                {
+                    Security = new SecuritySpec(
+                        "mtls", "9093", "./ca.pem", "./client.pem", "./client.key", null)
+                    {
+                        ClientKeyPassword = passphraseCanary,
+                        Extra = securityExtra,
+                    },
+                },
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var hash = ScenarioRunner.ComputeEnvironmentHash(env);
+
+        Assert.DoesNotContain(passphraseCanary, hash, StringComparison.Ordinal);
+        Assert.DoesNotContain(securityBucketCanary, hash, StringComparison.Ordinal);
+        Assert.DoesNotContain(dependencyBucketCanary, hash, StringComparison.Ordinal);
+
+        // Non-vacuity, and the shape of the guarantee: an uppercase hex digest, so no author
+        // string of any kind can survive into it. An empty or truncated return would satisfy the
+        // three assertions above while proving nothing.
+        Assert.Equal(64, hash.Length);
+        Assert.All(hash, c => Assert.True(
+            (c >= '0' && c <= '9') || (c >= 'A' && c <= 'F'),
+            $"Expected uppercase hex, found '{c}' in: {hash}"));
+
+        // And the canaries DID reach the serialised form — otherwise this row would pass on an
+        // environment whose secret-bearing members were dropped before the digest, proving
+        // nothing about the digest at all.
+        Assert.NotEqual(
+            hash,
+            ScenarioRunner.ComputeEnvironmentHash(
+                new EnvironmentSpec(
+                    Services: null,
+                    Dependencies: new Dictionary<string, DependencySpec>
+                    {
+                        ["events"] = new DependencySpec(Type: "kafka", Version: null, Extra: null)
+                        {
+                            Security = new SecuritySpec(
+                                "mtls", "9093", "./ca.pem", "./client.pem", "./client.key", null),
+                        },
+                    },
+                    Seed: null,
+                    ImageRegistry: null,
+                    ImagePullPolicy: null)));
+    }
+
     // ── Test 2: Determinism — key-order invariance ────────────────────────────
 
     /// <summary>
@@ -237,15 +434,20 @@ public sealed class EnvironmentHashTests
                 + $"DependencySpec.Extra.{System.Environment.NewLine}AB = {hashAB}"
                 + $"{System.Environment.NewLine}BA = {hashBA}");
 
-        // And the difference is exactly the key order — BOTH pairs are present in BOTH strings,
-        // which is what excludes the alternative explanation ("the difference is content, not
-        // order"). Checking one pair per string would not: a serialiser that dropped the second
-        // entry of each map would leave the inequality above intact and still pass.
-        foreach (var hash in new[] { hashAB, hashBA })
-        {
-            Assert.Contains("\"A\":\"1\"", hash, System.StringComparison.Ordinal);
-            Assert.Contains("\"B\":\"2\"", hash, System.StringComparison.Ordinal);
-        }
+        // And the difference is exactly the key ORDER, not lost content — the alternative
+        // explanation this excludes is "the serialiser dropped the second entry of each map",
+        // which would leave the inequality above intact. A one-entry environment is the control:
+        // were the second entry being dropped, AB and BA would each equal it.
+        //
+        // Asserted by COMPARISON rather than by looking for '"A":"1"' inside the returned value,
+        // which is what this test did while ComputeEnvironmentHash returned its plaintext JSON
+        // (#353, review round two). The property under test is unchanged; only a digest cannot be
+        // read for substrings, and a method named for a hash should never have been readable that
+        // way in the first place.
+        var hashAOnly = ScenarioRunner.ComputeEnvironmentHash(KafkaEnvWithTypedEnv(("A", "1")));
+
+        Assert.NotEqual(hashAOnly, hashAB);
+        Assert.NotEqual(hashAOnly, hashBA);
     }
 
     // ── Test 3: Fidelity — different extras → different hashes ───────────────

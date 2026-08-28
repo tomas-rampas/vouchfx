@@ -23,11 +23,15 @@
 //   • It lands ONE `ContainerFileSystemCallbackAnnotation { DestinationPath, Callback }` on the
 //     resource; resolving that callback returns the `ContainerFile { Name, SourcePath }` entries
 //     verbatim. No `WithBindMount`, no `ContainerMountAnnotation`.
-//   • `IResourceBuilder<out T>` is COVARIANT, so the `IResourceBuilder<IResource>` this mapper
-//     retains for a dependency casts back to `IResourceBuilder<ContainerResource>` with `as`
-//     whenever the concrete resource derives from `ContainerResource` (verified against a real
-//     `AddKafka` builder, whose runtime type is `DistributedApplicationResourceBuilder<
-//     KafkaServerResource>`).
+//   • `IResourceBuilder<out T>` is COVARIANT — it converts UP and never back down. A widened
+//     `IResourceBuilder<IResource>` therefore converts to `IResourceBuilder<ContainerResource>`
+//     ONLY when the runtime builder's own type argument IS, or derives from, `ContainerResource`
+//     (the four `AddContainer`-backed registrations — mailpit, azureservicebus, dynamodb, minio —
+//     are the identity case; `AddKafka` is the derived case, its runtime type being
+//     `DistributedApplicationResourceBuilder<KafkaServerResource>`), and yields null otherwise —
+//     e.g. for an `AddDatabase` child. That is why `Apply` takes a container-typed builder and
+//     each caller narrows BEFORE calling: the mapper resolves a dependency's own container by
+//     name, so no widened builder is ever in play (#426).
 //
 // EDGE-007: `ContainerFile.Contents` is `string?` — TEXT only — and a Java keystore is binary,
 // which is why the schema offers no inline `contents:` alternative and this file only ever sets
@@ -240,38 +244,30 @@ internal static class ServerArtifactInjection
     /// a bind mount (REQ-016).
     /// </summary>
     /// <param name="builder">
-    /// The resource builder, which may be the type-erased <c>IResourceBuilder&lt;IResource&gt;</c>
-    /// this mapper retains for a dependency. <see cref="IResourceBuilder{T}"/> is covariant, so a
-    /// container-backed resource casts back with <c>as</c>.
+    /// The CONTAINER the artefacts are copied into — a service's own image-form container builder,
+    /// or, for a dependency, the container the mapper resolved by the declared dependency name.
     /// </param>
     /// <param name="groups">The planned groups from <see cref="Plan"/>.</param>
-    /// <param name="ownerKindPlural"><c>"services"</c> or <c>"dependencies"</c>.</param>
-    /// <param name="ownerName">The declared service/dependency name.</param>
-    /// <exception cref="ArgumentException">
-    /// The resource is not container-backed, so there is no container filesystem to copy into.
-    /// </exception>
+    /// <remarks>
+    /// The parameter is container-TYPED on purpose (#426). It was previously widened to
+    /// <c>IResourceBuilder&lt;IResource&gt;</c>, guarded by an <c>as</c> cast and a throw for the
+    /// null case — and that width is precisely what let the dependency call site pass a resource
+    /// with no container filesystem. Narrowing it makes that class of mistake unrepresentable at
+    /// compile time instead of diagnosed at topology-build time; covariance explains why the wide
+    /// type compiled, which is not a reason to keep it.
+    /// </remarks>
+    /// <remarks>
+    /// The owner's kind and name are no longer parameters: they existed solely to compose the
+    /// deleted throw's message, and <see cref="Plan"/> — which owns every author-facing diagnostic
+    /// this feature emits — still takes both.
+    /// </remarks>
     internal static void Apply(
-        IResourceBuilder<IResource> builder,
-        IReadOnlyList<ServerArtifactGroup> groups,
-        string ownerKindPlural,
-        string ownerName)
+        IResourceBuilder<ContainerResource> builder,
+        IReadOnlyList<ServerArtifactGroup> groups)
     {
         if (groups.Count == 0)
         {
             return;
-        }
-
-        if (builder as IResourceBuilder<ContainerResource> is not { } containerBuilder)
-        {
-            // Unreachable through the schema today — every dependency kind is container-backed and
-            // `security` is rejected outright on a project-form service (REQ-023) — but a resource
-            // that is not a container has no filesystem to copy into, and silently skipping the
-            // copy is the EDGE-005 shape: a healthy container whose entrypoint finds no keystore.
-            throw new ArgumentException(
-                $"environment.{ownerKindPlural}.{ownerName}.security.serverArtifacts: "
-                + $"'{ownerName}' is not backed by a container, so declared artefacts cannot be "
-                + "copied into it.",
-                nameof(builder));
         }
 
         foreach (var group in groups)
@@ -288,7 +284,7 @@ internal static class ServerArtifactInjection
                 })
                 .ToArray();
 
-            containerBuilder.WithContainerFiles(group.DestinationDirectory, entries);
+            builder.WithContainerFiles(group.DestinationDirectory, entries);
         }
     }
 }

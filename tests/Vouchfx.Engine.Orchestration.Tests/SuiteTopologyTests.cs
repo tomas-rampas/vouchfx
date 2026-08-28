@@ -31,11 +31,17 @@ namespace Vouchfx.Engine.Orchestration.Tests;
 /// is resolved from this assembly rather than from the xUnit runner entry assembly.
 /// </para>
 /// </remarks>
-public sealed class SuiteTopologyTests
+public sealed class SuiteTopologyTests : IDisposable
 {
     private readonly ITestOutputHelper _output;
 
     public SuiteTopologyTests(ITestOutputHelper output) => _output = output;
+
+    /// <summary>Synthesised <c>project:</c>-form fixtures, removed when xUnit disposes this class.</summary>
+    private readonly ProjectFixtures _fixtures = new();
+
+    /// <inheritdoc />
+    public void Dispose() => _fixtures.Dispose();
 
     // The short name of *this* test assembly — the one whose AssemblyInfo carries dcpclipath.
     private const string AppHostAssemblyName = "Vouchfx.Engine.Orchestration.Tests";
@@ -285,5 +291,72 @@ public sealed class SuiteTopologyTests
             () => SuiteTopology.StartAsync(
                 environment: unsecured,
                 appHostAssemblyName: AppHostAssemblyName));
+    }
+
+    // -----------------------------------------------------------------------
+    // #348 — the MIDDLE link of the verdict chain.
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// A TopologyAuthoringException raised inside Map's Configure closure escapes
+    /// <see cref="SuiteTopology.StartAsync"/> UNWRAPPED — it is not classified as an
+    /// <see cref="OrchestrationException"/> like every other exception from that closure.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The link nothing else pins.</strong> The chain #348 depends on is: throw in
+    /// Configure → <c>SuiteTopology</c>'s <c>catch (TopologyAuthoringException) { throw; }</c> →
+    /// <c>ScenarioRunner</c>'s <c>catch (ArgumentException)</c> → Inconclusive → non-zero exit.
+    /// The first link is covered by <c>ProjectServiceEndpointStagingTests</c> (which calls
+    /// <c>Configure</c> directly) and the third by the exception's base type; this covers the
+    /// second, which was covered by nothing.
+    /// </para>
+    /// <para>
+    /// <strong>Why deletion is the realistic mutation.</strong> Reordering the catch clauses is a
+    /// compile error (CS0160, a more-derived clause after its base). But deleting an
+    /// apparently-redundant rethrow compiles clean and keeps every other test green, while
+    /// silently turning an authoring fault into an EnvironmentError — which, having executed
+    /// nothing, EXITS 0 (#390). A green build over a suite that never started is exactly the
+    /// outcome this fix exists to prevent.
+    /// </para>
+    /// <para>
+    /// Non-Docker, by construction: the refusal is raised while the Configure callback runs,
+    /// which is before <c>builder.Build()</c> and long before DCP is reached — the same property
+    /// that makes the accessor-guard tests above runnable without a container.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task SuiteTopology_TargetedProjectServiceWithNoEndpoint_PropagatesTheAuthoringFaultUnwrapped()
+    {
+        // A project with no launch profile at all: measured under the pinned Aspire 13.4.2, its
+        // ProjectResource carries zero endpoint annotations.
+        var csproj = _fixtures.Create(applicationUrl: null);
+
+        var environment = new EnvironmentSpec(
+            Services: new Dictionary<string, ServiceSpec>(StringComparer.Ordinal)
+            {
+                ["orders-api"] = new ServiceSpec(
+                    Image: null,
+                    Project: csproj,
+                    ImagePullPolicy: null,
+                    HttpPort: null,
+                    Env: null),
+            },
+            Dependencies: null,
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        // ThrowsAsync, not ThrowsAnyAsync: the EXACT-type match is the whole assertion. An
+        // OrchestrationException would satisfy neither, and TopologyAuthoringException is not
+        // assignable from it, so a lost rethrow reddens here and only here.
+        var ex = await Assert.ThrowsAsync<TopologyAuthoringException>(
+            () => SuiteTopology.StartAsync(
+                environment: environment,
+                appHostAssemblyName: AppHostAssemblyName,
+                endpointConsumingTargets: new HashSet<string>(StringComparer.Ordinal) { "orders-api" }));
+
+        Assert.Contains("orders-api", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("declares no endpoint", ex.Message, StringComparison.Ordinal);
     }
 }
