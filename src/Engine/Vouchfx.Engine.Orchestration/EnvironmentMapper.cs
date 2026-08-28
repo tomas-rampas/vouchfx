@@ -127,6 +127,21 @@ public sealed record MappedTopology(
     /// </remarks>
     internal IReadOnlyList<EndpointSelectionNotice> EndpointSelectionNotices { get; init; }
         = Array.Empty<EndpointSelectionNotice>();
+
+    /// <summary>
+    /// Author-facing notices that a service's staged address resolves to an https listener the
+    /// engine configures no client trust material for — whether it was named by the service's
+    /// <c>endpoint:</c> or chosen by the engine's own rule. Empty until <see cref="Configure"/>
+    /// has run, and empty for almost every suite.
+    /// </summary>
+    /// <remarks>
+    /// A second list rather than a second case of <see cref="EndpointSelectionNotices"/> — see
+    /// <see cref="EndpointTrustNotice"/>'s own header for the reason, which is that the two
+    /// records carry different fields, not merely different wording. Surfaced and printed through
+    /// exactly the same channel.
+    /// </remarks>
+    internal IReadOnlyList<EndpointTrustNotice> EndpointTrustNotices { get; init; }
+        = Array.Empty<EndpointTrustNotice>();
 }
 
 /// <summary>
@@ -688,14 +703,16 @@ public static class EnvironmentMapper
     /// <see cref="ArgumentException"/> out of this method as Inconclusive rather than
     /// EnvironmentError (§12.1).
     /// <para>
-    /// <strong>One authoring fault is NOT raised eagerly, and it is the exception to the "every
-    /// eager check" framing above rather than a member of it</strong> (#348): a step-targeted
-    /// <c>project:</c>-form service whose project declares no endpoint is refused from inside the
-    /// <see cref="MappedTopology.Configure"/> closure, because only Aspire can say what endpoints a
-    /// launch profile produces and only after it has built the resource. It throws
+    /// <strong>Some authoring faults are NOT raised eagerly, and they are the exception to the
+    /// "every eager check" framing above rather than members of it.</strong> The property they
+    /// share is that only Aspire can decide them, and only after it has built the resource — what
+    /// endpoints a launch profile produces is the standing example (#348). Those are refused from
+    /// inside the <see cref="MappedTopology.Configure"/> closure and throw
     /// <see cref="TopologyAuthoringException"/> — an <see cref="ArgumentException"/> subclass, so
     /// the classification above still holds — which <see cref="SuiteTopology.StartAsync"/>
-    /// re-throws unwrapped for exactly that reason. Every OTHER throw from that closure is an
+    /// re-throws unwrapped for exactly that reason. For the current set, grep
+    /// <c>throw new TopologyAuthoringException</c>; a roster written out here goes stale, which is
+    /// how this paragraph went wrong once already. Every OTHER throw from that closure is an
     /// engine defect or an infrastructure fault and is correctly wrapped as an
     /// <see cref="OrchestrationException"/>.
     /// </para>
@@ -730,6 +747,12 @@ public static class EnvironmentMapper
         // inside the closure, read after it — same lifecycle as serviceEndpoints, and the same
         // reason it cannot be computed eagerly: it depends on endpoints Aspire discovers.
         var endpointSelectionNotices = new List<EndpointSelectionNotice>();
+
+        // The OTHER endpoint advisory, and a separate list because it is a separate record with a
+        // separate field set (see EndpointTrustNotice's own header for why it is not a
+        // discriminated case of the one above): a staged address that resolves to an https
+        // listener the engine holds no trust material for. Same lifecycle, same reason.
+        var endpointTrustNotices = new List<EndpointTrustNotice>();
 
         // #348: same treatment, same reason — captured once here so the endpoint-less project-form
         // refusal inside the Configure closure is a plain set lookup. Empty is the PERMISSIVE
@@ -1359,16 +1382,18 @@ public static class EnvironmentMapper
             // IDEMPOTENCE, to match the neighbours (peer-review MINOR). The three captured
             // dictionaries — serviceEndpoints, dependencyBuilders, depConnBuilders — are written
             // by KEYED ASSIGNMENT, so a second invocation of this closure overwrites rather than
-            // accumulates. endpointSelectionNotices is a List and its only write is an Add, so
-            // without this Clear a second Configure DOUBLES every notice the author sees —
-            // measured by deleting the line and re-running the pin below, which then reports
+            // accumulates. The two notice lists are Lists whose only write is an Add, so without
+            // these Clears a second Configure DOUBLES every notice the author sees — measured by
+            // deleting the line and re-running the pin below, which then reports
             // "Expected: 1 / Actual: 2".
             // There is exactly ONE production invocation today — HeadlessTopology's
             // `configureResources?.Invoke(builder)`, reached from SuiteTopology — so this closes a
             // latent inconsistency rather than a live defect. Pinned by
             // ProjectServiceEndpointStagingTests
-            // .ConfigureInvokedTwice_DoesNotDuplicateTheTransportDowngradeNotice.
+            // .ConfigureInvokedTwice_DoesNotDuplicateTheTransportDowngradeNotice, and — for the
+            // trust notice — .ConfigureInvokedTwice_DoesNotDuplicateTheTrustNotice.
             endpointSelectionNotices.Clear();
+            endpointTrustNotices.Clear();
 
             var mostSpecificDependencyResources = new List<IResourceBuilder<IResource>>();
 
@@ -1658,6 +1683,131 @@ public static class EnvironmentMapper
                         .OfType<EndpointAnnotation>()
                         .ToList();
 
+                    // THE AUTHOR'S OWN SELECTION, where one was declared. `endpoint:` names WHICH
+                    // discovered listener svc::<name> resolves to, and it is the only override
+                    // this form has — the fixed rule below is what runs in its absence.
+                    //
+                    // MATCHED ON THE ANNOTATION NAME, under Ordinal comparison, never on the
+                    // scheme. Scheme matching is the fixed rule's business because that rule is a
+                    // statement about TRANSPORT; this field is a statement about WHICH LISTENER,
+                    // and a project declaring two http URLs has two listeners ("http", "http2" —
+                    // measured) that no scheme can tell apart. Ordinal is also case-sensitive by
+                    // construction, matching every other DSL vocabulary term: `endpoint: HTTPS`
+                    // does not name an endpoint called "https", and is refused below rather than
+                    // quietly folded into it.
+                    //
+                    // FIRST MATCH WINS, in annotation order — the same order the fixed rule
+                    // iterates. No uniqueness is claimed for the orchestrator's naming; the rule
+                    // is stated so that a duplicate name, if one ever appears, is deterministic
+                    // rather than undefined.
+                    //
+                    // `is { }` — NULL IS THE ONLY SPELLING OF "ABSENT". Not
+                    // `string.IsNullOrWhiteSpace`, and not `{ Length: > 0 }` either: every
+                    // non-null value the parser can produce is a declaration the author wrote, so
+                    // it takes the Find-then-throw path below and is named back to them. A
+                    // whitespace-only value is schema-legal (`minLength: 1` refuses only the empty
+                    // string), and the field's shipped description promises such a value is
+                    // "refused at topology-build time like any other unmatched name".
+                    //
+                    // THE EMPTY STRING TAKES THE SAME PATH, and the schema is not what makes that
+                    // matter — two paths reach this mapper with no schema in front of them. A
+                    // dangling `endpoint:` key (no value after the colon) round-trips through
+                    // GetScalar as "", NOT as null: GetScalar returns `scalar.Value` verbatim, and
+                    // only the separate GetScalarOrPlainNull helper collapses that spelling, which
+                    // this field deliberately does not use. `--watch` never validates against the
+                    // schema at all (measured: WatchRunner.Compile is YamlDocumentParser.Parse +
+                    // AstBuilder.Build, with no DocumentValidator.Validate call) and is precisely
+                    // the edit-and-save mode where a half-typed key exists; and a direct
+                    // EnvironmentSpec embedding — the shipped Vouchfx.Sdk.Testing surface —
+                    // bypasses the schema by design. Under a `Length: > 0` test both would leave
+                    // this null, fall through to the fixed rule, and accept the author's
+                    // `endpoint:` key while silently ignoring it: the exact defect class #448
+                    // exists to end, reproduced inside its own fix.
+                    //
+                    // MATCH FIRST, HAND GetEndpoint ONLY A NAME THE ORCHESTRATOR PRODUCED.
+                    // Measured, and recorded again by the endpoint-less refusal below: GetEndpoint
+                    // does NOT throw on a name no endpoint carries — it returns an
+                    // EndpointReference whose Exists is false, deferring the failure past
+                    // StartAsync into the unattributable UriFormatException shape #348 exists to
+                    // remove. Passing the author's string straight through would reintroduce
+                    // exactly that.
+                    EndpointAnnotation? declaredProjectEndpoint = null;
+                    if (spec.Endpoint is { } requestedEndpoint)
+                    {
+                        declaredProjectEndpoint = projectEndpoints.Find(
+                            e => string.Equals(e.Name, requestedEndpoint, StringComparison.Ordinal));
+
+                        if (declaredProjectEndpoint is null)
+                        {
+                            // REFUSED WHETHER OR NOT ANY STEP TARGETS THIS SERVICE, which is the
+                            // one place this diagnostic deliberately parts company with the
+                            // endpoint-less refusal further down. That one is gated on targeting
+                            // because a .NET worker service legitimately declares no endpoint at
+                            // all — silence there is correct. The reasoning does not transfer: an
+                            // `endpoint:` naming something the project does not declare is a false
+                            // statement the author wrote, and an untargeted worker carrying a
+                            // stray one would otherwise pass silently — the accepted-and-ignored
+                            // shape this field exists to end.
+                            //
+                            // IT ALSO WINS OVER THE ENDPOINT-LESS REFUSAL when the project
+                            // declares nothing at all: the author named a selector, so naming it
+                            // back is the more specific diagnostic. But the endpoint-less
+                            // refusal's advice is still the fix, so this message carries it too
+                            // in that case rather than sending the author to a shorter dead end.
+                            //
+                            // TopologyAuthoringException, for the reason spelled out at the
+                            // endpoint-less throw below: anything else escaping the Configure
+                            // closure is wrapped by SuiteTopology.StartAsync as
+                            // OrchestrationException → EnvironmentError, which reports an
+                            // authoring fault as an infrastructure one and hands CI a green run
+                            // over a suite that never started.
+                            //
+                            // NO ADVICE TO DECLARE 'ports', 'httpPort' OR 'security' — none of
+                            // the three is available on a project-form service, so suggesting any
+                            // of them would send the author to a validation failure.
+                            //
+                            // BOTH FIXES ARE OFFERED IN THE NO-ENDPOINT CASE, because the two
+                            // shapes that reach it need opposite ones. An author who meant to
+                            // address this service over HTTP needs the 'applicationUrl'; an author
+                            // whose worker service — the canonical case here: no launch profile,
+                            // no step targeting it — simply carries a stray 'endpoint:' needs to
+                            // DELETE that line, and nothing else. The message this one displaces
+                            // said so ("a worker consuming a queue, say — needs no endpoint and is
+                            // unaffected by this rule"); dropping that sentence would leave the
+                            // larger of the two audiences with only advice that does not apply.
+                            var describedProjectEndpoints = projectEndpoints.Count == 0
+                                ? "(none)"
+                                : string.Join(
+                                    ", ",
+                                    projectEndpoints.Select(e => $"{e.Name} ({e.UriScheme})"));
+
+                            var noneAdvice = projectEndpoints.Count == 0
+                                ? " This project declares no endpoint at all: they are discovered "
+                                    + "from the launch profile in its "
+                                    + "'Properties/launchSettings.json', so add an "
+                                    + "'applicationUrl' to that profile (for example "
+                                    + "\"applicationUrl\": \"http://localhost:5000\") and name "
+                                    + "here the endpoint it produces. If instead this service is "
+                                    + "not meant to be addressed at all — a worker consuming a "
+                                    + "queue, say — remove the 'endpoint:' line: such a service "
+                                    + "needs no endpoint and is unaffected by this rule."
+                                : string.Empty;
+
+                            // THE VALUE IS QUOTED. A whitespace-only selector otherwise renders as
+                            // `declares 'endpoint:    '`, where the reader cannot tell the value
+                            // from the spacing around it — and a whitespace-only value is exactly
+                            // one of the shapes that reaches this throw.
+                            throw new TopologyAuthoringException(
+                                $"Service '{name}' declares 'endpoint: \"{requestedEndpoint}\"', "
+                                + "which matches none of the endpoints its project "
+                                + $"('{spec.Project}') declares. Discovered endpoints: "
+                                + $"{describedProjectEndpoints}. The value is an endpoint NAME and "
+                                + "is matched exactly, case included."
+                                + noneAdvice,
+                                nameof(env));
+                        }
+                    }
+
                     // Selection rule, project-form: "http", else "https", else the first declared.
                     //
                     // Measured, so the common case is on record rather than assumed: a stock
@@ -1695,12 +1845,11 @@ public static class EnvironmentMapper
                     // acceptable: when the project declares both, the notice below tells the
                     // author their traffic went plaintext, names both endpoints, and says why.
                     //
-                    // THE AUTHOR HAS NO OVERRIDE TODAY. `$defs/service`'s project-form clause
-                    // forbids `ports` and `healthCheck` but not `httpPort`, and `spec.HttpPort` is
-                    // read only in the image branch — so the one field that looks like the
-                    // endpoint control is accepted and silently ignored on this form. That is
-                    // pre-existing on main, and giving it meaning (or refusing it) is a language
-                    // change rather than a bug fix; tracked as #448.
+                    // ALL OF THE ABOVE IS THE DEFAULT, NOT THE ONLY OUTCOME. `endpoint:` overrides
+                    // it outright: the match is made above, and `??` short-circuits, so none of
+                    // the operands below is evaluated when it succeeded. What follows is what an
+                    // author who expressed no preference gets — which is why it stays the
+                    // conservative choice.
                     //
                     // "https" is still taken when it is the ONLY endpoint, so an https-only
                     // project resolves to its one real listener rather than being refused; trust
@@ -1716,8 +1865,15 @@ public static class EnvironmentMapper
                     // happened to encode it, and would stop encoding it the moment Aspire named
                     // an endpoint "http2" (measured: it does, for a second http URL) or a future
                     // hook named one anything else.
-                    var primaryProjectEndpoint =
-                        projectEndpoints.Find(e => string.Equals(
+                    //
+                    // THE LEADING `declaredProjectEndpoint ??` IS NOT A FALLBACK FROM A FAILED
+                    // MATCH. An `endpoint:` that matched nothing threw above, so this operand is
+                    // non-null exactly when the author selected a listener, and `??` then
+                    // short-circuits the whole fixed rule: the author's selection is final,
+                    // whatever its scheme, and the transport argument above simply does not apply
+                    // to a choice the author made deliberately.
+                    var primaryProjectEndpoint = declaredProjectEndpoint
+                        ?? projectEndpoints.Find(e => string.Equals(
                             e.UriScheme, ServiceEndpointNaming.HttpEndpointName, StringComparison.Ordinal))
                         ?? projectEndpoints.Find(e => string.Equals(
                             e.UriScheme, ServiceEndpointNaming.HttpsEndpointName, StringComparison.Ordinal))
@@ -1746,7 +1902,15 @@ public static class EnvironmentMapper
                     // will use PLAINTEXT", which is simply untrue of a worker no step addresses —
                     // and emitting it there would also spend the notice's credibility on the case
                     // that has nothing to warn about.
-                    if (endpointTargets.Contains(name)
+                    //
+                    // AND ONLY WHEN THE ENGINE MADE IT. `declaredProjectEndpoint is null` is the
+                    // whole of that condition: this notice announces a choice the AUTHOR did not
+                    // make, and announcing an author's own `endpoint: http` back to them spends
+                    // the notice's credibility on the case that needs no warning — the same
+                    // argument that gates it on targeting. An explicit plaintext selection is
+                    // therefore SILENT; the author opted out knowingly.
+                    if (declaredProjectEndpoint is null
+                        && endpointTargets.Contains(name)
                         && primaryProjectEndpoint is not null
                         && string.Equals(
                             primaryProjectEndpoint.UriScheme,
@@ -1763,6 +1927,52 @@ public static class EnvironmentMapper
                             RejectedEndpoint: securedSibling.Name));
                     }
 
+                    // REPORT THE ABSENCE OF TRUST, which is the other half of the same disclosure
+                    // and the one that survives the rule above. Silence on an explicit selection
+                    // is right for `endpoint: http` — the author chose plaintext knowingly — and
+                    // wrong for an https one, because it removes the ONLY thing in the run that
+                    // says anything about transport while the author's likely reading of what
+                    // they typed ("this is now secured") is exactly what it is not. Composed with
+                    // a handshake failure landing as EnvironmentError, the plausible outcome is a
+                    // green CI run over a suite that never verified anything. Announcing the
+                    // absence of trust creates none of it.
+                    //
+                    // GATED ON THE SELECTED ENDPOINT, NOT ON WHO SELECTED IT (maintainer-approved,
+                    // and this is the correction of a narrower rule that shipped with a hole in
+                    // it). Gating on `declaredProjectEndpoint` — "the author chose this" — left an
+                    // https-ONLY project with no `endpoint:` completely silent: the fixed rule
+                    // above picks its https listener, the downgrade notice cannot fire because it
+                    // requires an http selection, and this one could not fire because there was no
+                    // author selection to gate on. The run then addressed an unverified TLS
+                    // listener and said nothing — the identical silent-green shape this notice
+                    // exists to close, reached from the other side. `primaryProjectEndpoint` covers
+                    // the engine-picked case and the author-picked case with one condition.
+                    //
+                    // The `endpoint: http` path is unaffected: its selection's scheme is http, so
+                    // the scheme test below excludes it, and an explicit plaintext choice stays
+                    // silent exactly as decision 5 says it should.
+                    //
+                    // TESTED ON THE SELECTED ANNOTATION'S SCHEME, NOT ON THE AUTHOR'S STRING.
+                    // `endpoint:` matches by NAME and a project may name an https listener
+                    // anything; firing on the literal text "https" would warn about a plaintext
+                    // listener that happens to be called "https" and stay silent on a TLS
+                    // listener called "secure-api" — noisy in the harmless case and silent in the
+                    // dangerous one, which is the wrong way round for a security advisory.
+                    //
+                    // GATED ON TARGETING for the same reason its sibling is: it describes traffic
+                    // that will actually happen.
+                    if (primaryProjectEndpoint is not null
+                        && endpointTargets.Contains(name)
+                        && string.Equals(
+                            primaryProjectEndpoint.UriScheme,
+                            ServiceEndpointNaming.HttpsEndpointName,
+                            StringComparison.Ordinal))
+                    {
+                        endpointTrustNotices.Add(new EndpointTrustNotice(
+                            ServiceName: name,
+                            SelectedEndpoint: primaryProjectEndpoint.Name));
+                    }
+
                     if (primaryProjectEndpoint is not null)
                     {
                         serviceEndpoints[name] = projectBuilder.GetEndpoint(primaryProjectEndpoint.Name);
@@ -1775,13 +1985,17 @@ public static class EnvironmentMapper
                         // without it was a worse regression than the bug being fixed: a .NET
                         // WORKER SERVICE (a BackgroundService consuming Kafka or a queue, no
                         // applicationUrl, no HTTP listener) declares no endpoint either. That
-                        // shape is schema-legal, has no escape hatch — $defs/service refuses
-                        // 'ports'/'healthCheck' on a project-form service, so its author cannot
-                        // declare a non-HTTP shape the way REQ-008 lets an image-form service —
-                        // and is the canonical thing this product tests: the worker consuming the
-                        // Kafka event in the one business transaction. It started fine before
-                        // #348 and was simply never staged, which is correct, because nothing
-                        // reads svc::<name> for a service no step targets.
+                        // shape is schema-legal, has no escape hatch — $defs/service's project-form
+                        // clause refuses the port-shaping fields it names (grep that clause's
+                        // `then` for the current roster rather than trusting a copy here, which is
+                        // how this sentence went stale once already), and `security`, which
+                        // carries an endpoint selector of its own, is refused separately and
+                        // eagerly by the validation loop at the top of this method — so its author
+                        // cannot declare a non-HTTP shape the way REQ-008 lets an image-form
+                        // service — and is the canonical thing this product tests: the worker
+                        // consuming the Kafka event in the one business transaction. It started
+                        // fine before #348 and was simply never staged, which is correct, because
+                        // nothing reads svc::<name> for a service no step targets.
                         //
                         // FAIL LOUDLY rather than staging something. The two alternatives were
                         // both worse. Staging GetEndpoint("http") unconditionally is not an
@@ -1873,6 +2087,7 @@ public static class EnvironmentMapper
             // happens rather than the empty state at Map's return.
             StagedServiceEndpoints = serviceEndpoints,
             EndpointSelectionNotices = endpointSelectionNotices,
+            EndpointTrustNotices = endpointTrustNotices,
         };
     }
 

@@ -166,10 +166,13 @@ internal static class EnvironmentSecurityValidator
     /// <remarks>
     /// <para>
     /// A <c>project</c>-form service's endpoints are discovered from the project's own launch
-    /// profile, which this engine neither models nor names, so there is no endpoint for
-    /// REQ-023 to construct with an <c>https</c> scheme and no <c>svc::&lt;name&gt;</c> value
-    /// is staged for one. The JSON Schema accepts the combination — <c>$defs/service</c>'s
-    /// project clause forbids <c>ports</c> and <c>healthCheck</c>, not <c>security</c> — and
+    /// profile, which this engine neither models nor names AT AUTHORING TIME, so there is no
+    /// endpoint for REQ-023 to construct with an <c>https</c> scheme. (A <c>svc::&lt;name&gt;</c>
+    /// value IS staged for such a service since #348 — read off the resource Aspire builds, inside
+    /// the Configure closure — but that can only report which endpoints were discovered, never
+    /// make one <c>https</c>.) The JSON Schema accepts the combination: its project-form clause
+    /// forbids several image-form-only fields but not <c>security</c> — grep that clause's
+    /// <c>then</c> for the current roster rather than trusting a copy here — and
     /// <c>EnvironmentMapper.Map</c> then throws at TOPOLOGY-BUILD time.
     /// </para>
     /// <para>

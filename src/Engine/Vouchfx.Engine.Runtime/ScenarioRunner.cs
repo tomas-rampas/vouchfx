@@ -834,14 +834,16 @@ public static class ScenarioRunner
             // Scope note: this catches EnvironmentMapper.Map's OWN eager, PRE-Configure
             // validation (SuiteTopology.StartAsync's Step 1, called before HeadlessTopology.
             // StartAsync/DCP is ever reached — see that method's Step 1 comment: "Map is pure
-            // ... let them propagate as-is"), PLUS the one authoring fault that can only be
-            // discovered inside the Configure closure and opts back onto this side deliberately:
+            // ... let them propagate as-is"), PLUS the authoring faults that can only be
+            // discovered inside the Configure closure and opt back onto this side deliberately:
             // TopologyAuthoringException, an ArgumentException subclass that SuiteTopology.Step 2
-            // re-throws unwrapped (#348 — a step-TARGETED `project:`-form service whose project
-            // declares no endpoint, which only Aspire can determine, and only after it has built
-            // the resource). Both are the same class of problem as the schema-invalid /
-            // parse-AST / pipeline-compile / secret-reference failures handled above: an author
-            // edits the suite and it goes away.
+            // re-throws unwrapped. The PROPERTY, which is stable, is that each such fault is one
+            // Aspire alone can determine and only after it has built the resource — a project's
+            // launch-profile endpoints are the standing example. For the current set, grep
+            // `throw new TopologyAuthoringException`; enumerating them here goes stale, which is
+            // how this sentence went wrong once already. Both are the same class of problem as
+            // the schema-invalid / parse-AST / pipeline-compile / secret-reference failures
+            // handled above: an author edits the suite and it goes away.
             //
             // Map()'s Configure CLOSURE also carries a few defensive throws of its own, reachable
             // only by defect (e.g. ResolveDependencyEnvAccess's internal-error fallback,
@@ -984,6 +986,17 @@ public static class ScenarioRunner
             // about a healthy run, and adding an optional one is deferred to #450 rather than
             // forbidden. Empty for almost every suite, so ordinary output is unchanged.
             foreach (var notice in suite.EndpointSelectionNotices)
+            {
+                await output.WriteLineAsync(DisplaySanitiser.SanitiseForDisplay(notice.ToString()))
+                    .ConfigureAwait(false);
+            }
+
+            // The other endpoint advisory, and a DIFFERENT fact: the address staged for the
+            // service is an https listener the engine configures no client trust material for —
+            // whoever selected it. Printed here rather than through a bespoke Console.WriteLine so
+            // it goes through the same sanitiser every other author-influenced string does — the
+            // notice carries a service name the author supplied.
+            foreach (var notice in suite.EndpointTrustNotices)
             {
                 await output.WriteLineAsync(DisplaySanitiser.SanitiseForDisplay(notice.ToString()))
                     .ConfigureAwait(false);
@@ -1964,6 +1977,17 @@ public static class ScenarioRunner
             // about a healthy run, and adding an optional one is deferred to #450 rather than
             // forbidden. Empty for almost every suite, so ordinary output is unchanged.
             foreach (var notice in suite.EndpointSelectionNotices)
+            {
+                await output.WriteLineAsync(DisplaySanitiser.SanitiseForDisplay(notice.ToString()))
+                    .ConfigureAwait(false);
+            }
+
+            // The other endpoint advisory, and a DIFFERENT fact: the address staged for the
+            // service is an https listener the engine configures no client trust material for —
+            // whoever selected it. Printed here rather than through a bespoke Console.WriteLine so
+            // it goes through the same sanitiser every other author-influenced string does — the
+            // notice carries a service name the author supplied.
+            foreach (var notice in suite.EndpointTrustNotices)
             {
                 await output.WriteLineAsync(DisplaySanitiser.SanitiseForDisplay(notice.ToString()))
                     .ConfigureAwait(false);
@@ -3161,7 +3185,14 @@ public static class ScenarioRunner
         // project's endpoints come from `Properties/launchSettings.json`, which is not part of the
         // YAML at all — so an author can delete the https URL, save, and keep being told about a
         // downgrade that no longer happens, indefinitely.
-        if (topology.EndpointSelectionNotices.Count > 0)
+        //
+        // BOTH ADVISORIES, under the one qualifier, because the qualifier is true of both. An
+        // author-declared `endpoint:` does live in the `environment` block and so does rebuild the
+        // topology when edited — but the SCHEME that makes it a trust notice comes from the launch
+        // profile, which does not, so a trust notice goes stale by exactly the same route. On an
+        // https-only project, where the engine selected the listener and no `endpoint:` exists at
+        // all, the notice depends on the launch profile and nothing else.
+        if (topology.EndpointSelectionNotices.Count > 0 || topology.EndpointTrustNotices.Count > 0)
         {
             await output.WriteLineAsync(
                     "transport: selected once when this topology was built, and replayed here — "
@@ -3171,6 +3202,12 @@ public static class ScenarioRunner
                 .ConfigureAwait(false);
 
             foreach (var notice in topology.EndpointSelectionNotices)
+            {
+                await output.WriteLineAsync(DisplaySanitiser.SanitiseForDisplay(notice.ToString()))
+                    .ConfigureAwait(false);
+            }
+
+            foreach (var notice in topology.EndpointTrustNotices)
             {
                 await output.WriteLineAsync(DisplaySanitiser.SanitiseForDisplay(notice.ToString()))
                     .ConfigureAwait(false);

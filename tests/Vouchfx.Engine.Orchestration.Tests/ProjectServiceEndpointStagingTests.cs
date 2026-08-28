@@ -53,7 +53,20 @@ public sealed class ProjectServiceEndpointStagingTests : IDisposable
             AssemblyName = AppHostAssemblyName,
         });
 
-    private static EnvironmentSpec EnvWithProject(string name, string csprojPath) =>
+    /// <summary>
+    /// A one-service environment declaring <paramref name="name"/> as a project-form service,
+    /// optionally with an author-declared <paramref name="endpoint"/>.
+    /// </summary>
+    /// <param name="endpoint">
+    /// The raw <c>endpoint:</c> scalar, or <see langword="null"/> for a service that declares
+    /// none. The default is <see langword="null"/> deliberately: every test written before this
+    /// field existed keeps calling the two-argument form, so those tests now double as the pin
+    /// that an absent <c>endpoint:</c> leaves the fixed selection rule byte-for-byte unchanged.
+    /// </param>
+    private static EnvironmentSpec EnvWithProject(
+        string name,
+        string csprojPath,
+        string? endpoint = null) =>
         new(
             Services: new Dictionary<string, ServiceSpec>(StringComparer.Ordinal)
             {
@@ -62,7 +75,10 @@ public sealed class ProjectServiceEndpointStagingTests : IDisposable
                     Project: csprojPath,
                     ImagePullPolicy: null,
                     HttpPort: null,
-                    Env: null),
+                    Env: null)
+                {
+                    Endpoint = endpoint,
+                },
             },
             Dependencies: null,
             Seed: null,
@@ -516,6 +532,514 @@ public sealed class ProjectServiceEndpointStagingTests : IDisposable
 
         var staged = Assert.Contains("web", mapped.StagedServiceEndpoints);
         Assert.Equal("http", staged.EndpointName);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // `endpoint:` — the author's own selection (#448).
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// THE FIELD'S POINT: a project serving both schemes is addressed over the one the AUTHOR
+    /// named, not the one the fixed rule would have picked. Without <c>endpoint:</c> this exact
+    /// project stages "http" — pinned by
+    /// <see cref="Configure_ProjectServiceDeclaringBothSchemes_StagesHttpWhicheverOrderTheyAreDeclaredIn"/>.
+    /// </summary>
+    [Theory]
+    [InlineData("http://localhost:5333;https://localhost:7333")]
+    [InlineData("https://localhost:7333;http://localhost:5333")]
+    public void Configure_ProjectServiceDeclaringEndpointHttps_StagesTheHttpsListener(
+        string applicationUrl)
+    {
+        var csproj = CreateProjectFixture(applicationUrl);
+        var mapped = EnvironmentMapper.Map(
+            EnvWithProject("api", csproj, endpoint: "https"),
+            endpointConsumingTargets: Targeting("api"));
+        var builder = CreateBuilder();
+
+        mapped.Configure(builder);
+
+        var staged = Assert.Contains("api", mapped.StagedServiceEndpoints);
+        Assert.Equal("https", staged.EndpointName);
+        Assert.Equal("https", staged.Scheme);
+        Assert.True(staged.Exists, "the staged endpoint must exist on the resource");
+    }
+
+    /// <summary>
+    /// THE CASE NO SCHEME CAN EXPRESS, and the reason the match is on the endpoint NAME: a project
+    /// declaring two http URLs has two listeners the fixed rule cannot tell apart. Measured under
+    /// the pinned Aspire 13.4.2, they are named "http" and "http2"; <c>endpoint: http2</c> reaches
+    /// the second, which nothing else in the language could.
+    /// </summary>
+    [Fact]
+    public void Configure_ProjectServiceDeclaringEndpointHttp2_StagesTheSecondHttpListener()
+    {
+        var csproj = CreateProjectFixture("http://localhost:5333;http://localhost:5334");
+        var mapped = EnvironmentMapper.Map(
+            EnvWithProject("api", csproj, endpoint: "http2"),
+            endpointConsumingTargets: Targeting("api"));
+        var builder = CreateBuilder();
+
+        mapped.Configure(builder);
+
+        // The naming this test depends on, asserted rather than assumed: if Aspire ever names the
+        // second same-scheme listener something else, this fails HERE with a readable cause rather
+        // than as an inexplicable staging miss.
+        var resource = builder.Resources.OfType<ProjectResource>().Single(r => r.Name == "api");
+        var declared = resource.Annotations.OfType<EndpointAnnotation>().Select(e => e.Name).ToList();
+        Assert.Collection(
+            declared,
+            first => Assert.Equal("http", first),
+            second => Assert.Equal("http2", second));
+
+        var staged = Assert.Contains("api", mapped.StagedServiceEndpoints);
+        Assert.Equal("http2", staged.EndpointName);
+        Assert.True(staged.Exists, "the staged endpoint must exist on the resource");
+    }
+
+    /// <summary>
+    /// EDGE-002: naming the project's ONLY endpoint is a no-op that stages the same reference the
+    /// fixed rule would have — no throw, and no notice of either kind.
+    /// </summary>
+    [Fact]
+    public void Configure_ProjectServiceDeclaringTheOnlyEndpointItHas_StagesItAndSaysNothing()
+    {
+        var csproj = CreateProjectFixture("http://localhost:5111");
+        var mapped = EnvironmentMapper.Map(
+            EnvWithProject("api", csproj, endpoint: "http"),
+            endpointConsumingTargets: Targeting("api"));
+        var builder = CreateBuilder();
+
+        mapped.Configure(builder);
+
+        var staged = Assert.Contains("api", mapped.StagedServiceEndpoints);
+        Assert.Equal("http", staged.EndpointName);
+        Assert.Empty(mapped.EndpointSelectionNotices);
+        Assert.Empty(mapped.EndpointTrustNotices);
+    }
+
+    /// <summary>
+    /// THE FIXED RULE IS UNTOUCHED where no <c>endpoint:</c> is declared: the same both-schemes
+    /// project stages "http", raises its one transport-downgrade notice, and raises no trust
+    /// notice — the new record is not emitted for a selection the author did not make.
+    /// </summary>
+    [Fact]
+    public void Configure_ProjectServiceWithNoDeclaredEndpoint_AppliesTheFixedRuleUnchanged()
+    {
+        var csproj = CreateProjectFixture("http://localhost:5333;https://localhost:7333");
+        var mapped = EnvironmentMapper.Map(
+            EnvWithProject("api", csproj), endpointConsumingTargets: Targeting("api"));
+        var builder = CreateBuilder();
+
+        mapped.Configure(builder);
+
+        var staged = Assert.Contains("api", mapped.StagedServiceEndpoints);
+        Assert.Equal("http", staged.EndpointName);
+        Assert.Single(mapped.EndpointSelectionNotices);
+        Assert.Empty(mapped.EndpointTrustNotices);
+    }
+
+    /// <summary>
+    /// AN UNMATCHED <c>endpoint:</c> IS REFUSED, naming the service, the string the author wrote,
+    /// and every endpoint the project actually declares with its scheme — the diagnostic that
+    /// makes a typo a two-second fix instead of a topology cycle.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Both a TARGETED and an UNTARGETED service, because the difference is the requirement
+    /// (EDGE-001). The endpoint-LESS refusal below is deliberately gated on targeting — a worker
+    /// service legitimately declares nothing — but that reasoning does not transfer: an
+    /// <c>endpoint:</c> naming something the project does not declare is a false statement the
+    /// author wrote, and leaving it unremarked on an untargeted service is precisely the
+    /// accepted-and-silently-ignored shape this field exists to end.
+    /// </para>
+    /// <para>
+    /// The refusal is <c>TopologyAuthoringException</c> for the reason its sibling is: anything
+    /// else escaping the Configure closure is wrapped as an <c>OrchestrationException</c> →
+    /// EnvironmentError, which reports an authoring fault as an infrastructure one and exits 0
+    /// when nothing executed.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Configure_ProjectServiceDeclaringAnUnmatchedEndpoint_ThrowsNamingEveryDeclaredOne(
+        bool targeted)
+    {
+        var csproj = CreateProjectFixture("http://localhost:5333;https://localhost:7333");
+        var mapped = EnvironmentMapper.Map(
+            EnvWithProject("api", csproj, endpoint: "grpc"),
+            endpointConsumingTargets: targeted ? Targeting("api") : null);
+        var builder = CreateBuilder();
+
+        var ex = Assert.Throws<TopologyAuthoringException>(() => mapped.Configure(builder));
+
+        Assert.Contains("api", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("grpc", ex.Message, StringComparison.Ordinal);
+        // Every discovered endpoint, as `name (scheme)`.
+        Assert.Contains("http (http)", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("https (https)", ex.Message, StringComparison.Ordinal);
+
+        // NOT advice to reach for a field this form does not have. All three are refused on a
+        // project-form service, so suggesting any of them would send the author to a validation
+        // failure — a diagnostic that costs a cycle is barely better than none.
+        Assert.DoesNotContain("'ports'", ex.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("'httpPort'", ex.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("'security'", ex.Message, StringComparison.Ordinal);
+
+        Assert.False(mapped.StagedServiceEndpoints.ContainsKey("api"));
+    }
+
+    /// <summary>
+    /// EDGE-005: the match is Ordinal, so it is case-sensitive. <c>endpoint: HTTPS</c> does not
+    /// name an endpoint called "https" — it names nothing, and is refused like any other unmatched
+    /// value.
+    /// </summary>
+    /// <remarks>
+    /// One canonical spelling per DSL vocabulary term is the pre-GA decision this follows
+    /// (dependency type, imagePullPolicy, verifyMode, security.profile). Case-folding here would
+    /// also be unsound in a way those are not: the value is matched against names the ORCHESTRATOR
+    /// produced, and nothing guarantees two of them cannot differ only by case.
+    /// </remarks>
+    [Fact]
+    public void Configure_ProjectServiceDeclaringEndpointInTheWrongCase_IsRefused()
+    {
+        var csproj = CreateProjectFixture("http://localhost:5333;https://localhost:7333");
+        var mapped = EnvironmentMapper.Map(
+            EnvWithProject("api", csproj, endpoint: "HTTPS"),
+            endpointConsumingTargets: Targeting("api"));
+        var builder = CreateBuilder();
+
+        var ex = Assert.Throws<TopologyAuthoringException>(() => mapped.Configure(builder));
+
+        Assert.Contains("HTTPS", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("https (https)", ex.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A WHITESPACE-ONLY <c>endpoint:</c> IS REFUSED, not treated as absent. The schema's
+    /// <c>minLength: 1</c> stops the empty string and nothing else, so <c>endpoint: "   "</c>
+    /// validates — and the field's shipped description promises such a value is refused at
+    /// topology-build time naming what the project declared.
+    /// </summary>
+    /// <remarks>
+    /// The implementation detail this pins is the presence test: <c>is { }</c> rather than
+    /// <c>string.IsNullOrWhiteSpace</c>. The latter would silently fall through to the fixed rule,
+    /// stage "http", pass, and make that shipped description false — the failure mode is a suite
+    /// that quietly ignores what its author wrote, which is the whole complaint this field answers.
+    /// </remarks>
+    [Fact]
+    public void Configure_ProjectServiceDeclaringAWhitespaceOnlyEndpoint_IsRefusedNotIgnored()
+    {
+        var csproj = CreateProjectFixture("http://localhost:5333;https://localhost:7333");
+        var mapped = EnvironmentMapper.Map(
+            EnvWithProject("api", csproj, endpoint: "   "),
+            endpointConsumingTargets: Targeting("api"));
+        var builder = CreateBuilder();
+
+        var ex = Assert.Throws<TopologyAuthoringException>(() => mapped.Configure(builder));
+
+        Assert.Contains("http (http)", ex.Message, StringComparison.Ordinal);
+
+        // The value is QUOTED in the message, so a reader can tell it from the spacing around it —
+        // the whole reason this shape needed pinning separately from an ordinary typo.
+        Assert.Contains("'endpoint: \"   \"'", ex.Message, StringComparison.Ordinal);
+
+        // The falling-through failure mode, asserted directly: nothing staged, no notice of either
+        // kind raised — the fixed rule would have staged "http" AND announced the downgrade, and
+        // an https selection would have announced the absence of trust, so both are checked.
+        Assert.False(mapped.StagedServiceEndpoints.ContainsKey("api"));
+        Assert.Empty(mapped.EndpointSelectionNotices);
+        Assert.Empty(mapped.EndpointTrustNotices);
+    }
+
+    /// <summary>
+    /// AN EMPTY <c>endpoint:</c> IS REFUSED TOO, on the same Find-then-throw path, and this is the
+    /// case the schema cannot be relied on for.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Constructed as an <c>EnvironmentSpec</c> DIRECTLY, because that is the point: the schema's
+    /// <c>minLength: 1</c> refuses the empty string, so a suite that goes through
+    /// <c>DocumentValidator</c> never reaches here with one. Two shipped paths do not go through
+    /// it. <c>--watch</c> performs no schema validation at all (<c>WatchRunner.Compile</c> is
+    /// <c>YamlDocumentParser.Parse</c> + <c>AstBuilder.Build</c>), and a dangling <c>endpoint:</c>
+    /// key — no value after the colon — round-trips through <c>GetScalar</c> as <c>""</c> rather
+    /// than <see langword="null"/>; and a direct <c>EnvironmentSpec</c> embedding, the shipped
+    /// <c>Vouchfx.Sdk.Testing</c> surface, bypasses the schema by design.
+    /// </para>
+    /// <para>
+    /// Treating <c>""</c> as absent would run the fixed rule and stage "http": the author's
+    /// <c>endpoint:</c> key accepted and silently ignored, which is the exact defect class this
+    /// field exists to end.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void Configure_ProjectServiceDeclaringAnEmptyEndpoint_IsRefusedNotIgnored()
+    {
+        var csproj = CreateProjectFixture("http://localhost:5333;https://localhost:7333");
+        var mapped = EnvironmentMapper.Map(
+            EnvWithProject("api", csproj, endpoint: string.Empty),
+            endpointConsumingTargets: Targeting("api"));
+        var builder = CreateBuilder();
+
+        var ex = Assert.Throws<TopologyAuthoringException>(() => mapped.Configure(builder));
+
+        Assert.Contains("api", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("http (http)", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("https (https)", ex.Message, StringComparison.Ordinal);
+
+        Assert.False(mapped.StagedServiceEndpoints.ContainsKey("api"));
+        Assert.Empty(mapped.EndpointSelectionNotices);
+        Assert.Empty(mapped.EndpointTrustNotices);
+    }
+
+    /// <summary>
+    /// EDGE-009 (and EDGE-001 for the untargeted half): an <c>endpoint:</c> on a project that
+    /// declares NO endpoint at all is refused with THIS message — the selector one — whether or
+    /// not a step targets the service, and it carries BOTH of the endpoint-less refusal's escapes,
+    /// because either can be the fix.
+    /// </summary>
+    /// <remarks>
+    /// Two refusals could fire here. The more specific one wins: the author wrote an explicit
+    /// selector, so naming it back is the more useful diagnostic — but it would be a worse
+    /// diagnostic than the one it displaces if it dropped the actionable sentences that one had,
+    /// so it carries them. Both matter, and they point opposite ways: an author who meant to
+    /// address this service needs the <c>applicationUrl</c>; the canonical author here — a worker
+    /// service with no launch profile, no step targeting it and a stray <c>endpoint:</c> — needs
+    /// to delete that line. Untargeted matters independently: without EDGE-001's rule such a
+    /// service would pass silently.
+    /// </remarks>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Configure_ProjectServiceWithNoEndpointsButADeclaredSelector_RefusesWithTheSelectorMessage(
+        bool targeted)
+    {
+        var csproj = CreateProjectFixture(applicationUrl: null);
+        var mapped = EnvironmentMapper.Map(
+            EnvWithProject("order-worker", csproj, endpoint: "http"),
+            endpointConsumingTargets: targeted ? Targeting("order-worker") : null);
+        var builder = CreateBuilder();
+
+        var ex = Assert.Throws<TopologyAuthoringException>(() => mapped.Configure(builder));
+
+        // The SELECTOR message, distinguished from the endpoint-less one by naming the value the
+        // author wrote and reporting the discovered set as "(none)".
+        Assert.Contains("order-worker", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("'endpoint: \"http\"'", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("(none)", ex.Message, StringComparison.Ordinal);
+
+        // ...carrying BOTH escapes the message it displaces would have given. The second one is
+        // the fix for this test's own fixture — a worker service — and the message would be
+        // advice-that-does-not-apply without it.
+        Assert.Contains("launchSettings.json", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("applicationUrl", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("remove the 'endpoint:' line", ex.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// AN EXPLICIT PLAINTEXT SELECTION IS SILENT. The transport-downgrade notice announces a
+    /// choice the ENGINE made; announcing an author's own <c>endpoint: http</c> back to them spends
+    /// the notice's credibility on the one case that needs no warning.
+    /// </summary>
+    [Fact]
+    public void Configure_ProjectServiceDeclaringEndpointHttpBesideAnHttpsSibling_AnnouncesNothing()
+    {
+        var csproj = CreateProjectFixture("http://localhost:5333;https://localhost:7333");
+        var mapped = EnvironmentMapper.Map(
+            EnvWithProject("api", csproj, endpoint: "http"),
+            endpointConsumingTargets: Targeting("api"));
+        var builder = CreateBuilder();
+
+        mapped.Configure(builder);
+
+        Assert.Empty(mapped.EndpointSelectionNotices);
+        Assert.Empty(mapped.EndpointTrustNotices);
+    }
+
+    /// <summary>
+    /// AN EXPLICIT HTTPS SELECTION IS NOT SILENT, and this is the half of the rule that is not
+    /// symmetric with the one above.
+    /// </summary>
+    /// <remarks>
+    /// Suppressing here would remove the ONLY thing in the run that says anything about transport,
+    /// while the author's likely reading of what they typed — "this is now secured" — is exactly
+    /// what it is not: a project-form service cannot declare <c>security</c>, so no trust material
+    /// exists: the certificate that listener presents is checked against this host's default trust
+    /// store and nothing else, and vouchfx asserts nothing about the outcome. Composed with a
+    /// handshake failure landing as an EnvironmentError, the plausible outcome is a green CI run
+    /// over a suite that verified nothing. It is a DIFFERENT record from the downgrade notice
+    /// because it is a different fact — "the address is TLS and this engine configured no trust
+    /// for it", not "the engine picked plaintext for you".
+    /// </remarks>
+    [Fact]
+    public void Configure_ProjectServiceDeclaringEndpointHttps_AnnouncesTheAbsenceOfTrust()
+    {
+        var csproj = CreateProjectFixture("http://localhost:5333;https://localhost:7333");
+        var mapped = EnvironmentMapper.Map(
+            EnvWithProject("api", csproj, endpoint: "https"),
+            endpointConsumingTargets: Targeting("api"));
+        var builder = CreateBuilder();
+
+        mapped.Configure(builder);
+
+        // Asserted on FIELDS, not on wording — the record is typed precisely so no test pins an
+        // English sentence as the contract.
+        var notice = Assert.Single(mapped.EndpointTrustNotices);
+        Assert.Equal("api", notice.ServiceName);
+        Assert.Equal("https", notice.SelectedEndpoint);
+
+        // And NOT the downgrade notice: the two must stay tellable apart, or a reader draws the
+        // opposite conclusion about what the run proved.
+        Assert.Empty(mapped.EndpointSelectionNotices);
+    }
+
+    /// <summary>
+    /// AN HTTPS-ONLY PROJECT WITH NO <c>endpoint:</c> ALSO ANNOUNCES THE ABSENCE OF TRUST — the
+    /// case the notice's first gate missed, and the reason that gate is now on the SELECTED
+    /// endpoint rather than on who selected it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Nothing here was authored: the service declares no <c>endpoint:</c>, the fixed rule reaches
+    /// the project's one https listener because there is no http one to prefer, and the run then
+    /// addresses a TLS listener the engine configured no trust material for. Gating on "the author
+    /// selected something" left this silent — the downgrade notice cannot fire (it requires an http
+    /// selection) and the trust notice could not (there was no selection to gate on), so the whole
+    /// run said nothing about transport.
+    /// </para>
+    /// <para>
+    /// User-visible consequence, pinned deliberately: this suite emits an advisory it did not emit
+    /// before. Terminal-only — no verdict, no exit code, no artefact change.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void Configure_TargetedHttpsOnlyProjectWithNoDeclaredEndpoint_AnnouncesTheAbsenceOfTrust()
+    {
+        var csproj = CreateProjectFixture("https://localhost:7222");
+        var mapped = EnvironmentMapper.Map(
+            EnvWithProject("api", csproj), endpointConsumingTargets: Targeting("api"));
+        var builder = CreateBuilder();
+
+        mapped.Configure(builder);
+
+        var notice = Assert.Single(mapped.EndpointTrustNotices);
+        Assert.Equal("api", notice.ServiceName);
+        Assert.Equal("https", notice.SelectedEndpoint);
+
+        // The downgrade notice still cannot fire — there is no plaintext endpoint to have been
+        // preferred — which is exactly why this one had to.
+        Assert.Empty(mapped.EndpointSelectionNotices);
+    }
+
+    /// <summary>
+    /// THE SAME PROJECT, UNTARGETED, STAYS SILENT. The targeting gate survives the widening: the
+    /// notice describes traffic that will actually happen, and no step addresses this service.
+    /// </summary>
+    [Fact]
+    public void Configure_UntargetedHttpsOnlyProjectWithNoDeclaredEndpoint_AnnouncesNothing()
+    {
+        var csproj = CreateProjectFixture("https://localhost:7222");
+        var mapped = EnvironmentMapper.Map(EnvWithProject("api", csproj));
+        var builder = CreateBuilder();
+
+        mapped.Configure(builder);
+
+        Assert.Empty(mapped.EndpointTrustNotices);
+        Assert.Empty(mapped.EndpointSelectionNotices);
+    }
+
+    /// <summary>
+    /// THE TEST THAT PROVES THE SCHEME TEST IS ON THE ANNOTATION, NOT ON THE AUTHOR'S STRING: an
+    /// https listener that is NOT named "https" still produces the trust notice.
+    /// </summary>
+    /// <remarks>
+    /// <c>endpoint:</c> matches by NAME, so a project may address a TLS listener under any name
+    /// the orchestrator gives it — here "https2", the second https URL in one
+    /// <c>applicationUrl</c>. An implementation comparing the author's literal text against
+    /// "https" would stay silent here (dangerous case, no warning) and would warn about a
+    /// plaintext listener that happened to be called "https" (harmless case, noise) — the wrong
+    /// way round for a security advisory, and invisible to every test that only ever writes
+    /// <c>endpoint: https</c>.
+    /// </remarks>
+    [Fact]
+    public void Configure_ProjectServiceSelectingAnHttpsListenerNotNamedHttps_StillAnnouncesTheAbsenceOfTrust()
+    {
+        var csproj = CreateProjectFixture("https://localhost:7333;https://localhost:7334");
+        var mapped = EnvironmentMapper.Map(
+            EnvWithProject("api", csproj, endpoint: "https2"),
+            endpointConsumingTargets: Targeting("api"));
+        var builder = CreateBuilder();
+
+        mapped.Configure(builder);
+
+        // The naming this test rests on, asserted rather than assumed.
+        var resource = builder.Resources.OfType<ProjectResource>().Single(r => r.Name == "api");
+        var declared = resource.Annotations.OfType<EndpointAnnotation>().ToList();
+        Assert.Collection(
+            declared.Select(e => e.Name),
+            first => Assert.Equal("https", first),
+            second => Assert.Equal("https2", second));
+        Assert.All(declared, e => Assert.Equal("https", e.UriScheme));
+
+        var staged = Assert.Contains("api", mapped.StagedServiceEndpoints);
+        Assert.Equal("https2", staged.EndpointName);
+
+        var notice = Assert.Single(mapped.EndpointTrustNotices);
+        Assert.Equal("https2", notice.SelectedEndpoint);
+    }
+
+    /// <summary>
+    /// AN UNTARGETED SERVICE ANNOUNCES NEITHER. Both notices describe traffic that will happen;
+    /// neither is true of a service no step addresses.
+    /// </summary>
+    [Fact]
+    public void Configure_UntargetedProjectServiceDeclaringEndpointHttps_AnnouncesNothing()
+    {
+        var csproj = CreateProjectFixture("http://localhost:5333;https://localhost:7333");
+        var mapped = EnvironmentMapper.Map(EnvWithProject("api", csproj, endpoint: "https"));
+        var builder = CreateBuilder();
+
+        mapped.Configure(builder);
+
+        Assert.Empty(mapped.EndpointTrustNotices);
+        Assert.Empty(mapped.EndpointSelectionNotices);
+
+        // Staged all the same — staging never depended on targeting.
+        var staged = Assert.Contains("api", mapped.StagedServiceEndpoints);
+        Assert.Equal("https", staged.EndpointName);
+    }
+
+    /// <summary>
+    /// The trust notice carries the same idempotence guarantee its sibling does: invoking
+    /// <c>Configure</c> twice yields the same notice count as invoking it once.
+    /// </summary>
+    /// <remarks>
+    /// The list's only write is an <c>Add</c>, so without the <c>Clear</c> at the top of the
+    /// closure a second invocation doubles it. A FRESH builder for the second call, as in the
+    /// sibling test: re-running the closure over the SAME builder would re-add resources under
+    /// names it already holds, which is a different question.
+    /// </remarks>
+    [Fact]
+    public void ConfigureInvokedTwice_DoesNotDuplicateTheTrustNotice()
+    {
+        var csproj = CreateProjectFixture("http://localhost:5333;https://localhost:7333");
+        var mapped = EnvironmentMapper.Map(
+            EnvWithProject("api", csproj, endpoint: "https"),
+            endpointConsumingTargets: Targeting("api"));
+
+        mapped.Configure(CreateBuilder());
+        var afterOne = mapped.EndpointTrustNotices.Count;
+
+        mapped.Configure(CreateBuilder());
+
+        Assert.Equal(1, afterOne);
+        Assert.Equal(afterOne, mapped.EndpointTrustNotices.Count);
+
+        // Still the SAME notice, not a survivor of a clear that dropped the real one.
+        var notice = Assert.Single(mapped.EndpointTrustNotices);
+        Assert.Equal("api", notice.ServiceName);
+        Assert.Equal("https", notice.SelectedEndpoint);
     }
 
     /// <inheritdoc />
