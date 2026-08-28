@@ -47,19 +47,32 @@ namespace Vouchfx.Engine.Orchestration;
 /// <para>
 /// <strong>What is absent is engine-configured trust, not verification.</strong> With no
 /// <c>security</c> block — and a <c>project:</c>-form service cannot declare one —
-/// <c>SecurityHelper.ConfigureHandler</c> returns without touching the handler, so the platform's
-/// own trust store applies and the certificate is verified against it, full chain, exactly as any
-/// other .NET HTTPS request would be. What vouchfx does NOT do is contribute a private anchor, pin
+/// <c>SecurityHelper.ConfigureHandler</c> returns without touching the handler, so for a step
+/// that makes an HTTP request the platform's own trust store applies and the certificate is
+/// verified against it, full chain, exactly as any other .NET HTTPS request would be. What
+/// vouchfx does NOT do is contribute a private anchor, pin
 /// the peer, present a client identity, or make any assertion about the outcome; the engine
 /// installs a validation callback only where a CA is actually declared, precisely so it never
 /// replaces the platform's verdict with its own.
+/// </para>
+/// <para>
+/// <strong>Why the message scopes the handshake sentence to an HTTP request, and does not say
+/// "the request" flatly.</strong> The staged value is not always a URL. <see cref="ServiceName"/>
+/// is a service name, and <c>EnvironmentMapper.StageServiceEndpoint</c> stages a bare
+/// <c>host:port</c> authority — scheme discarded, no TLS configured by anything — for any target
+/// the suite's own Kafka steps address. Such a run performs no handshake at all, so a flat "the
+/// request fails the handshake" would describe it incorrectly. The shape is barely reachable (it
+/// needs a <c>project:</c>-form csproj acting as a broker) and the notice is deliberately still
+/// raised for it: what the notice asserts — that the engine configures no trust material — is
+/// true of every target, and only the consequence is HTTP-specific. A security advisory that is
+/// wrong about one target is worse than one that is narrower than it could be.
 /// </para>
 /// <para>
 /// <strong>Why that still needs saying.</strong> The most plausible reading of an https address —
 /// "this is now secured, and vouchfx checked" — is wrong in its second half. Addressing the https
 /// listener changes WHICH listener is reached and nothing else. On a host that does not already
 /// trust the certificate that listener presents — a fresh CI runner that never ran
-/// <c>dotnet dev-certs https --trust</c>, say — the request fails the handshake, which is
+/// <c>dotnet dev-certs https --trust</c>, say — an HTTP request to it fails the handshake, which is
 /// classified an environment error, which does not fail the run unless <c>--fail-on-env-error</c>
 /// is passed: a green run over a suite that verified nothing.
 /// </para>
@@ -82,9 +95,11 @@ public sealed record EndpointTrustNotice(
     public override string ToString() =>
         $"transport: service '{ServiceName}' is addressed at endpoint '{SelectedEndpoint}', which "
         + "is an https listener, and the engine configures NO client trust material for it. A "
-        + "'project'-form service cannot declare 'security', so the certificate that listener "
-        + "presents is checked against this host's own default trust store and nothing else — "
-        + "vouchfx asserts nothing about the outcome. If this host does not already trust that "
-        + "certificate the request fails the handshake, which is classified an ENVIRONMENT ERROR "
-        + "and does not fail the run unless '--fail-on-env-error' is passed.";
+        + "'project'-form service cannot declare 'security', so nothing here contributes a trust "
+        + "anchor, pins the peer or presents a client identity — vouchfx asserts nothing about "
+        + "the transport. For a step that makes an HTTP request to this service, the certificate "
+        + "that listener presents is checked against this host's own default trust store and "
+        + "nothing else: if this host does not already trust it the request fails the handshake, "
+        + "which is classified an ENVIRONMENT ERROR and does not fail the run unless "
+        + "'--fail-on-env-error' is passed.";
 }

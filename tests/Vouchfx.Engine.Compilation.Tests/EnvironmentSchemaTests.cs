@@ -2513,9 +2513,21 @@ public sealed class EnvironmentSchemaTests
     }
 
     /// <summary>
-    /// 'httpPort' is refused on a project-form service, naming the field —
-    /// exactly one error, no composite-branch noise.
+    /// 'httpPort' is refused on a project-form service, naming the field AND the
+    /// field that replaces it — exactly one error, no composite-branch noise.
     /// </summary>
+    /// <remarks>
+    /// The remedy half is the part worth pinning. This refusal is a BREAKING
+    /// CHANGE: the field used to be accepted here and silently ignored, so the
+    /// first thing an author of a previously-green suite sees is this string,
+    /// in the output of the run that broke. The generic "not valid on service
+    /// '&lt;name&gt;'" text every other forbidden service property gets would
+    /// leave them deleting a line with no idea what takes its place, which is
+    /// why <c>SchemaErrorCollector.FormatForbiddenPropertyError</c> carries a
+    /// bespoke branch for this one property. Assert the substance — the
+    /// port/listener distinction and the word <c>endpoint</c> — not just the
+    /// prefix, so a future reword cannot quietly drop the remedy and stay green.
+    /// </remarks>
     [Fact]
     public void Service_HttpPortOnProjectForm_IsRejected()
     {
@@ -2539,7 +2551,10 @@ public sealed class EnvironmentSchemaTests
         var onlyError = Assert.Single(result.Errors);
         Assert.Equal("/environment/services/app/httpPort", onlyError.InstanceLocation);
         Assert.Contains(
-            "[properties] Property 'httpPort' is not valid on service 'app'",
+            "[properties] Property 'httpPort' is not valid on the 'project'-form service 'app' — "
+            + "a project's endpoints are discovered from its own launch profile, and 'httpPort' "
+            + "names a container port rather than a listener. Remove the line; to choose WHICH "
+            + "discovered endpoint this service is addressed on, use 'endpoint' (DSL §3.2)",
             onlyError.Message,
             System.StringComparison.Ordinal);
     }

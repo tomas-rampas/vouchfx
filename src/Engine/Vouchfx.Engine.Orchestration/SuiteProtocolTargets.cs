@@ -164,9 +164,11 @@ public static class SuiteProtocolTargets
     /// <c>project:</c>-form service that declares no endpoint — but only when a step would
     /// actually read one for it. A .NET worker service (a <c>BackgroundService</c> consuming
     /// Kafka or a queue, no <c>applicationUrl</c>, no HTTP listener) is schema-legal, has no
-    /// escape hatch — <c>$defs/service</c> refuses <c>ports</c>/<c>healthCheck</c> on a
-    /// project-form service, so its author cannot declare a non-HTTP shape the way REQ-008 lets
-    /// an image-form service — and is the canonical shape this product exists to test. It must
+    /// escape hatch — <c>$defs/service</c>'s project-form clause forbids every field an
+    /// image-form service would use to declare a non-HTTP shape (grep that clause's <c>then</c>
+    /// for the current roster rather than trusting a copy here), so its author cannot do what
+    /// REQ-008 lets an image-form author do — and is the canonical shape this product exists to
+    /// test. It must
     /// keep starting as part of the topology and simply never be staged, exactly as it did before
     /// that refusal existed. This set is what tells the two cases apart.
     /// </para>

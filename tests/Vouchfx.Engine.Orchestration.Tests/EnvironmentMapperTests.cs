@@ -1859,8 +1859,11 @@ public sealed class EnvironmentMapperTests : IDisposable
     }
 
     // -----------------------------------------------------------------------
-    // REQ-006: a field that is meaningless on the form it sits on
+    // REQ-006 (service-form fields): a field that is meaningless on the form it sits on
     // -----------------------------------------------------------------------
+    //
+    // The qualifier disambiguates: this file carries a SECOND, unrelated REQ-006 — the
+    // ${env:NAME} passthrough block further down — so a bare "REQ-006" grep returns both.
     //
     // Every spec here is constructed DIRECTLY rather than parsed from YAML, and that is the
     // whole point of these four tests rather than an incidental convenience. $defs/service
@@ -1875,7 +1878,8 @@ public sealed class EnvironmentMapperTests : IDisposable
     // Map_ServiceHealthCheckType_Unrecognised_ThrowsArgumentException above.
 
     /// <summary>
-    /// REQ-006: an <c>image</c>-form service declaring <c>endpoint</c> is refused eagerly by
+    /// REQ-006 (service-form fields): an <c>image</c>-form service declaring <c>endpoint</c> is
+    /// refused eagerly by
     /// <c>Map()</c> — the field selects among endpoints DISCOVERED from a project's launch
     /// profile, and an image-form service has none: the engine names its endpoints itself,
     /// from the service's own declaration. Before this check the value was accepted and
@@ -1912,7 +1916,8 @@ public sealed class EnvironmentMapperTests : IDisposable
     }
 
     /// <summary>
-    /// REQ-006: a <c>project</c>-form service declaring <c>httpPort</c> is refused eagerly by
+    /// REQ-006 (service-form fields): a <c>project</c>-form service declaring <c>httpPort</c> is
+    /// refused eagerly by
     /// <c>Map()</c>. The field never had any effect on this form — the services loop reads it
     /// for an image-form service only, while Aspire's own <c>AddProject</c> discovers the
     /// project's launch-profile endpoints — so this refuses a value that was previously

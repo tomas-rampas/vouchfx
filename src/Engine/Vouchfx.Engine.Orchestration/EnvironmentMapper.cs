@@ -783,18 +783,24 @@ public static class EnvironmentMapper
                     nameof(env));
             }
 
-            // ── REQ-006: the two shapes where a field is meaningless on the form it sits on ──
+            // ── REQ-006 (SERVICE-FORM FIELDS): the two shapes where a field is meaningless on
+            //    the form it sits on ──
             //
-            // Both are already refused by $defs/service (the `image`/`endpoint` clause and the
-            // project-form clause that now lists `httpPort` beside `ports`/`healthCheck`). These
-            // are the braces to those belts, in the same relationship every other check in this
-            // loop has with its own schema counterpart. ONE AUTHOR-REACHABLE PATH reaches this
+            // The qualifier is not decorative: this file carries a SECOND, unrelated REQ-006 —
+            // the `${env:NAME}` passthrough further down (s_envRefPattern and its call sites),
+            // from a different requirement set. A bare "REQ-006" grep over this file returns
+            // both, so neither may be labelled with the bare id alone.
+            //
+            // Both shapes are already refused by $defs/service (the `image`/`endpoint` clause and
+            // the project-form clause that forbids `httpPort`). These are the braces to those
+            // belts, in the same relationship every other check in this loop has with its own
+            // schema counterpart. ONE AUTHOR-REACHABLE PATH reaches this
             // method with no schema in front of it, and it is MEASURED, not theoretical: `--watch`,
             // whose compile seam is YamlDocumentParser.Parse + AstBuilder.Build with no
             // DocumentValidator.Validate call anywhere in it, and which then reaches here through
             // SuiteTopology.StartAsync (#370). An in-repo caller constructing an EnvironmentSpec
             // directly arrives the same way, which is how the checks below are pinned — see
-            // EnvironmentMapperTests' REQ-006 block.
+            // EnvironmentMapperTests' "REQ-006 (service-form fields)" block.
             //
             // Without these two checks, that path accepts the author's field and silently drops
             // it — the accepted-and-ignored shape #448 exists to end, reproduced one layer down.

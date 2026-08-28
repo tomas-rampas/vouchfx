@@ -1367,14 +1367,19 @@ internal static class SchemaErrorCollector
     /// dependency by its own map key instead, never a guessed kind.
     /// </para>
     /// <para>
-    /// On a <c>service</c> container, exactly ONE of the per-field exclusions
-    /// $defs/service declares is named directly here: <c>project</c> forbidden
-    /// once <c>image</c> is set (see that definition's own description) — a
-    /// single, fixed, frozen rule, so it gets bespoke wording rather than a
-    /// generalisation. The offending <c>then</c> branch is reachable only via a
-    /// sibling <c>if: required:["image"]</c>, so 'image' being present is a
-    /// schema invariant of this branch, not an assumption this method makes
-    /// about the instance. EVERY OTHER per-field service exclusion, whatever
+    /// On a <c>service</c> container, TWO of the per-field exclusions
+    /// $defs/service declares are named directly here, and the branches below
+    /// are the whole of that list: <c>project</c> forbidden once <c>image</c>
+    /// is set (see that definition's own description), and <c>httpPort</c>
+    /// forbidden once <c>project</c> is set. Each is a single, fixed rule whose
+    /// remedy is more than "delete the field" — the first tells an author the
+    /// two keys are alternatives, the second names the field they actually
+    /// wanted — so each gets bespoke wording rather than a generalisation. The
+    /// <c>project</c> branch's offending <c>then</c> is reachable only via a
+    /// sibling <c>if: required:["image"]</c>, and the <c>httpPort</c> branch's
+    /// only via a sibling <c>if: required:["project"]</c>, so the other key's
+    /// presence is a schema invariant of each branch, not an assumption this
+    /// method makes about the instance. EVERY OTHER per-field service exclusion, whatever
     /// the roster is at any given time (read it off $defs/service's own
     /// <c>allOf</c>), is deliberately NOT named individually: each falls
     /// through to the generic "Property '&lt;name&gt;' is not valid on service
@@ -1568,6 +1573,34 @@ internal static class SchemaErrorCollector
             {
                 return $"[properties] Property 'project' cannot be combined with 'image' on service " +
                        $"'{containerName}' — exactly one of the two is required (DSL §3.2)";
+            }
+
+            // The generic text below ("Property 'httpPort' is not valid on service 'app'") is the
+            // WRONG diagnostic for the one field on this container whose refusal is a BREAKING
+            // CHANGE. `httpPort` was accepted on a project-form service and silently ignored;
+            // refusing it reddens suites that ran green, and the author of such a suite meets this
+            // message first — before any prose, in the output of the run that broke. "Not valid
+            // here" tells them to delete a line they believed was doing work, and leaves them to
+            // guess what replaces it. The remedy is a DIFFERENT FIELD, so the message has to name
+            // it: `endpoint`, which selects among the listeners the project's own launch profile
+            // declares. Naming it is also what distinguishes the two fields for good — `httpPort`
+            // names a container PORT, `endpoint` names a LISTENER, and the field that looks like
+            // the selector is not the one that is.
+            //
+            // Reachability is a schema invariant, not an assumption: `httpPort: false` appears in
+            // exactly one place in $defs/service — the `if: required:["project"]` clause's `then`,
+            // beside `ports` and `healthCheck` — so this branch can only fire on a project-form
+            // service and may say so unconditionally. It is NOT reachable from `run`/`validate`'s
+            // sibling in EnvironmentMapper, which throws its own longer message on the schema-free
+            // `--watch` seam; the two are separate texts for separate seams, and this one is the
+            // author-facing default because schema validation short-circuits first.
+            if (containerKind == ServiceContainerKind && propertyName == "httpPort")
+            {
+                return $"[properties] Property 'httpPort' is not valid on the 'project'-form " +
+                       $"service '{containerName}' — a project's endpoints are discovered from its " +
+                       "own launch profile, and 'httpPort' names a container port rather than a " +
+                       "listener. Remove the line; to choose WHICH discovered endpoint this " +
+                       "service is addressed on, use 'endpoint' (DSL §3.2)";
             }
 
             return $"[properties] Property '{propertyName}' is not valid on {containerKind} '{containerName}'";

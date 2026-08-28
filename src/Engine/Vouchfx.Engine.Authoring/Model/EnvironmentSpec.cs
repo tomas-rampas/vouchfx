@@ -169,11 +169,10 @@ public sealed record ServiceSpec(
 
     /// <summary>
     /// The name of the endpoint to stage for this service, selecting among those discovered
-    /// from a <see cref="Project"/>-form service's launch profile
-    /// (project-service-endpoint-selection spec, REQ-001). <see langword="null"/> when the
-    /// service declares no <c>endpoint:</c> key — which is every service written before this
-    /// field existed, and for which the engine's own fixed preference order picks the endpoint
-    /// as it always has.
+    /// from a <see cref="Project"/>-form service's launch profile. <see langword="null"/> when
+    /// the service declares no <c>endpoint:</c> key, and the engine's own fixed preference
+    /// order then picks the endpoint: the plaintext listener where the project offers one,
+    /// otherwise the secure one, otherwise the first the project declares.
     /// </summary>
     /// <remarks>
     /// <para>

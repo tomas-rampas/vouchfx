@@ -842,7 +842,8 @@ public sealed class EnvironmentSecurityValidatorTests : IDisposable
     /// </summary>
     /// <remarks>
     /// The JSON Schema accepts the combination — <c>$defs/service</c>'s project clause forbids
-    /// <c>ports</c> and <c>healthCheck</c>, not <c>security</c> — and
+    /// several image-form-only fields but not <c>security</c>; grep that clause's <c>then</c>
+    /// for the current roster rather than trusting a copy here — and
     /// <c>EnvironmentMapper.Map</c> then throws at topology-build time. That is the "validates
     /// but can never work" shape: loud, but only after a full topology cycle the author paid
     /// for to learn something knowable from the document alone. The mapper's own throw is

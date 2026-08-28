@@ -341,7 +341,34 @@ public static class YamlDocumentParser
             // project's discovered endpoints under StringComparison.Ordinal, so normalising it
             // here would silently change which listener the author selected, and would mask a
             // mistyped selector the consuming layer is meant to refuse by name.
-            var endpoint = GetScalar(serviceMapping, "endpoint");
+            //
+            // NOT GetScalar, and the difference is the whole point of the field. GetScalar
+            // collapses "key absent" and "key present, value is not a scalar" to the same null,
+            // and null is how a service says "I made no selection — apply the engine's own fixed
+            // preference order". So `endpoint: [https]` (a sequence, or a mapping) would bind as
+            // no selection at all: the author's declaration accepted and silently ignored, which
+            // is the exact defect this field was added to end, reproduced one layer down. The
+            // schema refuses the shape on `run`/`validate`, but `--watch`'s compile seam is
+            // YamlDocumentParser.Parse + AstBuilder.Build with no DocumentValidator.Validate in
+            // it, so on that path this is the only thing between the author and a silent drop.
+            // Distinguish the two cases and refuse the second with line/column, mirroring the
+            // non-mapping service-value throw above.
+            string? endpoint = null;
+            if (TryGetNode(serviceMapping, "endpoint", out var endpointNode))
+            {
+                if (endpointNode is not YamlScalarNode endpointScalar)
+                {
+                    throw new YamlParseException(
+                        $"Service '{keyScalar.Value}' declares 'endpoint' at line " +
+                        $"{endpointNode.Start.Line} as {endpointNode.NodeType}, but 'endpoint' " +
+                        "names a single endpoint of the service's project — one scalar, " +
+                        "e.g. 'endpoint: https'.",
+                        endpointNode.Start.Line,
+                        endpointNode.Start.Column);
+                }
+
+                endpoint = endpointScalar.Value;
+            }
 
             dict[keyScalar.Value] = new ServiceSpec(image, project, pullPolicy, httpPort, env)
             {

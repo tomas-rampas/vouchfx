@@ -1903,4 +1903,51 @@ public sealed class YamlDocumentParserTests
         // Assert
         Assert.Equal("  HTTPS  ", doc.Environment!.Services!["api"].Endpoint);
     }
+
+    /// <summary>
+    /// A NON-SCALAR <c>endpoint:</c> is refused here, with line and column — never collapsed to
+    /// <see langword="null"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see langword="null"/> is not a spare slot: on this field it MEANS "the author made no
+    /// selection", and the consuming layer answers it by applying the engine's own fixed
+    /// preference order. A sequence or mapping binding as null would therefore be the author's
+    /// declaration accepted and silently ignored — the precise defect this field exists to end,
+    /// reproduced one layer below it.
+    /// </para>
+    /// <para>
+    /// The schema refuses the shape on every document that reaches <c>run</c>/<c>validate</c>.
+    /// This test guards the seam that does not: <c>--watch</c> recompiles through
+    /// <c>YamlDocumentParser.Parse</c> + <c>AstBuilder.Build</c> with no
+    /// <c>DocumentValidator.Validate</c> call in it, so on that path the parser is the only thing
+    /// between a mis-shaped selector and a silent discard.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [InlineData("endpoint:\n        - https", "a sequence")]
+    [InlineData("endpoint:\n        name: https", "a mapping")]
+    public void Parse_ServiceEndpoint_NonScalar_ThrowsYamlParseException(string endpointBlock, string shape)
+    {
+        // Arrange — 'endpoint:' carries a non-scalar node. The block is indented to sit as a
+        // sibling of 'project:' inside the service mapping.
+        var yaml = $"""
+            environment:
+              services:
+                api:
+                  project: "./Api/Api.csproj"
+                  {endpointBlock}
+            steps:
+              - id: noop
+                type: script.csharp
+            """;
+
+        // Act + Assert
+        var ex = Assert.Throws<YamlParseException>(() => YamlDocumentParser.Parse(yaml));
+        Assert.Contains("api", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("endpoint", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("scalar", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.True(ex.Line > 0, $"Line should be populated from the offending {shape} node.");
+        Assert.True(ex.Column > 0, $"Column should be populated from the offending {shape} node.");
+    }
 }

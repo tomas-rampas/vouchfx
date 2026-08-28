@@ -386,9 +386,10 @@ public sealed class ProjectServiceEndpointStagingTests : IDisposable
     /// This is the test whose absence let an unconditional refusal through review. A
     /// <c>BackgroundService</c> consuming Kafka or a queue has no <c>applicationUrl</c> and no HTTP
     /// listener; it is schema-legal (<c>$defs/service</c> requires only <c>project</c>), it has no
-    /// escape hatch (that same schema refuses <c>ports</c> and <c>healthCheck</c> on a project-form
-    /// service, so its author cannot declare a non-HTTP shape the way REQ-008 lets an image-form
-    /// service), and it is the canonical shape this product exists to test — the worker consuming
+    /// escape hatch (that same schema's project-form clause forbids every field an image-form
+    /// service would use to declare a non-HTTP shape — grep that clause's <c>then</c> for the
+    /// current roster rather than trusting a copy here — so its author cannot do what REQ-008 lets
+    /// an image-form author do), and it is the canonical shape this product exists to test — the worker consuming
     /// the Kafka event in the one business transaction crossing REST, Kafka, a DB and a webhook.
     /// </para>
     /// <para>
