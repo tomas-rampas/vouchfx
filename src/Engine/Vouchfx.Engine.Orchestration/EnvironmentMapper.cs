@@ -783,6 +783,64 @@ public static class EnvironmentMapper
                     nameof(env));
             }
 
+            // ── REQ-006: the two shapes where a field is meaningless on the form it sits on ──
+            //
+            // Both are already refused by $defs/service (the `image`/`endpoint` clause and the
+            // project-form clause that now lists `httpPort` beside `ports`/`healthCheck`). These
+            // are the braces to those belts, in the same relationship every other check in this
+            // loop has with its own schema counterpart. ONE AUTHOR-REACHABLE PATH reaches this
+            // method with no schema in front of it, and it is MEASURED, not theoretical: `--watch`,
+            // whose compile seam is YamlDocumentParser.Parse + AstBuilder.Build with no
+            // DocumentValidator.Validate call anywhere in it, and which then reaches here through
+            // SuiteTopology.StartAsync (#370). An in-repo caller constructing an EnvironmentSpec
+            // directly arrives the same way, which is how the checks below are pinned — see
+            // EnvironmentMapperTests' REQ-006 block.
+            //
+            // Without these two checks, that path accepts the author's field and silently drops
+            // it — the accepted-and-ignored shape #448 exists to end, reproduced one layer down.
+            // Eager, before any builder mutation, like every other check here.
+
+            // `endpoint:` SELECTS AMONG ENDPOINTS THE ENGINE DISCOVERED, and an image-form service
+            // has none to select among: its endpoint set is one the engine NAMES itself from the
+            // service's own declaration (ServiceEndpointNaming.PlaintextEndpoints), rather than one
+            // it discovers. So the field cannot mean anything here, whatever it says.
+            //
+            // `is not null`, not `is { }`: nothing needs the value bound in order to refuse the
+            // field.
+            if (spec.Image is not null && spec.Endpoint is not null)
+            {
+                throw new ArgumentException(
+                    $"Service '{name}' declares both 'image' and 'endpoint'. 'endpoint' names one " +
+                    "of the endpoints discovered from a 'project'-form service's launch profile, " +
+                    "and an image-form service has none to name: the engine names its endpoints " +
+                    "itself, from this service's own declaration. Remove the 'endpoint' line and " +
+                    "select the port through 'httpPort', 'ports' or 'security.endpoint' instead.",
+                    nameof(env));
+            }
+
+            // `httpPort` NEVER DID ANYTHING ON A PROJECT-FORM SERVICE — this is not a field being
+            // narrowed away from some previous meaning. The services loop below reads it only for
+            // an image-form service; a project-form one goes to Aspire's own AddProject, which
+            // discovers the project's launch-profile endpoints and never consults this value. It
+            // was accepted and silently ignored, which is precisely why refusing it is the fix and
+            // there is no behaviour to preserve.
+            //
+            // The value IS bound, unlike the check above, because it is quoted back: an author
+            // scanning a suite for `httpPort: 8080` finds the line from the message, and the
+            // 'ports'-pinning sibling further down states its own port the same way.
+            if (spec.Project is not null && spec.HttpPort is { } projectFormHttpPort)
+            {
+                throw new ArgumentException(
+                    $"Service '{name}' declares 'httpPort: {projectFormHttpPort}' on a " +
+                    "'project'-form service, where it has never had any effect: a project's " +
+                    "endpoints are discovered from its own launch profile, never declared here, " +
+                    "so the engine reads 'httpPort' for an 'image'-form service only. Remove the " +
+                    "line. If the intent was to choose WHICH of the project's endpoints this " +
+                    "service is addressed on, that is 'endpoint:', which names a listener rather " +
+                    "than a port.",
+                    nameof(env));
+            }
+
             // ── REQ-023: the secured endpoint ────────────────────────────────────────────
             // Validated eagerly, before any builder mutation, for the same reason every other
             // check in this loop is: an unresolvable selector must fail with a located,
@@ -1431,13 +1489,11 @@ public static class EnvironmentMapper
                 // the pre-existing code was CORRECT for it.
                 //
                 // The retarget therefore is not a repair of a reachable authoring break. It is:
-                // (a) correctness for the shipped kafka path, unchanged in behaviour; (b) defence
-                // for the widening the $defs/security description itself calls "a release
+                // (a) correctness for the shipped kafka path, unchanged in behaviour; and (b)
+                // defence for the widening the $defs/security description itself calls "a release
                 // position rather than a permanent one: transport security for the remaining
                 // dependency kinds is a 1.1 capability" — on that day the four database-backed
-                // types would otherwise have thrown; and (c) protection for callers that embed an
-                // EnvironmentSpec directly and never touch the schema, such as the shipped
-                // Vouchfx.Sdk.Testing surface.
+                // types would otherwise have thrown.
                 //
                 // ONE AUTHOR-REACHABLE CALLER TODAY, and it is a divergence, not a repair:
                 // `--watch` (WatchRunner.Compile runs only YamlDocumentParser.Parse + AstBuilder
@@ -1710,16 +1766,15 @@ public static class EnvironmentMapper
                     // "refused at topology-build time like any other unmatched name".
                     //
                     // THE EMPTY STRING TAKES THE SAME PATH, and the schema is not what makes that
-                    // matter — two paths reach this mapper with no schema in front of them. A
-                    // dangling `endpoint:` key (no value after the colon) round-trips through
-                    // GetScalar as "", NOT as null: GetScalar returns `scalar.Value` verbatim, and
-                    // only the separate GetScalarOrPlainNull helper collapses that spelling, which
-                    // this field deliberately does not use. `--watch` never validates against the
-                    // schema at all (measured: WatchRunner.Compile is YamlDocumentParser.Parse +
-                    // AstBuilder.Build, with no DocumentValidator.Validate call) and is precisely
-                    // the edit-and-save mode where a half-typed key exists; and a direct
-                    // EnvironmentSpec embedding — the shipped Vouchfx.Sdk.Testing surface —
-                    // bypasses the schema by design. Under a `Length: > 0` test both would leave
+                    // matter — one author-reachable path reaches this mapper with no schema in
+                    // front of it. A dangling `endpoint:` key (no value after the colon)
+                    // round-trips through GetScalar as "", NOT as null: GetScalar returns
+                    // `scalar.Value` verbatim, and only the separate GetScalarOrPlainNull helper
+                    // collapses that spelling, which this field deliberately does not use.
+                    // `--watch` never validates against the schema at all (measured:
+                    // WatchRunner.Compile is YamlDocumentParser.Parse + AstBuilder.Build, with no
+                    // DocumentValidator.Validate call) and is precisely the edit-and-save mode
+                    // where a half-typed key exists. Under a `Length: > 0` test it would leave
                     // this null, fall through to the fixed rule, and accept the author's
                     // `endpoint:` key while silently ignoring it: the exact defect class #448
                     // exists to end, reproduced inside its own fix.

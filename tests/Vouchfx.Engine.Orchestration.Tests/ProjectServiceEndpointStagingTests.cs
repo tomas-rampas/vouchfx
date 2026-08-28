@@ -760,12 +760,12 @@ public sealed class ProjectServiceEndpointStagingTests : IDisposable
     /// <para>
     /// Constructed as an <c>EnvironmentSpec</c> DIRECTLY, because that is the point: the schema's
     /// <c>minLength: 1</c> refuses the empty string, so a suite that goes through
-    /// <c>DocumentValidator</c> never reaches here with one. Two shipped paths do not go through
-    /// it. <c>--watch</c> performs no schema validation at all (<c>WatchRunner.Compile</c> is
-    /// <c>YamlDocumentParser.Parse</c> + <c>AstBuilder.Build</c>), and a dangling <c>endpoint:</c>
-    /// key — no value after the colon — round-trips through <c>GetScalar</c> as <c>""</c> rather
-    /// than <see langword="null"/>; and a direct <c>EnvironmentSpec</c> embedding, the shipped
-    /// <c>Vouchfx.Sdk.Testing</c> surface, bypasses the schema by design.
+    /// <c>DocumentValidator</c> never reaches here with one. One author-reachable path does not go
+    /// through it: <c>--watch</c> performs no schema validation at all (<c>WatchRunner.Compile</c>
+    /// is <c>YamlDocumentParser.Parse</c> + <c>AstBuilder.Build</c>), and a dangling
+    /// <c>endpoint:</c> key — no value after the colon — round-trips through <c>GetScalar</c>
+    /// as <c>""</c> rather than <see langword="null"/>. Constructing the spec directly, as this
+    /// test does, reaches the same code by the same route.
     /// </para>
     /// <para>
     /// Treating <c>""</c> as absent would run the fixed rule and stage "http": the author's

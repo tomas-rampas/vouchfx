@@ -257,9 +257,9 @@ public sealed class ServerArtifactInjectionTests : IDisposable
     /// this code with a database-backed dependency: the 1.1 widening the <c>$defs/security</c>
     /// description already commits to ("a release position rather than a permanent one:
     /// transport security for the remaining dependency kinds is a 1.1 capability"), and callers
-    /// that embed an <see cref="EnvironmentSpec"/> directly, as this test does and as the shipped
-    /// <c>Vouchfx.Sdk.Testing</c> surface allows.  For those four types the RETAINED builder is
-    /// the <c>AddDatabase</c> child, which is not a container at all.
+    /// that embed an <see cref="EnvironmentSpec"/> directly, as this test does.  For those four
+    /// types the RETAINED builder is the <c>AddDatabase</c> child, which is not a container at
+    /// all.
     /// </para>
     /// <para>
     /// The third row is the keystore shape from the original kafka-dependency <c>Fact</c> this

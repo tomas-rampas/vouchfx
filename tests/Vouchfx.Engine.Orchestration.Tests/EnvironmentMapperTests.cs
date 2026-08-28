@@ -1859,6 +1859,174 @@ public sealed class EnvironmentMapperTests : IDisposable
     }
 
     // -----------------------------------------------------------------------
+    // REQ-006: a field that is meaningless on the form it sits on
+    // -----------------------------------------------------------------------
+    //
+    // Every spec here is constructed DIRECTLY rather than parsed from YAML, and that is the
+    // whole point of these four tests rather than an incidental convenience. $defs/service
+    // already refuses both shapes, so a YAML-driven test would be caught by the schema and
+    // would prove nothing about the mapper checks below. The mapper checks exist for the one
+    // author-reachable path with no schema in front of it — `--watch`, whose compile seam is
+    // YamlDocumentParser.Parse + AstBuilder.Build with no DocumentValidator.Validate call
+    // (#370), and which reaches Map through SuiteTopology.StartAsync. Constructing the spec
+    // directly here reaches Map the same way, minus the file watcher.
+    //
+    // Same belt-and-braces relationship, and the same reachability argument, as
+    // Map_ServiceHealthCheckType_Unrecognised_ThrowsArgumentException above.
+
+    /// <summary>
+    /// REQ-006: an <c>image</c>-form service declaring <c>endpoint</c> is refused eagerly by
+    /// <c>Map()</c> — the field selects among endpoints DISCOVERED from a project's launch
+    /// profile, and an image-form service has none: the engine names its endpoints itself,
+    /// from the service's own declaration. Before this check the value was accepted and
+    /// silently dropped, and whichever endpoint the fixed rule selects staged regardless of
+    /// what the field named — the accepted-and-ignored shape #448 exists to end.
+    /// </summary>
+    [Fact]
+    public void Map_ServiceWithImageAndEndpoint_ThrowsArgumentException()
+    {
+        // Arrange
+        var env = new EnvironmentSpec(
+            Services: new Dictionary<string, ServiceSpec>
+            {
+                ["api"] = new ServiceSpec(
+                    Image: "myorg/api:1.0",
+                    Project: null,
+                    ImagePullPolicy: null,
+                    HttpPort: null,
+                    Env: null)
+                {
+                    Endpoint = "https",
+                },
+            },
+            Dependencies: null,
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        // Act + Assert
+        var ex = Assert.Throws<ArgumentException>(() => EnvironmentMapper.Map(env));
+        Assert.Contains("api", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("'endpoint'", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("'image'", ex.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// REQ-006: a <c>project</c>-form service declaring <c>httpPort</c> is refused eagerly by
+    /// <c>Map()</c>. The field never had any effect on this form — the services loop reads it
+    /// for an image-form service only, while Aspire's own <c>AddProject</c> discovers the
+    /// project's launch-profile endpoints — so this refuses a value that was previously
+    /// accepted and ignored rather than narrowing away any behaviour.
+    /// </summary>
+    [Fact]
+    public void Map_ServiceWithProjectAndHttpPort_ThrowsArgumentException()
+    {
+        // Arrange
+        var env = new EnvironmentSpec(
+            Services: new Dictionary<string, ServiceSpec>
+            {
+                ["api"] = new ServiceSpec(
+                    Image: null,
+                    Project: "./src/App/App.csproj",
+                    ImagePullPolicy: null,
+                    HttpPort: 8080,
+                    Env: null),
+            },
+            Dependencies: null,
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        // Act + Assert
+        var ex = Assert.Throws<ArgumentException>(() => EnvironmentMapper.Map(env));
+        Assert.Contains("api", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("'httpPort: 8080'", ex.Message, StringComparison.Ordinal);
+
+        // The message must point at the field that DOES select an endpoint on this form,
+        // rather than leaving the author with only a prohibition.
+        Assert.Contains("'endpoint:'", ex.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The over-refusal pin for
+    /// <see cref="Map_ServiceWithImageAndEndpoint_ThrowsArgumentException"/>: a
+    /// <c>project</c>-form service declaring <c>endpoint</c> is the shape the field exists for
+    /// and must still map. Asserted at <c>Map()</c> only — the eager pass is where the new
+    /// checks live; what <c>Configure()</c> then does with the selector is pinned separately in
+    /// <c>ProjectServiceEndpointStagingTests</c>, which needs a real csproj fixture.
+    /// </summary>
+    [Fact]
+    public void Map_ServiceWithProjectAndEndpoint_IsAccepted()
+    {
+        // Arrange
+        var env = new EnvironmentSpec(
+            Services: new Dictionary<string, ServiceSpec>
+            {
+                ["api"] = new ServiceSpec(
+                    Image: null,
+                    Project: "./src/App/App.csproj",
+                    ImagePullPolicy: null,
+                    HttpPort: null,
+                    Env: null)
+                {
+                    Endpoint = "https",
+                },
+            },
+            Dependencies: null,
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        // Act
+        var mapped = EnvironmentMapper.Map(env);
+
+        // Assert — mapped, not refused. A PROXY assertion, and worth naming as one: the
+        // health-gate list is built in its own later loop, which adds every service name
+        // unconditionally. So this proves that Map returned rather than throwing AND that
+        // Services was non-empty — it also rules out the empty-environment early return,
+        // whose HealthGateResourceNames is Array.Empty. It does not observe the eager loop.
+        Assert.Contains("api", mapped.HealthGateResourceNames);
+    }
+
+    /// <summary>
+    /// The over-refusal pin for
+    /// <see cref="Map_ServiceWithProjectAndHttpPort_ThrowsArgumentException"/>: an
+    /// <c>image</c>-form service declaring <c>httpPort</c> is the shape that field exists for,
+    /// and still maps to an HTTP endpoint on the declared port.
+    /// </summary>
+    [Fact]
+    public void Map_ServiceWithImageAndHttpPort_IsAccepted()
+    {
+        // Arrange
+        var env = new EnvironmentSpec(
+            Services: new Dictionary<string, ServiceSpec>
+            {
+                ["api"] = new ServiceSpec(
+                    Image: "myorg/api:1.0",
+                    Project: null,
+                    ImagePullPolicy: null,
+                    HttpPort: 8080,
+                    Env: null),
+            },
+            Dependencies: null,
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        // Act
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+        mapped.Configure(builder);
+
+        // Assert — the declared port is still what the "http" endpoint targets.
+        var resource = builder.Resources.OfType<ContainerResource>().Single(r => r.Name == "api");
+        var endpoint = Assert.Single(
+            resource.Annotations.OfType<EndpointAnnotation>(),
+            a => a.Name == "http");
+        Assert.Equal(8080, endpoint.TargetPort);
+    }
+
+    // -----------------------------------------------------------------------
     // SUT configuration surface — service `env:` mapping
     // -----------------------------------------------------------------------
     //
