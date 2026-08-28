@@ -8,13 +8,19 @@
 // builder mutation — precisely so an authoring fault surfaces as an
 // ArgumentException that ScenarioRunner classifies as Inconclusive.  A handful
 // of facts are not knowable that early: they exist only once Aspire itself has
-// built the resource inside the closure.  The one that matters to an author is
-// whether a `project:`-form service THAT A STEP TARGETS declares any endpoint at
-// all — Aspire discovers a project's endpoints from its own launch profile, and
-// nothing outside Aspire can answer that without reimplementing the discovery.
-// (The targeting half IS known eagerly; it is the endpoint half that is not, so
-// the combined check can only run here.  An endpoint-less project-form service
-// that no step targets is a worker service and is not a fault at all.)
+// built the resource inside the closure.  That — not any particular fault — is
+// the membership rule for this type: the author can fix it, and nothing outside
+// Aspire can decide it without reimplementing the discovery.  The standing
+// example is what endpoints a `project:`-form service's launch profile
+// produces, which is the question behind every throw site so far.
+//
+// FOR THE CURRENT SET, GREP `throw new TopologyAuthoringException`.  A roster
+// written out here goes stale the first time one is added, which is exactly
+// what happened to the roster this comment used to carry; the property above
+// does not.  Note in particular that membership implies nothing about step
+// TARGETING: some of these throws are gated on it and some deliberately are
+// not, because a false statement the author wrote is a fault whether or not
+// anything reads the service.
 //
 // Every OTHER throw from inside that closure is an engine defect or an infra
 // fault, and SuiteTopology.StartAsync's `catch (Exception ex)` correctly wraps

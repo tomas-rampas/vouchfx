@@ -168,6 +168,29 @@ public sealed record ServiceSpec(
     public HealthCheckSpec? HealthCheck { get; init; }
 
     /// <summary>
+    /// The name of the endpoint to stage for this service, selecting among those discovered
+    /// from a <see cref="Project"/>-form service's launch profile. <see langword="null"/> when
+    /// the service declares no <c>endpoint:</c> key, and the engine's own fixed preference
+    /// order then picks the endpoint: the plaintext listener where the project offers one,
+    /// otherwise the secure one, otherwise the first the project declares.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Carried as the raw scalar text the author wrote, with no trimming, case folding or
+    /// normalisation of any kind: the name is matched against a discovered endpoint under
+    /// <see cref="StringComparison.Ordinal"/>, so normalising it here would silently change
+    /// which listener the author selected. This record neither validates the value nor resolves
+    /// it to anything — a project's launch profile is not modelled at authoring time, so an
+    /// unmatched name can only be caught at topology-build time.
+    /// </para>
+    /// <para>
+    /// An init-only property for the same binary-compatibility reason as
+    /// <see cref="Security"/> — see its own remarks.
+    /// </para>
+    /// </remarks>
+    public string? Endpoint { get; init; }
+
+    /// <summary>
     /// Withholds <see cref="Security"/> from <c>ToString()</c> (#408), printing every other
     /// member exactly as the compiler-generated <c>PrintMembers</c> did.
     /// </summary>
@@ -212,7 +235,8 @@ public sealed record ServiceSpec(
             (nameof(Security), Security),
             (nameof(Ports), Ports),
             (nameof(PinnedHostPorts), PinnedHostPorts),
-            (nameof(HealthCheck), HealthCheck));
+            (nameof(HealthCheck), HealthCheck),
+            (nameof(Endpoint), Endpoint));
 }
 
 /// <summary>

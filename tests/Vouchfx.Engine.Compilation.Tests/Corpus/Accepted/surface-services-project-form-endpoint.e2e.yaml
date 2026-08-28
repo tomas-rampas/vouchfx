@@ -1,0 +1,19 @@
+# Surface coverage: environment.services project form declaring an explicit
+# 'endpoint:' selector (DSL §3.2 — names which of the project's launch-profile
+# endpoints the engine stages as svc::orders-api). A sibling of
+# surface-services-project-form.e2e.yaml rather than an amendment to it: that
+# fixture pins the bare project form, whose acceptance must keep being asserted
+# with no 'endpoint:' present at all. NOT a usage recommendation: naming the
+# 'https' listener configures no client trust (see the field's own description
+# in root-language-schema.json for what that costs at run time).
+metadata:
+  name: surface-services-project-form-endpoint
+environment:
+  services:
+    orders-api:
+      project: ./src/Orders.Api/Orders.Api.csproj
+      endpoint: https
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step: this fixture exercises the services project form only."

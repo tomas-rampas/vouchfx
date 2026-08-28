@@ -1785,4 +1785,169 @@ public sealed class YamlDocumentParserTests
             Assert.Equal(serviceEx.Column, dependencyEx.Column);
         }
     }
+
+    // -------------------------------------------------------------------------
+    // Endpoint selection for a project-form service — service 'endpoint:' scalar
+    //
+    // These tests assert exactly what this layer owns — that the key is bound to
+    // the typed field, that its absence is null, that the text is carried through
+    // untouched, and that the binding does not depend on the service's form.
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void Parse_ServiceEndpoint_ParsesIntoTypedField()
+    {
+        // Arrange — a project-form service naming one of its launch-profile endpoints.
+        const string yaml = """
+            environment:
+              services:
+                api:
+                  project: "./Api/Api.csproj"
+                  endpoint: https
+            steps:
+              - id: noop
+                type: script.csharp
+            """;
+
+        // Act
+        var doc = YamlDocumentParser.Parse(yaml);
+
+        // Assert
+        Assert.Equal("https", doc.Environment!.Services!["api"].Endpoint);
+    }
+
+    /// <summary>
+    /// The parser is deliberately BLIND to the service's form: it binds <c>endpoint:</c> on an
+    /// <c>image:</c>-form service exactly as it does on a <c>project:</c>-form one. The form
+    /// restriction is not this layer's job — the JSON Schema refuses the combination for any
+    /// document that goes through validation, and REQ-006's eager check in
+    /// <c>EnvironmentMapper</c> refuses it again for the direct-construction path that bypasses
+    /// the schema. This test exists because that second backstop is asserted by constructing an
+    /// <c>EnvironmentSpec</c> in code and so never touches the parser: were the parser "helpfully"
+    /// taught to drop <c>endpoint:</c> on an image-form service, every existing test would stay
+    /// green while the mapper's refusal silently stopped firing on real documents, turning a
+    /// located error into a silent discard.
+    /// </summary>
+    [Fact]
+    public void Parse_ServiceEndpoint_ImageForm_StillBinds_BecauseFormPolicyLivesElsewhere()
+    {
+        // Arrange — an image-form service declaring 'endpoint:', which the schema refuses but the
+        // parser must still bind, so the layer that owns the refusal has something to refuse.
+        const string yaml = """
+            environment:
+              services:
+                api:
+                  image: myorg/api:1.0
+                  endpoint: https
+            steps:
+              - id: noop
+                type: script.csharp
+            """;
+
+        // Act
+        var doc = YamlDocumentParser.Parse(yaml);
+
+        // Assert
+        Assert.Equal("https", doc.Environment!.Services!["api"].Endpoint);
+    }
+
+    [Fact]
+    public void Parse_ServiceEndpoint_Absent_IsNull()
+    {
+        // Arrange — a service with no 'endpoint:' key at all, which is every service
+        // written before this field existed.
+        const string yaml = """
+            environment:
+              services:
+                api:
+                  project: "./Api/Api.csproj"
+            steps:
+              - id: noop
+                type: script.csharp
+            """;
+
+        // Act
+        var doc = YamlDocumentParser.Parse(yaml);
+
+        // Assert
+        Assert.Null(doc.Environment!.Services!["api"].Endpoint);
+    }
+
+    /// <summary>
+    /// The scalar's text is carried VERBATIM: no trimming, no case folding, no normalisation
+    /// of any kind. The value is matched against the names a project's launch profile declares
+    /// under <c>StringComparison.Ordinal</c>, so any normalisation applied here would silently
+    /// change which listener the author selected — and would hide a mistyped selector that the
+    /// consuming layer is meant to refuse by name. Asserted with a value that both a trim and
+    /// a case fold would visibly alter.
+    /// </summary>
+    [Fact]
+    public void Parse_ServiceEndpoint_IsRetainedVerbatim()
+    {
+        // Arrange — a double-quoted scalar, which preserves the surrounding whitespace YAML
+        // would otherwise strip from a plain one.
+        const string yaml = """
+            environment:
+              services:
+                api:
+                  project: "./Api/Api.csproj"
+                  endpoint: "  HTTPS  "
+            steps:
+              - id: noop
+                type: script.csharp
+            """;
+
+        // Act
+        var doc = YamlDocumentParser.Parse(yaml);
+
+        // Assert
+        Assert.Equal("  HTTPS  ", doc.Environment!.Services!["api"].Endpoint);
+    }
+
+    /// <summary>
+    /// A NON-SCALAR <c>endpoint:</c> is refused here, with line and column — never collapsed to
+    /// <see langword="null"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see langword="null"/> is not a spare slot: on this field it MEANS "the author made no
+    /// selection", and the consuming layer answers it by applying the engine's own fixed
+    /// preference order. A sequence or mapping binding as null would therefore be the author's
+    /// declaration accepted and silently ignored — the precise defect this field exists to end,
+    /// reproduced one layer below it.
+    /// </para>
+    /// <para>
+    /// The schema refuses the shape on every document that reaches <c>run</c>/<c>validate</c>.
+    /// This test guards the seam that does not: <c>--watch</c> recompiles through
+    /// <c>YamlDocumentParser.Parse</c> + <c>AstBuilder.Build</c> with no
+    /// <c>DocumentValidator.Validate</c> call in it, so on that path the parser is the only thing
+    /// between a mis-shaped selector and a silent discard.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [InlineData("endpoint:\n        - https", "a sequence")]
+    [InlineData("endpoint:\n        name: https", "a mapping")]
+    public void Parse_ServiceEndpoint_NonScalar_ThrowsYamlParseException(string endpointBlock, string shape)
+    {
+        // Arrange — 'endpoint:' carries a non-scalar node. The block is indented to sit as a
+        // sibling of 'project:' inside the service mapping.
+        var yaml = $"""
+            environment:
+              services:
+                api:
+                  project: "./Api/Api.csproj"
+                  {endpointBlock}
+            steps:
+              - id: noop
+                type: script.csharp
+            """;
+
+        // Act + Assert
+        var ex = Assert.Throws<YamlParseException>(() => YamlDocumentParser.Parse(yaml));
+        Assert.Contains("api", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("endpoint", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("scalar", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.True(ex.Line > 0, $"Line should be populated from the offending {shape} node.");
+        Assert.True(ex.Column > 0, $"Column should be populated from the offending {shape} node.");
+    }
 }

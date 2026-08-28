@@ -2469,4 +2469,185 @@ public sealed class EnvironmentSchemaTests
         Assert.True(result.Errors.Any(e => e.InstanceLocation == "/environment/dependencies/cache/type"),
             $"The sibling 'type' violation must survive alongside the forbidden container. Errors: {dump}");
     }
+
+    // ── Part 6: environment.services.endpoint (project-form endpoint selection) ──
+    //
+    // 'endpoint' names WHICH of a project's discovered launch-profile endpoints
+    // the engine stages as that service's address. Two schema-tier rules ship
+    // with it, both per-field boolean 'false' subschemas in $defs/service's
+    // existing 'allOf' (never a 'oneOf'/'not' as an ENFORCEMENT mechanism — see
+    // that definition's own description for the measured reason):
+    //   • 'endpoint' is forbidden once 'image' is set — an image-form service
+    //     already selects what it exposes through httpPort/ports/security.endpoint.
+    //   • 'httpPort' joins 'ports'/'healthCheck' in the project-form clause. It
+    //     was previously accepted there and silently ignored (EnvironmentMapper
+    //     reads it only in the image branch), which is exactly the failure mode
+    //     that clause exists to close. A pre-GA narrowing, not an addition.
+    //
+    // Every case below pins the error COUNT as well as its location, because
+    // composite-branch noise is the standing hazard in this schema: 'anyOf' has
+    // a satisfied branch in all four documents (each declares exactly one of
+    // image/project), so the ONLY error may ever be the one the case is about.
+
+    /// <summary>
+    /// A project-form service may declare 'endpoint' — the accept half.
+    /// </summary>
+    [Fact]
+    public void Service_EndpointOnProjectForm_IsAccepted()
+    {
+        const string yaml = """
+            environment:
+              services:
+                app:
+                  project: ./src/App/App.csproj
+                  endpoint: https
+            steps:
+              - id: noop
+                type: noop.echo
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        var dump = string.Join("; ", result.Errors.Select(e => $"{e.InstanceLocation}: {e.Message}"));
+        Assert.True(result.IsValid, $"A project-form service declaring 'endpoint' must validate. Errors: {dump}");
+    }
+
+    /// <summary>
+    /// 'httpPort' is refused on a project-form service, naming the field AND the
+    /// field that replaces it — exactly one error, no composite-branch noise.
+    /// </summary>
+    /// <remarks>
+    /// The remedy half is the part worth pinning. This refusal is a BREAKING
+    /// CHANGE: the field used to be accepted here and silently ignored, so the
+    /// first thing an author of a previously-green suite sees is this string,
+    /// in the output of the run that broke. The generic "not valid on service
+    /// '&lt;name&gt;'" text every other forbidden service property gets would
+    /// leave them deleting a line with no idea what takes its place, which is
+    /// why <c>SchemaErrorCollector.FormatForbiddenPropertyError</c> carries a
+    /// bespoke branch for this one property. Assert the substance — the
+    /// port/listener distinction and the word <c>endpoint</c> — not just the
+    /// prefix, so a future reword cannot quietly drop the remedy and stay green.
+    /// </remarks>
+    [Fact]
+    public void Service_HttpPortOnProjectForm_IsRejected()
+    {
+        const string yaml = """
+            environment:
+              services:
+                app:
+                  project: ./src/App/App.csproj
+                  httpPort: 8080
+            steps:
+              - id: noop
+                type: noop.echo
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.False(result.IsValid,
+            "'httpPort' has no effect on a project-form service and must be rejected, not silently ignored.");
+        // 8080 satisfies httpPort's OWN base schema (integer, in range), so the
+        // boolean-'false' rejection is the only thing that can report here.
+        var onlyError = Assert.Single(result.Errors);
+        Assert.Equal("/environment/services/app/httpPort", onlyError.InstanceLocation);
+        Assert.Contains(
+            "[properties] Property 'httpPort' is not valid on the 'project'-form service 'app' — "
+            + "a project's endpoints are discovered from its own launch profile, and 'httpPort' "
+            + "names a container port rather than a listener. Remove the line; to choose WHICH "
+            + "discovered endpoint this service is addressed on, use 'endpoint' (DSL §3.2)",
+            onlyError.Message,
+            System.StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// 'endpoint' is refused on an image-form service, naming the field —
+    /// exactly one error.
+    /// </summary>
+    [Fact]
+    public void Service_EndpointOnImageForm_IsRejected()
+    {
+        const string yaml = """
+            environment:
+              services:
+                app:
+                  image: myorg/app:1.0
+                  endpoint: https
+            steps:
+              - id: noop
+                type: noop.echo
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.False(result.IsValid, "'endpoint' is project-form only and must be rejected on an image-form service.");
+        // 'https' satisfies endpoint's own base schema (string, minLength 1), so
+        // the boolean-'false' rejection is the only thing that can report here.
+        var onlyError = Assert.Single(result.Errors);
+        Assert.Equal("/environment/services/app/endpoint", onlyError.InstanceLocation);
+        Assert.Contains(
+            "[properties] Property 'endpoint' is not valid on service 'app'",
+            onlyError.Message,
+            System.StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// An EMPTY 'endpoint' is refused by 'minLength: 1'. A whitespace-only value
+    /// is deliberately NOT refused here — it is a legal string that names no
+    /// endpoint, and the topology-build-time match is the layer that can say so
+    /// while listing what the project actually declares.
+    /// </summary>
+    [Fact]
+    public void Service_EmptyEndpoint_IsRejected()
+    {
+        const string yaml = """
+            environment:
+              services:
+                app:
+                  project: ./src/App/App.csproj
+                  endpoint: ""
+            steps:
+              - id: noop
+                type: noop.echo
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.False(result.IsValid, "An empty 'endpoint' names no endpoint and must be rejected (minLength: 1).");
+        var onlyError = Assert.Single(result.Errors);
+        Assert.Equal("/environment/services/app/endpoint", onlyError.InstanceLocation);
+        Assert.Contains("[minLength]", onlyError.Message, System.StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A PORT NUMBER is refused: 'endpoint' takes an endpoint NAME, and both
+    /// fields an author is likely to migrate from are numeric ('httpPort', and
+    /// 'security.endpoint', which explicitly accepts a port). Pinned because it
+    /// is the most likely author mistake against this field and the only new
+    /// refusal in this part whose message does NOT name 'endpoint' — the
+    /// located, singular '[type]' error is the whole diagnosis an author gets,
+    /// so a regression that widened the type or split this into composite noise
+    /// would degrade the one signal available here without failing anything
+    /// else.
+    /// </summary>
+    [Fact]
+    public void Service_NumericEndpoint_IsRejected()
+    {
+        const string yaml = """
+            environment:
+              services:
+                app:
+                  project: ./src/App/App.csproj
+                  endpoint: 5001
+            steps:
+              - id: noop
+                type: noop.echo
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.False(result.IsValid, "'endpoint' names a launch-profile endpoint, never a port, so a number must be rejected.");
+        var onlyError = Assert.Single(result.Errors);
+        Assert.Equal("/environment/services/app/endpoint", onlyError.InstanceLocation);
+        Assert.Contains("[type]", onlyError.Message, System.StringComparison.Ordinal);
+    }
 }

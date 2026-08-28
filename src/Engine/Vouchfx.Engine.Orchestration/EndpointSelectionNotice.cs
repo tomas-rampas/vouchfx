@@ -17,8 +17,12 @@ namespace Vouchfx.Engine.Orchestration;
 /// <param name="RejectedEndpoint">The endpoint that was available and not chosen.</param>
 /// <remarks>
 /// Today there is exactly one producer: a <c>project:</c>-form service declaring both an http and
-/// an https endpoint, where the engine stages the plaintext one because it holds no trust material
-/// for a form that cannot declare <c>security</c>.
+/// an https endpoint AND NO <c>endpoint:</c> OF ITS OWN, where the engine stages the plaintext one
+/// because it holds no trust material for a form that cannot declare <c>security</c>. An author
+/// who names the endpoint has made the choice themselves, so there is nothing for the ENGINE to
+/// announce — see <see cref="EndpointTrustNotice"/> for the separate fact worth saying whenever
+/// the staged address is an https one, and for why it is a separate record rather than a case of
+/// this one.
 /// </remarks>
 public sealed record EndpointSelectionNotice(
     string ServiceName,

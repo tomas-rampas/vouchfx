@@ -143,18 +143,20 @@ public sealed class SchemaAcceptedCorpusTests
     /// <remarks>
     /// Raised from 15 to 34 (critic NIT-8, 2026-08-12). 15 was set when the
     /// corpus was young and never tightened as fixtures accumulated: the
-    /// committed count is <b>36</b> — counted directly off the tree on
-    /// 2026-08-12 (every <c>*.e2e.yaml</c> under <c>Corpus/Accepted</c>,
+    /// committed count is <b>38</b> — counted directly off the tree on
+    /// 2026-08-28 (every <c>*.e2e.yaml</c> under <c>Corpus/Accepted</c>,
     /// recursively, the same enumeration <see cref="AcceptedFiles"/> itself
     /// performs), not carried forward from the previous revision of this
-    /// comment — so the old floor would have tolerated losing twenty-one
-    /// fixtures in silence, which is the whole failure this gate exists to
-    /// prevent. Its sibling <c>SchemaRejectedCorpusTests</c> was retightened
-    /// the same way (40 to 55 against a counted 57) and this one was left
-    /// behind. 34 is sensibly below-but-near the true count: tight enough that
-    /// dropping several fixtures fails loudly, with enough headroom that
-    /// routine reorganisation does not require raising it every time. Safe to
-    /// raise as fixtures accumulate; recount rather than increment when doing so.
+    /// comment, which said 36 and had already drifted a fixture behind the
+    /// tree before this recount — so the old floor would have tolerated losing
+    /// twenty-three fixtures in silence, which is the whole failure this gate
+    /// exists to prevent. Its sibling <c>SchemaRejectedCorpusTests</c> was
+    /// retightened the same way (40 to 55 against a then-counted 57) and this
+    /// one was left behind. 34 is sensibly below-but-near the true count:
+    /// tight enough that dropping several fixtures fails loudly, with enough
+    /// headroom that routine reorganisation does not require raising it every
+    /// time. Safe to raise as fixtures accumulate; recount rather than
+    /// increment when doing so.
     /// </remarks>
     [Fact]
     public void AcceptedFiles_DiscoversAtLeastOneFile()

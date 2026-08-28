@@ -337,6 +337,45 @@ public static class YamlDocumentParser
             var security = ParseSecurity(serviceMapping, "Service", keyScalar.Value);
             var (ports, pinnedHostPorts) = ParseServicePorts(serviceMapping, keyScalar.Value);
             var healthCheck = ParseHealthCheck(serviceMapping);
+            // Carried VERBATIM — no Trim, no case fold. The name is matched against a
+            // project's discovered endpoints under StringComparison.Ordinal, so normalising it
+            // here would silently change which listener the author selected, and would mask a
+            // mistyped selector the consuming layer is meant to refuse by name.
+            //
+            // NOT GetScalar, and the difference is the whole point of the field. GetScalar
+            // collapses "key absent" and "key present, value is not a scalar" to the same null,
+            // and null is how a service says "I made no selection — apply the engine's own fixed
+            // preference order". So `endpoint: [https]` (a sequence, or a mapping) would bind as
+            // no selection at all: the author's declaration accepted and silently ignored, which
+            // is the exact defect this field was added to end, reproduced one layer down. The
+            // schema refuses the shape on `run`/`validate`, but `--watch`'s compile seam is
+            // YamlDocumentParser.Parse + AstBuilder.Build with no DocumentValidator.Validate in
+            // it, so on that path this is the only thing between the author and a silent drop.
+            // Distinguish the two cases and refuse the second with line/column, mirroring the
+            // non-mapping service-value throw above.
+            string? endpoint = null;
+            if (TryGetNode(serviceMapping, "endpoint", out var endpointNode))
+            {
+                if (endpointNode is not YamlScalarNode endpointScalar)
+                {
+                    // THE LINE NUMBER IS THE VALUE'S, AND THE SENTENCE SAYS SO. The position
+                    // comes off endpointNode, which TryGetNode binds to the entry's VALUE and
+                    // never to its key, so for `endpoint:` on line 7 with `- https` on line 8
+                    // this reports 8. Pointing at the offending value is the right target — it
+                    // is what the author has to change — but a sentence reading "declares
+                    // 'endpoint' at line 8" would claim to point at the KEY and then hand over
+                    // the VALUE's number, which is why the message says "with a value at line".
+                    throw new YamlParseException(
+                        $"Service '{keyScalar.Value}' declares 'endpoint' with a value at " +
+                        $"line {endpointNode.Start.Line} whose node type is " +
+                        $"{endpointNode.NodeType}, but 'endpoint' names a single endpoint of " +
+                        "the service's project — one scalar, e.g. 'endpoint: https'.",
+                        endpointNode.Start.Line,
+                        endpointNode.Start.Column);
+                }
+
+                endpoint = endpointScalar.Value;
+            }
 
             dict[keyScalar.Value] = new ServiceSpec(image, project, pullPolicy, httpPort, env)
             {
@@ -344,6 +383,7 @@ public static class YamlDocumentParser
                 Ports = ports,
                 PinnedHostPorts = pinnedHostPorts,
                 HealthCheck = healthCheck,
+                Endpoint = endpoint,
             };
         }
 

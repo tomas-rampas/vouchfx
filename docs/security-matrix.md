@@ -170,9 +170,30 @@ twelve it is rejected outright — the *block*, not merely a particular profile 
 | `minio` | No | Local double only |
 
 An `environment.services` entry accepts `security:` unconditionally — but only in its `image:` form.
-A `project:`-form service cannot be secured at all: its endpoints come from its own launch profile,
-so the engine has none of its own to give an `https` scheme, and the declaration is rejected at
+A `project:`-form service cannot declare it: its endpoints come from its own launch profile, so the
+engine has none of its own to give an `https` scheme, and the declaration is rejected at
 topology-build time.
+
+**That refusal does not make a `project:`-form service plaintext by definition**, and the
+difference matters here more than anywhere else on this page. Such a service has three states, not
+two. It may be addressed over plaintext, which is what the engine's fixed selection rule prefers
+whenever the project offers a plaintext listener. It may be refused a `security:` block, as above.
+And it may be **addressed over TLS with no engine-configured trust** — either because the author
+named an https listener through the service's `endpoint:` field, or because the project offers only
+an https listener and the fixed rule selected the one that exists. A terminal advisory announces
+that third state whenever a step addresses such a service, precisely because a reader who stopped
+at the paragraph above would be contradicted by their own terminal.
+
+**What is absent in that state is engine-configured trust, not verification**, and conflating the
+two in either direction is wrong. vouchfx contributes no trust anchor, pins no peer, presents no
+client identity and asserts nothing about the transport: there is no `security:` block to declare
+any of it from. What still happens is the platform's own verification — for a step that makes an
+HTTP request, the certificate that listener presents is validated against the host's default trust
+store, full chain, exactly as any other .NET HTTPS request is. A host that does not already trust
+that certificate fails the handshake, which is classified an **environment error**, and an
+environment error does not fail the run unless `--fail-on-env-error` is passed. So a suite in this
+state can finish green having verified nothing about the service it addressed. Securing the system
+under test, in the sense the rest of this page uses, still requires the `image:` form.
 
 ## What "not reachable" actually means for the twelve excluded kinds
 

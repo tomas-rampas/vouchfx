@@ -88,7 +88,8 @@ public sealed class SuiteTopology : IAsyncDisposable
         EnvironmentSpec? environment,
         string seedBaseDirectory,
         IReadOnlyList<SecurityConfirmation> securityConfirmations,
-        IReadOnlyList<EndpointSelectionNotice> endpointSelectionNotices)
+        IReadOnlyList<EndpointSelectionNotice> endpointSelectionNotices,
+        IReadOnlyList<EndpointTrustNotice> endpointTrustNotices)
     {
         _inner = inner;
         DiscoveredServices = discoveredServices;
@@ -98,6 +99,7 @@ public sealed class SuiteTopology : IAsyncDisposable
         _seedBaseDirectory = seedBaseDirectory;
         SecurityConfirmations = securityConfirmations;
         EndpointSelectionNotices = endpointSelectionNotices;
+        EndpointTrustNotices = endpointTrustNotices;
     }
 
     /// <summary>
@@ -127,6 +129,20 @@ public sealed class SuiteTopology : IAsyncDisposable
     /// adding an optional one is deferred to #450 rather than forbidden.
     /// </remarks>
     public IReadOnlyList<EndpointSelectionNotice> EndpointSelectionNotices { get; }
+
+    /// <summary>
+    /// Gets the author-facing notices that a service's staged address resolves to an https
+    /// listener the engine configures no client trust material for — whether that listener was
+    /// named by the service's <c>endpoint:</c> or chosen by the engine's own rule. Empty for
+    /// almost every suite.
+    /// </summary>
+    /// <remarks>
+    /// Separate from <see cref="EndpointSelectionNotices"/> because the two records are different
+    /// facts with different fields — one says the engine picked plaintext when TLS was on offer,
+    /// the other that the address is TLS this engine contributed no trust of its own to.
+    /// Surfaced and printed through the same channel, for the same reasons.
+    /// </remarks>
+    public IReadOnlyList<EndpointTrustNotice> EndpointTrustNotices { get; }
 
     /// <summary>
     /// Gets the flat map of discovered service endpoints and managed-dependency connection strings.
@@ -427,13 +443,17 @@ public sealed class SuiteTopology : IAsyncDisposable
         catch (TopologyAuthoringException)
         {
             // An AUTHORING fault raised from inside Map's Configure closure — the only class of
-            // fault that legitimately escapes there (#348's endpoint-less `project:` service is
-            // the first and, today, the only one). Propagate UNWRAPPED so it reaches
-            // ScenarioRunner's ArgumentException catch and is classified Inconclusive, never
-            // EnvironmentError: reporting an authoring fault as an infrastructure fault is the
-            // one direction §12.1 must not bend, and it also decides the exit code — an
-            // EnvironmentError that executed nothing exits 0 (#390) while an Inconclusive that
-            // executed nothing does not (#369).
+            // fault that legitimately escapes there. Its members share one property: the fault is
+            // the author's to fix but is only decidable once Aspire has built the resource
+            // (#348's endpoint-less `project:` service is the original). Grep
+            // `throw new TopologyAuthoringException` for the current set rather than trusting a
+            // roster here; the roster this comment used to carry went stale.
+            //
+            // Propagate UNWRAPPED so it reaches ScenarioRunner's ArgumentException catch and is
+            // classified Inconclusive, never EnvironmentError: reporting an authoring fault as an
+            // infrastructure fault is the one direction §12.1 must not bend, and it also decides
+            // the exit code — an EnvironmentError that executed nothing exits 0 (#390) while an
+            // Inconclusive that executed nothing does not (#369).
             //
             // DELIBERATELY NARROW. The blanket wrap below stays exactly as it was for every other
             // exception escaping the closure — Map's defensive internal-error throws, Aspire's
@@ -584,7 +604,8 @@ public sealed class SuiteTopology : IAsyncDisposable
                 environment,
                 resolvedSeedBaseDirectory,
                 securityConfirmations,
-                mapped.EndpointSelectionNotices);
+                mapped.EndpointSelectionNotices,
+                mapped.EndpointTrustNotices);
         }
         catch
         {
