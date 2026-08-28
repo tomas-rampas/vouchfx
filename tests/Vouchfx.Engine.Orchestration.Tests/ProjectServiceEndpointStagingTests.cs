@@ -1043,6 +1043,79 @@ public sealed class ProjectServiceEndpointStagingTests : IDisposable
         Assert.Equal("https", notice.SelectedEndpoint);
     }
 
+    /// <summary>
+    /// THE ADVISORY'S OWN TEXT IS PINNED HERE, and it is the one string in this file that is —
+    /// deliberately, and deliberately unlike its sibling's.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Every other assertion in this file is on the notices' FIELDS, on the stated ground that a
+    /// typed record exists precisely so no test pins an English sentence as the contract. That
+    /// ground holds for <see cref="EndpointSelectionNotice"/>: its line is an operational
+    /// convenience, and a reword that mangled it would inconvenience a reader without making
+    /// anything published elsewhere false.
+    /// </para>
+    /// <para>
+    /// It does not hold for THIS string, and the difference is what the string is load-bearing
+    /// for. <see cref="EndpointTrustNotice.ToString"/> holds the only copy of the disclosure that
+    /// a TLS-addressed <c>project:</c>-form service gets no engine-configured trust, and two
+    /// published documents make claims about what it says: CHANGELOG's transport-advisory entry
+    /// (“naming the service and the selected endpoint and stating what the engine did not do”)
+    /// and docs/security-matrix.md (“vouchfx contributes no trust anchor, pins no peer, presents
+    /// no client identity and asserts nothing about the transport”). A reword dropping, say, the
+    /// client-identity clause leaves every field assertion in this file green and silently
+    /// falsifies a published security disclosure. Nothing else would catch it.
+    /// </para>
+    /// <para>
+    /// SUBSTANCE, NOT SENTENCE. The pins below are short meaning-bearing fragments of each
+    /// disclosed absence and of the exit-code clause, not the sentence they sit in, so the
+    /// wording stays free to change; the test fails only when a clause is actually dropped —
+    /// which is exactly the change that should require a deliberate decision rather than passing
+    /// unnoticed.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void TrustNoticeToString_DisclosesEveryAbsenceThePublishedDocsClaimItDoes()
+    {
+        // Values chosen so the identity assertions below cannot be satisfied by the message's own
+        // boilerplate: "https" appears in the sentence regardless, an endpoint named "tls-in" does
+        // not.
+        var line = new EndpointTrustNotice("orders-api", "tls-in").ToString();
+
+        // WHICH service and WHICH address. An advisory that does not identify the affected
+        // endpoint cannot be acted on, and both are the notice's only two fields.
+        Assert.Contains("orders-api", line, StringComparison.Ordinal);
+        Assert.Contains("tls-in", line, StringComparison.Ordinal);
+
+        // Absence 1 of 4 — no trust anchor is contributed.
+        Assert.Contains("trust anchor", line, StringComparison.OrdinalIgnoreCase);
+
+        // Absence 2 of 4 — no peer pinning. Two fragments rather than one phrase, because the
+        // clause is equally true as "pins the peer", "pins no peer" or "peer pinning".
+        Assert.Contains("peer", line, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("pin", line, StringComparison.OrdinalIgnoreCase);
+
+        // Absence 3 of 4 — no client identity is presented. This is the clause whose loss would
+        // be least visible and most consequential: it is the difference between "vouchfx did not
+        // authenticate itself" and a reader assuming mutual TLS happened.
+        Assert.Contains("client identity", line, StringComparison.OrdinalIgnoreCase);
+
+        // Absence 4 of 4 — vouchfx asserts nothing about the transport. Spelled as an
+        // alternation because this one has several natural renderings and no single noun phrase.
+        Assert.True(
+            line.Contains("asserts nothing", StringComparison.OrdinalIgnoreCase)
+                || line.Contains("no assertion", StringComparison.OrdinalIgnoreCase)
+                || line.Contains("makes no claim", StringComparison.OrdinalIgnoreCase),
+            "The advisory must still disclose that vouchfx asserts nothing about the transport. "
+                + $"Got: {line}");
+
+        // And the consequence that makes the four absences matter: a failed handshake here is an
+        // environment error, which leaves the run GREEN unless the operator opted in. Dropping
+        // this clause would leave a reader believing the absence is at least loud.
+        Assert.Contains("environment error", line, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("--fail-on-env-error", line, StringComparison.Ordinal);
+    }
+
     /// <inheritdoc />
     public void Dispose() => _fixtures.Dispose();
 }

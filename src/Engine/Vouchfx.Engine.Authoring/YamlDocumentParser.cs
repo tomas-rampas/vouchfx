@@ -358,11 +358,17 @@ public static class YamlDocumentParser
             {
                 if (endpointNode is not YamlScalarNode endpointScalar)
                 {
+                    // THE LINE NUMBER IS THE VALUE'S, AND THE SENTENCE NOW SAYS SO. YamlDotNet
+                    // reports a mapping entry's position from its VALUE node, so for
+                    // `endpoint:` on line 7 with `- https` on line 8 this reports 8. Pointing
+                    // at the offending value is the right target — it is what the author has
+                    // to change — but a sentence reading "declares 'endpoint' at line 8"
+                    // claims to be pointing at the KEY and then hands over the VALUE's number.
                     throw new YamlParseException(
-                        $"Service '{keyScalar.Value}' declares 'endpoint' at line " +
-                        $"{endpointNode.Start.Line} as {endpointNode.NodeType}, but 'endpoint' " +
-                        "names a single endpoint of the service's project — one scalar, " +
-                        "e.g. 'endpoint: https'.",
+                        $"Service '{keyScalar.Value}' declares 'endpoint' with a value at " +
+                        $"line {endpointNode.Start.Line} whose node type is " +
+                        $"{endpointNode.NodeType}, but 'endpoint' names a single endpoint of " +
+                        "the service's project — one scalar, e.g. 'endpoint: https'.",
                         endpointNode.Start.Line,
                         endpointNode.Start.Column);
                 }
