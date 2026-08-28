@@ -1044,16 +1044,18 @@ public sealed class ProjectServiceEndpointStagingTests : IDisposable
     }
 
     /// <summary>
-    /// THE ADVISORY'S OWN TEXT IS PINNED HERE, and it is the one string in this file that is —
-    /// deliberately, and deliberately unlike its sibling's.
+    /// THE ADVISORY'S OWN TEXT IS PINNED HERE, and it is the one NOTICE line in this file that is
+    /// — deliberately, and deliberately unlike its sibling's.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Every other assertion in this file is on the notices' FIELDS, on the stated ground that a
-    /// typed record exists precisely so no test pins an English sentence as the contract. That
-    /// ground holds for <see cref="EndpointSelectionNotice"/>: its line is an operational
-    /// convenience, and a reword that mangled it would inconvenience a reader without making
-    /// anything published elsewhere false.
+    /// Every other assertion on a NOTICE in this file is on its FIELDS, on the stated ground that
+    /// a typed record exists precisely so no test pins an English sentence as the contract. (The
+    /// refusal tests above do pin fragments of their exception messages, and are right to: a
+    /// diagnostic has no fields, so its wording is the whole of what a test can hold.) That
+    /// ground holds for the notice <see cref="EndpointSelectionNotice"/>: its line is an
+    /// operational convenience, and a reword that mangled it would inconvenience a reader
+    /// without making anything published elsewhere false.
     /// </para>
     /// <para>
     /// It does not hold for THIS string, and the difference is what the string is load-bearing
@@ -1097,8 +1099,15 @@ public sealed class ProjectServiceEndpointStagingTests : IDisposable
 
         // Absence 3 of 4 — no client identity is presented. This is the clause whose loss would
         // be least visible and most consequential: it is the difference between "vouchfx did not
-        // authenticate itself" and a reader assuming mutual TLS happened.
-        Assert.Contains("client identity", line, StringComparison.OrdinalIgnoreCase);
+        // authenticate itself" and a reader assuming mutual TLS happened. An alternation for the
+        // same reason absence 4 is one: the substance is that vouchfx authenticates itself to
+        // nothing, and "identity", "certificate" and "credential" all say it.
+        Assert.True(
+            line.Contains("client identity", StringComparison.OrdinalIgnoreCase)
+                || line.Contains("client cert", StringComparison.OrdinalIgnoreCase)
+                || line.Contains("client credential", StringComparison.OrdinalIgnoreCase),
+            "The advisory must still disclose that vouchfx presents no client identity. "
+                + $"Got: {line}");
 
         // Absence 4 of 4 — vouchfx asserts nothing about the transport. Spelled as an
         // alternation because this one has several natural renderings and no single noun phrase.
