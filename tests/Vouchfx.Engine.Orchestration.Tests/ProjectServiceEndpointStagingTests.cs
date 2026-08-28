@@ -1054,8 +1054,10 @@ public sealed class ProjectServiceEndpointStagingTests : IDisposable
     /// refusal tests above do pin fragments of their exception messages, and are right to: a
     /// diagnostic has no fields, so its wording is the whole of what a test can hold.) That
     /// ground holds for the notice <see cref="EndpointSelectionNotice"/>: its line is an
-    /// operational convenience, and a reword that mangled it would inconvenience a reader
-    /// without making anything published elsewhere false.
+    /// operational convenience, and no published document quotes it. The nearest thing is a
+    /// PARAPHRASE in the CHANGELOG's #348 entry — "the notice reports what steps addressing the
+    /// service will use" — which a reword could falsify, so the case for pinning that line too is
+    /// weaker than this one rather than absent. Tracked as #454.
     /// </para>
     /// <para>
     /// It does not hold for THIS string, and the difference is what the string is load-bearing
