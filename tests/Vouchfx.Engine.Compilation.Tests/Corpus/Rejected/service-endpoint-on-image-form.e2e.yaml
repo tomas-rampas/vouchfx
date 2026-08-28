@@ -1,0 +1,20 @@
+# expected-instance-location: /environment/services/app/endpoint
+# expected-keyword: properties
+#
+# project-form endpoint selection: 'endpoint:' names one of a project's discovered
+# launch-profile endpoints, so it means nothing on an image-form service — that form already
+# selects what it exposes through 'httpPort'/'ports'/'security.endpoint'. A second spelling of
+# one choice would collide with 'security.endpoint's own meaning, so $defs/service forbids
+# 'endpoint' outright once 'image' is set, via the same per-field 'false' subschema idiom as
+# the image/project exclusion.
+metadata:
+  name: rejected-service-endpoint-on-image-form
+environment:
+  services:
+    app:
+      image: myorg/app:1.0
+      endpoint: https
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step."

@@ -1367,14 +1367,25 @@ internal static class SchemaErrorCollector
     /// dependency by its own map key instead, never a guessed kind.
     /// </para>
     /// <para>
-    /// On a <c>service</c> container, the only per-field exclusion the
-    /// schema declares is <c>project</c> forbidden once <c>image</c> is set
-    /// (see $defs/service's own description) — a single, fixed, frozen rule,
-    /// so it is named directly rather than generalised: the offending
-    /// <c>then</c> branch is reachable only via a sibling
-    /// <c>if: required:["image"]</c>, so 'image' being present is a schema
-    /// invariant of this branch, not an assumption this method makes about
-    /// the instance.
+    /// On a <c>service</c> container, exactly ONE of the per-field exclusions
+    /// $defs/service declares is named directly here: <c>project</c> forbidden
+    /// once <c>image</c> is set (see that definition's own description) — a
+    /// single, fixed, frozen rule, so it gets bespoke wording rather than a
+    /// generalisation. The offending <c>then</c> branch is reachable only via a
+    /// sibling <c>if: required:["image"]</c>, so 'image' being present is a
+    /// schema invariant of this branch, not an assumption this method makes
+    /// about the instance. EVERY OTHER per-field service exclusion, whatever
+    /// the roster is at any given time (read it off $defs/service's own
+    /// <c>allOf</c>), is deliberately NOT named individually: each falls
+    /// through to the generic "Property '&lt;name&gt;' is not valid on service
+    /// '&lt;name&gt;'" text below, which already tells an author the one thing
+    /// they must do (delete the field). Stated as that property rather than as
+    /// a list on purpose: this paragraph has twice carried a claim about the
+    /// roster's contents instead — first that the image/project rule was the
+    /// only such exclusion in the schema at all, then a hand-enumeration of the
+    /// rest. The first was already false by the time anyone read it; the second
+    /// was accurate when written and had the same failure mode waiting, because
+    /// no gate proves the roster either way.
     /// </para>
     /// <para>
     /// On a <c>captureEntry</c> container (m6 — see

@@ -1,0 +1,21 @@
+# expected-instance-location: /environment/services/app/httpPort
+# expected-keyword: properties
+#
+# project-form endpoint selection: 'httpPort' has no effect on a project-form service —
+# EnvironmentMapper's Configure() reads it only for an image-form service, while Aspire's own
+# AddProject auto-discovers the project's launch-profile endpoints instead. It had been
+# accepted here and silently ignored, which is exactly the failure mode $defs/service's
+# project-form clause exists to close, so it now joins 'ports'/'healthCheck' in that clause's
+# 'then'. A pre-GA narrowing of a field that never did anything on this form; 'endpoint:' is
+# the selector authors reach for instead, and it pins a LISTENER rather than a port.
+metadata:
+  name: rejected-service-httpport-on-project-form
+environment:
+  services:
+    app:
+      project: ./src/App/App.csproj
+      httpPort: 8080
+steps:
+  - id: noop
+    type: script.csharp
+    code: "// Filler step."

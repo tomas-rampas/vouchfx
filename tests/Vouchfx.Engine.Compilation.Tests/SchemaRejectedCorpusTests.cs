@@ -74,13 +74,14 @@ public sealed class SchemaRejectedCorpusTests
     /// then from 40 to 55: the original floor was set when the committed count
     /// was 25 and never tightened as fixtures accumulated, and 40 had gone the
     /// same way — it was set against a committed count of 45 and left standing
-    /// while the corpus grew half as large again, so it would have tolerated
-    /// losing seventeen fixtures in silence. The committed count is <b>57</b>,
-    /// counted directly off the tree (every <c>*.e2e.yaml</c> under
-    /// <c>Corpus/Rejected</c>, recursively — the same enumeration
-    /// <see cref="RejectedFiles"/> itself performs), not carried forward from
-    /// the previous revision of this comment. 55 is sensibly below-but-near
-    /// that — tight enough that dropping several fixtures fails loudly, with
+    /// while the corpus grew half as large again, so against a then-counted 57
+    /// it would have tolerated losing seventeen fixtures in silence. The
+    /// committed count is <b>59</b>, counted directly off the tree on
+    /// 2026-08-28 (every <c>*.e2e.yaml</c> under <c>Corpus/Rejected</c>,
+    /// recursively — the same enumeration <see cref="RejectedFiles"/> itself
+    /// performs), not carried forward from the previous revision of this
+    /// comment, which said 57. 55 is sensibly below-but-near that — tight
+    /// enough that dropping several fixtures fails loudly, with
     /// enough headroom that routine single-fixture additions/reorganisation do
     /// not require raising it every time. Safe to raise again as fixtures
     /// accumulate further; recount rather than increment when doing so.
