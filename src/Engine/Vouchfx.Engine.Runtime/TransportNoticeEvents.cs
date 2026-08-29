@@ -47,7 +47,8 @@ namespace Vouchfx.Engine.Runtime;
 /// declared NAME corrupts the diagnosis for no gain.
 /// </para>
 /// <para>
-/// Run the same analysis over this record and every member falls on the not-scrubbed side.
+/// Run the same analysis over the members this producer SETS and every one falls on the
+/// not-scrubbed side.
 /// <see cref="TransportNoticeEvent.Service"/> is the service name as declared under
 /// <c>environment.services</c>. <see cref="TransportNoticeEvent.SelectedEndpoint"/> and
 /// <see cref="TransportNoticeEvent.RejectedEndpoint"/> are Aspire endpoint NAMES read off the
@@ -66,11 +67,21 @@ namespace Vouchfx.Engine.Runtime;
 /// The cost is asymmetric and points the other way.
 /// </para>
 /// <para>
+/// <strong>The envelope's <see cref="TransportNoticeEvent.CorrelationIds"/> is the one member
+/// this analysis does NOT cover, and it is left null here.</strong> It is the record's only
+/// other string-bearing member — a free-form <c>string</c>→<c>string</c> map — so a producer
+/// that ever populates it inherits none of the reasoning above and must redo it. The remaining
+/// envelope members are engine-set and cannot carry author text: the two version fields and
+/// <c>Type</c> are constants, <c>Timestamp</c> is a <c>DateTimeOffset</c>, and <c>RunId</c> is
+/// engine-minted.
+/// </para>
+/// <para>
 /// <strong>This paragraph is the thing to update, not delete, if a free-form member is ever
 /// added to <see cref="TransportNoticeEvent"/>.</strong> The analysis above is a claim about
-/// today's five members; a sixth carrying an exception message, a URL, or any author-supplied
-/// free text would need the scrub, and inheriting this decision silently is exactly how the
-/// environment-error path shipped an unscrubbed channel once already.
+/// the five payload members this producer sets; a sixth carrying an exception message, a URL,
+/// or any author-supplied free text — or <c>CorrelationIds</c> ceasing to be null — would need
+/// the scrub, and inheriting this decision silently is exactly how the environment-error path
+/// shipped an unscrubbed channel once already.
 /// </para>
 /// <para>
 /// <strong>NOT SANITISED either — <c>DisplaySanitiser.SanitiseForDisplay</c> must not be
