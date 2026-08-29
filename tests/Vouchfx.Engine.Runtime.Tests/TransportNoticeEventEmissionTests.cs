@@ -524,7 +524,11 @@ public sealed class TransportNoticeEventEmissionTests
     /// <para>
     /// <strong>Two roots, because the collections are public and Runtime does not own them.</strong>
     /// Every site that reads the two collections in order to PRINT them is in Runtime today, so the
-    /// CLI root adds no assertion now — it closes a future hole.
+    /// CLI root adds no assertion now — it closes a future hole. It is also a hole the CLI can
+    /// actually fall into: <c>Vouchfx.Engine.Runtime.csproj</c> grants
+    /// <c>InternalsVisibleTo("vouchfx")</c> and the CLI's assembly name IS <c>vouchfx</c>, so a
+    /// print site there genuinely could call the internal producer — without that, the CLI root
+    /// would be open to the same "demands the impossible" objection that excludes Orchestration.
     /// <c>SuiteTopology.EndpointSelectionNotices</c> and <c>EndpointTrustNotices</c> are PUBLIC
     /// members of Orchestration, so a print site added in <c>Vouchfx.Cli</c> — a <c>--dry-run</c>
     /// summary echoing the advisories, say — would print, emit nothing, and be caught by nothing.
@@ -532,11 +536,15 @@ public sealed class TransportNoticeEventEmissionTests
     /// assembly most likely to want to build a <c>TransportNoticeEvent</c> of its own.
     /// </para>
     /// <para>
-    /// <strong>Orchestration is deliberately NOT a third root.</strong> It declares the two
-    /// collections, but it has no event destination, no run id and no opinion about replay — see
-    /// <c>TransportNoticeEvents</c>'s own header on why the producer lives in Runtime. A gate
-    /// demanding emission there would demand something Orchestration cannot do, so a print site
-    /// appearing in Orchestration is a design question to raise, not a rule to enforce here.
+    /// <strong>Orchestration is deliberately NOT a third root, and the decisive reason is the
+    /// dependency direction rather than any of the softer ones.</strong> Orchestration sits BELOW
+    /// Runtime and <c>TransportNoticeEvents</c> is internal to Runtime, so a call from there is a
+    /// reference cycle — impossible, not merely awkward. The softer reasons are true too (no event
+    /// destination, no run id, no opinion about replay), but stating only those invites an
+    /// objection they do not survive: <c>EnvironmentErrorEvents</c> is a §14 record with a
+    /// <c>ToLine</c> serialiser and a runId parameter, and it lives in Orchestration. That is not a
+    /// counter-example — every one of its <c>ToLine</c> calls is in <c>ScenarioRunner</c>, with the
+    /// runId passed in — but a reader who finds it should meet the cycle argument first.
     /// </para>
     /// <para>
     /// Asserts the PROPERTY (print ⇒ emit, in the same method) rather than a count of sites, so the
@@ -557,6 +565,8 @@ public sealed class TransportNoticeEventEmissionTests
         };
 
         var sep = Path.DirectorySeparatorChar;
+        var producerPath = Path.Combine(runtimeRoot, "TransportNoticeEvents.cs");
+
         var sources = roots
             .SelectMany(root => Directory.GetFiles(root, "*.cs", SearchOption.AllDirectories))
             .Where(p => !p.Contains($"{sep}bin{sep}", StringComparison.Ordinal)
@@ -576,7 +586,14 @@ public sealed class TransportNoticeEventEmissionTests
             // gate that fails closed on a stray mention is louder and cheaper than one that misses
             // a real site. Skipped here rather than special-cased below so the exemption is one
             // decision in one place.
-            if (file.EndsWith("TransportNoticeEvents.cs", StringComparison.Ordinal))
+            //
+            // MATCHED ON THE FULL PATH, NOT THE FILE NAME, and the second root is exactly why.
+            // While Runtime was the only root, a name match was safe because only one file could
+            // carry it. With the CLI scanned too, `src/Cli/Vouchfx.Cli/TransportNoticeEvents.cs`
+            // would be exempted in full — free to print without emitting AND to hand-build the
+            // record — and that name is not a contrived one: it is precisely what a second,
+            // CLI-side producer would be called, which is the shape this widening exists to catch.
+            if (string.Equals(file, producerPath, StringComparison.Ordinal))
             {
                 continue;
             }

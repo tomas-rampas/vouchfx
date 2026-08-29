@@ -703,7 +703,7 @@ public sealed record ReproducibilityEnvelopeEvent
 //
 // THE READING `no-engine-trust` WAS CHECKED AGAINST, AND WHY THE TOKEN KEPT ITS NAME.
 //   It parses two ways. "No [engine-configured] trust" is what it means. "The engine does not
-//   trust it" is a negative judgement about the peer, and it is one the advisory's own producer
+//   trust it" is a negative judgement about the peer, and it is one the advisory's own record type
 //   explicitly refuses to make: EndpointTrustNotice's remarks say the engine does not "make any
 //   assertion about the outcome", because with no `security` block the platform's own trust store
 //   validates the chain exactly as it does for any other .NET HTTPS request. A token that carried

@@ -2006,10 +2006,11 @@ public static class EnvironmentMapper
                     // https-ONLY project with no `endpoint:` completely silent: the fixed rule
                     // above picks its https listener, the downgrade notice cannot fire because it
                     // requires an http selection, and this one could not fire because there was no
-                    // author selection to gate on. The run then addressed an unverified TLS
-                    // listener and said nothing — the identical silent-green shape this notice
-                    // exists to close, reached from the other side. `primaryProjectEndpoint` covers
-                    // the engine-picked case and the author-picked case with one condition.
+                    // author selection to gate on. The run then addressed an https listener the
+                    // engine configures no trust material for, and said nothing — the identical
+                    // silent-green shape this notice exists to close, reached from the other
+                    // side. `primaryProjectEndpoint` covers the engine-picked case and the
+                    // author-picked case with one condition.
                     //
                     // The `endpoint: http` path is unaffected: its selection's scheme is http, so
                     // the scheme test below excludes it, and an explicit plaintext choice stays
