@@ -920,7 +920,11 @@ public sealed class ProjectServiceEndpointStagingTests : IDisposable
     /// </para>
     /// <para>
     /// User-visible consequence, pinned deliberately: this suite emits an advisory it did not emit
-    /// before. Terminal-only — no verdict, no exit code, no artefact change.
+    /// before. No verdict moves with it and no exit code changes — but it is not terminal-only.
+    /// It also emits one <c>TransportNoticeEvent</c>, so a run archiving --events or
+    /// --events-stream gains a line, while --junit and --html are unchanged (their
+    /// <c>default:</c> arm). See the remarks on the downgrade-notice theory above for the whole
+    /// reach.
     /// </para>
     /// </remarks>
     [Fact]
