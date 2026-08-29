@@ -299,12 +299,17 @@ public sealed class TransportNoticeEventEmissionTests
 
         Assert.Equal(2, lines.Count);
 
-        var byService = lines
-            .Select(l => JsonDocument.Parse(l).RootElement)
-            .ToDictionary(
-                e => e.GetProperty("service").GetString()!,
-                e => e.GetProperty("kind").GetString()!,
-                StringComparer.Ordinal);
+        // Disposed per line: JsonDocument rents from a shared pool, and the two
+        // strings are all that outlive the parse — no JsonElement escapes, so the
+        // `using` costs nothing here and keeps the file's one pattern.
+        var byService = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var line in lines)
+        {
+            using var doc = JsonDocument.Parse(line);
+            byService.Add(
+                doc.RootElement.GetProperty("service").GetString()!,
+                doc.RootElement.GetProperty("kind").GetString()!);
+        }
 
         Assert.Equal(
             new HashSet<string>(StringComparer.Ordinal) { "orders", "payments" },
@@ -449,10 +454,18 @@ public sealed class TransportNoticeEventEmissionTests
                 .ToList();
 
             Assert.Equal(Scenarios * 2, written.Count);
+
+            // Disposed per line, for the reason given at the two-services test above.
+            var runIds = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var line in written)
+            {
+                using var doc = JsonDocument.Parse(line);
+                runIds.Add(doc.RootElement.GetProperty("runId").GetString()!);
+            }
+
             Assert.Equal(
                 Enumerable.Range(0, Scenarios).Select(i => $"run-{i}").ToHashSet(StringComparer.Ordinal),
-                written.Select(l => JsonDocument.Parse(l).RootElement.GetProperty("runId").GetString()!)
-                    .ToHashSet(StringComparer.Ordinal));
+                runIds);
         }
         finally
         {
