@@ -981,10 +981,8 @@ public static class ScenarioRunner
 
             // #348 (security review): the transport downgrade a project-form service declaring
             // both schemes incurs. Printed beside the security confirmations because it answers
-            // the same question — what did this run actually talk to, and how — and because that
-            // is the channel available today: no EXISTING v1 event field carries an advisory
-            // about a healthy run, and adding an optional one is deferred to #450 rather than
-            // forbidden. Empty for almost every suite, so ordinary output is unchanged.
+            // the same question — what did this run actually talk to, and how. Empty for almost
+            // every suite, so ordinary output is unchanged.
             foreach (var notice in suite.EndpointSelectionNotices)
             {
                 await output.WriteLineAsync(DisplaySanitiser.SanitiseForDisplay(notice.ToString()))
@@ -1001,6 +999,44 @@ public static class ScenarioRunner
                 await output.WriteLineAsync(DisplaySanitiser.SanitiseForDisplay(notice.ToString()))
                     .ConfigureAwait(false);
             }
+
+            // #450 / #453: the same two advisories onto the §14 event stream, so a CI job reading
+            // --events sees what the terminal above just said. Until this, both were terminal-only
+            // — which matters most for the trust notice, because the handshake failure it warns
+            // about lands as an EnvironmentError and exits 0 by default, so the artefacts showed a
+            // green run with no explanation in them.
+            //
+            // SCOPED TO --events / --events-stream, and that scope is the whole of what this
+            // closes. HtmlRenderer and JunitXmlRenderer both take their `default: break` arm on an
+            // unrecognised type, so a run whose only artefacts are --junit and --html still shows
+            // that green run with no explanation in it. Rendering the record there is out of scope
+            // this pass (decision 2: the stream is the contract).
+            //
+            // NOT scrubbed and NOT sanitised, deliberately — the WHICH-members analysis behind
+            // both decisions is written out on TransportNoticeEvents, which is the one producer.
+            //
+            // `replayed: false` ⇒ the field is left OFF the wire (TransportNoticeEvents.ToLines
+            // maps it to null, not to false); only the --watch replay sets it.
+            //
+            // POSTED AS WELL AS BUFFERED, and both halves are load-bearing here. The buffer is
+            // this scenario's reconstruction for the end-of-run --events archive; the pump is the
+            // live --events-stream file. This method is the core `--parallel` fans out into, and
+            // ParallelSuiteRunner deliberately does NOT re-post the returned buffer (it would
+            // duplicate every line), so a line added to the buffer alone would never reach the
+            // live stream. `livePump` is null whenever no --events-stream destination was asked
+            // for; the null-conditional is what makes that a no-op rather than a crash.
+            //
+            // ONE topology, so ONE runId: this method builds a topology for a single scenario, so
+            // the scenario's own runId identifies the build unambiguously and the advisory
+            // correlates with that scenario's other events.
+            var transportNoticeLines = TransportNoticeEvents.ToLines(
+                suite.EndpointSelectionNotices,
+                suite.EndpointTrustNotices,
+                runId,
+                DateTimeOffset.UtcNow,
+                replayed: false);
+            buffer.AddRange(transportNoticeLines);
+            livePump?.PostRange(transportNoticeLines);
 
             // Use NullScenarioIsolation for single-scenario RunAsync — no state reset needed.
             IScenarioIsolation isolation = new NullScenarioIsolation();
@@ -1972,10 +2008,11 @@ public static class ScenarioRunner
 
             // #348 (security review): the transport downgrade a project-form service declaring
             // both schemes incurs. Printed beside the security confirmations because it answers
-            // the same question — what did this run actually talk to, and how — and because that
-            // is the channel available today: no EXISTING v1 event field carries an advisory
-            // about a healthy run, and adding an optional one is deferred to #450 rather than
-            // forbidden. Empty for almost every suite, so ordinary output is unchanged.
+            // the same question — what did this run actually talk to, and how. Empty for almost
+            // every suite, so ordinary output is unchanged.
+            //
+            // The matching §14 records are emitted below, once `allBuffers` and the live pump
+            // exist — see the "#450 / #453" block after the pump is opened.
             foreach (var notice in suite.EndpointSelectionNotices)
             {
                 await output.WriteLineAsync(DisplaySanitiser.SanitiseForDisplay(notice.ToString()))
@@ -2020,6 +2057,37 @@ public static class ScenarioRunner
             await using var livePump = eventsStreamPath is not null
                 ? new LiveEventPump(eventsStreamPath, output)
                 : null;
+
+            // #450 / #453: the two transport advisories printed above, onto the §14 event stream.
+            // Written here rather than beside the prints because `allBuffers` (the --events
+            // archive) and the pump (the live --events-stream file) are both opened between the
+            // two points; the prints and this block are held together by the source gate in
+            // TransportNoticeEventEmissionTests, not by adjacency.
+            //
+            // NOT scrubbed and NOT sanitised, deliberately — the WHICH-members analysis behind
+            // both decisions is written out on TransportNoticeEvents, the one producer.
+            //
+            // ONE RECORD PER NOTICE PER TOPOLOGY BUILD, WHICH IS ONCE HERE. This method builds a
+            // single topology for the WHOLE suite, so a suite of twelve scenarios reports each
+            // advisory once — matching the terminal above, which also prints it once. Emitting
+            // inside the scenario loop below would produce twelve copies of one fact.
+            //
+            // A MINTED runId, and it belongs to no scenario ON PURPOSE. Every other event on this
+            // path carries the runId of the scenario that produced it, minted per iteration of the
+            // loop below (§14: "each scenario has a distinct runId"). This advisory is not a
+            // scenario's — it is the topology's, and the topology outlives every scenario in the
+            // suite. Attributing it to one arbitrary scenario would state something false about
+            // the other eleven, so it gets an id of its own; a consumer joining on runId finds
+            // nothing to join to, which is the correct answer. The correlation key a consumer
+            // actually wants is `service`, which is why the record carries it.
+            var transportNoticeLines = TransportNoticeEvents.ToLines(
+                suite.EndpointSelectionNotices,
+                suite.EndpointTrustNotices,
+                Guid.NewGuid().ToString("n"),
+                DateTimeOffset.UtcNow,
+                replayed: false);
+            allBuffers.AddRange(transportNoticeLines);
+            livePump?.PostRange(transportNoticeLines);
 
             try
             {
@@ -3212,6 +3280,35 @@ public static class ScenarioRunner
                 await output.WriteLineAsync(DisplaySanitiser.SanitiseForDisplay(notice.ToString()))
                     .ConfigureAwait(false);
             }
+
+            // #450 / #453, with `replayed: true` — THE ONE PATH THAT SETS IT. The terminal
+            // qualifier printed above says these advisories may be stale, and that qualification
+            // cannot travel on an unqualified record: a consumer that could not tell a replay from
+            // a fresh selection would read a downgrade that stopped happening several saves ago as
+            // current. A replay against a kept topology therefore emits EVERY re-run, exactly as it
+            // prints every re-run — distinguishable from the build that first raised it rather than
+            // suppressed as a duplicate.
+            //
+            // NOT scrubbed and NOT sanitised, deliberately — the analysis is on
+            // TransportNoticeEvents, the one producer.
+            //
+            // ADDED TO `buffer`, WHICH IS THIS PATH'S ONLY EVENT DESTINATION, and that is the whole
+            // of what "emit" can mean here today: --events / --events-stream / --junit / --html are
+            // deliberately not wired into watch mode (RunCommand.cs:376/650/661 say so, and #456
+            // tracks that gap), so `buffer` goes to TerminalRenderer and nowhere else. The
+            // environment-error emission in the reset-failure catch below does exactly the same
+            // thing on this same path, through the same buffer, for the same reason.
+            // The record is built, carries the run's id and reaches the run's event buffer;
+            // when watch mode gains an event destination it arrives with the rest, and no second
+            // producer has to be remembered then. TerminalRenderer ignores an unrecognised type
+            // (its `default:` arm — the §14 forward-compatibility guarantee), so what an author
+            // sees is unchanged.
+            buffer.AddRange(TransportNoticeEvents.ToLines(
+                topology.EndpointSelectionNotices,
+                topology.EndpointTrustNotices,
+                runId,
+                DateTimeOffset.UtcNow,
+                replayed: true));
         }
 
         // ── Reset + re-seed BEFORE a REUSE re-run (S08-T10) ───────────────────

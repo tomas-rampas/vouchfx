@@ -802,8 +802,9 @@ public static class TransportNoticeKinds
 /// <para>
 /// <strong>Run-level, not scenario-level.</strong>  Unlike the six records above
 /// it, this one carries no <c>scenarioId</c>: the advisory is a property of the
-/// topology a run built, and one topology can serve many scenarios.  It is keyed
-/// by <c>runId</c> and by the service name it names.
+/// topology a run built, and one topology can serve many scenarios.  The service
+/// name is its correlation key; see <see cref="TransportNoticeEvent.RunId"/> for
+/// why the envelope's run id is not one.
 /// </para>
 /// <para>
 /// <strong>Structured fields, never the rendered sentence.</strong>  The terminal
@@ -843,7 +844,26 @@ public sealed record TransportNoticeEvent
     [JsonPropertyName("ts")]
     public DateTimeOffset Timestamp { get; init; }
 
-    /// <summary>Identifier of the run this event belongs to.</summary>
+    /// <summary>
+    /// Envelope run identifier.  <strong>Do not join on it: on this record it may
+    /// resolve to no scenario at all.</strong>
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The advisory belongs to a TOPOLOGY, and one topology can serve many
+    /// scenarios.  Where the topology is a single scenario's own, the producer
+    /// passes that scenario's run id and the join works.  Where one topology serves
+    /// a whole suite, every scenario has its own distinct run id and none of them
+    /// is the topology's, so the producer mints an id belonging to nothing rather
+    /// than picking one arbitrarily — attributing a topology-wide fact to one named
+    /// test case would make a renderer display a false statement about that test,
+    /// whereas an id that joins to nothing is merely uninformative.
+    /// </para>
+    /// <para>
+    /// <see cref="Service"/> is the correlation key a consumer actually wants, and
+    /// is why the record carries it.
+    /// </para>
+    /// </remarks>
     [JsonPropertyName("runId")]
     public required string RunId { get; init; }
 
@@ -851,6 +871,13 @@ public sealed record TransportNoticeEvent
     /// Optional correlation identifiers.  Omitted from the wire when
     /// <see langword="null"/>.
     /// </summary>
+    /// <remarks>
+    /// This is the slot designed for a "belongs to suite X" attribution, and the
+    /// producer deliberately leaves it <see langword="null"/>: no suite-level
+    /// identifier travels on this stream today, so there is nothing to put here that
+    /// a consumer could join on.  If one is ever minted it belongs here, not in
+    /// <see cref="RunId"/>.
+    /// </remarks>
     [JsonPropertyName("correlationIds")]
     public IReadOnlyDictionary<string, string>? CorrelationIds { get; init; }
 
