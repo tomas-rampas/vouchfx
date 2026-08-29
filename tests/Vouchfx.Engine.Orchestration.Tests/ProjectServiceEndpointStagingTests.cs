@@ -203,7 +203,8 @@ public sealed class ProjectServiceEndpointStagingTests : IDisposable
     /// <para>
     /// Security review: staging http when the project also offers https is a transport downgrade
     /// the author never asked for, and before this nothing in the run disclosed it — the step
-    /// observation carries only status and expectation, and no event record has a field for it.
+    /// observation carries only status and expectation, so nothing else in the run's own step
+    /// record says so.
     /// An undisclosed downgrade is the part that makes it a finding; the CHOICE itself is
     /// endorsed, because preferring https would fail the dev-certificate handshake and land as an
     /// EnvironmentError, which exits 0 unless the caller passes <c>--fail-on-env-error</c>
@@ -211,9 +212,17 @@ public sealed class ProjectServiceEndpointStagingTests : IDisposable
     /// step runs) — a green build over a step that verified nothing.
     /// </para>
     /// <para>
-    /// The notice is terminal-only for now: every EXISTING free-text field reaching
-    /// --events/--junit/--html is a scenario-level CAUSE for a non-Pass verdict. A new optional
-    /// event field is a legitimate route the v1 freeze permits — deferred to #450, not ruled out.
+    /// It reaches the §14 event stream too (#450 / #453) — through a NEW record,
+    /// <c>TransportNoticeEvent</c>, rather than an existing field, because every EXISTING
+    /// free-text field reaching --events/--junit/--html is a scenario-level CAUSE for a non-Pass
+    /// verdict. Adding an optional record is what the v1 freeze permits, and
+    /// <c>Vouchfx.Engine.Runtime.TransportNoticeEvents</c> is its single producer;
+    /// <c>EnvironmentMapper</c> raises the notice and does nothing else with it. The reach is
+    /// <c>--events</c> and
+    /// <c>--events-stream</c> only: <c>JunitXmlRenderer</c> and <c>HtmlRenderer</c> both take
+    /// their <c>default:</c> arm on an unrecognised type, so a run whose only artefacts are
+    /// <c>--junit</c> and <c>--html</c> still shows that green run with nothing in it about the
+    /// transport.
     /// </para>
     /// </remarks>
     [Theory]
@@ -1053,8 +1062,9 @@ public sealed class ProjectServiceEndpointStagingTests : IDisposable
     /// <see cref="SelectionNoticeToString_DisclosesEveryClauseThePublishedDocsClaimItDoes"/>
     /// below. Every OTHER notice assertion here is on FIELDS, on the stated ground that a typed
     /// record exists precisely so no test pins an English sentence as the contract. (The refusal
-    /// tests above do pin fragments of their exception messages — nineteen such assertions — and
-    /// are right to: a diagnostic has no fields, so its wording is the whole of what a test can
+    /// tests above do pin fragments of their exception messages — a count is deliberately not
+    /// given here, because one in a comment rots at the next assertion added — and they are right
+    /// to: a diagnostic has no fields, so its wording is the whole of what a test can
     /// hold.) The two line pins are the deliberate exception, and each earns it the same way: a
     /// published document states what the line discloses, and a reword dropping that clause
     /// leaves every field assertion in this file green.

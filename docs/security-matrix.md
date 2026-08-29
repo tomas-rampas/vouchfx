@@ -180,9 +180,13 @@ two. It may be addressed over plaintext, which is what the engine's fixed select
 whenever the project offers a plaintext listener. It may be refused a `security:` block, as above.
 And it may be **addressed over TLS with no engine-configured trust** — either because the author
 named an https listener through the service's `endpoint:` field, or because the project offers only
-an https listener and the fixed rule selected the one that exists. A terminal advisory announces
+an https listener and the fixed rule selected the one that exists. An advisory announces
 that third state whenever a step addresses such a service, precisely because a reader who stopped
-at the paragraph above would be contradicted by their own terminal.
+at the paragraph above would be contradicted by their own terminal. It is printed there, and it
+also reaches the JSON Lines event stream as a `transport-notice` record — so the announcement
+survives into an archive, not just a console. **Its reach is `--events` and `--events-stream`
+only:** the JUnit and HTML renderers ignore an event type they do not recognise, and `--watch` is
+wired to no report artefact whatever.
 
 **What is absent in that state is engine-configured trust, not verification**, and conflating the
 two in either direction is wrong. vouchfx contributes no trust anchor, pins no peer, presents no
@@ -192,7 +196,10 @@ HTTP request, the certificate that listener presents is validated against the ho
 store, full chain, exactly as any other .NET HTTPS request is. A host that does not already trust
 that certificate fails the handshake, which is classified an **environment error**, and an
 environment error does not fail the run unless `--fail-on-env-error` is passed. So a suite in this
-state can finish green having verified nothing about the service it addressed. Securing the system
+state can finish green having verified nothing about the service it addressed — which is why the
+advisory above is on the event stream as well as the terminal: a run archiving `--events` or
+`--events-stream` keeps the record that says which state it was in, while a `--junit`/`--html`-only
+pipeline still archives a green report with nothing in it about the transport. Securing the system
 under test, in the sense the rest of this page uses, still requires the `image:` form.
 
 ## What "not reachable" actually means for the twelve excluded kinds
