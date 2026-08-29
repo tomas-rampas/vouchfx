@@ -1327,24 +1327,27 @@ internal static class SchemaErrorCollector
     /// </summary>
     private static string FormatAdditionalPropertiesError(string instanceLocation)
     {
-        var propertyName = LastPointerSegment(instanceLocation);
+        var displayProperty = TruncateForDisplay(LastPointerSegment(instanceLocation));
 
         if (TryResolveEnvironmentContainer(
             instanceLocation, out var containerKind, out var containerName,
             out var isNestedBelowSecurity, allowNestedSecurity: true))
         {
+            var displayContainer = TruncateForDisplay(containerName);
+
             return isNestedBelowSecurity
-                ? $"[additionalProperties] Unknown property '{propertyName}' in {containerKind} '{containerName}' " +
-                  $"(at {BuildSecuritySubPath(instanceLocation)})"
-                : $"[additionalProperties] Unknown property '{propertyName}' on {containerKind} '{containerName}'";
+                ? $"[additionalProperties] Unknown property '{displayProperty}' in {containerKind} '{displayContainer}' " +
+                  $"(at {TruncateForDisplay(BuildSecuritySubPath(instanceLocation))})"
+                : $"[additionalProperties] Unknown property '{displayProperty}' on {containerKind} '{displayContainer}'";
         }
 
         if (TryResolveCaptureEntryContainer(instanceLocation, out var variableName))
         {
-            return $"[additionalProperties] Unknown property '{propertyName}' on capture entry '{variableName}'";
+            return $"[additionalProperties] Unknown property '{displayProperty}' on capture entry " +
+                   $"'{TruncateForDisplay(variableName)}'";
         }
 
-        return $"[additionalProperties] Unknown property '{propertyName}'";
+        return $"[additionalProperties] Unknown property '{displayProperty}'";
     }
 
     /// <summary>
@@ -1462,12 +1465,16 @@ internal static class SchemaErrorCollector
         string instanceLocation, JsonElement? instance, JsonElement? schema, Uri schemaLocation)
     {
         var propertyName = LastPointerSegment(instanceLocation);
+        var displayProperty = TruncateForDisplay(propertyName);
 
         if (TryResolveEnvironmentContainer(instanceLocation, out var containerKind, out var containerName, out _))
         {
+            var displayContainer = TruncateForDisplay(containerName);
+
             if (containerKind == DependencyContainerKind)
             {
                 var dependencyKind = instance is { } root ? TryResolveContainerType(instanceLocation, root) : null;
+                var displayKind = dependencyKind is null ? null : TruncateForDisplay(dependencyKind);
 
                 // REQ-021, as tightened by M1 (peer review, fix round 2): 'security' is forbidden
                 // on every dependency kind except kafka, and the generic "Property 'x' is not
@@ -1524,55 +1531,42 @@ internal static class SchemaErrorCollector
                 // a detector for the real thing, not a search that trips over its own obituary.)
                 if (propertyName == "security")
                 {
-                    // NIT-1 + SEC-4 (peer review, fix round 3). Two bounds on this ONE branch,
-                    // both because M1 made it the message an author hits first:
-                    //   • The kind is named as "dependency kind '<x>'", never "a '<x>'
-                    //     dependency" — the article cannot agree with a value that is DATA
-                    //     (a 'azureservicebus' / a 'elasticsearch'), and picking it from the
-                    //     next character's vowel-ness would still be wrong for a kind such as
-                    //     'unified'. Dropping the article is the robust fix, not a cleverer test.
-                    //   • Both interpolated values are author-controlled and length-unbounded
-                    //     (the container NAME is a YAML key; the KIND is whatever 'type' holds,
-                    //     which on this path has failed its own enum and so may be arbitrary),
-                    //     so both go through TruncateForDisplay — the same bound
-                    //     FormatEnumError already applies to an offending scalar. Deliberately
-                    //     scoped to this branch: the generic messages below are pre-existing,
-                    //     unbounded like every other interpolation in this class, and widening
-                    //     that is a separate change.
-                    var displayName = TruncateForDisplay(containerName);
-
+                    // NIT-1 (peer review, fix round 3): the kind is named as "dependency kind
+                    // '<x>'", never "a '<x>' dependency" — the article cannot agree with a value
+                    // that is DATA (a 'azureservicebus' / a 'elasticsearch'), and picking it from
+                    // the next character's vowel-ness would still be wrong for a kind such as
+                    // 'unified'. Dropping the article is the robust fix, not a cleverer test.
+                    //
                     // Reachable, and measured: a NON-SCALAR 'type' (e.g. 'type: [redis, postgres]')
                     // still satisfies the narrowing clause's own 'not: { const: "kafka" }'
                     // condition, so 'security' is rejected while TryResolveContainerType has no
                     // scalar to read a kind from. Pinned by
                     // EnvironmentSchemaTests.Dependency_Security_NonScalarType_UsesTheUnqualifiedMessage.
-                    if (dependencyKind is null)
+                    if (displayKind is null)
                     {
-                        return $"[properties] Dependency '{displayName}' declares 'security', but no " +
+                        return $"[properties] Dependency '{displayContainer}' declares 'security', but no " +
                                "security profile is wired for this dependency kind in this release — " +
                                "only a 'kafka' dependency, or a declared service, can carry a 'security' " +
                                "block today. Transport security for the remaining dependency kinds " +
                                "arrives in 1.1.";
                     }
 
-                    var displayKind = TruncateForDisplay(dependencyKind);
-
-                    return $"[properties] Dependency '{displayName}' (type '{displayKind}') declares " +
+                    return $"[properties] Dependency '{displayContainer}' (type '{displayKind}') declares " +
                            $"'security', but no security profile is wired for dependency kind " +
                            $"'{displayKind}' in this release — only a 'kafka' dependency, or a declared " +
                            "service, can carry a 'security' block today. Transport security for the " +
                            "remaining dependency kinds arrives in 1.1.";
                 }
 
-                return dependencyKind is null
-                    ? $"[properties] Property '{propertyName}' is not valid on dependency '{containerName}'"
-                    : $"[properties] Property '{propertyName}' is not valid on a '{dependencyKind}' dependency";
+                return displayKind is null
+                    ? $"[properties] Property '{displayProperty}' is not valid on dependency '{displayContainer}'"
+                    : $"[properties] Property '{displayProperty}' is not valid on a '{displayKind}' dependency";
             }
 
             if (containerKind == ServiceContainerKind && propertyName == "project")
             {
                 return $"[properties] Property 'project' cannot be combined with 'image' on service " +
-                       $"'{containerName}' — exactly one of the two is required (DSL §3.2)";
+                       $"'{displayContainer}' — exactly one of the two is required (DSL §3.2)";
             }
 
             // The generic text below ("Property 'httpPort' is not valid on service 'app'") is the
@@ -1597,13 +1591,13 @@ internal static class SchemaErrorCollector
             if (containerKind == ServiceContainerKind && propertyName == "httpPort")
             {
                 return $"[properties] Property 'httpPort' is not valid on the 'project'-form " +
-                       $"service '{containerName}' — a project's endpoints are discovered from its " +
+                       $"service '{displayContainer}' — a project's endpoints are discovered from its " +
                        "own launch profile, and 'httpPort' names a container port rather than a " +
                        "listener. Remove the line; to choose WHICH discovered endpoint this " +
                        "service is addressed on, use 'endpoint' (DSL §3.2)";
             }
 
-            return $"[properties] Property '{propertyName}' is not valid on {containerKind} '{containerName}'";
+            return $"[properties] Property '{displayProperty}' is not valid on {containerKind} '{displayContainer}'";
         }
 
         if (TryResolveCaptureEntryContainer(instanceLocation, out var variableName))
@@ -1612,14 +1606,16 @@ internal static class SchemaErrorCollector
                 ? TryReadSiblingPropertyNames(schemaRoot, schemaLocation, excludePropertyName: propertyName)
                 : null;
 
+            var displayVariable = TruncateForDisplay(variableName);
+
             if (siblingNames is { Count: > 0 })
             {
                 var otherNames = string.Join(", ", siblingNames.Select(n => $"'{n}'"));
-                return $"[properties] Property '{propertyName}' cannot be combined with {otherNames} on " +
-                       $"capture entry '{variableName}' — exactly one of the two is required (DSL §6.1)";
+                return $"[properties] Property '{displayProperty}' cannot be combined with {otherNames} on " +
+                       $"capture entry '{displayVariable}' — exactly one of the two is required (DSL §6.1)";
             }
 
-            return $"[properties] Property '{propertyName}' is not valid on capture entry '{variableName}'";
+            return $"[properties] Property '{displayProperty}' is not valid on capture entry '{displayVariable}'";
         }
 
         // M5: the generic allOf/if/then exclusion case (storage-assert.s3's
@@ -1632,19 +1628,19 @@ internal static class SchemaErrorCollector
             {
                 if (TryReadSingleConstCondition(ifElement, out var conditionField, out var conditionValueDisplay))
                 {
-                    return $"[properties] Property '{propertyName}' is not valid when " +
+                    return $"[properties] Property '{displayProperty}' is not valid when " +
                            $"'{conditionField}' is {conditionValueDisplay}";
                 }
 
                 if (TryReadSoleRequiredNoOtherContent(ifElement, out var otherField))
                 {
-                    return $"[properties] Property '{propertyName}' cannot be combined with " +
+                    return $"[properties] Property '{displayProperty}' cannot be combined with " +
                            $"'{otherField}' — exactly one of the two may be set";
                 }
             }
         }
 
-        return $"[properties] Property '{propertyName}' is not valid here";
+        return $"[properties] Property '{displayProperty}' is not valid here";
     }
 
     /// <summary>
@@ -1992,8 +1988,9 @@ internal static class SchemaErrorCollector
     }
 
     /// <summary>
-    /// The maximum number of characters of an offending SCALAR VALUE
-    /// <see cref="FormatEnumError"/> echoes verbatim before truncating.
+    /// The maximum number of characters of an author-controlled value this class
+    /// echoes verbatim into a diagnostic before <see cref="TruncateForDisplay"/>
+    /// truncates it.
     /// </summary>
     /// <remarks>
     /// Security finding (feat/close-remaining-surfaces, second round): unlike
@@ -2018,6 +2015,27 @@ internal static class SchemaErrorCollector
     /// it unchanged otherwise. Never splits a UTF-16 surrogate pair.
     /// </summary>
     /// <remarks>
+    /// <para>
+    /// One bound, one reason, recorded HERE rather than restated at each call site. Two classes
+    /// of value pass through it. The first is the offending SCALAR of an <c>enum</c> or
+    /// <c>const</c> rejection, for the serialisation reason on
+    /// <see cref="MaxOffendingValueChars"/>. The second is the author's own YAML map keys that
+    /// <see cref="FormatAdditionalPropertiesError"/> and
+    /// <see cref="FormatForbiddenPropertyError"/> name back to them — a service or dependency
+    /// key, a dependency's declared <c>type</c>, a capture variable, the rejected property
+    /// itself. Those keys carry no length limit of their own, so one pasted at kilobyte scale
+    /// turns a one-line rejection into a screenful and buries the sentence saying what to do.
+    /// For that second class the bound is LEGIBILITY and nothing more: the value is the author's
+    /// own key rendered back to the author, on the author's own terminal, through the same sinks
+    /// every other diagnostic in this class already reaches. Anyone tempted to write a stronger
+    /// justification at a call site should put it here instead, or not at all: the
+    /// <see cref="FormatForbiddenPropertyError"/> <c>security</c> branch carried this reasoning
+    /// alone, in a comment whose closing sentence scoped it to that one branch and deferred
+    /// widening to "a separate change" — and nothing propagated it until this became that change.
+    /// Not every interpolation in this class goes through this bound yet; grep before assuming
+    /// a given message is O(1) in the value it complains about.
+    /// </para>
+    /// <para>
     /// SEC-2 (peer review, fix round 3): the cut index is a CHAR index, so a naive
     /// <c>value[..MaxOffendingValueChars]</c> slice can land exactly between a high surrogate
     /// and its low-surrogate partner when the author-controlled value contains an astral-plane
@@ -2029,6 +2047,7 @@ internal static class SchemaErrorCollector
     /// the planner's own bounded field — the same idiom, deliberately, so the two do not drift.
     /// The loop (rather than a single decrement) also survives malformed input carrying
     /// consecutive unpaired high surrogates.
+    /// </para>
     /// </remarks>
     private static string TruncateForDisplay(string value)
     {

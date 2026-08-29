@@ -2560,6 +2560,63 @@ public sealed class EnvironmentSchemaTests
     }
 
     /// <summary>
+    /// The <c>httpPort</c> refusal bounds the service NAME it echoes, at the same
+    /// 200-character display limit the <c>security</c> branch has always applied — one bound
+    /// covering both, not two message shapes.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This branch was unbounded when it shipped, and it is the branch that most needed the
+    /// bound: the refusal is a breaking change, so its message is the first thing an author of a
+    /// previously-green suite reads, and the remedy sentence naming <c>endpoint</c> sits at the
+    /// END of it — behind however many characters the service key happens to be. An unbounded
+    /// key pushes the only actionable half of the message off the terminal.
+    /// </para>
+    /// <para>
+    /// Legibility, not safety: the value is the author's own YAML key rendered back to the
+    /// author. The assertion is therefore about SIZE and about the remedy surviving, never about
+    /// the key being neutralised.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void Service_HttpPortOnProjectForm_BoundsTheServiceName()
+    {
+        var longName = new string('s', 250);
+
+        var yaml = $$"""
+            environment:
+              services:
+                {{longName}}:
+                  project: ./src/App/App.csproj
+                  httpPort: 8080
+            steps:
+              - id: noop
+                type: noop.echo
+            """;
+
+        var result = YamlSchemaValidator.Validate(yaml);
+
+        Assert.False(result.IsValid);
+
+        var onlyError = Assert.Single(result.Errors);
+        Assert.Equal($"/environment/services/{longName}/httpPort", onlyError.InstanceLocation);
+
+        Assert.DoesNotContain(longName, onlyError.Message, System.StringComparison.Ordinal);
+        Assert.Contains(
+            $"service '{new string('s', 200)}… (250 chars total)' — ",
+            onlyError.Message,
+            System.StringComparison.Ordinal);
+
+        // The remedy is the half a long name would have buried, so pin that it still arrives.
+        Assert.EndsWith(
+            "use 'endpoint' (DSL §3.2)", onlyError.Message, System.StringComparison.Ordinal);
+
+        // O(1) in the offending key rather than a multiple of it.
+        Assert.True(onlyError.Message.Length < 1000,
+            $"Message must be O(1) in the service name; was {onlyError.Message.Length} chars.");
+    }
+
+    /// <summary>
     /// 'endpoint' is refused on an image-form service, naming the field —
     /// exactly one error.
     /// </summary>
