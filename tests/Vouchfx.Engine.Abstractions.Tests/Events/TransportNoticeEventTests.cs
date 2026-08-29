@@ -1,5 +1,5 @@
 // Tests for the transport-notice event record (#450, #453) — the wire half of the
-// two transport advisories the engine has printed to the terminal since #348.
+// two transport advisories the engine prints to the terminal by their own route.
 //
 // Covered concerns:
 //   • Round-trip fidelity for BOTH kinds.

@@ -59,7 +59,7 @@ public static class EventTypes
     /// and the run's outcome is decided elsewhere (§12.1).
     /// </summary>
     /// <remarks>
-    /// The advisory these events carry has been printed to the terminal since #348;
+    /// The advisories these events carry are printed to the terminal by their own route;
     /// the event exists so that a CI job consuming <c>--events</c> can see it too,
     /// which matters most when a failed handshake surfaces as an environment error
     /// and exits 0 by default.  The two advisories share one event type and are

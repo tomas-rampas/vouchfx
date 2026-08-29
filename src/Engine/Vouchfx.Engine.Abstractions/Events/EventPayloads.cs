@@ -707,11 +707,11 @@ public sealed record ReproducibilityEnvelopeEvent
 /// </summary>
 /// <remarks>
 /// <para>
-/// <strong>Spelled exactly once, here.</strong>  Both advisories are produced by
-/// different call sites and consumed by different renderers; a string literal at
-/// each producer is precisely how the two notices came to be treated differently
-/// in the first place.  Every producer and every consumer references these
-/// constants.
+/// <strong>Spelled exactly once, here.</strong>  The two advisories are raised at
+/// different call sites; a string literal at each is precisely how the two notices
+/// came to be treated differently in the first place.  The single producer
+/// references these constants, and so must any consumer that branches on
+/// <c>kind</c>.
 /// </para>
 /// <para>
 /// <strong>Why a string and not an enum.</strong>  <see cref="Verdict"/> is an enum
