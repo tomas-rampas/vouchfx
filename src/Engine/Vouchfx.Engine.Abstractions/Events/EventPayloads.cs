@@ -700,6 +700,19 @@ public sealed record ReproducibilityEnvelopeEvent
 // ---------------------------------------------------------------------------
 // TransportNoticeKinds — the closed `kind` vocabulary of TransportNoticeEvent
 // ---------------------------------------------------------------------------
+//
+// THE READING `no-engine-trust` WAS CHECKED AGAINST, AND WHY THE TOKEN KEPT ITS NAME.
+//   It parses two ways. "No [engine-configured] trust" is what it means. "The engine does not
+//   trust it" is a negative judgement about the peer, and it is one the advisory's own producer
+//   explicitly refuses to make: EndpointTrustNotice's remarks say the engine does not "make any
+//   assertion about the outcome", because with no `security` block the platform's own trust store
+//   validates the chain exactly as it does for any other .NET HTTPS request. A token that carried
+//   the second sense would assert on this wire what the notice denies in prose.
+//   `no-engine-trust-material` was the unambiguous alternative and was NOT taken (maintainer
+//   decision): the sibling token `plaintext-downgrade` establishes a noun phrase naming a state as
+//   this vocabulary's shape, and the meaning is spelled out in full twice over — on the constant
+//   below and in blueprint §14.4.3, which is where a consumer deciding what the token licenses
+//   reads. Recorded rather than acted on, so the reading is not re-derived by the next reviewer.
 
 /// <summary>
 /// The closed vocabulary of <see cref="TransportNoticeEvent.Kind"/> values (§14.4,

@@ -197,7 +197,7 @@ public sealed class TransportNoticeEventEmissionTests
     /// <remarks>
     /// This is the testable half of "match the terminal's cardinality exactly". The other half —
     /// that each print site hands this producer the SAME two collections it iterates to print — is
-    /// <see cref="EveryPrintSite_InRuntime_AlsoEmitsTheRecord"/>. A fixed count would only hold on
+    /// <see cref="EveryPrintSite_AlsoEmitsTheRecord"/>. A fixed count would only hold on
     /// one path: <c>RunSuiteAsync</c> builds one topology for the whole selection and reports each
     /// advisory once, however many files that selection held, while
     /// <c>RunScenarioOwningTopologyAsync</c> is entered once per scenario-owned topology — which in
@@ -470,7 +470,7 @@ public sealed class TransportNoticeEventEmissionTests
     /// </summary>
     /// <remarks>
     /// The runtime half is trivial (a null-conditional post), so the load-bearing half is the
-    /// source assertion in <see cref="EveryPrintSite_InRuntime_AlsoEmitsTheRecord"/> that every
+    /// source assertion in <see cref="EveryPrintSite_AlsoEmitsTheRecord"/> that every
     /// transport post in the runner really is null-conditional. This pins the behaviour the sites
     /// depend on: <c>PostRange</c> on a null pump is a no-op, and the lines still reach the buffer
     /// that feeds the <c>--events</c> archive.
@@ -496,7 +496,7 @@ public sealed class TransportNoticeEventEmissionTests
     // ── The routing gate: every print site emits, through the one producer ───────────────────
 
     /// <summary>
-    /// Every method in <c>Vouchfx.Engine.Runtime</c> that reads
+    /// Every method in <c>Vouchfx.Engine.Runtime</c> or <c>Vouchfx.Cli</c> that reads
     /// <c>EndpointSelectionNotices</c> / <c>EndpointTrustNotices</c> to PRINT them must also call
     /// <c>TransportNoticeEvents.ToLines</c> to EMIT them — and must pass the pump result through a
     /// null-conditional post.
@@ -509,6 +509,23 @@ public sealed class TransportNoticeEventEmissionTests
     /// forget one — the defect #450 and #453 exist to report was precisely a print with no record.
     /// </para>
     /// <para>
+    /// <strong>Two roots, because the collections are public and Runtime does not own them.</strong>
+    /// Every site that reads the two collections in order to PRINT them is in Runtime today, so the
+    /// CLI root adds no assertion now — it closes a future hole.
+    /// <c>SuiteTopology.EndpointSelectionNotices</c> and <c>EndpointTrustNotices</c> are PUBLIC
+    /// members of Orchestration, so a print site added in <c>Vouchfx.Cli</c> — a <c>--dry-run</c>
+    /// summary echoing the advisories, say — would print, emit nothing, and be caught by nothing.
+    /// The CLI is also where the hand-rolled-record assertion below most needs to reach: it is the
+    /// assembly most likely to want to build a <c>TransportNoticeEvent</c> of its own.
+    /// </para>
+    /// <para>
+    /// <strong>Orchestration is deliberately NOT a third root.</strong> It declares the two
+    /// collections, but it has no event destination, no run id and no opinion about replay — see
+    /// <c>TransportNoticeEvents</c>'s own header on why the producer lives in Runtime. A gate
+    /// demanding emission there would demand something Orchestration cannot do, so a print site
+    /// appearing in Orchestration is a design question to raise, not a rule to enforce here.
+    /// </para>
+    /// <para>
     /// Asserts the PROPERTY (print ⇒ emit, in the same method) rather than a count of sites, so the
     /// gate survives a site being added or moved. Reads the production source in the shape
     /// <c>SecretObservationLeakPenetrationTests.EveryEnvironmentErrorEmission_InRuntime_GoesThroughTheScrubbingChokepoint</c>
@@ -516,12 +533,19 @@ public sealed class TransportNoticeEventEmissionTests
     /// </para>
     /// </remarks>
     [Fact]
-    public void EveryPrintSite_InRuntime_AlsoEmitsTheRecord()
+    public void EveryPrintSite_AlsoEmitsTheRecord()
     {
-        var runtimeRoot = Path.Combine(RepositoryRoot(), "src", "Engine", "Vouchfx.Engine.Runtime");
+        var repositoryRoot = RepositoryRoot();
+        var runtimeRoot = Path.Combine(repositoryRoot, "src", "Engine", "Vouchfx.Engine.Runtime");
+        var roots = new[]
+        {
+            runtimeRoot,
+            Path.Combine(repositoryRoot, "src", "Cli", "Vouchfx.Cli"),
+        };
+
         var sep = Path.DirectorySeparatorChar;
-        var sources = Directory
-            .GetFiles(runtimeRoot, "*.cs", SearchOption.AllDirectories)
+        var sources = roots
+            .SelectMany(root => Directory.GetFiles(root, "*.cs", SearchOption.AllDirectories))
             .Where(p => !p.Contains($"{sep}bin{sep}", StringComparison.Ordinal)
                      && !p.Contains($"{sep}obj{sep}", StringComparison.Ordinal))
             .ToList();
