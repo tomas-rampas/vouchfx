@@ -12,7 +12,7 @@
 // records reachable from them on the wire):
 //   EventEnvelope, ScenarioStartedEvent, StepStartedEvent, StepAttemptEvent,
 //   StepCompletedEvent, ScenarioCompletedEvent, ReproducibilityEnvelopeEvent,
-//   VerdictCounts,
+//   TransportNoticeEvent, VerdictCounts,
 //   CapturedVar, SubstitutionRef          (nested in StepCompletedEvent),
 //   SecretReferenceDigest, FixtureDigest   (nested in the reproducibility envelope;
 //                                           these two live in a DIFFERENT namespace —
@@ -93,6 +93,7 @@ public sealed class EventContractFreezeTests
         typeof(StepCompletedEvent),
         typeof(ScenarioCompletedEvent),
         typeof(ReproducibilityEnvelopeEvent),
+        typeof(TransportNoticeEvent), // #450/#453; added here AND to the golden, one reviewed act.
         typeof(VerdictCounts),
 
         // Nested value records reachable on the wire from the events above. Their
@@ -196,6 +197,17 @@ public sealed class EventContractFreezeTests
     /// edit: a new record is either added to <see cref="s_eventRecords"/> (frozen) or
     /// added here (explicitly excused), never silently left unguarded.
     /// </summary>
+    /// <remarks>
+    /// SCOPE LIMIT worth knowing before trusting this gate: the completeness guard
+    /// filters on <c>IsRecord</c>, so a static class in the Events namespace is outside
+    /// it, and the golden freezes property NAMES and TYPES, never string VALUES.
+    /// <c>TransportNoticeKinds</c> is both — its two <c>kind</c> tokens are part of the
+    /// wire contract (a consumer branches on them) yet renaming one produces no diff
+    /// here. Their value-freeze lives in
+    /// <c>TransportNoticeEventTests.Kinds_AreTheTwoPinnedTokens</c>, which asserts the
+    /// literals. A reviewer seeing that test change alongside a constant is looking at a
+    /// wire break, not at a test kept in step.
+    /// </remarks>
     private static readonly HashSet<Type> s_eventNamespaceExclusions = new();
 
     /// <summary>

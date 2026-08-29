@@ -123,10 +123,12 @@ public sealed class SuiteTopology : IAsyncDisposable
     /// </summary>
     /// <remarks>
     /// Surfaced for the same reason, and printed through the same channel, as
-    /// <see cref="SecurityConfirmations"/>: the decision is invisible in the step observation and
-    /// on the event wire, and a run whose traffic silently went plaintext should say so. Terminal
-    /// only for now — no EXISTING v1 event field carries an advisory about a healthy run, and
-    /// adding an optional one is deferred to #450 rather than forbidden.
+    /// <see cref="SecurityConfirmations"/>: the decision is invisible in the step observation, and
+    /// a run whose traffic silently went plaintext should say so. No EXISTING v1 event field could
+    /// carry an advisory about a healthy run, so it travels on a NEW record instead:
+    /// <c>Vouchfx.Engine.Runtime.TransportNoticeEvents</c> maps this collection onto the frozen
+    /// <c>transport-notice</c> record and is its SINGLE producer. Read that type before writing
+    /// any new emission — a second producer would double every advisory.
     /// </remarks>
     public IReadOnlyList<EndpointSelectionNotice> EndpointSelectionNotices { get; }
 

@@ -3,8 +3,11 @@
 // Typed rather than a pre-formatted string, matching its sibling SecurityConfirmation, which
 // SuiteTopology also surfaces and the runner also prints. The reasons are the same ones that
 // applied there: the orchestration layer should not be assembling author-facing English; a test
-// asserting on fields does not pin a particular wording as the contract; and #450, if it routes
-// this to the event stream, needs the parts rather than a sentence to re-parse.
+// asserting on fields does not pin a particular wording as the contract; and the event-stream
+// route needs the parts rather than a sentence to re-parse. That route shipped (#450 / #453):
+// Vouchfx.Engine.Runtime.TransportNoticeEvents maps this record onto the frozen
+// `transport-notice` record and is its SINGLE producer. Read that type before writing any new
+// emission — a second producer would double every advisory.
 
 namespace Vouchfx.Engine.Orchestration;
 

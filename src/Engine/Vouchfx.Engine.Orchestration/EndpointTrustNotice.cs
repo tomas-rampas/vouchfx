@@ -4,8 +4,8 @@
 // IT DOES NOT MATTER WHO PICKED THAT LISTENER, and the wording throughout this file is careful not
 // to claim otherwise. The notice fires on the SELECTED endpoint: an `endpoint:` naming an https
 // listener, and equally an https-ONLY project whose author wrote no `endpoint:` at all and whose
-// listener the engine's own fixed rule therefore chose. Both address an unverified TLS listener;
-// only the second used to pass in silence.
+// listener the engine's own fixed rule therefore chose. Both address an https listener the engine
+// configures no trust material for; only the second used to pass in silence.
 //
 // A SEPARATE RECORD RATHER THAN A DISCRIMINATED ADDITION TO EndpointSelectionNotice, and the
 // deciding argument is the data, not the taxonomy. EndpointSelectionNotice's third field,

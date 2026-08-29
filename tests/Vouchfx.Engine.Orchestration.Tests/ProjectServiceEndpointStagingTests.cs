@@ -203,7 +203,8 @@ public sealed class ProjectServiceEndpointStagingTests : IDisposable
     /// <para>
     /// Security review: staging http when the project also offers https is a transport downgrade
     /// the author never asked for, and before this nothing in the run disclosed it — the step
-    /// observation carries only status and expectation, and no event record has a field for it.
+    /// observation carries only status and expectation, so nothing else in the run's own step
+    /// record says so.
     /// An undisclosed downgrade is the part that makes it a finding; the CHOICE itself is
     /// endorsed, because preferring https would fail the dev-certificate handshake and land as an
     /// EnvironmentError, which exits 0 unless the caller passes <c>--fail-on-env-error</c>
@@ -211,9 +212,17 @@ public sealed class ProjectServiceEndpointStagingTests : IDisposable
     /// step runs) — a green build over a step that verified nothing.
     /// </para>
     /// <para>
-    /// The notice is terminal-only for now: every EXISTING free-text field reaching
-    /// --events/--junit/--html is a scenario-level CAUSE for a non-Pass verdict. A new optional
-    /// event field is a legitimate route the v1 freeze permits — deferred to #450, not ruled out.
+    /// It reaches the §14 event stream too (#450 / #453) — through a NEW record,
+    /// <c>TransportNoticeEvent</c>, rather than an existing field, because every EXISTING
+    /// free-text field reaching --events/--junit/--html is a scenario-level CAUSE for a non-Pass
+    /// verdict. Adding an optional record is what the v1 freeze permits, and
+    /// <c>Vouchfx.Engine.Runtime.TransportNoticeEvents</c> is its single producer;
+    /// <c>EnvironmentMapper</c> raises the notice and does nothing else with it. The reach is
+    /// <c>--events</c> and
+    /// <c>--events-stream</c> only: <c>JunitXmlRenderer</c> and <c>HtmlRenderer</c> both take
+    /// their <c>default:</c> arm on an unrecognised type, so a run whose only artefacts are
+    /// <c>--junit</c> and <c>--html</c> still shows that green run with nothing in it about the
+    /// transport.
     /// </para>
     /// </remarks>
     [Theory]
@@ -911,7 +920,11 @@ public sealed class ProjectServiceEndpointStagingTests : IDisposable
     /// </para>
     /// <para>
     /// User-visible consequence, pinned deliberately: this suite emits an advisory it did not emit
-    /// before. Terminal-only — no verdict, no exit code, no artefact change.
+    /// before. No verdict moves with it and no exit code changes — but it is not terminal-only.
+    /// It also emits one <c>TransportNoticeEvent</c>, so a run archiving --events or
+    /// --events-stream gains a line, while --junit and --html are unchanged (their
+    /// <c>default:</c> arm). See the remarks on the downgrade-notice theory above for the whole
+    /// reach.
     /// </para>
     /// </remarks>
     [Fact]
@@ -1044,31 +1057,35 @@ public sealed class ProjectServiceEndpointStagingTests : IDisposable
     }
 
     /// <summary>
-    /// THE ADVISORY'S OWN TEXT IS PINNED HERE, and it is the one NOTICE line in this file that is
-    /// — deliberately, and deliberately unlike its sibling's.
+    /// THE ADVISORY'S OWN TEXT IS PINNED HERE, because published documents make claims about what
+    /// this line says that no assertion on the record's fields can check.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Every other assertion on a NOTICE in this file is on its FIELDS, on the stated ground that
-    /// a typed record exists precisely so no test pins an English sentence as the contract. (The
-    /// refusal tests above do pin fragments of their exception messages, and are right to: a
-    /// diagnostic has no fields, so its wording is the whole of what a test can hold.) That
-    /// ground holds for the notice <see cref="EndpointSelectionNotice"/>: its line is an
-    /// operational convenience, and no published document quotes it. The nearest thing is a
-    /// PARAPHRASE in the CHANGELOG's #348 entry — "the notice reports what steps addressing the
-    /// service will use" — which a reword could falsify, so the case for pinning that line too is
-    /// weaker than this one rather than absent. Tracked as #454.
+    /// Exactly two assertions in this file are on a NOTICE's rendered LINE: this one, and
+    /// <see cref="SelectionNoticeToString_DisclosesEveryClauseThePublishedDocsClaimItDoes"/>
+    /// below. Every OTHER notice assertion here is on FIELDS, on the stated ground that a typed
+    /// record exists precisely so no test pins an English sentence as the contract. (The refusal
+    /// tests above do pin fragments of their exception messages — a count is deliberately not
+    /// given here, because one in a comment rots at the next assertion added — and they are right
+    /// to: a diagnostic has no fields, so its wording is the whole of what a test can
+    /// hold.) The two line pins are the deliberate exception, and each earns it the same way: a
+    /// published document states what the line discloses, and a reword dropping that clause
+    /// leaves every field assertion in this file green.
     /// </para>
     /// <para>
-    /// It does not hold for THIS string, and the difference is what the string is load-bearing
-    /// for. <see cref="EndpointTrustNotice.ToString"/> holds the only copy of the disclosure that
-    /// a TLS-addressed <c>project:</c>-form service gets no engine-configured trust, and two
-    /// published documents make claims about what it says: CHANGELOG's transport-advisory entry
-    /// (“naming the service and the selected endpoint and stating what the engine did not do”)
-    /// and docs/security-matrix.md (“vouchfx contributes no trust anchor, pins no peer, presents
-    /// no client identity and asserts nothing about the transport”). A reword dropping, say, the
-    /// client-identity clause leaves every field assertion in this file green and silently
-    /// falsifies a published security disclosure. Nothing else would catch it.
+    /// What THIS string is load-bearing for. <see cref="EndpointTrustNotice.ToString"/> holds the
+    /// only copy of the disclosure that a TLS-addressed <c>project:</c>-form service gets no
+    /// engine-configured trust, and THREE published documents make claims about what it says:
+    /// CHANGELOG's transport-advisory entry (“naming the service and the selected endpoint and
+    /// stating what the engine did not do”), docs/security-matrix.md (“vouchfx contributes no
+    /// trust anchor, pins no peer, presents no client identity and asserts nothing about the
+    /// transport”), and docs/02's §3.2 transport-advisories paragraph (“no trust anchor, no peer
+    /// pinning, no client identity, and no assertion about the outcome”). The count was “two”
+    /// here until #454 was worked and the third was found by grep; the DSL specification is the
+    /// document an author is likeliest to read, so it was the worst one to have missed. A reword
+    /// dropping, say, the client-identity clause silently falsifies a published security
+    /// disclosure in all three. Nothing else would catch it.
     /// </para>
     /// <para>
     /// SUBSTANCE, NOT SENTENCE. The pins below are short meaning-bearing fragments of each
@@ -1125,6 +1142,87 @@ public sealed class ProjectServiceEndpointStagingTests : IDisposable
         // this clause would leave a reader believing the absence is at least loud.
         Assert.Contains("environment error", line, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("--fail-on-env-error", line, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// THE DOWNGRADE ADVISORY'S OWN TEXT IS PINNED HERE, for the reason its sibling above is
+    /// pinned: published documents make claims about what this line says, and a reword can
+    /// falsify them while every assertion on the record's fields stays green (#454).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// TWO published documents, THREE claim sites. docs/02's §3.2 transport-advisories paragraph
+    /// is the nearest paraphrase and the one that matters most — the downgrade notice “names both
+    /// endpoints and states that steps targeting the service will use plaintext”. The CHANGELOG
+    /// says it twice: the #348 entry (“the notice reports what steps addressing the service will
+    /// use”, which is what makes the silence for an untargeted service correct rather than a bug)
+    /// and the transport-advisory entry's closing contrast, which distinguishes this notice from
+    /// its sibling by saying it reports “the opposite choice”. docs/security-matrix.md describes
+    /// the fixed selection rule but makes no claim about this notice's text, so it is not on the
+    /// list.
+    /// </para>
+    /// <para>
+    /// THE NAMES-BOTH-ENDPOINTS CLAUSE IS THE LOAD-BEARING ONE, and it is the specific gap #454
+    /// was filed for. Two assertions elsewhere in this file check that the record CARRIES a
+    /// rejected endpoint; they say nothing about whether
+    /// <see cref="EndpointSelectionNotice.ToString"/> still RENDERS it. A reword that drops the
+    /// rejected endpoint from the line passes every one of them while falsifying docs/02 and
+    /// gutting the advisory — an author told only that the http listener was staged learns
+    /// nothing they did not already know, where the whole point is that an https listener was
+    /// available and not taken.
+    /// </para>
+    /// <para>
+    /// SUBSTANCE, NOT SENTENCE, and DELIBERATELY LOOSE WHERE NOTHING IS CLAIMED. The pins below
+    /// are short meaning-bearing fragments, not the sentence they sit in. Four things are left
+    /// loose on purpose. (1) The whole second sentence — that a <c>project:</c>-form service
+    /// cannot declare <c>security</c>, so the engine holds no trust material and a request would
+    /// fail the handshake — is the notice's RATIONALE for the choice, and no published document
+    /// claims the notice states it; the CHANGELOG gives that reasoning in its own voice, about
+    /// the engine's behaviour, not as a report of this string's contents. (2) The scheme labels
+    /// <c>(http)</c> and <c>(https)</c>: docs/02 claims the notice names both endpoints, not that
+    /// it annotates either. (3) The transport word is an alternation over “plaintext”, “plain
+    /// text”, “cleartext” and “unencrypted”, and case-insensitive: the disclosure is that the
+    /// traffic is not encrypted, and each of those says it. (4) The grammar joining “steps” to
+    /// the service is unpinned — “steps targeting it”, “steps that address it” and “steps
+    /// addressing the service” are the same claim. The trust pin above had to be loosened once
+    /// for over-pinning exactly this way: it fixed the phrase “client identity”, and a reword to
+    /// “client certificate” would have failed while preserving the disclosure whole.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void SelectionNoticeToString_DisclosesEveryClauseThePublishedDocsClaimItDoes()
+    {
+        // Endpoint names chosen so no assertion below can be satisfied by the message's own
+        // boilerplate, in either direction: "http" and "https" appear in the sentence regardless
+        // but "http-in" and "tls-in" do not, and neither name contains any fragment the
+        // transport alternation looks for.
+        var line = new EndpointSelectionNotice("orders-api", "http-in", "tls-in").ToString();
+
+        // Clause 1 of 2 — WHICH service, and BOTH endpoints. The rejected one is the fragment
+        // this whole test exists for: it is the only field whose loss from the rendered line is
+        // invisible to every other assertion in this file.
+        Assert.Contains("orders-api", line, StringComparison.Ordinal);
+        Assert.Contains("http-in", line, StringComparison.Ordinal);
+        Assert.Contains("tls-in", line, StringComparison.Ordinal);
+
+        // Clause 2 of 2 — what steps addressing the service will actually use. Three fragments
+        // rather than one phrase: the noun, the transport, and the fact that the two are
+        // connected. The grammar joining them is not pinned, and neither is any one spelling of
+        // "not encrypted".
+        Assert.True(
+            line.Contains("plaintext", StringComparison.OrdinalIgnoreCase)
+                || line.Contains("plain text", StringComparison.OrdinalIgnoreCase)
+                || line.Contains("cleartext", StringComparison.OrdinalIgnoreCase)
+                || line.Contains("unencrypted", StringComparison.OrdinalIgnoreCase),
+            "The advisory must still disclose that the staged transport is unencrypted — that is "
+                + $"the whole content of the downgrade it reports. Got: {line}");
+        Assert.Contains("step", line, StringComparison.OrdinalIgnoreCase);
+        Assert.True(
+            line.Contains("target", StringComparison.OrdinalIgnoreCase)
+                || line.Contains("address", StringComparison.OrdinalIgnoreCase),
+            "The advisory must still say WHICH steps the plaintext transport applies to — the "
+                + "ones targeting or addressing the service — because the notice is silent for a "
+                + $"service no step targets, and that silence is only correct if it does. Got: {line}");
     }
 
     /// <inheritdoc />

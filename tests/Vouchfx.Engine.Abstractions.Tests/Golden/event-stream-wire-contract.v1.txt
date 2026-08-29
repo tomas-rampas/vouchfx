@@ -84,6 +84,19 @@ record ReproducibilityEnvelopeEvent
   property System.String Type [wire=type] [init]
   property System.Int32 Version [wire=v] [init]
 
+record TransportNoticeEvent
+  property System.Collections.Generic.IReadOnlyDictionary<System.String,System.String> CorrelationIds [wire=correlationIds] [init]
+  property System.String Kind [wire=kind] [required] [init]
+  property System.String RejectedEndpoint [wire=rejectedEndpoint] [init]
+  property System.Boolean? Replayed [wire=replayed] [init]
+  property System.String RunId [wire=runId] [required] [init]
+  property System.String SchemaVersion [wire=schemaVersion] [init]
+  property System.String SelectedEndpoint [wire=selectedEndpoint] [required] [init]
+  property System.String Service [wire=service] [required] [init]
+  property System.DateTimeOffset Timestamp [wire=ts] [init]
+  property System.String Type [wire=type] [init]
+  property System.Int32 Version [wire=v] [init]
+
 record VerdictCounts
   property System.Int32 EnvError [wire=envError] [init]
   property System.Int32 Fail [wire=fail] [init]

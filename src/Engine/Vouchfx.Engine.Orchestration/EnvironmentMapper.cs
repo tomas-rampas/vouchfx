@@ -121,9 +121,10 @@ public sealed record MappedTopology(
     /// <remarks>
     /// Surfaced rather than logged because the mapper has no writer and must not acquire one:
     /// <c>SuiteTopology</c> republishes this and the runner prints it, exactly as it already does
-    /// for <c>SecurityConfirmations</c>. Terminal-only for now: no EXISTING field on the v1 event
-    /// wire carries an advisory about a healthy run. Adding an optional one is permitted and
-    /// precedented — deferred to #450, not impossible.
+    /// for <c>SecurityConfirmations</c>. Not terminal-only: the runner also maps this collection
+    /// onto the frozen §14 <c>transport-notice</c> record, through the single producer
+    /// <c>Vouchfx.Engine.Runtime.TransportNoticeEvents</c>. That still happens over there — this
+    /// mapper has no event destination and must not acquire one.
     /// </remarks>
     internal IReadOnlyList<EndpointSelectionNotice> EndpointSelectionNotices { get; init; }
         = Array.Empty<EndpointSelectionNotice>();
@@ -1942,19 +1943,20 @@ public static class EnvironmentMapper
 
                     // REPORT THE DOWNGRADE (security review). A project declaring an https
                     // endpoint whose traffic the engine then sends in plaintext is a decision the
-                    // author must be able to see: nothing else in the run says so — the step
-                    // observation carries only status and expectation, and no event record has a
-                    // field for it. Emitted once per service, naming both endpoints and the
-                    // reason, and ONLY when there was a real choice to make.
+                    // author must be able to see: the step observation carries only status and
+                    // expectation, so nothing else in the run's own step record says so. Emitted
+                    // once per service, naming both endpoints and the reason, and ONLY when there
+                    // was a real choice to make.
                     //
-                    // Terminal-only, and DEFERRED rather than impossible. Every EXISTING free-text
-                    // field reaching --events/--junit/--html is a scenario-level CAUSE for a
-                    // non-Pass verdict; writing a healthy-run advisory into one would either change
-                    // what a green JUnit test displays or overwrite a real failure cause. A NEW
-                    // optional field is a legitimate route — the v1 freeze forbids renaming,
-                    // retyping and re-wiring properties, not adding an optional one, and #372 added
-                    // ScenarioCompletedEvent.Message exactly that way. That is a deliberate
-                    // wire-contract act and does not belong in a bug-fix branch: tracked as #450.
+                    // It reaches the §14 event stream too (#450 / #453) — through a NEW record,
+                    // TransportNoticeEvent, rather than an existing field. That distinction is the
+                    // whole design: every EXISTING free-text field reaching --events/--junit/--html
+                    // is a scenario-level CAUSE for a non-Pass verdict, so writing a healthy-run
+                    // advisory into one would have changed what a green JUnit test displays or
+                    // overwritten a real failure cause. Adding an optional record is what the v1
+                    // freeze permits (it forbids renaming, retyping and re-wiring properties), and
+                    // Vouchfx.Engine.Runtime.TransportNoticeEvents is its single producer; this
+                    // mapper raises the notice and does nothing else with it.
                     // This mirrors SecurityConfirmations, which is surfaced off the topology and
                     // printed for the same reason and through the same channel — and, like it,
                     // travels as a TYPED record so the wording lives at the print site.
@@ -2004,10 +2006,11 @@ public static class EnvironmentMapper
                     // https-ONLY project with no `endpoint:` completely silent: the fixed rule
                     // above picks its https listener, the downgrade notice cannot fire because it
                     // requires an http selection, and this one could not fire because there was no
-                    // author selection to gate on. The run then addressed an unverified TLS
-                    // listener and said nothing — the identical silent-green shape this notice
-                    // exists to close, reached from the other side. `primaryProjectEndpoint` covers
-                    // the engine-picked case and the author-picked case with one condition.
+                    // author selection to gate on. The run then addressed an https listener the
+                    // engine configures no trust material for, and said nothing — the identical
+                    // silent-green shape this notice exists to close, reached from the other
+                    // side. `primaryProjectEndpoint` covers the engine-picked case and the
+                    // author-picked case with one condition.
                     //
                     // The `endpoint: http` path is unaffected: its selection's scheme is http, so
                     // the scheme test below excludes it, and an explicit plaintext choice stays

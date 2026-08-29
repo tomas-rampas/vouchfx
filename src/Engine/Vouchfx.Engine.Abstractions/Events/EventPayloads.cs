@@ -696,3 +696,260 @@ public sealed record ReproducibilityEnvelopeEvent
     [JsonPropertyName("fixtures")]
     public required IReadOnlyList<FixtureDigest> Fixtures { get; init; }
 }
+
+// ---------------------------------------------------------------------------
+// TransportNoticeKinds — the closed `kind` vocabulary of TransportNoticeEvent
+// ---------------------------------------------------------------------------
+//
+// THE READING `no-engine-trust` WAS CHECKED AGAINST, AND WHY THE TOKEN KEPT ITS NAME.
+//   It parses two ways. "No [engine-configured] trust" is what it means. "The engine does not
+//   trust it" is a negative judgement about the peer, and it is one the advisory's own record type
+//   explicitly refuses to make: EndpointTrustNotice's remarks say the engine does not "make any
+//   assertion about the outcome", because with no `security` block the platform's own trust store
+//   validates the chain exactly as it does for any other .NET HTTPS request. A token that carried
+//   the second sense would assert on this wire what the notice denies in prose.
+//   `no-engine-trust-material` was the unambiguous alternative and was NOT taken (maintainer
+//   decision): the sibling token `plaintext-downgrade` establishes a noun phrase naming a state as
+//   this vocabulary's shape, and the meaning is spelled out in full twice over — on the constant
+//   below and in blueprint §14.4.3, which is where a consumer deciding what the token licenses
+//   reads. Recorded rather than acted on, so the reading is not re-derived by the next reviewer.
+
+/// <summary>
+/// The closed vocabulary of <see cref="TransportNoticeEvent.Kind"/> values (§14.4,
+/// type <see cref="EventTypes.TransportNotice"/>).
+/// </summary>
+/// <remarks>
+/// <para>
+/// <strong>Spelled exactly once, here.</strong>  The two advisories are raised at
+/// different call sites; a string literal at each is precisely how the two notices
+/// came to be treated differently in the first place.  The single producer
+/// references these constants, and so must any consumer that branches on
+/// <c>kind</c>.
+/// </para>
+/// <para>
+/// <strong>Why a string and not an enum.</strong>  <see cref="Verdict"/> is an enum
+/// with a converter on this same frozen wire, so the enum is the house precedent and
+/// the departure needs a reason.  The reason is round-trip fidelity of an unknown
+/// token: a stream from a newer engine carrying a third advisory must deserialise,
+/// retain the token exactly as it arrived, and re-serialise unchanged.  An enum would
+/// need an <c>Unknown</c> member — permanently meaningless, which is the shape this
+/// record's design deliberately rejects — plus a side channel to keep the original
+/// text.  A string needs neither.  Pinned by
+/// <c>TransportNoticeEventTests.UnknownKind_IsCarriedVerbatim_NotRejected</c>.
+/// </para>
+/// <para>
+/// Matching is <em>ordinal</em>.  These are wire tokens, not display text: a
+/// culture-sensitive or case-insensitive comparison would accept a token the
+/// engine never emits.  The C# constant patterns used by <see cref="IsKnown"/>
+/// compare ordinally by construction.
+/// </para>
+/// <para>
+/// The vocabulary is closed but not closed-at-two: a third transport advisory is
+/// plausible, and adding a constant here is the additive change that absorbs it.
+/// A consumer meeting an unrecognised <c>kind</c> must not reject the record and must
+/// not fail the parse — but §14 asks for <em>tolerance</em>, and tolerance is not
+/// discard.  Surface it as an unrecognised transport advisory, naming its service and
+/// its selected endpoint.  Dropping it silently would make a newer engine's third
+/// advisory invisible to an older consumer, which is exactly the invisibility this
+/// record exists to end, displaced one engine version forward.
+/// </para>
+/// <para>
+/// <strong>That tolerance covers the token vocabulary, not the field set.</strong>
+/// <see cref="TransportNoticeEvent.Kind"/>, <see cref="TransportNoticeEvent.Service"/>,
+/// <see cref="TransportNoticeEvent.SelectedEndpoint"/> and
+/// <see cref="TransportNoticeEvent.RunId"/> are <c>required</c>, so a line missing any
+/// of them throws <c>JsonException</c> rather than degrading — a future advisory that
+/// is not endpoint-scoped cannot simply reuse this record as it stands.  Relaxing one
+/// of those <c>required</c> markers later is itself wire-compatible (no producer stops
+/// writing the field, no consumer's parse changes) and costs only a golden
+/// regeneration; it is a deliberate act rather than an additive one.
+/// </para>
+/// </remarks>
+public static class TransportNoticeKinds
+{
+    /// <summary>
+    /// The engine selected a plaintext listener for a targeted service while an
+    /// https listener was also available.  Events of this kind carry
+    /// <see cref="TransportNoticeEvent.RejectedEndpoint"/>.
+    /// </summary>
+    public const string PlaintextDowngrade = "plaintext-downgrade";
+
+    /// <summary>
+    /// The run addresses an https listener for which the engine configures no client
+    /// trust material of its own.  <strong>What is absent is engine-configured trust,
+    /// not verification</strong> — with no <c>security</c> block the platform's own
+    /// trust store still validates the chain, full depth, exactly as it does for any
+    /// other .NET HTTPS request; what the engine does not do is contribute a private
+    /// anchor, pin the peer or present a client identity.  The token says that, and
+    /// only that, because on this wire the token is the entire payload a machine
+    /// consumer receives.  Events of this kind carry no rejected endpoint — nothing
+    /// was rejected — so <see cref="TransportNoticeEvent.RejectedEndpoint"/> is absent
+    /// from the wire.
+    /// </summary>
+    public const string NoEngineTrust = "no-engine-trust";
+
+    /// <summary>
+    /// True when <paramref name="kind"/> is a token this engine version knows.
+    /// A <see langword="false"/> result on a stream from a newer engine means
+    /// "not understood here", not "invalid".
+    /// </summary>
+    /// <param name="kind">The <c>kind</c> token read from the wire.</param>
+    public static bool IsKnown(string? kind) =>
+        kind is PlaintextDowngrade or NoEngineTrust;
+}
+
+// ---------------------------------------------------------------------------
+// TransportNoticeEvent — #450 / #453
+// ---------------------------------------------------------------------------
+
+/// <summary>
+/// Emitted when the engine has a transport advisory about the endpoint a targeted
+/// service is addressed on (§14.4, type <see cref="EventTypes.TransportNotice"/>).
+/// </summary>
+/// <remarks>
+/// <para>
+/// Wire shape is flat: <c>kind</c>, <c>service</c>, <c>selectedEndpoint</c>,
+/// <c>rejectedEndpoint</c> and <c>replayed</c> are siblings of the envelope fields at
+/// the root JSON object level, like every other record in this file.
+/// </para>
+/// <para>
+/// <strong>Run-level, not scenario-level.</strong>  Unlike the six records above
+/// it, this one carries no <c>scenarioId</c>: the advisory is a property of the
+/// topology a run built, and one topology can serve many scenarios.  The service
+/// name is its correlation key; see <see cref="TransportNoticeEvent.RunId"/> for
+/// why the envelope's run id is not one.
+/// </para>
+/// <para>
+/// <strong>Structured fields, never the rendered sentence.</strong>  The terminal
+/// owns the wording; a consumer reconstructs meaning from <see cref="Kind"/> and
+/// the two endpoint names.  Putting the sentence on the wire would freeze prose
+/// that is deliberately free to be reworded.
+/// </para>
+/// <para>
+/// <strong>Additive to the frozen v1 event-wire contract.</strong>  The freeze
+/// forbids renaming a property, changing a CLR type, or changing a
+/// <c>[JsonPropertyName]</c>; it does not forbid adding a record, and §14 requires
+/// renderers to tolerate what they do not recognise (<c>TerminalRenderer</c>'s
+/// default branch already ignores this type, deliberately — the terminal already
+/// prints the advisory by its own route).  A run with no advisory to report emits
+/// no record at all, so such a stream is byte-identical to one from before this
+/// record existed.
+/// </para>
+/// </remarks>
+public sealed record TransportNoticeEvent
+{
+    /// <summary>Envelope schema generation.  Currently <c>1</c>.</summary>
+    [JsonPropertyName("v")]
+    public int Version { get; init; } = 1;
+
+    /// <summary>Human-readable schema version string, e.g. <c>"v1"</c>.</summary>
+    [JsonPropertyName("schemaVersion")]
+    public string SchemaVersion { get; init; } = "v1";
+
+    /// <summary>
+    /// Event-type discriminator.  Defaults to
+    /// <see cref="EventTypes.TransportNotice"/> (<c>"transport-notice"</c>).
+    /// </summary>
+    [JsonPropertyName("type")]
+    public string Type { get; init; } = EventTypes.TransportNotice;
+
+    /// <summary>Wall-clock timestamp at which the engine emitted this event.</summary>
+    [JsonPropertyName("ts")]
+    public DateTimeOffset Timestamp { get; init; }
+
+    /// <summary>
+    /// Envelope run identifier.  <strong>Do not join on it: on this record it may
+    /// resolve to no scenario at all.</strong>
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The advisory belongs to a TOPOLOGY, and one topology can serve many
+    /// scenarios.  Where the topology is a single scenario's own, the producer
+    /// passes that scenario's run id and the join works.  Where one topology serves
+    /// a whole suite, every scenario has its own distinct run id and none of them
+    /// is the topology's, so the producer mints an id belonging to nothing rather
+    /// than picking one arbitrarily — attributing a topology-wide fact to one named
+    /// test case would make a renderer display a false statement about that test,
+    /// whereas an id that joins to nothing is merely uninformative.
+    /// </para>
+    /// <para>
+    /// <see cref="Service"/> is the correlation key a consumer actually wants, and
+    /// is why the record carries it.
+    /// </para>
+    /// </remarks>
+    [JsonPropertyName("runId")]
+    public required string RunId { get; init; }
+
+    /// <summary>
+    /// Optional correlation identifiers.  Omitted from the wire when
+    /// <see langword="null"/>.
+    /// </summary>
+    /// <remarks>
+    /// This is the slot designed for a "belongs to suite X" attribution, and the
+    /// producer deliberately leaves it <see langword="null"/>: no suite-level
+    /// identifier travels on this stream today, so there is nothing to put here that
+    /// a consumer could join on.  If one is ever minted it belongs here, not in
+    /// <see cref="RunId"/>.
+    /// </remarks>
+    [JsonPropertyName("correlationIds")]
+    public IReadOnlyDictionary<string, string>? CorrelationIds { get; init; }
+
+    /// <summary>
+    /// Which advisory this is — one of the <see cref="TransportNoticeKinds"/>
+    /// tokens, matched ordinally.  Required: there is no default that could be
+    /// right, so a producer that forgets it fails to compile rather than emitting
+    /// an unattributable notice.
+    /// </summary>
+    [JsonPropertyName("kind")]
+    public required string Kind { get; init; }
+
+    /// <summary>
+    /// The name of the service the advisory concerns, as declared under
+    /// <c>environment.services</c>.
+    /// </summary>
+    [JsonPropertyName("service")]
+    public required string Service { get; init; }
+
+    /// <summary>
+    /// The name of the endpoint steps addressing the service will use.
+    /// </summary>
+    [JsonPropertyName("selectedEndpoint")]
+    public required string SelectedEndpoint { get; init; }
+
+    /// <summary>
+    /// The name of the endpoint that was available and not selected.  Present only
+    /// for <see cref="TransportNoticeKinds.PlaintextDowngrade"/>; for
+    /// <see cref="TransportNoticeKinds.NoEngineTrust"/> nothing was rejected, so
+    /// this is <see langword="null"/> and — because the shared serialiser sets
+    /// <c>DefaultIgnoreCondition = WhenWritingNull</c> — absent from the wire
+    /// without needing a <c>[JsonIgnore]</c>.
+    /// </summary>
+    [JsonPropertyName("rejectedEndpoint")]
+    public string? RejectedEndpoint { get; init; }
+
+    /// <summary>
+    /// <see langword="true"/> when this record replays an advisory raised by an
+    /// earlier topology build rather than reporting a fresh one.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The <c>--watch</c> loop re-reports both advisories against a topology it kept,
+    /// under a terminal qualifier saying they may be stale: the endpoint was selected
+    /// once, when that topology was built, and a <c>project:</c>-form service's
+    /// endpoints come from its launch profile, which is not part of the
+    /// <c>environment</c> block — so editing one does not rebuild the topology.  An
+    /// author can therefore change the listeners and keep being told about a transport
+    /// condition that no longer holds.  That qualification cannot travel on an
+    /// unqualified record, so it travels here.
+    /// </para>
+    /// <para>
+    /// <strong>Nullable, not a defaulted <c>bool</c>.</strong>  The fresh-build paths
+    /// must leave <c>replayed</c> off the wire entirely, not write
+    /// <c>"replayed":false</c> on every record; the shared serialiser's
+    /// <c>DefaultIgnoreCondition = WhenWritingNull</c> omits a null and would write a
+    /// <see langword="false"/>.  Read an absent field as "not a replay".
+    /// </para>
+    /// </remarks>
+    [JsonPropertyName("replayed")]
+    public bool? Replayed { get; init; }
+}
