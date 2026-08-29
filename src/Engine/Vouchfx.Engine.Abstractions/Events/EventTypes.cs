@@ -52,6 +52,24 @@ public static class EventTypes
     public const string EnvironmentError = "environment-error";
 
     /// <summary>
+    /// Emitted when the engine has a transport advisory to make about the endpoint
+    /// a targeted service is addressed on — the engine selected a plaintext listener
+    /// while an https one was available, or the run addresses an https listener the
+    /// engine configures no client trust for.  Carries no verdict: it is advisory,
+    /// and the run's outcome is decided elsewhere (§12.1).
+    /// </summary>
+    /// <remarks>
+    /// The advisory these events carry has been printed to the terminal since #348;
+    /// the event exists so that a CI job consuming <c>--events</c> can see it too,
+    /// which matters most when a failed handshake surfaces as an environment error
+    /// and exits 0 by default.  The two advisories share one event type and are
+    /// discriminated by <see cref="TransportNoticeEvent.Kind"/> — see
+    /// <see cref="TransportNoticeKinds"/> — so that they cannot drift apart in the
+    /// artefacts the way they did between the terminal and the stream.
+    /// </remarks>
+    public const string TransportNotice = "transport-notice";
+
+    /// <summary>
     /// Emitted once per scenario carrying the reproducibility envelope (§17,
     /// docs/02 §3.2.2): a hash of every distinct secret <em>reference</em> and the
     /// content hash of every applied seed fixture.  By construction it carries no
