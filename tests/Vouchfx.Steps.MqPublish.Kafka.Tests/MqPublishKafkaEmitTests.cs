@@ -16,6 +16,16 @@
 //      missing ${secret:env/…} payload reference) WITHOUT a broker — the helper
 //      resolves secrets before building the producer, so ProduceAsync is never
 //      reached; the observation is reference-only (source/path, never the value, §17).
+//  13. Emit (#367): the teardown flush is bounded by a CTS linked to the step token on
+//      BOTH produce paths, and no unconditional Flush(TimeSpan.FromSeconds(10)) remains.
+//  14. Emit (#367): the ten-second cap survives for a step declaring no timeout.
+//  15. Emit (#367): the flush cut is swallowed and the linked CTS explicitly disposed.
+//  16. Emit (#367): no client delivery timeout is derived from the step budget — the
+//      rejected alternative fix, pinned so it is not reintroduced.
+//  17. Compile-and-RUN (#367, no docker): a governed step against a refused peer
+//      (127.0.0.1:9) concludes at its budget with the wrapper's step-timeout outcome
+//      intact — the one #367 assertion that EXECUTES the new teardown rather than
+//      text-matching it. Fails at roughly budget + 10s against the pre-fix shape.
 using System;
 using System.Collections.Generic;
 using Vouchfx.Engine.Abstractions;
@@ -680,7 +690,281 @@ public sealed class MqPublishKafkaEmitTests
         Assert.DoesNotContain(sentinel, outcome.Observation!, StringComparison.Ordinal);
     }
 
+    // ── 13-16. Teardown flush is bounded by the step token (#367) ────────────────
+
+    /// <summary>
+    /// The emitted helper must bound its teardown flush by a
+    /// <c>CancellationTokenSource</c> linked to the step token — on BOTH the plain and
+    /// the Avro produce paths — and must retain no unconditional
+    /// <c>Flush(TimeSpan.FromSeconds(10))</c> call.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the #367 regression pin, and it guards a defect that lived entirely in the
+    /// teardown rather than in the client.  MEASURED against an unreachable broker on
+    /// Confluent.Kafka 2.14.2 with a 5000 ms token: <c>ProduceAsync(topic, msg, ct)</c>
+    /// returned <c>OperationCanceledException</c> at 5025 ms — the step token IS observed —
+    /// after which the fixed <c>Flush(10s)</c> burned its full 10001 ms because the
+    /// undeliverable message was still queued.  Total 15045 ms on a 5000 ms budget, which
+    /// is the same budget + 10 s constant behind both figures in the filing (30027 ms on a
+    /// 20 s budget; 20099 ms on a 10 s budget).
+    /// </para>
+    /// <para>
+    /// A future maintainer removing the linkage would restore an overrun that only a
+    /// live unreachable broker can expose, which is why the shape is pinned here where
+    /// no Docker is needed.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void Emit_TeardownFlush_IsBoundedByTheStepTokenOnBothProducePaths()
+    {
+        var helperSource = EmittedHelperSource();
+
+        // The fixed-duration flush is the defect: it must be gone from both paths.
+        Assert.DoesNotContain(
+            "producer.Flush(System.TimeSpan.FromSeconds(10))",
+            helperSource,
+            StringComparison.Ordinal);
+
+        // Both produce paths (plain + Avro) link their flush CTS to the step token.
+        Assert.Equal(
+            2,
+            CountOccurrences(
+                helperSource,
+                "System.Threading.CancellationTokenSource.CreateLinkedTokenSource(ct)"));
+        Assert.Equal(2, CountOccurrences(helperSource, "producer.Flush(flushCts.Token)"));
+    }
+
+    /// <summary>
+    /// The ten-second cap survives for a step that declares no timeout — <c>ct</c> is
+    /// <c>CancellationToken.None</c> there, so <c>CancelAfter</c> is the only thing that
+    /// can cut the flush.  The fix must not tighten the ungoverned case.
+    /// </summary>
+    /// <remarks>
+    /// The cap is <strong>defensive, not the operative bound</strong> on the ungoverned
+    /// single-message path, and the assertion is kept for that reason rather than because
+    /// it is load-bearing today. MEASURED: with no declared timeout the flush leg costs
+    /// 0 ms, because an ungoverned step blocks inside <c>ProduceAsync</c> instead — on
+    /// librdkafka's own 300-second <c>message.timeout.ms</c> default — and never reaches
+    /// the teardown with the message still queued. The cap therefore only bites if a
+    /// future change lets a queued message reach this <c>finally</c> without a governing
+    /// token, which is precisely the regression worth pinning.
+    /// </remarks>
+    [Fact]
+    public void Emit_TeardownFlush_KeepsTheTenSecondCapForAnUngovernedStep()
+    {
+        var helperSource = EmittedHelperSource();
+
+        Assert.Equal(
+            2,
+            CountOccurrences(helperSource, "flushCts.CancelAfter(System.TimeSpan.FromSeconds(10))"));
+    }
+
+    /// <summary>
+    /// The flush cut must be swallowed and the linked CTS disposed: an
+    /// <c>OperationCanceledException</c> escaping the <c>finally</c> would displace the
+    /// produce's own outcome, and <c>using var</c> is illegal in a Roslyn script body
+    /// (§13.3.1), so disposal is explicit.
+    /// </summary>
+    [Fact]
+    public void Emit_TeardownFlush_SwallowsTheCutAndDisposesTheLinkedSource()
+    {
+        var helperSource = EmittedHelperSource();
+
+        Assert.DoesNotContain("using var", helperSource, StringComparison.Ordinal);
+
+        var collapsed = CollapseWhitespace(helperSource);
+
+        // The Flush call sits inside a try whose catch swallows everything, so no teardown
+        // failure — cancellation included — can reach the step's classification.  Compared
+        // over whitespace-collapsed text so re-indenting the emitted helper does not
+        // redden a test about its control flow.
+        Assert.Equal(
+            2,
+            CountOccurrences(
+                collapsed,
+                CollapseWhitespace("producer.Flush(flushCts.Token); } catch { }")));
+
+        // Both disposals live in the SAME finally, with the producer released last and
+        // unconditionally: §5's handle discipline must not depend on the order the two
+        // are written in, nor on the swallowing catch above continuing to swallow.
+        Assert.Equal(
+            2,
+            CountOccurrences(
+                collapsed,
+                CollapseWhitespace(
+                    "finally { if (flushCts is not null) flushCts.Dispose(); producer.Dispose(); }")));
+
+        // The linked source is constructed INSIDE the guarded region, so a throw from
+        // CreateLinkedTokenSource itself cannot skip the producer's release.
+        Assert.Equal(
+            2,
+            CountOccurrences(
+                collapsed,
+                CollapseWhitespace(
+                    "try { flushCts = System.Threading.CancellationTokenSource" +
+                    ".CreateLinkedTokenSource(ct);")));
+    }
+
+    /// <summary>
+    /// The producer config must NOT derive <c>message.timeout.ms</c> (or any sibling
+    /// delivery timeout) from the step budget.
+    /// </summary>
+    /// <remarks>
+    /// The rejected alternative, pinned so it is not reintroduced as a "fix" for #367.
+    /// librdkafka's own delivery timeout is not on the critical path — the step token
+    /// already cuts <c>ProduceAsync</c> at the budget (measured, 5025 ms against 5000 ms) —
+    /// and setting it to the budget would race that token.  Whichever won would decide the
+    /// verdict: the token yields <c>Inconclusive</c>, which §12.1 makes the correct outcome
+    /// for a timeout and which the filing explicitly confirms as already correct, while a
+    /// delivery-timeout expiry surfaces as a <c>ProduceException</c> and would be
+    /// classified <c>EnvironmentError</c>.  Deriving the client timeout would therefore
+    /// trade a timing defect for a nondeterministic verdict.
+    /// </remarks>
+    [Fact]
+    public void Emit_ProducerConfig_DoesNotDeriveAClientDeliveryTimeoutFromTheBudget()
+    {
+        var helperSource = EmittedHelperSource();
+
+        Assert.DoesNotContain("MessageTimeoutMs", helperSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("message.timeout.ms", helperSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("DeliveryTimeoutMs", helperSource, StringComparison.Ordinal);
+    }
+
+    // ── 17. Compile-and-RUN: the bounded teardown actually executes (#367) ────────
+
+    /// <summary>
+    /// Executes the real emitted teardown against a refused connection under a governed
+    /// step token, with no broker and no Docker: the step must conclude at its budget,
+    /// carry the wrapper's <c>step-timeout</c> outcome undisplaced, and not re-block in
+    /// <c>Dispose()</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Every other #367 assertion in this file text-matches the emitted source. This one
+    /// runs it, closing the gap that the new teardown was pinned but never executed
+    /// outside a Docker job. Three things are proved together and only by executing:
+    /// the <c>finally</c> does not throw (a teardown throw would surface as some other
+    /// verdict), the swallowed flush cancellation does not displace the produce's own
+    /// outcome, and <c>producer.Dispose()</c> does not re-block after the cut.
+    /// </para>
+    /// <para>
+    /// <c>127.0.0.1:9</c> is the discard port: nothing listens, so the connection is
+    /// refused immediately and repeatedly. That is deliberately NOT a fast produce
+    /// failure — librdkafka keeps retrying and the message stays QUEUED (its own
+    /// <c>message.timeout.ms</c> default is 300 s), which is exactly the stuck state the
+    /// teardown has to handle. Measured against a refused peer, the produce is cut by the
+    /// token, the linked flush is cut within one ~100 ms librdkafka poll slice, and
+    /// <c>Dispose()</c> purges the queue in ~110 ms without re-blocking.
+    /// </para>
+    /// <para>
+    /// Against the pre-fix teardown this test FAILS on the duration assertion, at roughly
+    /// budget + 10 s — it is a genuine regression pin, not a smoke test.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task Emit_CompileAndRun_GovernedStepAgainstARefusedPeer_ConcludesAtItsBudget()
+    {
+        const string stepId = "pub-bounded";
+        const long budgetMs = 2_000;
+
+        // Generous next to the ~250 ms of measured teardown (flush cut + Dispose), and
+        // still far below the ~10 000 ms the unbounded flush cost, so the pin cannot pass
+        // while the defect is present however loaded the CI host is.
+        const long graceMs = 1_500;
+
+        var model = MakeModel("bus", "orders", "hello");
+        var fragment = _provider.Emit(model, new StubCompileContext(stepId));
+
+        // TimeoutMs set, so CsxAssembler emits the IMMEDIATE wrapper: the per-step CTS,
+        // the step stopwatch, and the filtered catch that classifies a token cut as
+        // Inconclusive(step-timeout). Without it the emitted call site would receive
+        // CancellationToken.None and nothing here would be governed.
+        var csx = Vouchfx.Engine.Compilation.CsxAssembler.Assemble(new[]
+        {
+            new Vouchfx.Engine.Compilation.StepCompilePlan(
+                stepId, fragment, Retry: false, TimeoutMs: budgetMs, PollIntervalMs: null),
+        }).CsxSource;
+
+        var compiled = RoslynScriptCompiler.CompileOnce(
+            csx, additionalReferencePaths: EmittedHelperReferencePaths);
+
+        var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            // The discard port: refused, never listening, no container involved.
+            [VarKeys.Connection("bus")] = "127.0.0.1:9",
+        };
+
+        await RoslynScriptCompiler.RunIsolatedAsync(compiled, new ScriptGlobalVariables(vars));
+
+        var outcome = Assert.IsType<StepOutcome>(vars[VarKeys.Outcome(CsxFragment.SanitiseId(stepId))]);
+
+        // The produce was cut by the step token and the wrapper classified it — proving the
+        // teardown neither threw nor overwrote the outcome on its way out.
+        Assert.Equal(Verdict.Inconclusive, outcome.Verdict);
+        Assert.Contains("step-timeout", outcome.Observation!, StringComparison.Ordinal);
+
+        // The bound itself: this is the assertion the pre-fix teardown fails.
+        Assert.True(
+            outcome.DurationMs <= budgetMs + graceMs,
+            $"step declared a {budgetMs} ms timeout but concluded in {outcome.DurationMs} ms — " +
+            $"an overrun of {outcome.DurationMs - budgetMs} ms against an allowed grace of " +
+            $"{graceMs} ms (#367). Observation: {outcome.Observation}");
+    }
+
     // ── Private helpers ───────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Compile-time metadata references the emitted helper needs. The helper class is
+    /// unconditionally Avro-aware, so the serdes assemblies are required even for a
+    /// plain-payload step. None is ever loaded into the collectible ALC (§5).
+    /// </summary>
+    private static readonly string[] EmittedHelperReferencePaths =
+    {
+        typeof(Confluent.Kafka.ProducerConfig).Assembly.Location,
+        typeof(Confluent.SchemaRegistry.CachedSchemaRegistryClient).Assembly.Location,
+        typeof(Confluent.SchemaRegistry.Serdes.AvroSerializer<Avro.Generic.GenericRecord>).Assembly.Location,
+        typeof(Avro.Schema).Assembly.Location,
+        typeof(System.Text.Json.JsonSerializer).Assembly.Location,
+        typeof(System.Text.Encoding).Assembly.Location,
+        typeof(System.Globalization.CultureInfo).Assembly.Location,
+        typeof(System.Text.RegularExpressions.Regex).Assembly.Location,
+    };
+
+    /// <summary>
+    /// Returns the provider-owned <c>MqPublishKafka_Helpers</c> source from a fresh emit.
+    /// The shared <c>Substitute_Helpers</c> / <c>Secret_Helpers</c> / <c>KafkaSecurity_Helpers</c>
+    /// entries are excluded so these assertions cannot be satisfied — or broken — by SDK
+    /// helper text this provider does not own.
+    /// </summary>
+    private string EmittedHelperSource()
+    {
+        var fragment = _provider.Emit(MakeModel("bus", "t", "hello"), new StubCompileContext("s"));
+
+        return System.Linq.Enumerable.Single(
+            fragment.RequiredHelpers,
+            h => h.Contains("MqPublishKafka_Helpers", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// Collapses every run of whitespace to a single space so a control-flow assertion
+    /// survives re-indentation of the emitted helper.
+    /// </summary>
+    private static string CollapseWhitespace(string source)
+        => System.Text.RegularExpressions.Regex.Replace(source, @"\s+", " ").Trim();
+
+    private static int CountOccurrences(string haystack, string needle)
+    {
+        var count = 0;
+        var index = 0;
+        while ((index = haystack.IndexOf(needle, index, StringComparison.Ordinal)) >= 0)
+        {
+            count++;
+            index += needle.Length;
+        }
+
+        return count;
+    }
 
     private static MqPublishKafkaModel MakeModel(
         string target,
