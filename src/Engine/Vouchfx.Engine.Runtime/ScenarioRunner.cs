@@ -1124,14 +1124,25 @@ public static class ScenarioRunner
     /// shape when two scenario directories were copied from one another — the suite silently seeds
     /// from the rejected document's copy, runs green, and asserts against the wrong data. No
     /// diagnostic distinguishes that from a correct run. So the suite is refused before the
-    /// topology is built whenever the two roots differ and the environment declares a seed,
-    /// carrying <see cref="Verdict.Inconclusive"/> — an authoring fault the author fixes by
-    /// repairing the rejected document or co-locating the files.
+    /// topology is built, carrying <see cref="Verdict.Inconclusive"/> — an authoring fault the
+    /// author fixes by repairing the rejected document or co-locating the files.
     /// </para>
     /// <para>
-    /// The guard is narrow on purpose: a single-directory suite cannot trip it, nor can one whose
-    /// first document validates, nor one whose environment declares no seed. A SECURED suite is
-    /// additionally covered further down by
+    /// <strong>Four conditions, and the fourth is what stops the guard over-refusing.</strong> The
+    /// baseline must have moved (a rejected document sits ahead of it), the environment must
+    /// declare a seed, the two directories must differ, AND the two documents' <c>seed</c> SECTIONS
+    /// must differ. Multi-directory suites are legal (#268), so without that last condition an
+    /// ordinary suite — two folders, a byte-identical environment, a seed, and a steps-level typo
+    /// in the first file — would be refused although the baseline supplies character-for-character
+    /// the paths the first document supplied, against the same root as before: nothing has moved,
+    /// and refusing there is the very over-refusal issue #451 exists to remove. The comparison is
+    /// on the <c>seed</c> section rather than the whole environment because the hazard is about
+    /// WHICH FILE a relative path names, which the seed strings alone decide.
+    /// </para>
+    /// <para>
+    /// So a single-directory suite cannot trip it, nor can one whose first document validates, nor
+    /// one whose environment declares no seed, nor one whose seed section is unchanged. A SECURED
+    /// suite is additionally covered further down by
     /// <c>TryFindSecurityBaseDirectoryDivergence</c>, which refuses any secured suite whose
     /// scenarios do not share one root at all.
     /// </para>
@@ -1552,6 +1563,24 @@ public static class ScenarioRunner
         // THE GATE IS ENVIRONMENT EQUALITY, NOT SCHEMA VALIDITY, and that is what keeps #451's
         // improvement rather than trading it back. See `FoldRejectedDivergent`'s own remarks, and
         // `FoldRejectedDivergentTests`, which tables all four cells.
+        //
+        // WHAT IS PINNED AND WHAT IS NOT — stated so nobody reads the tests as covering more than
+        // they do. The DECISION (which scenarios are folded, with which refusal) is pinned
+        // Docker-free by `FoldRejectedDivergentTests`, whose four cells were each shown to redden
+        // under a mutation of this method. The WIRING — the outer `Worse(…,
+        // rejectedDivergentAssurance)` term below, which carries that value into the suite's answer
+        // — is NOT observable without a container, and that is a property of the predicate rather
+        // than a gap in the tests. MEASURED: deleting that term leaves the whole non-Docker suite
+        // green (4347/4347). The reason is structural. At every pre-topology door `Confirmed` is
+        // empty while `Declared` already holds the rejected scenario's own declaration (the
+        // canonical walk covers every scenario), and some door has recorded a refusal — so the
+        // union RAISES; `Refusing` keeps the highest-precedence kind across the whole suite, so the
+        // union's precedence is never below this fold's; and `Worse` therefore returns the union
+        // whenever both raise. The fold can only change the answer where the union does NOT raise,
+        // which requires a probe to have CONFIRMED the declaration — exactly the shape issue #410
+        // exists for, and exactly the shape it records as needing a Docker arm ("every Docker-free
+        // row in the matrix is blind to this by construction"). Do not add a Docker-free row here
+        // and call the wiring covered; add the row to #410's arm.
         var rejectedDivergentAssurance =
             FoldRejectedDivergent(scenarios, schemaValid, schemaRefusalKinds, baselineIndex);
 
@@ -1761,9 +1790,36 @@ public static class ScenarioRunner
         // (repair the rejected document, or co-locate the files), nothing infrastructural failed,
         // and an EnvironmentError that started no container exits 0 — silence on a suite refused
         // for seeding from the wrong folder.
+        //
+        // THE FOURTH CLAUSE IS WHAT KEEPS THIS FROM BEING THE VERY OVER-REFUSAL #451 REMOVED
+        // (peer-review, final round). Multi-directory suites are legal since #268, so without it
+        // this guard fired on a perfectly ordinary shape: two scenarios in two folders declaring a
+        // BYTE-IDENTICAL environment, a seed, and a steps-level typo in the first file. Nothing has
+        // moved there — the seed strings the baseline supplies are character-for-character the ones
+        // scenarios[0] supplied, resolved against the same root as before #451 — yet the innocent
+        // sibling would be refused for its neighbour's typo, which is precisely the outcome this
+        // whole issue exists to prevent.
+        //
+        // IT COMPARES THE `seed` SECTIONS, NOT THE WHOLE ENVIRONMENT, and the narrower comparison is
+        // the correct one because it is exactly the guard's stated hazard: this refusal is about
+        // WHICH FILE a relative seed path names, and that is decided by the seed strings alone. Two
+        // environments differing only in, say, a service image still supply the same seed list to
+        // the same root, so refusing them would again refuse a suite where nothing moved. The whole
+        // -environment form would have been the conservative choice and is deliberately not taken:
+        // its extra refusals are all of that shape.
+        //
+        // scenarios[0] IS THE COMPARISON POINT because `seedBaseDirectory` is documented as the
+        // first discovered scenario's directory and `RunCommand` passes exactly that. A caller that
+        // roots the seed somewhere else entirely is outside this heuristic — the DirectoriesEqual
+        // clause above still anchors on the real value, so such a caller is not refused for a
+        // divergence, only left unprotected against a hazard it opted into.
         if (baselineIndex > 0
             && scenarios[topologyIndex].Environment?.Seed is not null
-            && !DirectoriesEqual(compilations[topologyIndex].ScenarioBaseDirectory, seedBaseDirectory))
+            && !DirectoriesEqual(compilations[topologyIndex].ScenarioBaseDirectory, seedBaseDirectory)
+            && !string.Equals(
+                SerialiseSeed(scenarios[0].Environment),
+                SerialiseSeed(scenarios[topologyIndex].Environment),
+                StringComparison.Ordinal))
         {
             // Issue #266, Item 4: the scenario name is author-controlled — sanitise before writing.
             // Printed HERE, once for the suite, and handed to the completion path as
@@ -1773,8 +1829,10 @@ public static class ScenarioRunner
                 $"RunSuiteAsync: scenario '{scenarioNames[topologyIndex]}' supplies this suite's "
                 + "environment (it is the first scenario that passes schema validation), but it "
                 + "lives in a different directory from the one this suite's environment.seed file "
-                + "paths resolve against.  A relative seed path would name a different file in each "
-                + "of the two, so the suite is refused rather than seeded from the wrong folder.  "
+                + "paths resolve against, and it declares a DIFFERENT seed section from the "
+                + "scenario that directory belongs to.  A relative seed path therefore names a "
+                + "different file in each of the two, so the suite is refused rather than seeded "
+                + "from the wrong folder.  "
                 + "Fix the earlier scenario the schema rejected, or put the suite's scenarios in "
                 + "one directory.";
 
@@ -3072,6 +3130,7 @@ public static class ScenarioRunner
     /// <see cref="CompleteWithoutTopologyAsync"/>.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// <strong>The verdict is the caller's, not <see cref="Verdict.Inconclusive"/></strong>, and
     /// this summary said otherwise until issue #451 gave the method callers that pass something
     /// else. Counted at HEAD: SIX call sites, of which four pass <see cref="Verdict.Inconclusive"/>
@@ -3080,8 +3139,7 @@ public static class ScenarioRunner
     /// shared-<c>environment</c> divergence guard, and the topology-failure catch). Grep the call
     /// sites rather than trusting that count — it is a census, and a census goes stale exactly the
     /// way the sentence it replaced did.
-    /// </remarks>
-    /// <remarks>
+    /// </para>
     /// <para>
     /// EXTRACTED RATHER THAN COPIED (MAJOR-1, fix round six). The protocol-conflict guard grew this
     /// loop in fix round five; the base-directory-divergence guard forty lines above it still
@@ -4588,6 +4646,23 @@ public static class ScenarioRunner
         env is null
             ? string.Empty
             : JsonSerializer.Serialize(env, s_envSerialiserOptions);
+
+    /// <summary>
+    /// The canonical JSON for an environment's <c>seed</c> section alone — the seed-root guard's
+    /// comparison, and nothing wider.
+    /// </summary>
+    /// <remarks>
+    /// Shares <see cref="s_envSerialiserOptions"/> with <see cref="SerialiseEnvironment"/> so the
+    /// two cannot canonicalise the same sub-graph differently: a seed section that compares equal
+    /// here is a seed section that contributes an identical substring there. A <see langword="null"/>
+    /// seed (and a null environment) yields the empty string, so two suites that declare no seed
+    /// compare equal — which is right, and is also unreachable from the one call site, whose
+    /// preceding clause already requires the baseline's seed to be non-null.
+    /// </remarks>
+    private static string SerialiseSeed(EnvironmentSpec? env) =>
+        env?.Seed is null
+            ? string.Empty
+            : JsonSerializer.Serialize(env.Seed, s_envSerialiserOptions);
 
     // ── Render-time diff lookup (S07-G-01) ──────────────────────────────────────
 

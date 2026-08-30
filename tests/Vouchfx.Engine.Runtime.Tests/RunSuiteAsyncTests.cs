@@ -1406,10 +1406,23 @@ public sealed class RunSuiteAsyncTests
 
         // The first document is schema-REJECTED (`bogus` is unknown on a service), so the baseline —
         // and therefore the environment — is the SECOND scenario, in a different directory.
-        var rejected = seededEnvironment.Replace(
-            "      image: myorg/api:1.0",
-            "      image: myorg/api:1.0\n      bogus: nope",
-            StringComparison.Ordinal);
+        //
+        // AND ITS SEED SECTION DIFFERS, which is what makes this the hazardous shape rather than
+        // merely a rearranged one. The guard compares the seed sections, not the whole environment
+        // (see its own remarks): with identical seed strings the baseline supplies exactly what
+        // scenarios[0] supplied and resolves it against exactly the root it always did, so nothing
+        // has moved and refusing would be an over-refusal. Here the strings genuinely differ, so
+        // the engine would read `orders.sql` out of the FIRST document's folder while the document
+        // that supplied that name is the second one — the silent wrong-file seed.
+        var rejected = seededEnvironment
+            .Replace(
+                "      image: myorg/api:1.0",
+                "      image: myorg/api:1.0\n      bogus: nope",
+                StringComparison.Ordinal)
+            .Replace(
+                "sql: [\"./fixtures/orders.sql\"]",
+                "sql: [\"./fixtures/legacy-orders.sql\"]",
+                StringComparison.Ordinal);
 
         var yamls = new[] { rejected, seededEnvironment };
         var registry = StepKindRegistry.BuildAndFreeze(ProviderAssemblies);
@@ -1438,6 +1451,103 @@ public sealed class RunSuiteAsyncTests
         // Map either — the guard returns above both.
         Assert.DoesNotContain(PreTopologyMarker, rendered, StringComparison.Ordinal);
         Assert.False(result.ExecutedAnyScenario);
+    }
+
+    /// <summary>
+    /// <strong>The green side of the seed-root guard: a legal multi-directory suite whose scenarios
+    /// declare a BYTE-IDENTICAL environment is NOT refused, even when the first document carries a
+    /// schema error and the environment declares a seed.</strong>
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Multi-directory suites are legal (#268), and here nothing has moved: the seed strings the
+    /// baseline supplies are character-for-character the ones <c>scenarios[0]</c> supplied, resolved
+    /// against the same root as before #451. Refusing this would be the exact over-refusal #451
+    /// exists to remove, one guard along — an innocent sibling refused for its neighbour's typo.
+    /// </para>
+    /// <para>
+    /// The typo is a STEPS-level one, deliberately: it must make the document schema-invalid while
+    /// leaving the <c>environment</c> block byte-identical, which is what puts the suite in the
+    /// baseline-moved-but-seed-unchanged cell.
+    /// </para>
+    /// <para>
+    /// <see cref="PreTopologyMarker"/> asserted PRESENT is the proof the guard did not fire: the run
+    /// proceeded to the topology and failed at <c>Map</c>'s eager validation for the fixture's own
+    /// deliberate <c>${conn:typo}</c>, so no container was started either way.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task RunSuiteAsync_SeedRootSplitButIdenticalSeedSections_IsNotRefused()
+    {
+        const string identicalEnvironment = """
+            environment:
+              services:
+                api:
+                  image: myorg/api:1.0
+                  env:
+                    FOO: "${conn:typo}"
+              dependencies:
+                db:
+                  type: postgres
+              seed:
+                db:
+                  sql: ["./fixtures/orders.sql"]
+            steps:
+              - id: get-noop
+                type: http.rest
+                target: api
+                method: GET
+                path: /
+                expect:
+                  status: 200
+            """;
+
+        // A STEPS-level schema error: the environment block stays byte-identical, so the seed
+        // sections compare equal and the guard's divergence clause is what decides the row.
+        // An unknown step KEY is the right instrument: `$defs/step` closes with
+        // `unevaluatedProperties: false`, so the SCHEMA rejects it, while `AstBuilder` ignores keys
+        // it does not read — which is what keeps the document buildable and therefore a SCENARIO
+        // that reaches the runner's schema door. (`verifyMode: NOT_A_MODE` was tried first and is
+        // wrong for this row: `AstBuilder.ResolveVerifyMode` throws, so the document never becomes
+        // a scenario at all and the fixture cannot reach the guard under test.)
+        // The indentation here is the literal's POST-DEDENT form (a C# raw string literal strips the
+        // common indentation set by its closing delimiter), so `path: /` sits at four spaces, not at
+        // the sixteen it occupies in this file. An earlier revision searched for the source-form
+        // indentation, matched nothing, and left the two documents identical — which made the row
+        // vacuous rather than red. The not-vacuous assertion below is what caught it.
+        var typoInSteps = identicalEnvironment.Replace(
+            "    path: /",
+            "    path: /\n    bogusStepKey: nope",
+            StringComparison.Ordinal);
+
+        var yamls = new[] { typoInSteps, identicalEnvironment };
+        var registry = StepKindRegistry.BuildAndFreeze(ProviderAssemblies);
+        var scenarios = yamls
+            .Select(y => AstBuilder.Build(YamlDocumentParser.Parse(y), registry))
+            .ToArray();
+
+        var sw = new StringWriter();
+        var result = await ScenarioRunner.RunSuiteAsync(
+            scenarios: scenarios,
+            scenarioNames: s_seedRootSplitNames,
+            yamlTexts: yamls,
+            providerAssemblies: ProviderAssemblies,
+            appHostAssemblyName: AppHostAssemblyName,
+            output: sw,
+            seedBaseDirectory: "dir-a",
+            scenarioBaseDirectories: s_seedRootSplitDirectories);
+
+        var rendered = sw.ToString();
+
+        // NOT VACUOUS: the first document really is schema-rejected, so the baseline really did move
+        // to index 1 and the guard's first three clauses really are all satisfied.
+        Assert.Contains("bogusStepKey", rendered, StringComparison.Ordinal);
+
+        // The guard did not fire…
+        Assert.DoesNotContain("environment.seed file", rendered, StringComparison.Ordinal);
+
+        // …and the sibling was allowed through to the topology.
+        Assert.Contains(PreTopologyMarker, rendered, StringComparison.Ordinal);
     }
 
     /// <summary>Counts non-overlapping occurrences of <paramref name="needle"/>.</summary>
