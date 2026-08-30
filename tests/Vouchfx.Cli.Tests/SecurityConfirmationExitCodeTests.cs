@@ -1360,4 +1360,97 @@ public sealed class SecurityConfirmationExitCodeTests
         Assert.Empty(result.Assurance.Confirmed);
         Assert.Null(result.Assurance.Refusal);
     }
+
+    // ── Issue #451's security seam: what a SCHEMA-REJECTED scenario's declaration may be
+    //    satisfied by ────────────────────────────────────────────────────────────────────────────
+    //
+    // Moving the shared-`environment` divergence guard below per-scenario schema validation
+    // narrowed what that guard proves from "every scenario shares the environment that starts" to
+    // "every SCHEMA-VALID scenario does". These two rows pin the two rules that keep the narrowing
+    // fail-CLOSED, at the tier where the decision is actually made — no container required.
+
+    /// <summary>
+    /// <strong>A refusal located AT a <c>security</c> block raises even when the probe confirmed
+    /// the very identity it declared.</strong> <see cref="SecurityAbortKind.SecurityDeclarationRejected"/>
+    /// is a STANDALONE disjunct of <see cref="SecurityAssurance.Unconfirmed"/>, so no sibling's
+    /// confirmation can satisfy it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the row that retires a residual an earlier revision of this change DOCUMENTED and
+    /// which does not exist: an unknown key inside a <c>security</c> block is precisely a schema
+    /// error located there, so it takes this kind, and the reasoning that had it satisfied by a
+    /// sibling (via the weaker <c>AuthoringFault ∧ something-went-unconfirmed</c> disjunct) applied
+    /// the wrong disjunct. The code fails closed harder than that prose claimed.
+    /// </para>
+    /// <para>
+    /// The <c>AuthoringFault</c> arm is asserted beside it because the contrast IS the finding: the
+    /// same declaration, the same covering confirmation, and only the kind differing, flips the
+    /// answer. A single-arm row would pin the outcome without pinning what decides it.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [InlineData(SecurityAbortKind.SecurityDeclarationRejected, true)]
+    [InlineData(SecurityAbortKind.AuthoringFault, false)]
+    public void Unconfirmed_WhenTheConfirmationCoversTheDeclaration_DependsOnWhichRefusalWasRecorded(
+        SecurityAbortKind refusal, bool expectedUnconfirmed)
+    {
+        var assurance = SecurityAssurance.None
+            .Declaring(s_oneDeclaredTarget)
+            .Confirming(s_oneConfirmation)
+            .Refusing(refusal);
+
+        // Not vacuous: the confirmation really does cover the declaration, so a difference in the
+        // answer can only come from the refusal kind.
+        Assert.Equal(assurance.Declared, assurance.Confirmed);
+
+        Assert.Equal(expectedUnconfirmed, assurance.Unconfirmed);
+    }
+
+    /// <summary>
+    /// <strong>A schema-rejected scenario whose environment was never held against the baseline's
+    /// is folded WHOLE — its own declaration beside its own refusal, with an empty
+    /// <see cref="SecurityAssurance.Confirmed"/> — so a covering confirmation elsewhere in the
+    /// suite cannot satisfy it.</strong>
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the shape the reorder made reachable and the fold closes.
+    /// <c>SecuredTargets.DigestOf</c> hashes the <c>endpoint:</c> selector's TEXT and never its
+    /// resolution, so a rejected scenario declaring a byte-identical <c>security:</c> block on a
+    /// service with a different <c>httpPort:</c> shares the running sibling's identity exactly —
+    /// which is why the left-hand value here uses the SAME identity as the confirmation rather than
+    /// a different one. Matching identities is the premise, not an oversight.
+    /// </para>
+    /// <para>
+    /// <see cref="SecurityAssurance.Worse"/> prefers a raising assurance over a non-raising one, so
+    /// folding the rejected scenario's own value is what carries the raise into the suite's answer.
+    /// The first assertion proves the left-hand side really would have gone quiet on its own —
+    /// without it the row could pass on a value that never needed the fold.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void Worse_AConfirmedSuiteFoldedWithARejectedScenarioOfItsOwnEnvironment_Raises()
+    {
+        // The suite that RAN: it declared the target and its probe confirmed exactly that identity,
+        // with an ordinary authoring refusal recorded for the rejected sibling by the shared walk.
+        var suiteThatRan = SecurityAssurance.None
+            .Declaring(s_oneDeclaredTarget)
+            .Confirming(s_oneConfirmation)
+            .Refusing(SecurityAbortKind.AuthoringFault);
+
+        Assert.False(
+            suiteThatRan.Unconfirmed,
+            "the fail-open being closed: on its own this value goes quiet, because the sibling's "
+            + "confirmation covers the rejected scenario's identity.");
+
+        // What the rejected scenario contributes once its environment is known NOT to be the one
+        // that started: the same declaration, its own refusal, and nothing confirmed.
+        var rejectedDivergent = SecurityAssurance.None
+            .Declaring(s_oneDeclaredTarget)
+            .Refusing(SecurityAbortKind.AuthoringFault);
+
+        Assert.True(rejectedDivergent.Unconfirmed);
+        Assert.True(SecurityAssurance.Worse(suiteThatRan, rejectedDivergent).Unconfirmed);
+    }
 }

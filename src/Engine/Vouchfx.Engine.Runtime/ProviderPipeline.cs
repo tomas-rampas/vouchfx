@@ -270,9 +270,11 @@ internal static class ProviderPipeline
         // 'security' blocks. Runs FIRST — before any step is bound — for two reasons.
         // It reads only ast.Environment, so it needs nothing from a bound model. And a
         // suite with a broken security artefact must report THAT, cleanly, even when it
-        // also contains a step whose Bind throws: Bind is unguarded here (deliberately —
-        // see BindAllSteps' remarks), so binding first would let a provider-bug exception
-        // pre-empt a diagnosable environment error. Keeping this check ahead of Pass 1
+        // also contains a step whose Bind throws: a throwing Bind returns from Pass 1 on the
+        // first offending step (issue #413 turned it into a ValidationFailure rather than a
+        // propagating exception, but it still pre-empts everything ordered after it), so
+        // binding first would let a provider bug displace a diagnosable environment error
+        // instead of merely following it. Keeping this check ahead of Pass 1
         // preserves the failure precedence the previous pre-pass design happened to give,
         // without the speculative second Bind that design needed.
         var environmentSecurityFailure = EnvironmentSecurityValidator.Validate(ast, resolvedSuiteDirectory);
@@ -785,10 +787,13 @@ internal static class ProviderPipeline
     /// </para>
     /// </remarks>
     /// <returns>
-    /// The bound steps, and — only in the defensive "registry lookup failed after AST build
-    /// already verified the type" case, which should never happen in practice — a non-null
-    /// <see cref="ValidationFailure"/> instead (the bound-steps list is then incomplete and
-    /// must not be used, mirroring every other early-return failure in this file).
+    /// The bound steps, and a non-null <see cref="ValidationFailure"/> instead in either of two
+    /// cases: the defensive "registry lookup failed after AST build already verified the type"
+    /// case, which should never happen in practice; or a provider whose <c>Bind</c> THREW
+    /// (issue #413), which is a provider defect rather than an authoring fault but is reported
+    /// through the same channel so it reaches a taxonomy verdict instead of escaping the run.
+    /// In both cases the bound-steps list is incomplete and must not be used, mirroring every
+    /// other early-return failure in this file.
     /// </returns>
     internal static (List<BoundStep> BoundSteps, ValidationFailure? RegistryFailure) BindAllSteps(
         ScenarioAst ast, StepKindRegistry registry)
@@ -806,14 +811,65 @@ internal static class ProviderPipeline
             var instance = rp.Instance;
             var bindingCtx = new RunBindingContext();
 
-            // ── Bind (UNGUARDED — exactly as the pre-M5 main loop always called it:
-            // IStepBinder<T>.Bind is not documented as safe to call more than once per
-            // compile, so this redesign calls it EXACTLY once, and a throw here propagates
-            // to Compile's own caller IMMEDIATELY, unchanged, same as it always did). A
-            // throwing Bind means this step's own model could not even be constructed, so
-            // there is no model for that step's Validate to examine — deferring it the way
-            // HostResources' throw is deferred below would have nothing to defer TO. ──
-            var model = ReflectBind(instance, node.RawNode, bindingCtx);
+            // ── Bind (GUARDED — issue #413; it was UNGUARDED, and the comment here used to
+            // document that propagation as deliberate). IStepBinder<T>.Bind is still called
+            // EXACTLY once per step per compile: nothing about the call count changed, only
+            // what happens when it throws.
+            //
+            // WHY A FAILURE RATHER THAN A DEFERRAL. HostResources' throw is DEFERRED onto the
+            // step's own BoundStep (below) so that step's own Validate gets first refusal on
+            // whatever model condition triggered it. There is nothing to defer to here: a
+            // throwing Bind means the model was never constructed, so no Validate can examine
+            // it. The throw becomes a ValidationFailure instead, returned exactly the way the
+            // registry-lookup failure above is, and Compile's caller maps it to
+            // Verdict.Inconclusive with the rest of the pre-topology authoring/compile faults.
+            //
+            // WHY IT IS CAUGHT AT ALL (§12.1). Unguarded, this exception escaped every caller —
+            // ScenarioRunner, ParallelSuiteRunner, RunCommand — so a provider defect produced no
+            // verdict and no --junit/--html/--events artefacts. AND THE EXIT CODE WAS 1, NOT some
+            // code outside the taxonomy, which is the version of this claim to keep: the CLI
+            // invokes through a bare InvocationConfiguration, whose EnableDefaultExceptionHandler
+            // defaults to true on the pinned System.CommandLine 2.0.0 GA, so the framework caught
+            // the escape and returned TestFailure — a provider crash telling CI the SUITE observed
+            // a product defect. Measured by Vouchfx.Cli.Tests' SystemCommandLineExitCodeTests.
+            // `--parallel` was worse still: it caught the throw further out and classified it as an
+            // EnvironmentError, which exits 0 for a run that executed nothing (#390) — a green CI
+            // build over a provider bug, and a flag deciding between 1 and 0 for one fault. Both
+            // are closed here, at the throw site, so the two run paths cannot answer differently.
+            //
+            // WHY Inconclusive AND NOT EnvironmentError. EnvironmentError is reserved for
+            // infrastructure an author cannot fix by editing the suite — a container, an image,
+            // a network — and, on a run that started nothing, it exits 0. A provider whose Bind
+            // throws is neither infrastructure nor the author's fault: it is a defect that left
+            // the engine unable to reach a verdict, which is exactly §12.1's Inconclusive. It is
+            // the same reasoning TopologyAuthoringException records for its own base class.
+            //
+            // THE CATCH IS DELIBERATELY UNFILTERED, including OperationCanceledException, and that
+            // differs from RunCommand's own backstop for a reason rather than by accident: no
+            // cancellation token reaches IStepBinder<T>.Bind — the v1 contract passes a YamlNode
+            // and an IBindingContext and nothing else — so a cancellation raised in here is not a
+            // stop anybody requested, it is a provider doing something odd, and it is a compile-
+            // time defect like any other. RunCommand's frame DOES receive a token and must tell a
+            // user stop from a timeout; this one has no such distinction to make.
+            //
+            // ORDERING IS UNCHANGED: this returns on the FIRST throwing step, in step order,
+            // exactly where the propagation used to unwind from.
+            object model;
+            try
+            {
+                model = ReflectBind(instance, node.RawNode, bindingCtx);
+            }
+            catch (Exception ex)
+            {
+                // MethodInfo.Invoke wraps whatever the provider threw; report the provider's own
+                // exception, not the reflection wrapper an author can do nothing with.
+                var cause = ex is TargetInvocationException { InnerException: { } inner } ? inner : ex;
+
+                return (boundSteps, new ValidationFailure(
+                    $"step '{node.Id}': the '{node.CanonicalType}' provider's Bind threw "
+                    + $"{cause.GetType().Name}: {cause.Message}  This is a defect in the provider, "
+                    + "not in the suite — the step was never compiled and never ran."));
+            }
 
             // ── Host resources (tolerant, S07-F-01a) — GUARDED and DEFERRED (G-A,
             // gatekeeper, fix round 3; this half of the comment used to be missing — the
@@ -1078,8 +1134,8 @@ internal static class ProviderPipeline
         // valid svc::<name> target, regardless of step order (see this method's own
         // <param name="boundSteps"> remarks). No binding happens here: boundSteps already
         // carries each step's materialised HostResources list from Compile's Pass 1. A
-        // community provider's throwing Bind would already have propagated out of Pass 1
-        // before this method is ever called (Bind is unguarded — see BindAllSteps' own
+        // community provider's throwing Bind would already have returned Pass 1's own
+        // ValidationFailure before this method is ever called (issue #413 — see BindAllSteps'
         // remarks); a throwing HostResources() enumerator, by contrast, is CAUGHT in Pass 1
         // (G-A, gatekeeper, fix round 3) and deferred onto that step's own BoundStep.
         // HostResourcesFailure rather than propagated — so bound.HostResources here is

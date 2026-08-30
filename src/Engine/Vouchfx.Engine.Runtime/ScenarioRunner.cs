@@ -684,17 +684,17 @@ public static class ScenarioRunner
         // "BOTH ARE PURE WALKS OVER THE SAME AST" IS RETRACTED: it was true of the secret pass and
         // false of ProviderPipeline.Compile, which reads the filesystem (Directory.
         // GetCurrentDirectory, then EnvironmentSecurityValidator's existence checks) and calls
-        // ReflectBind, documented UNGUARDED at BindAllSteps — a provider's throwing Bind propagates
-        // straight out of Compile to this caller (contrast HostResources, caught two lines below
-        // it). THE TRADE IS ACCEPTED, EXPLICITLY: this door used to reach the secret pass first on
-        // the `run` path and return before Compile ran at all — MEASURED at baseline, where two
-        // fixtures printed only the step-secret fault — so `run` now carries the unguarded-Bind
-        // exposure `--parallel` always had. A throwing Bind aborts with a stack trace instead of a
-        // verdict, because RunCommand has no broad catch (see SecuredEndpointProbe's own note on
-        // that seam). Reporting a document's faults as a property of the document is worth taking
-        // the exposure the other path already lived with; narrowing it belongs with the missing
-        // top-level catch, not here — filed as issue #413, so the acceptance carries a number
-        // rather than only a rationale.
+        // ReflectBind. THE EXPOSURE THAT ACCEPTANCE NAMED IS NOW CLOSED, and the history is kept
+        // because the trade was recorded here: this door used to reach the secret pass first on the
+        // `run` path and return before Compile ran at all — MEASURED at baseline, where two
+        // fixtures printed only the step-secret fault — so merging the doors gave `run` the
+        // unguarded-Bind exposure `--parallel` always had, and a throwing Bind aborted with a stack
+        // trace instead of a verdict. Issue #413 closed both halves: BindAllSteps now returns a
+        // throwing Bind as a ValidationFailure (so it arrives at the `pipelineResult.Failure`
+        // branch below like any other compile fault, on both paths), and RunCommand.ExecuteAsync
+        // grew the top-level catch whose absence was the other half. Nothing about the merged door
+        // itself changed — reporting a document's faults as a property of the document, rather than
+        // of which pass ran first, is still what it is for.
         //
         // The `fromSecurityDeclaration` out-value is DISCARDED, and that is the change rather than
         // an oversight: this door used to classify itself, reporting the flag only when the fault
@@ -1102,12 +1102,25 @@ public static class ScenarioRunner
     /// The base directory against which the ONE shared topology's
     /// <c>environment.seed</c> SQL file paths are resolved (S05-A-01), and against which the
     /// reproducibility envelope's seed-fixture digests are hashed. Defaults to the current
-    /// working directory when <see langword="null"/>. This stays rooted at the FIRST
-    /// scenario's own directory regardless of <paramref name="scenarioBaseDirectories"/>
-    /// (issue #268): the shared topology is built ONCE from <c>scenarios[0].Environment</c>
-    /// and seeded ONCE against ONE base directory — <c>environment.seed</c> is genuinely
+    /// working directory when <see langword="null"/>. This stays rooted wherever the CALLER
+    /// rooted it — in practice the first DISCOVERED scenario's directory — regardless of
+    /// <paramref name="scenarioBaseDirectories"/> (issue #268): the shared topology is built ONCE
+    /// and seeded ONCE against ONE base directory, so <c>environment.seed</c> is genuinely
     /// single-rooted in this sequential, shared-topology path, unlike a step's own <c>file:</c>
     /// reference (see <paramref name="scenarioBaseDirectories"/>).
+    /// <para>
+    /// <strong>The seed root and the topology's ENVIRONMENT can now come from different
+    /// scenarios, in one narrow shape (issue #451).</strong> The environment is taken from the
+    /// first scenario that passes SCHEMA validation, which is <c>scenarios[0]</c> unless a
+    /// schema-rejected document sits ahead of it; this parameter is the caller's own choice and,
+    /// for <c>RunCommand</c>, is <c>scenarios[0]</c>'s directory unconditionally. So a
+    /// MULTI-DIRECTORY suite whose first document is schema-rejected seeds against that
+    /// document's folder while building from a later one's environment. It is unchecked for an
+    /// UNSECURED suite — a seed path that does not resolve fails loudly, naming the file, rather
+    /// than silently seeding the wrong thing. A SECURED suite cannot reach the shape at all:
+    /// <c>TryFindSecurityBaseDirectoryDivergence</c> refuses a secured suite whose scenarios do
+    /// not share one root, before the topology is built.
+    /// </para>
     /// </param>
     /// <param name="scenarioBaseDirectories">
     /// Per-scenario base directories (issue #268), in the same order as
@@ -1184,12 +1197,15 @@ public static class ScenarioRunner
     /// </returns>
     /// <remarks>
     /// <para>
-    /// <strong>Shared-environment assumption:</strong> all scenarios in the suite
-    /// are expected to declare the same <c>environment</c> block.  The topology is
-    /// built from <paramref name="scenarios"/>[0].Environment.  If a later scenario's
-    /// environment differs (detected by structural equality on the serialised JSON),
-    /// the suite short-circuits with <see cref="Verdict.EnvironmentError"/> — running
-    /// heterogeneous topologies in one suite would produce unpredictable results.
+    /// <strong>Shared-environment assumption:</strong> all scenarios in the suite that
+    /// pass schema validation are expected to declare the same <c>environment</c> block.
+    /// The topology is built from the FIRST such scenario's <c>Environment</c> — which is
+    /// <paramref name="scenarios"/>[0] unless a schema-rejected document sits ahead of it
+    /// (issue #451). If a later schema-valid scenario's environment differs (detected by
+    /// structural equality on the serialised JSON), the suite short-circuits with
+    /// <see cref="Verdict.EnvironmentError"/> — running heterogeneous topologies in one suite
+    /// would produce unpredictable results. A schema-rejected scenario is not compared: it
+    /// carries its own located verdict and executes nothing.
     /// </para>
     /// <para>
     /// <strong>Isolation failure → EnvironmentError:</strong> any
@@ -1318,7 +1334,16 @@ public static class ScenarioRunner
         // WHY A UNION WAS DEFENSIBLE FOR SCENARIOS AND IS NOT FOR THESE. This path builds ONE
         // shared topology from ONE environment block, so a declaration REQ-005's probe confirmed on
         // that topology is confirmed for every scenario in the suite — and the shared-`environment`
-        // divergence guard below is what makes "one environment block" true of the scenarios. An
+        // divergence guard below is what makes "one environment block" true of the scenarios, for
+        // the ones that PASS SCHEMA VALIDATION. Issue #451 added that qualification: the guard now
+        // runs below the schema pass and skips a scenario the schema rejected, so such a scenario's
+        // declaration reaches this walk without having been held against the environment that
+        // started. THAT GAP IS CLOSED BELOW rather than tolerated here — see
+        // `rejectedDivergentAssurance`, which folds such a scenario whole, with `Confirmed` empty,
+        // whenever its serialised environment differs from the baseline's. Leaving it to the digest
+        // alone would NOT have been enough: `SecuredTargets.DigestOf` hashes the `endpoint:`
+        // selector's text and not its resolution, so a rejected scenario declaring the same block
+        // against a different `httpPort:` shares the baseline's identity exactly. An
         // unbuilt document is by construction absent from `scenarios`, so that loop never compares
         // its environment with anything: it bypasses the guard entirely. Nothing downstream of such
         // a document ran, and no guard ever proved its environment is the one that started, so its
@@ -1369,102 +1394,94 @@ public static class ScenarioRunner
         // the topology.
         var unbuiltAssurance = UnbuiltDocument.AssureAll(unbuiltDocuments, registry);
 
-        // The suite's answer: the scenarios' own assurance folded against the unbuilt documents'.
-        // Applied at EVERY site below that hands back a `SuiteResult`, because `Worse` must see the
-        // scenarios' assurance in its final state — with its door recorded and, on the success path,
-        // with the probe's confirmations attached.
+        // ── What a SCHEMA-REJECTED scenario contributes when its environment is not the one that
+        // started (issue #451, security review) ───────────────────────────────────────────────────
+        //
+        // Assigned below, after the divergence guard has chosen the baseline; declared HERE only so
+        // `WithUnbuiltDocuments` can close over it. `None` until then, which is correct for every
+        // door that returns before the topology: nothing is confirmed on those paths, so the union
+        // above already raises for anything it declared.
+        //
+        // WHY IT EXISTS. Moving the divergence guard below the schema pass narrowed what the guard
+        // proves from "every scenario shares the environment that starts" to "every SCHEMA-VALID
+        // scenario does". A rejected scenario still contributes its declaration to the union above —
+        // deliberately, so a declaration is never silently dropped — and `Unconfirmed`'s
+        // `AuthoringFault` disjunct is satisfied only when some DECLARED IDENTITY went unconfirmed.
+        // `SecuredTargets.DigestOf` hashes the `endpoint:` selector's TEXT and never its resolution,
+        // so a rejected scenario declaring a byte-identical `security:` block on a service with a
+        // DIFFERENT `httpPort:` shares the baseline's identity — and the running sibling's probe
+        // confirmation then satisfied a declaration the probe never tested: mTLS asserted on a port
+        // nothing confirmed, exiting 0. Before the reorder the guard refused that suite outright.
+        //
+        // THE GATE IS ENVIRONMENT EQUALITY, NOT SCHEMA VALIDITY, and that is what keeps #451's
+        // improvement. A rejected scenario whose serialised environment EQUALS the baseline's is
+        // exactly as covered by the probe as its siblings are — that is the ordinary typo case #451
+        // exists for — so it stays in the union and a confirmation may satisfy it. Only a rejected
+        // scenario whose environment DIFFERS is folded whole, the way `UnbuiltDocument.AssureAll`
+        // folds a document that never became a scenario, and for the same reason: nothing held its
+        // environment against the one that started, so nothing of its can be confirmed.
+        var rejectedDivergentAssurance = SecurityAssurance.None;
+
+        // The suite's answer: the scenarios' own assurance folded against the unbuilt documents' and
+        // against any schema-rejected scenario whose environment was never held against the
+        // baseline's. Applied at EVERY site below that hands back a `SuiteResult`, because `Worse`
+        // must see the scenarios' assurance in its final state — with its door recorded and, on the
+        // success path, with the probe's confirmations attached.
         SecurityAssurance WithUnbuiltDocuments(SecurityAssurance scenarioAssurance) =>
-            SecurityAssurance.Worse(scenarioAssurance, unbuiltAssurance);
+            SecurityAssurance.Worse(
+                SecurityAssurance.Worse(scenarioAssurance, unbuiltAssurance),
+                rejectedDivergentAssurance);
 
-        // ── Validate shared-environment assumption ─────────────────────────────
-        // All scenarios must share the environment declared in scenario[0].
-        // If any scenario diverges, return EnvironmentError for the whole suite.
-        var firstEnvJson = SerialiseEnvironment(scenarios[0].Environment);
-        for (int i = 1; i < scenarios.Count; i++)
-        {
-            var envJson = SerialiseEnvironment(scenarios[i].Environment);
-            if (!string.Equals(envJson, firstEnvJson, StringComparison.Ordinal))
-            {
-                var divergentEnvironment =
-                    $"RunSuiteAsync: scenario '{scenarioNames[i]}' declares a different " +
-                    "environment block than the first scenario.  All scenarios in a suite " +
-                    "must share one topology.  Suite aborted with EnvironmentError.";
-
-                // Issue #266, Item 4: scenarioNames[i] is author-controlled (a scenario's
-                // metadata.name or file-derived identity) — sanitise before writing. Printed HERE,
-                // once for the suite, and the completion path is told so it prints no duplicate —
-                // the same two-halves arrangement the two guards below use.
-                await output.WriteLineAsync(
-                    DisplaySanitiser.SanitiseForDisplay(divergentEnvironment))
-                    .ConfigureAwait(false);
-
-                // One of the five returns that could not raise the old flag at all. Scenarios
-                // declaring different environment blocks is an authoring fault, and no container
-                // has started, so a SECURED suite refused here is unconfirmable on exactly the
-                // terms every other pre-topology refusal is. An unsecured one is untouched.
-                //
-                // RETURNED THROUGH CompleteWithoutTopologyAsync, NOT AS A BARE SuiteResult
-                // (peer-review MAJOR-1, fix round ten). This was the THIRD instance of the defect
-                // this branch already diagnosed and fixed at the two seams below — a bare return
-                // skips the ScenarioStarted/Completed events, the --events-stream pump, the
-                // terminal render and FileReportWriter.WriteFileReports. MEASURED on this shape
-                // with --junit/--html/--events all requested: `junit exists = False, html exists =
-                // False, events exists = False`, beside an exit of 3 for the secured spelling — a
-                // red build with an empty results directory, which the same seam's own note two
-                // guards below calls out as the worst combination of the two. Verdict and exit code
-                // are unchanged (Elevate over N EnvironmentErrors is EnvironmentError, which is
-                // what the bare return said); only the artefacts now exist.
-                //
-                // THE SCENARIO LIST IS BUILT FROM THE PARAMETERS, NOT FROM `compilations`, and that
-                // is forced rather than chosen: this guard runs ABOVE the compilation loop, so
-                // there is nothing compiled to stamp. Moving the guard below that loop would have
-                // let it share StampWhereUnjudged with its neighbours — and would have
-                // changed which diagnostic an author sees first, trading a reporting gap for a
-                // behaviour change. The list is therefore synthesised here, in declaration order,
-                // with the suite-level verdict and cause on every scenario, which is exactly what
-                // the stamp produces for its own callers.
-                // THE WRAP IS PINNED, AND THE PIN NEEDS UNSECURED SCENARIOS TO MEAN ANYTHING
-                // (T2 review, MAJOR). Dropping `WithUnbuiltDocuments` at any of these doors is
-                // silently exit 0 on a suite that contains a broken SECURED file — and a suite
-                // whose own scenarios declare security cannot detect it, because their assurance
-                // raises here regardless. The row that turns red is
-                // `SharedEnvironmentDivergence` of `RunSuiteAsyncTests
-                // .RunSuiteAsync_UnsecuredScenariosBesideASecuredUnbuiltDocument_RaisesAtEveryPreTopologyDoor`,
-                // which reaches this door with unsecured scenarios beside a secured unbuilt
-                // document; that theory's own remarks map every row to its door and name the one
-                // door still unpinned (the success return at the bottom of this method, which
-                // needs a container).
-                return await CompleteWithoutTopologyAsync(
-                        EveryScenarioRefusedBeforeCompilation(
-                            scenarios,
-                            scenarioNames,
-                            scenarioBaseDirectories,
-                            seedBaseDirectory,
-                            Verdict.EnvironmentError,
-                            divergentEnvironment),
-                        WithUnbuiltDocuments(assurance.Refusing(SecurityAbortKind.AuthoringFault)),
-                        output,
-                        decorate,
-                        diffLookup,
-                        htmlReportPath,
-                        junitReportPath,
-                        eventsReportPath,
-                        eventsStreamPath,
-                        runSecretLedger: null,
-                        alreadyPrintedMessage: divergentEnvironment)
-                    .ConfigureAwait(false);
-            }
-        }
-
-        // ── Per-scenario compilation (pre-topology) ───────────────────────────
+        // ── Per-scenario compilation (pre-topology), in TWO passes ─────────────
         // Validate + compile each scenario's YAML before we pay the topology build cost.
+        //
+        // TWO PASSES WITH THE SHARED-`environment` DIVERGENCE GUARD BETWEEN THEM (issue #451),
+        // where there used to be one loop with the guard entirely ABOVE it. Schema validation
+        // runs for EVERY scenario first; the guard then compares only the documents that
+        // individually validate; provider-pipeline compilation runs after it, in the same order
+        // relative to the guard as before.
+        //
+        // WHY THE ORDER MOVED. The guard compares the SERIALISED `environment` block, and #353
+        // gave `SecuritySpec` an `Extra` bucket, so an unknown key inside a `security:` block —
+        // a plain authoring typo, which the schema rejects with a located diagnostic naming the
+        // key — now SURVIVES into the AST and serialises. Two scenarios differing only by that
+        // typo therefore diverged, and the suite took the divergence door: a suite-level
+        // `EnvironmentError` about a topology nobody could point at, in place of the located
+        // authoring error, with the sibling scenario refused along with it. §12.1 is explicit
+        // that reporting an authoring fault as an infrastructure fault is the one direction the
+        // taxonomy must not bend — the same principle that made #348 introduce
+        // `TopologyAuthoringException` rather than let a `Configure`-time throw become an
+        // `EnvironmentError`.
+        //
+        // WHAT DID NOT MOVE, and it is the constraint the guard exists for: it still runs BEFORE
+        // the topology is built, so a genuinely divergent suite is still refused without starting
+        // a container. Only its INPUT narrowed — from every scenario to the schema-valid ones.
+        // Compilation still runs AFTER it, so a pipeline or secret-reference fault still does not
+        // pre-empt the divergence diagnostic.
         var compilations = new List<(
             string ScenarioName,
             ScenarioAst Ast,
             PipelineResult? Pipeline,
             Verdict? EarlyVerdict,
             string? EarlyMessage,
-            string? ScenarioBaseDirectory)>();
+            string? ScenarioBaseDirectory)>(scenarios.Count);
+
+        // Pass A's answer, per scenario, in declaration order. Read by the divergence guard (to
+        // decide what it may compare) and by Pass B (to decide what it may compile). Deliberately
+        // NOT re-derived from `compilations[i].EarlyVerdict`: after Pass B that flag also covers
+        // pipeline and secret-reference faults, and the guard's rule is specifically "documents
+        // that pass the SCHEMA", which is the one thing it can require of a document it compares.
+        var schemaValid = new bool[scenarios.Count];
+
+        // The abort kind Pass A recorded for each scenario it REJECTED, retained per scenario rather
+        // than only accumulated into `assurance`. The whole-value fold below needs the kind that
+        // belongs to ONE scenario, and `Refusing` deliberately keeps only the highest-precedence
+        // kind across the suite — so reading it back off the accumulator would attribute a
+        // sibling's refusal. Retained rather than recomputed because `RejectsASecurityDeclaration`
+        // needs the validation errors, and re-running `DocumentValidator.Validate` to get them back
+        // costs a full schema recomposition per scenario (~24 ms — see `UnbuiltDocument.Assure`'s
+        // own measurement of the same call).
+        var schemaRefusalKinds = new SecurityAbortKind?[scenarios.Count];
 
         for (int i = 0; i < scenarios.Count; i++)
         {
@@ -1475,7 +1492,7 @@ public static class ScenarioRunner
             // Issue #268: each scenario compiles against its OWN directory — falling back to
             // the shared seed base directory only when the caller supplied no per-scenario
             // list (pre-#268 callers). This is the value script.csharp's `file:` resolves
-            // against (via ProviderPipeline.Compile below) and the value the reproducibility
+            // against (via ProviderPipeline.Compile in Pass B) and the value the reproducibility
             // envelope later hashes this scenario's script-file digest against — it does NOT
             // affect the ONE shared topology's seed, which stays rooted at seedBaseDirectory.
             var scenarioBaseDirectory = scenarioBaseDirectories?[i] ?? seedBaseDirectory;
@@ -1498,10 +1515,10 @@ public static class ScenarioRunner
                 // schema error at or inside a `security` node is a refusal OF the declaration, and
                 // is the one shape `Declared` cannot see (`security: mtls` binds no SecuritySpec).
                 var errorIsInsideTheSecurityBlock = RejectsASecurityDeclaration(validationResult.Errors);
-                assurance = assurance.Refusing(
-                    errorIsInsideTheSecurityBlock
-                        ? SecurityAbortKind.SecurityDeclarationRejected
-                        : SecurityAbortKind.AuthoringFault);
+                schemaRefusalKinds[i] = errorIsInsideTheSecurityBlock
+                    ? SecurityAbortKind.SecurityDeclarationRejected
+                    : SecurityAbortKind.AuthoringFault;
+                assurance = assurance.Refusing(schemaRefusalKinds[i]!.Value);
 
                 // The notice that used to be spliced onto this message has moved to the ONE site
                 // that reads the assurance (RunCommand): the exit code must never be the only
@@ -1511,6 +1528,164 @@ public static class ScenarioRunner
                     scenarioBaseDirectory));
                 continue;
             }
+
+            schemaValid[i] = true;
+            compilations.Add((name, ast, null, null, null, scenarioBaseDirectory));
+        }
+
+        // ── Validate shared-environment assumption ─────────────────────────────
+        // Every scenario that PASSED SCHEMA VALIDATION must share the environment declared by the
+        // FIRST such scenario. If any of them diverges, return EnvironmentError for the whole suite.
+        //
+        // THE BASELINE IS THE FIRST SCHEMA-VALID SCENARIO, NOT `scenarios[0]`, and that is forced
+        // rather than chosen. Comparing against a document the schema rejected would report the
+        // divergence against an environment that will never be built — issue #451 one index along —
+        // and the ONE shared topology is built from this SAME baseline below, precisely so the
+        // environment every runnable scenario was proved to match is the environment that starts.
+        // (Before this, the topology was built from `scenarios[0]` and the guard compared against
+        // it, so the two agreed by construction; they still do, through one index.)
+        //
+        // A SCHEMA-INVALID DOCUMENT IS SKIPPED, NOT TRUSTED. It carries its own located verdict
+        // from Pass A and executes nothing, so it stages nothing into the shared topology and has
+        // no environment worth comparing — its `environment` block did not validate.
+        var baselineIndex = Array.IndexOf(schemaValid, true);
+        if (baselineIndex >= 0)
+        {
+            var baselineEnvJson = SerialiseEnvironment(scenarios[baselineIndex].Environment);
+            for (int i = baselineIndex + 1; i < scenarios.Count; i++)
+            {
+                if (!schemaValid[i])
+                {
+                    continue;
+                }
+
+                var envJson = SerialiseEnvironment(scenarios[i].Environment);
+                if (string.Equals(envJson, baselineEnvJson, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                // The message names BOTH scenarios rather than "the first scenario": the baseline
+                // is no longer necessarily the first one declared, and an author reading "the
+                // first scenario" would compare against the wrong file.
+                var divergentEnvironment =
+                    $"RunSuiteAsync: scenario '{scenarioNames[i]}' declares a different " +
+                    $"environment block than scenario '{scenarioNames[baselineIndex]}'.  All " +
+                    "scenarios in a suite must share one topology.  Suite aborted with " +
+                    "EnvironmentError.";
+
+                // Issue #266, Item 4: the scenario names are author-controlled (a scenario's
+                // metadata.name or file-derived identity) — sanitise before writing. Printed HERE,
+                // once for the suite, and the completion path is told so it prints no duplicate —
+                // the same two-halves arrangement the two guards below use.
+                await output.WriteLineAsync(
+                    DisplaySanitiser.SanitiseForDisplay(divergentEnvironment))
+                    .ConfigureAwait(false);
+
+                // One of the five returns that could not raise the old flag at all. Scenarios
+                // declaring different environment blocks is an authoring fault, and no container
+                // has started, so a SECURED suite refused here is unconfirmable on exactly the
+                // terms every other pre-topology refusal is. An unsecured one is untouched.
+                //
+                // RETURNED THROUGH CompleteWithoutTopologyAsync, NOT AS A BARE SuiteResult
+                // (peer-review MAJOR-1, fix round ten). This was the THIRD instance of the defect
+                // that branch already diagnosed and fixed at the two seams below — a bare return
+                // skips the ScenarioStarted/Completed events, the --events-stream pump, the
+                // terminal render and FileReportWriter.WriteFileReports. MEASURED on this shape
+                // with --junit/--html/--events all requested: `junit exists = False, html exists =
+                // False, events exists = False`, beside an exit of 3 for the secured spelling — a
+                // red build with an empty results directory, which the same seam's own note two
+                // guards below calls out as the worst combination of the two.
+                //
+                // IT NOW SHARES StampWhereUnjudged WITH ITS NEIGHBOURS (issue #451). It used to
+                // synthesise the scenario list from the PARAMETERS, because it ran above the
+                // compilation loop and there was nothing compiled to stamp; running below Pass A
+                // there is, and a scenario the SCHEMA already refused keeps its own located
+                // message instead of having the suite-level cause written over it. Every other
+                // scenario is stamped with the divergence, exactly as the synthesised list did.
+                // THE WRAP IS PINNED, AND THE PIN NEEDS UNSECURED SCENARIOS TO MEAN ANYTHING
+                // (T2 review, MAJOR). Dropping `WithUnbuiltDocuments` at any of these doors is
+                // silently exit 0 on a suite that contains a broken SECURED file — and a suite
+                // whose own scenarios declare security cannot detect it, because their assurance
+                // raises here regardless. The row that turns red is
+                // `SharedEnvironmentDivergence` of `RunSuiteAsyncTests
+                // .RunSuiteAsync_UnsecuredScenariosBesideASecuredUnbuiltDocument_RaisesAtEveryPreTopologyDoor`,
+                // which reaches this door with unsecured scenarios beside a secured unbuilt
+                // document; that theory's own remarks map every row to its door and name the one
+                // door still unpinned (the success return at the bottom of this method, which
+                // needs a container).
+                return await CompleteWithoutTopologyAsync(
+                        StampWhereUnjudged(
+                            compilations, Verdict.EnvironmentError, divergentEnvironment),
+                        WithUnbuiltDocuments(assurance.Refusing(SecurityAbortKind.AuthoringFault)),
+                        output,
+                        decorate,
+                        diffLookup,
+                        htmlReportPath,
+                        junitReportPath,
+                        eventsReportPath,
+                        eventsStreamPath,
+                        runSecretLedger: null,
+                        alreadyPrintedMessage: divergentEnvironment)
+                    .ConfigureAwait(false);
+            }
+        }
+
+        // The scenario the ONE shared topology — and the REQ-005 probe's security configuration —
+        // is built from: the same baseline every runnable scenario was just proved to match. The
+        // fallback is unreachable in practice (no schema-valid scenario means every scenario
+        // carries an early verdict, and the all-early guard below returns before the topology is
+        // built) and exists so the index is total rather than conditional.
+        var topologyIndex = baselineIndex >= 0 ? baselineIndex : 0;
+
+        // Fold in every SCHEMA-REJECTED scenario whose environment is NOT the baseline's, WHOLE —
+        // its own declaration beside its own refusal, with `Confirmed` empty by construction, so no
+        // sibling's probe can satisfy it. See this value's declaration above for the fail-open this
+        // closes and for why the gate is environment equality rather than schema validity.
+        //
+        // A scenario that declared no `security` block contributes NOTHING, and the guard is the
+        // same one `UnbuiltDocument.Assure` applies for the same reason: an empty declaration paired
+        // with a refusal would let a scenario that asserted nothing displace a sibling's evidence in
+        // the fold, and `SecurityAssurance.None` must stay the fold's identity element.
+        if (baselineIndex >= 0)
+        {
+            var baselineEnvJson = SerialiseEnvironment(scenarios[baselineIndex].Environment);
+            for (int i = 0; i < scenarios.Count; i++)
+            {
+                if (schemaValid[i]
+                    || string.Equals(
+                        SerialiseEnvironment(scenarios[i].Environment),
+                        baselineEnvJson,
+                        StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                var declaredHere = SecuredTargets.Enumerate(scenarios[i].Environment).ToArray();
+                if (declaredHere.Length == 0)
+                {
+                    continue;
+                }
+
+                rejectedDivergentAssurance = SecurityAssurance.Worse(
+                    rejectedDivergentAssurance,
+                    SecurityAssurance.None
+                        .Declaring(declaredHere)
+                        .Refusing(schemaRefusalKinds[i] ?? SecurityAbortKind.AuthoringFault));
+            }
+        }
+
+        // ── Pass B: per-scenario compilation (pre-topology) ────────────────────
+        for (int i = 0; i < scenarios.Count; i++)
+        {
+            if (!schemaValid[i])
+            {
+                continue;
+            }
+
+            var name = compilations[i].ScenarioName;
+            var ast = scenarios[i];
+            var scenarioBaseDirectory = compilations[i].ScenarioBaseDirectory;
 
             // The pre-topology authoring passes, run TOGETHER and reported together — the twin of
             // the merged door in RunScenarioOwningTopologyAsync, in the SAME order, which is the
@@ -1528,6 +1703,12 @@ public static class ScenarioRunner
             // consulted: a step-level fault in a SECURED document is an authoring fault like any
             // other, which is the widening this change makes — MEASURED as taking that shape from
             // exit 0 to exit 4 on both run paths.
+            //
+            // A PROVIDER WHOSE `Bind` THREW ARRIVES HERE AS A `PipelineResult.Failure` TOO
+            // (issue #413), rather than as an exception unwinding past this loop. It is a provider
+            // defect and not an authoring fault, but it is reported through this door because the
+            // taxonomy answer is the same: the step was never compiled, nothing ran, and the
+            // scenario is Inconclusive.
             var pipelineResult = ProviderPipeline.Compile(ast, registry, SuiteNamespace, scenarioBaseDirectory);
             var stepSecretFault = TryValidateSecretReferences(ast, out var secretError, out _)
                 ? secretError
@@ -1536,13 +1717,13 @@ public static class ScenarioRunner
             {
                 assurance = assurance.Refusing(SecurityAbortKind.AuthoringFault);
 
-                compilations.Add((name, ast, null, Verdict.Inconclusive,
+                compilations[i] = (name, ast, null, Verdict.Inconclusive,
                     JoinAuthoringFaults(pipelineResult.Failure?.Message, stepSecretFault),
-                    scenarioBaseDirectory));
+                    scenarioBaseDirectory);
                 continue;
             }
 
-            compilations.Add((name, ast, pipelineResult, null, null, scenarioBaseDirectory));
+            compilations[i] = (name, ast, pipelineResult, null, null, scenarioBaseDirectory);
         }
 
         // ── Stop here when NO scenario can run ─────────────────────────────────
@@ -1579,16 +1760,19 @@ public static class ScenarioRunner
         // ── Build topology once ────────────────────────────────────────────────
         // REQ-005's probe runs inside StartAsync (after the health gate, before the seed) and
         // presents the SAME client security configuration a step will, which is what makes its
-        // verdict evidence about the step rather than about the probe. Built from scenarios[0] —
-        // the scenario the ONE shared topology is built from, and whose environment block every
-        // other scenario in the suite is already required to match exactly — against that same
-        // scenario's own directory, so the probe resolves each declared path to the same file
-        // EnvironmentSecurityValidator checked.
+        // verdict evidence about the step rather than about the probe. Built from
+        // scenarios[topologyIndex] — the divergence guard's own baseline, and therefore the
+        // scenario whose environment block every OTHER schema-valid scenario in the suite has just
+        // been required to match exactly — against that same scenario's own directory, so the
+        // probe resolves each declared path to the same file EnvironmentSecurityValidator checked.
+        // (It is `scenarios[0]` in every suite whose first document validates, which is every
+        // suite that has no rejected document at all; the index exists so the topology and the
+        // guard cannot disagree about which environment was proved shared — see #451.)
         //
         // …and that last clause is only true while every scenario shares one directory. Scenarios
         // are required to share a byte-identical `environment` block, NOT a folder (#268), so
         // `caCert: ./certs/ca.pem` in two scenarios one directory apart names two different files:
-        // the probe would present scenarios[0]'s copy while a later scenario's steps present their
+        // the probe would present the baseline's copy while a later scenario's steps present their
         // own. Both fail closed, so nothing passes on the wrong material — but the probe would no
         // longer be evidence about those steps, which is the whole basis of its verdict. Refused
         // rather than silently picked, and refused only for suites that declare security at all.
@@ -1624,7 +1808,7 @@ public static class ScenarioRunner
         // note that `compilations[0]`, the baseline both arms compare against, may itself carry
         // one, so filtering here would also change which directory is the reference.
         if (TryFindSecurityBaseDirectoryDivergence(
-                scenarios[0].Environment, compilations, seedBaseDirectory, out var divergence))
+                scenarios[topologyIndex].Environment, compilations, seedBaseDirectory, out var divergence))
         {
             // Issue #266, Item 4: the message splices scenario names straight from untrusted YAML.
             // Printed HERE, once, for the suite; the completion path is told what was printed so it
@@ -1793,12 +1977,14 @@ public static class ScenarioRunner
         try
         {
             probeSecurity = SecurityConfigurationAccessor.Build(
-                scenarios[0],
-                compilations.Count > 0 ? compilations[0].ScenarioBaseDirectory : seedBaseDirectory,
+                scenarios[topologyIndex],
+                compilations.Count > 0
+                    ? compilations[topologyIndex].ScenarioBaseDirectory
+                    : seedBaseDirectory,
                 probeSecrets.Accessor);
 
             suite = await SuiteTopology.StartAsync(
-                scenarios[0].Environment,
+                scenarios[topologyIndex].Environment,
                 appHostAssemblyName,
                 startupTimeout: TimeSpan.FromSeconds(120),
                 seedBaseDirectory: seedBaseDirectory,
@@ -2312,27 +2498,24 @@ public static class ScenarioRunner
                 // SchemaSecuritySurfaceClosureTests
                 // .ASecurityPropertyWithANonScalarValue_IsSchemaRejectedAndInvisibleInTheAst.
                 //
-                // THIS EXAMPLE USED TO BE AN UNKNOWN KEY (`$defs/security` closes with
-                // `unevaluatedProperties: false`, and SecuritySpec had no catch-all member, so the
-                // key was dropped). #353 gave SecuritySpec an `Extra` bucket, so an unknown key now
-                // SURVIVES into the AST, the two scenarios diverge, and that suite takes the
-                // shared-environment door above instead.
+                // AN UNKNOWN KEY IS A SECOND SHAPE THAT REACHES THIS RETURN, and its history is
+                // why the route-ordering question was settled rather than left open. `$defs/security`
+                // closes with `unevaluatedProperties: false`, and before #353 SecuritySpec had no
+                // catch-all member, so the key was dropped and two scenarios differing only by it
+                // were AST-identical — exactly like the non-scalar shape above. #353 gave
+                // SecuritySpec an `Extra` bucket, the key began to SURVIVE into the AST, the two
+                // environments diverged, and for as long as the shared-`environment` guard ran
+                // ABOVE per-scenario schema validation that suite aborted EnvironmentError with
+                // "declares a different environment block" instead: an authoring fault reported as
+                // an infrastructure one, with the sibling refused alongside it. Issue #451 moved
+                // the guard BELOW the schema pass, so this shape reaches the schema door again and
+                // arrives back here with a located error naming the key. What never moved through
+                // either route is the only thing this assignment is responsible for: every door
+                // calls `assurance.Refusing(...)`, so a suite that declares `security` exits
+                // non-zero whichever one it takes.
                 //
-                // "ONLY THE ROUTE CHANGED" IS WHAT THIS NOTE USED TO SAY, AND IT UNDERSTATED IT
-                // (peer-review MINOR). The shared-environment guard sits ABOVE the compilation
-                // loop, so it pre-empts per-scenario schema validation entirely: the whole suite
-                // now aborts EnvironmentError with "declares a different environment block than
-                // the first scenario", where before the sibling RAN and the offending scenario
-                // alone took the schema door with a located error naming the key and a
-                // Verdict.Inconclusive of its own. The author's first diagnostic and the
-                // suite-level verdict both moved. What did NOT move is the only thing this
-                // assignment is responsible for: both doors call `assurance.Refusing(...)`, so a
-                // suite that declares `security` exits non-zero on either route.
-                // Whether the environment gate ought to run AFTER schema validation is a separate
-                // question about gate ordering; nothing here changes that ordering.
-                //
-                // The argument for THIS assignment therefore needed a shape #353 did not close,
-                // and the one above is it.
+                // The argument for THIS assignment therefore needs a shape that reaches this
+                // return with a runnable sibling, and there are now two of them.
                 //
                 // So this is not defence in depth: it is the path REQ-018 takes for a mixed suite,
                 // and dropping it would report exit 0 on a rejected security declaration.
@@ -2522,11 +2705,13 @@ public static class ScenarioRunner
     /// <para>
     /// FOUR CALLERS, and the latter three are why every scenario must be handed in already carrying
     /// a verdict rather than that being read off the compilation loop: the all-early-verdict guard
-    /// above; the two suite-level guards — base-directory divergence and protocol conflict — which
-    /// STAMP Inconclusive onto the scenarios that compiled cleanly before calling (see
-    /// <see cref="StampWhereUnjudged"/>); and the shared-<c>environment</c> divergence
-    /// guard, which runs ABOVE the compilation loop and therefore SYNTHESISES the whole list (see
-    /// <see cref="EveryScenarioRefusedBeforeCompilation"/>). A caller that leaves an <c>EarlyVerdict</c>
+    /// above; and the three suite-level guards — shared-<c>environment</c> divergence,
+    /// base-directory divergence and protocol conflict — which all STAMP their own suite-level
+    /// verdict onto the scenarios that carry none of their own before calling (see
+    /// <see cref="StampWhereUnjudged"/>). The <c>environment</c>-divergence guard joined that set
+    /// with issue #451, which moved it BELOW per-scenario schema validation: it used to run above
+    /// the whole compilation loop, where there was nothing compiled to stamp, and synthesised the
+    /// list from its parameters instead. A caller that leaves an <c>EarlyVerdict</c>
     /// null gets an <see cref="InvalidOperationException"/> here, deliberately — <c>earlyVerdict</c>
     /// is a <c>Nullable&lt;Verdict&gt;</c>, and <c>.Value</c> on an empty one throws
     /// <c>"Nullable object must have a value"</c>, not a <see cref="NullReferenceException"/> (m1,
@@ -2726,68 +2911,6 @@ public static class ScenarioRunner
             "\n",
             new[] { pipelineFailure, stepSecretFault }.Where(m => !string.IsNullOrEmpty(m)));
 
-    /// <summary>
-    /// The compilation list for a suite refused BEFORE the per-scenario compilation loop ran:
-    /// every scenario, in declaration order, carrying one suite-level verdict and its cause.
-    /// </summary>
-    /// <param name="scenarios">The parsed ASTs, exactly as <c>RunSuiteAsync</c> received them.</param>
-    /// <param name="scenarioNames">Their names, in the same order.</param>
-    /// <param name="scenarioBaseDirectories">
-    /// The per-scenario directories (#268), or <see langword="null"/> from a pre-#268 caller.
-    /// </param>
-    /// <param name="seedBaseDirectory">The fallback for a null element or a null list.</param>
-    /// <param name="verdict">The suite-level verdict every scenario is stamped with.</param>
-    /// <param name="cause">The suite-level diagnostic, stamped as every scenario's own cause.</param>
-    /// <remarks>
-    /// <para>
-    /// The sibling of <see cref="StampWhereUnjudged"/> for the one guard that runs
-    /// ABOVE the compilation loop (the shared-<c>environment</c> divergence guard) and therefore has
-    /// no compilations to stamp. It is a separate helper rather than a parameterised stamp because
-    /// the two take different inputs — that one refines a list, this one builds one — and because
-    /// nothing here can ever preserve a MORE SPECIFIC per-scenario message: at this point in the
-    /// method no scenario has one.
-    /// </para>
-    /// <para>
-    /// <c>Pipeline</c> is <see langword="null"/> on every entry, which is what
-    /// <see cref="CompleteWithoutTopologyAsync"/> already expects of a scenario carrying an early
-    /// verdict — it reads the name, the verdict and the message and nothing else.
-    /// </para>
-    /// </remarks>
-    private static List<(
-        string ScenarioName,
-        ScenarioAst Ast,
-        PipelineResult? Pipeline,
-        Verdict? EarlyVerdict,
-        string? EarlyMessage,
-        string? ScenarioBaseDirectory)> EveryScenarioRefusedBeforeCompilation(
-        IReadOnlyList<ScenarioAst> scenarios,
-        IReadOnlyList<string> scenarioNames,
-        IReadOnlyList<string?>? scenarioBaseDirectories,
-        string? seedBaseDirectory,
-        Verdict verdict,
-        string cause)
-    {
-        var refused = new List<(
-            string ScenarioName,
-            ScenarioAst Ast,
-            PipelineResult? Pipeline,
-            Verdict? EarlyVerdict,
-            string? EarlyMessage,
-            string? ScenarioBaseDirectory)>(scenarios.Count);
-
-        for (int i = 0; i < scenarios.Count; i++)
-        {
-            refused.Add((
-                scenarioNames[i],
-                scenarios[i],
-                null,
-                verdict,
-                cause,
-                scenarioBaseDirectories?[i] ?? seedBaseDirectory));
-        }
-
-        return refused;
-    }
 
     /// <summary>
     /// Stamps <see cref="Verdict.Inconclusive"/> and a suite-level <paramref name="cause"/> onto
@@ -2885,7 +3008,9 @@ public static class ScenarioRunner
     /// <para>
     /// <strong>Scenario against seed root</strong> (m4, peer-review critic, fix round eight). The
     /// CLIENT material — the probe's and the steps' <c>caCert</c>/<c>clientCert</c>/<c>clientKey</c>
-    /// — resolves against <c>compilations[0].ScenarioBaseDirectory</c>, while REQ-016's SERVER
+    /// — resolves against <c>compilations[topologyIndex].ScenarioBaseDirectory</c> (the scenario the
+    /// topology is built from: the first schema-valid one, index 0 unless a rejected document sits
+    /// ahead of it — issue #451), while REQ-016's SERVER
     /// artefacts resolve against <c>SuiteTopology.StartAsync</c>'s own <c>seedBaseDirectory</c>.
     /// Those are two parameters, and a divergent pair splits one suite's security material across
     /// two roots — the client half trusting an anchor from one directory while the server half is
@@ -3398,8 +3523,19 @@ public static class ScenarioRunner
                 // earlyMessage cannot CONTAIN a resolved value. TryCompileForRun has exactly
                 // three sources — schema validation errors, TryValidateSecretReferences's
                 // message, and ProviderPipeline's compile failure — and all three are produced
-                // before any step executes, from YAML text and secret REFERENCES. A reference is
-                // not its value.
+                // before any step executes.
+                //
+                // "ALL THREE COME FROM YAML TEXT" WAS THE PREMISE AND IS NO LONGER EXACTLY TRUE
+                // (issue #413), so it is restated rather than left to decay. The third source now
+                // also carries a PROVIDER-authored exception message: a throwing `Bind` is reported
+                // as `{ExceptionType}: {Message}`, and that text is the provider's, not the
+                // document's. The CONCLUSION is unchanged, and for a stronger reason than the old
+                // premise gave — `Bind` runs at COMPILE time, before any topology and before any
+                // secret is resolved, and the v1 `IStepBinder<T>` contract hands it a YamlNode and
+                // an IBindingContext and no secret accessor at all. There is no resolved value in
+                // scope for that message to contain. Sanitising still applies to it, and for the
+                // same reason it applies to the other two: it is untrusted text reaching a
+                // terminal.
                 //
                 // Not scrubbed as belt-and-braces either, and that is a judgement rather than an
                 // oversight. This is the author's primary feedback channel under `--watch`: it is

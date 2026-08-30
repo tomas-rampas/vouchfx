@@ -945,10 +945,13 @@ public sealed class RunSuiteAsyncTests
     /// JUnit's <c>&lt;error&gt;</c> primitive and its counts to <c>envError</c>.
     /// </para>
     /// <para>
-    /// The guard runs ABOVE the per-scenario compilation loop, so the completion path is handed a
-    /// scenario list synthesised from the parameters rather than one stamped onto compilations.
-    /// Moving the guard below that loop would have shared the stamp — and changed which diagnostic
-    /// an author sees first, which is a behaviour change this fix deliberately did not make.
+    /// The guard used to run ABOVE the per-scenario compilation loop, so the completion path was
+    /// handed a scenario list synthesised from the parameters rather than one stamped onto
+    /// compilations. Issue #451 moved it BELOW per-scenario schema validation, so it now shares
+    /// <c>StampWhereUnjudged</c> with its neighbours. Neither move touches THIS shape: both
+    /// documents here are schema-valid and neither carries an early verdict, so the stamp produces
+    /// exactly the list the synthesis did — two scenarios, both <see cref="Verdict.EnvironmentError"/>,
+    /// both carrying the divergence as their cause.
     /// </para>
     /// </remarks>
     [Fact]
@@ -1162,6 +1165,192 @@ public sealed class RunSuiteAsyncTests
             squatter.Stop();
             suiteDirectory.Delete(recursive: true);
         }
+    }
+
+    // ── Issue #451: an authoring typo inside one scenario's `environment` block ────────────
+    //
+    // The shared-`environment` divergence guard used to run ABOVE per-scenario schema validation,
+    // so a key the schema rejects — and which #353 made SURVIVE into the AST, into
+    // `SecuritySpec.Extra`, and into the serialised environment — made the two environments
+    // differ and took the suite through the divergence door. The author's first diagnostic was a
+    // suite-level INFRASTRUCTURE message about a topology nobody could point at, and the suite
+    // carried `Verdict.EnvironmentError`. Blueprint §12.1 is explicit that reporting an authoring
+    // fault as an infrastructure fault is the one direction the taxonomy must not bend.
+    //
+    // The guard now runs BETWEEN the two passes: schema validation first, for every scenario, then
+    // the guard over the documents that individually validate, then provider-pipeline compilation.
+    // It still refuses before any container starts, which is the constraint the guard exists for.
+
+    /// <summary>
+    /// The environment the #451 pair shares, with a <c>security</c> block for the typo to live in
+    /// and the same <c>${conn:typo}</c> the mixed-suite fixtures use — so a run that gets PAST the
+    /// divergence guard fails deterministically at <c>EnvironmentMapper.Map</c>, before any
+    /// container, and prints <see cref="PreTopologyMarker"/> as proof it got there.
+    /// </summary>
+    private const string SecurityTypoSuiteEnvironment = """
+        environment:
+          services:
+            api:
+              image: myorg/api:1.0
+              env:
+                FOO: "${conn:typo}"
+              security:
+                profile: tls
+                endpoint: 8443
+        """;
+
+    private const string SecurityTypoSuiteSteps = """
+
+        steps:
+          - id: get-noop
+            type: http.rest
+            target: api
+            method: GET
+            path: /
+            expect:
+              status: 200
+        """;
+
+    /// <summary>The clean half of the #451 pair: schema-valid, and the topology's own source.</summary>
+    private const string SecurityTypoSuiteClean =
+        SecurityTypoSuiteEnvironment + SecurityTypoSuiteSteps;
+
+    /// <summary>
+    /// The offending half: one unknown key inside the <c>security</c> block. Since #353 that key
+    /// survives into <c>SecuritySpec.Extra</c> and serialises, so this document's environment is
+    /// NOT byte-identical to its sibling's — which is exactly what used to take the suite through
+    /// the divergence door instead of the schema one.
+    /// </summary>
+    private const string SecurityTypoSuiteOffending = """
+        environment:
+          services:
+            api:
+              image: myorg/api:1.0
+              env:
+                FOO: "${conn:typo}"
+              security:
+                profile: tls
+                endpoint: 8443
+                bogus: nope
+        """ + SecurityTypoSuiteSteps;
+
+    /// <summary>A third document: schema-valid like the clean half, but a different image tag.</summary>
+    private static readonly string SecurityTypoSuiteDivergent =
+        SecurityTypoSuiteClean.Replace("myorg/api:1.0", "myorg/api:2.0", StringComparison.Ordinal);
+
+    private static readonly string[] s_securityTypoNames = { "clean", "typo" };
+    private static readonly string[] s_typoFirstDivergentNames = { "typo", "clean", "divergent" };
+
+    /// <summary>
+    /// <strong>#451: the located schema error wins, and the divergence message is never printed.</strong>
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// MEASURED RED FIRST: before the reorder this suite returned
+    /// <see cref="Verdict.EnvironmentError"/> with <c>"declares a different environment block"</c>
+    /// and never reached <see cref="PreTopologyMarker"/> — the offending key was never named.
+    /// </para>
+    /// <para>
+    /// <see cref="PreTopologyMarker"/> is asserted PRESENT rather than absent, and that is the
+    /// half that proves the sibling is no longer vetoed: the clean scenario is runnable, so the
+    /// suite proceeds to the topology exactly as it would have before #353 made this shape
+    /// divergent. It fails there for the fixture's own deliberate <c>${conn:typo}</c>, at
+    /// <c>Map</c>'s eager validation, so no container is ever started.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task RunSuiteAsync_OneScenarioEnvironmentTypo_ReportsTheLocatedSchemaErrorNotDivergence()
+    {
+        var yamls = new[] { SecurityTypoSuiteClean, SecurityTypoSuiteOffending };
+        var registry = StepKindRegistry.BuildAndFreeze(ProviderAssemblies);
+        var scenarios = yamls
+            .Select(y => AstBuilder.Build(YamlDocumentParser.Parse(y), registry))
+            .ToArray();
+
+        var sw = new StringWriter();
+        var result = await ScenarioRunner.RunSuiteAsync(
+            scenarios: scenarios,
+            scenarioNames: s_securityTypoNames,
+            yamlTexts: yamls,
+            providerAssemblies: ProviderAssemblies,
+            appHostAssemblyName: AppHostAssemblyName,
+            output: sw);
+
+        var rendered = sw.ToString();
+
+        // The authoring fault reaches the author LOCATED, naming the key it found.
+        Assert.Contains("bogus", rendered, StringComparison.Ordinal);
+
+        // …and never as an infrastructure claim about the suite.
+        Assert.DoesNotContain(DivergentEnvironmentMarker, rendered, StringComparison.Ordinal);
+        Assert.NotEqual(Verdict.EnvironmentError, result.Verdict);
+        Assert.Equal(Verdict.Inconclusive, result.Verdict);
+
+        // The clean sibling was not vetoed: the run reached the topology build.
+        Assert.Contains(PreTopologyMarker, rendered, StringComparison.Ordinal);
+
+        // WHICH DISJUNCT RAISES IS ASSERTED, NOT JUST THAT ONE DOES (security review). The typo is
+        // INSIDE the `security` block, so the schema error is located there, so the door records
+        // `SecurityDeclarationRejected` — a STANDALONE disjunct of `Unconfirmed` that no sibling
+        // confirmation can satisfy. Without this line the row would pass through the weaker
+        // `AuthoringFault ∧ something-went-unconfirmed` disjunct, which on this fixture is true only
+        // because the topology never came up — so it would pin the fixture, not the rule.
+        Assert.Equal(SecurityAbortKind.SecurityDeclarationRejected, result.Assurance.Refusal);
+        Assert.True(result.Assurance.Unconfirmed);
+    }
+
+    /// <summary>
+    /// <strong>The guard's baseline is the FIRST SCHEMA-VALID scenario, not <c>scenarios[0]</c>.</strong>
+    /// A schema-invalid document sitting first must neither become the environment every sibling is
+    /// compared against nor suppress a genuine divergence between the two that follow it.
+    /// </summary>
+    /// <remarks>
+    /// Both halves are asserted because they fail for different reasons: comparing against the
+    /// rejected document would report divergence for the wrong scenario (#451 again, one index
+    /// along), while skipping the guard whenever any document is rejected would build ONE topology
+    /// for two genuinely different environments — and the topology is built from this same
+    /// baseline, which is why the two decisions cannot be made independently.
+    /// </remarks>
+    [Fact]
+    public async Task RunSuiteAsync_SchemaInvalidFirstScenario_StillRefusesAGenuineDivergenceBetweenTheRest()
+    {
+        var yamls = new[]
+        {
+            SecurityTypoSuiteOffending,
+            SecurityTypoSuiteClean,
+            SecurityTypoSuiteDivergent,
+        };
+
+        var registry = StepKindRegistry.BuildAndFreeze(ProviderAssemblies);
+        var scenarios = yamls
+            .Select(y => AstBuilder.Build(YamlDocumentParser.Parse(y), registry))
+            .ToArray();
+
+        var sw = new StringWriter();
+        var result = await ScenarioRunner.RunSuiteAsync(
+            scenarios: scenarios,
+            scenarioNames: s_typoFirstDivergentNames,
+            yamlTexts: yamls,
+            providerAssemblies: ProviderAssemblies,
+            appHostAssemblyName: AppHostAssemblyName,
+            output: sw);
+
+        var rendered = sw.ToString();
+
+        // The two schema-VALID documents genuinely diverge, so the guard fires — and it names the
+        // third scenario, the one that actually differs from the baseline.
+        Assert.Contains(DivergentEnvironmentMarker, rendered, StringComparison.Ordinal);
+        Assert.Contains("'divergent'", rendered, StringComparison.Ordinal);
+        Assert.Equal(Verdict.EnvironmentError, result.Verdict);
+
+        // Before any container: the guard still returns above the topology build.
+        Assert.DoesNotContain(PreTopologyMarker, rendered, StringComparison.Ordinal);
+
+        // The rejected document keeps its OWN located message rather than being overwritten by the
+        // suite-level cause — the stamp the guard shares with its neighbours now that it runs below
+        // the schema pass.
+        Assert.Contains("bogus", rendered, StringComparison.Ordinal);
+        Assert.Equal(3, result.ScenarioVerdicts.Count);
     }
 
     /// <summary>Counts non-overlapping occurrences of <paramref name="needle"/>.</summary>
