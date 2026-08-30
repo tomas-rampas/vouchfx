@@ -164,7 +164,10 @@ public sealed class ThreeRequirementsSuiteDockerTests
             try
             {
                 result = await ScenarioRunner.RunScenarioOwningTopologyAsync(
-                    s_registry, yaml, "three-requirements", AppHostAssemblyName, diagnostics,
+                    s_registry, yaml, "three-requirements",
+                    // Issue #409: supplied, not derived — the same walk the aggregator passes in.
+                    ScenarioRunner.DeclaredTargetsOf(yaml, s_registry),
+                    AppHostAssemblyName, diagnostics,
                     seedBaseDirectory: suiteDirectory, livePump: null, cancellationToken: cts.Token);
             }
             finally

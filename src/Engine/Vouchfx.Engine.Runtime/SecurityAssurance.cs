@@ -231,13 +231,44 @@ public enum SecurityAbortKind
 /// <param name="Refusal">Which door aborted the run, or <see langword="null"/> when none did.</param>
 /// <remarks>
 /// <para>
-/// <strong>The two halves are filled at different sites, on purpose.</strong> A door knows which
-/// door it is and nothing else; it records <paramref name="Refusal"/>. The verdict-assembly site
-/// holds the parsed ASTs as a PARAMETER — <c>ScenarioRunner.RunSuiteAsync</c> and
-/// <c>ParallelSuiteRunner.RunParallelCoreAsync</c> both take them — so it can fill
-/// <paramref name="Declared"/> on every path, including the ones that abort before the runner
-/// itself has parsed anything. That is what removed the speculative re-parse the schema door used
-/// to need in order to answer "does this document declare security" at the door.
+/// <strong>A door never DERIVES <paramref name="Declared"/>, and on one of the two run paths it no
+/// longer waits for someone else to fill it either.</strong> A door knows which door it is; it
+/// records <paramref name="Refusal"/>. What the document DECLARED comes from a site holding the
+/// parsed ASTs as a PARAMETER, walking <c>SecuredTargets.Enumerate</c> — which is what removed the
+/// speculative re-parse the schema door used to need in order to answer "does this document declare
+/// security" at the door, and it is still the rule. What changed is WHERE the walk's result is
+/// applied, and the two paths now differ:
+/// </para>
+/// <list type="bullet">
+/// <item>
+/// <description>
+/// <strong>Sequential (<c>ScenarioRunner.RunSuiteAsync</c>) — unchanged.</strong> It walks every
+/// scenario ONCE for the suite and holds one assurance it carries through its own doors, so
+/// <paramref name="Declared"/> is filled at the verdict-assembly site exactly as described before.
+/// </description>
+/// </item>
+/// <item>
+/// <description>
+/// <strong>Parallel (<c>ParallelSuiteRunner.RunParallelCoreAsync</c>) — the walk is now passed
+/// INTO the core rather than re-attached to what it returns (issue #409).</strong> The site still
+/// owns the walk, once per scenario; it hands the result to
+/// <c>ScenarioRunner.RunScenarioOwningTopologyAsync</c> as an argument, so every one of that
+/// method's doors attaches the same declaration and the result it hands back is complete on its
+/// own. This paragraph used to say the aggregator "can fill <paramref name="Declared"/> on every
+/// path", which described a re-attach that has been DELETED — it was a second corrector for one
+/// value, and because its walk agreed with the core's by construction it hid the two doors where
+/// the core had no walk at all. A direct caller of the core (the Docker drills are exactly that)
+/// read <c>Unconfirmed == false</c> for a secured document the aggregator reported as unconfirmed.
+/// <strong>Do not reintroduce the re-attach</strong>: the core is self-describing now, and every
+/// one of its returns is held to attaching by <c>ScenarioCoreDeclarationCensusTests</c>.
+/// </description>
+/// </item>
+/// </list>
+/// <para>
+/// The three assurances <c>ParallelSuiteRunner</c> still SYNTHESISES itself — its two cancellation
+/// paths and its escaped-exception path — attach the walk directly, because no core ran there to be
+/// handed anything. That is not the repair; it is the same site filling in for a door that never
+/// opened.
 /// </para>
 /// <para>
 /// <strong>IDENTITIES, not the <c>SecuritySpec</c> values they carry — and the narrowing is a
@@ -440,12 +471,20 @@ public sealed record SecurityAssurance(
     /// </para>
     /// </param>
     /// <remarks>
-    /// <strong>REPLACES what an earlier call attached; it does not accumulate</strong> — and
-    /// <c>ParallelSuiteRunner</c> depends on that, re-attaching a slot's own declaration over the
-    /// assurance its core already returned rather than expecting the two to union. Pinned by
+    /// <strong>REPLACES what an earlier call attached; it does not accumulate.</strong> Pinned by
     /// <c>SecurityConfirmationExitCodeTests.Declaring_And_Confirming_ReplaceRatherThanAccumulate</c>,
     /// because a rename to <c>WithDeclared</c> this late would move a member on a type the CLI and
     /// both runners already read.
+    /// <para>
+    /// <strong>NO CALLER DEPENDS ON THE REPLACEMENT ANY LONGER, and the sentence that said one did
+    /// is retracted rather than reworded (issue #409).</strong> It named <c>ParallelSuiteRunner</c>
+    /// re-attaching a slot's own declaration over the assurance its core had already returned —
+    /// which is precisely the repair #409 deleted. Every remaining call site applies this to
+    /// <see cref="None"/> exactly once, so replacement and accumulation are indistinguishable from
+    /// the outside. What the property still buys is that they STAY indistinguishable: a
+    /// second attach appearing anywhere would union one scenario's declaration into another's,
+    /// which is the pairing <see cref="Worse"/> exists to prevent, and it would do so silently.
+    /// </para>
     /// </remarks>
     public SecurityAssurance Declaring(IReadOnlyList<SecuredTarget> declared)
     {

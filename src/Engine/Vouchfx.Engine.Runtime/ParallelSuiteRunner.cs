@@ -83,15 +83,22 @@ public static class ParallelSuiteRunner
     /// <summary>
     /// The injectable seam matching the shape of
     /// <see cref="ScenarioRunner.RunScenarioOwningTopologyAsync"/>: given a frozen registry, a
-    /// scenario's YAML, its name, the Aspire host assembly name, an output writer (for the core's
-    /// raw early-exit diagnostics only), and a seed base directory, it builds/owns/disposes a
-    /// topology, runs the single scenario, and returns the verdict plus the fully-populated event
-    /// buffer.  The default is <see cref="ScenarioRunner.RunScenarioOwningTopologyAsync"/>; tests
-    /// inject a fake to exercise the gather/render logic without a container.
+    /// scenario's YAML, its name, its declared secured targets, the Aspire host assembly name, an
+    /// output writer (for the core's raw early-exit diagnostics only), and a seed base directory, it
+    /// builds/owns/disposes a topology, runs the single scenario, and returns the verdict plus the
+    /// fully-populated event buffer.  The default is
+    /// <see cref="ScenarioRunner.RunScenarioOwningTopologyAsync"/>; tests inject a fake to exercise
+    /// the gather/render logic without a container.
     /// </summary>
     /// <param name="registry">The frozen provider registry.</param>
     /// <param name="yamlText">The scenario's raw YAML.</param>
     /// <param name="scenarioName">The scenario's name (used as the event-stream scenarioId).</param>
+    /// <param name="declaredTargets">
+    /// This scenario's <c>SecuredTargets.Enumerate</c> walk, taken from the AST this class holds as
+    /// a parameter and supplied to the core so its result is correct at every door — including the
+    /// two that return before the core has parsed anything (issue #409). A test's fake core is free
+    /// to ignore it; the real core attaches it to every assurance it returns.
+    /// </param>
     /// <param name="appHostAssemblyName">The Aspire host assembly name (R-1; nullable).</param>
     /// <param name="output">The writer that receives the core's raw early-exit diagnostics.</param>
     /// <param name="seedBaseDirectory">Base directory for relative seed fixture paths.</param>
@@ -110,6 +117,7 @@ public static class ParallelSuiteRunner
         StepKindRegistry registry,
         string yamlText,
         string scenarioName,
+        IReadOnlyList<SecuredTarget> declaredTargets,
         string? appHostAssemblyName,
         TextWriter output,
         string? seedBaseDirectory,
@@ -405,6 +413,13 @@ public static class ParallelSuiteRunner
         // this change removed. `scenarios` is a PARAMETER here, so the walk happens once per
         // scenario on EVERY path, including the ones the core aborts before parsing anything.
         //
+        // THE WALK IS NOW PASSED INTO THE CORE RATHER THAN RE-ATTACHED TO WHAT IT RETURNS
+        // (issue #409). Same walk, same site, one consumer instead of two: the core's own result is
+        // correct at every door, so this class no longer repairs it afterwards. The slots below
+        // still carry `declared` for the three assurances this class SYNTHESISES itself — the two
+        // cancellation paths and the escaped-exception path, where no core ran to be handed
+        // anything.
+        //
         // Per scenario rather than per suite, unlike the shared-topology runner: scenarios under
         // `--parallel` need NOT declare a common environment block, so each one's declaration is
         // its own. That is also why the fold below keeps whole assurances rather than unioning
@@ -557,6 +572,7 @@ public static class ParallelSuiteRunner
                 registry,
                 yamlText,
                 scenarioName,
+                declared,
                 appHostAssemblyName,
                 rawWriter,
                 seedBaseDirectory,
@@ -571,9 +587,22 @@ public static class ParallelSuiteRunner
             // order and a shared read-modify-write across them would be a data race. The
             // aggregation tail folds the array once the gather has joined.
             //
-            // The core supplied WHICH door refused; `declared` supplies WHAT the document
-            // asserted. Neither half is a decision.
-            slotAssurances[index] = result.Assurance.Declaring(declared);
+            // TAKEN WHOLE, NOT REPAIRED (issue #409). This line used to read
+            // `result.Assurance.Declaring(declared)`, re-attaching the walk over whatever the core
+            // returned because the core left `Declared` empty at its two pre-parse doors. `declared`
+            // now goes IN, above, so the core's answer is already complete and re-attaching it here
+            // would be a second corrector for a value that no longer needs correcting — which is
+            // how one rule comes to have two spellings again.
+            //
+            // THE ONE VISIBLE CONSEQUENCE, stated because it is a test-double contract: a fake core
+            // is now BELIEVED about what its document declared. Before, a fake returning
+            // `SecurityAssurance.None` had this class's own walk stamped onto it; now it reports an
+            // empty declaration, and a fake standing in for the real core must attach the
+            // `declared` it is handed if the slot is meant to declare anything. No existing fake
+            // does — every one of them drives an unsecured AST, whose walk is empty either way —
+            // so nothing silently changed meaning; a future one that needs a declaration has to say
+            // so, which is the right way round.
+            slotAssurances[index] = result.Assurance;
             // Issue #262: NO livePump?.PostRange(buffer) here. The real core
             // (ScenarioRunner.RunScenarioOwningTopologyAsync) already streamed every one of this
             // slot's lines live — as they happened — via the per-scenario LiveStepEventSink plus
