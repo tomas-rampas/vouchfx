@@ -467,18 +467,21 @@ internal static class SecuredEndpointProbe
         //     and this map disagree is an in-tree edit, and SecurityProfileVocabularyDriftTests
         //     turns that into a red build at the moment of registration.
         //
-        //   • On `vouchfx run` (single-scenario, shared-topology and --parallel alike) an author
-        //     cannot reach this throw: the root schema narrows `profile` to the registered set
-        //     (REQ-021) and SecurityProfileWiringValidator rejects an unresolved (profile,
-        //     target-kind) pair (REQ-022), both inside ProviderPipeline.Compile, which runs before
-        //     the topology is built.
+        //   • An author cannot reach this throw on ANY path: the root schema narrows `profile` to
+        //     the registered set (REQ-021) and SecurityProfileWiringValidator rejects an unresolved
+        //     (profile, target-kind) pair (REQ-022), both inside ProviderPipeline.Compile, which
+        //     runs before the topology is built. That is true of `vouchfx run` (single-scenario,
+        //     shared-topology and --parallel alike) and — since #370 — of `--watch`.
         //
-        //   • On `--watch` an author CAN. The watch compile seam (WatchRunner.Compile) is
-        //     YamlDocumentParser.Parse + AstBuilder.Build only — no DocumentValidator.Validate, no
-        //     ProviderPipeline.Compile — so `profile: kerbros` reaches the probe, and the run has
-        //     already started containers and passed the health gate by then. That is why the message
-        //     below is written for the AUTHOR, naming the profiles this engine actually has, with
-        //     the engine-maintainer instruction demoted to a parenthesis.
+        //   • IT WAS FALSE ON `--watch` UNTIL #370, which is the reason the message below is
+        //     written the way it is. That compile seam was YamlDocumentParser.Parse +
+        //     AstBuilder.Build only — no DocumentValidator.Validate, no ProviderPipeline.Compile —
+        //     so `profile: kerbros` reached the probe, with containers already started and the
+        //     health gate already passed. The message is kept AUTHOR-facing, naming the profiles
+        //     this engine actually has with the engine-maintainer instruction demoted to a
+        //     parenthesis, because "unreachable by author input" is a property of two validators
+        //     upstream rather than of this method, and a diagnostic that assumes its own
+        //     unreachability is how the next such gap goes unnoticed.
         if (!ProfilesPresentingAClientIdentity.TryGetValue(declaredProfile, out var presentsClientIdentity))
         {
             throw Failure(

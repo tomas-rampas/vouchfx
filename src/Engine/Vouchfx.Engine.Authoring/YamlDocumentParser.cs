@@ -348,9 +348,11 @@ public static class YamlDocumentParser
             // preference order". So `endpoint: [https]` (a sequence, or a mapping) would bind as
             // no selection at all: the author's declaration accepted and silently ignored, which
             // is the exact defect this field was added to end, reproduced one layer down. The
-            // schema refuses the shape on `run`/`validate`, but `--watch`'s compile seam is
-            // YamlDocumentParser.Parse + AstBuilder.Build with no DocumentValidator.Validate in
-            // it, so on that path this is the only thing between the author and a silent drop.
+            // schema refuses the shape on every path that reaches it — `run`, `validate` and,
+            // since #370, `--watch` too. This check is kept and is not redundant: it runs at PARSE
+            // time, ahead of the schema on every one of those paths, so it is what refuses the
+            // shape for any caller that parses without validating (the AST-building seams, an
+            // embedder) and it is what makes the refusal carry a line and column at all.
             // Distinguish the two cases and refuse the second with line/column, mirroring the
             // non-mapping service-value throw above.
             string? endpoint = null;

@@ -1098,14 +1098,14 @@ internal static class RunCommand
 
         // ── Watch mode (S08-C-01) ─────────────────────────────────────────────
         // `vouchfx run <file> --watch` watches a SINGLE file: run once, then re-run on save,
-        // re-using the kept topology while the `environment` block is unchanged.  Watching is
+        // re-using the kept topology while every input it was built from is unchanged.  Watching is
         // inherently single-file, so the selection must resolve to exactly one scenario; a
         // directory matching many files (or none that parses) is a usage error here.
         //
         // NOTE (S09-T3 / S10 / #258 scope): --html / --junit / --events / --events-stream /
         // --no-decorations are NOT wired into watch mode.  Watch renders per re-run (not from one
         // suite-wide buffer), and threading the report / events paths through WatchRunner /
-        // WatchSession / RunScenarioAgainstKeptTopologyAsync — plus deciding the
+        // WatchSession / RunPlannedScenarioAgainstKeptTopologyAsync — plus deciding the
         // overwrite-on-every-save semantics — is meaningful complexity for an interactive loop
         // whose value is the terminal feedback. --events, --events-stream, and the
         // --no-decorations `decorate` flag all follow the SAME scope as --html / --junit:

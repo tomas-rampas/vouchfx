@@ -494,9 +494,18 @@ public sealed class SuiteProtocolTargetsTests
     /// parameters are OPTIONAL and this project sets no <c>GenerateDocumentationFile</c>, so a
     /// call site that passes <c>kafkaSpeakingTargets</c> and forgets
     /// <c>endpointConsumingTargets</c> compiles clean, runs clean, and silently never refuses an
-    /// endpoint-less targeted project-form service — the #348 defect back, on the path that
-    /// forgot. <c>--watch</c> is the live example: it builds its own topology through this seam,
-    /// so it needs its own pass-through.
+    /// endpoint-less targeted project-form service — the #348 defect back, on the path that forgot.
+    /// </para>
+    /// <para>
+    /// <strong>RE-POINTED, NOT RELAXED (#364).</strong> There were THREE production call sites when
+    /// this was written — <c>ScenarioRunner</c> twice and <c>WatchRunner</c> once — and the reason
+    /// there is now ONE is the fix: <c>TopologyRequest</c> owns the whole document-derived argument
+    /// list and both its factories derive the two sets together from one input, so no call site
+    /// maintains them any more. The expected count moves from 3 to 1 and the guard keeps doing
+    /// exactly what it did: assert that every call that exists passes both. The stronger companion
+    /// gates live in <c>Vouchfx.Engine.Orchestration.Tests.TopologyRequestCoverageCensusTests</c>,
+    /// which fail on a SIXTH parameter added to <c>StartAsync</c> and not to the request — the
+    /// shape this text-level guard cannot see.
     /// </para>
     /// <para>
     /// Scoped to <c>src/</c> deliberately. The ~60 Docker test call sites hand in an
@@ -542,22 +551,25 @@ public sealed class SuiteProtocolTargetsTests
             .OrderBy(file => file.Name, StringComparer.Ordinal)
             .ToList();
 
-        // COUNTED PER CALL, NOT PER FILE, and that is the point: ScenarioRunner.cs holds TWO call
-        // sites (the per-scenario seam and the shared-topology suite seam), so a file-level check
-        // would pass with one of them silently unwired. The guard is also worthless if the scan
-        // finds nothing, so the expected total is asserted before anything is concluded from it.
+        // COUNTED PER CALL, NOT PER FILE. When this counted three, ScenarioRunner.cs held two of
+        // them and a file-level check would have passed with one silently unwired; it counts ONE
+        // today (TopologyRequest.StartAsync) and the per-call rule is what keeps a second call
+        // appearing in the same file visible. The guard is also worthless if the scan finds
+        // nothing, so the expected total is asserted before anything is concluded from it.
         //
         // Assert.True, not Assert.Equal, purely so the count can carry guidance: a legitimate
-        // FOURTH caller is a normal event, and `3 != 4` with no message tells whoever added it
+        // SECOND caller is a normal event, and `1 != 2` with no message tells whoever added it
         // nothing about what to do.
         var totalCalls = callSites.Sum(file => file.Calls);
         Assert.True(
-            totalCalls == 3,
-            $"Expected 3 production SuiteTopology.StartAsync call sites, found {totalCalls} in "
+            totalCalls == 1,
+            $"Expected 1 production SuiteTopology.StartAsync call site (TopologyRequest.StartAsync), "
+            + $"found {totalCalls} in "
             + string.Join(", ", callSites.Select(f => $"{f.Name} x{f.Calls}"))
-            + ". If you ADDED a caller: pass both kafkaSpeakingTargets and endpointConsumingTargets, "
-            + "derived from the same scenarios, then update this expected count. If you REMOVED one, "
-            + "just update the count.");
+            + ". If you ADDED a caller: prefer routing it through TopologyRequest, which owns the "
+            + "whole document-derived argument list (#364). If it must call StartAsync directly, "
+            + "pass both kafkaSpeakingTargets and endpointConsumingTargets derived from the same "
+            + "scenarios, then update this expected count. If you REMOVED one, just update the count.");
 
         var unwired = callSites
             .Where(file => file.Passes < file.Calls)

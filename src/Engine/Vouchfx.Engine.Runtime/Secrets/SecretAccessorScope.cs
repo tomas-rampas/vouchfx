@@ -40,10 +40,10 @@ namespace Vouchfx.Engine.Runtime.Secrets;
 /// <strong>The <c>--watch</c> call site shares a SESSION-scoped ledger (EDGE-007), and the wider
 /// scope is forced by CAPTURE ORDER, not merely by breadth.</strong> <c>WatchRunner.RunAsync</c>
 /// builds one ledger for the whole watch session and hands it both to the probe scope in its build
-/// seam and to <c>ScenarioRunner.RunScenarioAgainstKeptTopologyAsync</c>. The narrower scope worth
+/// seam and to <c>ScenarioRunner.RunPlannedScenarioAgainstKeptTopologyAsync</c>. The narrower scope worth
 /// ruling out is the BUILD SEAM's, and the precise reason is not "the seam runs per save" — it does
-/// not; <c>WatchSession.OnChangeAsync</c> reaches it only when the environment hash changes, so a
-/// seam-scoped ledger would already be shared by every reusing save. It is that the watch loop's
+/// not; <c>WatchSession.OnChangeAsync</c> reaches it only when the topology fingerprint changes, so
+/// a seam-scoped ledger would already be shared by every reusing save. It is that the watch loop's
 /// error sinks capture the ledger BY VALUE before the seam runs, so on a REBUILD save the probe
 /// would resolve into a ledger the catch receiving its failure has never seen. Sharing one
 /// session-scoped instance is what makes the probe's value scrubbable both from that catch and

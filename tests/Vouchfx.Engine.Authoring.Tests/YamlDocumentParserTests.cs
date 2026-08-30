@@ -1917,11 +1917,17 @@ public sealed class YamlDocumentParserTests
     /// reproduced one layer below it.
     /// </para>
     /// <para>
-    /// The schema refuses the shape on every document that reaches <c>run</c>/<c>validate</c>.
-    /// This test guards the seam that does not: <c>--watch</c> recompiles through
-    /// <c>YamlDocumentParser.Parse</c> + <c>AstBuilder.Build</c> with no
-    /// <c>DocumentValidator.Validate</c> call in it, so on that path the parser is the only thing
-    /// between a mis-shaped selector and a silent discard.
+    /// The schema refuses the shape on every document that reaches <c>DocumentValidator</c> — since
+    /// #370 that includes <c>--watch</c>, whose compile seam used to be
+    /// <c>YamlDocumentParser.Parse</c> + <c>AstBuilder.Build</c> and nothing else, and which is what
+    /// this refusal was originally written for.
+    /// </para>
+    /// <para>
+    /// <strong>The refusal is not redundant now that the schema stands in front of every CLI
+    /// path.</strong> It runs at PARSE time, ahead of the schema on every one of those paths, so it
+    /// is what refuses the shape for any caller that parses without validating — the AST-building
+    /// seams, an embedder — and it is what gives the refusal a line and column at all. This test
+    /// drives the parser directly and is unaffected by which callers validate.
     /// </para>
     /// </remarks>
     [Theory]

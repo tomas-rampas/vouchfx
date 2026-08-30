@@ -10,15 +10,21 @@
 //     resolving a REAL reference — never by calling Scrub directly, which the T5 review measured
 //     goes green against a production path that never calls it.
 //
-//   • STRUCTURAL — the rest of WatchRunner.RunAsync stands up an Aspire topology and cannot be
-//     reached without Docker (#364: it is a second implementation of the run path with no
-//     Docker-free seam). The censuses below read WatchRunner.cs and pin the wiring that no
-//     Docker-free test can execute: that the probe's security accessor is built from the
-//     production secret-accessor factory, that ONE ledger is created for the whole session and
-//     outside the build seam, and that both the probe scope and the step path are handed THAT
-//     ledger. Every one of those is an optional argument or a lambda-local variable — dropping
-//     any of them compiles cleanly, changes no signature, and silently restores the
-//     pre-EDGE-007 behaviour.
+//   • STRUCTURAL — the censuses below read WatchRunner.cs and pin the wiring: that the probe's
+//     security accessor is built from the production secret-accessor factory, that ONE ledger is
+//     created for the whole session and OUTSIDE the build seam, and that both the probe scope and
+//     the step path are handed THAT ledger. Every one of those is an optional argument or a
+//     seam-local variable — dropping any of them compiles cleanly, changes no signature, and
+//     silently restores the pre-EDGE-007 behaviour.
+//
+//     THE REASON THEY ARE TEXTUAL IS NARROWER THAN IT WAS (#364). The seams themselves are now
+//     reachable without Docker: WatchRunner.CreateSession takes the topology STARTER as a
+//     parameter over the IKeptTopology interface, and WatchPreTopologyGateTests drives the real
+//     compile / build / run / dispose / report wiring against a double. What a Docker-free test
+//     still cannot see is what the accessor composition RESOLVES — that needs the production
+//     resolver set and real certificate material, which is the replica's job below — and the
+//     LEXICAL facts these censuses pin: which factory built the accessor, and that exactly one
+//     ledger exists and predates the seam. A run against a fake starter is green either way.
 //
 //     These censuses are ALSO the second half of the evidence for EDGE-007's behavioural
 //     requirement. Vouchfx.Engine.Runtime.Tests/WatchProbeSecurityWiringTests executes a
@@ -203,10 +209,11 @@ public sealed class WatchRunnerSecurityLedgerTests
     /// <para>
     /// Session scope is the load-bearing part. State the failure precisely, because the obvious
     /// phrasing is wrong: the build seam is per-REBUILD, not per-save —
-    /// <c>WatchSession.OnChangeAsync</c> reaches it only when the environment hash changes — so a
-    /// seam-scoped ledger would still be shared by every reusing save. What breaks is the REBUILD
-    /// save itself: the watch loop's sinks capture the ledger by value before the seam runs, so
-    /// the probe would resolve into an instance the catch receiving its failure never holds.
+    /// <c>WatchSession.OnChangeAsync</c> reaches it only when the topology fingerprint changes, and
+    /// never at all for a save a pre-topology gate refused (#370) — so a seam-scoped ledger would
+    /// still be shared by every reusing save. What breaks is the REBUILD save itself: the watch
+    /// loop's sinks capture the ledger by value before the seam runs, so the probe would resolve
+    /// into an instance the catch receiving its failure never holds.
     /// </para>
     /// <para>
     /// Every clause here is a shape that compiles when broken. Passing no ledger to the factory
@@ -233,6 +240,10 @@ public sealed class WatchRunnerSecurityLedgerTests
         // `ResolvedSecretLedger sessionSecretLedger = null!;` here and assigning it as the first
         // statement of the build seam COMPILES, leaves exactly one construction, and hands every
         // sink a null on the very save the probe resolves.
+        // The seam moved into CreateSession (#364) and the ledger is now that method's parameter,
+        // constructed by RunAsync above it — so the ordinal comparison still expresses the same
+        // property, for the same reason, and the marker is still the one string that locates the
+        // seam wherever in this file it lives.
         var buildSeam = source.IndexOf("buildTopologyAsync:", StringComparison.Ordinal);
         Assert.True(buildSeam > 0, "the build seam marker must exist in WatchRunner.cs");
         Assert.True(
@@ -385,8 +396,19 @@ public sealed class WatchRunnerSecurityLedgerTests
     /// and deleting that replica would leave these gates green while EDGE-007 lost its behavioural
     /// evidence entirely — the failure would be silent, which is the one kind this todo exists to
     /// remove. Asserted by path rather than by type because the type is not referenceable from
-    /// here; when #364 closes and the watch path gains a real seam, both halves and this guard
-    /// should go together.
+    /// here.
+    /// <para>
+    /// <strong>#364 has closed and this pair survives it, deliberately.</strong> An earlier revision
+    /// of this note predicted the opposite — "when #364 closes and the watch path gains a real seam,
+    /// both halves and this guard should go together" — and it was wrong about which gap the seam
+    /// fills. The watch path does now have a Docker-free seam, and
+    /// <c>WatchPreTopologyGateTests</c> asserts that a resolved accessor reaches the topology
+    /// starter; that is the ARGUMENT, not the RESOLUTION. What no test against a topology double can
+    /// show is that the composition opens an encrypted client key against the PRODUCTION resolver
+    /// set, because a suite declaring <c>security</c> needs real certificates on disk to get past
+    /// the artefact-existence gate at all. So the replica keeps its job and this guard keeps the two
+    /// halves tied together.
+    /// </para>
     /// </remarks>
     [Fact]
     public void TheBehaviouralHalfOfTheEvidence_StillExists()
