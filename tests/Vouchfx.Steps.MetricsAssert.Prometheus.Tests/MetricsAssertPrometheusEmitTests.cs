@@ -525,7 +525,7 @@ public sealed class MetricsAssertPrometheusEmitTests
             catch (HttpListenerException second)
             {
                 throw new AggregateException(
-                    "Could not bind an HttpListener on an OS-allocated free port, twice running.",
+                    "Could not bind an HttpListener on an OS-allocated free port after two attempts.",
                     first,
                     second);
             }
