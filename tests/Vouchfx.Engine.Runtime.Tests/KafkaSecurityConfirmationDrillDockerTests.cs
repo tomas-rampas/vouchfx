@@ -1316,13 +1316,26 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
         // The diagnostic is asserted as the WHOLE missing-required-property message, not as the
         // word `topic`. The drill's own step declares `topic: orders`, so a bare `Contains("topic")`
         // passes whether or not the sibling was ever read — near-vacuous, and it would have let a
-        // silently-dropped sibling pass as a carve-out. The scenario line beside it proves the
-        // sibling became a SCENARIO rather than an unbuilt document, which is the premise that puts
-        // this row on the carve-out's rule instead of #415's.
+        // silently-dropped sibling pass as a carve-out.
         AssertArmOutputContains("run", output, $"step '{StepId}'");
         AssertArmOutputContains("run", output, Issue410SiblingSchemaDiagnostic);
+
+        // THE EXIT CODE ALONE DOES NOT SAY WHICH 0 THIS IS, so the verdict is asserted directly.
+        // `ExitCodes.FromVerdict` returns 0 for Pass AND for a flagless Inconclusive, so a suite
+        // that somehow passed would satisfy the assertion below just as well as the one this row is
+        // about — and they are not the same claim. The carve-out's claim is precisely that an
+        // INCONCLUSIVE suite, whose declared assertion the probe confirmed, does not have its exit
+        // code escalated by the security rule. The renderer's per-scenario line carries the token
+        // (measured: `Scenario '<name>': INCONCLUSIVE`), so it costs one assertion to say so; and
+        // because the suite verdict is the Elevate fold over its scenarios, a sibling reported
+        // INCONCLUSIVE bounds the suite at Inconclusive or worse. Asserting the sibling's line
+        // rather than a bare token also keeps the earlier premise — that the sibling became a
+        // SCENARIO rather than an unbuilt document, which is what puts this row on the carve-out's
+        // rule instead of #415's.
         AssertArmOutputContains(
-            "run", output, $"schema-rejected-sibling-{SiblingShape.IdenticalEnvironment}");
+            "run",
+            output,
+            $"schema-rejected-sibling-{SiblingShape.IdenticalEnvironment}': INCONCLUSIVE");
 
         Assert.Equal(0, exitCode);
         Assert.DoesNotContain(
@@ -2372,7 +2385,7 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
     {
         var suiteDirectory = MaterialiseSuiteDirectory(
             row,
-            securedEndpoint: "9093",
+            securedEndpoint: Issue410SecuredEndpoint,
             keystoreTarget: CheckedKeystorePath,
 
             // Gate on the SECURED port. This is the one thing this fixture changes besides adding
@@ -2382,7 +2395,14 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
             // in 22 row-executions. Flake resistance is worth more here than a one-variable
             // differential, and the row's own remarks state the differential as one file plus this
             // gate port.
-            healthCheckPort: 9093);
+            //
+            // Taken from the SAME two constants the #410 fixture uses, though this is #415's row.
+            // The two fixtures are deliberately the same baseline suite — that is what makes the
+            // changelog's "same baseline" claim structurally true rather than a coincidence of two
+            // literals agreeing — so a change to either constant must reach both or neither. They
+            // are named for #410 only because that is where they were hoisted; the shared baseline
+            // is older than the name.
+            healthCheckPort: Issue410HealthCheckPort);
 
         var drillYaml = File.ReadAllText(Path.Combine(suiteDirectory, "drill.e2e.yaml"));
 

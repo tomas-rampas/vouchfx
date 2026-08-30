@@ -33,6 +33,7 @@
 // that is the matrix's job — and it does not try. It answers one question: does every return from
 // the core carry an attach at all.
 
+using System.Text;
 using System.Text.RegularExpressions;
 using Xunit;
 
@@ -46,31 +47,30 @@ namespace Vouchfx.Engine.Runtime.Tests;
 public sealed class ScenarioCoreDeclarationCensusTests
 {
     /// <summary>
-    /// A <c>return</c> of the core's result record, on any line that is not a comment.
+    /// A <c>return</c> of the core's result record. Counted UNANCHORED, over source whose comments
+    /// have already been removed.
     /// </summary>
     /// <remarks>
     /// <para>
     /// <c>ScenarioCoreResult</c> is returned by exactly one method in this file — the core — so the
-    /// whole-file count and the core-region count are the same number, and the regex needs no
+    /// whole-file count and the core-region count are the same number, and the pattern needs no
     /// region delimiters to keep in step with. If a second method ever returns one, the equality
     /// this test asserts is the property that method needs too.
     /// </para>
     /// <para>
-    /// <strong>The comment exclusion is the load-bearing part, and the anchor deliberately is
-    /// not.</strong> Both of these expressions are quoted in prose a few lines from where they are
-    /// executed — this fix's own comments do it — so a naive substring count reads those quotations
-    /// as call sites and inflates both sides until they happen to balance. Excluding <c>//</c> lines
-    /// fixes that. Requiring the expression to START the line would also have worked today, but it
-    /// would break on a legal one-line reformat of a chained initialiser, turning a formatting
-    /// change into a false failure about security.
+    /// <strong>Unanchored, and stripping the comments FIRST is what makes that safe.</strong> Two
+    /// earlier shapes were both wrong in a way that passed. A bare substring count reads the
+    /// quotations of these expressions in the surrounding prose — this fix's own comments quote both
+    /// — as call sites. Anchoring to the start of a line fixed that but bought a new blind spot: it
+    /// counts a line ONCE, so two returns formatted onto one line count as one, and it is defeated
+    /// outright by a <c>/* … */</c> block, which has no <c>//</c> to exclude. Removing comments once
+    /// and then counting occurrences has neither hole and is no more code.
     /// </para>
     /// </remarks>
-    private const string CoreReturnPattern =
-        @"^(?![ \t]*//)[^\r\n]*return new ScenarioCoreResult";
+    private const string CoreReturnPattern = @"return new ScenarioCoreResult";
 
     /// <summary>The attach, counted the same way and for the same reasons.</summary>
-    private const string AttachPattern =
-        @"^(?![ \t]*//)[^\r\n]*\.Declaring\(declaredTargets\)";
+    private const string AttachPattern = @"\.Declaring\(declaredTargets\)";
 
     /// <summary>
     /// The implicit-conversion hazard: <c>ScenarioCoreResult</c> converts from
@@ -78,8 +78,7 @@ public sealed class ScenarioCoreDeclarationCensusTests
     /// <see cref="SecurityAssurance.None"/> — an EMPTY declaration, with nothing downstream to
     /// repair it any more.
     /// </summary>
-    private const string BareTupleReturnPattern =
-        @"^(?![ \t]*//)[^\r\n]*return \([^)]*buffer[^)]*\)[ \t]*;";
+    private const string BareTupleReturnPattern = @"return \([^)]*buffer[^)]*\)[ \t]*;";
 
     /// <summary>
     /// The count of returns and the count of attaches must be equal: a door that returns without
@@ -103,10 +102,10 @@ public sealed class ScenarioCoreDeclarationCensusTests
     [Fact]
     public void EveryCoreReturn_AttachesTheCallersDeclaredTargets()
     {
-        var runner = ScenarioRunnerSource();
+        var runner = WithoutComments(ScenarioRunnerSource());
 
-        var returns = Regex.Count(runner, CoreReturnPattern, RegexOptions.Multiline);
-        var attaches = Regex.Count(runner, AttachPattern, RegexOptions.Multiline);
+        var returns = Regex.Count(runner, CoreReturnPattern);
+        var attaches = Regex.Count(runner, AttachPattern);
 
         Assert.True(
             returns > 0,
@@ -123,8 +122,15 @@ public sealed class ScenarioCoreDeclarationCensusTests
             + "`.Declaring(declaredTargets)`: since issue #409 deleted ParallelSuiteRunner's "
             + "re-attach, a door that omits it hands back an EMPTY `Declared`, and a secured "
             + "document refused at that door then reads `Unconfirmed == false` — the run reports a "
-            + "clean exit on a `security` block it never confirmed. Add the attach; do not relax "
-            + "this count.");
+            + "clean exit on a `security` block it never confirmed.\n"
+            + "\n"
+            + "BEFORE ADDING AN ATTACH TO SATISFY THIS COUNT, check which way it is off. There is "
+            + "one legitimate shape in which fewer attaches than returns is CORRECT: a shared local, "
+            + "e.g. `var refusal = SecurityAssurance.None.Declaring(declaredTargets).Refusing(...);` "
+            + "assigned into two or more returns. That is one attach covering several doors and is "
+            + "perfectly sound — duplicating `.Declaring(declaredTargets)` into each return to "
+            + "appease the arithmetic would be the wrong fix. Widen the census for that shape "
+            + "instead. Any other shortfall is a door that genuinely forgot to attach.");
     }
 
     /// <summary>
@@ -142,9 +148,9 @@ public sealed class ScenarioCoreDeclarationCensusTests
     [Fact]
     public void TheCore_NeverReturnsTheBareTupleShape()
     {
-        var runner = ScenarioRunnerSource();
+        var runner = WithoutComments(ScenarioRunnerSource());
 
-        var bareReturns = Regex.Matches(runner, BareTupleReturnPattern, RegexOptions.Multiline);
+        var bareReturns = Regex.Matches(runner, BareTupleReturnPattern);
 
         Assert.True(
             bareReturns.Count == 0,
@@ -153,6 +159,62 @@ public sealed class ScenarioCoreDeclarationCensusTests
             + "empty declaration that nothing repairs since issue #409. Return the record "
             + "explicitly with `.Declaring(declaredTargets)`. Found: "
             + string.Join(" | ", bareReturns.Select(m => m.Value.Trim())));
+    }
+
+    /// <summary>
+    /// Removes C# comments — block first, then each line's <c>//</c> tail — so the counts above can
+    /// be taken UNANCHORED without the surrounding prose voting.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Deliberately a heuristic, and the failure direction is why that is acceptable.</strong>
+    /// The line-comment scan skips a <c>//</c> that follows an odd number of <c>"</c> on the line, so
+    /// a URL inside a string literal is not mistaken for a comment; it does NOT understand escaped
+    /// quotes, verbatim strings or raw string literals. If that heuristic ever leaves a comment
+    /// standing, the comment can only ADD to one of the two counts, the equality above breaks, and
+    /// the test fails loudly with both numbers in the message. It cannot cause a silent pass — which
+    /// is the property a guard like this has to have.
+    /// </para>
+    /// <para>
+    /// <strong>What no syntactic census can see, stated so it is not mistaken for coverage:</strong>
+    /// a door extracted into a helper method. If a future refactor moves a return and its attach out
+    /// of the core into a private helper, both counts fall together, the equality still holds, and
+    /// this file says nothing about whether that helper attaches anything. The behavioural rows in
+    /// <c>SecurityAssuranceMatrixTests</c> are what cover a door wherever it physically lives.
+    /// </para>
+    /// </remarks>
+    private static string WithoutComments(string source)
+    {
+        // Block comments first: a `//` inside one must not survive to be treated as a code line's
+        // tail, and a `/* … */` spanning lines is exactly the shape a line-oriented filter misses.
+        var withoutBlocks = Regex.Replace(source, @"/\*.*?\*/", string.Empty, RegexOptions.Singleline);
+
+        var stripped = new StringBuilder(withoutBlocks.Length);
+        foreach (var line in withoutBlocks.Split('\n'))
+        {
+            stripped.Append(WithoutLineComment(line)).Append('\n');
+        }
+
+        return stripped.ToString();
+    }
+
+    /// <summary>Truncates one line at its first <c>//</c> that is not inside a string literal.</summary>
+    private static string WithoutLineComment(string line)
+    {
+        var quotes = 0;
+        for (var i = 0; i < line.Length - 1; i++)
+        {
+            if (line[i] == '"')
+            {
+                quotes++;
+            }
+            else if (quotes % 2 == 0 && line[i] == '/' && line[i + 1] == '/')
+            {
+                return line[..i];
+            }
+        }
+
+        return line;
     }
 
     /// <summary>

@@ -257,8 +257,11 @@ public enum SecurityAbortKind
 /// own. This paragraph used to say the aggregator "can fill <paramref name="Declared"/> on every
 /// path", which described a re-attach that has been DELETED — it was a second corrector for one
 /// value, and because its walk agreed with the core's by construction it hid the two doors where
-/// the core had no walk at all. A direct caller of the core (the Docker drills are exactly that)
-/// read <c>Unconfirmed == false</c> for a secured document the aggregator reported as unconfirmed.
+/// the core had no walk at all. A direct caller of the core would read <c>Unconfirmed == false</c>
+/// for a secured document the aggregator reported as unconfirmed — measured by
+/// <c>RunParallelAsyncTests.RunScenarioOwningTopologyAsync_SecuredWithAnOutOfBlockSchemaError_IsUnconfirmed</c>,
+/// NOT by the Docker drills. The drills are direct callers, which is why the divergence mattered,
+/// but every row they run reaches a post-parse door and so none of them ever observed it.
 /// <strong>Do not reintroduce the re-attach</strong>: the core is self-describing now, and every
 /// one of its returns is held to attaching by <c>ScenarioCoreDeclarationCensusTests</c>.
 /// </description>

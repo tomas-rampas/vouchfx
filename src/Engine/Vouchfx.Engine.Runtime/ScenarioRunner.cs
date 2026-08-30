@@ -519,15 +519,24 @@ public static class ScenarioRunner
     /// same-text-same-registry.</strong> An empty return is indistinguishable from "this document
     /// declares nothing", so if a parse failed for a reason the CORE will not also hit, a secured
     /// document would be handed on with an empty declaration and its refusal would stop raising —
-    /// a silent exit 0 on an unconfirmed <c>security</c> block. That cannot happen while both sides
-    /// read the SAME <paramref name="yamlText"/> through the SAME <paramref name="registry"/>: the
-    /// core runs the identical <c>YamlDocumentParser.Parse</c> + <c>AstBuilder.Build</c> pair, so
-    /// anything that throws here throws there too and the core's own parse door refuses the
-    /// document before the declaration matters. Pass a different registry — one missing a provider,
-    /// say — and that equivalence breaks in the fail-open direction, because <c>AstBuilder</c>
-    /// rejects an unknown step type. Hence the precondition, and hence the shape is kept rather than
-    /// narrowed: a targeted catch would still be silent about the case that matters, and throwing
-    /// would replace a diagnosed verdict with a stack trace.
+    /// a silent exit 0 on an unconfirmed <c>security</c> block. That cannot happen for a
+    /// DETERMINISTIC parse failure while both sides read the SAME <paramref name="yamlText"/>
+    /// through the SAME <paramref name="registry"/>: the core runs the identical
+    /// <c>YamlDocumentParser.Parse</c> + <c>AstBuilder.Build</c> pair, so anything that throws here
+    /// throws there too and the core's own parse door refuses the document before the declaration
+    /// matters.
+    /// </para>
+    /// <para>
+    /// <strong>Two ways out of that equivalence, and both are named rather than assumed away.</strong>
+    /// A DIFFERENT registry — one missing a provider — makes <c>AstBuilder</c> reject an unknown step
+    /// type here and accept it there, which is the fail-open direction; that is what the precondition
+    /// is for. And a NON-DETERMINISTIC failure — the OOM class: <c>OutOfMemoryException</c>,
+    /// <c>StackOverflowException</c>'s cousins, a transient failure under memory pressure — can throw
+    /// on this call and not on the core's, since the two parses are separate executions. Neither is
+    /// worth a code change: the first is a caller error the precondition states, and the second is a
+    /// process already in trouble, where a swallowed parse is not the defect that matters. The shape
+    /// stays as it is — a targeted catch would still be silent about exactly these cases, and
+    /// throwing would replace a diagnosed verdict with a stack trace.
     /// </para>
     /// </remarks>
     internal static IReadOnlyList<SecuredTarget> DeclaredTargetsOf(
@@ -809,10 +818,16 @@ public static class ScenarioRunner
         // above return before any AST exists. So this method returned an assurance that was right
         // at four doors and wrong at two, and ParallelSuiteRunner patched the difference afterwards
         // with a `result.Assurance.Declaring(declared)` re-attach. That repair was the second source
-        // of truth: two walks, two callers, and only one of them corrected — a direct caller (the
-        // Docker drills are exactly that) read `Unconfirmed == false` for a secured document the
-        // aggregator reported as unconfirmed. The walks agreed by construction, which is precisely
-        // why the divergence was invisible until a door that runs before the AST was reached.
+        // of truth: two walks, two callers, and only one of them corrected — a direct caller would
+        // read `Unconfirmed == false` for a secured document the aggregator reported as unconfirmed.
+        //
+        // MEASURED BY RunParallelAsyncTests
+        // .RunScenarioOwningTopologyAsync_SecuredWithAnOutOfBlockSchemaError_IsUnconfirmed, NOT by
+        // the Docker drills — the distinction matters and this comment used to blur it. The drills
+        // ARE direct callers, which is what made the divergence consequential rather than academic,
+        // but every row they run reaches a post-parse door, so not one of them ever observed it.
+        // That is the point: the walks agreed by construction, so nothing was wrong anywhere a test
+        // happened to look, and a row had to be written at a pre-parse door to see it at all.
         //
         // `declaredTargets` is now a PARAMETER, walked once by the caller that holds the AST, and
         // this method answers WHAT the document declared identically at every door it can return
@@ -1728,8 +1743,13 @@ public static class ScenarioRunner
         // under a mutation of this method. The WIRING — the outer `Worse(…,
         // rejectedDivergentAssurance)` term below, which carries that value into the suite's answer
         // — is NOT observable without a container, and that is a property of the predicate rather
-        // than a gap in the tests. MEASURED: deleting that term leaves the whole non-Docker suite
-        // green (4347/4347). The reason is structural. At every pre-topology door `Confirmed` is
+        // than a gap in the tests. MEASURED ON THE PRIOR TREE (#467, 2026-08-28, when the non-Docker
+        // suite stood at 4347): deleting that term left the whole of it green. The count is
+        // date-stamped rather than refreshed because the claim is a historical one and the tree has
+        // since moved (4370 as of 2026-08-30) — and because it no longer needs re-running: the fold
+        // row described below now pins the same term end to end, and a re-measurement of the
+        // Docker-free half would only re-confirm that it cannot see this.
+        // The reason it cannot is structural. At every pre-topology door `Confirmed` is
         // empty while `Declared` already holds the rejected scenario's own declaration (the
         // canonical walk covers every scenario), and some door has recorded a refusal — so the
         // union RAISES; `Refusing` keeps the highest-precedence kind across the whole suite, so the
