@@ -31,6 +31,7 @@ using Vouchfx.Engine.Abstractions.Security;
 using Vouchfx.Engine.Authoring.Model;
 using Vouchfx.Engine.Orchestration;
 using Vouchfx.Sdk;
+using Vouchfx.TestSupport;
 using Xunit;
 
 namespace Vouchfx.Cli.Tests;
@@ -499,33 +500,76 @@ public sealed class WatchPreTopologyGateTests : IDisposable
     }
 
     /// <summary>
-    /// T12 — <strong>#364's first defect, made assertable.</strong> The topology starter is reached
-    /// with a resolved security accessor rather than nothing.
+    /// T12 — <strong>#364's first defect, made assertable.</strong> A suite that DECLARES
+    /// <c>security</c> reaches the topology starter with an accessor that RESOLVED its declaration —
+    /// not with the null-object singleton, and not with nothing.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// The accessor was omitted from this call once, invisibly — an optional parameter left off
     /// compiles and reads correctly — and every secured suite became unrunnable under <c>--watch</c>,
     /// failing closed with messages blaming the author's certificates for a host defect.
+    /// </para>
     /// <para>
-    /// <strong>The limit, stated.</strong> This suite declares no <c>security</c> block, so what is
-    /// pinned is that an accessor ARRIVES, not that it carries loaded client material: a
-    /// security-declaring document is refused at the artefact-existence gate unless real
-    /// certificates are on disk, and the behavioural half — that the composition really loads an
-    /// encrypted client key and refuses a wrong passphrase — is
-    /// <c>Vouchfx.Engine.Runtime.Tests.WatchProbeSecurityWiringTests</c>.
+    /// <strong>The fixture is a real certificate bed, and an unsecured document would have made this
+    /// arm vacuous.</strong> Peer review measured that: the starter parameter is non-nullable, and
+    /// <c>SecurityConfigurationAccessor.Build</c> returns
+    /// <c>NullSecurityConfigurationAccessor.Instance</c> for a document declaring no <c>security</c>
+    /// — so a bare <c>Assert.NotNull</c> over an unsecured suite passes even if the <c>Build</c> call
+    /// is deleted outright. Both assertions below fail on that deletion: the singleton is rejected by
+    /// identity, and <c>For("api")</c> returns the resolved configuration only because the
+    /// declaration was really walked.
+    /// </para>
+    /// <para>
+    /// <strong>What is still not covered here.</strong> This shows the accessor RESOLVED the
+    /// declaration, not that the certificate material LOADS: the load is lazy, inside
+    /// <c>StartAsync</c>, past the Docker line. That half — an encrypted client key opening against
+    /// the production resolver set, and a wrong passphrase raising EDGE-001 rather than connecting
+    /// anonymously — is <c>Vouchfx.Engine.Runtime.Tests.WatchProbeSecurityWiringTests</c>.
     /// </para>
     /// </remarks>
     [Fact]
-    public async Task TheTopologyStarter_IsReachedWithAResolvedSecurityAccessor()
+    public async Task ASecuredSuite_ReachesTheTopologyStarterWithAResolvedSecurityAccessor()
     {
+        // Real PEMs on disk: the provider-pipeline door checks that every declared path exists and
+        // is contained by the suite directory, so the save is refused before the starter otherwise.
+        using var bed = TestCertificateAuthority.CreateSuiteDirectory();
+
         ISecurityConfigurationAccessor? captured = null;
 
         await DriveCapturingAsync(
-            ScriptOnly("""Vars.Set("k", "v");"""),
+            $$"""
+            metadata:
+              name: secured
+            environment:
+              services:
+                api:
+                  image: nginx:alpine
+                  ports: [8443]
+                  healthCheck: { type: tcp, port: 8443 }
+                  security:
+                    profile: mtls
+                    endpoint: "8443"
+                    caCert: ./{{TestCertificateAuthority.CaFileName}}
+                    clientCert: ./{{TestCertificateAuthority.ClientCertFileName}}
+                    clientKey: ./{{TestCertificateAuthority.ClientKeyFileName}}
+            steps:
+              - id: local
+                type: script.csharp
+                code: |
+                  Vars.Set("k", "v");
+            """,
             _ => { },
-            accessor => captured = accessor);
+            accessor => captured = accessor,
+            suiteDirectory: bed.SuiteDirectory);
 
         Assert.NotNull(captured);
+
+        // NOT the null object — this is the assertion the unsecured fixture could not make.
+        Assert.NotSame(NullSecurityConfigurationAccessor.Instance, captured);
+
+        // …and it really resolved THIS document's declaration.
+        Assert.NotNull(captured!.For("api"));
     }
 
     // ── Harness ───────────────────────────────────────────────────────────────
@@ -607,12 +651,18 @@ public sealed class WatchPreTopologyGateTests : IDisposable
     /// Drives ONE save with a starter that captures its arguments and then throws, so the assertion
     /// is made on the request/accessor without a run against a fabricated endpoint.
     /// </summary>
+    /// <param name="suiteDirectory">
+    /// Where the watched file is written. Defaults to this fixture's own temp root; a secured suite
+    /// passes the certificate bed's directory instead, because every declared <c>security</c> path is
+    /// resolved against — and contained by — the watched file's own directory.
+    /// </param>
     private async Task DriveCapturingAsync(
         string save,
         Action<TopologyRequest> onRequest,
-        Action<ISecurityConfigurationAccessor>? onAccessor = null)
+        Action<ISecurityConfigurationAccessor>? onAccessor = null,
+        string? suiteDirectory = null)
     {
-        var filePath = Path.Combine(_root, "captured.e2e.yaml");
+        var filePath = Path.Combine(suiteDirectory ?? _root, "captured.e2e.yaml");
         await File.WriteAllTextAsync(filePath, save);
 
         var output = new StringWriter();

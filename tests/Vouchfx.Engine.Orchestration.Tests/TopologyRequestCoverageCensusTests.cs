@@ -99,6 +99,78 @@ public sealed class TopologyRequestCoverageCensusTests
     }
 
     /// <summary>
+    /// THE ELEMENT FRAMING, isolated: two sets of the SAME cardinality whose elements CONCATENATE to
+    /// the same characters — <c>{"ab", "c"}</c> and <c>{"a", "bc"}</c> — must produce different
+    /// digest inputs.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The cardinalities are equal on purpose, and the first draft of this arm got that
+    /// wrong.</strong> It used <c>{"ab"}</c> against <c>{"a", "b"}</c>; the drill then deleted the
+    /// length framing and the arm stayed GREEN, because the two sets have different counts and the
+    /// count prefix separated them on its own. An arm that a sibling mechanism can carry measures
+    /// the sibling. Same count, same concatenation, different boundaries is the smallest input the
+    /// framing alone decides.
+    /// </para>
+    /// <para>
+    /// <strong>What this does and does not say about separators.</strong> No single pair can fail
+    /// "every separator scheme" — for any fixed pair, some separator character distinguishes it, and
+    /// for any fixed separator, some author-writable pair collides. That asymmetry is the whole
+    /// argument for framing, and it is why <c>TopologyFingerprintTests</c>' document-level collision
+    /// arm is comma-specific: it shows the reachable YAML for the separator this code actually used.
+    /// What these two census arms pin is the PROPERTY that replaces the search for a safe separator
+    /// — the encoding records where each element ends, and how many elements each set holds.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void TargetsDifferingOnlyInWhereTheElementEnds_ProduceDifferentDigestInputs()
+    {
+        var left = RequestWith(kafka: Set(), endpointConsuming: Set("ab", "c"));
+        var right = RequestWith(kafka: Set(), endpointConsuming: Set("a", "bc"));
+
+        // The premise, asserted rather than assumed: equal cardinality and equal concatenation, so
+        // neither the count prefix nor the raw characters can be what separates them below.
+        Assert.Equal(
+            left.EndpointConsumingTargets.Count, right.EndpointConsumingTargets.Count);
+        Assert.Equal(
+            string.Concat(left.EndpointConsumingTargets.OrderBy(t => t, StringComparer.Ordinal)),
+            string.Concat(right.EndpointConsumingTargets.OrderBy(t => t, StringComparer.Ordinal)));
+
+        Assert.NotEqual(
+            left.ComputeFingerprintInput("ENVHASH"), right.ComputeFingerprintInput("ENVHASH"));
+    }
+
+    /// <summary>
+    /// THE COUNT PREFIX, pinned: the same element in the Kafka set and in the endpoint-consuming set
+    /// must produce different digest inputs.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The two sets are adjacent in the digest input, so without a per-set element count their
+    /// frames form one undifferentiated run and MOVING an element from one set to the other leaves
+    /// the input byte-identical. That is not a cosmetic difference: the Kafka set decides the STAGED
+    /// FORM (a bare <c>host:port</c> authority rather than a URL) and the confirmation level, so the
+    /// two arrangements describe materially different topologies.
+    /// </para>
+    /// <para>
+    /// <strong>This property had no test until the peer review derived it</strong>, and no drill in
+    /// the earlier round covered it: deleting the count prefix left every fingerprint arm green,
+    /// because each of those arms moves an element INTO or OUT OF the union rather than BETWEEN the
+    /// two sets.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void TheSameTargetInEitherSet_ProducesDifferentDigestInputs()
+    {
+        var kafkaSpeaking = RequestWith(kafka: Set("a"), endpointConsuming: Set());
+        var endpointOnly = RequestWith(kafka: Set(), endpointConsuming: Set("a"));
+
+        Assert.NotEqual(
+            kafkaSpeaking.ComputeFingerprintInput("ENVHASH"),
+            endpointOnly.ComputeFingerprintInput("ENVHASH"));
+    }
+
+    /// <summary>
     /// Two requests carrying the SAME multi-element target sets produce the same digest input, and
     /// the elements are ordered ORDINALLY rather than in enumeration order — the property the
     /// fingerprint's sort exists to guarantee.
@@ -122,21 +194,8 @@ public sealed class TopologyRequestCoverageCensusTests
     [Fact]
     public void ForScenario_IsDeterministic_AndOrdersTargetsOrdinally()
     {
-        var forward = new TopologyRequest(
-            Environment: null,
-            AppHostAssemblyName: "host",
-            StartupTimeout: TopologyRequest.DefaultStartupTimeout,
-            SeedBaseDirectory: "/dir",
-            KafkaSpeakingTargets: new HashSet<string>(StringComparer.Ordinal) { "alpha", "beta" },
-            EndpointConsumingTargets: new HashSet<string>(StringComparer.Ordinal) { "alpha", "beta" });
-
-        var reversed = new TopologyRequest(
-            Environment: null,
-            AppHostAssemblyName: "host",
-            StartupTimeout: TopologyRequest.DefaultStartupTimeout,
-            SeedBaseDirectory: "/dir",
-            KafkaSpeakingTargets: new HashSet<string>(StringComparer.Ordinal) { "beta", "alpha" },
-            EndpointConsumingTargets: new HashSet<string>(StringComparer.Ordinal) { "beta", "alpha" });
+        var forward = RequestWith(Set("alpha", "beta"), Set("alpha", "beta"));
+        var reversed = RequestWith(Set("beta", "alpha"), Set("beta", "alpha"));
 
         var forwardInput = forward.ComputeFingerprintInput("ENVHASH");
 
@@ -160,4 +219,28 @@ public sealed class TopologyRequestCoverageCensusTests
             TopologyRequest.ForScenario(ast, "host", "/dir").ComputeFingerprintInput("ENVHASH"),
             TopologyRequest.ForScenario(ast, "host", "/dir").ComputeFingerprintInput("ENVHASH"));
     }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// A request whose only interesting members are its two target sets — every other input held
+    /// fixed, so a difference between two of these is attributable to the sets alone.
+    /// </summary>
+    /// <remarks>
+    /// Uses the PUBLIC constructor rather than a factory deliberately: these arms are about the
+    /// ENCODING, so they must be able to state target sets a single AST would never produce (an
+    /// element in the Kafka set and not in its superset, for instance).
+    /// </remarks>
+    private static TopologyRequest RequestWith(
+        IReadOnlySet<string> kafka, IReadOnlySet<string> endpointConsuming) =>
+        new(
+            Environment: null,
+            AppHostAssemblyName: "host",
+            StartupTimeout: TopologyRequest.DefaultStartupTimeout,
+            SeedBaseDirectory: "/dir",
+            KafkaSpeakingTargets: kafka,
+            EndpointConsumingTargets: endpointConsuming);
+
+    private static HashSet<string> Set(params string[] targets) =>
+        new(targets, StringComparer.Ordinal);
 }

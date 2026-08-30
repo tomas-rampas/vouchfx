@@ -186,6 +186,29 @@ public sealed record TopologyRequest(
     /// — U+001F and U+001E included — is a delimiter here. Each set is additionally prefixed with
     /// its own element count, so an element boundary can never be read as a field boundary.
     /// </para>
+    /// <para>
+    /// <strong>THE INJECTIVITY CLAIM IS ABOUT THIS STRING, AND IT SURVIVES ONLY IF THE CONSUMER
+    /// HASHES THE CODE UNITS.</strong> Framing distinguishes values whose CHARACTERS differ; it
+    /// cannot distinguish two values a lossy encoder has already collapsed onto the same
+    /// characters. <c>Encoding.UTF8.GetBytes</c> does exactly that to an unpaired surrogate — it
+    /// substitutes U+FFFD — and a target name is unconstrained author text that can carry one. So
+    /// <see cref="ScenarioRunner.ComputeTopologyFingerprint"/> hashes
+    /// <c>MemoryMarshal.AsBytes(material.AsSpan())</c>, never a transcode, and this method's claim
+    /// is stated as holding of the STRING it returns rather than of whatever a caller does to it.
+    /// </para>
+    /// <para>
+    /// <strong>Two accepted residuals, recorded rather than closed.</strong> First, this record's
+    /// generated equality is REFERENCE-based over the two set members — <see cref="IReadOnlySet{T}"/>
+    /// does not implement structural equality — so two requests describing the same topology can
+    /// compare unequal. Compare <see cref="ComputeFingerprintInput"/> (or the fingerprint derived
+    /// from it), never the record, wherever the answer matters; nothing in the engine compares
+    /// <c>TopologyRequest</c> instances today. Second, the public constructor can be called
+    /// directly with two target sets that no single AST would produce — the factories below are the
+    /// only thing that derives them together, and the call-site census counts
+    /// <c>SuiteTopology.StartAsync</c> invocations rather than factory usage, so it would not see
+    /// such a caller. Both are in-tree risks only: this assembly is not packable and ships to
+    /// nobody.
+    /// </para>
     /// </remarks>
     public string ComputeFingerprintInput(string environmentHash)
     {

@@ -24,6 +24,18 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Cli\Vouchfx.Cli\Vouchfx.Cli.csproj" />
+    <!--
+      TestCertificateAuthority, for the one arm that needs REAL certificate material: the watch-mode
+      topology starter must be reached with a RESOLVED security accessor rather than the null-object
+      singleton, and a suite declaring `security` is refused at the artefact-existence gate unless
+      the declared PEMs are on disk (#364, defect 1).
+
+      Safe to add to this deliberately-lean project: Vouchfx.TestSupport carries NO ProjectReferences
+      of its own (see its csproj), so this drags in no engine assembly and no Aspire, and nothing
+      here becomes an Aspire host. The bed writes PEMs to a temp directory and installs nothing into
+      any certificate store.
+    -->
+    <ProjectReference Include="..\Vouchfx.TestSupport\Vouchfx.TestSupport.csproj" />
   </ItemGroup>
 
   <ItemGroup Label="#260 — frozen validate/list --json wire-shape golden artifacts">

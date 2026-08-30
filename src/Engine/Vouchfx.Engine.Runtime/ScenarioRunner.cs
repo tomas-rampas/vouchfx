@@ -3731,7 +3731,22 @@ public static class ScenarioRunner
     {
         ArgumentNullException.ThrowIfNull(request);
         var material = request.ComputeFingerprintInput(ComputeEnvironmentHash(request.Environment));
-        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(material)));
+
+        // THE BYTES ARE THE STRING'S UTF-16 CODE UNITS REINTERPRETED, NEVER TRANSCODED, and that
+        // choice is what makes the length framing above worth having. MEASURED: an earlier form
+        // used Encoding.UTF8.GetBytes, which substitutes U+FFFD for a lone surrogate — so
+        // "a\uD800", "a\uD801" and the literal "a�" produce byte-identical output of
+        // identical length. Framing separates values whose CHARACTERS differ; it cannot separate
+        // values an encoder has already collapsed to the same characters, and a target name is
+        // unconstrained author text that can carry a lone surrogate. An injective encoding fed to
+        // a lossy transcoder is not injective.
+        //
+        // This is the SAME rule ComputeEnvironmentHash applies immediately above, and for a
+        // stronger reason here: that method's input has already been through JsonSerializer, which
+        // replaces an unpaired surrogate itself, so its choice buys uniformity. THIS input has not
+        // — the target sets are raw declared strings — so here the choice buys injectivity, which
+        // is exactly the argument SecuredTargets.IdentityOf makes about its own raw declared input.
+        return Convert.ToHexString(SHA256.HashData(MemoryMarshal.AsBytes(material.AsSpan())));
     }
 
     /// <summary>
