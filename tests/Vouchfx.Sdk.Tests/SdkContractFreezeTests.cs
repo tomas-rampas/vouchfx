@@ -419,6 +419,17 @@ public sealed class SdkContractFreezeTests
         // set, because neither can see a const neither looks for. Its own introduction review is
         // the only gate on that case, which is exactly why the convention is written down in this
         // file's header instead of being left to be inferred from the code.
+        //
+        // NOT ENFORCED IN REGEN MODE, and that is the whole point of the exemption. Adding a fifth
+        // helper is precisely when a maintainer runs VOUCHFX_REGEN_SDK_CONTRACT=1, and an
+        // unconditional check here would throw from inside the builder BEFORE the golden is
+        // written — leaving the signature golden rewritten by the sibling test and this one not,
+        // i.e. the half-regenerated state this file's header explicitly promises against ("one
+        // flag, because the two artifacts pin two halves of one contract"). Nothing is weakened by
+        // skipping it: in regen mode the membership change lands as an added or removed line in
+        // the golden diff, which `**/Golden/` CODEOWNERS puts in front of a reviewer anyway. The
+        // check exists to stop drift arriving UNANNOUNCED in an ordinary run, not to stop a
+        // maintainer from deliberately regenerating.
         string[] expectedHelpers =
         {
             "Vouchfx.Sdk.KafkaSecurityHelper",
@@ -427,7 +438,25 @@ public sealed class SdkContractFreezeTests
             "Vouchfx.Sdk.SubstituteHelper",
         };
 
-        Assert.Equal(expectedHelpers, helpers.Select(h => h.Name).ToArray());
+        if (!IsRegenRequested())
+        {
+            var found = helpers.Select(h => h.Name).ToArray();
+
+            Assert.True(
+                expectedHelpers.SequenceEqual(found, StringComparer.Ordinal),
+                "The set of CSX helpers discovered in Vouchfx.Sdk is not the known set. Discovery "
+                + "keys on the const NAME `Source`, so a helper that renames or drops that constant "
+                + "simply disappears from this list rather than failing loudly on its own."
+                + Environment.NewLine
+                + "  expected: " + string.Join(", ", expectedHelpers)
+                + Environment.NewLine
+                + "  found:    " + string.Join(", ", found)
+                + Environment.NewLine
+                + "If a helper was legitimately added or removed, update expectedHelpers in this "
+                + "file and regenerate both goldens with VOUCHFX_REGEN_SDK_CONTRACT=1. If it was "
+                + "not, a helper has left the `public const string Source` convention and its body "
+                + "is no longer pinned by anything.");
+        }
 
         var sb = new StringBuilder();
         sb.Append("# Vouchfx.Sdk CSX helper Source bodies — FROZEN for the v1.x engine series (#361).\n");

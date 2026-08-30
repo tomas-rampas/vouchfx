@@ -2743,6 +2743,15 @@ public static class EnvironmentMapper
         // single call site that already holds the concrete staging map, and the interface
         // buys nothing but an indirection on every lookup (CA1859). Read-only use here is
         // a convention of this method, not something the parameter type enforces.
+        //
+        // Why this concession is acceptable here while SeedApplierDispatchTests chose an
+        // immutable FrozenDictionary for the same rule: the risk classes differ. That was a
+        // SHARED STATIC field read by every test in the class, where one stray write contaminates
+        // the rest of the run in test-order-dependent ways. This is a method-local PARAMETER on a
+        // private single-call-site helper whose caller retains the reference and whose lifetime
+        // ends with the call — there is no second reader to contaminate, so the mutability the
+        // parameter type now permits has nowhere to do harm. The same reading applies to the four
+        // sibling CA1859 concessions in this change.
         Dictionary<string, EndpointReference> serviceEndpoints)
     {
         if (string.Equals(dependencyType, "mailpit", StringComparison.Ordinal))
