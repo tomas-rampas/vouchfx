@@ -429,7 +429,10 @@ public sealed class SdkContractFreezeTests
         // skipping it: in regen mode the membership change lands as an added or removed line in
         // the golden diff, which `**/Golden/` CODEOWNERS puts in front of a reviewer anyway. The
         // check exists to stop drift arriving UNANNOUNCED in an ordinary run, not to stop a
-        // maintainer from deliberately regenerating.
+        // maintainer from deliberately regenerating. The vacuity guard above stays unconditional
+        // for a SEMANTIC reason, not a mechanical one: membership legitimately moves during a
+        // regen; an empty discovery never does, and a gate that has stopped seeing helpers must
+        // not quietly write an empty golden. Do not "fix" the asymmetry by exempting it too.
         string[] expectedHelpers =
         {
             "Vouchfx.Sdk.KafkaSecurityHelper",
