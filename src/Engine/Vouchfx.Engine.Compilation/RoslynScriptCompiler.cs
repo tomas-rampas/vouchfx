@@ -332,8 +332,7 @@ public static class RoslynScriptCompiler
             //   public static Task<object> <Factory>(object[] submissionArray)
             // because CSharpScript.Create<object> is used.  At runtime,
             // Func<object?[], Task<object?>> has the same representation.
-            var factory = (Func<object?[], Task<object?>>)
-                factoryMethod.CreateDelegate(typeof(Func<object?[], Task<object?>>));
+            var factory = factoryMethod.CreateDelegate<Func<object?[], Task<object?>>>();
 
             return new LoadedScript(alc, factory);
         }
@@ -547,8 +546,7 @@ public static class RoslynScriptCompiler
                 "This indicates a Roslyn scripting API change — verify against the pinned version (4.14.0).");
 
         // Bind once; no per-call reflection overhead from here on.
-        var factory = (Func<object?[], Task<object?>>)
-            factoryMethod.CreateDelegate(typeof(Func<object?[], Task<object?>>));
+        var factory = factoryMethod.CreateDelegate<Func<object?[], Task<object?>>>();
 
         cancellationToken.ThrowIfCancellationRequested();
 

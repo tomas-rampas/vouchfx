@@ -230,9 +230,7 @@ public sealed class DbAssertMongodbEmitTests
     [Fact]
     public void CompileReferenceAssemblies_ContainsMongoDbDriverAssembly()
     {
-        var contributor = (ICompileReferenceContributor)_provider;
-
-        var assemblies = contributor.CompileReferenceAssemblies.ToList();
+        var assemblies = ((ICompileReferenceContributor)_provider).CompileReferenceAssemblies.ToList();
 
         Assert.Contains(assemblies, a =>
             a.GetName().Name?.Contains("MongoDB.Driver", StringComparison.OrdinalIgnoreCase) == true);

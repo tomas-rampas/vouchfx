@@ -1114,7 +1114,7 @@ public sealed class SecretObservationLeakPenetrationTests
 
         // Call sites only — the factory's own declaration is `CreateSecretAccessorScope(\n`,
         // whose parameter list is on the following line.
-        var argumentless = Regex.Matches(source, @"CreateSecretAccessorScope\(\s*\)").Count;
+        var argumentless = Regex.Count(source, @"CreateSecretAccessorScope\(\s*\)");
         Assert.True(
             argumentless == 0,
             $"{argumentless} call(s) to CreateSecretAccessorScope in ScenarioRunner pass no "
@@ -1124,7 +1124,7 @@ public sealed class SecretObservationLeakPenetrationTests
             + "vice versa.");
 
         // And the gate is not vacuous: the call sites really are there.
-        Assert.Equal(3, Regex.Matches(source, @"CreateSecretAccessorScope\([A-Za-z]").Count);
+        Assert.Equal(3, Regex.Count(source, @"CreateSecretAccessorScope\([A-Za-z]"));
 
         // Pin the ARGUMENT, not merely its shape. Measured: with the assertion above alone,
         // rewriting a call site as `CreateSecretAccessorScope(new ResolvedSecretLedger())`
@@ -1132,8 +1132,8 @@ public sealed class SecretObservationLeakPenetrationTests
         // gate stays green, because `new` also starts with [A-Za-z]. Every site must name the
         // run's ledger: `runSecretLedger` on the two entry points that create it, `sharedLedger`
         // on the per-scenario site that receives it as a parameter.
-        var pinned = Regex.Matches(
-            source, @"CreateSecretAccessorScope\((?:runSecretLedger|sharedLedger)\)").Count;
+        var pinned = Regex.Count(
+            source, @"CreateSecretAccessorScope\((?:runSecretLedger|sharedLedger)\)");
         Assert.True(
             pinned == 3,
             $"{pinned} of the 3 CreateSecretAccessorScope call sites in ScenarioRunner pass the "
@@ -1173,14 +1173,14 @@ public sealed class SecretObservationLeakPenetrationTests
         // call sites (the two probe paths, the suite loop's isolation failure, and the --watch
         // kept-topology reset). One call puts its argument on the FOLLOWING line, so the pattern
         // has to skip whitespace rather than assume one-line calls.
-        var mentions = Regex.Matches(source, @"EnvironmentErrorLine\(").Count;
+        var mentions = Regex.Count(source, @"EnvironmentErrorLine\(");
         Assert.Equal(5, mentions);
 
-        var declaration = Regex.Matches(source, @"EnvironmentErrorLine\(\s*ResolvedSecretLedger\b").Count;
+        var declaration = Regex.Count(source, @"EnvironmentErrorLine\(\s*ResolvedSecretLedger\b");
         Assert.Equal(1, declaration);
 
-        var pinned = Regex.Matches(
-            source, @"EnvironmentErrorLine\(\s*(?:runSecretLedger|sharedLedger)\b").Count;
+        var pinned = Regex.Count(
+            source, @"EnvironmentErrorLine\(\s*(?:runSecretLedger|sharedLedger)\b");
         Assert.True(
             pinned == 4,
             $"{pinned} of the 4 EnvironmentErrorLine call sites in ScenarioRunner name a real "
@@ -1189,8 +1189,8 @@ public sealed class SecretObservationLeakPenetrationTests
             + "REQ-010/EDGE-007 scrub silently absent at the one sink that carries topology-probe "
             + "text onto the §14 event stream.");
 
-        var nulls = Regex.Matches(
-            source, @"EnvironmentErrorLine\(\s*(?:sharedLedger\s*:\s*)?null\b").Count;
+        var nulls = Regex.Count(
+            source, @"EnvironmentErrorLine\(\s*(?:sharedLedger\s*:\s*)?null\b");
         Assert.Equal(0, nulls);
     }
 

@@ -307,7 +307,7 @@ public sealed class HtmlRendererWcagTests
     public void Structure_HasExactlyOneH1()
     {
         var output = RenderFourVerdicts();
-        var count = Regex.Matches(output, "<h1", RegexOptions.IgnoreCase).Count;
+        var count = Regex.Count(output, "<h1", RegexOptions.IgnoreCase);
         Assert.Equal(1, count);
     }
 
@@ -459,9 +459,9 @@ public sealed class HtmlRendererWcagTests
     /// Asserts no heading is more than one level deeper than its predecessor (going
     /// shallower by any amount is fine; the first heading has no predecessor).
     /// </summary>
-    private static void AssertNoDeeperJumpThanOne(IReadOnlyList<int> levels)
+    private static void AssertNoDeeperJumpThanOne(int[] levels)
     {
-        for (var i = 1; i < levels.Count; i++)
+        for (var i = 1; i < levels.Length; i++)
         {
             Assert.True(
                 levels[i] <= levels[i - 1] + 1,

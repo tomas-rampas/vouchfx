@@ -137,12 +137,12 @@ public sealed class HttpsClientCertificateTests
     /// returns the <c>Vars</c> the emitted script mutated.
     /// </summary>
     private static async Task<Dictionary<string, object?>> RunStepsAsync(
-        IReadOnlyList<(string StepId, HttpRestModel Model)> steps,
+        (string StepId, HttpRestModel Model)[] steps,
         string baseUrl,
         ISecurityConfigurationAccessor security)
     {
         var provider = new HttpRestProvider();
-        var plans = new List<(string, CsxFragment)>(steps.Count);
+        var plans = new List<(string, CsxFragment)>(steps.Length);
         foreach (var (stepId, model) in steps)
         {
             plans.Add((stepId, provider.Emit(model, new StubCompileContext(stepId))));

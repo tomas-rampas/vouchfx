@@ -270,9 +270,7 @@ public sealed class MqExpectNatsEmitTests
     [Fact]
     public void CompileReferenceAssemblies_ContainsNatsAndJsonPathAssemblies()
     {
-        var contributor = (ICompileReferenceContributor)_provider;
-
-        var assemblies = contributor.CompileReferenceAssemblies.ToList();
+        var assemblies = ((ICompileReferenceContributor)_provider).CompileReferenceAssemblies.ToList();
 
         Assert.Contains(assemblies, a =>
             a.GetName().Name?.Contains("NATS", StringComparison.OrdinalIgnoreCase) == true);

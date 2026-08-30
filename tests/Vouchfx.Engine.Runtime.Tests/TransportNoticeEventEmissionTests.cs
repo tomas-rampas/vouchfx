@@ -674,10 +674,10 @@ public sealed class TransportNoticeEventEmissionTests
         // suggestion severity and .editorconfig promotes only IDE0055. So: every line this file
         // produces is added to an event buffer, and every live post has a buffered sibling (the
         // buffer is the wider destination — the watch site buffers with no pump at all).
-        var produced = Regex.Matches(runner, @"TransportNoticeEvents\.ToLines\(").Count;
-        var buffered = Regex.Matches(
-            runner, @"AddRange\((?:transportNoticeLines\)|TransportNoticeEvents\.ToLines\()").Count;
-        var posted = Regex.Matches(runner, @"PostRange\(transportNoticeLines\)").Count;
+        var produced = Regex.Count(runner, @"TransportNoticeEvents\.ToLines\(");
+        var buffered = Regex.Count(
+            runner, @"AddRange\((?:transportNoticeLines\)|TransportNoticeEvents\.ToLines\()");
+        var posted = Regex.Count(runner, @"PostRange\(transportNoticeLines\)");
 
         Assert.True(
             produced > 0 && buffered == produced,

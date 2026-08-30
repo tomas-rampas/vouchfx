@@ -65,12 +65,12 @@ public sealed class MqExpectAzureServiceBusEmitTests
         _additionalRefs = BuildAdditionalRefs(_provider);
     }
 
-    private static string[] BuildAdditionalRefs(ICompileReferenceContributor provider)
+    private static string[] BuildAdditionalRefs(MqExpectAzureServiceBusProvider provider)
     {
         // Provider-specific assemblies (e.g. Azure.Messaging.ServiceBus, Azure.Core)
         // sourced directly from the provider so the test is coupled to the provider's
         // actual declaration.
-        var providerRefs = provider.CompileReferenceAssemblies
+        var providerRefs = ((ICompileReferenceContributor)provider).CompileReferenceAssemblies
             .Select(a => a.Location)
             .Where(p => !string.IsNullOrEmpty(p));
 
@@ -208,8 +208,7 @@ public sealed class MqExpectAzureServiceBusEmitTests
     [Fact]
     public void CompileReferenceAssemblies_ContainsServiceBusAndAzureCore()
     {
-        var contributor = (ICompileReferenceContributor)_provider;
-        var names = contributor.CompileReferenceAssemblies
+        var names = ((ICompileReferenceContributor)_provider).CompileReferenceAssemblies
             .Select(a => a.GetName().Name)
             .ToList();
 

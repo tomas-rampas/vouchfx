@@ -156,9 +156,7 @@ public sealed class CacheAssertRedisEmitTests
     [Fact]
     public void CompileReferenceAssemblies_ContainsRedisAssembly()
     {
-        var contributor = (ICompileReferenceContributor)_provider;
-
-        Assert.Contains(contributor.CompileReferenceAssemblies.ToList(), a =>
+        Assert.Contains(((ICompileReferenceContributor)_provider).CompileReferenceAssemblies.ToList(), a =>
             a.GetName().Name?.Contains("StackExchange.Redis", StringComparison.OrdinalIgnoreCase) == true);
     }
 

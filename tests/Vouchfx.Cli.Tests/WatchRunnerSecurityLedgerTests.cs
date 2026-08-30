@@ -182,7 +182,7 @@ public sealed class WatchRunnerSecurityLedgerTests
     {
         var source = WatchRunnerSource();
 
-        int buildCallSites = Regex.Matches(source, @"SecurityConfigurationAccessor\.Build\(").Count;
+        int buildCallSites = Regex.Count(source, @"SecurityConfigurationAccessor\.Build\(");
         Assert.Equal(1, buildCallSites);
 
         Assert.True(
@@ -246,11 +246,11 @@ public sealed class WatchRunnerSecurityLedgerTests
         // The probe scope records into it: no argument-less factory call survives, and the one
         // call names the session ledger rather than any other expression. Whitespace-tolerant —
         // the call site is near the line-length limit and a reflow must not redden a correct tree.
-        int argumentless = Regex.Matches(source, @"CreateSecretAccessorScope\(\s*\)").Count;
+        int argumentless = Regex.Count(source, @"CreateSecretAccessorScope\(\s*\)");
         Assert.Equal(0, argumentless);
 
         int sessionScoped =
-            Regex.Matches(source, @"CreateSecretAccessorScope\(\s*sessionSecretLedger\s*\)").Count;
+            Regex.Count(source, @"CreateSecretAccessorScope\(\s*sessionSecretLedger\s*\)");
         Assert.Equal(1, sessionScoped);
 
         // And the step path is handed the SAME instance through the run seam.
@@ -311,7 +311,7 @@ public sealed class WatchRunnerSecurityLedgerTests
         // Second net, independent of the extractor: this class writes through the writer it was
         // handed, never the ambient console. A Console call here would also escape the CLI's
         // --json/--events redirection, not merely this gate.
-        int consoleUses = Regex.Matches(source, @"\bConsole\s*\.").Count;
+        int consoleUses = Regex.Count(source, @"\bConsole\s*\.");
         Assert.Equal(0, consoleUses);
 
         var scrubbed = new List<string>();
@@ -369,7 +369,7 @@ public sealed class WatchRunnerSecurityLedgerTests
 
         // And the helper is used ONLY by those writes — no other caller composes it differently.
         // Call sites only; the declaration is excluded by its parameter list's leading type.
-        var helperCallSites = Regex.Matches(source, @"ScrubThenSanitise\((?!string\b)").Count;
+        var helperCallSites = Regex.Count(source, @"ScrubThenSanitise\((?!string\b)");
         Assert.Equal(4, helperCallSites);
     }
 

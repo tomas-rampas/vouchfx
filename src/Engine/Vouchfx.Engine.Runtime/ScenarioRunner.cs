@@ -2565,7 +2565,10 @@ public static class ScenarioRunner
     /// unchanged: per-scenario messages that merely happen to coincide are still each printed.
     /// </param>
     private static async Task<SuiteResult> CompleteWithoutTopologyAsync(
-        IReadOnlyList<(
+        // Concrete List, not IReadOnlyList (CA1859): every call site already holds the
+        // concrete list — either `compilations` itself or StampWhereUnjudged's List return
+        // — so the interface buys nothing but an indirection on Count/indexer.
+        List<(
             string ScenarioName,
             ScenarioAst Ast,
             PipelineResult? Pipeline,
@@ -2835,7 +2838,8 @@ public static class ScenarioRunner
         Verdict? EarlyVerdict,
         string? EarlyMessage,
         string? ScenarioBaseDirectory)> StampWhereUnjudged(
-        IReadOnlyList<(
+        // Concrete List, not IReadOnlyList (CA1859) — see CompleteWithoutTopologyAsync.
+        List<(
             string ScenarioName,
             ScenarioAst Ast,
             PipelineResult? Pipeline,
@@ -2920,7 +2924,8 @@ public static class ScenarioRunner
     /// </remarks>
     private static bool TryFindSecurityBaseDirectoryDivergence(
         EnvironmentSpec? environment,
-        IReadOnlyList<(
+        // Concrete List, not IReadOnlyList (CA1859) — see CompleteWithoutTopologyAsync.
+        List<(
             string ScenarioName,
             ScenarioAst Ast,
             PipelineResult? Pipeline,

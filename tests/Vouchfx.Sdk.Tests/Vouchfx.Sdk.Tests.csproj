@@ -22,6 +22,15 @@
     <Content Include="Golden\vouchfx-sdk-public-api.v1.txt">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+    <!--
+      #361: the companion golden pinning each CSX helper's `public const string Source` BODY by
+      SHA-256.  The signature golden above records only `field const System.String Source`, which
+      is byte-identical whatever text the const holds — yet the body IS contract, because a const
+      inlines into every consuming provider and CsxAssembler dedupes helpers by exact text.
+    -->
+    <Content Include="Golden\vouchfx-sdk-helper-sources.v1.txt">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
 
   <ItemGroup>

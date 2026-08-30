@@ -2739,7 +2739,11 @@ public static class EnvironmentMapper
         string name,
         string dependencyType,
         IResourceBuilder<IResource> retained,
-        IReadOnlyDictionary<string, EndpointReference> serviceEndpoints)
+        // Concrete Dictionary, not IReadOnlyDictionary: this is a private helper with a
+        // single call site that already holds the concrete staging map, and the interface
+        // buys nothing but an indirection on every lookup (CA1859). Read-only use here is
+        // a convention of this method, not something the parameter type enforces.
+        Dictionary<string, EndpointReference> serviceEndpoints)
     {
         if (string.Equals(dependencyType, "mailpit", StringComparison.Ordinal))
         {
