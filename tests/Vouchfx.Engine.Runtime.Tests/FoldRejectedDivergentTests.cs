@@ -171,8 +171,8 @@ public sealed class FoldRejectedDivergentTests
     }
 
     /// <summary>
-    /// No schema-valid scenario at all: there is no baseline and no topology, so the fold
-    /// contributes nothing and the canonical union does the raising.
+    /// No baseline index (<c>baselineIndex = -1</c>): treat the suite as having no schema-valid baseline, so the
+    /// fold contributes nothing and the canonical union does the raising.
     /// </summary>
     [Fact]
     public void FoldRejectedDivergent_NoBaseline_ContributesNothing()
