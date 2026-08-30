@@ -689,7 +689,7 @@ public sealed class HttpSoapEmitTests
 
     /// <summary>
     /// Binds an <see cref="HttpListener"/> to a loopback port the OS reports as free, returning
-    /// the started listener and the prefix it is bound to.
+    /// the bound prefix and the started listener.
     /// </summary>
     /// <remarks>
     /// <see cref="FindFreePort"/> releases the probed port before <see cref="HttpListener"/>
