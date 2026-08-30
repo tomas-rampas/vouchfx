@@ -331,7 +331,9 @@ public static class SecuredTargets
     /// directories declaring a byte-identical <c>security</c> block share one identity while
     /// potentially naming different files on disk. Identities derived under different suite
     /// directories must therefore not be compared. Today that is not a hazard — the shared-topology
-    /// accessor roots every scenario at <c>compilations[0].ScenarioBaseDirectory</c>, so every
+    /// accessor roots every scenario at the base directory of the scenario the topology is built
+    /// from (<c>compilations[topologyIndex].ScenarioBaseDirectory</c>: the first schema-VALID one,
+    /// which is index 0 unless a rejected document sits ahead of it — issue #451), so every
     /// scenario in a run resolves against one directory regardless of where its document lives —
     /// but any future caller that widens the comparison across directories must revisit this.
     /// </para>
@@ -356,14 +358,41 @@ public static class SecuredTargets
     /// <c>HttpEndpointName</c> is the fixed string <c>"http"</c> and <c>PlaintextEndpoints</c> maps
     /// it to whatever <c>ServiceSpec.HttpPort</c> happens to be.
     /// It is nonetheless strictly stronger than the target-NAME matching it replaced,
-    /// and it is not reachable today: both sides of every comparison the engine makes are derived
-    /// from ONE <c>environment</c> block — the shared-<c>environment</c> divergence guard forces a
-    /// sequential suite's scenarios byte-identical, a parallel slot compares one scenario's
-    /// declaration against its own topology's confirmations, and an unbuilt document, which bypasses
-    /// that guard, carries an EMPTY <c>Confirmed</c>, so nothing of its is ever matched. Any future
-    /// caller that compares identities derived from two environments the guard did not hold together
-    /// must revisit this: the fix is to hash the RESOLVED port beside the selector, which needs the
-    /// whole <c>ServiceSpec</c> rather than the <c>SecuritySpec</c> this walk yields.
+    /// and it is not reachable today — but the reason it is not is a RUNNER invariant, not a
+    /// property of this digest, and issue #451 came within one line of removing it.
+    /// </para>
+    /// <para>
+    /// <strong>The three ways every comparison the engine makes derives both sides from ONE
+    /// <c>environment</c> block.</strong> A parallel slot compares one scenario's declaration
+    /// against its own topology's confirmations. An unbuilt document carries an EMPTY
+    /// <c>Confirmed</c>, so nothing of its is ever matched. And on the sequential path the
+    /// shared-<c>environment</c> divergence guard forces the suite byte-identical.
+    /// </para>
+    /// <para>
+    /// <strong>#451 narrowed that third one to the SCHEMA-VALID scenarios, and this is the field
+    /// that would have paid for it.</strong> That change moved the guard below per-scenario schema
+    /// validation so an authoring typo reports as an authoring fault rather than as a suite-level
+    /// infrastructure one; a scenario the schema rejected is skipped by the guard while still
+    /// contributing its declaration to the canonical walk. Because this digest hashes the
+    /// <c>endpoint:</c> selector's TEXT and never its resolution — the paragraph above — a rejected
+    /// scenario declaring a byte-identical <c>security: { profile: mtls, endpoint: http, … }</c> on
+    /// a service whose <c>httpPort:</c> differs from the baseline's shares the baseline's identity
+    /// exactly. A running sibling's probe confirmation would then have satisfied a declaration the
+    /// probe never tested: mutual TLS asserted on a port nothing confirmed, exiting 0 where the
+    /// suite previously exited 3.
+    /// </para>
+    /// <para>
+    /// <strong>It is closed in the RUNNER rather than here, and deliberately so.</strong>
+    /// <c>ScenarioRunner.RunSuiteAsync</c> folds a schema-rejected scenario's assurance WHOLE — its
+    /// own declaration beside its own refusal, <c>Confirmed</c> empty — whenever its serialised
+    /// environment differs from the baseline's, exactly as an unbuilt document is folded and for
+    /// exactly the same reason: nothing held that environment against the one that started. Where
+    /// the two environments ARE equal the scenario stays in the shared union and a confirmation may
+    /// satisfy it, which is what preserves #451's improvement for the ordinary typo. Hashing the
+    /// RESOLVED port here would close it at this tier instead, and needs the whole
+    /// <c>ServiceSpec</c> rather than the <c>SecuritySpec</c> this walk yields — that remains the
+    /// fix for any FUTURE caller that compares identities derived from two environments no guard
+    /// held together, and such a caller must not assume the runner's gate covers it.
     /// </para>
     /// <para>
     /// <strong>Third scope limit: <see cref="SecuritySpec.Extra"/> is NOT an input.</strong> That
@@ -371,7 +400,23 @@ public static class SecuredTargets
     /// declarations differing ONLY there share one identity. Not reachable today for a document the
     /// engine accepts: <c>$defs/security</c> closes with <c>"unevaluatedProperties": false</c> and
     /// no profile fragment contributing a field has shipped, so on every schema-valid document the
-    /// bucket is <see langword="null"/> and contributes nothing to distinguish. It is left out
+    /// bucket is <see langword="null"/> and contributes nothing to distinguish.
+    /// <strong>A rejected document can carry a non-null bucket, and that is NOT a way round this
+    /// exclusion — a claim an earlier revision of this remark made and which is false.</strong> An
+    /// unknown <c>security</c> key is what puts content in the bucket, and it does so by being a
+    /// schema error located AT the <c>security</c> node: <c>$defs/security</c> closes with
+    /// <c>unevaluatedProperties: false</c> over exactly the keys the parser binds, so a populated
+    /// bucket IMPLIES such an error. The schema door therefore records
+    /// <c>SecurityAbortKind.SecurityDeclarationRejected</c>, which is a STANDALONE disjunct of
+    /// <c>SecurityAssurance.Unconfirmed</c> — no sibling's confirmation can satisfy it, whatever
+    /// this digest says about the identities. Measured, both halves:
+    /// <c>RunSuiteAsyncTests.RunSuiteAsync_OneScenarioEnvironmentTypo_…</c> asserts the recorded
+    /// kind, and
+    /// <c>SecurityConfirmationExitCodeTests.Unconfirmed_WhenTheConfirmationCoversTheDeclaration_…</c>
+    /// asserts the disjunct against a confirmation that DOES cover the declaration. The bucket's
+    /// exclusion is therefore exactly as unreachable as it was before #451; the shape that change
+    /// did make reachable is the <c>httpPort</c> one in the paragraph above, which reaches this
+    /// digest through a TYPED field's resolution rather than through the bucket. It is left out
     /// rather than hashed because its content is unconstrained author text with no
     /// <c>SecretReference</c> gate over it — the same §17 argument that keeps a bare literal
     /// passphrase out of this hash, below. Whoever ships the first profile fragment must revisit

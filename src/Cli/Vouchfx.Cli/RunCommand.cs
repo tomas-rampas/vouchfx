@@ -590,6 +590,188 @@ internal static class RunCommand
     };
 
     /// <summary>
+    /// The taxonomy backstop for a <c>run</c> invocation (issue #413): delegates the whole of the
+    /// run to <see cref="ExecuteCoreAsync"/> and maps any exception that would otherwise escape
+    /// the run onto <see cref="ExitCodes.Inconclusive"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>What the absence of this catch actually did was exit 1 — TestFailure — and that is
+    /// worse than the "non-taxonomy crash code" an earlier draft of this remark claimed.</strong>
+    /// <c>Program.cs</c> invokes through a bare <see cref="InvocationConfiguration"/>, whose
+    /// <c>EnableDefaultExceptionHandler</c> defaults to <see langword="true"/> on the pinned
+    /// System.CommandLine 2.0.0 GA, so an exception escaping the action is caught by the framework,
+    /// printed, and turned into exit code <strong>1</strong>. The exit code was therefore inside the
+    /// taxonomy and telling CI the wrong thing: that the SUITE observed a product defect. Measured,
+    /// not reasoned about, by
+    /// <c>SystemCommandLineExitCodeTests.EscapingException_UnderTheDefaultHandler_ExitsOne</c>,
+    /// which drives the pinned framework directly. Issue #413 was raised on one such route (a
+    /// provider whose <c>Bind</c> threw out of <c>ProviderPipeline.Compile</c>); that route is
+    /// closed at its own throw site, and this frame exists because the NEXT one has not been found.
+    /// </para>
+    /// <para>
+    /// <strong>What this frame covers is the <c>run</c> PATH's escapes, and that is narrower than
+    /// "every unexpected engine throw now lands inside the taxonomy".</strong> An exception raised
+    /// inside a <c>--parallel</c> SLOT does not reach here at all:
+    /// <c>ParallelSuiteRunner</c>'s per-slot catch-all absorbs it first and classifies it
+    /// <see cref="Verdict.EnvironmentError"/>, which exits 0 when nothing executed. That
+    /// classification is correct for a genuine infrastructure fault and wrong for an engine defect,
+    /// and the frame that makes it cannot tell them apart — tracked as issue #466, not fixed here.
+    /// So the accurate claim is: escapes on the run path land on
+    /// <see cref="ExitCodes.Inconclusive"/>, and a throwing provider <c>Bind</c> does so on BOTH
+    /// paths because it is converted to a verdict before either catch sees it.
+    /// </para>
+    /// <para>
+    /// <strong>Inconclusive (4), not TestFailure (1), and not EnvironmentError (3).</strong> An
+    /// unexpected throw is not a product defect the suite observed, which is exactly what the
+    /// framework's 1 asserted. Nor is it infrastructure: <see cref="Verdict.EnvironmentError"/>
+    /// exits 0 by default for a run that executed nothing (#390), which would report a green build
+    /// over an engine crash. What actually happened is that the engine could not reach a verdict,
+    /// which is §12.1's Inconclusive, and it is the same code <c>ShutdownBackstop</c> chooses for
+    /// the same event.
+    /// </para>
+    /// <para>
+    /// <strong>It cannot override a code the run already chose.</strong> Every deliberate exit —
+    /// the usage errors, the discovery catch, <see cref="ComputeExitCode"/>'s own answer — is a
+    /// RETURN from <see cref="ExecuteCoreAsync"/> and never reaches this catch. Only a throw does.
+    /// </para>
+    /// <para>
+    /// <strong>"The run", not "the process".</strong> This frame covers
+    /// <see cref="ExecuteCoreAsync"/> and everything below it, which is the whole of a <c>run</c>
+    /// invocation's work — but not the option/argument binding the parse action performs before
+    /// calling it, and not <c>Program.cs</c>'s own parse and exit-code resolution around it. A
+    /// throw from either of those still reaches System.CommandLine's default handler and its exit
+    /// 1. Widening the backstop to cover them would mean catching in <c>Program.cs</c>, where a
+    /// <c>validate</c> or <c>list</c> invocation would be caught by the same frame and mapped to a
+    /// code from <c>run</c>'s taxonomy; that is a different change with a different scope.
+    /// </para>
+    /// <para>
+    /// <strong>Cancellation is filtered, not blanket-re-thrown, and the filter is the whole of the
+    /// correctness here.</strong> <see cref="TaskCanceledException"/> derives from
+    /// <see cref="OperationCanceledException"/> and is what a TIMEOUT raises — an
+    /// <c>HttpClient</c> hitting its 100-second default, a <c>CancelAfter</c> budget expiring. An
+    /// unfiltered <c>catch (OperationCanceledException) { throw; }</c> therefore sent every such
+    /// timeout back out to the framework's default handler and the exit-1 measured above: a
+    /// transport hiccup reported as a product defect, from the frame written to prevent precisely
+    /// that. The filter is <c>cancellationToken.IsCancellationRequested</c> — the token
+    /// System.CommandLine cancels on Ctrl-C / SIGTERM — so only a genuine USER cancellation is
+    /// re-thrown and keeps the path it has today; a timeout, or any other cancellation nobody
+    /// asked for, is mapped like every other unexpected fault.
+    /// </para>
+    /// <para>
+    /// <strong>The stdin-EOF path maps to 4 rather than re-throwing, and reading the LINKED source
+    /// here would break that.</strong> <c>--shutdown-on-stdin-eof</c> cancels a linked source
+    /// created inside <see cref="ExecuteCoreAsync"/> and never touches this method's parameter, so
+    /// the filter above is <see langword="false"/> for an EOF-driven stop and the run maps to
+    /// <see cref="ExitCodes.Inconclusive"/> — the SAME code <c>ShutdownBackstop</c> force-exits
+    /// with for the same event. Hoisting the linked source so this frame could consult it would
+    /// make EOF re-throw into the framework's 1 and split them; the parameter is the right token
+    /// precisely BECAUSE it is not the one EOF cancels.
+    /// <strong>The agreement claimed is for a cancellation that ESCAPES the run</strong>, and only
+    /// that. Where the EOF cancellation is instead ABSORBED lower down — a runner that observes the
+    /// token, unwinds, and hands back an ordinary <see cref="SuiteResult"/> — no exception reaches
+    /// this frame and the exit code is whatever <see cref="ComputeExitCode"/> derives, which for a
+    /// suite that executed something can be 0. That is pre-existing and out of scope here.
+    /// </para>
+    /// <para>
+    /// <strong>No report artefacts are synthesised here, and that is a stated residual rather than
+    /// an oversight.</strong> The artefacts are written by the runners, from the event buffer they
+    /// own; this frame has no buffer, no run id and no scenario list, and a synthetic empty report
+    /// written over a partially-written real one would be worse than none. The routes that CAN
+    /// produce artefacts must therefore keep converting their faults into verdicts BEFORE they
+    /// reach here — which is exactly what the <c>Bind</c> guard does for #413's own route.
+    /// </para>
+    /// </remarks>
+    internal static async Task<int> ExecuteAsync(
+        string path,
+        SelectionCriteria criteria,
+        int? parallel,
+        bool watch,
+        bool failOnEnvironmentError,
+        bool failOnInconclusive,
+        string? htmlReportPath,
+        string? junitReportPath,
+        string? eventsReportPath,
+        string? eventsStreamPath,
+        bool decorate,
+        TextWriter output,
+        TelemetryRunHook? telemetryHook,
+        CancellationToken cancellationToken,
+        bool shutdownOnStdinEof = false)
+    {
+        ArgumentNullException.ThrowIfNull(output);
+
+        try
+        {
+            return await ExecuteCoreAsync(
+                path,
+                criteria,
+                parallel,
+                watch,
+                failOnEnvironmentError,
+                failOnInconclusive,
+                htmlReportPath,
+                junitReportPath,
+                eventsReportPath,
+                eventsStreamPath,
+                decorate,
+                output,
+                telemetryHook,
+                cancellationToken,
+                shutdownOnStdinEof).ConfigureAwait(false);
+        }
+        // A GENUINE USER CANCELLATION, AND NOTHING ELSE, KEEPS THE PATH IT HAS. The filter is
+        // load-bearing: TaskCanceledException IS an OperationCanceledException and is what a
+        // timeout raises, so an unfiltered rethrow here sent every timeout to System.CommandLine's
+        // default handler and its exit 1 — a transport hiccup reported as a product Fail. See this
+        // method's own remarks for the measurement and for why the token consulted is the
+        // PARAMETER rather than the stdin-EOF path's linked source.
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            // THE DIAGNOSTIC IS BEST-EFFORT; THE EXIT CODE IS NOT. `output` is a caller-supplied
+            // sink and is itself a candidate for the fault that got here (a full disk, a closed
+            // pipe, a redirected stream the host tore down). Letting the report of the failure fail
+            // the process would hand back the framework's exit 1 — the exact answer this catch
+            // exists to replace — so the write is guarded and the code is returned either way.
+            try
+            {
+                // Issue #266, Item 4: an engine exception's message can carry author-supplied YAML
+                // spliced in by whatever composed it, so the whole composed line is sanitised
+                // before it reaches the terminal / CI log — the same treatment every other
+                // author-influenced diagnostic on this path gets.
+                await output.WriteLineAsync(
+                    DisplaySanitiser.SanitiseForDisplay(
+                        $"vouchfx run: the engine failed unexpectedly and could not reach a verdict "
+                        + $"({ex.GetType().FullName}: {ex.Message}).  This is an engine or provider "
+                        + "defect, not a suite failure — please report it with the suite that "
+                        + "triggered it.  Reported as Inconclusive (§12.1)."))
+                    .ConfigureAwait(false);
+            }
+            catch (Exception writeFailure) when (
+                writeFailure is not OperationCanceledException
+                || !cancellationToken.IsCancellationRequested)
+            {
+                // Nothing left to report it to. Swallowed deliberately.
+                //
+                // THE FILTER IS THE SAME ONE THE OUTER CATCH USES, AND FOR THE SAME REASON — it was
+                // written here as the narrower `is not OperationCanceledException`, which had the
+                // defect one level down: a sink whose write TIMES OUT raises TaskCanceledException,
+                // an OperationCanceledException, so the diagnostic's own failure escaped this frame
+                // and took the run to System.CommandLine's exit 1 — with the taxonomy code already
+                // computed and one `return` away. Caught by this file's own timeout row, which
+                // drives a sink that throws on EVERY write including this one. Only a cancellation
+                // the USER actually requested is left to propagate, matching the outer catch.
+            }
+
+            return ExitCodes.Inconclusive;
+        }
+    }
+
+    /// <summary>
     /// The Docker-free orchestration of a <c>run</c> invocation: discovers scenarios, runs
     /// the parsed ones, folds parse-failures in as Inconclusive, and returns the exit code.
     /// </summary>
@@ -710,7 +892,7 @@ internal static class RunCommand
     /// <see cref="StdinShutdownWatcher"/> in isolation) is ALSO Docker-free and IS covered
     /// directly.
     /// </remarks>
-    internal static async Task<int> ExecuteAsync(
+    private static async Task<int> ExecuteCoreAsync(
         string path,
         SelectionCriteria criteria,
         int? parallel,
@@ -934,12 +1116,17 @@ internal static class RunCommand
         // built on this path and a `security` block in an unbuildable file contributes nothing to
         // a watch session. That is a documented divergence rather than a hole in the guarantee —
         // watch never calls `ExitCodes.FromVerdict`, so no verdict of any kind becomes an exit code
-        // here and REQ-018 has nothing to say about it. (`WatchRunner.RunAsync` DOES return a
-        // process exit code — `ExitCodes.UsageError` or `ExitCodes.Success` — and it is this
-        // method's return value; what it never does is derive one from a verdict. Saying watch
-        // "derives no exit code at all" would be false, and the false form is what let the
-        // selection change above regress a filtered watch to exit 2 unnoticed.) Issue #412 already
-        // tracks the watch path's divergence from `run`.
+        // here and REQ-018 has nothing to say about it. (`WatchRunner.RunAsync` RETURNS
+        // `ExitCodes.UsageError` or `ExitCodes.Success` and it is this method's return value; what
+        // it never does is derive one from a verdict. Saying watch "derives no exit code at all"
+        // would be false, and the false form is what let the selection change above regress a
+        // filtered watch to exit 2 unnoticed — so the enumeration is kept accurate rather than
+        // dropped. Since issue #413 those two are no longer the whole set of codes a watch
+        // INVOCATION can produce: a throw escaping `WatchRunner.RunAsync` — which
+        // `ProcessChangeGuardedAsync` catches per change, but which the surrounding session
+        // plumbing does not cover in full — reaches this method's own backstop and becomes
+        // `ExitCodes.Inconclusive`. That is still not a verdict-derived code, which is the claim
+        // this paragraph makes.) Issue #412 already tracks the watch path's divergence from `run`.
         if (watch)
         {
             return await WatchRunner.RunAsync(discovered, registry, output, runCancellationToken)
@@ -1012,13 +1199,21 @@ internal static class RunCommand
                 .Select(p => Path.GetDirectoryName(p.AbsolutePath))
                 .ToList();
 
-            // The suite-wide SEED base directory stays rooted at the FIRST scenario's own
-            // directory (unchanged), matching WatchRunner's Path.GetDirectoryName(filePath)
-            // convention. All scenarios in a sequential suite already share one `environment`
-            // block (validated below in ScenarioRunner), and ScenarioRunner.RunSuiteAsync
-            // builds exactly ONE shared topology from scenarios[0].Environment and applies its
-            // ONE seed ONCE against ONE base directory — environment.seed is genuinely
-            // single-rooted there, unlike a step's own file: reference above. The parallel path
+            // The suite-wide SEED base directory stays rooted at the FIRST DISCOVERED scenario's
+            // own directory (unchanged), matching WatchRunner's Path.GetDirectoryName(filePath)
+            // convention. All scenarios in a sequential suite that pass schema validation share one
+            // `environment` block (enforced below in ScenarioRunner), and
+            // ScenarioRunner.RunSuiteAsync builds exactly ONE shared topology from that block and
+            // applies its ONE seed ONCE against ONE base directory — environment.seed is genuinely
+            // single-rooted there, unlike a step's own file: reference above.
+            //
+            // THE ENVIRONMENT IS NOT NECESSARILY scenarios[0]'s SINCE #451, and this value does not
+            // follow it. The topology is built from the first SCHEMA-VALID scenario, while this
+            // stays index 0 — the same scenario in every suite whose first document validates. When
+            // they differ AND the two scenarios live in different directories AND the environment
+            // declares a seed, ScenarioRunner REFUSES the suite rather than seeding from the wrong
+            // folder (see its seed-root guard); so this line's "single-rooted" claim is enforced
+            // rather than assumed. The parallel path
             // (ParallelSuiteRunner) needs no such single root — each scenario owns its own
             // topology, so it is passed scenarioBaseDirectories for EVERYTHING (seed included).
             var suiteBaseDirectory = scenarioBaseDirectories.Count > 0

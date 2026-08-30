@@ -1028,18 +1028,29 @@ public sealed class ProviderPipelineTests
     // ── Test: single-Bind-per-step, no swallow-catch (M5 fix, fix round 2) ───
 
     /// <summary>
-    /// M5 fix (fix round 2, PR #349 follow-up): <c>Bind</c> is now called EXACTLY once per
-    /// step, in <see cref="ProviderPipeline.BindAllSteps"/> (Compile's own Pass 1) — there is
-    /// no longer a separate speculative pre-pass, so there is nothing left to swallow a
-    /// throwing <c>Bind</c> into. A step whose provider's <c>Bind</c> always throws now
-    /// propagates that exception out of <see cref="ProviderPipeline.BindAllSteps"/> directly
-    /// — exactly the same "no purity assumption beyond what already holds" contract the
-    /// pre-M5 MAIN loop's own (always unguarded) <c>Bind</c> call already had; only the
-    /// now-removed speculative pre-pass ever silently ate this. <c>MethodInfo.Invoke</c>
-    /// wraps the provider's own thrown exception in <see cref="TargetInvocationException"/>.
+    /// Issue #413 — supersedes the version of this test that asserted
+    /// <see cref="ProviderPipeline.BindAllSteps"/> PROPAGATED a
+    /// <see cref="TargetInvocationException"/>. It no longer does: a throwing <c>Bind</c> is
+    /// returned as the pass's <c>RegistryFailure</c>-shaped <see cref="ValidationFailure"/>,
+    /// which <see cref="ProviderPipeline.Compile"/> hands back as
+    /// <c>PipelineResult.Failure</c> and both run paths map to <c>Verdict.Inconclusive</c>.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>Bind</c> is still called EXACTLY once per step per compile (the M5 property, fix
+    /// round 2, PR #349 follow-up) — nothing about the call count changed, only what happens
+    /// when the call throws.
+    /// </para>
+    /// <para>
+    /// The message must name the STEP and the PROVIDER and unwrap the reflection wrapper:
+    /// <c>MethodInfo.Invoke</c> wraps the provider's own exception in
+    /// <see cref="TargetInvocationException"/>, whose own message ("Exception has been thrown
+    /// by the target of an invocation") tells the reader nothing about which provider is
+    /// defective.
+    /// </para>
+    /// </remarks>
     [Fact]
-    public void BindAllSteps_StepBindThrows_PropagatesTargetInvocationException()
+    public void BindAllSteps_StepBindThrows_ReturnsAValidationFailureNamingTheStepAndProvider()
     {
         const string yaml = """
             environment:
@@ -1054,11 +1065,46 @@ public sealed class ProviderPipelineTests
         var doc = YamlDocumentParser.Parse(yaml);
         var ast = AstBuilder.Build(doc, s_registry);
 
-        var ex = Assert.Throws<System.Reflection.TargetInvocationException>(
-            () => ProviderPipeline.BindAllSteps(ast, s_registry));
+        var (_, failure) = ProviderPipeline.BindAllSteps(ast, s_registry);
 
-        Assert.IsType<InvalidOperationException>(ex.InnerException);
-        Assert.Contains("Bind always throws", ex.InnerException!.Message, StringComparison.Ordinal);
+        Assert.NotNull(failure);
+        Assert.Contains("will-throw", failure!.Message, StringComparison.Ordinal);
+        Assert.Contains("stub.throwing-bind", failure.Message, StringComparison.Ordinal);
+
+        // The provider's OWN exception, unwrapped — not the reflection wrapper.
+        Assert.Contains(nameof(InvalidOperationException), failure.Message, StringComparison.Ordinal);
+        Assert.Contains("Bind always throws", failure.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            nameof(System.Reflection.TargetInvocationException),
+            failure.Message,
+            StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The same fault through <see cref="ProviderPipeline.Compile"/>'s own front door: a
+    /// <c>PipelineResult</c> carrying the failure and NO assembled script, never an exception.
+    /// </summary>
+    [Fact]
+    public void Compile_StepBindThrows_ReturnsAFailureRatherThanThrowing()
+    {
+        const string yaml = """
+            environment:
+              services:
+                svc:
+                  image: myorg/svc:1.0
+            steps:
+              - id: will-throw
+                type: stub.throwing-bind
+            """;
+
+        var doc = YamlDocumentParser.Parse(yaml);
+        var ast = AstBuilder.Build(doc, s_registry);
+
+        var result = ProviderPipeline.Compile(ast, s_registry, SuiteNamespace);
+
+        Assert.NotNull(result.Failure);
+        Assert.Null(result.Assembled);
+        Assert.Contains("will-throw", result.Failure!.Message, StringComparison.Ordinal);
     }
 
     /// <summary>
