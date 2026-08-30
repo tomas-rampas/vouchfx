@@ -88,8 +88,14 @@ public static class TestCertificateAuthority
     /// depended on being declared BELOW <see cref="ProcessToken"/> — static field initialisers run
     /// in textual order, so reordering the two would have left the marker as a bare <c>" "</c>,
     /// and a guard searching for a single space matches every subject that contains one, then
-    /// deletes them. Evaluating at call time removes the ordering dependency entirely: every
-    /// caller is a test method, long after static initialisation.
+    /// deletes them. Evaluating at call time removes the ordering dependency for the guard's
+    /// needle — the destructive one. <see cref="CaSubjectCommonName"/> and
+    /// <see cref="ForeignCaSubjectCommonName"/> still reach this from their own field
+    /// initialisers via <see cref="WithProcessToken"/>, so they still require
+    /// <see cref="ProcessToken"/> to be declared above them; a reorder there loses the token on
+    /// those two subjects — not destructive, and reddened by
+    /// <c>RootCaSubjectFieldAndTheMintedAnchorAgree</c> and
+    /// <c>EveryAuthoritySubjectIsDistinctWithinTheProcess</c>.
     /// <c>TestCertificateAuthorityProcessTokenTests</c> pins the SHAPE (nine characters, a space
     /// then eight hex digits) so a future re-spelling that widens the match reddens.
     /// </para>

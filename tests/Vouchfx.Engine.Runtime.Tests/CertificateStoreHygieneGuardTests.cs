@@ -163,7 +163,7 @@ public sealed class CertificateStoreGuardTeethTests
         var now = DateTimeOffset.UtcNow;
         using var key = RSA.Create(2048);
         var request = new CertificateRequest(
-            $"CN=Vouchfx Guard Drill {TestCertificateAuthority.ProcessToken}",
+            $"CN=Vouchfx Guard Drill{TestCertificateAuthority.ProcessTokenMarker}",
             key,
             HashAlgorithmName.SHA256,
             RSASignaturePadding.Pkcs1);
