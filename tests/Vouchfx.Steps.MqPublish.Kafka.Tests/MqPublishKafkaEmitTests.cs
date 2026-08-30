@@ -880,8 +880,9 @@ public sealed class MqPublishKafkaEmitTests
 
         // SHARED MEASUREMENT (see KafkaStepTimeoutBoundDockerTests.GraceMs, which sizes its
         // own grace from the same numbers): the post-fix tail is ~250 ms — a flush cut within
-        // one ~100 ms librdkafka poll slice, plus a Dispose measured at 16-110 ms depending on
-        // how the peer refuses. Generous against that, still far below the ~10 000 ms the
+        // one ~100 ms librdkafka poll slice, plus a Dispose measured at 94-110 ms after a cut
+        // flush (the 16 ms figure elsewhere is the PRE-fix probe, where the 10 s flush had
+        // already drained the wait). Generous against that, still far below the ~10 000 ms the
         // unbounded flush cost, so the pin cannot pass while the defect is present however
         // loaded the CI host is. Deliberately duplicated rather than hoisted into TestSupport:
         // the two live in different assemblies and each needs its own budget-relative headroom.
