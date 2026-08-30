@@ -28,6 +28,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net;
+using System.Net.Sockets;
 using System.Text;
 using System.Threading.Tasks;
 using Vouchfx.Engine.Abstractions;
@@ -274,7 +275,7 @@ public sealed class HttpSoapEmitTests
     [Fact]
     public async Task Emit_CompileAndRun_SuccessEnvelope_DefaultExpect_ReturnsPass()
     {
-        var (prefix, serveTask, listener) = StartOneShotServer(19601, SuccessEnvelope);
+        var (prefix, serveTask, listener) = StartOneShotServer(SuccessEnvelope);
         try
         {
             var model = MakeModel(envelope: "<GetUser/>");
@@ -300,7 +301,7 @@ public sealed class HttpSoapEmitTests
     [Fact]
     public async Task Emit_CompileAndRun_ExpectedFault_ReturnsPass()
     {
-        var (prefix, serveTask, listener) = StartOneShotServer(19602, FaultEnvelope, statusCode: 500);
+        var (prefix, serveTask, listener) = StartOneShotServer(FaultEnvelope, statusCode: 500);
         try
         {
             var model = MakeModel(
@@ -327,7 +328,7 @@ public sealed class HttpSoapEmitTests
     [Fact]
     public async Task Emit_CompileAndRun_UnexpectedFault_ReturnsFail_WithFaultcodeOnly()
     {
-        var (prefix, serveTask, listener) = StartOneShotServer(19603, FaultEnvelope, statusCode: 500);
+        var (prefix, serveTask, listener) = StartOneShotServer(FaultEnvelope, statusCode: 500);
         try
         {
             var model = MakeModel(envelope: "<GetUser/>"); // default expect: no fault expected
@@ -355,7 +356,7 @@ public sealed class HttpSoapEmitTests
     [Fact]
     public async Task Emit_CompileAndRun_ExpectedFaultMissing_ReturnsFail()
     {
-        var (prefix, serveTask, listener) = StartOneShotServer(19604, SuccessEnvelope);
+        var (prefix, serveTask, listener) = StartOneShotServer(SuccessEnvelope);
         try
         {
             var model = MakeModel(
@@ -383,7 +384,7 @@ public sealed class HttpSoapEmitTests
     [Fact]
     public async Task Emit_CompileAndRun_StatusMismatch_ReturnsFail()
     {
-        var (prefix, serveTask, listener) = StartOneShotServer(19605, SuccessEnvelope, statusCode: 200);
+        var (prefix, serveTask, listener) = StartOneShotServer(SuccessEnvelope, statusCode: 200);
         try
         {
             var model = MakeModel(
@@ -412,7 +413,7 @@ public sealed class HttpSoapEmitTests
     [Fact]
     public async Task Emit_CompileAndRun_XPathAssertionMatch_ReturnsPass()
     {
-        var (prefix, serveTask, listener) = StartOneShotServer(19606, SuccessEnvelope);
+        var (prefix, serveTask, listener) = StartOneShotServer(SuccessEnvelope);
         try
         {
             var model = MakeModel(
@@ -445,7 +446,7 @@ public sealed class HttpSoapEmitTests
     [Fact]
     public async Task Emit_CompileAndRun_XPathAssertionMismatch_ReturnsFail()
     {
-        var (prefix, serveTask, listener) = StartOneShotServer(19607, SuccessEnvelope);
+        var (prefix, serveTask, listener) = StartOneShotServer(SuccessEnvelope);
         try
         {
             var model = MakeModel(
@@ -481,7 +482,7 @@ public sealed class HttpSoapEmitTests
     [Fact]
     public async Task Emit_CompileAndRun_XPathCapture_ReturnsPass_AndCapturesValue()
     {
-        var (prefix, serveTask, listener) = StartOneShotServer(19608, SuccessEnvelope);
+        var (prefix, serveTask, listener) = StartOneShotServer(SuccessEnvelope);
         try
         {
             var model = MakeModel(envelope: "<GetUser/>");
@@ -516,7 +517,7 @@ public sealed class HttpSoapEmitTests
     {
         string? observedSoapAction = null;
         var (prefix, serveTask, listener) = StartOneShotServer(
-            19609, SuccessEnvelope, captureRequest: req => observedSoapAction = req.Headers["SOAPAction"]);
+            SuccessEnvelope, captureRequest: req => observedSoapAction = req.Headers["SOAPAction"]);
         try
         {
             var model = MakeModel(action: "http://example.com/GetUser", envelope: "<GetUser/>");
@@ -606,7 +607,7 @@ public sealed class HttpSoapEmitTests
     [Fact]
     public async Task Emit_CompileAndRun_JsonPathFormatCapture_IsAlwaysUnmet_ReturnsInconclusive()
     {
-        var (prefix, serveTask, listener) = StartOneShotServer(19610, SuccessEnvelope);
+        var (prefix, serveTask, listener) = StartOneShotServer(SuccessEnvelope);
         try
         {
             var model = MakeModel(envelope: "<GetUser/>");
@@ -655,18 +656,22 @@ public sealed class HttpSoapEmitTests
     }
 
     /// <summary>
-    /// Starts an in-process <see cref="HttpListener"/> bound to
-    /// <c>http://127.0.0.1:&lt;port&gt;/</c> that serves <paramref name="body"/> exactly once
-    /// with the given <paramref name="statusCode"/>, optionally invoking
-    /// <paramref name="captureRequest"/> with the incoming request before responding.
+    /// Starts an in-process <see cref="HttpListener"/> bound to a freshly-allocated loopback
+    /// port that serves <paramref name="body"/> exactly once with the given
+    /// <paramref name="statusCode"/>, optionally invoking <paramref name="captureRequest"/>
+    /// with the incoming request before responding.
     /// </summary>
+    /// <remarks>
+    /// The port is chosen by the OS, never hard-coded (issue #377). A fixed port is red by
+    /// accident of whatever else the host happens to be running, and nothing in the number
+    /// reserves it: measured, on a host whose dynamic port range had been widened to start at
+    /// 1024, a browser tab held 19610 — one of the ports this file used to pin — as an OUTBOUND
+    /// ephemeral port, turning a row red with a failure that read as an engine defect.
+    /// </remarks>
     private static (string Prefix, Task ServeTask, HttpListener Listener) StartOneShotServer(
-        int port, string body, int statusCode = 200, Action<HttpListenerRequest>? captureRequest = null)
+        string body, int statusCode = 200, Action<HttpListenerRequest>? captureRequest = null)
     {
-        var prefix = $"http://127.0.0.1:{port}/";
-        var listener = new HttpListener();
-        listener.Prefixes.Add(prefix);
-        listener.Start();
+        var (prefix, listener) = StartOnAFreePort();
 
         var serveTask = Task.Run(async () =>
         {
@@ -680,6 +685,68 @@ public sealed class HttpSoapEmitTests
         });
 
         return (prefix, serveTask, listener);
+    }
+
+    /// <summary>
+    /// Binds an <see cref="HttpListener"/> to a loopback port the OS reports as free, returning
+    /// the started listener and the prefix it is bound to.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="FindFreePort"/> releases the probed port before <see cref="HttpListener"/>
+    /// re-binds it, so another process can win the race in between. That TOCTOU window is far
+    /// narrower than a fixed port's permanent exposure, and a single retry with a fresh port
+    /// absorbs it. If BOTH attempts fail, both exceptions are surfaced: the first attempt's
+    /// error code is the evidence a later http.sys/WinNAT diagnosis needs, and swallowing it
+    /// would leave only the second — a different port, and possibly a different cause.
+    /// </remarks>
+    private static (string Prefix, HttpListener Listener) StartOnAFreePort()
+    {
+        try
+        {
+            return BindOnAFreePort();
+        }
+        catch (HttpListenerException first)
+        {
+            try
+            {
+                return BindOnAFreePort();
+            }
+            catch (HttpListenerException second)
+            {
+                throw new AggregateException(
+                    "Could not bind an HttpListener on an OS-allocated free port, twice running.",
+                    first,
+                    second);
+            }
+        }
+
+        static (string Prefix, HttpListener Listener) BindOnAFreePort()
+        {
+            var prefix = $"http://127.0.0.1:{FindFreePort()}/";
+            var listener = new HttpListener();
+            listener.Prefixes.Add(prefix);
+            try
+            {
+                listener.Start();
+            }
+            catch
+            {
+                listener.Close();
+                throw;
+            }
+
+            return (prefix, listener);
+        }
+    }
+
+    /// <summary>Reserves a free loopback TCP port by binding port 0 and releasing it.</summary>
+    private static int FindFreePort()
+    {
+        var probe = new TcpListener(IPAddress.Loopback, 0);
+        probe.Start();
+        var port = ((IPEndPoint)probe.LocalEndpoint).Port;
+        probe.Stop();
+        return port;
     }
 
     private async Task<StepOutcome> RunStepAsync(

@@ -24,6 +24,7 @@
 //   14. Full compile-and-run: missing ${secret:env/…} in path → EnvironmentError,
 //       REFERENCE-ONLY observation (§17), no HTTP request ever attempted.
 using System.Net;
+using System.Net.Sockets;
 using System.Text;
 using Vouchfx.Engine.Abstractions;
 using Vouchfx.Engine.Abstractions.Secrets;
@@ -181,7 +182,7 @@ public sealed class MetricsAssertPrometheusEmitTests
             "orders_total{status=\"failed\"} 1\n" +
             "http_requests_total 7 # {trace_id=\"abc\"} 0.5\n";
 
-        var (prefix, serveTask, listener) = StartOneShotServer(18521, body);
+        var (prefix, serveTask, listener) = StartOneShotServer(body);
         try
         {
             var model = GetModel(
@@ -218,7 +219,7 @@ public sealed class MetricsAssertPrometheusEmitTests
     {
         const string body = "orders_total{status=\"ok\"} 1\norders_total{status=\"failed\"} 2\n";
 
-        var (prefix, serveTask, listener) = StartOneShotServer(18522, body);
+        var (prefix, serveTask, listener) = StartOneShotServer(body);
         try
         {
             var model = GetModel(labels: null, value: "1");
@@ -246,7 +247,7 @@ public sealed class MetricsAssertPrometheusEmitTests
     {
         const string body = "other_metric 1\n";
 
-        var (prefix, serveTask, listener) = StartOneShotServer(18523, body);
+        var (prefix, serveTask, listener) = StartOneShotServer(body);
         try
         {
             var model = GetModel(value: "1");
@@ -272,7 +273,7 @@ public sealed class MetricsAssertPrometheusEmitTests
     [Fact]
     public async Task Emit_CompileAndRun_NonSuccessStatus_ReturnsFail()
     {
-        var (prefix, serveTask, listener) = StartOneShotServer(18524, "not found", statusCode: 404);
+        var (prefix, serveTask, listener) = StartOneShotServer("not found", statusCode: 404);
         try
         {
             var model = GetModel(value: "1");
@@ -300,7 +301,7 @@ public sealed class MetricsAssertPrometheusEmitTests
     {
         const string body = "orders_total 5\n";
 
-        var (prefix, serveTask, listener) = StartOneShotServer(18525, body);
+        var (prefix, serveTask, listener) = StartOneShotServer(body);
         try
         {
             var model = GetModel(value: "1");
@@ -339,7 +340,7 @@ public sealed class MetricsAssertPrometheusEmitTests
     {
         const string body = "orders_total NaN\n";
 
-        var (prefix, serveTask, listener) = StartOneShotServer(18526, body);
+        var (prefix, serveTask, listener) = StartOneShotServer(body);
         try
         {
             var model = GetModel(value: "1");
@@ -374,7 +375,7 @@ public sealed class MetricsAssertPrometheusEmitTests
     {
         const string body = "orders_total +Inf\n";
 
-        var (prefix, serveTask, listener) = StartOneShotServer(18527, body);
+        var (prefix, serveTask, listener) = StartOneShotServer(body);
         try
         {
             var model = GetModel(value: null, min: null, max: "100");
@@ -466,19 +467,23 @@ public sealed class MetricsAssertPrometheusEmitTests
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Starts an in-process <see cref="HttpListener"/> bound to
-    /// <c>http://127.0.0.1:&lt;port&gt;/</c> that serves <paramref name="body"/> exactly
-    /// once with the given <paramref name="statusCode"/>, then returns the listener so
-    /// the caller can <c>Stop()</c> it, plus a <see cref="Task"/> that completes once the
-    /// single request has been served.
+    /// Starts an in-process <see cref="HttpListener"/> bound to a freshly-allocated loopback
+    /// port that serves <paramref name="body"/> exactly once with the given
+    /// <paramref name="statusCode"/>, then returns the bound prefix, a <see cref="Task"/> that
+    /// completes once the single request has been served, and the listener so the caller can
+    /// <c>Stop()</c> it.
     /// </summary>
+    /// <remarks>
+    /// The port is chosen by the OS, never hard-coded (issue #431). A fixed port is
+    /// red-by-boot-order on Windows: WinNAT's dynamic exclusion ranges move across reboots,
+    /// and a measured range of 18498-18597 covered every port this file used to pin, turning
+    /// all seven listener-backed rows red with <see cref="HttpListenerException"/> and costing
+    /// a full misattributed investigation.
+    /// </remarks>
     private static (string Prefix, Task ServeTask, HttpListener Listener) StartOneShotServer(
-        int port, string body, int statusCode = 200)
+        string body, int statusCode = 200)
     {
-        var prefix = $"http://127.0.0.1:{port}/";
-        var listener = new HttpListener();
-        listener.Prefixes.Add(prefix);
-        listener.Start();
+        var (prefix, listener) = StartOnAFreePort();
 
         var serveTask = Task.Run(async () =>
         {
@@ -491,6 +496,68 @@ public sealed class MetricsAssertPrometheusEmitTests
         });
 
         return (prefix, serveTask, listener);
+    }
+
+    /// <summary>
+    /// Binds an <see cref="HttpListener"/> to a loopback port the OS reports as free, returning
+    /// the started listener and the prefix it is bound to.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="FindFreePort"/> releases the probed port before <see cref="HttpListener"/>
+    /// re-binds it, so another process can win the race in between. That TOCTOU window is far
+    /// narrower than a fixed port's permanent exposure, and a single retry with a fresh port
+    /// absorbs it. If BOTH attempts fail, both exceptions are surfaced: the first attempt's
+    /// error code is the evidence a later http.sys/WinNAT diagnosis needs, and swallowing it
+    /// would leave only the second — a different port, and possibly a different cause.
+    /// </remarks>
+    private static (string Prefix, HttpListener Listener) StartOnAFreePort()
+    {
+        try
+        {
+            return BindOnAFreePort();
+        }
+        catch (HttpListenerException first)
+        {
+            try
+            {
+                return BindOnAFreePort();
+            }
+            catch (HttpListenerException second)
+            {
+                throw new AggregateException(
+                    "Could not bind an HttpListener on an OS-allocated free port, twice running.",
+                    first,
+                    second);
+            }
+        }
+
+        static (string Prefix, HttpListener Listener) BindOnAFreePort()
+        {
+            var prefix = $"http://127.0.0.1:{FindFreePort()}/";
+            var listener = new HttpListener();
+            listener.Prefixes.Add(prefix);
+            try
+            {
+                listener.Start();
+            }
+            catch
+            {
+                listener.Close();
+                throw;
+            }
+
+            return (prefix, listener);
+        }
+    }
+
+    /// <summary>Reserves a free loopback TCP port by binding port 0 and releasing it.</summary>
+    private static int FindFreePort()
+    {
+        var probe = new TcpListener(IPAddress.Loopback, 0);
+        probe.Start();
+        var port = ((IPEndPoint)probe.LocalEndpoint).Port;
+        probe.Stop();
+        return port;
     }
 
     private async Task<StepOutcome> RunStepAsync(
