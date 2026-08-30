@@ -70,20 +70,31 @@ public static class TestCertificateAuthority
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Eight hex characters on their own are not rare inside a certificate store. Measured on one
-    /// developer host's real <c>CA</c> stores, the subjects present (Intel PTT/TPM attestation
-    /// intermediates, whose common names embed long hexadecimal key identifiers) offered 198
-    /// distinct 8-hex windows a bare token could collide with; the same scan against the
-    /// space-anchored form offered 0. A collision would make the residue guard delete a device
-    /// attestation intermediate, which is a far worse outcome than the leak it is closing — so
-    /// the anchored form is the only supported way to match, and it is spelled ONCE, here.
+    /// Eight hex characters on their own are not rare inside a certificate store: real
+    /// <c>CA</c> stores carry distinguished names containing long hexadecimal runs (TPM and
+    /// platform attestation intermediates embed key identifiers that way), so a BARE token
+    /// measurably collides with them, while the space-anchored form matched nothing on any host
+    /// checked. A collision would make the residue guard delete a device attestation certificate,
+    /// which is a far worse outcome than the leak it is closing — so the anchored form is the only
+    /// supported way to match, and it is spelled ONCE, here.
     /// </para>
     /// <para>
     /// <see cref="WithProcessToken"/> builds every authority common name by appending exactly this
     /// string, so a search using it and a subject that was minted cannot drift apart.
     /// </para>
+    /// <para>
+    /// A computed property, not a field, and that is a safety property rather than a style choice.
+    /// As <c>static readonly string ProcessTokenMarker = " " + ProcessToken;</c> its correctness
+    /// depended on being declared BELOW <see cref="ProcessToken"/> — static field initialisers run
+    /// in textual order, so reordering the two would have left the marker as a bare <c>" "</c>,
+    /// and a guard searching for a single space matches every subject that contains one, then
+    /// deletes them. Evaluating at call time removes the ordering dependency entirely: every
+    /// caller is a test method, long after static initialisation.
+    /// <c>TestCertificateAuthorityProcessTokenTests</c> pins the SHAPE (nine characters, a space
+    /// then eight hex digits) so a future re-spelling that widens the match reddens.
+    /// </para>
     /// </remarks>
-    public static readonly string ProcessTokenMarker = " " + ProcessToken;
+    public static string ProcessTokenMarker => " " + ProcessToken;
 
     /// <summary>
     /// Common name of the generated root CA, carrying <see cref="ProcessToken"/>.
@@ -1074,7 +1085,20 @@ internal static class TestCertificateBedPaths
 /// two of them share a subject, and while every run minted its authorities under constant common
 /// names, any run whose process died before teardown left one that a later run could collide
 /// with. <see cref="TestCertificateAuthority.ProcessToken"/> removes the collision at the source
-/// (#374); this sweep remains the mechanism that keeps the store from growing.
+/// (#374); this sweep is what keeps the store from growing ALONG THE PATH WHERE
+/// <c>Dispose</c> RUNS.
+/// </para>
+/// <para>
+/// <strong>What is knowingly left behind.</strong> Nothing here reclaims residue from a process
+/// that was killed, cancelled, or crashed before teardown — not this sweep, which runs in
+/// <c>Dispose</c>, and not <c>TestCertificateStoreGuard</c>, which only ever sees its own live
+/// process's token. Such residue is now harmless rather than merely rarer: its subject is unique
+/// to the dead run, so no later run can collide with it, which is the whole point of the token.
+/// It is litter, and it is accepted as litter. The certificates stop being time-valid quickly —
+/// intermediates and leaves are minted <c>notAfter = now + 1 day</c> and roots <c>+ 2 days</c> —
+/// but expiry does NOT remove them from the store, and whether an expired copy is still offered
+/// as a chain-building candidate has not been measured here, so no claim is made either way.
+/// Reclaiming abandoned residue is tracked on #459; deliberately not built into this change.
 /// </para>
 /// <para>
 /// <strong>Why the match is by thumbprint and never by subject.</strong> Within one process every
@@ -1192,9 +1216,13 @@ internal static class TestCertificateStoreSweep
             return matches;
         }
 
+        // Hoisted: X509Store.Certificates materialises a NEW collection of live handles on every
+        // access, so the throw path below needs the same instance the loop is walking.
+        var all = store.Certificates;
+
         try
         {
-            foreach (var certificate in store.Certificates)
+            foreach (var certificate in all)
             {
                 if (wanted.Contains(certificate.Thumbprint))
                 {
@@ -1208,8 +1236,10 @@ internal static class TestCertificateStoreSweep
         }
         catch
         {
-            // Whatever went wrong, the handles matched so far are this method's to return.
-            foreach (var certificate in matches)
+            // Reading a certificate can throw (a malformed DN, a broken store entry), and the
+            // handles this method never reached are as much its responsibility as the ones it
+            // matched. Dispose EVERYTHING; double-dispose is a no-op.
+            foreach (var certificate in all)
             {
                 certificate.Dispose();
             }

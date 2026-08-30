@@ -85,6 +85,10 @@ public sealed class TestAiaBedSweepCoverageTests
         // written that way.
         var built = chain.Build(bed.LeafWithAuthorityInfoAccess);
 
+        // The status is asserted non-empty rather than equal to a specific flag ON PURPOSE: this
+        // suite runs on Windows and on Linux, Windows reports PartialChain, and OpenSSL's flag
+        // choice and wording for the same condition need not match. What the fixture promises is
+        // "does not build, and says why" — not a particular platform's spelling of why.
         Assert.False(built);
         Assert.NotEmpty(chain.ChainStatus);
     }

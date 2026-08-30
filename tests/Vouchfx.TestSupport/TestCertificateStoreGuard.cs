@@ -192,19 +192,23 @@ public static class TestCertificateStoreGuard
     /// the separator every minted subject puts before it — and not the bare token. Eight hex
     /// characters unanchored appear inside real subjects on an ordinary Windows host (TPM
     /// attestation intermediates embed long hexadecimal key identifiers), and a false match here
-    /// deletes somebody's device certificate.
+    /// deletes somebody's device certificate. <see cref="CarriesProcessToken"/> additionally
+    /// requires the token not to run on into more hex digits.
     /// </para>
     /// </remarks>
     private static X509Certificate2Collection OwnTokenCertificates(X509Store store)
     {
         var matches = new X509Certificate2Collection();
 
+        // Hoisted: X509Store.Certificates materialises a NEW collection of live handles on every
+        // access, so the throw path below needs the same instance the loop is walking.
+        var all = store.Certificates;
+
         try
         {
-            foreach (var certificate in store.Certificates)
+            foreach (var certificate in all)
             {
-                if (certificate.Subject.Contains(
-                    TestCertificateAuthority.ProcessTokenMarker, StringComparison.OrdinalIgnoreCase))
+                if (CarriesProcessToken(certificate.Subject))
                 {
                     matches.Add(certificate);
                 }
@@ -216,7 +220,10 @@ public static class TestCertificateStoreGuard
         }
         catch
         {
-            foreach (var certificate in matches)
+            // Reading Subject can throw (CryptographicException on a malformed DN), and the
+            // handles this method never reached are as much its responsibility as the ones it
+            // matched. Dispose EVERYTHING; double-dispose is a no-op.
+            foreach (var certificate in all)
             {
                 certificate.Dispose();
             }
@@ -225,5 +232,29 @@ public static class TestCertificateStoreGuard
         }
 
         return matches;
+    }
+
+    /// <remarks>
+    /// The marker must be followed by end-of-string or a NON-hex character, so this process's
+    /// <c>" a1b2c3d4"</c> cannot match inside another subject's longer run <c>" a1b2c3d4ef"</c>.
+    /// Costs one character comparison and closes the only false-positive shape the space anchor
+    /// leaves open.
+    /// </remarks>
+    private static bool CarriesProcessToken(string subject)
+    {
+        var marker = TestCertificateAuthority.ProcessTokenMarker;
+
+        for (var at = subject.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+            at >= 0;
+            at = subject.IndexOf(marker, at + 1, StringComparison.OrdinalIgnoreCase))
+        {
+            var after = at + marker.Length;
+            if (after >= subject.Length || !Uri.IsHexDigit(subject[after]))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

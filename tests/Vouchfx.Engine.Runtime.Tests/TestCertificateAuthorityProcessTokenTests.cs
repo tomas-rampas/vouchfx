@@ -24,6 +24,31 @@ public sealed class TestCertificateAuthorityProcessTokenTests
             $"Expected hexadecimal, got '{TestCertificateAuthority.ProcessToken}'.");
     }
 
+    /// <summary>
+    /// Pins the SHAPE of the marker — a space then exactly the eight hex digits — because the
+    /// marker is the needle a DESTRUCTIVE scan uses.
+    /// </summary>
+    /// <remarks>
+    /// Asserting <c>" " + ProcessToken == ProcessTokenMarker</c> would be tautological against a
+    /// property whose body is that expression. The shape is not: if the marker ever loses its
+    /// token (the failure mode the old <c>static readonly</c> field had, where a reordering left
+    /// it as a bare <c>" "</c>) or gains a wider separator, it stops being nine characters of
+    /// space-then-hex and this reddens. A guard whose needle is a single space matches every
+    /// subject containing a space and then deletes it.
+    /// </remarks>
+    [Fact]
+    [Trait("requires", "none")]
+    public void ProcessTokenMarkerIsASpaceFollowedByExactlyTheEightHexDigits()
+    {
+        var marker = TestCertificateAuthority.ProcessTokenMarker;
+
+        Assert.Equal(9, marker.Length);
+        Assert.Equal(' ', marker[0]);
+        Assert.True(
+            marker[1..].All(Uri.IsHexDigit),
+            $"Expected a space then eight hexadecimal digits, got '{marker}'.");
+    }
+
     [Fact]
     [Trait("requires", "none")]
     public void TwoTierIntermediateSubjectIsNotTheBareLiteralAndCarriesTheProcessToken()
