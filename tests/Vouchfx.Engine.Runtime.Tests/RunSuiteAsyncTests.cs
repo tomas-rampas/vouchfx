@@ -1351,6 +1351,93 @@ public sealed class RunSuiteAsyncTests
         // the schema pass.
         Assert.Contains("bogus", rendered, StringComparison.Ordinal);
         Assert.Equal(3, result.ScenarioVerdicts.Count);
+
+        // The diagnostic names BOTH scenarios, and the BASELINE half is what the old "than the
+        // first scenario" wording got wrong here: the baseline is 'clean' at index 1, not the
+        // rejected document at index 0. Asserting only the divergent name would pass under either
+        // wording (peer-review MINOR-4).
+        Assert.Contains("'clean'", rendered, StringComparison.Ordinal);
+    }
+
+    private static readonly string[] s_seedRootSplitNames = { "rejected-elsewhere", "clean" };
+    private static readonly string?[] s_seedRootSplitDirectories = { "dir-a", "dir-b" };
+
+    /// <summary>
+    /// <strong>A suite whose seed root and whose environment come from DIFFERENT scenarios in
+    /// DIFFERENT directories is refused before the topology is built (peer-review MINOR-1).</strong>
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// #451 made the two separable: <c>seedBaseDirectory</c> is the caller's own choice (the first
+    /// DISCOVERED scenario's directory) while the environment now comes from the first
+    /// SCHEMA-VALID one. A relative <c>environment.seed</c> path then names a different file in
+    /// each, and the harmful case is the one that RESOLVES — a same-named fixture in both folders
+    /// seeds silently from the wrong one.
+    /// </para>
+    /// <para>
+    /// <see cref="Verdict.Inconclusive"/> rather than <see cref="Verdict.EnvironmentError"/>: the
+    /// author fixes it by editing the suite, and an EnvironmentError that started no container
+    /// exits 0.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task RunSuiteAsync_SeedRootAndEnvironmentFromDifferentDirectories_IsRefused()
+    {
+        const string seededEnvironment = """
+            environment:
+              services:
+                api:
+                  image: myorg/api:1.0
+              dependencies:
+                db:
+                  type: postgres
+              seed:
+                db:
+                  sql: ["./fixtures/orders.sql"]
+            steps:
+              - id: get-noop
+                type: http.rest
+                target: api
+                method: GET
+                path: /
+                expect:
+                  status: 200
+            """;
+
+        // The first document is schema-REJECTED (`bogus` is unknown on a service), so the baseline —
+        // and therefore the environment — is the SECOND scenario, in a different directory.
+        var rejected = seededEnvironment.Replace(
+            "      image: myorg/api:1.0",
+            "      image: myorg/api:1.0\n      bogus: nope",
+            StringComparison.Ordinal);
+
+        var yamls = new[] { rejected, seededEnvironment };
+        var registry = StepKindRegistry.BuildAndFreeze(ProviderAssemblies);
+        var scenarios = yamls
+            .Select(y => AstBuilder.Build(YamlDocumentParser.Parse(y), registry))
+            .ToArray();
+
+        var sw = new StringWriter();
+        var result = await ScenarioRunner.RunSuiteAsync(
+            scenarios: scenarios,
+            scenarioNames: s_seedRootSplitNames,
+            yamlTexts: yamls,
+            providerAssemblies: ProviderAssemblies,
+            appHostAssemblyName: AppHostAssemblyName,
+            output: sw,
+            seedBaseDirectory: "dir-a",
+            scenarioBaseDirectories: s_seedRootSplitDirectories);
+
+        var rendered = sw.ToString();
+
+        Assert.Contains("environment.seed file", rendered, StringComparison.Ordinal);
+        Assert.Contains("'clean'", rendered, StringComparison.Ordinal);
+        Assert.Equal(Verdict.Inconclusive, result.Verdict);
+
+        // Refused BEFORE the topology: no container, and no environment-configuration error from
+        // Map either — the guard returns above both.
+        Assert.DoesNotContain(PreTopologyMarker, rendered, StringComparison.Ordinal);
+        Assert.False(result.ExecutedAnyScenario);
     }
 
     /// <summary>Counts non-overlapping occurrences of <paramref name="needle"/>.</summary>

@@ -1109,17 +1109,32 @@ public static class ScenarioRunner
     /// single-rooted in this sequential, shared-topology path, unlike a step's own <c>file:</c>
     /// reference (see <paramref name="scenarioBaseDirectories"/>).
     /// <para>
-    /// <strong>The seed root and the topology's ENVIRONMENT can now come from different
-    /// scenarios, in one narrow shape (issue #451).</strong> The environment is taken from the
-    /// first scenario that passes SCHEMA validation, which is <c>scenarios[0]</c> unless a
+    /// <strong>The seed root and the topology's ENVIRONMENT can come from different scenarios, and
+    /// that combination is REFUSED (issue #451).</strong> The environment is taken from the first
+    /// scenario that passes SCHEMA validation, which is <c>scenarios[0]</c> unless a
     /// schema-rejected document sits ahead of it; this parameter is the caller's own choice and,
-    /// for <c>RunCommand</c>, is <c>scenarios[0]</c>'s directory unconditionally. So a
-    /// MULTI-DIRECTORY suite whose first document is schema-rejected seeds against that
-    /// document's folder while building from a later one's environment. It is unchecked for an
-    /// UNSECURED suite — a seed path that does not resolve fails loudly, naming the file, rather
-    /// than silently seeding the wrong thing. A SECURED suite cannot reach the shape at all:
-    /// <c>TryFindSecurityBaseDirectoryDivergence</c> refuses a secured suite whose scenarios do
-    /// not share one root, before the topology is built.
+    /// for <c>RunCommand</c>, is <c>scenarios[0]</c>'s directory unconditionally. A MULTI-DIRECTORY
+    /// suite whose first document is schema-rejected would therefore seed against that document's
+    /// folder while building from a later one's environment, and a relative
+    /// <c>environment.seed</c> path then names a different file in each.
+    /// <para>
+    /// <strong>Refusing is the only safe answer because the RESOLVING case is the harmful one.</strong>
+    /// Where the named fixture is absent from the seed root the run fails loudly and names the
+    /// file, which is survivable; where a SAME-NAMED fixture exists in both folders — the ordinary
+    /// shape when two scenario directories were copied from one another — the suite silently seeds
+    /// from the rejected document's copy, runs green, and asserts against the wrong data. No
+    /// diagnostic distinguishes that from a correct run. So the suite is refused before the
+    /// topology is built whenever the two roots differ and the environment declares a seed,
+    /// carrying <see cref="Verdict.Inconclusive"/> — an authoring fault the author fixes by
+    /// repairing the rejected document or co-locating the files.
+    /// </para>
+    /// <para>
+    /// The guard is narrow on purpose: a single-directory suite cannot trip it, nor can one whose
+    /// first document validates, nor one whose environment declares no seed. A SECURED suite is
+    /// additionally covered further down by
+    /// <c>TryFindSecurityBaseDirectoryDivergence</c>, which refuses any secured suite whose
+    /// scenarios do not share one root at all.
+    /// </para>
     /// </para>
     /// </param>
     /// <param name="scenarioBaseDirectories">
@@ -1394,44 +1409,6 @@ public static class ScenarioRunner
         // the topology.
         var unbuiltAssurance = UnbuiltDocument.AssureAll(unbuiltDocuments, registry);
 
-        // ── What a SCHEMA-REJECTED scenario contributes when its environment is not the one that
-        // started (issue #451, security review) ───────────────────────────────────────────────────
-        //
-        // Assigned below, after the divergence guard has chosen the baseline; declared HERE only so
-        // `WithUnbuiltDocuments` can close over it. `None` until then, which is correct for every
-        // door that returns before the topology: nothing is confirmed on those paths, so the union
-        // above already raises for anything it declared.
-        //
-        // WHY IT EXISTS. Moving the divergence guard below the schema pass narrowed what the guard
-        // proves from "every scenario shares the environment that starts" to "every SCHEMA-VALID
-        // scenario does". A rejected scenario still contributes its declaration to the union above —
-        // deliberately, so a declaration is never silently dropped — and `Unconfirmed`'s
-        // `AuthoringFault` disjunct is satisfied only when some DECLARED IDENTITY went unconfirmed.
-        // `SecuredTargets.DigestOf` hashes the `endpoint:` selector's TEXT and never its resolution,
-        // so a rejected scenario declaring a byte-identical `security:` block on a service with a
-        // DIFFERENT `httpPort:` shares the baseline's identity — and the running sibling's probe
-        // confirmation then satisfied a declaration the probe never tested: mTLS asserted on a port
-        // nothing confirmed, exiting 0. Before the reorder the guard refused that suite outright.
-        //
-        // THE GATE IS ENVIRONMENT EQUALITY, NOT SCHEMA VALIDITY, and that is what keeps #451's
-        // improvement. A rejected scenario whose serialised environment EQUALS the baseline's is
-        // exactly as covered by the probe as its siblings are — that is the ordinary typo case #451
-        // exists for — so it stays in the union and a confirmation may satisfy it. Only a rejected
-        // scenario whose environment DIFFERS is folded whole, the way `UnbuiltDocument.AssureAll`
-        // folds a document that never became a scenario, and for the same reason: nothing held its
-        // environment against the one that started, so nothing of its can be confirmed.
-        var rejectedDivergentAssurance = SecurityAssurance.None;
-
-        // The suite's answer: the scenarios' own assurance folded against the unbuilt documents' and
-        // against any schema-rejected scenario whose environment was never held against the
-        // baseline's. Applied at EVERY site below that hands back a `SuiteResult`, because `Worse`
-        // must see the scenarios' assurance in its final state — with its door recorded and, on the
-        // success path, with the probe's confirmations attached.
-        SecurityAssurance WithUnbuiltDocuments(SecurityAssurance scenarioAssurance) =>
-            SecurityAssurance.Worse(
-                SecurityAssurance.Worse(scenarioAssurance, unbuiltAssurance),
-                rejectedDivergentAssurance);
-
         // ── Per-scenario compilation (pre-topology), in TWO passes ─────────────
         // Validate + compile each scenario's YAML before we pay the topology build cost.
         //
@@ -1549,6 +1526,48 @@ public static class ScenarioRunner
         // from Pass A and executes nothing, so it stages nothing into the shared topology and has
         // no environment worth comparing — its `environment` block did not validate.
         var baselineIndex = Array.IndexOf(schemaValid, true);
+
+        // ── What a SCHEMA-REJECTED scenario contributes when its environment is not the one that
+        // will start (issue #451, security review) ────────────────────────────────────────────────
+        //
+        // COMPUTED HERE — the first line after the baseline is known, and BEFORE the divergence
+        // guard below — rather than after it (peer-review MAJOR-1 + MINOR-3). The value is captured
+        // by `WithUnbuiltDocuments`, which every door from the guard onward calls; computing it
+        // later meant the closure read a mutable local that a door inserted in between would have
+        // silently seen as `None`. Nothing between here and the topology build can now get the
+        // wrong value, because there is no window in which a wrong value exists.
+        //
+        // WHY IT EXISTS. Moving the divergence guard below the schema pass narrowed what that guard
+        // proves from "every scenario shares the environment that starts" to "every SCHEMA-VALID
+        // scenario does". A rejected scenario still contributes its declaration to the canonical
+        // walk above — deliberately, so a declaration is never silently dropped — and
+        // `Unconfirmed`'s `AuthoringFault` disjunct is satisfied only when some DECLARED IDENTITY
+        // went unconfirmed. `SecuredTargets.DigestOf` hashes the `endpoint:` selector's TEXT and
+        // never its resolution, so a rejected scenario declaring a byte-identical `security:` block
+        // on a service with a DIFFERENT `httpPort:` shares the baseline's identity — and the running
+        // sibling's probe confirmation then satisfies a declaration the probe never tested: mTLS
+        // asserted on a port nothing confirmed, exiting 0. Before the reorder the guard refused that
+        // suite outright.
+        //
+        // THE GATE IS ENVIRONMENT EQUALITY, NOT SCHEMA VALIDITY, and that is what keeps #451's
+        // improvement rather than trading it back. See `FoldRejectedDivergent`'s own remarks, and
+        // `FoldRejectedDivergentTests`, which tables all four cells.
+        var rejectedDivergentAssurance =
+            FoldRejectedDivergent(scenarios, schemaValid, schemaRefusalKinds, baselineIndex);
+
+        // The suite's answer: the scenarios' own assurance folded against the unbuilt documents' and
+        // against any schema-rejected scenario whose environment was never held against the
+        // baseline's. Applied at EVERY site below that hands back a `SuiteResult`, because `Worse`
+        // must see the scenarios' assurance in its final state — with its door recorded and, on the
+        // success path, with the probe's confirmations attached.
+        //
+        // BOTH captured values are ASSIGNED BEFORE THIS DECLARATION, so this closure reads two
+        // settled values rather than a local it races the rest of the method for.
+        SecurityAssurance WithUnbuiltDocuments(SecurityAssurance scenarioAssurance) =>
+            SecurityAssurance.Worse(
+                SecurityAssurance.Worse(scenarioAssurance, unbuiltAssurance),
+                rejectedDivergentAssurance);
+
         if (baselineIndex >= 0)
         {
             var baselineEnvJson = SerialiseEnvironment(scenarios[baselineIndex].Environment);
@@ -1638,43 +1657,6 @@ public static class ScenarioRunner
         // built) and exists so the index is total rather than conditional.
         var topologyIndex = baselineIndex >= 0 ? baselineIndex : 0;
 
-        // Fold in every SCHEMA-REJECTED scenario whose environment is NOT the baseline's, WHOLE —
-        // its own declaration beside its own refusal, with `Confirmed` empty by construction, so no
-        // sibling's probe can satisfy it. See this value's declaration above for the fail-open this
-        // closes and for why the gate is environment equality rather than schema validity.
-        //
-        // A scenario that declared no `security` block contributes NOTHING, and the guard is the
-        // same one `UnbuiltDocument.Assure` applies for the same reason: an empty declaration paired
-        // with a refusal would let a scenario that asserted nothing displace a sibling's evidence in
-        // the fold, and `SecurityAssurance.None` must stay the fold's identity element.
-        if (baselineIndex >= 0)
-        {
-            var baselineEnvJson = SerialiseEnvironment(scenarios[baselineIndex].Environment);
-            for (int i = 0; i < scenarios.Count; i++)
-            {
-                if (schemaValid[i]
-                    || string.Equals(
-                        SerialiseEnvironment(scenarios[i].Environment),
-                        baselineEnvJson,
-                        StringComparison.Ordinal))
-                {
-                    continue;
-                }
-
-                var declaredHere = SecuredTargets.Enumerate(scenarios[i].Environment).ToArray();
-                if (declaredHere.Length == 0)
-                {
-                    continue;
-                }
-
-                rejectedDivergentAssurance = SecurityAssurance.Worse(
-                    rejectedDivergentAssurance,
-                    SecurityAssurance.None
-                        .Declaring(declaredHere)
-                        .Refusing(schemaRefusalKinds[i] ?? SecurityAbortKind.AuthoringFault));
-            }
-        }
-
         // ── Pass B: per-scenario compilation (pre-topology) ────────────────────
         for (int i = 0; i < scenarios.Count; i++)
         {
@@ -1757,6 +1739,63 @@ public static class ScenarioRunner
                 .ConfigureAwait(false);
         }
 
+        // ── The seed root and the topology's environment must come from ONE scenario ──────────
+        //
+        // #451 made these separable for the first time. `seedBaseDirectory` is the CALLER's choice
+        // and, for `RunCommand`, is the FIRST DISCOVERED scenario's directory unconditionally; the
+        // environment — and therefore the `environment.seed` file list read against that root — now
+        // comes from the first SCHEMA-VALID scenario. They are the same scenario in every suite
+        // whose first document validates, which is every suite with no rejected document ahead of
+        // the baseline. When they are not, and the scenarios live in DIFFERENT directories, a
+        // relative seed path such as `./fixtures/orders.sql` names two different files.
+        //
+        // THE HARMFUL CASE IS THE ONE THAT RESOLVES, which is why this refuses rather than relying
+        // on a missing file to fail loudly: where a same-named fixture exists in BOTH folders, the
+        // suite silently seeds from the rejected document's copy — the wrong data, no diagnostic,
+        // and a green run. Before #451 the shape was unreachable, because the divergence guard held
+        // every scenario (rejected ones included) to one environment and the topology was built
+        // from `scenarios[0]`, so the two roots could not come apart.
+        //
+        // Inconclusive, not EnvironmentError, on the same reasoning `TopologyAuthoringException`
+        // records for deriving from ArgumentException: the author fixes this by editing the suite
+        // (repair the rejected document, or co-locate the files), nothing infrastructural failed,
+        // and an EnvironmentError that started no container exits 0 — silence on a suite refused
+        // for seeding from the wrong folder.
+        if (baselineIndex > 0
+            && scenarios[topologyIndex].Environment?.Seed is not null
+            && !DirectoriesEqual(compilations[topologyIndex].ScenarioBaseDirectory, seedBaseDirectory))
+        {
+            // Issue #266, Item 4: the scenario name is author-controlled — sanitise before writing.
+            // Printed HERE, once for the suite, and handed to the completion path as
+            // `alreadyPrintedMessage` so the per-scenario walk prints no duplicate — the same
+            // two-halves arrangement every neighbouring suite-level guard uses.
+            var seedRootSplit =
+                $"RunSuiteAsync: scenario '{scenarioNames[topologyIndex]}' supplies this suite's "
+                + "environment (it is the first scenario that passes schema validation), but it "
+                + "lives in a different directory from the one this suite's environment.seed file "
+                + "paths resolve against.  A relative seed path would name a different file in each "
+                + "of the two, so the suite is refused rather than seeded from the wrong folder.  "
+                + "Fix the earlier scenario the schema rejected, or put the suite's scenarios in "
+                + "one directory.";
+
+            await output.WriteLineAsync(DisplaySanitiser.SanitiseForDisplay(seedRootSplit))
+                .ConfigureAwait(false);
+
+            return await CompleteWithoutTopologyAsync(
+                    StampWhereUnjudged(compilations, Verdict.Inconclusive, seedRootSplit),
+                    WithUnbuiltDocuments(assurance.Refusing(SecurityAbortKind.AuthoringFault)),
+                    output,
+                    decorate,
+                    diffLookup,
+                    htmlReportPath,
+                    junitReportPath,
+                    eventsReportPath,
+                    eventsStreamPath,
+                    runSecretLedger: null,
+                    alreadyPrintedMessage: seedRootSplit)
+                .ConfigureAwait(false);
+        }
+
         // ── Build topology once ────────────────────────────────────────────────
         // REQ-005's probe runs inside StartAsync (after the health gate, before the seed) and
         // presents the SAME client security configuration a step will, which is what makes its
@@ -1807,6 +1846,15 @@ public static class ScenarioRunner
         // closed over the whole declaration, including scenarios carrying an early verdict — and
         // note that `compilations[0]`, the baseline both arms compare against, may itself carry
         // one, so filtering here would also change which directory is the reference.
+        //
+        // AND `compilations[0]` STAYS THE REFERENCE HERE WHILE THE ENVIRONMENT ARGUMENT USES
+        // `topologyIndex` — deliberate, not an oversight of #451's reindexing (peer-review Q3). The
+        // two cannot disagree about a suite this guard has anything to say about: it requires EVERY
+        // compilation's directory to be equal, so on any suite it passes, `compilations[0]` and
+        // `compilations[topologyIndex]` name the same directory, and on any suite it fails the run
+        // is refused whichever of the two was the reference. Only the `environment` argument —
+        // which decides whether the suite declares security AT ALL — needs to be the one that will
+        // actually start, and that is why only it moved.
         if (TryFindSecurityBaseDirectoryDivergence(
                 scenarios[topologyIndex].Environment, compilations, seedBaseDirectory, out var divergence))
         {
@@ -2911,13 +2959,128 @@ public static class ScenarioRunner
             "\n",
             new[] { pipelineFailure, stepSecretFault }.Where(m => !string.IsNullOrEmpty(m)));
 
+    /// <summary>
+    /// The assurance contributed by every SCHEMA-REJECTED scenario whose serialised
+    /// <c>environment</c> differs from the baseline's: one whole value per such scenario — its own
+    /// declaration beside its own refusal, with <see cref="SecurityAssurance.Confirmed"/> empty by
+    /// construction — folded by <see cref="SecurityAssurance.Worse"/> (issue #451, security review).
+    /// </summary>
+    /// <param name="scenarios">The suite's parsed ASTs, in declaration order.</param>
+    /// <param name="schemaValid">
+    /// Pass A's per-scenario answer: <see langword="true"/> where <c>DocumentValidator</c> accepted
+    /// the document. Only the <see langword="false"/> entries are candidates here.
+    /// </param>
+    /// <param name="schemaRefusalKinds">
+    /// The abort kind Pass A recorded for each REJECTED scenario, per scenario. Read rather than
+    /// re-derived from the accumulated assurance, which keeps only the highest-precedence kind
+    /// across the whole suite and would therefore attribute a SIBLING's refusal to this scenario.
+    /// A <see langword="null"/> entry for a rejected scenario falls back to
+    /// <see cref="SecurityAbortKind.AuthoringFault"/> — defensive only; Pass A sets every one it
+    /// rejects.
+    /// </param>
+    /// <param name="baselineIndex">
+    /// The index of the first schema-valid scenario — the environment the shared topology is built
+    /// from — or <c>-1</c> when the suite has none.
+    /// </param>
+    /// <returns>
+    /// <see cref="SecurityAssurance.None"/> when nothing qualifies, which is the fold's identity
+    /// element and contributes nothing at any call site.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// <strong>Extracted rather than inlined so the DECISION can be tabled, not merely the folded
+    /// value</strong> (peer-review MAJOR-1). Its four cells — rejected+divergent+declaring,
+    /// rejected+equal-environment, rejected+divergent+unsecured, schema-valid — are pinned by
+    /// <c>FoldRejectedDivergentTests</c> without a container. Inline, only the third of those was
+    /// reachable from an end-to-end test on this machine, and inverting the equality gate left the
+    /// whole suite green.
+    /// </para>
+    /// <para>
+    /// <strong>The gate is environment EQUALITY, not schema validity, and the direction matters.</strong>
+    /// A rejected scenario whose environment EQUALS the baseline's is exactly as covered by the
+    /// suite's own probe as its siblings are — that is the ordinary typo shape #451 exists to
+    /// report as an authoring fault — so it stays in the canonical union and a confirmation may
+    /// satisfy it. Only a rejected scenario whose environment DIFFERS is folded here, because
+    /// nothing held that environment against the one that started.
+    /// </para>
+    /// <para>
+    /// <strong>A scenario that declared no <c>security</c> block contributes NOTHING</strong>, the
+    /// same guard <see cref="UnbuiltDocument.Assure"/> applies and for the same reason: an empty
+    /// declaration paired with a refusal would let a scenario that asserted nothing displace a
+    /// sibling's evidence in the fold, and <see cref="SecurityAssurance.None"/> must stay the
+    /// fold's identity element rather than becoming a refusal looking for a declaration.
+    /// </para>
+    /// <para>
+    /// <c>internal</c> (not <c>private</c>) so <c>Vouchfx.Engine.Runtime.Tests</c> — already granted
+    /// access by this assembly's <c>InternalsVisibleTo</c> — can drive the four cells directly,
+    /// exactly as <c>BindAllSteps</c> and <c>BuildProjectContext</c> are driven.
+    /// </para>
+    /// </remarks>
+    internal static SecurityAssurance FoldRejectedDivergent(
+        IReadOnlyList<ScenarioAst> scenarios,
+        IReadOnlyList<bool> schemaValid,
+        IReadOnlyList<SecurityAbortKind?> schemaRefusalKinds,
+        int baselineIndex)
+    {
+        ArgumentNullException.ThrowIfNull(scenarios);
+        ArgumentNullException.ThrowIfNull(schemaValid);
+        ArgumentNullException.ThrowIfNull(schemaRefusalKinds);
+
+        // No schema-valid scenario means no baseline and no topology: the all-early guard returns
+        // before anything starts, so nothing can be confirmed and the canonical union already
+        // raises for whatever was declared.
+        if (baselineIndex < 0)
+        {
+            return SecurityAssurance.None;
+        }
+
+        var baselineEnvJson = SerialiseEnvironment(scenarios[baselineIndex].Environment);
+        var folded = SecurityAssurance.None;
+
+        for (int i = 0; i < scenarios.Count; i++)
+        {
+            if (schemaValid[i]
+                || string.Equals(
+                    SerialiseEnvironment(scenarios[i].Environment),
+                    baselineEnvJson,
+                    StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var declaredHere = SecuredTargets.Enumerate(scenarios[i].Environment).ToArray();
+            if (declaredHere.Length == 0)
+            {
+                continue;
+            }
+
+            folded = SecurityAssurance.Worse(
+                folded,
+                SecurityAssurance.None
+                    .Declaring(declaredHere)
+                    .Refusing(schemaRefusalKinds[i] ?? SecurityAbortKind.AuthoringFault));
+        }
+
+        return folded;
+    }
+
 
     /// <summary>
-    /// Stamps <see cref="Verdict.Inconclusive"/> and a suite-level <paramref name="cause"/> onto
-    /// every compilation that carries no early verdict of its own, leaving the ones that do
-    /// untouched — the shared preamble both suite-level guards run before
+    /// Stamps the caller's <paramref name="verdict"/> and a suite-level <paramref name="cause"/>
+    /// onto every compilation that carries no early verdict of its own, leaving the ones that do
+    /// untouched — the shared preamble every suite-level guard runs before
     /// <see cref="CompleteWithoutTopologyAsync"/>.
     /// </summary>
+    /// <remarks>
+    /// <strong>The verdict is the caller's, not <see cref="Verdict.Inconclusive"/></strong>, and
+    /// this summary said otherwise until issue #451 gave the method callers that pass something
+    /// else. Counted at HEAD: SIX call sites, of which four pass <see cref="Verdict.Inconclusive"/>
+    /// (seed-root split, base-directory divergence, protocol conflict, the <c>Map</c>-time
+    /// <c>ArgumentException</c>) and two pass <see cref="Verdict.EnvironmentError"/> (the
+    /// shared-<c>environment</c> divergence guard, and the topology-failure catch). Grep the call
+    /// sites rather than trusting that count — it is a census, and a census goes stale exactly the
+    /// way the sentence it replaced did.
+    /// </remarks>
     /// <remarks>
     /// <para>
     /// EXTRACTED RATHER THAN COPIED (MAJOR-1, fix round six). The protocol-conflict guard grew this

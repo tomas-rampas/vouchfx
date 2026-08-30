@@ -610,6 +610,18 @@ internal static class RunCommand
     /// closed at its own throw site, and this frame exists because the NEXT one has not been found.
     /// </para>
     /// <para>
+    /// <strong>What this frame covers is the <c>run</c> PATH's escapes, and that is narrower than
+    /// "every unexpected engine throw now lands inside the taxonomy".</strong> An exception raised
+    /// inside a <c>--parallel</c> SLOT does not reach here at all:
+    /// <c>ParallelSuiteRunner</c>'s per-slot catch-all absorbs it first and classifies it
+    /// <see cref="Verdict.EnvironmentError"/>, which exits 0 when nothing executed. That
+    /// classification is correct for a genuine infrastructure fault and wrong for an engine defect,
+    /// and the frame that makes it cannot tell them apart — tracked as issue #466, not fixed here.
+    /// So the accurate claim is: escapes on the run path land on
+    /// <see cref="ExitCodes.Inconclusive"/>, and a throwing provider <c>Bind</c> does so on BOTH
+    /// paths because it is converted to a verdict before either catch sees it.
+    /// </para>
+    /// <para>
     /// <strong>Inconclusive (4), not TestFailure (1), and not EnvironmentError (3).</strong> An
     /// unexpected throw is not a product defect the suite observed, which is exactly what the
     /// framework's 1 asserted. Nor is it infrastructure: <see cref="Verdict.EnvironmentError"/>
@@ -652,10 +664,14 @@ internal static class RunCommand
     /// created inside <see cref="ExecuteCoreAsync"/> and never touches this method's parameter, so
     /// the filter above is <see langword="false"/> for an EOF-driven stop and the run maps to
     /// <see cref="ExitCodes.Inconclusive"/> — the SAME code <c>ShutdownBackstop</c> force-exits
-    /// with for the same event, which is what makes the graceful and forced halves of that feature
-    /// agree. Hoisting the linked source so this frame could consult it would make EOF re-throw
-    /// into the framework's 1 and split them; the parameter is the right token precisely BECAUSE it
-    /// is not the one EOF cancels.
+    /// with for the same event. Hoisting the linked source so this frame could consult it would
+    /// make EOF re-throw into the framework's 1 and split them; the parameter is the right token
+    /// precisely BECAUSE it is not the one EOF cancels.
+    /// <strong>The agreement claimed is for a cancellation that ESCAPES the run</strong>, and only
+    /// that. Where the EOF cancellation is instead ABSORBED lower down — a runner that observes the
+    /// token, unwinds, and hands back an ordinary <see cref="SuiteResult"/> — no exception reaches
+    /// this frame and the exit code is whatever <see cref="ComputeExitCode"/> derives, which for a
+    /// suite that executed something can be 0. That is pre-existing and out of scope here.
     /// </para>
     /// <para>
     /// <strong>No report artefacts are synthesised here, and that is a stated residual rather than
@@ -1183,13 +1199,21 @@ internal static class RunCommand
                 .Select(p => Path.GetDirectoryName(p.AbsolutePath))
                 .ToList();
 
-            // The suite-wide SEED base directory stays rooted at the FIRST scenario's own
-            // directory (unchanged), matching WatchRunner's Path.GetDirectoryName(filePath)
-            // convention. All scenarios in a sequential suite already share one `environment`
-            // block (validated below in ScenarioRunner), and ScenarioRunner.RunSuiteAsync
-            // builds exactly ONE shared topology from scenarios[0].Environment and applies its
-            // ONE seed ONCE against ONE base directory — environment.seed is genuinely
-            // single-rooted there, unlike a step's own file: reference above. The parallel path
+            // The suite-wide SEED base directory stays rooted at the FIRST DISCOVERED scenario's
+            // own directory (unchanged), matching WatchRunner's Path.GetDirectoryName(filePath)
+            // convention. All scenarios in a sequential suite that pass schema validation share one
+            // `environment` block (enforced below in ScenarioRunner), and
+            // ScenarioRunner.RunSuiteAsync builds exactly ONE shared topology from that block and
+            // applies its ONE seed ONCE against ONE base directory — environment.seed is genuinely
+            // single-rooted there, unlike a step's own file: reference above.
+            //
+            // THE ENVIRONMENT IS NOT NECESSARILY scenarios[0]'s SINCE #451, and this value does not
+            // follow it. The topology is built from the first SCHEMA-VALID scenario, while this
+            // stays index 0 — the same scenario in every suite whose first document validates. When
+            // they differ AND the two scenarios live in different directories AND the environment
+            // declares a seed, ScenarioRunner REFUSES the suite rather than seeding from the wrong
+            // folder (see its seed-root guard); so this line's "single-rooted" claim is enforced
+            // rather than assumed. The parallel path
             // (ParallelSuiteRunner) needs no such single root — each scenario owns its own
             // topology, so it is passed scenarioBaseDirectories for EVERYTHING (seed included).
             var suiteBaseDirectory = scenarioBaseDirectories.Count > 0

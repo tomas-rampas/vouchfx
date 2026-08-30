@@ -861,14 +861,27 @@ internal static class ProviderPipeline
             }
             catch (Exception ex)
             {
-                // MethodInfo.Invoke wraps whatever the provider threw; report the provider's own
-                // exception, not the reflection wrapper an author can do nothing with.
-                var cause = ex is TargetInvocationException { InnerException: { } inner } ? inner : ex;
+                // TWO FAULTS ARRIVE HERE AND THEY ARE NOT THE SAME THING (peer-review NIT-1).
+                // ReflectBind does the closed-generic interface lookup and the MethodInfo resolve
+                // BEFORE it invokes anything, so a failure in either is an ENGINE plumbing fault —
+                // it is not "Bind threw", and reporting it as such would send a reader to read a
+                // provider's Bind that never ran. MethodInfo.Invoke, and only MethodInfo.Invoke,
+                // wraps a provider's own exception in TargetInvocationException; that wrapper is
+                // therefore the discriminator, and unwrapping it is what gets the author the
+                // provider's own message rather than "Exception has been thrown by the target of
+                // an invocation". Both map to the same ValidationFailure channel and the same
+                // Inconclusive verdict — what differs is only which component the diagnostic
+                // blames, which is the whole value of a diagnostic here.
+                var failure = ex is TargetInvocationException { InnerException: { } cause }
+                    ? $"step '{node.Id}': the '{node.CanonicalType}' provider's Bind threw "
+                        + $"{cause.GetType().Name}: {cause.Message}  This is a defect in the "
+                        + "provider, not in the suite — the step was never compiled and never ran."
+                    : $"step '{node.Id}': the engine could not invoke Bind on the "
+                        + $"'{node.CanonicalType}' provider ({ex.GetType().Name}: {ex.Message}).  "
+                        + "This is an engine or provider-packaging fault, not a fault in the suite "
+                        + "— the step was never compiled and never ran.";
 
-                return (boundSteps, new ValidationFailure(
-                    $"step '{node.Id}': the '{node.CanonicalType}' provider's Bind threw "
-                    + $"{cause.GetType().Name}: {cause.Message}  This is a defect in the provider, "
-                    + "not in the suite — the step was never compiled and never ran."));
+                return (boundSteps, new ValidationFailure(failure));
             }
 
             // ── Host resources (tolerant, S07-F-01a) — GUARDED and DEFERRED (G-A,

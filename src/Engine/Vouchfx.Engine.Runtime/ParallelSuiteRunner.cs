@@ -600,6 +600,16 @@ public static class ParallelSuiteRunner
             // verdicts and never throws on them.  A genuine exception ESCAPING the core is an
             // engine/infra fault, not a product defect → synthesise an EnvironmentError slot so
             // the gather never crashes and a real Fail is never manufactured from an infra fault.
+            //
+            // WHAT THIS CATCH CANNOT TELL APART, TRACKED AS ISSUE #466. `EnvironmentError` is the
+            // RIGHT classification for a genuine infrastructure fault and the WRONG one for an
+            // engine or provider defect, which — on a run that executed nothing — exits 0. This
+            // frame cannot distinguish the two: it sees only an exception type. Issue #413 closed
+            // the one route that was known to arrive here (a throwing provider `Bind`, now a
+            // `PipelineResult.Failure` returned before this frame is ever reached), and #466 holds
+            // the general question, because reclassifying every escape would move `EnvironmentError`
+            // semantics for real infra faults too and that is a design decision rather than a fix.
+            // Do NOT widen this catch without reading it.
             // Leave a minimal, redaction-safe trace (exception TYPE only, never the message — §17)
             // on this slot's raw writer so a genuine engine fault is at least diagnosable; the raw
             // writers flush in declaration order, so this stays deterministic.
