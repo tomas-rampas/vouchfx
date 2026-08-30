@@ -41,6 +41,24 @@
 // one Aspire topology starts at a time (the S08 parallel capstone excepted, by
 // design — its concurrency is the engine's ParallelSuiteRunner, not xUnit).
 
+// WHY a collection orderer is registered here
+// ───────────────────────────────────────────
+// #419's non-regression guard (CertificateStoreHygieneGuardTests) asserts that this process
+// leaves no certificate of its own cached in Windows' intermediate-CA stores. That question is
+// only meaningful once every certificate bed in the assembly has been disposed, so the guard's
+// collection has to run LAST — which is what CertificateStoreGuardLastOrderer arranges, and
+// which the DisableTestParallelization above turns into a real guarantee ON A HOST WHERE THE
+// GUARD DOES ANYTHING: collections run sequentially, in the order the orderer returns. The guard
+// itself is Windows-only (nothing else caches intermediates this way) and every job in
+// .github/workflows/build.yml runs on ubuntu-latest, so in CI the ordering is arranged for a
+// check that returns immediately. The enforcement surface is a developer's Windows machine.
+//
+// If xUnit ever fails to load the orderer it logs a diagnostic and falls back to its default
+// order. The consequence is a guard that may run too early and find an already-swept store —
+// a missed leak, not a false failure — because serialised execution means no bed is alive
+// while it runs.
 using Xunit;
 
 [assembly: CollectionBehavior(DisableTestParallelization = true)]
+[assembly: TestCollectionOrderer(
+    "Vouchfx.Engine.Runtime.Tests.CertificateStoreGuardLastOrderer", "Vouchfx.Engine.Runtime.Tests")]

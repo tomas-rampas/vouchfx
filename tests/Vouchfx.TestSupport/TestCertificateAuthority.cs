@@ -28,8 +28,90 @@ namespace Vouchfx.TestSupport;
 /// </summary>
 public static class TestCertificateAuthority
 {
-    /// <summary>Common name of the generated root CA.</summary>
-    public const string CaSubjectCommonName = "Vouchfx Test Root CA";
+    /// <summary>
+    /// Eight hexadecimal characters unique to THIS process, appended to the common name of every
+    /// CA and INTERMEDIATE this class mints — and to no leaf.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The invariant: authority subjects are per-process unique; leaf subjects are
+    /// stable.</strong> On Windows, <see cref="X509Chain.Build"/> caches the intermediates it
+    /// encounters into the <c>CA</c> store, and that cache is keyed by SUBJECT. While every run
+    /// minted a fresh authority under a CONSTANT common name, each run deposited another
+    /// same-subject/different-key copy; once enough had accumulated, chain building failed
+    /// deterministically for reasons that read as environmental (issue #374, which recurred twice
+    /// and cost about an hour of diagnosis each time — 101 of 175 measured residue copies were
+    /// <c>Vouchfx Test Issuing Intermediate</c>). A per-process token makes the cross-run
+    /// collision impossible: two runs can no longer mint the same subject.
+    /// </para>
+    /// <para>
+    /// Leaves are deliberately EXCLUDED. <see cref="ServerSubjectCommonName"/> is matched against
+    /// the host name a probe connects to, and the client identities
+    /// (<see cref="ClientSubjectCommonName"/>, <see cref="UnauthorisedClientSubjectCommonName"/>,
+    /// <see cref="ForeignClientSubjectCommonName"/>) are matched by a broker's own authorisation
+    /// rules — both are matched by VALUE, so suffixing them would break the thing under test to
+    /// close a leak no leaf has been measured to cause: what CryptoAPI caches while assembling a
+    /// path is the path's LINKS.
+    /// </para>
+    /// <para>
+    /// The token is per PROCESS, not per bed: beds running side by side within one run keep the
+    /// same-subject coexistence they have always had, which the thumbprint-keyed
+    /// <c>TestCertificateStoreSweep</c> already handles. The collision this closes is the
+    /// cross-run one. It doubles as the only safe key for a residue guard — any BROADER subject
+    /// match (a bare common name, a <c>Vouchfx</c> prefix) would sweep in the cached intermediates
+    /// of a concurrently running suite, which is a worse fault than the leak.
+    /// </para>
+    /// </remarks>
+    public static readonly string ProcessToken = Guid.NewGuid().ToString("N")[..8];
+
+    /// <summary>
+    /// <see cref="ProcessToken"/> preceded by the separator every authority subject puts in front
+    /// of it — the form anything SEARCHING for this process's certificates must match on.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Eight hex characters on their own are not rare inside a certificate store: real
+    /// <c>CA</c> stores carry distinguished names containing long hexadecimal runs (TPM and
+    /// platform attestation intermediates embed key identifiers that way), so a BARE token
+    /// measurably collides with them, while the space-anchored form matched nothing on any host
+    /// checked. A collision would make the residue guard delete a device attestation certificate,
+    /// which is a far worse outcome than the leak it is closing — so the anchored form is the only
+    /// supported way to match, and it is spelled ONCE, here.
+    /// </para>
+    /// <para>
+    /// <see cref="WithProcessToken"/> builds every authority common name by appending exactly this
+    /// string, so a search using it and a subject that was minted cannot drift apart.
+    /// </para>
+    /// <para>
+    /// A computed property, not a field, and that is a safety property rather than a style choice.
+    /// As <c>static readonly string ProcessTokenMarker = " " + ProcessToken;</c> its correctness
+    /// depended on being declared BELOW <see cref="ProcessToken"/> — static field initialisers run
+    /// in textual order, so reordering the two would have left the marker as a bare <c>" "</c>,
+    /// and a guard searching for a single space matches every subject that contains one, then
+    /// deletes them. Evaluating at call time removes the ordering dependency for the guard's
+    /// needle — the destructive one. <see cref="CaSubjectCommonName"/> and
+    /// <see cref="ForeignCaSubjectCommonName"/> still reach this from their own field
+    /// initialisers via <see cref="WithProcessToken"/>, so they still require
+    /// <see cref="ProcessToken"/> to be declared above them; a reorder there loses the token on
+    /// those two subjects — not destructive, and reddened by
+    /// <c>RootCaSubjectFieldAndTheMintedAnchorAgree</c> and
+    /// <c>EveryAuthoritySubjectIsDistinctWithinTheProcess</c>.
+    /// <c>TestCertificateAuthorityProcessTokenTests</c> pins the SHAPE (nine characters, a space
+    /// then eight hex digits) so a future re-spelling that widens the match reddens.
+    /// </para>
+    /// </remarks>
+    public static string ProcessTokenMarker => " " + ProcessToken;
+
+    /// <summary>
+    /// Common name of the generated root CA, carrying <see cref="ProcessToken"/>.
+    /// </summary>
+    /// <remarks>
+    /// A field rather than a constant BECAUSE of the token: the value is not known until the
+    /// process starts. The one external assertion over it
+    /// (<c>SecurityConfigurationAccessorTests</c>) reads this same field, so mint and assertion
+    /// cannot drift.
+    /// </remarks>
+    public static readonly string CaSubjectCommonName = WithProcessToken("Vouchfx Test Root CA");
 
     /// <summary>Common name of the generated client certificate.</summary>
     public const string ClientSubjectCommonName = "vouchfx-test-client";
@@ -64,14 +146,22 @@ public static class TestCertificateAuthority
     /// subject this class mints.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// The distinctness is operational, not cosmetic. Chain building on Windows can leave issuer
     /// certificates in the user's intermediate-CA store, and a stale entry sharing a subject with a
     /// live fixture's issuer produces chain failures that look like defects in whatever ran next —
     /// a trap this repository has already paid for once with a subject that WAS shared. A root
     /// nobody trusts, whose whole purpose is to be rejected, is the last one that should be
     /// confusable with the anchor a suite declares.
+    /// </para>
+    /// <para>
+    /// It additionally carries <see cref="ProcessToken"/>, as every authority subject here does,
+    /// which makes it unique across RUNS as well as across the subjects of one run. A field
+    /// rather than a constant for that reason.
+    /// </para>
     /// </remarks>
-    public const string ForeignCaSubjectCommonName = "Vouchfx Test Foreign Root CA";
+    public static readonly string ForeignCaSubjectCommonName =
+        WithProcessToken("Vouchfx Test Foreign Root CA");
 
     /// <summary>Common name of the foreign client certificate.</summary>
     public const string ForeignClientSubjectCommonName = "vouchfx-test-foreign-client";
@@ -110,6 +200,20 @@ public static class TestCertificateAuthority
 
     private static readonly Oid s_serverAuth = new("1.3.6.1.5.5.7.3.1");
     private static readonly Oid s_clientAuth = new("1.3.6.1.5.5.7.3.2");
+
+    /// <summary>
+    /// Appends <see cref="ProcessTokenMarker"/> to an authority's common name — the ONE spelling
+    /// of how the token is attached, so a subject minted inline, a subject exposed as a field, and
+    /// a guard searching for either cannot disagree about the separator.
+    /// </summary>
+    private static string WithProcessToken(string commonName) => commonName + ProcessTokenMarker;
+
+    /// <summary>
+    /// Builds the distinguished name of a CA or intermediate. Every authority subject this class
+    /// mints goes through here or through a field built by <see cref="WithProcessToken"/>; leaves
+    /// deliberately do not (see <see cref="ProcessToken"/>).
+    /// </summary>
+    private static string AuthoritySubject(string commonName) => "CN=" + WithProcessToken(commonName);
 
     /// <summary>
     /// Creates a temporary suite directory containing <see cref="CaFileName"/>,
@@ -413,13 +517,16 @@ public static class TestCertificateAuthority
 
         using var rootKey = RSA.Create(2048);
         var rootRequest = new CertificateRequest(
-            "CN=Vouchfx Test Offline Root", rootKey, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+            AuthoritySubject("Vouchfx Test Offline Root"),
+            rootKey,
+            HashAlgorithmName.SHA256,
+            RSASignaturePadding.Pkcs1);
         AddCaExtensions(rootRequest);
         using var root = rootRequest.CreateSelfSigned(now.AddDays(-1), now.AddDays(2));
 
         using var intermediateKey = RSA.Create(2048);
         var intermediateRequest = new CertificateRequest(
-            "CN=Vouchfx Test Issuing Intermediate",
+            AuthoritySubject("Vouchfx Test Issuing Intermediate"),
             intermediateKey,
             HashAlgorithmName.SHA256,
             RSASignaturePadding.Pkcs1);
@@ -454,7 +561,7 @@ public static class TestCertificateAuthority
 
         using var key = RSA.Create(2048);
         var request = new CertificateRequest(
-            "CN=Imposter Root", key, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+            AuthoritySubject("Imposter Root"), key, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
         AddCaExtensions(request);
         using var imposter = request.CreateSelfSigned(now.AddDays(-1), now.AddDays(2));
 
@@ -480,13 +587,16 @@ public static class TestCertificateAuthority
 
         using var rootKey = RSA.Create(2048);
         var rootRequest = new CertificateRequest(
-            "CN=Vouchfx AIA Root", rootKey, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+            AuthoritySubject("Vouchfx AIA Root"), rootKey, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
         AddCaExtensions(rootRequest);
         using var root = rootRequest.CreateSelfSigned(now.AddDays(-1), now.AddDays(2));
 
         using var intermediateKey = RSA.Create(2048);
         var intermediateRequest = new CertificateRequest(
-            "CN=Vouchfx AIA Intermediate", intermediateKey, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+            AuthoritySubject("Vouchfx AIA Intermediate"),
+            intermediateKey,
+            HashAlgorithmName.SHA256,
+            RSASignaturePadding.Pkcs1);
         AddCaExtensions(intermediateRequest);
         using var intermediateSigned = intermediateRequest.Create(
             root, now.AddDays(-1), now.AddDays(1), RandomNumberGenerator.GetBytes(8));
@@ -500,8 +610,20 @@ public static class TestCertificateAuthority
 
         File.WriteAllText(Path.Combine(suiteDirectory, CaFileName), root.ExportCertificatePem());
 
+        // Subject AND thumbprint, read from the SAME live certificate in one statement, are handed
+        // to the bed even though the bed does not RETAIN the intermediate: whether a chain builder
+        // ever obtains it decides whether a copy gets cached, and this fixture exists precisely to
+        // dangle it at one over the caIssuers URL. Taken as a pair because a thumbprint alone
+        // identifies nothing a test can check against — the subject is what ties it to the leaf's
+        // issuer. See TestAiaBed's constructor.
+        var intermediate = (intermediateSigned.Subject, intermediateSigned.Thumbprint);
+
         return new TestAiaBed(
-            suiteDirectory, new X509Certificate2(root.Export(X509ContentType.Cert)), leaf.Certificate);
+            suiteDirectory,
+            new X509Certificate2(root.Export(X509ContentType.Cert)),
+            leaf.Certificate,
+            intermediate.Subject,
+            intermediate.Thumbprint);
     }
 
     /// <summary>
@@ -627,7 +749,7 @@ public static class TestCertificateAuthority
 
         using var otherCaKey = RSA.Create(2048);
         var otherCaRequest = new CertificateRequest(
-            "CN=Unrelated Root", otherCaKey, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+            AuthoritySubject("Unrelated Root"), otherCaKey, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
         otherCaRequest.CertificateExtensions.Add(
             new X509BasicConstraintsExtension(certificateAuthority: true, hasPathLengthConstraint: false, 0, critical: true));
         using var otherCa = otherCaRequest.CreateSelfSigned(now.AddDays(-1), now.AddDays(2));
@@ -856,16 +978,33 @@ public sealed class TestTwoTierBed : IDisposable
 /// </summary>
 public sealed class TestAiaBed : IDisposable
 {
-    internal TestAiaBed(string suiteDirectory, X509Certificate2 root, X509Certificate2 leaf)
+    internal TestAiaBed(
+        string suiteDirectory,
+        X509Certificate2 root,
+        X509Certificate2 leaf,
+        string intermediateSubject,
+        string intermediateThumbprint)
     {
         SuiteDirectory = suiteDirectory;
         RootCertificate = root;
         LeafWithAuthorityInfoAccess = leaf;
+        IntermediateSubject = intermediateSubject;
+        IntermediateThumbprint = intermediateThumbprint;
 
-        // See TestTwoTierBed's copy of this. The intermediate this bed's leaf was issued by is
-        // deliberately ABSENT — the whole point of the fixture — so it is not the bed's to remove
-        // and is not listed; what the sweep covers is the material the bed does hold.
-        _ownThumbprints = new[] { RootCertificate.Thumbprint, LeafWithAuthorityInfoAccess.Thumbprint };
+        // See TestTwoTierBed's copy of this. The intermediate is ABSENT FROM THE BED — the whole
+        // point of the fixture — but absent from the bed is not the same as absent from the host:
+        // a chain builder that has not had downloads disabled fetches it over the caIssuers URL,
+        // and CryptoAPI then caches what it fetched. That is the exact case this fixture provokes,
+        // so the copy it can produce is this bed's to remove. It is listed by THUMBPRINT, captured
+        // at mint time (#374/#419) — the bed knows the value because the bed minted the
+        // certificate, which is all the sweep needs and is why retaining the certificate itself
+        // would be the wrong fix.
+        _ownThumbprints = new[]
+        {
+            RootCertificate.Thumbprint,
+            LeafWithAuthorityInfoAccess.Thumbprint,
+            IntermediateThumbprint,
+        };
     }
 
     private readonly string[] _ownThumbprints;
@@ -878,6 +1017,32 @@ public sealed class TestAiaBed : IDisposable
 
     /// <summary>The leaf carrying the <c>caIssuers</c> URL, whose issuer is deliberately absent.</summary>
     public X509Certificate2 LeafWithAuthorityInfoAccess { get; }
+
+    /// <summary>
+    /// Distinguished name of the intermediate that signed
+    /// <see cref="LeafWithAuthorityInfoAccess"/>, captured from the same certificate instance and
+    /// in the same statement as <see cref="IntermediateThumbprint"/>.
+    /// </summary>
+    /// <remarks>
+    /// The pair is what makes the capture checkable: a thumbprint on its own could have been read
+    /// off any certificate the bed minted and still look right, whereas a subject can be compared
+    /// with <c>LeafWithAuthorityInfoAccess.Issuer</c>. Because the two are read together, a
+    /// subject that matches the leaf's issuer is evidence the thumbprint beside it came from the
+    /// missing link too.
+    /// </remarks>
+    public string IntermediateSubject { get; }
+
+    /// <summary>
+    /// Thumbprint of the intermediate that signed <see cref="LeafWithAuthorityInfoAccess"/> —
+    /// the certificate a chain builder would fetch from the <c>caIssuers</c> URL, and therefore
+    /// the one it would cache.
+    /// </summary>
+    /// <remarks>
+    /// A thumbprint and not a certificate, on purpose: the bed must not be able to hand anyone
+    /// the intermediate, because its absence is the fixture. This is exactly the amount of it the
+    /// teardown sweep needs, and it is the entry the sweep uses.
+    /// </remarks>
+    public string IntermediateThumbprint { get; }
 
     /// <inheritdoc />
     public void Dispose()
@@ -916,18 +1081,38 @@ internal static class TestCertificateBedPaths
 /// <see cref="X509ChainPolicy.ExtraStore"/> — into the <c>CA</c> store, so the next build can find
 /// it without going back to the network. The two-tier fixture supplies exactly such an
 /// intermediate, so every run of it deposits one. Measured on this repository: one
-/// <c>CN=Vouchfx Test Issuing Intermediate</c> per run of Vouchfx.Engine.Runtime.Tests, and 175
+/// <c>Vouchfx Test Issuing Intermediate</c> per run of Vouchfx.Engine.Runtime.Tests, and 175
 /// accumulated copies once produced two failures that read as environmental for several sessions
 /// before the cause was found. The cure is therefore a teardown sweep, not a change to what the
 /// fixture installs.
 /// </para>
 /// <para>
-/// <strong>Why the match is by thumbprint and never by subject.</strong> Every bed mints a FRESH
-/// intermediate under the same common name, and xUnit runs test classes in parallel. A
-/// subject-matched sweep would delete a concurrently-running bed's cached intermediate, and
-/// removing one mid-run can make another test's chain build fail — which would trade a cosmetic
-/// leak for an intermittent suite. A thumbprint identifies one certificate, so a bed can only ever
-/// remove its own.
+/// <strong>Why the sweep alone was not enough.</strong> A cache entry only DAMAGES anything when
+/// two of them share a subject, and while every run minted its authorities under constant common
+/// names, any run whose process died before teardown left one that a later run could collide
+/// with. <see cref="TestCertificateAuthority.ProcessToken"/> removes the collision at the source
+/// (#374); this sweep is what keeps the store from growing ALONG THE PATH WHERE
+/// <c>Dispose</c> RUNS.
+/// </para>
+/// <para>
+/// <strong>What is knowingly left behind.</strong> Nothing here reclaims residue from a process
+/// that was killed, cancelled, or crashed before teardown — not this sweep, which runs in
+/// <c>Dispose</c>, and not <c>TestCertificateStoreGuard</c>, which only ever sees its own live
+/// process's token. Such residue is now harmless rather than merely rarer: its subject is unique
+/// to the dead run, so no later run can collide with it, which is the whole point of the token.
+/// It is litter, and it is accepted as litter. The certificates stop being time-valid quickly —
+/// intermediates and leaves are minted <c>notAfter = now + 1 day</c> and roots <c>+ 2 days</c> —
+/// but expiry does NOT remove them from the store, and whether an expired copy is still offered
+/// as a chain-building candidate has not been measured here, so no claim is made either way.
+/// Reclaiming abandoned residue is tracked on #459; deliberately not built into this change.
+/// </para>
+/// <para>
+/// <strong>Why the match is by thumbprint and never by subject.</strong> Within one process every
+/// bed mints a FRESH intermediate under the same common name — the token is per process, not per
+/// bed — and xUnit runs test classes in parallel. A subject-matched sweep would delete a
+/// concurrently-running bed's cached intermediate, and removing one mid-run can make another
+/// test's chain build fail, which would trade a cosmetic leak for an intermittent suite. A
+/// thumbprint identifies one certificate, so a bed can only ever remove its own.
 /// </para>
 /// <para>
 /// <strong>Why every failure is swallowed.</strong> Writing to <c>LocalMachine\CA</c> needs
@@ -976,7 +1161,7 @@ internal static class TestCertificateStoreSweep
                 return;
             }
 
-            // Find() hands back fresh X509Certificate2 instances, each owning its own native
+            // Matching() hands back fresh X509Certificate2 instances, each owning its own native
             // CertContext handle, so they must be disposed once removal is done — a sweep that
             // leaked handles while closing a certificate leak would be a poor joke. Disposal is
             // in a finally because Remove itself can throw (the unelevated machine store), and
@@ -1008,28 +1193,64 @@ internal static class TestCertificateStoreSweep
     }
 
     /// <remarks>
-    /// De-duplicated, and not defensively: a bed legitimately lists the SAME certificate twice.
-    /// <c>IssueLeaf</c> hands back a certificate and a PKCS#12-reloaded <c>Loadable</c> copy of it,
-    /// and <c>TestTwoTierBed</c> captures both (<c>ServerLeaf</c> and <c>ServerLeafWithKey</c>) —
-    /// a thumbprint is computed over the certificate DER, so the private key does not change it
-    /// and the two entries are identical. Without the distinct, each such pair costs a second
-    /// <c>Find</c>, a second <c>Remove</c> whose target is already gone, and a second live handle
-    /// to dispose.
     /// <para>
-    /// Empty thumbprints are dropped for the same reason rather than passed to <c>Find</c>, which
-    /// is a lookup nothing can usefully match.
+    /// The wanted thumbprints are de-duplicated, and not defensively: a bed legitimately lists the
+    /// SAME certificate twice. <c>IssueLeaf</c> hands back a certificate and a PKCS#12-reloaded
+    /// <c>Loadable</c> copy of it, and <c>TestTwoTierBed</c> captures both (<c>ServerLeaf</c> and
+    /// <c>ServerLeafWithKey</c>) — a thumbprint is computed over the certificate DER, so the
+    /// private key does not change it and the two entries are identical. Empty thumbprints are
+    /// dropped for the same reason: they are a lookup nothing can usefully match.
+    /// </para>
+    /// <para>
+    /// The store is enumerated ONCE and every non-matching instance is disposed on the spot. The
+    /// earlier shape called <c>store.Certificates.Find</c> per thumbprint, which enumerates the
+    /// whole store again each time and leaves each intermediate collection's native
+    /// <c>CertContext</c> handles to the finaliser; a four-thumbprint bed swept across two store
+    /// locations paid for eight full enumerations, and the AIA fixture's arrival made that worse.
+    /// Enumerating once and disposing eagerly is the same pattern
+    /// <c>TestCertificateStoreGuard</c> uses, for the same reason.
     /// </para>
     /// </remarks>
     private static X509Certificate2Collection Matching(X509Store store, IReadOnlyList<string> thumbprints)
     {
-        var matches = new X509Certificate2Collection();
+        var wanted = new HashSet<string>(
+            thumbprints.Where(t => !string.IsNullOrEmpty(t)), StringComparer.OrdinalIgnoreCase);
 
-        foreach (var thumbprint in thumbprints
-            .Where(t => !string.IsNullOrEmpty(t))
-            .Distinct(StringComparer.OrdinalIgnoreCase))
+        var matches = new X509Certificate2Collection();
+        if (wanted.Count == 0)
         {
-            matches.AddRange(
-                store.Certificates.Find(X509FindType.FindByThumbprint, thumbprint, validOnly: false));
+            return matches;
+        }
+
+        // Hoisted: X509Store.Certificates materialises a NEW collection of live handles on every
+        // access, so the throw path below needs the same instance the loop is walking.
+        var all = store.Certificates;
+
+        try
+        {
+            foreach (var certificate in all)
+            {
+                if (wanted.Contains(certificate.Thumbprint))
+                {
+                    matches.Add(certificate);
+                }
+                else
+                {
+                    certificate.Dispose();
+                }
+            }
+        }
+        catch
+        {
+            // Reading a certificate can throw (a malformed DN, a broken store entry), and the
+            // handles this method never reached are as much its responsibility as the ones it
+            // matched. Dispose EVERYTHING; double-dispose is a no-op.
+            foreach (var certificate in all)
+            {
+                certificate.Dispose();
+            }
+
+            throw;
         }
 
         return matches;
