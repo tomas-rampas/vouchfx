@@ -256,7 +256,10 @@ public static partial class SuiteScaffolder
     private static void AppendSteps(
         StringBuilder sb,
         IReadOnlyList<ScaffoldStepIntent> steps,
-        IReadOnlyDictionary<string, StepCatalogueEntry> byType,
+        // Concrete Dictionary, not IReadOnlyDictionary: this is a private helper with a
+        // single call site that already holds the concrete map, and the interface buys
+        // nothing but an indirection on every lookup (CA1859).
+        Dictionary<string, StepCatalogueEntry> byType,
         TargetResolver targets)
     {
         sb.AppendLine("steps:");

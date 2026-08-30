@@ -269,9 +269,7 @@ public sealed class MqExpectKafkaEmitTests
     [Fact]
     public void CompileReferenceAssemblies_ContainsConfluentKafkaAndJsonPathAssemblies()
     {
-        var contributor = (ICompileReferenceContributor)_provider;
-
-        var assemblies = contributor.CompileReferenceAssemblies.ToList();
+        var assemblies = ((ICompileReferenceContributor)_provider).CompileReferenceAssemblies.ToList();
 
         Assert.Contains(assemblies, a =>
             a.GetName().Name?.Equals("Confluent.Kafka", StringComparison.OrdinalIgnoreCase) == true);
@@ -509,8 +507,7 @@ public sealed class MqExpectKafkaEmitTests
     [Fact]
     public void CompileReferenceAssemblies_ContainsAvroSerdesAssemblies()
     {
-        var contributor = (ICompileReferenceContributor)_provider;
-        var names = contributor.CompileReferenceAssemblies
+        var names = ((ICompileReferenceContributor)_provider).CompileReferenceAssemblies
             .Select(a => a.GetName().Name)
             .ToList();
 

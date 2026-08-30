@@ -176,8 +176,7 @@ public sealed class MailExpectSmtpEmitTests
     [Fact]
     public void CompileReferenceAssemblies_ContainsHttpAndJsonAssemblies()
     {
-        var contributor = (ICompileReferenceContributor)_provider;
-        var names = contributor.CompileReferenceAssemblies
+        var names = ((ICompileReferenceContributor)_provider).CompileReferenceAssemblies
             .Select(a => a.GetName().Name)
             .ToList();
 

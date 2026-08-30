@@ -150,8 +150,7 @@ public sealed class HttpRestXPathCaptureTests
     [Fact]
     public void CompileReferenceAssemblies_ContainsSystemPrivateXml()
     {
-        var contributor = (ICompileReferenceContributor)new HttpRestProvider();
-        var assemblies = contributor.CompileReferenceAssemblies.ToList();
+        var assemblies = ((ICompileReferenceContributor)new HttpRestProvider()).CompileReferenceAssemblies.ToList();
 
         Assert.Contains(assemblies, a =>
             a.GetName().Name?.Equals("System.Private.Xml", StringComparison.OrdinalIgnoreCase) == true);

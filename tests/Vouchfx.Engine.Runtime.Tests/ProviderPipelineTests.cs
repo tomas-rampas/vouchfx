@@ -814,12 +814,14 @@ public sealed class ProviderPipelineTests
             ["events"] = "kafka",
         };
 
-        // Access through the public IProjectContext interface, as providers do.
-        Vouchfx.Sdk.IProjectContext ctx = new RunProjectContext(deps, Directory.GetCurrentDirectory());
+        // Read through the public IProjectContext interface, as providers do — the cast is
+        // the point of the test, so it stays; only the local's own type is concrete (CA1859).
+        var ctx = new RunProjectContext(deps, Directory.GetCurrentDirectory());
+        var declared = ((Vouchfx.Sdk.IProjectContext)ctx).DeclaredDependencies;
 
-        Assert.Equal(2, ctx.DeclaredDependencies.Count);
-        Assert.Equal("postgres", ctx.DeclaredDependencies["orders-db"]);
-        Assert.Equal("kafka", ctx.DeclaredDependencies["events"]);
+        Assert.Equal(2, declared.Count);
+        Assert.Equal("postgres", declared["orders-db"]);
+        Assert.Equal("kafka", declared["events"]);
     }
 
     /// <summary>
@@ -829,9 +831,9 @@ public sealed class ProviderPipelineTests
     [Fact]
     public void RunProjectContext_Empty_HasNoDeclaredDependencies()
     {
-        Vouchfx.Sdk.IProjectContext ctx = RunProjectContext.Empty(Directory.GetCurrentDirectory());
+        var ctx = RunProjectContext.Empty(Directory.GetCurrentDirectory());
 
-        Assert.Empty(ctx.DeclaredDependencies);
+        Assert.Empty(((Vouchfx.Sdk.IProjectContext)ctx).DeclaredDependencies);
     }
 
     // ── Test: RunProjectContext.DeclaredServices (services-generalisation, REQ-010) ──
@@ -851,14 +853,15 @@ public sealed class ProviderPipelineTests
             ["api"] = new DeclaredServiceInfo(new List<string> { "http" }),
         };
 
-        Vouchfx.Sdk.IProjectContext ctx = new RunProjectContext(
+        var ctx = new RunProjectContext(
             new Dictionary<string, string>(StringComparer.Ordinal),
             Directory.GetCurrentDirectory(),
             services);
+        var declared = ((Vouchfx.Sdk.IProjectContext)ctx).DeclaredServices;
 
-        Assert.Equal(2, ctx.DeclaredServices.Count);
-        Assert.Equal("tcp-9093", Assert.Single(ctx.DeclaredServices["kafka-broker"].EndpointNames));
-        Assert.Equal("http", Assert.Single(ctx.DeclaredServices["api"].EndpointNames));
+        Assert.Equal(2, declared.Count);
+        Assert.Equal("tcp-9093", Assert.Single(declared["kafka-broker"].EndpointNames));
+        Assert.Equal("http", Assert.Single(declared["api"].EndpointNames));
     }
 
     /// <summary>
@@ -868,9 +871,9 @@ public sealed class ProviderPipelineTests
     [Fact]
     public void RunProjectContext_Empty_HasNoDeclaredServices()
     {
-        Vouchfx.Sdk.IProjectContext ctx = RunProjectContext.Empty(Directory.GetCurrentDirectory());
+        var ctx = RunProjectContext.Empty(Directory.GetCurrentDirectory());
 
-        Assert.Empty(ctx.DeclaredServices);
+        Assert.Empty(((Vouchfx.Sdk.IProjectContext)ctx).DeclaredServices);
     }
 
     /// <summary>

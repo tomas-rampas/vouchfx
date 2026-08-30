@@ -12,6 +12,7 @@
 // IDocumentSeedSink were removed along with the feature. What remains here is
 // the NIT-1 dispatch behaviour for the surviving `sql` kind.
 
+using System.Collections.Frozen;
 using Vouchfx.Engine.Abstractions;
 using Vouchfx.Engine.Authoring.Model;
 using Vouchfx.Engine.Orchestration;
@@ -101,13 +102,20 @@ public sealed class SeedApplierDispatchTests
     /// host/port pair is never dialled by these tests — only present so the
     /// discoveredServices lookup succeeds before the file-existence check runs.
     /// </summary>
-    private static readonly IReadOnlyDictionary<string, string> RelationalConnStrings =
+    // FrozenDictionary, not Dictionary (CA1859 + immutability). CA1859 rejects the
+    // IReadOnlyDictionary this field used to declare — the interface buys only an indirection on
+    // a field whose value never changes — but swapping in a bare Dictionary would have traded a
+    // compile-time no-mutation guarantee for a mutable map SHARED by every test in this class,
+    // where one stray write would contaminate the rest of the run in test-order-dependent ways.
+    // FrozenDictionary is concrete (so the analyser is satisfied) AND immutable (so the guarantee
+    // is kept), which is why it is preferred here over either alternative.
+    private static readonly FrozenDictionary<string, string> RelationalConnStrings =
         new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["postgres"] = "Host=localhost;Port=1;Database=db;Username=u;Password=p",
             ["sqlserver"] = "Server=localhost,1;Database=db;User Id=u;Password=p;TrustServerCertificate=True",
             ["mysql"] = "Server=localhost;Port=1;Database=db;Uid=u;Pwd=p",
-        };
+        }.ToFrozenDictionary(StringComparer.Ordinal);
 
     [Theory]
     [InlineData("postgres")]

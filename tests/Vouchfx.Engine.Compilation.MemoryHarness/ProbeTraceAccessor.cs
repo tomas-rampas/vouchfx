@@ -49,7 +49,10 @@ public sealed class ProbeTraceAccessor : ITraceCaptureAccessor
     private static readonly IReadOnlyList<CapturedSpan> Empty =
         Array.Empty<CapturedSpan>();
 
-    private readonly IReadOnlyList<CapturedSpan> _seed;
+    // Concrete array, not IReadOnlyList (CA1859): the field is only ever the array built
+    // in the constructor. `Empty` deliberately stays interface-typed so GetCaptured's
+    // conditional still yields IReadOnlyList<CapturedSpan>, the interface's return type.
+    private readonly CapturedSpan[] _seed;
 
     /// <summary>
     /// Creates the stub with a small fixed seed: two captured spans, each carrying
@@ -104,6 +107,6 @@ public sealed class ProbeTraceAccessor : ITraceCaptureAccessor
     /// </returns>
     public long GetTotalReceived(string receiverVarName)
         => string.Equals(receiverVarName, ProbeReceiverName, StringComparison.Ordinal)
-            ? _seed.Count
+            ? _seed.Length
             : 0;
 }

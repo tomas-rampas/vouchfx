@@ -298,7 +298,7 @@ public sealed class DependencyEnvSecurityInteropTests
     /// <c>EnvironmentMapperTests.ResolveEnvVarsAsync</c> and <c>DependencyEnvCensusTests</c> use,
     /// which needs no live endpoint and therefore no Docker.
     /// </summary>
-    private static async Task<Dictionary<string, object>> ResolveEnvVarsAsync(IResource resource)
+    private static async Task<Dictionary<string, object>> ResolveEnvVarsAsync(ContainerResource resource)
     {
         var envVars = new Dictionary<string, object>();
         var callbackContext = new EnvironmentCallbackContext(

@@ -145,7 +145,10 @@ public sealed class HtmlRenderer
 
     private static ReportModel BuildModel(
         IEnumerable<string> jsonLines,
-        IDictionary<(string RunId, string StepId), string> stepKinds)
+        // Concrete Dictionary, not IDictionary: this private helper has a single call site
+        // that already holds the concrete map, and the interface buys nothing but an
+        // indirection on every write (CA1859).
+        Dictionary<(string RunId, string StepId), string> stepKinds)
     {
         var model = new ReportModel();
 

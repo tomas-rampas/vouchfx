@@ -220,9 +220,7 @@ public sealed class DbAssertSqlServerEmitTests
     [Fact]
     public void CompileReferenceAssemblies_ContainsSqlClientAssembly()
     {
-        var contributor = (ICompileReferenceContributor)_provider;
-
-        var assemblies = contributor.CompileReferenceAssemblies.ToList();
+        var assemblies = ((ICompileReferenceContributor)_provider).CompileReferenceAssemblies.ToList();
 
         Assert.Contains(assemblies, a =>
             a.GetName().Name?.Contains("SqlClient", StringComparison.OrdinalIgnoreCase) == true);

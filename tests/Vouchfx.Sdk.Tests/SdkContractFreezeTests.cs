@@ -47,16 +47,40 @@
 // Vouchfx.TestSupport so that this gate and the Vouchfx.Sdk.Testing freeze gate
 // emit byte-comparable goldens from ONE implementation (S08-F-02 / M4 follow-up).
 //
+// THE FROZEN SURFACE IS NOT ONLY THE SIGNATURE — IT INCLUDES CSX HELPER SOURCE BODIES (#361):
+//   Vouchfx.Sdk exposes CSX helper classes (SecurityHelper, SecretHelper, SubstituteHelper,
+//   KafkaSecurityHelper) whose whole public surface is one `public const string Source` holding
+//   the text of a static class that providers splice into CsxFragment.RequiredHelpers.  A const
+//   string's VALUE is INLINED into every consuming assembly at ITS compile time, and CsxAssembler
+//   throws CsxAssemblyException when two fragments declare the same helper class with different
+//   source text.  So an out-of-tree provider compiled against an OLDER SDK carries the OLD body
+//   verbatim, and a suite mixing it with an in-tree provider on the NEW SDK fails to assemble.
+//   Editing a helper BODY is therefore a breaking change to the v1 contract, exactly as editing
+//   an interface would be — but the signature golden cannot see it: it records
+//   `field const System.String Source`, which is byte-identical whichever text the const holds.
+//   MEASURED while building this gate: a 13-character edit to a comment INSIDE
+//   SubstituteHelper.Source left VouchfxSdkPublicApi_MatchesGolden_ByteForByte green and moved
+//   no line of vouchfx-sdk-public-api.v1.txt, while the new hash gate went red on it.
+//   CsxHelperSources_MatchGolden_ByteForByte closes that hole by pinning a SHA-256 of each
+//   helper's Source VALUE in a companion golden, so a body edit reds the gate and must be
+//   regenerated and reviewed like any other contract change.
+//
 // REGENERATION (when the v1 provider contract legitimately changes — additive only):
 //   VOUCHFX_REGEN_SDK_CONTRACT=1 dotnet test tests/Vouchfx.Sdk.Tests \
 //     --filter "FullyQualifiedName~SdkContractFreezeTests"
-//   This rewrites Golden/vouchfx-sdk-public-api.v1.txt from the freshly-reflected
-//   surface.  Review the diff (must be additive only), then commit.  Mirror of
-//   SchemaFreezeTests.IsRegenRequested / VOUCHFX_REGEN_SCHEMA.
+//   This rewrites BOTH Golden/vouchfx-sdk-public-api.v1.txt (from the freshly-reflected surface)
+//   and Golden/vouchfx-sdk-helper-sources.v1.txt (from the freshly-read helper constants) — one
+//   flag, because the two artifacts pin two halves of one contract and regenerating only half is
+//   never the intent.  Review the diff (the signature must be additive only; a moved helper hash
+//   means a body edit, which needs the compatibility argument above answered), then commit.
+//   Mirror of SchemaFreezeTests.IsRegenRequested / VOUCHFX_REGEN_SCHEMA.
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Security.Cryptography;
+using System.Text;
 using Vouchfx.Sdk;
 using Vouchfx.TestSupport;
 using Xunit;
@@ -99,7 +123,7 @@ public sealed class SdkContractFreezeTests
             return;
         }
 
-        var golden = ReadGolden();
+        var golden = ReadGolden("vouchfx-sdk-public-api.v1.txt");
 
         var actualNormalised = Normalise(actual);
         var goldenNormalised = Normalise(golden);
@@ -243,7 +267,217 @@ public sealed class SdkContractFreezeTests
         Assert.Equal(expected, defaulted);
     }
 
+    /// <summary>
+    /// Every CSX helper's <c>Source</c> BODY is pinned by hash. A body edit is a breaking change
+    /// to the v1 contract that the signature golden structurally cannot see (#361).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Why a helper body is contract, not implementation.</strong> A CSX helper's whole
+    /// public surface is <c>public const string Source</c>. Two facts make its VALUE binding.
+    /// First, a <c>const</c> is INLINED: a provider assembly that wrote <c>SecurityHelper.Source</c>
+    /// carries the text as it stood when THAT assembly was compiled, and never reads the shipped
+    /// <c>Vouchfx.Sdk</c> again for it. Second, <c>CsxAssembler</c> deduplicates helpers by exact
+    /// source text and throws <c>CsxAssemblyException</c> when one helper class arrives with two
+    /// different bodies (§13.3.1). Together: edit a body, and any suite mixing an out-of-tree
+    /// provider built against the previous SDK with an in-tree provider built against this one
+    /// stops assembling. That is precisely the class of breakage the v1 freeze exists to prevent,
+    /// so the body belongs inside the frozen surface.
+    /// </para>
+    /// <para>
+    /// <strong>What the signature golden misses, measured rather than argued.</strong>
+    /// <c>SdkPublicApiSignature.MemberLines</c> emits a field as
+    /// <c>field const System.String Source</c> — the literal's TYPE, never its VALUE. The
+    /// committed <c>vouchfx-sdk-public-api.v1.txt</c> shows the consequence directly: all four
+    /// helpers render as that identical two-line stanza, distinguished only by their type header.
+    /// Measured while building this gate — a 13-character edit to a comment inside
+    /// <c>SubstituteHelper.Source</c> left <see cref="VouchfxSdkPublicApi_MatchesGolden_ByteForByte"/>
+    /// green and moved no line of the signature golden, while this test failed on it with the
+    /// hash and <c>chars</c> both moved. That is the hole, demonstrated rather than argued.
+    /// </para>
+    /// <para>
+    /// <strong>Discovery is by SHAPE, not by name.</strong> The three helpers #361 named
+    /// (<c>SecurityHelper</c>, <c>SecretHelper</c>, <c>SubstituteHelper</c>) are not the whole set
+    /// — <c>KafkaSecurityHelper</c> is a fourth, already shipped, and a hard-coded list would have
+    /// left it unpinned on the day it was written. Any public type in <c>Vouchfx.Sdk</c> exposing a
+    /// <c>public const string Source</c> is pinned, so the FIFTH helper is covered the moment it
+    /// compiles — <em>provided it follows the convention</em>, which is the whole of what shape
+    /// discovery can promise. Discovery keys on the const NAME, so a helper that spells its
+    /// constant differently is invisible to it; the known-set assertion beside the vacuity guard
+    /// is what turns a departure from the convention red rather than silent. The net is
+    /// deliberately wider than "public static class": a helper declared some other way must not
+    /// escape the gate on a technicality.
+    /// </para>
+    /// <para>
+    /// <strong>Scope: this gate scans <c>Vouchfx.Sdk</c> only.</strong> <c>Vouchfx.Sdk.Testing</c>
+    /// is a second SHIPPED, golden-gated package whose own gate
+    /// (<c>SdkTestingContractFreezeTests</c>) records field SIGNATURES for the same reason this one
+    /// does, and would be equally blind to a body — so a CSX helper constant added THERE would need
+    /// its own pin, which does not exist. Verified rather than assumed: that package's golden
+    /// contains no <c>Helper</c> type and no <c>field const</c> line at all, so nothing is unpinned
+    /// there today.
+    /// </para>
+    /// <para>
+    /// The value is read with <see cref="FieldInfo.GetRawConstantValue"/> off the reflected
+    /// <c>Vouchfx.Sdk</c> assembly rather than by naming <c>SecurityHelper.Source</c> in C#.
+    /// Naming it would inline THIS test assembly's own copy at ITS compile time — the very
+    /// mechanism the gate exists to guard — so the gate would then compare a constant against
+    /// itself. Reflection reads the shipped assembly's metadata, which is what a downstream
+    /// consumer's next compilation will read.
+    /// </para>
+    /// <para>
+    /// A separate golden rather than extra lines in the signature golden: the signature is emitted
+    /// by the SHARED <c>SdkPublicApiSignature</c>, which also emits the <c>Vouchfx.Sdk.Testing</c>
+    /// golden. Teaching it this SDK-specific helper convention would move a second frozen artifact
+    /// for a rule that does not apply to it. Same directory, same banner style, same regen flag.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void CsxHelperSources_MatchGolden_ByteForByte()
+    {
+        var actual = BuildHelperSourceSignature(typeof(IStepProvider).Assembly);
+
+        if (IsRegenRequested())
+        {
+            var repoRoot = FindRepoRoot();
+            var goldenPath = Path.Combine(
+                repoRoot, "tests", "Vouchfx.Sdk.Tests", "Golden", HelperSourcesGoldenFileName);
+            File.WriteAllText(goldenPath, actual);
+            return;
+        }
+
+        var golden = ReadGolden(HelperSourcesGoldenFileName);
+
+        var actualNormalised = Normalise(actual);
+        var goldenNormalised = Normalise(golden);
+
+        Assert.True(
+            string.Equals(actualNormalised, goldenNormalised, StringComparison.Ordinal),
+            "A Vouchfx.Sdk CSX helper's Source BODY has changed. A helper body is part of the "
+            + "FROZEN v1 surface: the const inlines into every provider compiled against this SDK, "
+            + "and CsxAssembler refuses a suite in which one helper class arrives with two "
+            + "different source texts — so an edited body breaks every out-of-tree provider still "
+            + "built against the previous SDK, at assembly time, in a suite that mixes them. If "
+            + "this change is intentional and that compatibility cost is accepted, regenerate "
+            + "Golden/" + HelperSourcesGoldenFileName + " with VOUCHFX_REGEN_SDK_CONTRACT=1 and "
+            + "get it reviewed."
+            + Environment.NewLine
+            + FirstDifference(goldenNormalised, actualNormalised));
+    }
+
     // ── Helpers ────────────────────────────────────────────────────────────────
+
+    /// <summary>The companion golden pinning CSX helper <c>Source</c> bodies by hash (#361).</summary>
+    private const string HelperSourcesGoldenFileName = "vouchfx-sdk-helper-sources.v1.txt";
+
+    /// <summary>
+    /// Builds the deterministic text signature of every CSX helper <c>Source</c> constant in
+    /// <paramref name="assembly"/>: one <c>&lt;type&gt;.Source sha256=&lt;hex&gt; chars=&lt;n&gt;</c>
+    /// line per helper, sorted ordinally by type name.
+    /// </summary>
+    /// <remarks>
+    /// The hash is taken over the constant's UTF-8 bytes with NO newline normalisation, unlike the
+    /// file-level comparison in <see cref="Normalise"/>. That asymmetry is deliberate and is the
+    /// point: <c>CsxAssembler</c> dedupes on EXACT text, so a body whose line endings changed is a
+    /// different body to it and must red this gate — while the golden FILE, an ordinary tracked
+    /// text file, must survive a CRLF/LF checkout. <c>chars</c> is diagnostic only; it moves only
+    /// when the hash does, and tells a reviewer at a glance whether a body grew or was rewritten.
+    /// </remarks>
+    private static string BuildHelperSourceSignature(Assembly assembly)
+    {
+        var helpers = assembly.GetTypes()
+            .Where(t => t.IsPublic || t.IsNestedPublic)
+            .Select(t => (Type: t, Field: t.GetField(
+                "Source", BindingFlags.Public | BindingFlags.Static | BindingFlags.DeclaredOnly)))
+            .Where(x => x.Field is { IsLiteral: true, IsInitOnly: false }
+                && x.Field.FieldType == typeof(string))
+            .Select(x => (Name: x.Type.FullName ?? x.Type.Name,
+                Source: (string)x.Field!.GetRawConstantValue()!))
+            .OrderBy(x => x.Name, StringComparer.Ordinal)
+            .ToList();
+
+        // Never let the gate pass vacuously. If a refactor renamed the convention out of
+        // existence, the discovery above silently returns nothing — and an empty computed set
+        // would then either match an empty golden (regen mode having written one) or produce a
+        // diff nobody reads as "the gate stopped looking". Say so instead.
+        Assert.True(
+            helpers.Count > 0,
+            "No CSX helper constants were discovered in Vouchfx.Sdk. This gate pins every public "
+            + "type exposing a `public const string Source`; finding none means the helper "
+            + "convention moved and the gate is now inert, not that there is nothing to pin.");
+
+        // Pin the MEMBERSHIP, not merely the count. Discovery keys on the const NAME `Source`, so
+        // it is blind by construction to a helper that stops using it: rename
+        // SecurityHelper.Source to .Body and discovery quietly returns three, which the golden
+        // comparison would then report as an unexplained missing line rather than as what it is.
+        // This known set is what makes that convention drift red AND names it. A helper is pinned
+        // automatically WHEN IT FOLLOWS THE CONVENTION; extending this list is the deliberate act
+        // that admits a new one, and departing from the convention is what this assertion catches.
+        //
+        // Residual, stated rather than implied: a brand-new helper that never adopts the
+        // convention at all — say `FooHelper.HelperSource` — is invisible to discovery AND to this
+        // set, because neither can see a const neither looks for. Its own introduction review is
+        // the only gate on that case, which is exactly why the convention is written down in this
+        // file's header instead of being left to be inferred from the code.
+        //
+        // NOT ENFORCED IN REGEN MODE, and that is the whole point of the exemption. Adding a fifth
+        // helper is precisely when a maintainer runs VOUCHFX_REGEN_SDK_CONTRACT=1, and an
+        // unconditional check here would throw from inside the builder BEFORE the golden is
+        // written — leaving the signature golden rewritten by the sibling test and this one not,
+        // i.e. the half-regenerated state this file's header explicitly promises against ("one
+        // flag, because the two artifacts pin two halves of one contract"). Nothing is weakened by
+        // skipping it: in regen mode the membership change lands as an added or removed line in
+        // the golden diff, which `**/Golden/` CODEOWNERS puts in front of a reviewer anyway. The
+        // check exists to stop drift arriving UNANNOUNCED in an ordinary run, not to stop a
+        // maintainer from deliberately regenerating. The vacuity guard above stays unconditional
+        // for a SEMANTIC reason, not a mechanical one: membership legitimately moves during a
+        // regen; an empty discovery never does, and a gate that has stopped seeing helpers must
+        // not quietly write an empty golden. Do not "fix" the asymmetry by exempting it too.
+        string[] expectedHelpers =
+        {
+            "Vouchfx.Sdk.KafkaSecurityHelper",
+            "Vouchfx.Sdk.SecretHelper",
+            "Vouchfx.Sdk.SecurityHelper",
+            "Vouchfx.Sdk.SubstituteHelper",
+        };
+
+        if (!IsRegenRequested())
+        {
+            var found = helpers.Select(h => h.Name).ToArray();
+
+            Assert.True(
+                expectedHelpers.SequenceEqual(found, StringComparer.Ordinal),
+                "The set of CSX helpers discovered in Vouchfx.Sdk is not the known set. Discovery "
+                + "keys on the const NAME `Source`, so a helper that renames or drops that constant "
+                + "simply disappears from this list rather than failing loudly on its own."
+                + Environment.NewLine
+                + "  expected: " + string.Join(", ", expectedHelpers)
+                + Environment.NewLine
+                + "  found:    " + string.Join(", ", found)
+                + Environment.NewLine
+                + "If a helper was legitimately added or removed, update expectedHelpers in this "
+                + "file and regenerate both goldens with VOUCHFX_REGEN_SDK_CONTRACT=1. If it was "
+                + "not, a helper has left the `public const string Source` convention and its body "
+                + "is no longer pinned by anything.");
+        }
+
+        var sb = new StringBuilder();
+        sb.Append("# Vouchfx.Sdk CSX helper Source bodies — FROZEN for the v1.x engine series (#361).\n");
+        sb.Append("# A const inlines into consuming assemblies and CsxAssembler dedupes helpers by EXACT text, so a body edit breaks providers built against the previous SDK. Generated by SdkContractFreezeTests; do not hand-edit — regenerate via the freeze test and review, or revert.\n");
+
+        foreach (var (name, source) in helpers)
+        {
+            sb.Append('\n');
+            sb.Append(name);
+            sb.Append(".Source sha256=");
+            sb.Append(Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(source))).ToLowerInvariant());
+            sb.Append(" chars=");
+            sb.Append(source.Length.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            sb.Append('\n');
+        }
+
+        return sb.ToString();
+    }
 
     // Collapse CRLF/CR → LF and drop any trailing final newline(s): the freeze
     // contract compares signature CONTENT, immune to line-ending style and to an
@@ -293,19 +527,18 @@ public sealed class SdkContractFreezeTests
     }
 
     /// <summary>
-    /// Reads the committed golden artifact from the test assembly's output
+    /// Reads a committed golden artifact from the test assembly's output
     /// directory (shipped as a copied <c>Content</c> item under <c>Golden/</c>).
     /// </summary>
-    private static string ReadGolden()
+    private static string ReadGolden(string fileName)
     {
         var baseDir = AppContext.BaseDirectory;
-        var path = Path.Combine(baseDir, "Golden", "vouchfx-sdk-public-api.v1.txt");
+        var path = Path.Combine(baseDir, "Golden", fileName);
 
         Assert.True(
             File.Exists(path),
-            $"Golden v1 provider-contract signature not found at '{path}'. The freeze "
-            + "gate requires Golden/vouchfx-sdk-public-api.v1.txt to be committed and "
-            + "copied to output.");
+            $"Golden v1 provider-contract artifact not found at '{path}'. The freeze "
+            + $"gate requires Golden/{fileName} to be committed and copied to output.");
 
         return File.ReadAllText(path);
     }

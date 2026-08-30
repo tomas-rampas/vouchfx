@@ -203,9 +203,7 @@ public sealed class CacheAssertElasticsearchEmitTests
     [Fact]
     public void CompileReferenceAssemblies_ContainsSystemNetHttpAssembly()
     {
-        var contributor = (ICompileReferenceContributor)_provider;
-
-        Assert.Contains(contributor.CompileReferenceAssemblies.ToList(), a =>
+        Assert.Contains(((ICompileReferenceContributor)_provider).CompileReferenceAssemblies.ToList(), a =>
             a.GetName().Name?.Contains("System.Net.Http", StringComparison.OrdinalIgnoreCase) == true);
     }
 

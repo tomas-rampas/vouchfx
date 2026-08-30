@@ -219,9 +219,7 @@ public sealed class DbAssertPostgresEmitTests
     [Fact]
     public void CompileReferenceAssemblies_ContainsNpgsqlAssembly()
     {
-        var contributor = (ICompileReferenceContributor)_provider;
-
-        var assemblies = contributor.CompileReferenceAssemblies.ToList();
+        var assemblies = ((ICompileReferenceContributor)_provider).CompileReferenceAssemblies.ToList();
 
         Assert.Contains(assemblies, a =>
             a.GetName().Name?.Equals("Npgsql", StringComparison.OrdinalIgnoreCase) == true);
