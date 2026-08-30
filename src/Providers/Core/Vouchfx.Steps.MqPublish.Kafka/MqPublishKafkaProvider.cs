@@ -363,9 +363,27 @@ public sealed class MqPublishKafkaProvider
     /// </para>
     /// <para>
     /// LEAK GATE (§5): the <c>Confluent.Kafka</c> producer owns a native librdkafka
-    /// handle.  Exactly one producer is created per step and is
-    /// <c>Flush(TimeSpan.FromSeconds(10))</c>ed then <c>Dispose()</c>d in a
-    /// <c>finally</c> so no native handle survives the collectible-ALC unload.
+    /// handle.  Exactly one producer is created per step and is flushed then
+    /// <c>Dispose()</c>d in a <c>finally</c> so no native handle survives the
+    /// collectible-ALC unload.
+    /// </para>
+    /// <para>
+    /// TIMEOUT BOUND (#367).  That flush is bounded by a <c>CancellationTokenSource</c>
+    /// linked to the step token and capped at the provider's own ten-second convention,
+    /// so an undeliverable message cannot extend the step past its declared
+    /// <c>timeout</c>.  It used to be an unconditional
+    /// <c>Flush(TimeSpan.FromSeconds(10))</c>, and that — not librdkafka — was the whole
+    /// of the reported overrun.  MEASURED against an unreachable broker on
+    /// Confluent.Kafka 2.14.2 with a 5000&#160;ms token:
+    /// <c>ProduceAsync(topic, msg, ct)</c> returned <c>OperationCanceledException</c> at
+    /// 5025&#160;ms (the token IS observed, contrary to the filing's hypothesis), the
+    /// fixed flush then burned its full 10001&#160;ms with the message still queued, and
+    /// <c>Dispose()</c> cost 16&#160;ms — total 15045&#160;ms, i.e. budget + 10&#160;s.
+    /// That is the constant behind both filed data points (30027&#160;ms on a 20&#160;s
+    /// budget; 20099&#160;ms on a 10&#160;s budget).  Bounding the flush by a CTS linked to
+    /// the step token, still capped at the same 10&#160;s, brought the same probe to
+    /// 5229&#160;ms.  The resulting bound is near-exact rather than exact, because
+    /// <c>Dispose()</c> is not itself token-bounded.
     /// </para>
     /// <para>
     /// The helper must be byte-identical across every instance of the same provider
@@ -526,8 +544,48 @@ public sealed class MqPublishKafkaProvider
         "            // librdkafka handle within this step, before the collectible ALC unloads.\n" +
         "            if (producer is not null)\n" +
         "            {\n" +
-        "                try { producer.Flush(System.TimeSpan.FromSeconds(10)); } catch { }\n" +
-        "                producer.Dispose();  // explicit Dispose() in finally (§13.3.1).\n" +
+        "                // TIMEOUT BOUND (#367): the flush is bounded by the STEP TOKEN, not by a\n" +
+        "                // fixed ten seconds alone.  ProduceAsync above already returns at the\n" +
+        "                // budget (it observes ct), but an undeliverable message stays QUEUED, so\n" +
+        "                // an unconditional Flush(10s) here spent its full ten seconds after that\n" +
+        "                // return — the step concluded at budget + 10s for every declared timeout.\n" +
+        "                // A CTS linked to ct and capped at the same ten seconds cuts a governed\n" +
+        "                // step within one librdkafka poll slice of its budget.\n" +
+        "                // Flush returns as soon as nothing is outstanding and throws when the\n" +
+        "                // linked token fires; the throw is swallowed with every other teardown\n" +
+        "                // failure so it can never displace the produce's own outcome.\n" +
+        "                // The UNGOVERNED case (ct = None) is left NEAR-exact, not exact: the cap\n" +
+        "                // is now reached by polling in ~100ms slices rather than by one blocking\n" +
+        "                // wait, so it overshoots by up to one slice (measured in review: ~65ms at\n" +
+        "                // a 2s cap; ~10.07s against the old 10.01s at the shipped cap), and it\n" +
+        "                // ends by THROWING a swallowed OperationCanceledException where the old\n" +
+        "                // Flush(TimeSpan) returned normally with the outstanding count.  Neither\n" +
+        "                // is observable in the step's outcome, which is why the cap is kept.\n" +
+        "                // The bound on a governed step is likewise near-exact rather than exact:\n" +
+        "                // producer.Dispose() below is NOT token-bounded (measured 110ms against a\n" +
+        "                // connect-refused peer, where it purges the queue and does not re-block —\n" +
+        "                // but a black-hole peer can leave it waiting on in-flight requests), so a\n" +
+        "                // step may still exceed its budget by the cost of releasing the handle.\n" +
+        "                // ORDER IS DELIBERATE, not incidental: the CTS is built INSIDE the try so\n" +
+        "                // a throw from CreateLinkedTokenSource cannot skip the teardown, and the\n" +
+        "                // producer is disposed FIRST in the finally so nothing — including a throw\n" +
+        "                // from the CTS's own disposal — can precede releasing the native handle\n" +
+        "                // (§5 is the hard invariant; a leaked CTS timer is not).  using-var is\n" +
+        "                // illegal (§13.3.1), so both disposals are explicit.\n" +
+        "                System.Threading.CancellationTokenSource? flushCts = null;\n" +
+        "                try\n" +
+        "                {\n" +
+        "                    flushCts = System.Threading.CancellationTokenSource.CreateLinkedTokenSource(ct);\n" +
+        "                    flushCts.CancelAfter(System.TimeSpan.FromSeconds(10));\n" +
+        "                    producer.Flush(flushCts.Token);\n" +
+        "                }\n" +
+        "                catch { }\n" +
+        "                finally\n" +
+        "                {\n" +
+        "                    producer.Dispose();\n" +
+        "                    if (flushCts is not null)\n" +
+        "                        flushCts.Dispose();\n" +
+        "                }\n" +
         "            }\n" +
         "            sw.Stop();\n" +
         "        }\n" +
@@ -570,8 +628,11 @@ public sealed class MqPublishKafkaProvider
         "        System.Threading.CancellationToken ct,\n" +
         "        bool budgetGoverned)\n" +
         "    {\n" +
-        "        // No hard-coded transport timeout to lift here — the step token plus\n" +
-        "        // the assembler's late supersession are the bound (#232).\n" +
+        "        // No CLIENT-level transport timeout for this flag to lift: ProduceAsync observes\n" +
+        "        // the step token directly, so a governed step needs no widened client bound.  The\n" +
+        "        // teardown flush below WAS an unconditional ten seconds and that overran the\n" +
+        "        // budget (#367); it is still capped at ten seconds but is now cut by `ct`, which\n" +
+        "        // is why budgetGoverned still selects nothing here.\n" +
         "        _ = budgetGoverned;\n" +
         "        var sw = System.Diagnostics.Stopwatch.StartNew();\n" +
         "        // Bootstrap (broker) must be present, exactly as the plain path requires.\n" +
@@ -692,8 +753,25 @@ public sealed class MqPublishKafkaProvider
         "            // within this step, before the collectible ALC unloads.\n" +
         "            if (producer is not null)\n" +
         "            {\n" +
-        "                try { producer.Flush(System.TimeSpan.FromSeconds(10)); } catch { }\n" +
-        "                producer.Dispose();\n" +
+        "                // TIMEOUT BOUND (#367) — identical to the plain path's teardown, and for\n" +
+        "                // the same reason: a queued, undeliverable message must not extend the\n" +
+        "                // step past its declared timeout via the flush.  See the plain path for\n" +
+        "                // the full rationale, including why the bound is near-exact (Dispose is\n" +
+        "                // not token-bounded) and why the CTS is built inside the try.\n" +
+        "                System.Threading.CancellationTokenSource? flushCts = null;\n" +
+        "                try\n" +
+        "                {\n" +
+        "                    flushCts = System.Threading.CancellationTokenSource.CreateLinkedTokenSource(ct);\n" +
+        "                    flushCts.CancelAfter(System.TimeSpan.FromSeconds(10));\n" +
+        "                    producer.Flush(flushCts.Token);\n" +
+        "                }\n" +
+        "                catch { }\n" +
+        "                finally\n" +
+        "                {\n" +
+        "                    producer.Dispose();\n" +
+        "                    if (flushCts is not null)\n" +
+        "                        flushCts.Dispose();\n" +
+        "                }\n" +
         "            }\n" +
         "            if (registry is not null)\n" +
         "                registry.Dispose();\n" +
