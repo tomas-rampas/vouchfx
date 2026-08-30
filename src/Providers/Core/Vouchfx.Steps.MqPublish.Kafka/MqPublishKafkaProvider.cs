@@ -549,21 +549,29 @@ public sealed class MqPublishKafkaProvider
         "                // budget (it observes ct), but an undeliverable message stays QUEUED, so\n" +
         "                // an unconditional Flush(10s) here spent its full ten seconds after that\n" +
         "                // return — the step concluded at budget + 10s for every declared timeout.\n" +
-        "                // A CTS linked to ct and capped at the same ten seconds leaves the\n" +
-        "                // ungoverned case (ct = None) behaving exactly as before, while a governed\n" +
-        "                // step is cut within one librdkafka poll slice of its budget.\n" +
+        "                // A CTS linked to ct and capped at the same ten seconds cuts a governed\n" +
+        "                // step within one librdkafka poll slice of its budget.\n" +
         "                // Flush returns as soon as nothing is outstanding and throws when the\n" +
         "                // linked token fires; the throw is swallowed with every other teardown\n" +
         "                // failure so it can never displace the produce's own outcome.\n" +
-        "                // The bound is near-exact rather than exact: producer.Dispose() below is\n" +
-        "                // NOT token-bounded (measured 110ms against a connect-refused peer, where\n" +
-        "                // it purges the queue and does not re-block — but a black-hole peer can\n" +
-        "                // leave it waiting on in-flight requests), so a step may still exceed its\n" +
-        "                // budget by the cost of releasing the native handle.\n" +
-        "                // The CTS is built INSIDE the try and released in the finally beside the\n" +
-        "                // producer, so §5's handle discipline holds without depending on the order\n" +
-        "                // two disposals happen to be written in.  using-var is illegal (§13.3.1),\n" +
-        "                // so both disposals are explicit.\n" +
+        "                // The UNGOVERNED case (ct = None) is left NEAR-exact, not exact: the cap\n" +
+        "                // is now reached by polling in ~100ms slices rather than by one blocking\n" +
+        "                // wait, so it overshoots by up to one slice (measured in review: ~65ms at\n" +
+        "                // a 2s cap; ~10.07s against the old 10.01s at the shipped cap), and it\n" +
+        "                // ends by THROWING a swallowed OperationCanceledException where the old\n" +
+        "                // Flush(TimeSpan) returned normally with the outstanding count.  Neither\n" +
+        "                // is observable in the step's outcome, which is why the cap is kept.\n" +
+        "                // The bound on a governed step is likewise near-exact rather than exact:\n" +
+        "                // producer.Dispose() below is NOT token-bounded (measured 110ms against a\n" +
+        "                // connect-refused peer, where it purges the queue and does not re-block —\n" +
+        "                // but a black-hole peer can leave it waiting on in-flight requests), so a\n" +
+        "                // step may still exceed its budget by the cost of releasing the handle.\n" +
+        "                // ORDER IS DELIBERATE, not incidental: the CTS is built INSIDE the try so\n" +
+        "                // a throw from CreateLinkedTokenSource cannot skip the teardown, and the\n" +
+        "                // producer is disposed FIRST in the finally so nothing — including a throw\n" +
+        "                // from the CTS's own disposal — can precede releasing the native handle\n" +
+        "                // (§5 is the hard invariant; a leaked CTS timer is not).  using-var is\n" +
+        "                // illegal (§13.3.1), so both disposals are explicit.\n" +
         "                System.Threading.CancellationTokenSource? flushCts = null;\n" +
         "                try\n" +
         "                {\n" +
@@ -574,9 +582,9 @@ public sealed class MqPublishKafkaProvider
         "                catch { }\n" +
         "                finally\n" +
         "                {\n" +
+        "                    producer.Dispose();\n" +
         "                    if (flushCts is not null)\n" +
         "                        flushCts.Dispose();\n" +
-        "                    producer.Dispose();\n" +
         "                }\n" +
         "            }\n" +
         "            sw.Stop();\n" +
@@ -760,9 +768,9 @@ public sealed class MqPublishKafkaProvider
         "                catch { }\n" +
         "                finally\n" +
         "                {\n" +
+        "                    producer.Dispose();\n" +
         "                    if (flushCts is not null)\n" +
         "                        flushCts.Dispose();\n" +
-        "                    producer.Dispose();\n" +
         "                }\n" +
         "            }\n" +
         "            if (registry is not null)\n" +

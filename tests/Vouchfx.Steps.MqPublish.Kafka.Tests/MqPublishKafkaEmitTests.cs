@@ -16,16 +16,25 @@
 //      missing ${secret:env/…} payload reference) WITHOUT a broker — the helper
 //      resolves secrets before building the producer, so ProduceAsync is never
 //      reached; the observation is reference-only (source/path, never the value, §17).
-//  13. Emit (#367): the teardown flush is bounded by a CTS linked to the step token on
+//  13. Emit (avro): RequiredHelpers contain the avro publish + CoerceField paths.
+//  14. CompileReferenceAssemblies includes the Avro serdes assemblies.
+//  15. Avro compile round-trip: EnvironmentError when the registry URL is absent.
+//  16. Avro compile round-trip: EnvironmentError when the bootstrap is absent.
+//  17. Avro compile round-trip: a coercion failure is value-free (§17).
+//  18. Emit (#367): the teardown flush is bounded by a CTS linked to the step token on
 //      BOTH produce paths, and no unconditional Flush(TimeSpan.FromSeconds(10)) remains.
-//  14. Emit (#367): the ten-second cap survives for a step declaring no timeout.
-//  15. Emit (#367): the flush cut is swallowed and the linked CTS explicitly disposed.
-//  16. Emit (#367): no client delivery timeout is derived from the step budget — the
+//  19. Emit (#367): the ten-second cap survives for a step declaring no timeout.
+//  20. Emit (#367): the flush cut is swallowed, the producer is disposed FIRST, and the
+//      linked CTS is explicitly disposed after it.
+//  21. Emit (#367): no client delivery timeout is derived from the step budget — the
 //      rejected alternative fix, pinned so it is not reintroduced.
-//  17. Compile-and-RUN (#367, no docker): a governed step against a refused peer
+//  22. Compile-and-RUN (#367, no docker): a governed step against a refused peer
 //      (127.0.0.1:9) concludes at its budget with the wrapper's step-timeout outcome
 //      intact — the one #367 assertion that EXECUTES the new teardown rather than
 //      text-matching it. Fails at roughly budget + 10s against the pre-fix shape.
+//
+// Entries 13-17 were present in the file but missing from this index before #367; they
+// are enumerated here rather than left as a silent gap the next author renumbers into.
 using System;
 using System.Collections.Generic;
 using Vouchfx.Engine.Abstractions;
@@ -690,7 +699,7 @@ public sealed class MqPublishKafkaEmitTests
         Assert.DoesNotContain(sentinel, outcome.Observation!, StringComparison.Ordinal);
     }
 
-    // ── 13-16. Teardown flush is bounded by the step token (#367) ────────────────
+    // ── 18-21. Teardown flush is bounded by the step token (#367) ────────────────
 
     /// <summary>
     /// The emitted helper must bound its teardown flush by a
@@ -785,15 +794,16 @@ public sealed class MqPublishKafkaEmitTests
                 collapsed,
                 CollapseWhitespace("producer.Flush(flushCts.Token); } catch { }")));
 
-        // Both disposals live in the SAME finally, with the producer released last and
-        // unconditionally: §5's handle discipline must not depend on the order the two
-        // are written in, nor on the swallowing catch above continuing to swallow.
+        // Both disposals live in the SAME finally and the ORDER is the assertion: the
+        // producer goes first, so nothing — not the swallowing catch above ceasing to
+        // swallow, not a throw from the CTS's own disposal — can precede releasing the
+        // native librdkafka handle. §5 is the hard invariant; a leaked CTS timer is not.
         Assert.Equal(
             2,
             CountOccurrences(
                 collapsed,
                 CollapseWhitespace(
-                    "finally { if (flushCts is not null) flushCts.Dispose(); producer.Dispose(); }")));
+                    "finally { producer.Dispose(); if (flushCts is not null) flushCts.Dispose(); }")));
 
         // The linked source is constructed INSIDE the guarded region, so a throw from
         // CreateLinkedTokenSource itself cannot skip the producer's release.
@@ -831,7 +841,7 @@ public sealed class MqPublishKafkaEmitTests
         Assert.DoesNotContain("DeliveryTimeoutMs", helperSource, StringComparison.Ordinal);
     }
 
-    // ── 17. Compile-and-RUN: the bounded teardown actually executes (#367) ────────
+    // ── 22. Compile-and-RUN: the bounded teardown actually executes (#367) ───────
 
     /// <summary>
     /// Executes the real emitted teardown against a refused connection under a governed
@@ -868,9 +878,13 @@ public sealed class MqPublishKafkaEmitTests
         const string stepId = "pub-bounded";
         const long budgetMs = 2_000;
 
-        // Generous next to the ~250 ms of measured teardown (flush cut + Dispose), and
-        // still far below the ~10 000 ms the unbounded flush cost, so the pin cannot pass
-        // while the defect is present however loaded the CI host is.
+        // SHARED MEASUREMENT (see KafkaStepTimeoutBoundDockerTests.GraceMs, which sizes its
+        // own grace from the same numbers): the post-fix tail is ~250 ms — a flush cut within
+        // one ~100 ms librdkafka poll slice, plus a Dispose measured at 16-110 ms depending on
+        // how the peer refuses. Generous against that, still far below the ~10 000 ms the
+        // unbounded flush cost, so the pin cannot pass while the defect is present however
+        // loaded the CI host is. Deliberately duplicated rather than hoisted into TestSupport:
+        // the two live in different assemblies and each needs its own budget-relative headroom.
         const long graceMs = 1_500;
 
         var model = MakeModel("bus", "orders", "hello");

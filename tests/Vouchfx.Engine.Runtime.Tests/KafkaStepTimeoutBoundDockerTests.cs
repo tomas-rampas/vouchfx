@@ -71,6 +71,14 @@ public sealed class KafkaStepTimeoutBoundDockerTests
     /// times smaller than the 10 000 ms overrun this test exists to catch — so the assertion cannot
     /// pass while the defect is present, whatever the host is doing.
     /// </para>
+    /// <para>
+    /// SHARED MEASUREMENT: the ~250 ms tail above is the same figure that sizes the Docker-free
+    /// sibling pin (<c>MqPublishKafkaEmitTests</c>'s
+    /// <c>Emit_CompileAndRun_GovernedStepAgainstARefusedPeer_ConcludesAtItsBudget</c>). The two
+    /// constants are deliberately duplicated rather than hoisted into a shared TestSupport
+    /// constant: they live in different assemblies and each is sized relative to its own budget
+    /// (10 s here, 2 s there), so a single shared number would fit neither.
+    /// </para>
     /// </remarks>
     private const long GraceMs = 2_000;
 

@@ -775,8 +775,14 @@ public sealed class MqExpectKafkaProvider
         "        System.Threading.CancellationToken ct,\n" +
         "        bool budgetGoverned)\n" +
         "    {\n" +
-        "        // No hard-coded transport timeout to lift here — the step token plus\n" +
-        "        // the assembler's late supersession are the bound (#232).\n" +
+        "        // The step token bounds the POLL: the consume loop below re-checks ct between\n" +
+        "        // Consume() slices, so a governed step stops consuming at its budget and there is\n" +
+        "        // no client-level transport timeout for this flag to lift.  But that is NOT the\n" +
+        "        // whole step: consumer.Close() in the teardown below is not token-bounded and can\n" +
+        "        // extend the step past its budget, the same class of defect #367 fixed in\n" +
+        "        // mq-publish.kafka's flush.  Tracked as #468 and deliberately NOT fixed here —\n" +
+        "        // unlike the flush, its cost has not been measured, and doing so needs a\n" +
+        "        // group-joined consumer against a broker that stops answering.\n" +
         "        _ = budgetGoverned;\n" +
         "        var sw = System.Diagnostics.Stopwatch.StartNew();\n" +
         "        var bootstrap = vars.TryGetValue(bootstrapKey, out var c) && c is string s ? s : null;\n" +
