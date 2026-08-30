@@ -122,6 +122,7 @@ public sealed class ScenarioRunnerTests
             registry: registry,
             yamlText: yaml,
             scenarioName: "core-seam-schema-invalid",
+            declaredTargets: ScenarioRunner.DeclaredTargetsOf(yaml, registry),
             appHostAssemblyName: AppHostAssemblyName,
             output: sw,
             seedBaseDirectory: null,

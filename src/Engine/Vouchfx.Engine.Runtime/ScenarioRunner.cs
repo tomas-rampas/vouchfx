@@ -115,11 +115,18 @@ public sealed record SuiteResult(
     /// <strong>There is no producer list to maintain, and that is the change.</strong> This member
     /// used to be a <c>bool</c> whose meaning was documented here as an OPEN, hand-maintained
     /// enumeration of the doors that set it — a list that went stale three times, on the very
-    /// surface three other doc sites designated as its authority. No door decides the OUTCOME now:
-    /// a door records only <c>Refusal</c> (WHICH door), <c>RunSuiteAsync</c> walks
-    /// <c>SecuredTargets.Enumerate</c> ONCE for the suite to fill <c>Declared</c> (WHAT the
-    /// document asserted), and <see cref="SecurityAssurance.Unconfirmed"/> is the single predicate
-    /// over the two. Read that as scoped to the DERIVED case: two of
+    /// surface three other doc sites designated as its authority. No door decides the OUTCOME now.
+    /// <strong>How the two halves come together depends on which runner produced this record, and
+    /// both do.</strong> Under <c>RunSuiteAsync</c> (the shared-topology path) a door records only
+    /// <c>Refusal</c> — WHICH door — while <c>RunSuiteAsync</c> itself walks
+    /// <c>SecuredTargets.Enumerate</c> ONCE for the suite to fill <c>Declared</c>, WHAT the document
+    /// asserted. Under <c>ParallelSuiteRunner</c> this member is instead a FOLD of per-scenario
+    /// assurances the core already completed: since issue #409 the core is HANDED the declaration
+    /// and every one of its doors attaches it, so there a door carries both halves and nothing
+    /// downstream repairs it. The invariant common to the two, and the one to carry away, is that a
+    /// door never DERIVES what was declared.
+    /// <see cref="SecurityAssurance.Unconfirmed"/> is then the single predicate over the two halves,
+    /// whichever runner assembled them. Read that as scoped to the DERIVED case: two of
     /// <see cref="SecurityAbortKind"/>'s members are named in that predicate and hard-code their
     /// answer — <c>SecurityDeclarationRejected</c> always raises, <c>TopologyUnavailable</c> never
     /// does — each for a reason recorded on the member itself.
@@ -177,20 +184,43 @@ public sealed record SuiteResult(
 public sealed record ScenarioCoreResult(Verdict Verdict, List<string> Buffer)
 {
     /// <summary>
-    /// What this scenario established about the <c>security</c> blocks its document declared —
-    /// carrying, from this seam, the <see cref="SecurityAssurance.Refusal"/> and (on the success
-    /// path) the <see cref="SecurityAssurance.Confirmed"/> halves.
+    /// What this scenario established about the <c>security</c> blocks its document declared: all
+    /// three halves — what was declared, what REQ-005's probe confirmed, and which door (if any)
+    /// refused.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <strong><see cref="SecurityAssurance.Declared"/> is deliberately NOT filled here.</strong>
-    /// This method validates (Step 2) before it parses (Step 3), so two of its doors return before
-    /// any AST exists — and answering "does this document declare security" at those doors is what
-    /// forced the speculative re-parse this change removed. The caller
-    /// (<c>ParallelSuiteRunner.RunParallelCoreAsync</c>) takes the parsed ASTs as a PARAMETER, so it
-    /// can walk <c>SecuredTargets.Enumerate</c> once per scenario on every path, including the ones
-    /// that abort before this method has parsed anything. A door reports which door it is; the
-    /// verdict-assembly site reports what the document asserted.
+    /// <strong>Complete at every door the core returns from, and therefore self-describing for a
+    /// caller that is not the aggregator — which the Docker drills are (issue #409).</strong>
+    /// <see cref="SecurityAssurance.Declared"/> used to be left empty here on the grounds that the
+    /// core validates (Step 2) before it parses (Step 3), so two of its doors return with no AST to
+    /// walk. That was a true account of why the core could not DERIVE the declaration and a false
+    /// account of whether it could REPORT one: it now takes the caller's walk as a parameter, so
+    /// every door attaches the same declaration and no caller has to repair what it is handed.
+    /// </para>
+    /// <para>
+    /// The repair that used to do it — <c>ParallelSuiteRunner</c> re-attaching its own walk over
+    /// whatever the core returned — is deleted, not retained as belt-and-braces. It was a second
+    /// corrector for one value, and the fact that its walk agreed with the core's by construction is
+    /// exactly what hid the two doors where the core had no walk at all.
+    /// </para>
+    /// <para>
+    /// <strong>The implicit tuple conversion below is how that completeness could be lost again, and
+    /// it is named here rather than removed.</strong> It defaults this member to
+    /// <see cref="SecurityAssurance.None"/> — an empty declaration — so a
+    /// <c>return (verdict, buffer);</c> added to
+    /// <c>ScenarioRunner.RunScenarioOwningTopologyAsync</c> would reintroduce #409 at that one door,
+    /// silently, with nothing downstream repairing it any more. Every one of the core's six returns
+    /// is an explicit object initialiser attaching <c>declaredTargets</c>; the conversion exists for
+    /// the test doubles and for callers that never asked about security, and a new door in the core
+    /// is not either of those.
+    /// </para>
+    /// <para>
+    /// <strong>That hazard is enforced, not merely described</strong>, by
+    /// <c>ScenarioCoreDeclarationCensusTests</c>: one row counts the core's returns against its
+    /// attaches and requires them EQUAL, and a second refuses the bare tuple shape outright. They
+    /// exist because the behavioural rows cover only the doors somebody wrote a row for — measured,
+    /// a door that silently stopped attaching left the whole non-Docker suite green.
     /// </para>
     /// </remarks>
     public SecurityAssurance Assurance { get; init; } = SecurityAssurance.None;
@@ -430,6 +460,13 @@ public static class ScenarioRunner
             registry,
             yamlText,
             scenarioName,
+            // This wrapper holds only YAML, so it walks the declaration through the adapter rather
+            // than being handed one (issue #409). It then DISCARDS the assurance — it returns a
+            // Verdict — so the walk buys this path nothing today. It is done anyway because the
+            // alternative is passing an empty list that is a lie about the document: the next
+            // caller to start reading `Assurance` here would inherit exactly the silent
+            // false-negative #409 was filed for, and would have no reason to look for it.
+            DeclaredTargetsOf(yamlText, registry),
             appHostAssemblyName,
             output,
             seedBaseDirectory,
@@ -438,6 +475,87 @@ public static class ScenarioRunner
 
         TerminalRenderer.Render(buffer, output, diffLookup);
         return verdict;
+    }
+
+    /// <summary>
+    /// Walks the <c>security</c> declarations of a document a caller holds only as YAML — the
+    /// adapter to <see cref="RunScenarioOwningTopologyAsync"/>'s <c>declaredTargets</c> parameter
+    /// for a caller that has not already parsed (issue #409).
+    /// </summary>
+    /// <param name="yamlText">The raw text of a <c>.e2e.yaml</c> document.</param>
+    /// <param name="registry">The frozen provider registry <c>AstBuilder</c> binds against.</param>
+    /// <returns>
+    /// The document's declared targets, or an empty list when it cannot be parsed into an AST at
+    /// all.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// <strong>This is not a second spelling of "does this document declare security".</strong> It
+    /// parses and then defers to <c>SecuredTargets.Enumerate</c> — the one canonical walk, the same
+    /// one every other producer of a <c>Declared</c> set calls — so it cannot disagree with them
+    /// about any document both can read. Recovering a declaration from a document neither can read
+    /// would need a raw-YAML scan for a <c>security:</c> key, which IS a second spelling and is
+    /// refused here as it is refused in <c>UnbuiltDocument.Assure</c>.
+    /// </para>
+    /// <para>
+    /// <strong>The empty answer is weaker than "the document declared nothing", and the difference
+    /// is a whole failure class.</strong> <c>AstBuilder.Build</c> also refuses documents whose
+    /// <c>environment</c> block bound perfectly well — an unknown step type, a duplicate step id —
+    /// and this returns empty for those too, because it has no AST to walk and will not guess from
+    /// the text. That is not a hole: such a document is exactly what the CLI routes to the runner as
+    /// an <c>UnbuiltDocument</c>, where the RECOVERED document is walked and its declaration is
+    /// read (issue #411). This adapter is for a caller holding raw YAML and nothing else, which in
+    /// this assembly is <see cref="RunAsync"/> and the direct-call tests.
+    /// </para>
+    /// <para>
+    /// It swallows every exception from the parse deliberately: this is not a door and reports no
+    /// fault. Whatever is wrong with the document, the caller is about to hand it to
+    /// <see cref="RunScenarioOwningTopologyAsync"/>, whose own schema and parse doors diagnose it —
+    /// once, in the event stream, with a verdict attached. Throwing here would move that diagnosis
+    /// to a stack trace and lose the buffer with it.
+    /// </para>
+    /// <para>
+    /// <strong>The catch FAILS OPEN, and the precondition that keeps it harmless is
+    /// same-text-same-registry.</strong> An empty return is indistinguishable from "this document
+    /// declares nothing", so if a parse failed for a reason the CORE will not also hit, a secured
+    /// document would be handed on with an empty declaration and its refusal would stop raising —
+    /// a silent exit 0 on an unconfirmed <c>security</c> block. That cannot happen for a
+    /// DETERMINISTIC parse failure while both sides read the SAME <paramref name="yamlText"/>
+    /// through the SAME <paramref name="registry"/>: the core runs the identical
+    /// <c>YamlDocumentParser.Parse</c> + <c>AstBuilder.Build</c> pair, so anything that throws here
+    /// throws there too and the core's own parse door refuses the document before the declaration
+    /// matters.
+    /// </para>
+    /// <para>
+    /// <strong>Two ways out of that equivalence, and both are named rather than assumed away.</strong>
+    /// A DIFFERENT registry — one missing a provider — makes <c>AstBuilder</c> reject an unknown step
+    /// type here and accept it there, which is the fail-open direction; that is what the precondition
+    /// is for. And a NON-DETERMINISTIC failure — the OOM class: <c>OutOfMemoryException</c>,
+    /// <c>StackOverflowException</c>'s cousins, a transient failure under memory pressure — can throw
+    /// on this call and not on the core's, since the two parses are separate executions. Neither is
+    /// worth a code change: the first is a caller error the precondition states, and the second is a
+    /// process already in trouble, where a swallowed parse is not the defect that matters. The shape
+    /// stays as it is — a targeted catch would still be silent about exactly these cases, and
+    /// throwing would replace a diagnosed verdict with a stack trace.
+    /// </para>
+    /// </remarks>
+    internal static IReadOnlyList<SecuredTarget> DeclaredTargetsOf(
+        string yamlText, StepKindRegistry registry)
+    {
+        ArgumentNullException.ThrowIfNull(yamlText);
+        ArgumentNullException.ThrowIfNull(registry);
+
+        try
+        {
+            var ast = AstBuilder.Build(YamlDocumentParser.Parse(yamlText), registry);
+            return SecuredTargets.Enumerate(ast.Environment).ToArray();
+        }
+#pragma warning disable CA1031 // Deliberate: see the remarks — this is an adapter, not a door.
+        catch (Exception)
+#pragma warning restore CA1031
+        {
+            return Array.Empty<SecuredTarget>();
+        }
     }
 
     /// <summary>
@@ -480,6 +598,27 @@ public static class ScenarioRunner
     /// Human-readable scenario name, used as the <c>scenarioId</c> in the event
     /// stream and as the Roslyn ALC run label.
     /// </param>
+    /// <param name="declaredTargets">
+    /// WHAT this document declared: the caller's <c>SecuredTargets.Enumerate</c> walk of the AST it
+    /// already holds. Supplied rather than derived so that the assurance this method returns is
+    /// correct at EVERY door, including the two that return before Step 3 has parsed anything
+    /// (issue #409). Empty for an unsecured document, and empty is also the honest answer for a
+    /// caller that could not build an AST at all — see <see cref="DeclaredTargetsOf"/>, the adapter
+    /// for a caller holding only YAML.
+    /// <para>
+    /// <strong>PRECONDITION: it must be walked from the SAME document as <paramref name="yamlText"/>,
+    /// and the failure is silent and fail-open.</strong> The success door pairs THIS set, supplied by
+    /// the caller, with the <c>Confirmed</c> set this method derives from the topology's own probe —
+    /// and <c>SecurityAssurance.Unconfirmed</c> compares the two by
+    /// <c>SecuredTargets.IdentityOf</c>. Identities from two different documents are not comparable,
+    /// so a mismatched set makes the comparison meaningless rather than merely wrong. The dangerous
+    /// direction is the NARROWER one: supply fewer targets than the document declares and every
+    /// remaining one is confirmed, so a secured suite the engine refused reports a clean exit. A
+    /// WIDER set fails closed and is merely noisy. Nothing here can check this — the method has no
+    /// AST until Step 3, which is the whole reason the parameter exists — so it is stated rather
+    /// than validated, and every in-tree call site derives the two from one string.
+    /// </para>
+    /// </param>
     /// <param name="appHostAssemblyName">
     /// Short name of the Aspire host assembly (R-1 finding, CLAUDE.md §"Aspire").
     /// </param>
@@ -500,12 +639,15 @@ public static class ScenarioRunner
         StepKindRegistry registry,
         string yamlText,
         string scenarioName,
+        IReadOnlyList<SecuredTarget> declaredTargets,
         string? appHostAssemblyName,
         TextWriter output,
         string? seedBaseDirectory,
         LiveEventPump? livePump,
         CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(declaredTargets);
+
         var runId = Guid.NewGuid().ToString("n");
         var buffer = new List<string>();
 
@@ -573,10 +715,17 @@ public static class ScenarioRunner
             // check that the derivation moved (security-assurance-derivation, REQ-002). It existed
             // for one reason: the flag was decided HERE, and deciding it needed "does this document
             // declare security" — a question with no AST to ask, because this method validates
-            // (Step 2) before it parses (Step 3). Nothing here decides any longer. This door
-            // records only WHAT it refused; ParallelSuiteRunner, which takes the parsed ASTs as a
-            // parameter, walks SecuredTargets.Enumerate once per scenario and supplies the other
-            // half on every path — including this one.
+            // (Step 2) before it parses (Step 3). Nothing here decides any longer, and nothing here
+            // re-derives: this door records WHICH door refused and attaches the `declaredTargets`
+            // its CALLER walked, which is the half no door of this method can compute for itself.
+            //
+            // ISSUE #409 IS WHAT THE `Declaring` CALL BELOW CLOSES. This door used to return
+            // `None.Refusing(...)` with an empty `Declared`, so a secured document rejected here
+            // read `Unconfirmed == false` — and only ParallelSuiteRunner, re-walking the AST it
+            // holds as a parameter, made it read true. Two callers, two answers about one document,
+            // with the Docker drills on the wrong side of the divergence because they call this
+            // method directly. There is no repair step now: the caller supplies the declaration
+            // ONCE, on entry, and every door of this method is correct without help.
             //
             // The located-in-the-block distinction survives as EVIDENCE rather than as a decision:
             // a schema error at or inside a `security` node is a refusal OF the declaration, which
@@ -586,10 +735,12 @@ public static class ScenarioRunner
 
             return new ScenarioCoreResult(Verdict.Inconclusive, buffer)
             {
-                Assurance = SecurityAssurance.None.Refusing(
-                    errorIsInsideTheSecurityBlock
-                        ? SecurityAbortKind.SecurityDeclarationRejected
-                        : SecurityAbortKind.AuthoringFault),
+                Assurance = SecurityAssurance.None
+                    .Declaring(declaredTargets)
+                    .Refusing(
+                        errorIsInsideTheSecurityBlock
+                            ? SecurityAbortKind.SecurityDeclarationRejected
+                            : SecurityAbortKind.AuthoringFault),
             };
         }
 
@@ -632,37 +783,59 @@ public static class ScenarioRunner
             livePump?.PostRange(buffer);
 
             // An unparseable document is an authoring fault before any container started, like
-            // every other pre-topology refusal. It cannot be SHOWN to declare anything, so the
-            // caller's own walk supplies an empty `Declared` and this raises nothing — the honest
-            // answer, and byte-for-byte the behaviour that shipped.
+            // every other pre-topology refusal. `declaredTargets` is attached here for the same
+            // reason it is at the schema door — this method does not decide what a document
+            // declared — and NOT because this door expects it to be non-empty. A document whose
+            // YAML this method cannot parse is one whose caller almost certainly could not parse it
+            // either, so the walk that reached here yields nothing and this raises nothing: the
+            // honest answer, and byte-for-byte the behaviour that shipped. What changes is that the
+            // emptiness is now the WALK's finding rather than this door's silence, so the two
+            // callers cannot disagree about it: under the CLI they never could, since it parses the
+            // same text with the same parser and reaches here only when its own parse failed too.
+            //
+            // COUPLED TO #411'S DOCUMENTED RESIDUAL, and the coupling runs one way. That residual is
+            // that three discovery failure classes bind nothing, so no declaration is recovered for
+            // them — deliberately, because recovering one would need a raw-YAML scan for a
+            // `security:` key, a second spelling of "does this document declare security". If that
+            // decision is ever revisited and a caller starts supplying a declaration for a document
+            // it could not parse, THIS DOOR STARTS RAISING with no edit here: the refusal is already
+            // AuthoringFault, `Confirmed` is empty by construction, and `Unconfirmed`'s first
+            // disjunct then holds. That is the correct behaviour for such a change and is exactly
+            // why nothing is hard-coded here — but it is a live exit-code consequence sitting behind
+            // someone else's decision, so it is written down rather than discovered.
             return new ScenarioCoreResult(Verdict.Inconclusive, buffer)
             {
-                Assurance = SecurityAssurance.None.Refusing(SecurityAbortKind.AuthoringFault),
+                Assurance = SecurityAssurance.None
+                    .Declaring(declaredTargets)
+                    .Refusing(SecurityAbortKind.AuthoringFault),
             };
         }
 
-        // The AST exists from here on, so this method can answer WHAT the document declared for
-        // itself rather than leaving every downstream return to the caller. One walk, the canonical
-        // one, used by all four returns below.
+        // THE LOCAL THAT USED TO SIT HERE — a second `SecuredTargets.Enumerate(ast.Environment)`
+        // walk, for the returns from this point on — IS GONE, and its absence is what closes #409.
         //
-        // ParallelSuiteRunner nonetheless re-attaches its own walk of the same AST to whatever this
-        // method returns — unconditionally, not "when empty". It is the only source for the two
-        // doors ABOVE, which return before any AST exists, and one unconditional rule there is
-        // worth more than a conditional that has to be reasoned about. The two values are equal by
-        // construction: same AST, same SecuredTargets.Enumerate.
+        // It bought correctness from the AST onwards and nothing before it, because the two doors
+        // above return before any AST exists. So this method returned an assurance that was right
+        // at four doors and wrong at two, and ParallelSuiteRunner patched the difference afterwards
+        // with a `result.Assurance.Declaring(declared)` re-attach. That repair was the second source
+        // of truth: two walks, two callers, and only one of them corrected — a direct caller would
+        // read `Unconfirmed == false` for a secured document the aggregator reported as unconfirmed.
         //
-        // WHAT THIS LOCAL DOES NOT BUY: a core whose result is self-describing for a direct caller.
-        // An earlier form of this comment claimed exactly that. It is false at the two doors above,
-        // which return SecurityAssurance.None.Refusing(...) with NO Declaring — so a secured
-        // document rejected by an out-of-block schema error, or unparseable, comes back from this
-        // method reading Unconfirmed == false. ParallelSuiteRunner repairs it (its
-        // `result.Assurance.Declaring(declared)` fold); nothing else does. THE CONTRACT IS
-        // THEREFORE: the assurance this core returns is complete only from the AST onwards, and a
-        // caller that is not the aggregator must supply its own Declaring for the earlier doors
-        // rather than trust what it is handed. Passing the declared set INTO the core would make it
-        // self-describing everywhere, and is not done here because it changes ScenarioCoreFunc's
-        // signature, which REQ-002 pins. Filed as issue #409.
-        var declaredTargets = SecuredTargets.Enumerate(ast.Environment).ToArray();
+        // MEASURED BY RunParallelAsyncTests
+        // .RunScenarioOwningTopologyAsync_SecuredWithAnOutOfBlockSchemaError_IsUnconfirmed, NOT by
+        // the Docker drills — the distinction matters and this comment used to blur it. The drills
+        // ARE direct callers, which is what made the divergence consequential rather than academic,
+        // but every row they run reaches a post-parse door, so not one of them ever observed it.
+        // That is the point: the walks agreed by construction, so nothing was wrong anywhere a test
+        // happened to look, and a row had to be written at a pre-parse door to see it at all.
+        //
+        // `declaredTargets` is now a PARAMETER, walked once by the caller that holds the AST, and
+        // this method answers WHAT the document declared identically at every door it can return
+        // from. The repair in ParallelSuiteRunner is deleted rather than kept as belt-and-braces:
+        // a second corrector for a value that no longer needs correcting is how the two spellings
+        // come back. Pinned by RunParallelAsyncTests
+        // .RunScenarioOwningTopologyAsync_SecuredWithAnOutOfBlockSchemaError_IsUnconfirmed, the row
+        // that was measured red against the pre-fix core.
 
         // ── Steps 4 + 5c: the pre-topology authoring passes, run TOGETHER ─────
         //
@@ -1570,8 +1743,13 @@ public static class ScenarioRunner
         // under a mutation of this method. The WIRING — the outer `Worse(…,
         // rejectedDivergentAssurance)` term below, which carries that value into the suite's answer
         // — is NOT observable without a container, and that is a property of the predicate rather
-        // than a gap in the tests. MEASURED: deleting that term leaves the whole non-Docker suite
-        // green (4347/4347). The reason is structural. At every pre-topology door `Confirmed` is
+        // than a gap in the tests. MEASURED ON THE PRIOR TREE (#467, 2026-08-28, when the non-Docker
+        // suite stood at 4347): deleting that term left the whole of it green. The count is
+        // date-stamped rather than refreshed because the claim is a historical one and the tree has
+        // since moved (4370 as of 2026-08-30) — and because it no longer needs re-running: the fold
+        // row described below now pins the same term end to end, and a re-measurement of the
+        // Docker-free half would only re-confirm that it cannot see this.
+        // The reason it cannot is structural. At every pre-topology door `Confirmed` is
         // empty while `Declared` already holds the rejected scenario's own declaration (the
         // canonical walk covers every scenario), and some door has recorded a refusal — so the
         // union RAISES; `Refusing` keeps the highest-precedence kind across the whole suite, so the
@@ -1580,7 +1758,23 @@ public static class ScenarioRunner
         // which requires a probe to have CONFIRMED the declaration — exactly the shape issue #410
         // exists for, and exactly the shape it records as needing a Docker arm ("every Docker-free
         // row in the matrix is blind to this by construction"). Do not add a Docker-free row here
-        // and call the wiring covered; add the row to #410's arm.
+        // and call the wiring covered.
+        //
+        // THAT DOCKER ARM NOW EXISTS, and the paragraph above is kept because it is still the
+        // reason the arm has to be a Docker one:
+        // `KafkaSecurityConfirmationDrillDockerTests.RejectedDivergentSiblingBesideAConfirmedProbe_
+        // RaisesThroughTheFold` builds the one suite where the union cannot raise — a schema-rejected
+        // sibling whose `security` block is byte-identical to the baseline's (so the walk holds one
+        // identity, which the probe confirmed) on an `environment` that differs elsewhere — and
+        // asserts a non-zero exit. Its sibling rows cover the two neighbouring cells: the carve-out
+        // (identical environment → 0, no notice) and a sibling whose DECLARATION also differs, where
+        // the union raises on its own (the fold fires there too — both terms do — which is exactly
+        // why that row cannot attribute anything to the wiring).
+        //
+        // MEASURED by mutating THIS line: with the term replaced by `SecurityAssurance.None` the
+        // fold row drops to exit 0 and fails while the different-declaration row stays green in the
+        // same run. That differential is what makes the fold row a measurement of the wiring rather
+        // than one more suite that happens to redden.
         var rejectedDivergentAssurance =
             FoldRejectedDivergent(scenarios, schemaValid, schemaRefusalKinds, baselineIndex);
 

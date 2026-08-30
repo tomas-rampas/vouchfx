@@ -496,7 +496,10 @@ public sealed class KafkaAuthorisationDrillDockerTests
         try
         {
             result = await ScenarioRunner.RunScenarioOwningTopologyAsync(
-                s_registry, yaml, row, AppHostAssemblyName, diagnostics,
+                s_registry, yaml, row,
+                // Issue #409: supplied, not derived — the same walk the aggregator passes in.
+                ScenarioRunner.DeclaredTargetsOf(yaml, s_registry),
+                AppHostAssemblyName, diagnostics,
                 seedBaseDirectory: suiteDirectory, livePump: null, cancellationToken: cts.Token);
         }
         finally

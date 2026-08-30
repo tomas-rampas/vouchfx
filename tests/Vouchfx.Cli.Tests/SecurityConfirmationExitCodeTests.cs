@@ -303,12 +303,18 @@ public sealed class SecurityConfirmationExitCodeTests
 
     /// <summary>
     /// <see cref="SecurityAssurance.Declaring"/> and <see cref="SecurityAssurance.Confirming"/>
-    /// REPLACE what an earlier call attached; they do not accumulate. <c>ParallelSuiteRunner</c>
-    /// depends on it — it re-attaches a slot's own declaration over the assurance the core already
-    /// returned, and an accumulating projection would union one scenario's declaration into
-    /// another's — and nothing pinned it, which is how a rename to <c>WithDeclared</c> would have
-    /// looked like the only way to say so.
+    /// REPLACE what an earlier call attached; they do not accumulate.
     /// </summary>
+    /// <remarks>
+    /// <strong>This used to say <c>ParallelSuiteRunner</c> depends on it, and that dependency is
+    /// gone (issue #409).</strong> The runner re-attached a slot's own declaration over the
+    /// assurance the core had already returned; the declaration is now passed INTO the core and the
+    /// re-attach is deleted, so every remaining call site applies each projection to
+    /// <c>SecurityAssurance.None</c> exactly once and the two behaviours are indistinguishable from
+    /// the outside. The row stays, because that indistinguishability is the thing worth guarding: a
+    /// second attach appearing anywhere would union one scenario's declaration into another's — the
+    /// pairing <c>SecurityAssurance.Worse</c> exists to prevent — and would do it silently.
+    /// </remarks>
     [Fact]
     public void Declaring_And_Confirming_ReplaceRatherThanAccumulate()
     {

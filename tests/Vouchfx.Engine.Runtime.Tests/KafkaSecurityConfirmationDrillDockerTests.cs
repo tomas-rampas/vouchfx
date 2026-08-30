@@ -130,6 +130,8 @@ using Vouchfx.Engine.Abstractions;
 using Vouchfx.Engine.Abstractions.Events;
 using Vouchfx.Engine.Authoring;
 using Vouchfx.Engine.Authoring.Ast;
+using Vouchfx.Engine.Authoring.Model;
+using Vouchfx.Engine.Compilation.Schema;
 using Vouchfx.Engine.Runtime;
 using Vouchfx.Sdk;
 using Vouchfx.Steps.MqExpect.Kafka;
@@ -1177,8 +1179,13 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
 
         // ── AND THE FAULT REPORTED, which is what makes the exit code mean something ──────────
         // This fragment of RunCommand.SecurityUnconfirmableNotice prints at exactly one site,
-        // guarded on SecurityAssurance.Unconfirmed — so it is the assurance raising and nothing
-        // else. Spelled literally because the const is internal to the CLI assembly.
+        // whose guard is a CONJUNCTION: `Unconfirmed: true, Refusal: not ProbeUnconfirmed`. Stated
+        // exactly, because the direction matters and only one direction is free. PRESENCE implies
+        // both conjuncts, so seeing this line IS the assurance raising — which is what this row
+        // needs. ABSENCE would imply neither on its own (a raised assurance whose refusal was a
+        // failed probe prints nothing here), so a row asserting the line's absence needs to rule the
+        // probe arm out separately; see this file's #410 carve-out row, which does.
+        // Spelled literally because the const is internal to the CLI assembly.
         AssertArmOutputContains(
             arm, output, "declares a 'security' block that this run could not confirm");
     }
@@ -1191,6 +1198,586 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
         => Assert.True(
             output.Contains(expected, StringComparison.Ordinal),
             $"the '{arm}' arm's output did not contain \"{expected}\". Output:\n{output}");
+
+    // ─────────────────────────────────────────────────────────────────────────────────────────
+    // Issue #410 — the carve-out's confirmed-probe narrowing, and #467's fold WIRING
+    // ─────────────────────────────────────────────────────────────────────────────────────────
+    //
+    // THREE ROWS OVER ONE BASELINE SUITE AND TWO KNOBS, so what separates any two of them is
+    // stated in one place and is greppable, rather than three separately-argued suites.
+    //
+    // NOT "each row moves one variable" — Row 2 moves BOTH knobs against Row 1's zero, and saying
+    // otherwise would overstate the differential. The pairs that ARE one-knob differentials are the
+    // ones the rows' claims rest on: Row 1 → Row 3 moves the environment alone (which is the fold's
+    // gate), and Row 3 → Row 2 moves the declaration alone (which is what the canonical union
+    // reads). Row 2 against Row 1 is two moves and is not used as evidence about either gate.
+    //
+    // Every row is the positive control's suite — a topology that comes up and a probe that
+    // CONFIRMS `mtls-broker` — plus ONE schema-rejected sibling. The sibling is always rejected the
+    // same way (a step missing its required `topic`, an error at `/steps/0` and therefore OUTSIDE
+    // any `security` node, so the recorded kind is AuthoringFault and never the unconditionally-
+    // raising SecurityDeclarationRejected). What varies is only its `environment`:
+    //
+    //   Row 1  environment BYTE-IDENTICAL              → exit 0, no notice.  The carve-out.
+    //   Row 2  environment differs, DECLARATION differs → non-zero.          The union raises.
+    //   Row 3  environment differs, declaration SAME    → non-zero.          Only the fold raises.
+    //
+    // MEASURED, all three green on one host in 1m06s, with no container or `aspire-session-network-*`
+    // left behind. AND the three are not one row wearing three names: replacing the outer
+    // `Worse(…, rejectedDivergentAssurance)` term in `RunSuiteAsync` with `SecurityAssurance.None`
+    // takes Row 3 from exit 4 to exit 0 (it fails) while Row 2 stays green — so Row 3 measures the
+    // WIRING and Row 2 measures the union, which is exactly the split the two rows claim.
+    //
+    // WHY DOCKER IS NOT OPTIONAL FOR ANY OF THEM. All three turn on `Confirmed` being NON-EMPTY,
+    // and nothing but a probe that succeeded can fill it. Without a topology every one of these
+    // suites records `Confirmed = []` and raises, whichever variant it is — so the three rows
+    // collapse into one and measure nothing. That is issue #410's own sentence ("every Docker-free
+    // row in the matrix is blind to this by construction") and it is why the record-tier folds and
+    // `FoldRejectedDivergentTests` cannot stand in for these.
+    //
+    // WHAT IS PINNED DOCKER-FREE, AND WHY IT IS NOT THE SAME CLAIM. The FIXTURE's premises — that
+    // each sibling is schema-rejected outside its security block, still builds an AST, and diverges
+    // (or does not) in environment and in declared identity exactly as its row's name says — are
+    // asserted by `SiblingPremises_AreWhatEachRowClaims` below, with no container. That guard exists
+    // because a fixture that silently stopped being rejected, or stopped diverging, would leave
+    // every row here green while measuring nothing. It is a check on the BED, not on the carve-out.
+
+    /// <summary>
+    /// Which sibling a row writes beside the drill — the two knobs, named.
+    /// </summary>
+    private enum SiblingShape
+    {
+        /// <summary>Byte-identical <c>environment</c>: not folded, and its declaration is the one
+        /// the probe confirmed. Row 1's carve-out.</summary>
+        IdenticalEnvironment,
+
+        /// <summary>A divergent <c>environment</c> carrying a DIFFERENT <c>security</c> declaration:
+        /// the canonical union already holds an unconfirmed identity. Row 2.</summary>
+        DivergentEnvironmentAndDeclaration,
+
+        /// <summary>A divergent <c>environment</c> carrying a BYTE-IDENTICAL <c>security</c>
+        /// declaration: the union sees only confirmed identities, so nothing but the fold can
+        /// raise. Row 3.</summary>
+        DivergentEnvironmentSameDeclaration,
+    }
+
+    /// <summary>
+    /// <strong>Issue #410's first acceptance row.</strong> A shared-topology secured suite where one
+    /// scenario carries a pre-topology authoring fault while the probe confirms EVERY declared
+    /// target exits <b>0</b> and prints no security notice.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The narrowing this pins: the declared assertion <em>was</em> confirmed, so REQ-018 has
+    /// nothing to say, and what remains is an authoring fault — <c>Inconclusive</c>, and only
+    /// <c>Fail</c> breaks CI by default (blueprint §12.1). Before the narrowing the schema door
+    /// OR-ed on <c>declaresSecurity</c> alone, without asking whether confirmation had happened, and
+    /// this suite raised — <strong>read</strong> from the archived source at the branch point and
+    /// never re-run, which is the same evidence label the changelog entry carries. What THIS row
+    /// measures is one tree: the exit code on this one.
+    /// </para>
+    /// <para>
+    /// <strong>Exit 0 is asserted together with the notice's ABSENCE, and neither alone would
+    /// do.</strong> Several doors in this engine produce a 0, so the code alone is not evidence that
+    /// the assurance stayed quiet.
+    /// </para>
+    /// <para>
+    /// <strong>The notice's absence is not, on its own, "Unconfirmed answered false" — and the row
+    /// closes the gap rather than overstating it.</strong> The one site that prints it in
+    /// <c>RunCommand</c> is guarded on a CONJUNCTION: <c>Unconfirmed: true, Refusal: not
+    /// ProbeUnconfirmed</c>. So a silent run is either an assurance that did not raise (what this
+    /// row claims) or one that raised on a FAILED PROBE (which prints its own measured security
+    /// failure instead). <see cref="AssertProbeConfirmed"/> runs first and rules the second out by
+    /// measurement: it asserts this run reached a CONFIRMED probe, and a confirmed probe records no
+    /// <c>ProbeUnconfirmed</c> refusal. The premise check therefore does double duty — it stops a
+    /// host whose topology never came up from reading as a regressed carve-out, and it is what makes
+    /// the absence below mean the predicate rather than the guard's other conjunct.
+    /// </para>
+    /// <para>
+    /// Row 2 below is what stops this row passing by the carve-out simply having been disabled: the
+    /// same baseline suite, with the sibling's environment AND its declaration moved, exits
+    /// non-zero. Two knobs, not one — stated exactly, because the one-knob differentials in this
+    /// group run Row 1 → Row 3 (environment alone) and Row 3 → Row 2 (declaration alone), and
+    /// neither of those is the pair being cited here.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    [Trait("requires", "docker")]
+    public async Task AuthoringRefusalBesideAFullyConfirmedProbe_ExitsZeroWithNoNotice()
+    {
+        var (exitCode, output) = await RunSchemaRejectedSiblingRowAsync(
+            "410-carve-out", SiblingShape.IdenticalEnvironment);
+
+        AssertProbeConfirmed("run", output);
+
+        // The run genuinely completed rather than exiting 0 by never starting: the step ran, and
+        // the sibling was seen AND refused for the reason this fixture built it to be.
+        //
+        // The diagnostic is asserted as the WHOLE missing-required-property message, not as the
+        // word `topic`. The drill's own step declares `topic: orders`, so a bare `Contains("topic")`
+        // passes whether or not the sibling was ever read — near-vacuous, and it would have let a
+        // silently-dropped sibling pass as a carve-out.
+        AssertArmOutputContains("run", output, $"step '{StepId}'");
+        AssertArmOutputContains("run", output, Issue410SiblingSchemaDiagnostic);
+
+        // THE EXIT CODE ALONE DOES NOT SAY WHICH 0 THIS IS, so the verdict is asserted directly.
+        // `ExitCodes.FromVerdict` returns 0 for Pass AND for a flagless Inconclusive, so a suite
+        // that somehow passed would satisfy the assertion below just as well as the one this row is
+        // about — and they are not the same claim. The carve-out's claim is precisely that an
+        // INCONCLUSIVE suite, whose declared assertion the probe confirmed, does not have its exit
+        // code escalated by the security rule. The renderer's per-scenario line carries the token
+        // (measured: `Scenario '<name>': INCONCLUSIVE`), so it costs one assertion to say so; and
+        // because the suite verdict is the Elevate fold over its scenarios, a sibling reported
+        // INCONCLUSIVE bounds the suite at Inconclusive or worse. Asserting the sibling's line
+        // rather than a bare token also keeps the earlier premise — that the sibling became a
+        // SCENARIO rather than an unbuilt document, which is what puts this row on the carve-out's
+        // rule instead of #415's.
+        AssertArmOutputContains(
+            "run",
+            output,
+            $"schema-rejected-sibling-{SiblingShape.IdenticalEnvironment}': INCONCLUSIVE");
+
+        Assert.Equal(0, exitCode);
+        Assert.DoesNotContain(
+            "declares a 'security' block that this run could not confirm",
+            output,
+            StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// <strong>Issue #410's companion row.</strong> The same suite with the refused scenario
+    /// declaring a DIFFERENT secured target: one declared identity confirmed, one not, so the
+    /// carve-out must not apply and the run exits non-zero.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is what makes the row above evidence. A carve-out that had simply been switched off —
+    /// or a predicate weakened to "anything was confirmed" — would take this suite to 0 as well, and
+    /// the pair separates the two readings. It is the end-to-end twin of
+    /// <c>SecurityConfirmationExitCodeTests.Unconfirmed_OneOfTwoDeclaredTargetsConfirmed_StillRaises</c>,
+    /// which pins the same rule at the record tier and cannot reach a real confirmation.
+    /// </para>
+    /// <para>
+    /// <strong>The canonical union suffices to raise it, and that is what makes it the wrong row for
+    /// #467's wiring.</strong> The sibling's <c>endpoint</c> differs, so
+    /// <c>SecuredTargets.IdentityOf</c> gives it an identity the probe never confirmed, and
+    /// <c>Unconfirmed</c>'s first disjunct is satisfied by the suite-wide walk alone. The fold ALSO
+    /// fires here — the environment diverges and the scenario declares something, so its gate is met
+    /// too — which is precisely why this row cannot attribute the raise to the wiring: both terms
+    /// raise and <c>Worse</c> keeps a raise either way. MEASURED, by removing the wiring term: this
+    /// row stays green while Row 3 reddens, so the union is doing the work here and the fold is
+    /// doing it there.
+    /// </para>
+    /// <para>
+    /// <strong>The exit code is 4, not 3</strong>, for the reason the #415 row above records: the
+    /// run reaches its step, whose budget expires as Inconclusive, and a schema-rejected sibling
+    /// keeps the aggregate there — 4 is the taxonomy's code for that verdict, and the carve-out
+    /// decides WHETHER it is returned flaglessly, never WHICH code it is. Asserted as non-zero AND
+    /// as 4, because "non-zero" alone would tolerate an exit 2 from a bed that never ran.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    [Trait("requires", "docker")]
+    public async Task PartiallyConfirmedDeclarationBesideAConfirmedProbe_ExitsNonZero()
+    {
+        var (exitCode, output) = await RunSchemaRejectedSiblingRowAsync(
+            "410-partial", SiblingShape.DivergentEnvironmentAndDeclaration);
+
+        AssertProbeConfirmed("run", output);
+
+        Assert.NotEqual(0, exitCode);
+        Assert.Equal(4, exitCode);
+        AssertArmOutputContains(
+            "run", output, "declares a 'security' block that this run could not confirm");
+    }
+
+    /// <summary>
+    /// <strong>Issue #410's third obligation, added by #467: the fold WIRING.</strong> A
+    /// schema-rejected scenario whose serialised <c>environment</c> differs from the baseline's,
+    /// beside a sibling whose probe confirms everything, exits non-zero — and the outer
+    /// <c>Worse(union, rejectedDivergentAssurance)</c> term is the only thing that can raise it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The union cannot raise on this suite, which is the whole reason the row exists.</strong>
+    /// The sibling's <c>security</c> block is byte-identical to the baseline's, so
+    /// <c>SecuredTargets.IdentityOf</c> gives the two the SAME identity — the digest hashes the
+    /// <c>endpoint:</c> selector's TEXT, never its resolution — and the suite-wide walk therefore
+    /// holds one identity, which the probe confirmed. <c>SomeDeclaredTargetWentUnconfirmed</c> is
+    /// false, no probe failure was recorded, and the schema error sits outside the declaration, so
+    /// all three of <c>Unconfirmed</c>'s disjuncts are false for the union. Only
+    /// <c>FoldRejectedDivergent</c>'s contribution — that scenario's own declaration beside its own
+    /// refusal, with <c>Confirmed</c> empty by construction — raises, and only the wiring term
+    /// carries it into the suite's answer.
+    /// </para>
+    /// <para>
+    /// <strong>This is the row the call-site comment in <c>ScenarioRunner.RunSuiteAsync</c> promises,
+    /// and it is the measurement that comment could not make.</strong> MEASURED there: deleting the
+    /// wiring term leaves the whole non-Docker suite green, because at every pre-topology door
+    /// <c>Confirmed</c> is empty and the union raises on its own. This suite is the one shape where
+    /// the union does not — and that is MEASURED here rather than argued: with the term replaced by
+    /// <c>SecurityAssurance.None</c> this row reports <c>exit code: 0</c> and fails on the very
+    /// assertion below, while the union row above stays green in the same run.
+    /// </para>
+    /// <para>
+    /// <strong>Why the divergence is an <c>env:</c> value and not the <c>httpPort:</c> the fold's
+    /// own tests use.</strong> The knob has to change the serialised <c>EnvironmentSpec</c> while
+    /// leaving the <c>security</c> block byte-identical, and this fixture's service declares its
+    /// ports through <c>ports:</c> — where a change would also move what the health gate and the
+    /// probe address. An <c>env:</c> entry the broker does not act on moves the serialisation and
+    /// nothing else. <c>FoldRejectedDivergentTests</c> tables the same gate with an <c>httpPort:</c>
+    /// against a container-free fixture; the gate is environment equality either way.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    [Trait("requires", "docker")]
+    public async Task RejectedDivergentSiblingBesideAConfirmedProbe_RaisesThroughTheFold()
+    {
+        var (exitCode, output) = await RunSchemaRejectedSiblingRowAsync(
+            "410-fold-wiring", SiblingShape.DivergentEnvironmentSameDeclaration);
+
+        AssertProbeConfirmed("run", output);
+
+        Assert.NotEqual(0, exitCode);
+        Assert.Equal(4, exitCode);
+        AssertArmOutputContains(
+            "run", output, "declares a 'security' block that this run could not confirm");
+    }
+
+    /// <summary>
+    /// Materialises one of the three rows above and runs the built CLI flaglessly over the whole
+    /// directory, returning the process exit code and its output.
+    /// </summary>
+    /// <remarks>
+    /// The DIRECTORY, not one file: the sibling only becomes a second scenario of the shared-topology
+    /// suite when discovery finds it, and discovery walks a root. Flagless for REQ-018's own reason —
+    /// the property is that the exit code is what it is <em>regardless</em> of gating flags, so a row
+    /// that needed one would not be testing it.
+    /// </remarks>
+    private async Task<(int ExitCode, string Output)> RunSchemaRejectedSiblingRowAsync(
+        string row, SiblingShape shape)
+    {
+        var cli = ResolveCliAssembly();
+        var suiteDirectory = MaterialiseSuiteDirectoryWithSchemaRejectedSibling(row, shape);
+
+        _output.WriteLine($"{cli} run {suiteDirectory}  [sibling shape: {shape}]");
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(5));
+        var (exitCode, output) = await RunCliAsync(cli, "run", suiteDirectory, cts.Token);
+
+        _output.WriteLine($"exit code: {exitCode}");
+        _output.WriteLine("── CLI output ──\n" + output);
+
+        return (exitCode, output);
+    }
+
+    /// <summary>
+    /// The positive control's suite directory plus ONE file: a document whose <c>environment</c> is
+    /// derived from the drill's own text and whose step is missing its required <c>topic</c> — a
+    /// schema error at <c>/steps/0</c>, outside any <c>security</c> node.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The sibling's environment is COPIED out of the drill rather than restated</strong>,
+    /// exactly as the #415 fixture above does it, so "byte-identical" is true by construction and
+    /// cannot drift when <see cref="SuiteYaml"/> changes. The two divergent shapes then apply a
+    /// named, minimal edit to that copy, so what diverges is stated in one place and is greppable.
+    /// </para>
+    /// <para>
+    /// <strong>Rejected by SCHEMA and not by <c>AstBuilder.Build</c>, which is the opposite choice
+    /// from the #415 fixture and is forced by the subject.</strong> A document refused by the AST
+    /// builder never becomes a scenario at all — it reaches the runner as an
+    /// <c>UnbuiltDocument</c>, whose assurance is kept WHOLE and therefore always raises when it
+    /// declares anything. That is #415's rule and it would make all three rows here non-zero. These
+    /// rows are about a document that IS a scenario: schema-rejected inside
+    /// <c>RunSuiteAsync</c>'s own Pass A, where <c>schemaValid[i]</c> is false and the fold's gate
+    /// can be reached.
+    /// </para>
+    /// <para>
+    /// The endpoint and the gate port are <see cref="Issue410SecuredEndpoint"/> and
+    /// <see cref="Issue410HealthCheckPort"/>, which carry their own rationale — stated there rather
+    /// than here so the premise guard, which builds the same baseline, reads the same reason from
+    /// the same place.
+    /// </para>
+    /// </remarks>
+    private static string MaterialiseSuiteDirectoryWithSchemaRejectedSibling(
+        string row, SiblingShape shape)
+    {
+        var suiteDirectory = MaterialiseSuiteDirectory(
+            row,
+            securedEndpoint: Issue410SecuredEndpoint,
+            keystoreTarget: CheckedKeystorePath,
+            healthCheckPort: Issue410HealthCheckPort);
+
+        File.WriteAllText(
+            Path.Combine(suiteDirectory, "schema-rejected-sibling.e2e.yaml"),
+            SchemaRejectedSiblingYaml(
+                File.ReadAllText(Path.Combine(suiteDirectory, "drill.e2e.yaml")), shape));
+
+        return suiteDirectory;
+    }
+
+    /// <summary>
+    /// The #410 rows' baseline suite, built from the SAME three arguments
+    /// <see cref="MaterialiseSuiteDirectoryWithSchemaRejectedSibling"/> hands to
+    /// <see cref="MaterialiseSuiteDirectory"/> (which forwards them to <see cref="SuiteYaml"/>), so
+    /// <see cref="SiblingPremises_AreWhatEachRowClaims"/> can build the same baseline without
+    /// writing a directory and the two cannot drift apart.
+    /// </summary>
+    /// <remarks>
+    /// Drift here is not a cosmetic risk: the premise guard derives every sibling from the baseline
+    /// it builds, so a guard building a DIFFERENT baseline would keep passing while asserting
+    /// nothing about the documents the rows actually write. Hoisting the two knob values makes that
+    /// impossible to do by accident — a change reaches both sites or neither.
+    /// </remarks>
+    private static string Issue410BaselineSuiteYaml() =>
+        SuiteYaml(
+            Issue410SecuredEndpoint,
+            CheckedKeystorePath,
+            healthCheckPort: Issue410HealthCheckPort);
+
+    /// <summary>The secured endpoint every #410 row declares — the broker's SSL listener.</summary>
+    private const string Issue410SecuredEndpoint = "9093";
+
+    /// <summary>
+    /// The schema diagnostic every #410 sibling produces, MEASURED at
+    /// <c>/steps/0</c>: <c>Required properties ["topic"] are not present</c>.
+    /// </summary>
+    /// <remarks>
+    /// <strong>Asserting the bare word <c>topic</c> would be very nearly vacuous</strong>, and that
+    /// is why this const exists: the drill's OWN step declares <c>topic: orders</c>, so a
+    /// <c>Contains("topic")</c> on the run's output passes whether or not the sibling was ever read.
+    /// This fragment appears only in a missing-required-property error. It is pinned Docker-free by
+    /// the premise guard and asserted end-to-end by Row 1, and it survives the terminal path intact
+    /// — measured, brackets and quotes included, in a captured run's CLI output.
+    /// </remarks>
+    private const string Issue410SiblingSchemaDiagnostic =
+        "Required properties [\"topic\"] are not present";
+
+    /// <summary>
+    /// The port every #410 row's health gate probes: the SECURED one, for the reason recorded on
+    /// <see cref="SuiteYaml"/>'s <c>healthCheckPort</c> parameter (gating on 9092 lets the gate
+    /// clear before the secured listener is behind its host-published proxy). Every #410 row needs
+    /// the probe to confirm, so every one of them gates here.
+    /// </summary>
+    private const int Issue410HealthCheckPort = 9093;
+
+    /// <summary>
+    /// Builds one sibling document from the drill's own text: its <c>environment</c> block, edited
+    /// per <paramref name="shape"/>, followed by a step the composed schema rejects.
+    /// </summary>
+    /// <remarks>
+    /// Separated from <see cref="MaterialiseSuiteDirectoryWithSchemaRejectedSibling"/> so the
+    /// Docker-free premise guard below can assert what each shape actually produces without writing
+    /// a suite directory or reaching a container. Both live in this class, so it stays private.
+    /// </remarks>
+    private static string SchemaRejectedSiblingYaml(string drillYaml, SiblingShape shape)
+    {
+        var environmentStart = drillYaml.IndexOf("environment:", StringComparison.Ordinal);
+        var stepsStart = drillYaml.IndexOf("\nsteps:", StringComparison.Ordinal);
+        Assert.True(
+            environmentStart >= 0 && stepsStart > environmentStart,
+            "the drill suite no longer has an 'environment:' block followed by a 'steps:' block, so "
+            + "the schema-rejected sibling can no longer be given a derived declaration. Fix this "
+            + "fixture rather than weakening the rows.");
+
+        var environmentBlock = drillYaml[environmentStart..stepsStart];
+
+        // The environment knob. An `env:` entry the broker does not act on: it moves what
+        // SerialiseEnvironment produces (the fold's gate) and nothing the topology, the health gate
+        // or the probe can see. Asserted to have actually replaced something, because a silent
+        // no-op here would leave a "divergent" row measuring the identical one.
+        if (shape is SiblingShape.DivergentEnvironmentAndDeclaration
+            or SiblingShape.DivergentEnvironmentSameDeclaration)
+        {
+            environmentBlock = ReplaceExactlyOnce(
+                environmentBlock,
+                "KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: \"0\"",
+                "KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: \"1\"");
+        }
+
+        // The declaration knob, applied INSIDE the security block: a different `endpoint:` selector
+        // is a different identity, because the digest hashes that selector's text.
+        //
+        // The needle is built from Issue410SecuredEndpoint rather than spelled again, so moving the
+        // baseline's endpoint moves this knob with it instead of turning it into a silent no-op that
+        // ReplaceExactlyOnce would then have to catch. The replacement is a literal because its only
+        // requirement is being a port the baseline does not declare.
+        if (shape is SiblingShape.DivergentEnvironmentAndDeclaration)
+        {
+            environmentBlock = ReplaceExactlyOnce(
+                environmentBlock,
+                $"endpoint: \"{Issue410SecuredEndpoint}\"",
+                "endpoint: \"9095\"");
+        }
+
+        return "metadata:\n"
+            + $"  name: schema-rejected-sibling-{shape}\n"
+            + environmentBlock
+            + "\n"
+            + SchemaRejectedSiblingSteps;
+    }
+
+    /// <summary>
+    /// <see cref="string.Replace(string, string, StringComparison)"/> that fails the test unless the
+    /// needle occurred EXACTLY once — a fixture knob that silently does nothing, or that moves more
+    /// of the document than its row claims, is a row that silently measures the wrong cell.
+    /// </summary>
+    /// <remarks>
+    /// The name is the contract, so the count is checked rather than assumed. Zero occurrences would
+    /// leave a "divergent" row measuring the identical shape; two or more would move a second site
+    /// the row's own remarks do not mention, which for the declaration knob could change the
+    /// declared IDENTITY of a target the row needs left alone. <c>IndexOf == LastIndexOf</c> is the
+    /// whole test once presence is established.
+    /// </remarks>
+    private static string ReplaceExactlyOnce(string text, string oldValue, string newValue)
+    {
+        var first = text.IndexOf(oldValue, StringComparison.Ordinal);
+        Assert.True(
+            first >= 0,
+            $"the drill's environment block no longer contains \"{oldValue}\", so this row's "
+            + "divergence knob would be a no-op and the row would measure the identical shape. Fix "
+            + "the fixture rather than weakening the row.");
+
+        Assert.True(
+            first == text.LastIndexOf(oldValue, StringComparison.Ordinal),
+            $"the drill's environment block contains \"{oldValue}\" more than once, so this knob "
+            + "would move more of the document than this row claims — and for the declaration knob "
+            + "that can change an identity the row needs left alone. Fix the fixture rather than "
+            + "weakening the row.");
+
+        return text.Replace(oldValue, newValue, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The sibling's steps: an <c>mq-publish.kafka</c> step with the REQUIRED <c>topic</c> omitted —
+    /// a schema error at <c>/steps/0</c>, deliberately outside any <c>security</c> node so the door
+    /// records <c>AuthoringFault</c> rather than the unconditionally-raising
+    /// <c>SecurityDeclarationRejected</c>.
+    /// </summary>
+    /// <remarks>
+    /// <strong>The same provider family as the drill, and that is not cosmetic.</strong> The fault
+    /// has to be a MISSING REQUIRED FIELD, not an unknown step type: a type no registry resolves is
+    /// refused by <c>AstBuilder.Build</c>, which makes the document an <c>UnbuiltDocument</c> rather
+    /// than a schema-rejected scenario and moves every row here onto #415's rule. Measured while
+    /// writing these rows — an <c>http.rest</c> step was rejected by this file's Kafka-only test
+    /// registry for exactly that reason, where the CLI's 25-provider registry would have accepted
+    /// it, so the two registries disagreed about which door the fixture opened.
+    /// </remarks>
+    private const string SchemaRejectedSiblingSteps =
+        "steps:\n"
+        + "  - id: rejected-publish\n"
+        + "    type: mq-publish.kafka\n"
+        + "    target: " + BrokerName + "\n"
+        + "    payload: '{\"id\":\"schema-rejected-sibling\"}'\n";
+
+    // Locals rather than inline array literals at the call site below: CA1861 on a repeated
+    // constant-element argument, the same workaround FoldRejectedDivergentTests applies.
+    private static readonly bool[] s_baselineThenRejected = { true, false };
+    private static readonly SecurityAbortKind?[] s_noKindThenAuthoringFault =
+        { null, SecurityAbortKind.AuthoringFault };
+
+    /// <summary>
+    /// <strong>The bed, not the carve-out.</strong> Every premise the three rows above rest on,
+    /// asserted without a container: each sibling is schema-REJECTED, rejected OUTSIDE its
+    /// <c>security</c> node, still builds an AST (so it becomes a scenario rather than an unbuilt
+    /// document), and diverges in environment and in declared identity exactly as its row claims.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A fixture that quietly stopped satisfying any of these would leave all three Docker rows
+    /// GREEN while measuring nothing — the identical shape would pass Row 1 for the wrong reason,
+    /// and a sibling that became AST-unbuildable would take Row 1's exit code non-zero through
+    /// #415's whole-value rule instead of through anything this issue is about. Cheap to state, and
+    /// it runs on every machine rather than only where Docker is healthy.
+    /// </para>
+    /// <para>
+    /// It deliberately does NOT assert an exit code or an assurance: those need a confirmed probe,
+    /// which needs a container. This checks only that the documents are what the rows say they are.
+    /// </para>
+    /// <para>
+    /// <strong>Why this file's Kafka-only registry gives the same verdicts the CLI's 25-provider
+    /// registry will.</strong> The two registries can disagree about a document — an unknown step
+    /// type is a schema error AND an <c>AstBuilder.Build</c> refusal to the registry that lacks the
+    /// provider, and neither to the one that has it. These fixtures are built so that no such
+    /// disagreement is possible: every step names <c>mq-publish.kafka</c>, which BOTH registries
+    /// resolve, and the fault is a MISSING REQUIRED FIELD on it — a property of that provider's own
+    /// contributed schema, identical in both. So the composed schema each registry builds rejects
+    /// this document at the same pointer for the same reason, and each builds the same AST. That
+    /// equivalence is the reason the earlier <c>http.rest</c> draft was abandoned rather than
+    /// patched: it held only for a registry that carried the provider.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void SiblingPremises_AreWhatEachRowClaims()
+    {
+        // The SAME baseline the rows materialise — one helper, so a fixture change reaches this
+        // guard and the three rows together or not at all.
+        var drillYaml = Issue410BaselineSuiteYaml();
+        var drillAst = AstBuilder.Build(YamlDocumentParser.Parse(drillYaml), s_registry);
+        var drillIdentities = SecuredTargets.Enumerate(drillAst.Environment)
+            .Select(SecuredTargets.IdentityOf).ToArray();
+        Assert.NotEmpty(drillIdentities);
+        Assert.True(
+            DocumentValidator.Validate(drillYaml, s_registry).IsValid,
+            "the drill itself must be schema-VALID — it is the baseline every row's topology is "
+            + "built from.");
+
+        foreach (var shape in Enum.GetValues<SiblingShape>())
+        {
+            var siblingYaml = SchemaRejectedSiblingYaml(drillYaml, shape);
+
+            // (1) Schema-REJECTED — otherwise it is an ordinary sibling and no row's door opens.
+            var validation = DocumentValidator.Validate(siblingYaml, s_registry);
+            Assert.False(
+                validation.IsValid,
+                $"the {shape} sibling is schema-VALID, so no row's schema door opens for it.");
+            // (1b) The DIAGNOSTIC TEXT the rows key on, pinned here so it is checked on every
+            //      machine rather than only where Docker is healthy. Row 1 asserts this fragment in
+            //      the CLI's output to prove the sibling was refused for the reason this fixture
+            //      built it to be; if the schema library's wording moves, this guard reddens first
+            //      and says so, instead of Row 1 failing on a container host with no explanation.
+            Assert.Contains(
+                Issue410SiblingSchemaDiagnostic,
+                string.Join(" ", validation.Errors.Select(e => e.Message)),
+                StringComparison.Ordinal);
+
+            // (2) Rejected OUTSIDE the security node, asserted through the engine's OWN predicate
+            //     rather than a substring of the pointer. `SecurityDeclarationRejected` raises
+            //     unconditionally, which would take Row 1 non-zero and make Rows 2 and 3 pass
+            //     without the union or the fold ever being consulted.
+            Assert.All(
+                validation.Errors,
+                error => Assert.False(
+                    ScenarioRunner.LocatesADeclaredSecurityBlock(error.InstanceLocation),
+                    $"the {shape} sibling's schema error at '{error.InstanceLocation}' is located "
+                    + "IN its security block, so the door records SecurityDeclarationRejected and "
+                    + "every row here stops measuring what it names."));
+
+            // (3) Still AST-buildable, so it becomes a SCENARIO. An unbuilt document is #415's
+            //     rule, not this issue's, and raises on its own whatever the probe confirmed.
+            var siblingAst = AstBuilder.Build(YamlDocumentParser.Parse(siblingYaml), s_registry);
+
+            // (4) The environment knob did what its row's name says — asserted through
+            //     `FoldRejectedDivergent` itself, which IS the gate the rows turn on, rather than
+            //     through a second serialisation this test would have to keep in step with
+            //     `SerialiseEnvironment`. A folded value of `None` is the equal-environment cell.
+            var folded = ScenarioRunner.FoldRejectedDivergent(
+                new[] { drillAst, siblingAst },
+                s_baselineThenRejected,
+                s_noKindThenAuthoringFault,
+                baselineIndex: 0);
+            Assert.Equal(shape is not SiblingShape.IdenticalEnvironment, folded.Unconfirmed);
+
+            // (5) The declaration knob did too — and this is the pair that separates Rows 2 and 3.
+            var siblingIdentities = SecuredTargets.Enumerate(siblingAst.Environment)
+                .Select(SecuredTargets.IdentityOf).ToArray();
+            Assert.NotEmpty(siblingIdentities);
+            Assert.Equal(
+                shape is not SiblingShape.DivergentEnvironmentAndDeclaration,
+                drillIdentities.SequenceEqual(siblingIdentities));
+        }
+    }
 
     /// <summary>
     /// Runs the built CLI as a subprocess against one drill row's suite, with NO
@@ -1692,6 +2279,11 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
                 s_registry,
                 yaml,
                 row,
+                // Issue #409: the declaration goes IN, exactly as the aggregator supplies it under
+                // `--parallel`. These drills are the direct callers the divergence was invisible
+                // to — the core's assurance used to be complete only from the AST onwards, and
+                // every row here happens to reach a post-parse door.
+                ScenarioRunner.DeclaredTargetsOf(yaml, s_registry),
                 AppHostAssemblyName,
                 diagnostics,
                 seedBaseDirectory: suiteDirectory,
@@ -1793,7 +2385,7 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
     {
         var suiteDirectory = MaterialiseSuiteDirectory(
             row,
-            securedEndpoint: "9093",
+            securedEndpoint: Issue410SecuredEndpoint,
             keystoreTarget: CheckedKeystorePath,
 
             // Gate on the SECURED port. This is the one thing this fixture changes besides adding
@@ -1803,7 +2395,14 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
             // in 22 row-executions. Flake resistance is worth more here than a one-variable
             // differential, and the row's own remarks state the differential as one file plus this
             // gate port.
-            healthCheckPort: 9093);
+            //
+            // Taken from the SAME two constants the #410 fixture uses, though this is #415's row.
+            // The two fixtures are deliberately the same baseline suite — that is what makes the
+            // changelog's "same baseline" claim structurally true rather than a coincidence of two
+            // literals agreeing — so a change to either constant must reach both or neither. They
+            // are named for #410 only because that is where they were hoisted; the shared baseline
+            // is older than the name.
+            healthCheckPort: Issue410HealthCheckPort);
 
         var drillYaml = File.ReadAllText(Path.Combine(suiteDirectory, "drill.e2e.yaml"));
 

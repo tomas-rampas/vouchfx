@@ -200,6 +200,22 @@ public sealed class SecurityAssuranceMatrixTests : IDisposable
         var exitCode = await RunAsync(file, parallel, sw);
 
         Assert.Contains("method", sw.ToString(), StringComparison.Ordinal);
+
+        // THE MECHANISM, not only the code — and its absence here was a real hole (issue #409
+        // review). Every secured arm of this matrix asserted a diagnostic and an exit code, while
+        // the notice was only ever asserted ABSENT on the unsecured controls and PRESENT on the
+        // Row 09 family alone (09b, 09d, 09e) — every one of them an UNBUILT document, which reaches
+        // the runner through `unbuiltDocuments` and never enters the scenario core. So no row here
+        // held the core to attaching a declaration: MEASURED, dropping `.Declaring(declaredTargets)`
+        // from the core's `${conn:}` door left Runtime 516/516 and Cli 573/573 green. This assertion
+        // and its siblings on Rows 5-8 close that: the notice's PRESENCE implies the assurance
+        // raised, and on THESE rows' refusal kind — AuthoringFault, since every one of their schema
+        // and pipeline faults sits outside the `security` node — raising requires a declared target
+        // to have gone unconfirmed, so it requires a declaration to have reached the record. Scoped
+        // to the kind on purpose: SecurityDeclarationRejected raises with `Declared` empty, so a row
+        // whose fault sat INSIDE the block would prove nothing about the attach (that is Row 3, and
+        // it is deliberately not given this assertion's weight).
+        Assert.Contains("declares a 'security' block", sw.ToString(), StringComparison.Ordinal);
         Assert.Equal(ExitCodes.Inconclusive, exitCode);
     }
 
@@ -331,6 +347,10 @@ public sealed class SecurityAssuranceMatrixTests : IDisposable
         var exitCode = await RunAsync(file, parallel, sw);
 
         Assert.Contains("step 'call'", sw.ToString(), StringComparison.Ordinal);
+
+        // The mechanism, paired with the unsecured control's DoesNotContain below — see Row 1's
+        // secured arm for why every secured arm now asserts this and not only its exit code.
+        Assert.Contains("declares a 'security' block", sw.ToString(), StringComparison.Ordinal);
         Assert.Equal(ExitCodes.Inconclusive, exitCode);
     }
 
@@ -427,6 +447,10 @@ public sealed class SecurityAssuranceMatrixTests : IDisposable
         var exitCode = await RunAsync(file, parallel, sw);
 
         Assert.Contains("no-such-helper.csx", sw.ToString(), StringComparison.Ordinal);
+
+        // The mechanism, paired with the unsecured control's DoesNotContain below — see Row 1's
+        // secured arm.
+        Assert.Contains("declares a 'security' block", sw.ToString(), StringComparison.Ordinal);
         Assert.Equal(ExitCodes.Inconclusive, exitCode);
     }
 
@@ -482,6 +506,22 @@ public sealed class SecurityAssuranceMatrixTests : IDisposable
         var exitCode = await RunAsync(file, parallel, sw);
 
         Assert.Contains("unknown dependency", sw.ToString(), StringComparison.Ordinal);
+
+        // THE ROW THAT GUARDS THE CORE'S `${conn:}` DOOR, and the reason this assertion exists at
+        // all (issue #409 review). Under `--parallel` this fault arrives at
+        // `RunScenarioOwningTopologyAsync`'s `catch (ArgumentException)` — `EnvironmentMapper.Map`'s
+        // eager validation, inside StartAsync but ahead of DCP. MEASURED: with
+        // `.Declaring(declaredTargets)` deleted from that door alone, the whole non-Docker suite
+        // stayed green, so a secured suite whose only fault was `${conn:nosuchdependency}` would
+        // have silently lost its security ground under `--parallel` — the exact breaking change
+        // this file's own Row 7 header records as delivered. The notice is the mechanism: it prints
+        // at one site in `RunCommand`, and only when the assurance raises.
+        //
+        // AND IT NOW FIRES: re-running that same mutation reddens this theory at `parallel: 1` and
+        // ONLY there. That asymmetry is the proof the row reaches the door it names — the
+        // sequential arm answers from `RunSuiteAsync`'s own walk and never enters the core, so a
+        // core-door regression cannot and should not move it.
+        Assert.Contains("declares a 'security' block", sw.ToString(), StringComparison.Ordinal);
         Assert.Equal(ExitCodes.Inconclusive, exitCode);
     }
 
@@ -532,6 +572,10 @@ public sealed class SecurityAssuranceMatrixTests : IDisposable
         var exitCode = await RunAsync(file, parallel, sw);
 
         Assert.Contains("one endpoint value per target", sw.ToString(), StringComparison.Ordinal);
+
+        // The mechanism, paired with the unsecured control's DoesNotContain below — see Row 1's
+        // secured arm.
+        Assert.Contains("declares a 'security' block", sw.ToString(), StringComparison.Ordinal);
         Assert.Equal(ExitCodes.Inconclusive, exitCode);
     }
 
@@ -631,6 +675,11 @@ public sealed class SecurityAssuranceMatrixTests : IDisposable
         var exitCode = await RunAsync(dir, parallel: null, sw);
 
         Assert.Contains("one endpoint value per target", sw.ToString(), StringComparison.Ordinal);
+
+        // The mechanism, paired with the unsecured control's DoesNotContain below — see Row 1's
+        // secured arm. This row is the SUITE-level guard (RunSuiteAsync), not the core, so it
+        // guards the sequential path's own attach rather than a core door.
+        Assert.Contains("declares a 'security' block", sw.ToString(), StringComparison.Ordinal);
         Assert.Equal(ExitCodes.Inconclusive, exitCode);
     }
 

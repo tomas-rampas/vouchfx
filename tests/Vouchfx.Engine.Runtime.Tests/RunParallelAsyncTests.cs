@@ -151,7 +151,7 @@ public sealed class RunParallelAsyncTests
             var sw = new StringWriter();
 
             ParallelSuiteRunner.ScenarioCoreFunc fake =
-                async (registry, yamlText, scenarioName, appHost, output, seedBaseDir, livePump, ct) =>
+                async (registry, yamlText, scenarioName, declared, appHost, output, seedBaseDir, livePump, ct) =>
                 {
                     // Index by declaration order via the scenario name suffix.
                     var idx = int.Parse(scenarioName.Split('-')[^1], System.Globalization.CultureInfo.InvariantCulture);
@@ -202,7 +202,7 @@ public sealed class RunParallelAsyncTests
         var gate = new object();
 
         ParallelSuiteRunner.ScenarioCoreFunc fake =
-            async (registry, yamlText, scenarioName, appHost, output, seedBaseDir, livePump, ct) =>
+            async (registry, yamlText, scenarioName, declared, appHost, output, seedBaseDir, livePump, ct) =>
             {
                 lock (gate)
                 {
@@ -261,7 +261,7 @@ public sealed class RunParallelAsyncTests
         var (asts, names, yamls) = MakeInputs(n);
 
         ParallelSuiteRunner.ScenarioCoreFunc fake =
-            async (registry, yamlText, scenarioName, appHost, output, seedBaseDir, livePump, ct) =>
+            async (registry, yamlText, scenarioName, declared, appHost, output, seedBaseDir, livePump, ct) =>
             {
                 var idx = int.Parse(scenarioName.Split('-')[^1], System.Globalization.CultureInfo.InvariantCulture);
                 var verdict = perScenario[idx];
@@ -314,7 +314,7 @@ public sealed class RunParallelAsyncTests
         var (asts, names, yamls) = MakeInputs(n);
 
         ParallelSuiteRunner.ScenarioCoreFunc fake =
-            async (registry, yamlText, scenarioName, appHost, output, seedBaseDir, livePump, ct) =>
+            async (registry, yamlText, scenarioName, declared, appHost, output, seedBaseDir, livePump, ct) =>
             {
                 var idx = int.Parse(scenarioName.Split('-')[^1], System.Globalization.CultureInfo.InvariantCulture);
 
@@ -365,7 +365,7 @@ public sealed class RunParallelAsyncTests
         var (asts, names, yamls) = MakeInputs(n);
 
         ParallelSuiteRunner.ScenarioCoreFunc fake =
-            (registry, yamlText, scenarioName, appHost, output, seedBaseDir, livePump, ct) =>
+            (registry, yamlText, scenarioName, declared, appHost, output, seedBaseDir, livePump, ct) =>
             {
                 var idx = int.Parse(scenarioName.Split('-')[^1], System.Globalization.CultureInfo.InvariantCulture);
                 var verdict = idx == 1 ? Verdict.EnvironmentError : Verdict.Pass;
@@ -473,6 +473,7 @@ public sealed class RunParallelAsyncTests
                 Registry,
                 yaml,
                 "rejected-security",
+                ScenarioRunner.DeclaredTargetsOf(yaml, Registry),
                 appHostAssemblyName: null,
                 output: sw,
                 seedBaseDirectory: suiteDirectory,
@@ -493,6 +494,82 @@ public sealed class RunParallelAsyncTests
         }
     }
 
+    /// <summary>
+    /// A secured document rejected by a schema error located OUTSIDE its <c>security</c> block:
+    /// the core's own result must read <c>Unconfirmed</c> for a caller that is not the aggregator
+    /// (issue #409).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the one door where the core used to need repairing downstream. The schema door
+    /// returns before Step 3 parses, so it once returned <c>None.Refusing(AuthoringFault)</c> with
+    /// an EMPTY <c>Declared</c> — and <see cref="SecurityAssurance.Unconfirmed"/>'s first disjunct
+    /// requires a declared target to have gone unconfirmed, so the result read <see langword="false"/>
+    /// while <c>ParallelSuiteRunner</c>, re-walking the AST it holds as a parameter, yielded
+    /// <see langword="true"/> for the very same document. Two callers, two answers, one document.
+    /// </para>
+    /// <para>
+    /// The in-block arm of the theory above cannot cover this: a schema error INSIDE the
+    /// declaration records <c>SecurityDeclarationRejected</c>, which raises on the third disjunct
+    /// without reading <c>Declared</c> at all. Hence a separate row, out of the block on purpose —
+    /// the required <c>method</c> is omitted from the step, so the error is at <c>/steps/0</c>.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task RunScenarioOwningTopologyAsync_SecuredWithAnOutOfBlockSchemaError_IsUnconfirmed()
+    {
+        var suiteDirectory = Directory.CreateTempSubdirectory("vouchfx-core-selfdescribing").FullName;
+        try
+        {
+            File.WriteAllText(Path.Combine(suiteDirectory, "client.pem"), "placeholder");
+            File.WriteAllText(Path.Combine(suiteDirectory, "client.key"), "placeholder");
+
+            var sw = new StringWriter();
+            var result = await ScenarioRunner.RunScenarioOwningTopologyAsync(
+                Registry,
+                SecuredServiceWithAnOutOfBlockSchemaError,
+                "secured-out-of-block-schema-error",
+                ScenarioRunner.DeclaredTargetsOf(SecuredServiceWithAnOutOfBlockSchemaError, Registry),
+                appHostAssemblyName: null,
+                output: sw,
+                seedBaseDirectory: suiteDirectory,
+                livePump: null,
+                cancellationToken: default);
+
+            // Pin the DOOR: the diagnostic names the missing step field, so a fixture that
+            // stopped reaching the schema door (or reached it inside the block) fails here first.
+            Assert.Contains("method", sw.ToString(), StringComparison.Ordinal);
+
+            Assert.Equal(Verdict.Inconclusive, result.Verdict);
+            Assert.True(result.Assurance.Unconfirmed);
+        }
+        finally
+        {
+            Directory.Delete(suiteDirectory, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// A service declaring <c>mtls</c>, whose STEP omits the required <c>method</c> — a schema
+    /// error at <c>/steps/0</c>, deliberately outside the <c>security</c> block.
+    /// </summary>
+    private const string SecuredServiceWithAnOutOfBlockSchemaError = """
+        environment:
+          services:
+            api:
+              image: myorg/api:1.0
+              security:
+                profile: mtls
+                endpoint: 8443
+                clientCert: ./client.pem
+                clientKey: ./client.key
+        steps:
+          - id: call
+            type: http.rest
+            target: api
+            path: /health
+        """;
+
     // ── (d) Complete-all (no fail-fast) ───────────────────────────────────────
 
     /// <summary>
@@ -508,7 +585,7 @@ public sealed class RunParallelAsyncTests
         var ran = new ConcurrentDictionary<int, bool>();
 
         ParallelSuiteRunner.ScenarioCoreFunc fake =
-            async (registry, yamlText, scenarioName, appHost, output, seedBaseDir, livePump, ct) =>
+            async (registry, yamlText, scenarioName, declared, appHost, output, seedBaseDir, livePump, ct) =>
             {
                 var idx = int.Parse(scenarioName.Split('-')[^1], System.Globalization.CultureInfo.InvariantCulture);
 
@@ -569,7 +646,7 @@ public sealed class RunParallelAsyncTests
         var gate = new object();
 
         ParallelSuiteRunner.ScenarioCoreFunc fake =
-            async (registry, yamlText, scenarioName, appHost, output, seedBaseDir, livePump, ct) =>
+            async (registry, yamlText, scenarioName, declared, appHost, output, seedBaseDir, livePump, ct) =>
             {
                 lock (gate)
                 {
@@ -637,7 +714,7 @@ public sealed class RunParallelAsyncTests
         var (asts, names, yamls) = MakeInputs(n);
 
         ParallelSuiteRunner.ScenarioCoreFunc fake =
-            (registry, yamlText, scenarioName, appHost, output, seedBaseDir, livePump, ct) =>
+            (registry, yamlText, scenarioName, declared, appHost, output, seedBaseDir, livePump, ct) =>
             {
                 var idx = int.Parse(scenarioName.Split('-')[^1], System.Globalization.CultureInfo.InvariantCulture);
                 if (idx == 2)
@@ -693,7 +770,7 @@ public sealed class RunParallelAsyncTests
         var names = new[] { "scenario-0", hostileName };
 
         ParallelSuiteRunner.ScenarioCoreFunc fake =
-            (registry, yamlText, scenarioName, appHost, output, seedBaseDir, livePump, ct) =>
+            (registry, yamlText, scenarioName, declared, appHost, output, seedBaseDir, livePump, ct) =>
             {
                 if (string.Equals(scenarioName, hostileName, StringComparison.Ordinal))
                 {
@@ -782,7 +859,7 @@ public sealed class RunParallelAsyncTests
             output: sw,
             diffLookup: NoDiff,
             maxConcurrency: 1,
-            runScenario: (_, _, _, _, _, _, _, _) =>
+            runScenario: (_, _, _, _, _, _, _, _, _) =>
                 throw new InvalidOperationException("no slot may run on the empty arm"),
             seedBaseDirectory: null,
             unbuiltDocuments: unbuilt);
@@ -855,7 +932,7 @@ public sealed class RunParallelAsyncTests
             output: sw,
             diffLookup: NoDiff,
             maxConcurrency: 1,
-            runScenario: (_, _, _, _, _, _, _, _) =>
+            runScenario: (_, _, _, _, _, _, _, _, _) =>
                 throw new InvalidOperationException("no slot may run on the empty arm"),
             seedBaseDirectory: null,
             unbuiltDocuments: unbuilt);
@@ -925,7 +1002,7 @@ public sealed class RunParallelAsyncTests
         var (asts, names, yamls) = MakeInputs(1);
 
         ParallelSuiteRunner.ScenarioCoreFunc fake =
-            (registry, yamlText, scenarioName, appHost, output, seedBaseDir, livePump, ct) =>
+            (registry, yamlText, scenarioName, declared, appHost, output, seedBaseDir, livePump, ct) =>
                 throw new InvalidOperationException(
                     "The scenario core must never be invoked: the length-mismatch guard should "
                     + "fire before any scenario slot is launched.");
