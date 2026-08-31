@@ -5420,6 +5420,7 @@ public static class ScenarioRunner
     /// are exercised on the real emission path by
     /// <c>SecretObservationLeakPenetrationTests.DcpCaptureTail_CarryingADeclaredSecurityPath_IsSubstitutedByThePathLedger</c>
     /// and its <c>…_CarryingANonAsciiDeclaredPath_DefeatsThePathLedgerToo</c> twin.
+    /// </para>
     /// <para>
     /// An earlier version of this paragraph cited a real capture's
     /// <c>…\AppData\Local\Temp\aspire-dcp…\kubeconfig</c> line as the evidence.  That was the
@@ -5429,6 +5430,7 @@ public static class ScenarioRunner
     /// and it is recorded where it belongs — in <c>DcpCapture.DescribeLocation</c>'s remarks —
     /// rather than as a defeat of a ledger it never reached.
     /// </para>
+    /// <para>
     /// Naming only the secret ledger above would still understate the inventory by half.
     /// What bounds the exposure is not this scrub but what the tail carries: warning-level DCP
     /// lines from a topology that failed to come up, on an engine whose
