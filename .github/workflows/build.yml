@@ -182,7 +182,12 @@ jobs:
   #
   # This job is NON-BLOCKING (continue-on-error: true) as a deliberate policy
   # for infrastructure-flaky Docker tests. It includes crash-dump capture
-  # (mini in CI, full locally) to aid diagnosis of #378-class intermittencies.
+  # (mini in CI; the README's local command uses full) to aid diagnosis of
+  # #378-class intermittencies.
+  #
+  # The display name below still says "forward-looking" — a check rename would
+  # break any branch-protection expectation pinned to the current string, so
+  # the name is kept and this comment records that it is stale on purpose.
   integration:
     name: Integration tests — Docker / Aspire (forward-looking, non-blocking)
     runs-on: ubuntu-latest
@@ -301,7 +306,8 @@ jobs:
           done
 
       # Run only tests carrying [Trait("requires","docker")].
-      # These include 54+ topology tests across orchestration and provider integration.
+      # The trait selects the docker-gated topology and provider-integration tests
+      # (spread across the orchestration, runtime and compilation test assemblies).
       #
       # Topology startup is serialised so at most ONE Aspire topology starts at a
       # time — fitting DCP's internal ~20s per-resource startup window on a loaded

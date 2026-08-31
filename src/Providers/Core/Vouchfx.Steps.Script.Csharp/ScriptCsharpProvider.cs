@@ -250,10 +250,13 @@ public sealed class ScriptCsharpProvider
                 // NO RESOLVED PATH IN THE MESSAGE (#357). `resolvedPath` is an absolute host
                 // path, and this diagnostic ships to CI artefacts and dashboards — a wider
                 // audience than whoever runs the suite. ScenarioRunner.ScrubDiagnostic applies
-                // two scrub nets: ResolvedSecrets.Scrub (for secret values) and
-                // SecurityPathDisclosureLedger (for security-material paths, #375), so the
-                // resolved path would be substituted back to its declared form before reaching
-                // any artefact.
+                // two scrub nets — ResolvedSecrets.Scrub (recorded secret VALUES) and
+                // SecurityPathDisclosureLedger (security-material paths, recorded only by
+                // SecurityConfigurationAccessor, #375) — and a script `file:` path is NEITHER,
+                // so nothing downstream substitutes or redacts it. This message does reach a
+                // scrub chokepoint (the authoring-fault event line takes both ledgers), but a
+                // net cannot replace what was never recorded into it: omitting the resolved
+                // path here is the only guard, exactly as #357 required.
                 //
                 // The declared form is the actionable half and the resolved form never was — the
                 // same fix, with the same measured outcome, that slice D applied to
