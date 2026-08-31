@@ -61,14 +61,29 @@ public sealed class DrillHostSweepCallSiteCensusTests
     private const int MinimumCensusFiles = 20;
 
     /// <summary>
-    /// The ONLY members permitted to name it.
+    /// The ONLY members permitted to name it, each written as
+    /// <c>Namespace.Type[.Nested].Member</c>.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <c>SweepUnlessDisabled</c> is the production sweep. It is reached from the public
-    /// parameterless constructor - the only one xUnit calls - and from the default of the seam that
-    /// <c>Dispose</c> runs. <c>SweepLiveProcesses</c> itself is permitted so the method's own body
-    /// is not an offender against its own name.
+    /// <strong>Fully qualified, because a bare member name is not an identity.</strong> An earlier
+    /// version keyed on the member name alone, so ANY method called
+    /// <c>SweepUnlessDisabled</c> - in any type, in any file this census reads - was treated as a
+    /// permitted caller. Planting one is a two-line change, and it would have handed the live
+    /// killer back to the fast lane through a gate that reported itself green. The namespace is
+    /// included as well as the type: two top-level types with the same name cannot coexist in one
+    /// namespace, but they can across two, so the type name alone is not unique either.
+    /// </para>
+    /// <para>
+    /// <c>DrillHostSweepFixture.SweepUnlessDisabled</c> is the production sweep. It is reached from
+    /// the public parameterless constructor - the only one xUnit calls - and from the default of
+    /// the seam that <c>Dispose</c> runs. <c>DrillHostSweep.SweepLiveProcesses</c> is the
+    /// declaration itself, permitted so the method's own body is not an offender against its own
+    /// name.
+    /// </para>
+    /// <para>
+    /// Note the two DIFFERENT declaring types above; they are easy to conflate and one review brief
+    /// already did. <c>SweepUnlessDisabled</c> lives on the FIXTURE, not on <c>DrillHostSweep</c>.
     /// </para>
     /// <para>
     /// Note what is NOT on this list: <c>Dispose</c>. It must reach the live sweep through the
@@ -78,8 +93,8 @@ public sealed class DrillHostSweepCallSiteCensusTests
     /// </remarks>
     private static readonly string[] s_permittedCallers =
     {
-        "SweepUnlessDisabled",
-        SweepMethod,
+        "Vouchfx.Engine.Runtime.Tests.DrillHostSweepFixture.SweepUnlessDisabled",
+        "Vouchfx.Engine.Runtime.Tests.DrillHostSweep." + SweepMethod,
     };
 
     /// <summary>Build output, which holds generated sources this census has no business reading.</summary>
@@ -251,6 +266,20 @@ public sealed class DrillHostSweepCallSiteCensusTests
     /// </remarks>
     private static string EnclosingMember(SyntaxNode node)
     {
+        var member = EnclosingMemberName(node);
+        var declaringType = EnclosingTypePath(node);
+
+        return declaringType is null ? member : $"{declaringType}.{member}";
+    }
+
+    /// <summary>The member a reference sits in, unqualified.</summary>
+    /// <remarks>
+    /// A reference in a field initialiser or outside any member yields a sentinel rather than
+    /// nothing, so it can never be silently permitted: a field initialiser runs on type load, which
+    /// is exactly the uncontrolled timing this census exists to prevent.
+    /// </remarks>
+    private static string EnclosingMemberName(SyntaxNode node)
+    {
         foreach (var ancestor in node.Ancestors())
         {
             switch (ancestor)
@@ -267,5 +296,47 @@ public sealed class DrillHostSweepCallSiteCensusTests
         }
 
         return "<file scope>";
+    }
+
+    /// <summary>
+    /// The namespace-and-type path a reference sits in - <c>Namespace.Outer.Inner</c> - or
+    /// <see langword="null"/> when it sits in no type at all.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Nesting is walked outermost-first so a decoy type nested inside another cannot borrow a
+    /// permitted name, and the namespace is prepended so one in a different namespace cannot
+    /// either. Both file-scoped and block-scoped namespace declarations are handled; a type in the
+    /// global namespace yields just its type path, which matches nothing on the permitted list.
+    /// </para>
+    /// <para>
+    /// Syntactic, not semantic: this census parses files individually rather than compiling them,
+    /// so it reads the path as written. A <c>using</c> alias could in principle make the written
+    /// path differ from the resolved one - but the path here comes from the DECLARATION the
+    /// reference sits inside, never from how the reference spells its target, and a declaration's
+    /// own namespace and type names cannot be aliased.
+    /// </para>
+    /// </remarks>
+    private static string? EnclosingTypePath(SyntaxNode node)
+    {
+        var segments = new List<string>();
+
+        foreach (var ancestor in node.Ancestors())
+        {
+            switch (ancestor)
+            {
+                case TypeDeclarationSyntax type:
+                    segments.Insert(0, type.Identifier.ValueText);
+                    break;
+                case FileScopedNamespaceDeclarationSyntax fileScoped:
+                    segments.Insert(0, fileScoped.Name.ToString());
+                    break;
+                case NamespaceDeclarationSyntax blockScoped:
+                    segments.Insert(0, blockScoped.Name.ToString());
+                    break;
+            }
+        }
+
+        return segments.Count == 0 ? null : string.Join(".", segments);
     }
 }
