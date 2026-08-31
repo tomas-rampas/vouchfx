@@ -23,10 +23,10 @@
 //
 // Diagnostics name the DECLARED (relative) path, never the resolved absolute one. A provider's
 // general catch writes an exception message into Vars[outcomeKey], which reaches the §14 event
-// stream and every renderer, and ScenarioRunner.ScrubDiagnostic is ResolvedSecrets.Scrub — a
-// targeted net over values the run's SecretAccessor actually revealed — so a filesystem path
-// there is never redacted and cannot be. The declared form is what the author wrote, is what
-// they need in order to fix the problem, and discloses nothing about the host.
+// stream and every renderer. ScenarioRunner.ScrubDiagnostic applies two nets: ResolvedSecrets.Scrub
+// (for secret values) and SecurityPathDisclosureLedger (for security-material paths, #375),
+// so resolved paths are substituted back to their declared form. The declared form is what
+// the author wrote, is what they need in order to fix the problem, and discloses nothing about the host.
 //
 // Certificate loading is LAZY and CACHED per target. Lazy because a suite may declare security
 // on a target no step in this scenario touches, and reading a private key has a real cost;

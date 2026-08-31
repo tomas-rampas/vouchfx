@@ -280,11 +280,46 @@ storage locations.
 running Docker daemon. The unit tests need neither.
 
 ```bash
-dotnet build vouchfx.sln                              # C# 11, nullable, warnings-as-errors
-dotnet test vouchfx.sln --filter "requires!=docker"   # unit tests — fast, no Docker
-dotnet test vouchfx.sln --filter "requires=docker"    # integration — Aspire topology
-dotnet format --verify-no-changes                     # formatting gate
+dotnet build vouchfx.sln                             # C# 11, nullable, warnings-as-errors
+dotnet test vouchfx.sln --filter "requires!=docker"  # unit tests — fast, no Docker
+dotnet format --verify-no-changes                    # formatting gate
+
+# integration — Aspire topology (see the two notes below)
+dotnet test vouchfx.sln --filter "requires=docker" \
+  --blame-crash --blame-crash-dump-type full
 ```
+
+**Always attach `--blame-crash`.** The integration lane launches the `vouchfx` CLI as a child
+process, and a test-host crash there — rare, but observed — leaves nothing to diagnose without a
+dump. The dump lands under the results directory. CI passes `--blame-crash-dump-type mini` instead,
+because its dumps are uploaded as publicly downloadable artefacts; a full dump is a verbatim copy of
+the test host's memory, so it is kept to local runs.
+
+**The lane sweeps for orphaned CLI hosts, and the sweep kills.** It runs before the lane's first
+test and again after its last, because a CLI child left behind by an earlier run keeps this
+repository's build output locked, which surfaces later as a build failure naming no test. It has two
+different scopes, and the difference matters:
+
+- **What it inspects:** every `dotnet` and `vouchfx` process on the machine. For each, it reads the
+  list of images that process has mapped. Nothing is read from a process of any other name, and
+  nothing but module paths is read — but a process you did not start is looked at, and if its
+  modules cannot be read (another user's, typically) that fact is logged with its process id and
+  name.
+- **What it kills:** only a process with an image mapped under this repository's
+  `src/Cli/Vouchfx.Cli/bin`, and then its whole process tree. That directory is the entire kill
+  scope. Before terminating anything the sweep re-checks the process start time it recorded during
+  inspection, so a process id recycled in between is left alone rather than killed by coincidence.
+
+What it did is recorded at `%LOCALAPPDATA%\vouchfx\drill-host-sweep.log`
+(`~/.local/share/vouchfx/` on Linux and macOS). A sweep that observed nothing writes nothing, so on
+many hosts the file stays empty. It is not a fault when it does not: a host running `dotnet` under
+another account, or otherwise out of reach, also produces `skipped` lines. Judge the log by the two
+lines that report a finding — `killed` and `was NOT removed` — and grep for those rather than by the
+file's length.
+
+To decline the sweep — when deliberately holding a CLI host under a debugger, say — set
+`VOUCHFX_DRILL_SWEEP=0`. Nothing is then inspected or killed at either end of the lane, and that is
+recorded in the same log.
 
 CI (`.github/workflows/build.yml`) runs a blocking **build** job (build + format + unit tests), a
 blocking **memory-leak** job over 5,000 load-unload cycles, and a forward-looking **integration**

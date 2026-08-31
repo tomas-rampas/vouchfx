@@ -46,7 +46,12 @@
 //   nginx  → `client_dn="CN=…" verify=SUCCESS` from an access-log format written for this purpose
 // Neither can be produced by anything on the engine's side of the connection.
 //
-// Run with: dotnet test --filter "requires=docker".
+// Run with: dotnet test --filter "requires=docker" --blame-crash --blame-crash-dump-type full
+//
+// The blame flags are not optional decoration: this lane launches the CLI as a child process and
+// has crashed a test host once, with no dump. See the canonical account in DrillHostHygiene.cs
+// ("WHY THE DRILL LANE IS ALWAYS RUN WITH --blame-crash") — the frequency there is a property of
+// the LANE, not of this class.
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -72,6 +77,7 @@ namespace Vouchfx.Engine.Runtime.Tests;
 /// <summary>
 /// The three requirements, together, against live containers.
 /// </summary>
+[Collection(DrillHostSweepCollectionDefinition.Name)]
 public sealed class ThreeRequirementsSuiteDockerTests
 {
     private const string AppHostAssemblyName = "Vouchfx.Engine.Runtime.Tests";
@@ -471,19 +477,9 @@ public sealed class ThreeRequirementsSuiteDockerTests
         }
         finally
         {
-            try
-            {
-                if (!process.HasExited)
-                {
-                    process.Kill(entireProcessTree: true);
-                }
-            }
-            catch (Exception ex) when (ex is InvalidOperationException
-                                           or System.ComponentModel.Win32Exception
-                                           or NotSupportedException)
-            {
-                // Ended between the check and the kill, or the platform refused it.
-            }
+            // Unconditional, on every exit path — a cancelled or faulted await would otherwise
+            // leave a CLI (and the DCP beneath it) running. See ChildProcess.KillTreeQuietly.
+            ChildProcess.KillTreeQuietly(process);
         }
     }
 
@@ -900,11 +896,24 @@ public sealed class ThreeRequirementsSuiteDockerTests
                 UseShellExecute = false,
             })!;
 
-            var stdout = process.StandardOutput.ReadToEndAsync(cancellationToken);
-            var stderr = process.StandardError.ReadToEndAsync(cancellationToken);
-            await Task.WhenAll(stdout, stderr).ConfigureAwait(false);
-            await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
-            return process.ExitCode == 0 ? await stdout : string.Empty;
+            try
+            {
+                var stdout = process.StandardOutput.ReadToEndAsync(cancellationToken);
+                var stderr = process.StandardError.ReadToEndAsync(cancellationToken);
+                await Task.WhenAll(stdout, stderr).ConfigureAwait(false);
+                await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+                return process.ExitCode == 0 ? await stdout : string.Empty;
+            }
+            finally
+            {
+                // Issue #378. The catch below returns on cancellation while the child is still
+                // running, and `using` disposes the Process OBJECT rather than the process — so
+                // before this block a cancelled docker command left one behind. Cheap for the
+                // short reads here, and load-bearing for the arbitrary-duration `docker exec`
+                // that KafkaSecurityConfirmationDrillDockerTests runs through the same shape (its
+                // DockerExecAsync; no other class in this assembly has one).
+                ChildProcess.KillTreeQuietly(process);
+            }
         }
         catch (Exception ex) when (ex is OperationCanceledException
                                        or System.ComponentModel.Win32Exception

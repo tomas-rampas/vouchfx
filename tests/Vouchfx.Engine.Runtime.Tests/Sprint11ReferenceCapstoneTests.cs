@@ -20,7 +20,13 @@
 // (R-1, CLAUDE.md §Aspire). appHostAssemblyName therefore points at THIS assembly.
 //
 // Run with:  dotnet test --filter "requires=docker&FullyQualifiedName~Sprint11Reference"
+//            --blame-crash --blame-crash-dump-type full
 // Excluded from non-docker CI:  dotnet test --filter "requires!=docker"
+//
+// The blame flags are not optional decoration: this lane launches the CLI as a child process and
+// has crashed a test host once, with no dump. See the canonical account in DrillHostHygiene.cs
+// ("WHY THE DRILL LANE IS ALWAYS RUN WITH --blame-crash") — the frequency there is a property of
+// the LANE, not of this class.
 //
 // The non-docker twin (Sprint11ReferenceCompileTests, same project) proves the SAME
 // file parses, validates, and compiles without any container.
@@ -51,6 +57,7 @@ namespace Vouchfx.Engine.Runtime.Tests;
 /// and the real <c>vouchfx</c> CLI, end-to-end against a real topology with REST + DB +
 /// Kafka + webhook, seed, secret, RETRY, and capture.
 /// </summary>
+[Collection(DrillHostSweepCollectionDefinition.Name)]
 public sealed class Sprint11ReferenceCapstoneTests
 {
     private readonly ITestOutputHelper _output;
@@ -248,13 +255,41 @@ public sealed class Sprint11ReferenceCapstoneTests
 
             proc.Start();
 
-            // Capture stdout + stderr concurrently to avoid deadlock on full buffer.
-            var stdoutTask = proc.StandardOutput.ReadToEndAsync(cts.Token);
-            var stderrTask = proc.StandardError.ReadToEndAsync(cts.Token);
+            string stdout;
+            string stderr;
+            try
+            {
+                // Capture stdout + stderr concurrently to avoid deadlock on full buffer.
+                var stdoutTask = proc.StandardOutput.ReadToEndAsync(cts.Token);
+                var stderrTask = proc.StandardError.ReadToEndAsync(cts.Token);
 
-            await proc.WaitForExitAsync(cts.Token);
-            var stdout = await stdoutTask;
-            var stderr = await stderrTask;
+                await proc.WaitForExitAsync(cts.Token);
+                stdout = await stdoutTask;
+                stderr = await stderrTask;
+            }
+            finally
+            {
+                // Issue #378. `using var proc` disposes the Process OBJECT and never the process,
+                // so before this block existed a cancelled or faulted await left the CLI running,
+                // holding this repository's build output mapped — which surfaced later as a
+                // file-lock build failure naming no test.
+                //
+                // THE TRADE THIS MAKES, STATED BECAUSE IT IS NOT FREE. Tree-killing takes DCP down
+                // with the CLI, which SKIPS the §4.5 teardown chokepoint
+                // (HeadlessTopology.DisposeAsync: WaitForResourceCleanup plus a bounded StopAsync)
+                // and so orphans this run's containers and its aspire-session-network-*. That is
+                // the same class of leak the container check in TopologyTeardownLeakTests exists
+                // to prevent — it is not being ignored here, it is being preferred:
+                //
+                //   host orphan       breaks the NEXT BUILD, silently, with no link to this test.
+                //   container orphan  costs disk and a port until swept, and `docker ps` names it.
+                //
+                // A visible leak that a sweep can find beats an invisible one that misattributes
+                // itself to unrelated work. Note also that the alternative is not "clean teardown"
+                // — on this path the CLI is already wedged or cancelled, so its own DisposeAsync
+                // was never going to run either. Killing the tree is what makes the leak finite.
+                ChildProcess.KillTreeQuietly(proc);
+            }
 
             _output.WriteLine("=== CLI stdout ===");
             _output.WriteLine(stdout);
