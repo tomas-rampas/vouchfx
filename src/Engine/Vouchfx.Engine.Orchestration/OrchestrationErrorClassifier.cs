@@ -398,7 +398,8 @@ public static class OrchestrationErrorClassifier
     /// Both inputs are read from the exception the caller already has: the signature from its
     /// message (the same case-insensitive substring rule as every other heuristic here), and the
     /// capture summary from <see cref="Exception.Data"/>, where it was attached wherever a flush
-    /// ran. There are four such sites and naming only the start path would misdescribe the ones
+    /// ran. Five sites flush before classifying, and naming only the start path would misdescribe
+    /// the ones
     /// this enrichment is mostly for: the health-gate catch and the discovery catch in
     /// <c>SuiteTopology</c>, the two gate catches in <c>StubTopology</c>, and
     /// <c>HeadlessTopology.StartAsync</c>'s own. Each flushes BEFORE calling this method, which

@@ -276,6 +276,7 @@ internal sealed record DcpFlightEntry(
 /// <strong>Disposal is the drop, and after it the residual cost is small but not zero.</strong>
 /// Disposal clears the buffer and makes <see cref="ILogger.Log"/> return before it formats
 /// anything.
+/// </para>
 /// <para>
 /// The mechanism, MEASURED on the Microsoft.Extensions.Logging 10.0.8 this solution resolves,
 /// because an earlier version of this remark got it wrong: after the drop, the AGGREGATED
