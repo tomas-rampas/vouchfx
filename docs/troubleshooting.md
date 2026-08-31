@@ -24,7 +24,7 @@ This guide covers real failure modes, what they mean, and how to fix them.
 
 **Symptom:**
 ```
-EnvironmentError: Failed to start topology — docker daemon unreachable
+RunSuiteAsync: topology failed to start - Cannot connect to the Docker daemon at unix:///var/run/docker.sock
 ```
 
 or
@@ -142,7 +142,7 @@ For the full incident write-up — root cause, why the release pipeline missed i
 
 **Symptom:**
 ```
-EnvironmentError: Failed to start topology — HealthGate timeout of 00:00:20 on resource 'postgres'
+RunSuiteAsync: topology failed to start - HealthGate timeout of 00:00:20 on resource 'postgres'
 ```
 
 **What it means:**
@@ -465,7 +465,7 @@ A `script.csharp` step throws an exception with a secret value in the message. T
 ```
 
 **What it means:**
-Unlike the terminal output and HTML report (which redact secret values), the `--events` JSON Lines stream persists **raw observations verbatim**. If a script throws an exception with a revealed secret in its message, that message becomes a raw observation in the event stream.
+The `--events` JSON Lines stream passes through the same scrubbing as the terminal output and HTML report (both redact secret values and substitute declared paths). If a script throws an exception with a revealed secret in its message, that message is redacted before reaching the event stream, just as it is on the terminal.
 
 **Fix:**
 
@@ -489,8 +489,8 @@ Unlike the terminal output and HTML report (which redact secret values), the `--
 
 3. **Understand the three tiers of secret protection** (see `docs/01` §17):
    - **Tier 1: No bake into IL** — The secret value is never compiled into the C# source or IL (verified by SecretResolutionPipelineTests).
-   - **Tier 2: Redaction in output** — Terminal output, HTML report, and JUnit XML redact secret values (shown as "(redacted)").
-   - **Tier 3: Raw event stream** — `--events` JSON Lines persists observations verbatim; authors must ensure no exception messages leak secrets.
+   - **Tier 2: Redaction in output** — Terminal output, HTML report, JUnit XML, and `--events` JSON Lines all redact secret values and substitute declared paths (values appear as `***REDACTED***`; resolved paths appear as the author's original declared text).
+   - **Tier 3: Author discipline** — Beyond the engine's automated redaction, authors must still avoid embedding secrets in exception messages because the scrub cannot catch deliberately transformed values (base64, HMAC, substrings).
 
 **Best practice:** Treat exception messages as user-visible; never embed secrets in them. The reproducibility envelope records the **reference hash**, not the value — use that for reproducibility without embedding secrets.
 
@@ -943,7 +943,7 @@ NATS JetStream messages are **only retained if the stream exists before they are
 
 **Symptom:**
 ```
-EnvironmentError: Failed to start topology — queue 'my-queue' not found on service-bus dependency
+RunSuiteAsync: topology failed to start - queue 'my-queue' not found on service-bus dependency
 ```
 
 **What it means:**
@@ -1066,7 +1066,7 @@ The managed Redis dependency (provided by Aspire/Testcontainers) has authenticat
 
 **Symptom:**
 ```
-EnvironmentError: Failed to start topology — HealthGate timeout of 00:00:20 on resource 'sqlserver'
+RunSuiteAsync: topology failed to start - HealthGate timeout of 00:00:20 on resource 'sqlserver'
 ```
 
 The SQL Server container takes a long time to start for the first time.
