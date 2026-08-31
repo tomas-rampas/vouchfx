@@ -795,15 +795,24 @@ public static class EnvironmentMapper
             // Both shapes are already refused by $defs/service (the `image`/`endpoint` clause and
             // the project-form clause that forbids `httpPort`). These are the braces to those
             // belts, in the same relationship every other check in this loop has with its own
-            // schema counterpart. ONE AUTHOR-REACHABLE PATH reaches this
-            // method with no schema in front of it, and it is MEASURED, not theoretical: `--watch`,
-            // whose compile seam is YamlDocumentParser.Parse + AstBuilder.Build with no
-            // DocumentValidator.Validate call anywhere in it, and which then reaches here through
-            // SuiteTopology.StartAsync (#370). An in-repo caller constructing an EnvironmentSpec
-            // directly arrives the same way, which is how the checks below are pinned — see
-            // EnvironmentMapperTests' "REQ-006 (service-form fields)" block.
+            // schema counterpart.
             //
-            // Without these two checks, that path accepts the author's field and silently drops
+            // WHAT REACHES THIS METHOD WITH NO SCHEMA IN FRONT OF IT: any caller that builds an
+            // EnvironmentSpec without validating a document first. EnvironmentMapper is public and
+            // is reached that way by embedders, by the SDK's testing doubles, and by this repo's own
+            // direct-construction tests — which is how the checks below are pinned; see
+            // EnvironmentMapperTests' "REQ-006 (service-form fields)" block, which arrives here by
+            // exactly that route.
+            //
+            // Until #370 there was a shipped CLI path too, and it is recorded rather than deleted
+            // because it is what these checks were written for: `--watch`'s compile seam was
+            // YamlDocumentParser.Parse + AstBuilder.Build with no DocumentValidator.Validate call
+            // anywhere in it, and it then reached here through SuiteTopology.StartAsync. #370 put
+            // the schema door in front of that seam, so the CLI no longer arrives unvalidated. THE
+            // CHECKS ARE NOT DEAD: the non-CLI callers above still arrive the same way, and this
+            // method's contract is its own, not a function of which callers currently validate.
+            //
+            // Without these two checks, such a caller accepts the author's field and silently drops
             // it — the accepted-and-ignored shape #448 exists to end, reproduced one layer down.
             // Eager, before any builder mutation, like every other check here.
 
@@ -1502,15 +1511,15 @@ public static class EnvironmentMapper
                 // dependency kinds is a 1.1 capability" — on that day the four database-backed
                 // types would otherwise have thrown.
                 //
-                // ONE AUTHOR-REACHABLE CALLER TODAY, and it is a divergence, not a repair:
-                // `--watch` (WatchRunner.Compile runs only YamlDocumentParser.Parse + AstBuilder
-                // .Build — no DocumentValidator, no ProviderPipeline, no security validator — then
-                // reaches EnvironmentMapper.Map/Configure). A `postgres` + serverArtifacts
-                // document therefore changed under --watch from "refused at topology build" to
-                // "accepted, files copied, containers started". That widens the watch/run gap
-                // tracked by issue #370 ("--watch starts containers before schema validation and
-                // the pre-topology guards"); it is recorded here rather than papered over, and
-                // #370 owns the fix.
+                // NO AUTHOR-REACHABLE CALLER TODAY, and the exception that used to exist is closed
+                // rather than merely unlikely. It was `--watch`: its compile seam ran only
+                // YamlDocumentParser.Parse + AstBuilder.Build — no DocumentValidator, no
+                // ProviderPipeline, no security validator — and then reached
+                // EnvironmentMapper.Map/Configure, so a `postgres` + serverArtifacts document went
+                // from "refused at topology build" to "accepted, files copied, containers started"
+                // on that path alone. #370 moved every one of those gates ahead of the topology
+                // build on the watch path too, so both gates now stand in front of this line on all
+                // three paths and the divergence recorded here no longer exists.
                 //
                 // Guarded on there being something to inject so an artefact-free dependency keeps
                 // today's behaviour exactly: Apply's own early-return meant it never resolved a
@@ -1772,19 +1781,20 @@ public static class EnvironmentMapper
                     // string), and the field's shipped description promises such a value is
                     // "refused at topology-build time like any other unmatched name".
                     //
-                    // THE EMPTY STRING TAKES THE SAME PATH, and the schema is not what makes that
-                    // matter — one author-reachable path reaches this mapper with no schema in
-                    // front of it. A dangling `endpoint:` key (no value after the colon)
+                    // THE EMPTY STRING TAKES THE SAME PATH, and it does NOT rest on the schema
+                    // being absent. A dangling `endpoint:` key (no value after the colon)
                     // round-trips through GetScalar as "", NOT as null: GetScalar returns
                     // `scalar.Value` verbatim, and only the separate GetScalarOrPlainNull helper
-                    // collapses that spelling, which this field deliberately does not use.
-                    // `--watch` never validates against the schema at all (measured:
-                    // WatchRunner.Compile is YamlDocumentParser.Parse + AstBuilder.Build, with no
-                    // DocumentValidator.Validate call) and is precisely the edit-and-save mode
-                    // where a half-typed key exists. Under a `Length: > 0` test it would leave
-                    // this null, fall through to the fixed rule, and accept the author's
-                    // `endpoint:` key while silently ignoring it: the exact defect class #448
-                    // exists to end, reproduced inside its own fix.
+                    // collapses that spelling, which this field deliberately does not use. Under a
+                    // `Length: > 0` test the empty string would leave this null, fall through to
+                    // the fixed rule, and accept the author's `endpoint:` key while silently
+                    // ignoring it: the exact defect class #448 exists to end, reproduced inside its
+                    // own fix. This mapper is reached by embedders and by the SDK's testing doubles
+                    // with no schema in front of it, so the refusal is this method's own to make.
+                    // (Until #370 there was a live CLI path too: `--watch` reached this mapper
+                    // without a DocumentValidator.Validate call, and is precisely the edit-and-save
+                    // mode where a half-typed key exists. That gap is closed; the rule is not
+                    // narrowed by its closing.)
                     //
                     // MATCH FIRST, HAND GetEndpoint ONLY A NAME THE ORCHESTRATOR PRODUCED.
                     // Measured, and recorded again by the endpoint-less refusal below: GetEndpoint

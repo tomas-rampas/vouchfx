@@ -317,45 +317,34 @@ internal static class ProviderPipeline
         //
         // SCOPE: this method compiles ONE scenario, so this call sees one scenario's steps. Where
         // one scenario IS the unit that gets a topology AND this method runs before that topology is
-        // built, that is the complete check: the single-scenario `run` and `--parallel` (each
-        // scenario owns its own topology via RunScenarioOwningTopologyAsync) — both MEASURED as
-        // ordered Compile-then-StartAsync in ScenarioRunner.RunScenarioOwningTopologyAsync. It is
-        // also the only check `vouchfx validate` can make, since ScenarioValidator treats each file
-        // independently by design and never decides which files form a suite.
+        // built, that is the complete check. THAT NOW HOLDS ON ALL THREE EXECUTING PATHS:
         //
-        // TWO PATHS THIS CALL DOES NOT COVER, corrected by measurement (MAJOR-2, fix round five —
-        // the previous wording claimed `--watch` among the complete-coverage set, which is false):
+        //   • the single-scenario `run` and `--parallel` (each scenario owns its own topology via
+        //     RunScenarioOwningTopologyAsync) — MEASURED as ordered Compile-then-StartAsync there;
         //
-        //   • The SHARED-topology `run` stages from the union across the RUNNABLE scenarios — those
-        //     carrying no early verdict, since a scenario that executes nothing stages nothing — so
-        //     a suite splitting the two families across two files is individually innocent per
-        //     scenario and collectively in conflict. It therefore carries its OWN call to the same
-        //     helper at its own seam (ScenarioRunner.RunSuiteAsync), from the SAME local it stages
-        //     from, so the guard and the staging cannot disagree about the set. Both seams call
-        //     this one helper, which owns the single spelling of the diagnostic (gatekeeper MAJOR,
-        //     fix round four — before it, the message was written out at this call site alone).
+        //   • `--watch`, since #370. Its compile seam (WatchRunner.Compile) used to be
+        //     YamlDocumentParser.Parse + AstBuilder.Build only, so this method was not reached until
+        //     the RUN seam — after the topology was already up, with kafkaSpeakingTargets already
+        //     computed from the same AST. A conflicting suite therefore started containers and was
+        //     rejected against them; it failed closed with this same diagnostic, but the containers
+        //     stayed up for the rest of the watch session, because WatchSession disposes the kept
+        //     topology only when it rebuilds. That seam now runs DocumentValidator.Validate and this
+        //     method (via WatchIterationPlan.Create) BEFORE the reuse-vs-rebuild decision, so the
+        //     conflict is refused before any container on the first save and without touching the
+        //     kept topology on a later one.
         //
-        //   • `--watch` runs this check AFTER the staging it protects rather than before it. The
-        //     watch compile seam (WatchRunner.Compile) is YamlDocumentParser.Parse +
-        //     AstBuilder.Build only; the topology — with kafkaSpeakingTargets already computed from
-        //     the AST — is built at the watch BUILD seam, and this method is not reached until the
-        //     RUN seam (ScenarioRunner.RunScenarioAgainstKeptTopologyAsync). A conflicting suite
-        //     under `--watch` therefore starts containers and is rejected against them, rather than
-        //     before them. It still fails closed with this same diagnostic — but the containers are
-        //     NOT torn down with it, and the previous wording of this note claimed they were
-        //     (gatekeeper MAJOR-2 + spec-compliance, fix round six; fix round five deleted one false
-        //     `--watch` claim from this paragraph and replaced it with a different one).
+        // It is also the only check `vouchfx validate` can make, since ScenarioValidator treats each
+        // file independently by design and never decides which files form a suite.
         //
-        //     MEASURED, three ways: WatchSession.OnChangeAsync disposes the kept topology ONLY on
-        //     the `!canReuse` path, and `canReuse` is decided on the ENVIRONMENT HASH alone
-        //     (WatchSession.cs — its own comment: "a steps-only edit keeps the hash"), while a
-        //     protocol conflict is a steps-level fact; the run seam RETURNS Inconclusive rather
-        //     than throwing; and WatchRunner.ProcessChangeGuardedAsync catches even a throw and
-        //     keeps watching. So the cost is not the container time to build and discard a
-        //     topology — it is that the topology stays up for the rest of the watch session, until
-        //     the session ends or a later save changes the environment hash.
-        //     Moving the watch compile seam onto the full validation stage is a wider, pre-existing
-        //     change (it runs no DocumentValidator.Validate either) and is tracked separately.
+        // ONE PATH THIS CALL DOES NOT COVER, and it is a property of the SUITE rather than of
+        // ordering: the SHARED-topology `run` stages from the union across the RUNNABLE scenarios —
+        // those carrying no early verdict, since a scenario that executes nothing stages nothing —
+        // so a suite splitting the two families across two files is individually innocent per
+        // scenario and collectively in conflict. It therefore carries its OWN call to the same
+        // helper at its own seam (ScenarioRunner.RunSuiteAsync), from the SAME local it stages from,
+        // so the guard and the staging cannot disagree about the set. Both seams call this one
+        // helper, which owns the single spelling of the diagnostic (gatekeeper MAJOR, fix round four
+        // — before it, the message was written out at this call site alone).
         var protocolConflict = SuiteProtocolTargets.DescribeProtocolConflict(new[] { (ScenarioAst?)ast });
         if (protocolConflict is not null)
         {

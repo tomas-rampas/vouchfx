@@ -1,9 +1,13 @@
 // EDGE-007 — the `--watch` probe's client-identity load (client-key-password, T8).
 //
 // WHY THIS FILE EXISTS SEPARATELY FROM SecurityConfigurationAccessorTests.
-// #364 records that `WatchRunner` is a SECOND implementation of the run path with no
-// Docker-free test seam, and EDGE-007 answers that by giving the watch path its own coverage
-// rather than letting it inherit the run path's. The two arms below therefore assemble the
+// #364 recorded that `WatchRunner` was a SECOND implementation of the run path with no
+// Docker-free test seam, and EDGE-007 answered that by giving the watch path its own coverage
+// rather than letting it inherit the run path's. #364's structural fix has since landed and the
+// watch seams ARE reachable without Docker — but not with real certificate material, so what this
+// file executes is still the only evidence that the composition RESOLVES anything (see the
+// `TheStructuralHalfOfTheEvidence_StillExists` remarks below for the exact division). The two arms
+// below therefore assemble the
 // probe's security accessor from EXACTLY the two production parts WatchRunner's build seam
 // composes, in the same order:
 //
@@ -19,25 +23,26 @@
 // and fail on the first secured suite a developer saves.
 //
 // THIS FILE IS A REPLICA, AND THE WORD IS EXACT. It never references WatchRunner — it cannot:
-// WatchRunner is internal to the `vouchfx` assembly and the composition happens inside a lambda
-// in RunAsync, past the Docker line. What is executed here is a HAND-ASSEMBLED copy of those two
+// WatchRunner is internal to the `vouchfx` assembly, and the composition happens inside the build
+// lambda CreateSession wires up. What is executed here is a HAND-ASSEMBLED copy of those two
 // statements, so what these tests prove is that the composition BEHAVES correctly, not that
 // WatchRunner performs it. That second half rests entirely on a textual census in a different
 // assembly — Vouchfx.Cli.Tests/WatchRunnerSecurityLedgerTests, which pins the call site and
 // forbids the accessor argument being dropped again. Neither half stands alone; read them as a
 // pair, and if the census is ever deleted this file stops being evidence about `--watch` at all.
 //
-// The split is forced rather than chosen. #364 records that the watch path has no Docker-free
-// seam, and the assembly boundary is real: SecurityConfigurationAccessor.Build and
+// The split is forced rather than chosen, and the ASSEMBLY BOUNDARY is what forces it — not the
+// missing seam #364 named, which is now closed. SecurityConfigurationAccessor.Build and
 // ScenarioRunner.CreateSecretAccessorScope are internal to Vouchfx.Engine.Runtime (visible here,
 // not to Vouchfx.Cli.Tests), while WatchRunner is internal to `vouchfx` (visible there, not
 // here). No single test project can both execute the composition and read the call site.
 //
-// WHAT IS *NOT* COVERED HERE, AND WHY. What follows the two lines above in WatchRunner is
-// `SuiteTopology.StartAsync`, which needs Docker; the connection the probe then makes is
-// outside any Docker-free reach. It does not need to be here: the accessor decides the
-// identity BEFORE any connection, so "loads the identity" and "refuses with EDGE-001's
-// diagnostic instead of connecting anonymously" are both settled at this boundary.
+// WHAT IS *NOT* COVERED HERE, AND WHY. What follows the two lines above in WatchRunner is the
+// injected topology starter, which in production is `TopologyRequest.StartAsync` and needs Docker;
+// the connection the probe then makes is outside any Docker-free reach. It does not need to be
+// here: the accessor decides the identity BEFORE any connection, so "loads the identity" and
+// "refuses with EDGE-001's diagnostic instead of connecting anonymously" are both settled at this
+// boundary.
 //
 // Non-Docker. Certificates are generated in-process by TestCertificateAuthority and written to
 // a temp suite directory, so the REAL PEM load path runs — including the PKCS#12 round trip.

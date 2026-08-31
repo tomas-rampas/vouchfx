@@ -61,7 +61,7 @@ namespace Vouchfx.Engine.Orchestration;
 /// </code>
 /// </para>
 /// </remarks>
-public sealed class SuiteTopology : IAsyncDisposable
+public sealed class SuiteTopology : IAsyncDisposable, IKeptTopology
 {
     /// <summary>
     /// The "no step speaks a protocol the probe knows" set, shared so the common path allocates
@@ -326,7 +326,7 @@ public sealed class SuiteTopology : IAsyncDisposable
         // tests/ passes `cancellationToken:` by name, and a caller that passed it positionally
         // would fail to compile rather than mis-bind (IReadOnlySet<string> and CancellationToken
         // do not convert), so the insertion cannot silently change any call's meaning. Same
-        // reasoning, same wording, as RunScenarioAgainstKeptTopologyAsync's own note.
+        // reasoning, same wording, as RunPlannedScenarioAgainstKeptTopologyAsync's own note.
         IReadOnlySet<string>? endpointConsumingTargets = null,
         CancellationToken cancellationToken = default)
     {

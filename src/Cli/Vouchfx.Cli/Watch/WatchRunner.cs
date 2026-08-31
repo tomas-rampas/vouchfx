@@ -1,14 +1,16 @@
 // Vouchfx.Cli — WatchRunner (S08-C-01, watch mode).
 //
 // The thin I/O shell around WatchSession: it validates that watch mode targets exactly ONE
-// file, wires the real engine seams into a WatchSession<SuiteTopology>, runs once, then watches
+// file, wires the real engine seams into a WatchSession<IKeptTopology>, runs once, then watches
 // the file with a debounced FileSystemWatcher and re-runs on each save until Ctrl-C.  All the
 // reuse-vs-rebuild logic lives in the (unit-tested) WatchSession; this layer is deliberately
 // small — it only does the real file I/O, debounce, and Ctrl-C handling.
 //
-// NOTE: this class starts an Aspire topology (via the build seam) and therefore needs Docker;
-// it is NOT exercised by the unit tests.  Its non-I/O decision logic is WatchSession, which is
-// fully unit-tested with fakes.
+// NOTE, NARROWED BY #364: `RunAsync` — the file I/O, the FileSystemWatcher and the production
+// topology starter — still needs Docker and is not exercised by the unit tests.  `CreateSession`
+// is NOT in that set any more: it takes the topology starter as a parameter over the
+// IKeptTopology seam, so a Docker-free test drives the real compile / build / run / dispose /
+// report wiring against a double.  The reuse-vs-rebuild decision itself remains WatchSession's.
 
 using System.Reflection;
 using Vouchfx.Cli.Watch;
@@ -91,11 +93,6 @@ internal static class WatchRunner
         var filePath = scenario.AbsolutePath;
         var appHostAssemblyName = Assembly.GetExecutingAssembly().GetName().Name;
 
-        // The kept-topology isolation is rebuilt by the build seam each time a NEW topology is
-        // built (it must bind to the new topology's connection string); held here so the run
-        // seam can pass it to the engine.  Disposed alongside the topology it belongs to.
-        IScenarioIsolation? isolation = null;
-
         // ── The watch SESSION's resolved-secret ledger (client-key-password EDGE-007) ──
         //
         // ONE ledger for the whole session, and SESSION scope is the load-bearing word. The
@@ -103,8 +100,9 @@ internal static class WatchRunner
         // topology while the step path runs on every save after it.
         //
         // BE PRECISE ABOUT THE BUILD SEAM: it is per-REBUILD, not per-save.
-        // WatchSession.OnChangeAsync invokes it only when the environment hash CHANGES (or on the
-        // first run) — a steps-only edit re-uses the topology and never reaches it. So a
+        // WatchSession.OnChangeAsync invokes it only when the TOPOLOGY FINGERPRINT changes (or on
+        // the first run) — a steps-only edit that changes no target name re-uses the topology and
+        // never reaches it, and a save a pre-topology gate refuses never reaches it at all. So a
         // build-seam-scoped ledger would already be shared across every reusing save, and stating
         // the reason as "otherwise it would be per-save" would overstate the failure and invite a
         // maintainer to narrow the scope back on a premise that was never true.
@@ -152,26 +150,104 @@ internal static class WatchRunner
         // surviving into a rendered diagnostic on a later save, and that is worse than either.
         var sessionSecretLedger = new ResolvedSecretLedger();
 
-        await using var session = new WatchSession<SuiteTopology>(
-            // Compile seam: re-read happens in OnChangeAsync (file content is passed in); here we
-            // validate + build the AST and compute the environment hash that drives reuse.
-            compile: content => Compile(content, filePath, registry),
+        await using var session = CreateSession(
+            filePath, registry, output, appHostAssemblyName, sessionSecretLedger,
+            StartTopologyAsync);
 
-            // Build seam: stand up a fresh topology for the compiled scenario's environment, and
+        // Issue #266, Item 4: `filePath` is author/CLI-supplied and reaches a terminal verbatim
+        // here. Sanitised, not scrubbed: this line is written BEFORE the first run, so no probe
+        // has resolved anything and there is nothing in the ledger a scrub could match. It is the
+        // banner's only untrusted component.
+        await output.WriteLineAsync(
+            DisplaySanitiser.SanitiseForDisplay(
+                $"Watching '{filePath}'.  Saving re-runs the suite (topology re-used while nothing "
+                + "it was built from changes).  Press Ctrl-C to stop.")).ConfigureAwait(false);
+
+        // ── Initial run ───────────────────────────────────────────────────────
+        await RunOnceFromDiskAsync(session, filePath, output, sessionSecretLedger, cancellationToken)
+            .ConfigureAwait(false);
+
+        // ── Watch loop ──────────────────────────────────────────────────────────
+        await WatchUntilCancelledAsync(
+                session, filePath, output, sessionSecretLedger, cancellationToken)
+            .ConfigureAwait(false);
+
+        return ExitCodes.Success;
+    }
+
+    /// <summary>
+    /// Wires the real engine seams into a <see cref="WatchSession{TTopology}"/> over the
+    /// <see cref="IKeptTopology"/> construction seam (#364) — extracted from
+    /// <see cref="RunAsync"/> so every one of them is reachable from a Docker-free test.
+    /// </summary>
+    /// <param name="filePath">The watched file (its directory is the suite directory).</param>
+    /// <param name="registry">The frozen provider registry.</param>
+    /// <param name="output">The writer that receives status, diagnostics and rendered reports.</param>
+    /// <param name="appHostAssemblyName">The DCP-metadata-carrying assembly's short name.</param>
+    /// <param name="sessionSecretLedger">
+    /// The SESSION's resolved-secret ledger (EDGE-007) — the same instance the caller's sinks
+    /// already captured. See its declaration in <see cref="RunAsync"/> for why the scope must be the
+    /// session and not this method.
+    /// </param>
+    /// <param name="startTopologyAsync">
+    /// Builds a topology from the plan's <see cref="TopologyRequest"/> and the resolved security
+    /// accessor. The production value is <see cref="StartTopologyAsync"/>, which is
+    /// <c>TopologyRequest.StartAsync</c> and nothing else; a test substitutes a starter returning a
+    /// double, which is what makes everything downstream of this seam — confirmation rendering,
+    /// transport-notice replay, reset/reseed ordering, the target sets the request carries —
+    /// assertable at unit speed for the first time (#364).
+    /// </param>
+    /// <remarks>
+    /// <para>
+    /// <strong>The ACCESSOR is built here, not inside the starter</strong>, and that split is
+    /// deliberate: it is derived from the AST and owns <c>X509Certificate2</c> instances this method
+    /// disposes in its own <c>finally</c>, so a topology double must not have to construct
+    /// certificates to stand in for a topology. It is nonetheless PASSED to the starter rather than
+    /// captured by it, so a test can see that one arrives at all — the argument that was omitted
+    /// once and left every secured suite unrunnable under <c>--watch</c>. That a suite DECLARING
+    /// <c>security</c> gets a working accessor is a different claim and needs real certificate
+    /// material: it belongs to
+    /// <c>Vouchfx.Engine.Runtime.Tests.WatchProbeSecurityWiringTests</c>, which executes this same
+    /// two-line composition against generated PEMs.
+    /// </para>
+    /// </remarks>
+    internal static WatchSession<IKeptTopology> CreateSession(
+        string filePath,
+        StepKindRegistry registry,
+        TextWriter output,
+        string? appHostAssemblyName,
+        ResolvedSecretLedger sessionSecretLedger,
+        Func<TopologyRequest, ISecurityConfigurationAccessor, CancellationToken, Task<IKeptTopology>>
+            startTopologyAsync)
+    {
+        // The kept-topology isolation is rebuilt by the build seam each time a NEW topology is
+        // built (it must bind to the new topology's connection string); held here so the run
+        // seam can pass it to the engine.  Disposed alongside the topology it belongs to.
+        IScenarioIsolation? isolation = null;
+
+        return new WatchSession<IKeptTopology>(
+            // Compile seam: re-read happens in OnChangeAsync (file content is passed in); here we
+            // parse, run EVERY pre-topology gate, and compute the fingerprint that drives reuse.
+            compile: content => Compile(content, filePath, registry, appHostAssemblyName, output),
+
+            // Build seam: stand up a fresh topology for the planned scenario's request, and
             // (re)build the matching isolation for it.
-            buildTopologyAsync: async (compiled, ct) =>
+            buildTopologyAsync: async (planned, ct) =>
             {
-                var ast = ((CompiledScenario)compiled).Ast;
+                var plan = (WatchIterationPlan)planned;
+                var ast = plan.Ast;
                 var suiteDirectory = Path.GetDirectoryName(filePath);
 
                 // REQ-005/REQ-014: the SAME resolved client security configuration `vouchfx run`
-                // hands the probe. Omitted here until now, and the omission was invisible: an
-                // optional parameter left off compiles and reads correctly, while every secured
-                // suite became unrunnable under `--watch` — a `profile: tls` suite failing
-                // PartialChain and a `profile: mtls` suite reporting "no 'clientCert'/'clientKey'
-                // pair resolved" about files that exist and are valid. Fail-closed, but blaming the
-                // author for the host's defect. SuiteTopology.StartAsync now refuses to start a
-                // security-declaring suite with no accessor, so this cannot recur silently.
+                // hands the probe. Omitted here until #364's first defect, and the omission was
+                // invisible: an optional parameter left off compiles and reads correctly, while
+                // every secured suite became unrunnable under `--watch` — a `profile: tls` suite
+                // failing PartialChain and a `profile: mtls` suite reporting "no
+                // 'clientCert'/'clientKey' pair resolved" about files that exist and are valid.
+                // Fail-closed, but blaming the author for the host's defect. SuiteTopology.StartAsync
+                // now refuses to start a security-declaring suite with no accessor, so this cannot
+                // recur silently — and, since it is handed to the starter below rather than built
+                // inside it, a Docker-free test can now see that it arrives.
                 //
                 // Disposed in the finally below rather than by the topology: the accessor owns the
                 // X509Certificate2 instances it loads and the topology does not own its lifetime —
@@ -184,7 +260,7 @@ internal static class WatchRunner
                 // after the health gate.
                 //
                 // The SCOPE is per-REBUILD (it owns the resolvers, and this seam runs only when
-                // the environment hash changes); the LEDGER it records into is the SESSION's
+                // the topology fingerprint changes); the LEDGER it records into is the SESSION's
                 // (EDGE-007). That split is the same one ScenarioRunner makes per-scenario, for
                 // the same reason: a passphrase resolved HERE must be scrubbable from text the
                 // step path emits on a later save against this same kept topology — and, per the
@@ -195,8 +271,8 @@ internal static class WatchRunner
                 // (Path.GetFullPath on a malformed declared path), and constructed before the
                 // `try` its failure skipped the `finally` below, leaking this scope's resolvers
                 // and the Vault one's HttpClient. That matters more here than at either
-                // `ScenarioRunner` site: THIS seam re-runs on every file save, so a suite whose
-                // `Build` fails repeatedly leaks once per save for as long as `--watch` is left
+                // `ScenarioRunner` site: THIS seam re-runs on every rebuild, so a suite whose
+                // `Build` fails repeatedly leaks once per rebuild for as long as `--watch` is left
                 // running. The scope's own construction allocates two objects and touches
                 // nothing, so a failure there leaves nothing to dispose.
                 var probeSecrets = ScenarioRunner.CreateSecretAccessorScope(sessionSecretLedger);
@@ -207,30 +283,14 @@ internal static class WatchRunner
                     probeSecurity = SecurityConfigurationAccessor.Build(
                         ast, suiteDirectory, probeSecrets.Accessor);
 
-                    var topology = await SuiteTopology.StartAsync(
-                        ast.Environment,
-                        appHostAssemblyName,
-                        startupTimeout: TimeSpan.FromSeconds(120),
-                        seedBaseDirectory: suiteDirectory,
-                        securityConfiguration: probeSecurity,
-                        kafkaSpeakingTargets: SuiteProtocolTargets.KafkaSpeaking(ast),
-
-                        // #348: the superset, from the same `ast`. Threaded HERE and not only in
-                        // ScenarioRunner because `--watch` builds its own topology through this
-                        // seam; omitting it would leave every service permissively unrefused under
-                        // `--watch` while `run` refused, which is exactly the kind of divergence
-                        // between the two paths this file's own history is full of.
-                        endpointConsumingTargets: SuiteProtocolTargets.EndpointConsuming(ast),
-
-                        // RESIDUAL, stated so it is not rediscovered as a regression: the rebuild
-                        // trigger is the ENVIRONMENT hash alone, so a save that adds an http.rest
-                        // step targeting an existing endpoint-less worker leaves the hash
-                        // unchanged, reuses this topology, and never re-runs the refusal — that
-                        // session sees #348's UriFormatException instead of the diagnostic. Plain
-                        // `run` refuses correctly, and saving any `environment` change rebuilds.
-                        // Widening the trigger to the steps is a --watch design change, not this
-                        // fix.
-                        cancellationToken: ct).ConfigureAwait(false);
+                    // ONE ARGUMENT LIST (#364). Both protocol target sets — REQ-005/REQ-011's
+                    // Kafka-speaking set and #348's endpoint-consuming superset — were computed at
+                    // this call site, from this `ast`, in a list maintained separately from the two
+                    // in ScenarioRunner. Each of them was dropped from one of those three lists at
+                    // some point. The plan's TopologyRequest is now the only list there is, and its
+                    // two factories derive both sets from one input.
+                    var topology = await startTopologyAsync(plan.Request, probeSecurity, ct)
+                        .ConfigureAwait(false);
                     isolation = ScenarioRunner.BuildWatchIsolation(topology);
                     return topology;
                 }
@@ -246,19 +306,20 @@ internal static class WatchRunner
             // topology (no pre-reset, no re-seed — it already carries the fresh seed and no prior
             // writes, matching plain `vouchfx run`); TRUE on a reuse run, where the kept topology
             // holds the previous run's writes (reset them, then re-apply the seed).
-            runAgainstTopologyAsync: async (topology, compiled, resetAndReseed, ct) =>
+            //
+            // NOTHING IS COMPILED HERE ANY MORE (#370). The plan arrived already validated and
+            // compiled, from before the reuse-vs-rebuild decision, so a save this seam receives is
+            // one every pre-topology gate passed.
+            runAgainstTopologyAsync: async (topology, planned, resetAndReseed, ct) =>
             {
-                var payload = (CompiledScenario)compiled;
-                await ScenarioRunner.RunScenarioAgainstKeptTopologyAsync(
+                var plan = (WatchIterationPlan)planned;
+                await ScenarioRunner.RunPlannedScenarioAgainstKeptTopologyAsync(
                     topology,
                     isolation ?? new NullScenarioIsolation(),
+                    plan,
                     registry,
-                    payload.Ast,
-                    payload.YamlText,
-                    payload.ScenarioName,
                     output,
                     resetAndReseed: resetAndReseed,
-                    seedBaseDirectory: Path.GetDirectoryName(filePath),
                     // EDGE-007: the step path records into — and scrubs against — the SAME ledger
                     // the probe above resolved into. Omitting this compiles (the parameter is
                     // optional) and leaves the engine building a ledger of its own per re-run.
@@ -288,42 +349,36 @@ internal static class WatchRunner
             // EDGE-007: scrubbed through the session ledger first — see ScrubThenSanitise for why
             // that order, and not the other one, is the one that holds.
             //
-            // COVERAGE, PLAINLY: this lambda is the ONE sink pinned by text alone. Its body is
-            // executed under test through ScrubThenSanitise, which the two catch sinks drive on a
-            // real emission path; what a test cannot reach is the lambda's own construction,
-            // because it happens inside RunAsync, past the Docker line. Extracting a factory to
-            // make one line executable would move the sink's definition away from the constructor
-            // argument that consumes it and add a production method whose only caller is a test —
-            // a worse trade than naming the limit here and gating it with the census.
+            // A PRE-TOPOLOGY REFUSAL NEVER ARRIVES HERE (#370): the compile seam renders it — the
+            // located diagnostic plus its event pair — and returns WatchCompileResult.Refused(),
+            // whose Error is null, so WatchSession's guarded call prints nothing further. Only a
+            // parse/AST failure, which has no events to render, still reaches this sink.
             report: line => output.WriteLine(ScrubThenSanitise(line, sessionSecretLedger)));
-
-        // Issue #266, Item 4: `filePath` is author/CLI-supplied and reaches a terminal verbatim
-        // here. Sanitised, not scrubbed: this line is written BEFORE the first run, so no probe
-        // has resolved anything and there is nothing in the ledger a scrub could match. It is the
-        // banner's only untrusted component.
-        await output.WriteLineAsync(
-            DisplaySanitiser.SanitiseForDisplay(
-                $"Watching '{filePath}'.  Saving re-runs the suite (topology re-used while the "
-                + "environment is unchanged).  Press Ctrl-C to stop.")).ConfigureAwait(false);
-
-        // ── Initial run ───────────────────────────────────────────────────────
-        await RunOnceFromDiskAsync(session, filePath, output, sessionSecretLedger, cancellationToken)
-            .ConfigureAwait(false);
-
-        // ── Watch loop ──────────────────────────────────────────────────────────
-        await WatchUntilCancelledAsync(
-                session, filePath, output, sessionSecretLedger, cancellationToken)
-            .ConfigureAwait(false);
-
-        return ExitCodes.Success;
     }
+
+    /// <summary>
+    /// The production topology starter: <c>TopologyRequest.StartAsync</c> and nothing else.
+    /// </summary>
+    /// <remarks>
+    /// A named method rather than a lambda at the call site so its body is one statement a reader
+    /// can check against the census that pins <c>SuiteTopology.StartAsync</c> to exactly one
+    /// production call site — <c>Vouchfx.Engine.Runtime.Tests.SuiteProtocolTargetsTests
+    /// .EverySuiteTopologyStartCallSite_PassesBothTargetSets</c>. That one call site is inside
+    /// <c>TopologyRequest</c>, not here: this method calls <c>request.StartAsync</c>, which is a
+    /// different symbol and does not move the census's count.
+    /// </remarks>
+    private static async Task<IKeptTopology> StartTopologyAsync(
+        TopologyRequest request,
+        ISecurityConfigurationAccessor securityConfiguration,
+        CancellationToken cancellationToken)
+        => await request.StartAsync(securityConfiguration, cancellationToken).ConfigureAwait(false);
 
     /// <summary>
     /// Reads the file from disk and processes one re-run through the session, catching any
     /// orchestration failure so a transient build error does not crash the loop.
     /// </summary>
     private static async Task RunOnceFromDiskAsync(
-        WatchSession<SuiteTopology> session,
+        WatchSession<IKeptTopology> session,
         string filePath,
         TextWriter output,
         // Non-nullable: the sole caller path always has the session's ledger in hand. Only
@@ -483,7 +538,7 @@ internal static class WatchRunner
     /// re-running through the session on each coalesced save, until the token is cancelled.
     /// </summary>
     private static async Task WatchUntilCancelledAsync(
-        WatchSession<SuiteTopology> session,
+        WatchSession<IKeptTopology> session,
         string filePath,
         TextWriter output,
         // Non-nullable for the same reason as RunOnceFromDiskAsync's: it only ever forwards the
@@ -565,11 +620,38 @@ internal static class WatchRunner
     }
 
     /// <summary>
-    /// Validates + builds the AST for the current file contents and computes the
-    /// environment-reuse hash, mapping any failure to a reported <see cref="WatchCompileResult"/>
-    /// error (so the watch loop keeps running through an authoring slip).
+    /// Builds the AST for the current file contents, runs EVERY pre-topology gate, and computes the
+    /// topology fingerprint that drives reuse — mapping a parse failure to a reported
+    /// <see cref="WatchCompileResult"/> error and a gate refusal to an already-rendered
+    /// <see cref="WatchCompileResult.Refused"/> (so the watch loop keeps running through an
+    /// authoring slip either way).
     /// </summary>
-    private static WatchCompileResult Compile(string content, string filePath, StepKindRegistry registry)
+    /// <remarks>
+    /// <para>
+    /// <strong>THIS IS #370'S FIX, AND ITS POSITION IS THE FIX.</strong> This seam used to be
+    /// <c>YamlDocumentParser.Parse</c> + <c>AstBuilder.Build</c> and nothing else: schema validation
+    /// and the provider-pipeline compile ran later, at the RUN seam, against a topology that was
+    /// already up. So a schema-invalid save started containers; a both-families protocol conflict
+    /// was reported by the security probe as "the broker did not answer a Kafka ApiVersions
+    /// request", blaming the broker for an authoring fault; and <c>SecuredEndpointProbe</c>'s
+    /// unrecognised-profile refusal — documented unreachable by author input, because
+    /// <c>SecurityProfileWiringValidator</c> rejects an unregistered profile first — was reachable
+    /// here alone. All three are gone because the gates run BEFORE
+    /// <c>WatchSession.OnChangeAsync</c> can reach the build seam.
+    /// </para>
+    /// <para>
+    /// The refusal is RENDERED HERE, once, and <see cref="WatchCompileResult.Refused"/> carries no
+    /// message so the session's report sink prints nothing further. The alternative — returning the
+    /// diagnostic as a bare <c>Error</c> — would drop the refusal's event pair, which is what a
+    /// refused save has always emitted.
+    /// </para>
+    /// </remarks>
+    private static WatchCompileResult Compile(
+        string content,
+        string filePath,
+        StepKindRegistry registry,
+        string? appHostAssemblyName,
+        TextWriter output)
     {
         ScenarioAst ast;
         try
@@ -582,10 +664,21 @@ internal static class WatchRunner
             return WatchCompileResult.Failure($"Parse / AST error: {ex.Message}");
         }
 
-        var scenarioName = ScenarioNameOf(ast, filePath);
-        var envHash = ScenarioRunner.ComputeEnvironmentHash(ast.Environment);
-        return WatchCompileResult.Success(
-            envHash, new CompiledScenario(ast, content, scenarioName));
+        var plan = WatchIterationPlan.Create(
+            ast,
+            content,
+            ScenarioNameOf(ast, filePath),
+            registry,
+            appHostAssemblyName,
+            Path.GetDirectoryName(filePath));
+
+        if (plan.IsRefused)
+        {
+            ScenarioRunner.RenderWatchRefusal(plan, registry, output);
+            return WatchCompileResult.Refused();
+        }
+
+        return WatchCompileResult.Success(plan.TopologyFingerprint, plan);
     }
 
     /// <summary>
@@ -606,11 +699,4 @@ internal static class WatchRunner
             ? name[..^suffix.Length]
             : name;
     }
-
-    /// <summary>
-    /// The opaque compiled-scenario payload threaded through <see cref="WatchSession{TTopology}"/>:
-    /// the parsed AST plus the raw YAML and the report-facing name the run seam needs.  The
-    /// session never inspects it — it only flows from the compile seam to the build/run seams.
-    /// </summary>
-    private sealed record CompiledScenario(ScenarioAst Ast, string YamlText, string ScenarioName);
 }

@@ -174,16 +174,26 @@ public sealed class KafkaServiceTargetDockerTests
 
         // ── 3. The compiled step reads that key, and never reports it missing ─────────────
         var sw = new StringWriter();
-        var verdict = await ScenarioRunner.RunScenarioAgainstKeptTopologyAsync(
-            topology,
-            new NullScenarioIsolation(),
-            s_registry,
+        // #364: the kept-topology entry point takes a PLAN now — the pre-topology gates run in
+        // WatchIterationPlan.Create, ahead of the topology rather than inside the run seam (#370).
+        // This suite is valid, so the plan is not refused; asserted rather than assumed, because a
+        // refused plan would make the verdict assertions below vacuous.
+        var plan = WatchIterationPlan.Create(
             ast,
             Yaml,
             "kafka-service-target",
+            s_registry,
+            AppHostAssemblyName,
+            Directory.GetCurrentDirectory());
+        Assert.False(plan.IsRefused, plan.Diagnostic ?? "(no diagnostic)");
+
+        var verdict = await ScenarioRunner.RunPlannedScenarioAgainstKeptTopologyAsync(
+            topology,
+            new NullScenarioIsolation(),
+            plan,
+            s_registry,
             sw,
             resetAndReseed: false,
-            seedBaseDirectory: Directory.GetCurrentDirectory(),
             cancellationToken: cts.Token);
 
         var rendered = sw.ToString();

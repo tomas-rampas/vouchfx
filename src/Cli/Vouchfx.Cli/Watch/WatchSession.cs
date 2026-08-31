@@ -1,22 +1,25 @@
 // Vouchfx.Cli — WatchSession (S08-C-01, watch mode).
 //
 // The testable core of `vouchfx run <file> --watch`.  It owns ONE topology across re-runs and,
-// on each save, decides whether to RE-USE the kept topology (the `environment` block is
-// unchanged — the expensive container build is skipped) or REBUILD it (the environment
-// changed).  This is the no-rebuild re-run seam factored out of the thin FileSystemWatcher
-// shell (WatchCommand), so the reuse/rebuild decision is unit-testable WITHOUT a real watcher
-// and WITHOUT a real container — the build / run / dispose / compile seams are injected.
+// on each save, decides whether to RE-USE the kept topology (every input the topology was built
+// from is unchanged — the expensive container build is skipped) or REBUILD it.  This is the
+// no-rebuild re-run seam factored out of the thin FileSystemWatcher shell (WatchCommand), so the
+// reuse/rebuild decision is unit-testable WITHOUT a real watcher and WITHOUT a real container —
+// the build / run / dispose / compile seams are injected.
 //
 // Reuse decision (the acceptance):
-//   • first save (no kept topology)         → build a topology, run.
-//   • later save, env hash UNCHANGED        → run against the KEPT topology (no rebuild).
-//   • later save, env hash CHANGED          → dispose the old topology, build a new one, run.
-//   • compile / validation error on a save  → report it and KEEP WATCHING (the kept topology,
-//                                             if any, is left intact — a typo mid-edit must
-//                                             not stop the loop or tear down infrastructure).
+//   • first save (no kept topology)           → build a topology, run.
+//   • later save, fingerprint UNCHANGED       → run against the KEPT topology (no rebuild).
+//   • later save, fingerprint CHANGED         → dispose the old topology, build a new one, run.
+//   • save refused by a pre-topology gate     → the seam has rendered it; KEEP WATCHING and do
+//                                               NOT build or reuse a topology for it (#370).
+//   • parse failure on a save                 → report it and KEEP WATCHING (the kept topology,
+//                                               if any, is left intact — a typo mid-edit must
+//                                               not stop the loop or tear down infrastructure).
 //
-// Generic over the topology handle TTopology so the production wiring passes the real
-// SuiteTopology while tests pass a counting fake — the session never names the engine type.
+// Generic over the topology handle TTopology so the production wiring passes the engine's
+// IKeptTopology seam while tests pass a counting fake — the session never names a concrete engine
+// type.
 
 using System.Threading;
 using System.Threading.Tasks;
@@ -25,21 +28,23 @@ namespace Vouchfx.Cli.Watch;
 
 /// <summary>
 /// The testable session behind <c>vouchfx run &lt;file&gt; --watch</c>: holds the current
-/// topology (and its environment hash) across re-runs and decides, per save, whether to re-use
-/// or rebuild it (S08-C-01).
+/// topology (and the fingerprint it was built from) across re-runs and decides, per save, whether
+/// to re-use or rebuild it (S08-C-01).
 /// </summary>
 /// <typeparam name="TTopology">
 /// The topology handle type.  The production wiring uses the engine's
-/// <c>SuiteTopology</c>; tests substitute a lightweight fake so the reuse/rebuild decision is
+/// <c>IKeptTopology</c> seam (#364); tests substitute a lightweight fake so the reuse/rebuild
+/// decision — and, since the seam exists, everything the run seam does with a topology — is
 /// exercised without a container.
 /// </typeparam>
 /// <remarks>
 /// <para>
 /// <strong>Reuse is the whole point:</strong> building the Aspire topology (image pull,
 /// container start, health gate) is the expensive part of a run.  When successive saves leave
-/// the <c>environment</c> block unchanged — the common case during local iteration, where the
-/// author is editing <c>steps</c> — the kept topology is re-used and only the cheap
-/// scenario re-runs (the run seam is expected to reset mutable dependency state itself).
+/// every input the topology was built from unchanged — the common case during local iteration,
+/// where the author is editing a step's body rather than what it targets — the kept topology is
+/// re-used and only the cheap scenario re-runs (the run seam is expected to reset mutable
+/// dependency state itself).
 /// </para>
 /// <para>
 /// <strong>Single-threaded by contract:</strong> <see cref="OnChangeAsync"/> is invoked
@@ -51,17 +56,17 @@ internal sealed class WatchSession<TTopology> : IAsyncDisposable
     where TTopology : class
 {
     /// <summary>
-    /// Validates and compiles the watched file's current contents into a
-    /// <see cref="WatchCompileResult"/> (success → environment hash + opaque compiled payload;
-    /// failure → an error message).  Synchronous: compilation is CPU-bound and fast relative to
-    /// the topology build.
+    /// Parses, validates and plans the watched file's current contents into a
+    /// <see cref="WatchCompileResult"/> (success → topology fingerprint + opaque planned payload;
+    /// refusal → an already-rendered non-success with no message; failure → an error message).
+    /// Synchronous: planning is CPU-bound and fast relative to the topology build.
     /// </summary>
     private readonly Func<string, WatchCompileResult> _compile;
 
     /// <summary>
-    /// Builds a fresh topology for the given environment hash + opaque compiled payload, returning
-    /// the topology handle.  The compiled payload is supplied because the real build derives the
-    /// environment from the parsed scenario the compile seam already produced.
+    /// Builds a fresh topology for the opaque planned payload, returning the topology handle.  The
+    /// payload is supplied because the real build derives the topology request from the plan the
+    /// compile seam already produced.
     /// </summary>
     private readonly Func<object, CancellationToken, Task<TTopology>> _buildTopologyAsync;
 
@@ -82,16 +87,16 @@ internal sealed class WatchSession<TTopology> : IAsyncDisposable
     /// <summary>Reports a single human-readable line (status / error) to the user.</summary>
     private readonly Action<string> _report;
 
-    // The kept topology and the environment hash it was built from.  Both null until the first
+    // The kept topology and the topology fingerprint it was built from.  Both null until the first
     // successful build; cleared together when a topology is disposed.
     private TTopology? _current;
-    private string? _currentEnvironmentHash;
+    private string? _currentTopologyFingerprint;
     private bool _disposed;
 
     /// <summary>
     /// Initialises a new <see cref="WatchSession{TTopology}"/> with its injected seams.
     /// </summary>
-    /// <param name="compile">Re-read/validate/compile the file contents (see field docs).</param>
+    /// <param name="compile">Re-read/validate/plan the file contents (see field docs).</param>
     /// <param name="buildTopologyAsync">Build a fresh topology (see field docs).</param>
     /// <param name="runAgainstTopologyAsync">Run a compiled scenario against a kept topology.</param>
     /// <param name="disposeTopologyAsync">Dispose a topology handle.</param>
@@ -122,12 +127,14 @@ internal sealed class WatchSession<TTopology> : IAsyncDisposable
     /// <param name="cancellationToken">Cancels the build / run (e.g. Ctrl-C).</param>
     /// <remarks>
     /// <para>
-    /// A compile/validation failure is reported and swallowed: the loop keeps watching and the
-    /// kept topology (if any) is left running, so the very next valid save re-runs against it
-    /// without paying the rebuild cost.  This is the "report and keep watching" contract.
+    /// A non-success is swallowed: the loop keeps watching and the kept topology (if any) is left
+    /// running, so the very next valid save re-runs against it without paying the rebuild cost.
+    /// This is the "report and keep watching" contract. A parse failure is REPORTED here; a
+    /// pre-topology refusal was already rendered by the compile seam and carries no message, so
+    /// nothing is printed twice (#370).
     /// </para>
     /// <para>
-    /// On a successful compile: when the environment hash matches the kept topology's, the
+    /// On a successful plan: when the topology fingerprint matches the kept topology's, the
     /// scenario runs against the existing topology (NO rebuild); otherwise the old topology is
     /// disposed and a new one is built before the run.  The first save always builds (there is
     /// no kept topology yet).
@@ -143,17 +150,30 @@ internal sealed class WatchSession<TTopology> : IAsyncDisposable
         {
             // Authoring error mid-edit: report and KEEP WATCHING — do not touch the kept
             // topology, so the next valid save re-runs against it with no rebuild.
-            _report(compileResult.Error!);
+            //
+            // GUARDED, because a REFUSAL carries no message (#370): the compile seam has already
+            // rendered the refusal's diagnostic and its event pair, and reporting a second time
+            // would print the same fault twice — once inside the rendered report and once as a bare
+            // line under it. A parse failure still carries a message and still reaches the sink.
+            // The run path makes the same split at its protocol-conflict seam
+            // (`alreadyPrintedMessage`), for the same reason.
+            if (compileResult.Error is { } error)
+            {
+                _report(error);
+            }
+
             return;
         }
 
-        var newEnvironmentHash = compileResult.EnvironmentHash!;
+        var newTopologyFingerprint = compileResult.TopologyFingerprint!;
         var compiled = compileResult.Compiled!;
 
-        // Decide reuse vs rebuild on the environment hash ALONE: a steps-only edit keeps the
-        // hash, so the kept topology is re-used and only the cheap scenario re-runs.
+        // Decide reuse vs rebuild on the topology fingerprint ALONE: a steps-only edit that changes
+        // no TARGET NAME keeps the fingerprint, so the kept topology is re-used and only the cheap
+        // scenario re-runs.
         var canReuse = _current is not null
-            && string.Equals(_currentEnvironmentHash, newEnvironmentHash, StringComparison.Ordinal);
+            && string.Equals(
+                _currentTopologyFingerprint, newTopologyFingerprint, StringComparison.Ordinal);
 
         if (!canReuse)
         {
@@ -161,7 +181,7 @@ internal sealed class WatchSession<TTopology> : IAsyncDisposable
             await DisposeCurrentTopologyAsync().ConfigureAwait(false);
 
             _current = await _buildTopologyAsync(compiled, cancellationToken).ConfigureAwait(false);
-            _currentEnvironmentHash = newEnvironmentHash;
+            _currentTopologyFingerprint = newTopologyFingerprint;
         }
 
         // Run the (re-)compiled scenario against the kept-or-new topology.  `canReuse` IS the
@@ -192,7 +212,7 @@ internal sealed class WatchSession<TTopology> : IAsyncDisposable
 
     /// <summary>
     /// Disposes the current topology (if any) and clears the kept-topology slot together with
-    /// its environment hash.  A no-op when no topology is held.
+    /// its topology fingerprint.  A no-op when no topology is held.
     /// </summary>
     private async Task DisposeCurrentTopologyAsync()
     {
@@ -203,7 +223,7 @@ internal sealed class WatchSession<TTopology> : IAsyncDisposable
 
         var topology = _current;
         _current = null;
-        _currentEnvironmentHash = null;
+        _currentTopologyFingerprint = null;
         await _disposeTopologyAsync(topology).ConfigureAwait(false);
     }
 }

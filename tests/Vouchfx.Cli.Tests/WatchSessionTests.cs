@@ -2,12 +2,18 @@
 //
 // WatchSession is the testable core of `vouchfx run <file> --watch`: it owns ONE topology
 // across re-runs and decides, on each file change, whether to RE-USE the kept topology (the
-// `environment` block is unchanged) or REBUILD it (the environment changed).  These tests
+// topology fingerprint the compile seam returned is unchanged) or REBUILD it.  These tests
 // exercise that decision with FAKES for the build-topology + run + compile seams, so no
 // FileSystemWatcher and no container is ever touched.
 //
-// The acceptance is test #2: a file change with an UNCHANGED environment re-runs WITHOUT a
-// topology rebuild (build count stays 1); test #3 proves a CHANGED environment rebuilds.
+// The fingerprint is OPAQUE to the session — it compares two strings and nothing more — so these
+// tests hand it arbitrary tokens. What the production seam actually digests (the `environment`
+// block AND every other input the topology is built from, including the resource names the steps
+// target) is TopologyFingerprintTests' subject, and the wiring that carries it is
+// WatchPreTopologyGateTests'.
+//
+// The acceptance is test #2: a file change with an UNCHANGED fingerprint re-runs WITHOUT a
+// topology rebuild (build count stays 1); test #3 proves a CHANGED fingerprint rebuilds.
 
 using System.Collections.Generic;
 using System.Threading;
@@ -42,9 +48,9 @@ public sealed class WatchSessionTests
     }
 
     // Builds a WatchSession wired to fake seams.  `compile` maps a file-content string to a
-    // WatchCompileResult (success → an env hash + an opaque compiled payload, here the content
-    // itself; failure → an error message), letting a test feed successive file contents and
-    // control the env-hash decision directly.
+    // WatchCompileResult (success → a topology fingerprint + an opaque compiled payload, here the
+    // content itself; failure → an error message), letting a test feed successive file contents and
+    // control the reuse decision directly.
     private static WatchSession<FakeTopology> BuildSession(
         Recorder rec,
         Func<string, WatchCompileResult> compile)
@@ -70,18 +76,18 @@ public sealed class WatchSessionTests
             report: rec.Reports.Add);
     }
 
-    // A compile seam that always succeeds with the given env hash, threading the raw content
+    // A compile seam that always succeeds with the given fingerprint, threading the raw content
     // through as the opaque compiled payload.
-    private static Func<string, WatchCompileResult> CompileWithEnvHash(
-        Func<string, string> envHashOf) =>
-        content => WatchCompileResult.Success(envHashOf(content), compiled: content);
+    private static Func<string, WatchCompileResult> CompileWithFingerprint(
+        Func<string, string> fingerprintOf) =>
+        content => WatchCompileResult.Success(fingerprintOf(content), compiled: content);
 
     [Fact]
     public async Task FirstRun_BuildsTopologyOnce_AndRunsScenario()
     {
         var rec = new Recorder();
-        // Env hash is constant — irrelevant for the first run.
-        var session = BuildSession(rec, CompileWithEnvHash(_ => "env-A"));
+        // The fingerprint is constant — irrelevant for the first run.
+        var session = BuildSession(rec, CompileWithFingerprint(_ => "env-A"));
 
         await session.OnChangeAsync("first content", CancellationToken.None);
 
@@ -97,7 +103,7 @@ public sealed class WatchSessionTests
         // re-runs against the KEPT topology.  Build count stays 1; the same topology id is
         // used for both runs; the old topology is NEVER disposed mid-session.
         var rec = new Recorder();
-        var session = BuildSession(rec, CompileWithEnvHash(_ => "env-A"));
+        var session = BuildSession(rec, CompileWithFingerprint(_ => "env-A"));
 
         await session.OnChangeAsync("steps: v1", CancellationToken.None);
         await session.OnChangeAsync("steps: v2 (same env)", CancellationToken.None);
@@ -112,10 +118,10 @@ public sealed class WatchSessionTests
     public async Task ChangedEnvironment_DisposesOldTopology_AndRebuilds()
     {
         var rec = new Recorder();
-        // The env hash follows the content: "A" → env-A, anything else → env-B.
+        // The fingerprint follows the content: "A" → env-A, anything else → env-B.
         var session = BuildSession(
             rec,
-            CompileWithEnvHash(content => content == "A" ? "env-A" : "env-B"));
+            CompileWithFingerprint(content => content == "A" ? "env-A" : "env-B"));
 
         await session.OnChangeAsync("A", CancellationToken.None);
         await session.OnChangeAsync("B", CancellationToken.None);
@@ -171,11 +177,49 @@ public sealed class WatchSessionTests
         Assert.Equal(0, rec.DisposeCount);
     }
 
+    /// <summary>
+    /// A REFUSED save — one a pre-topology gate rejected and whose diagnostic and event pair the
+    /// compile seam has already rendered — builds nothing, runs nothing, leaves the kept topology
+    /// alone, and reports NOTHING further (#370).
+    /// </summary>
+    /// <remarks>
+    /// The last clause is the one that needs a test: <c>WatchCompileResult.Refused</c> carries a
+    /// null <c>Error</c>, and the pre-#370 body was an unconditional <c>_report(compileResult.
+    /// Error!)</c>. Left unguarded that either throws on the bang or prints an empty line under the
+    /// rendered report, and either way the author's primary feedback channel gains noise that no
+    /// other assertion here would notice. Everything else in this arm mirrors the failure case
+    /// above, because "report and keep watching" is unchanged by where the refusal now happens.
+    /// </remarks>
+    [Fact]
+    public async Task RefusedSave_IsNotReportedAgain_AndLeavesTheKeptTopologyAlone()
+    {
+        var rec = new Recorder();
+        var session = BuildSession(
+            rec,
+            content => content == "good"
+                ? WatchCompileResult.Success("env-A", compiled: content)
+                : WatchCompileResult.Refused());
+
+        await session.OnChangeAsync("good", CancellationToken.None);
+        await session.OnChangeAsync("refused", CancellationToken.None);
+
+        Assert.Empty(rec.Reports);
+        Assert.Equal(1, rec.BuildCount);
+        Assert.Equal(0, rec.DisposeCount);
+        Assert.Single(rec.RunsAgainstTopologyId);
+
+        // …and the next good save still re-uses the topology the refusal did not disturb.
+        await session.OnChangeAsync("good", CancellationToken.None);
+        Assert.Equal(1, rec.BuildCount);
+        Assert.Equal(2, rec.RunsAgainstTopologyId.Count);
+        Assert.Equal(rec.RunsAgainstTopologyId[0], rec.RunsAgainstTopologyId[1]);
+    }
+
     [Fact]
     public async Task DisposeAsync_TearsDownTheKeptTopology()
     {
         var rec = new Recorder();
-        var session = BuildSession(rec, CompileWithEnvHash(_ => "env-A"));
+        var session = BuildSession(rec, CompileWithFingerprint(_ => "env-A"));
 
         await session.OnChangeAsync("content", CancellationToken.None);
         Assert.Equal(0, rec.DisposeCount);
@@ -197,7 +241,7 @@ public sealed class WatchSessionTests
         // schema-via-script.csharp).  A REUSE run (same env, kept topology with the previous
         // run's writes) MUST reset+reseed to restore the freshly-built baseline.
         var rec = new Recorder();
-        var session = BuildSession(rec, CompileWithEnvHash(_ => "env-A"));
+        var session = BuildSession(rec, CompileWithFingerprint(_ => "env-A"));
 
         await session.OnChangeAsync("steps: v1", CancellationToken.None); // build → first run.
         await session.OnChangeAsync("steps: v2 (same env)", CancellationToken.None); // reuse run.
@@ -217,7 +261,7 @@ public sealed class WatchSessionTests
         var rec = new Recorder();
         var session = BuildSession(
             rec,
-            CompileWithEnvHash(content => content == "A" ? "env-A" : "env-B"));
+            CompileWithFingerprint(content => content == "A" ? "env-A" : "env-B"));
 
         await session.OnChangeAsync("A", CancellationToken.None); // build env-A → first run.
         await session.OnChangeAsync("B", CancellationToken.None); // env changed → rebuild → run.

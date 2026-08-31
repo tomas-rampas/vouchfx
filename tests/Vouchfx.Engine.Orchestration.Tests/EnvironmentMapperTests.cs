@@ -1868,11 +1868,16 @@ public sealed class EnvironmentMapperTests : IDisposable
     // Every spec here is constructed DIRECTLY rather than parsed from YAML, and that is the
     // whole point of these four tests rather than an incidental convenience. $defs/service
     // already refuses both shapes, so a YAML-driven test would be caught by the schema and
-    // would prove nothing about the mapper checks below. The mapper checks exist for the one
-    // author-reachable path with no schema in front of it — `--watch`, whose compile seam is
-    // YamlDocumentParser.Parse + AstBuilder.Build with no DocumentValidator.Validate call
-    // (#370), and which reaches Map through SuiteTopology.StartAsync. Constructing the spec
-    // directly here reaches Map the same way, minus the file watcher.
+    // would prove nothing about the mapper checks below. The mapper checks exist for callers
+    // that reach Map with no schema in front of them — embedders, the SDK's testing doubles,
+    // and direct constructors like these tests. Constructing the spec directly here IS that
+    // route, not a stand-in for it.
+    //
+    // The check these tests pin was written for a CLI path that no longer arrives unvalidated:
+    // `--watch`'s compile seam used to be YamlDocumentParser.Parse + AstBuilder.Build with no
+    // DocumentValidator.Validate call, and reached Map through SuiteTopology.StartAsync. #370
+    // put the schema door ahead of that seam. These tests are unaffected — they never went
+    // through the watcher — and the mapper checks remain live for the non-CLI callers above.
     //
     // Same belt-and-braces relationship, and the same reachability argument, as
     // Map_ServiceHealthCheckType_Unrecognised_ThrowsArgumentException above.

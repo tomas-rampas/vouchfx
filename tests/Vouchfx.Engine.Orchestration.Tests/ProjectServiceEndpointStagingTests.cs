@@ -769,13 +769,15 @@ public sealed class ProjectServiceEndpointStagingTests : IDisposable
     /// <remarks>
     /// <para>
     /// Constructed as an <c>EnvironmentSpec</c> DIRECTLY, because that is the point: the schema's
-    /// <c>minLength: 1</c> refuses the empty string, so a suite that goes through
-    /// <c>DocumentValidator</c> never reaches here with one. One author-reachable path does not go
-    /// through it: <c>--watch</c> performs no schema validation at all (<c>WatchRunner.Compile</c>
-    /// is <c>YamlDocumentParser.Parse</c> + <c>AstBuilder.Build</c>), and a dangling
-    /// <c>endpoint:</c> key — no value after the colon — round-trips through <c>GetScalar</c>
-    /// as <c>""</c> rather than <see langword="null"/>. Constructing the spec directly, as this
-    /// test does, reaches the same code by the same route.
+    /// <c>minLength: 1</c> refuses the empty string, so a caller that goes through
+    /// <c>DocumentValidator</c> never reaches here with one — and a dangling <c>endpoint:</c> key
+    /// (no value after the colon) round-trips through <c>GetScalar</c> as <c>""</c> rather than
+    /// <see langword="null"/>, so the case is reachable for any caller that does not.
+    /// <c>EnvironmentMapper</c> is public and is reached by embedders and by the SDK's testing
+    /// doubles with no schema in front of it; until #370 there was a live CLI path too, since
+    /// <c>--watch</c>'s compile seam was <c>YamlDocumentParser.Parse</c> + <c>AstBuilder.Build</c>
+    /// and nothing else. Constructing the spec directly, as this test does, reaches the same code
+    /// by the same route, and does so without depending on which callers happen to validate today.
     /// </para>
     /// <para>
     /// Treating <c>""</c> as absent would run the fixed rule and stage "http": the author's

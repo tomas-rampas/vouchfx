@@ -1584,10 +1584,12 @@ internal static class SchemaErrorCollector
             // Reachability is a schema invariant, not an assumption: `httpPort: false` appears in
             // exactly one place in $defs/service — the `if: required:["project"]` clause's `then`,
             // beside `ports` and `healthCheck` — so this branch can only fire on a project-form
-            // service and may say so unconditionally. It is NOT reachable from `run`/`validate`'s
-            // sibling in EnvironmentMapper, which throws its own longer message on the schema-free
-            // `--watch` seam; the two are separate texts for separate seams, and this one is the
-            // author-facing default because schema validation short-circuits first.
+            // service and may say so unconditionally. It does not displace EnvironmentMapper's
+            // sibling refusal, which throws its own longer message for callers that reach the mapper
+            // with no schema in front of them — embedders and the SDK's testing doubles, and until
+            // #370 the `--watch` seam as well, which is what that sibling was written for. The two
+            // are separate texts for separate seams, and this one is what an author sees because
+            // schema validation short-circuits first on every path that runs it.
             if (containerKind == ServiceContainerKind && propertyName == "httpPort")
             {
                 return $"[properties] Property 'httpPort' is not valid on the 'project'-form " +

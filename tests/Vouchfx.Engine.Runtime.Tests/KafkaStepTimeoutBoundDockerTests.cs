@@ -154,16 +154,24 @@ public sealed class KafkaStepTimeoutBoundDockerTests
         _output.WriteLine($"staged svc::{BrokerName} = '{topology.DiscoveredServices[BrokerName]}'");
 
         var sw = new StringWriter();
-        var verdict = await ScenarioRunner.RunScenarioAgainstKeptTopologyAsync(
-            topology,
-            new NullScenarioIsolation(),
-            s_registry,
+        // #364: the kept-topology entry point takes a PLAN now — the pre-topology gates run in
+        // WatchIterationPlan.Create, ahead of the topology rather than inside the run seam (#370).
+        var plan = WatchIterationPlan.Create(
             ast,
             Yaml,
             "kafka-step-timeout-bound",
+            s_registry,
+            AppHostAssemblyName,
+            Directory.GetCurrentDirectory());
+        Assert.False(plan.IsRefused, plan.Diagnostic ?? "(no diagnostic)");
+
+        var verdict = await ScenarioRunner.RunPlannedScenarioAgainstKeptTopologyAsync(
+            topology,
+            new NullScenarioIsolation(),
+            plan,
+            s_registry,
             sw,
             resetAndReseed: false,
-            seedBaseDirectory: Directory.GetCurrentDirectory(),
             cancellationToken: cts.Token);
 
         var rendered = sw.ToString();

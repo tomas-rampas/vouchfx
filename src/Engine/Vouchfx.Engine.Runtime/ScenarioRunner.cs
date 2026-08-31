@@ -685,7 +685,7 @@ public static class ScenarioRunner
             }));
 
             // #372 stamped at THIS seam too. The terminal keeps one line per error below; the
-            // record carries them joined, in the same shape TryCompileForRun's schema door
+            // record carries them joined, in the same shape WatchIterationPlan's schema door
             // already joins its own list, because the record has one message field and an author
             // triaging from a JUnit publisher needs every error the door found, not the first.
             buffer.Add(StepEventBuilder.ScenarioCompletedLine(
@@ -863,32 +863,21 @@ public static class ScenarioRunner
         // fixtures printed only the step-secret fault — so merging the doors gave `run` the
         // unguarded-Bind exposure `--parallel` always had, and a throwing Bind aborted with a stack
         // trace instead of a verdict. Issue #413 closed both halves: BindAllSteps now returns a
-        // throwing Bind as a ValidationFailure (so it arrives at the `pipelineResult.Failure`
-        // branch below like any other compile fault, on both paths), and RunCommand.ExecuteAsync
-        // grew the top-level catch whose absence was the other half. Nothing about the merged door
-        // itself changed — reporting a document's faults as a property of the document, rather than
-        // of which pass ran first, is still what it is for.
+        // throwing Bind as a ValidationFailure (so it arrives at the pipeline-failure branch like
+        // any other compile fault, on every path), and RunCommand.ExecuteAsync grew the top-level
+        // catch whose absence was the other half. Nothing about the merged door itself changed —
+        // reporting a document's faults as a property of the document, rather than of which pass ran
+        // first, is still what it is for.
         //
-        // The `fromSecurityDeclaration` out-value is DISCARDED, and that is the change rather than
-        // an oversight: this door used to classify itself, reporting the flag only when the fault
-        // sat in a declared `security` block. Under the derived rule the classification is not this
-        // door's to make — a secured document refused before any container started is unconfirmable
-        // whatever the fault was, and an unsecured one is not, whatever the fault was. The helper
-        // keeps the out-parameter for its own direct tests.
-        //
-        // A DOCUMENT WHOSE ONLY FAULT IS A STEP-SECRET FAULT NOW BUILDS A FULL CSX EMIT AND THROWS
-        // IT AWAY — `pipelineResult.Assembled` is dropped by the return below. That is the price of
-        // the two paths agreeing, and it is recorded here so it is not "optimised" back into a
-        // short-circuit: guarding the Compile call on `stepSecretFault is null` would restore
-        // exactly the ordering divergence #399 was filed for, silently, because both paths would
-        // still exit 4. The cost is bounded — one in-memory emit for a scenario that is about to be
-        // refused, no topology, no container, no Roslyn ALC load (CompileOnce runs far below this
-        // return).
-        var pipelineResult = ProviderPipeline.Compile(ast, registry, SuiteNamespace, seedBaseDirectory);
-        var stepSecretFault = TryValidateSecretReferences(ast, out var secretError, out _)
-            ? secretError
-            : null;
-        if (pipelineResult.Failure is not null || stepSecretFault is not null)
+        // THE DOOR IS NOW ONE HELPER RATHER THAN THIS SITE'S OWN THREE LINES (#412). It was written
+        // out here and at the shared-topology seam, and the `--watch` seam kept the RETIRED order in
+        // a third spelling — the exact way a duplicated door decays. Everything about the door's
+        // behaviour, including the discarded `fromSecurityDeclaration` and the thrown-away CSX emit
+        // a step-secret-only document pays for, is recorded on RunPreTopologyAuthoringDoor. What is
+        // local to THIS site is only what it does with the answer, below.
+        var (pipelineResult, authoringFault) =
+            RunPreTopologyAuthoringDoor(ast, registry, seedBaseDirectory);
+        if (authoringFault is not null)
         {
             var nowAuthoring = DateTimeOffset.UtcNow;
             buffer.Add(EventStreamJson.ToLine(new ScenarioStartedEvent
@@ -897,8 +886,6 @@ public static class ScenarioRunner
                 Timestamp = nowAuthoring,
                 ScenarioId = scenarioName,
             }));
-            var authoringFault =
-                JoinAuthoringFaults(pipelineResult.Failure?.Message, stepSecretFault);
             buffer.Add(StepEventBuilder.ScenarioCompletedLine(
                 runId,
                 nowAuthoring,
@@ -972,25 +959,20 @@ public static class ScenarioRunner
             probeSecurity = SecurityConfigurationAccessor.Build(
                 ast, seedBaseDirectory, probeSecrets.Accessor);
 
-            suite = await SuiteTopology.StartAsync(
-                doc.Environment,
-                appHostAssemblyName,
-                startupTimeout: TimeSpan.FromSeconds(120),
-                seedBaseDirectory: seedBaseDirectory,
-                securityConfiguration: probeSecurity,
-
-                // REQ-005/REQ-011: which targets this scenario's own steps will speak Kafka to, so
-                // a customer-supplied broker declared as a SERVICE earns the same authenticated
-                // round trip a `kafka` dependency does. Derived from the AST, never declared.
-                kafkaSpeakingTargets: SuiteProtocolTargets.KafkaSpeaking(ast),
-
-                // #348: the superset of the line above — every target this scenario's steps read a
-                // staged endpoint for, Kafka-family and HTTP-family alike. Derived from the SAME
-                // `ast`, so the two sets cannot disagree about what this scenario addresses. It
-                // decides one thing in the mapper: whether an endpoint-less `project:`-form service
-                // is a refused authoring fault or an untargeted worker service.
-                endpointConsumingTargets: SuiteProtocolTargets.EndpointConsuming(ast),
-                cancellationToken: cancellationToken)
+            // ONE ARGUMENT LIST (#364). `TopologyRequest.ForScenario` derives BOTH protocol target
+            // sets from this one `ast` — REQ-005/REQ-011's Kafka-speaking set, so a broker declared
+            // as a SERVICE earns the authenticated round trip a `kafka` dependency does, and #348's
+            // superset that decides whether an endpoint-less `project:`-form service is a refused
+            // authoring fault or an untargeted worker. Written out at three call sites, those two
+            // were dropped once each; there is now nothing at a call site to drop.
+            //
+            // The request reads `ast.Environment`, where this site read `doc.Environment`. Same
+            // reference, not merely an equal value: AstBuilder.Build carries `doc.Environment`
+            // straight onto the ScenarioAst it returns (AstBuilder.cs — `new ScenarioAst(doc.
+            // Metadata, doc.Environment, …)`), and this `ast` was built from this `doc`.
+            suite = await TopologyRequest
+                .ForScenario(ast, appHostAssemblyName, seedBaseDirectory)
+                .StartAsync(probeSecurity, cancellationToken)
                 .ConfigureAwait(false);
         }
         catch (ArgumentException aex)
@@ -1914,16 +1896,17 @@ public static class ScenarioRunner
             // defect and not an authoring fault, but it is reported through this door because the
             // taxonomy answer is the same: the step was never compiled, nothing ran, and the
             // scenario is Inconclusive.
-            var pipelineResult = ProviderPipeline.Compile(ast, registry, SuiteNamespace, scenarioBaseDirectory);
-            var stepSecretFault = TryValidateSecretReferences(ast, out var secretError, out _)
-                ? secretError
-                : null;
-            if (pipelineResult.Failure is not null || stepSecretFault is not null)
+            //
+            // ONE HELPER, THREE CALLERS (#412) — this seam, the single-scenario core, and the
+            // `--watch` iteration plan. The two clauses above and the ordering they describe are
+            // properties of RunPreTopologyAuthoringDoor now, not of this loop.
+            var (pipelineResult, authoringFault) =
+                RunPreTopologyAuthoringDoor(ast, registry, scenarioBaseDirectory);
+            if (authoringFault is not null)
             {
                 assurance = assurance.Refusing(SecurityAbortKind.AuthoringFault);
 
-                compilations[i] = (name, ast, null, Verdict.Inconclusive,
-                    JoinAuthoringFaults(pipelineResult.Failure?.Message, stepSecretFault),
+                compilations[i] = (name, ast, null, Verdict.Inconclusive, authoringFault,
                     scenarioBaseDirectory);
                 continue;
             }
@@ -2283,28 +2266,20 @@ public static class ScenarioRunner
                     : seedBaseDirectory,
                 probeSecrets.Accessor);
 
-            suite = await SuiteTopology.StartAsync(
-                scenarios[topologyIndex].Environment,
-                appHostAssemblyName,
-                startupTimeout: TimeSpan.FromSeconds(120),
-                seedBaseDirectory: seedBaseDirectory,
-                securityConfiguration: probeSecurity,
-
-                // REQ-005/REQ-011: the union across every RUNNABLE scenario, because the ONE shared
-                // topology serves all of them — a target any of them speaks Kafka to is a target the
-                // one probe must confirm as a broker. Exactly the list the protocol-conflict guard
-                // above was handed, by construction: see that guard's own note (m7) for why the
-                // scenarios carrying an early verdict are excluded, and why the two must share one
-                // variable rather than two equal expressions.
-                kafkaSpeakingTargets: SuiteProtocolTargets.KafkaSpeaking(runnableScenarios),
-
-                // #348: the superset, over the SAME `runnableScenarios` list — one variable, for
-                // the reason the note above gives about the protocol-conflict guard. A scenario
-                // carrying an early verdict executes nothing and therefore targets nothing, so it
-                // must not be able to make a project-form service look targeted and get the suite
-                // refused for a step that was never going to run.
-                endpointConsumingTargets: SuiteProtocolTargets.EndpointConsuming(runnableScenarios),
-                cancellationToken: cancellationToken)
+            // ONE ARGUMENT LIST (#364). `TopologyRequest.ForSuite` derives BOTH protocol target
+            // sets from the SAME `runnableScenarios` list the protocol-conflict guard above was
+            // handed — one variable, so the guard and the staging cannot disagree about the set,
+            // which is the invariant this seam re-broke five times before it was bound to a single
+            // local. See that guard's own note (m7) for why scenarios carrying an early verdict are
+            // excluded: one executes nothing, so it stages nothing, and it must not be able to make
+            // a project-form service look targeted (#348) for a step that was never going to run.
+            suite = await TopologyRequest
+                .ForSuite(
+                    scenarios[topologyIndex].Environment,
+                    runnableScenarios,
+                    appHostAssemblyName,
+                    seedBaseDirectory)
+                .StartAsync(probeSecurity, cancellationToken)
                 .ConfigureAwait(false);
         }
         catch (ArgumentException aex)
@@ -3171,6 +3146,67 @@ public static class ScenarioRunner
     };
 
     /// <summary>
+    /// THE merged pre-topology authoring door (#399, #412): the provider-pipeline compile and the
+    /// secret-reference walk, both run, neither short-circuiting the other, joined into one
+    /// diagnostic.
+    /// </summary>
+    /// <param name="ast">The scenario to gate.</param>
+    /// <param name="registry">The frozen provider registry.</param>
+    /// <param name="baseDirectory">
+    /// The directory relative step file fields (and <c>security</c> artefact paths) resolve
+    /// against — THIS scenario's own directory (#268), which for the shared-topology suite path is
+    /// not necessarily the suite-wide seed root.
+    /// </param>
+    /// <returns>
+    /// The pipeline result (always computed, even when a fault is reported) and the joined fault,
+    /// or <see langword="null"/> when the document passed both walks.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// <strong>Extracted so "which fault an author sees first" cannot be a property of which path
+    /// they took.</strong> Before #399 the two verdict-producing paths ran the two walks in opposite
+    /// orders and each returned at its first fault, so the same document was diagnosed differently
+    /// by <c>run</c> and by <c>run --parallel</c>. That was fixed by writing the merged door out at
+    /// both sites; #412 then found the retired ordering surviving in a THIRD spelling on the
+    /// <c>--watch</c> seam, which is what a duplicated door is for. There is now one.
+    /// </para>
+    /// <para>
+    /// <strong>A document whose only fault is a step-secret fault still pays a full in-memory CSX
+    /// emit, which is then thrown away.</strong> Recorded so it is not "optimised" back into a
+    /// short-circuit: guarding the <c>Compile</c> call on <c>stepSecretFault is null</c> restores
+    /// exactly the divergence #399 was filed for, silently, because both paths would still refuse.
+    /// The cost is bounded — one in-memory emit for a scenario that is about to be refused; no
+    /// topology, no container, no Roslyn ALC load.
+    /// </para>
+    /// <para>
+    /// <strong>The <c>fromSecurityDeclaration</c> out-value is discarded</strong>, and that is the
+    /// rule rather than an oversight: a secured document refused before any container started is
+    /// unconfirmable whatever the fault was, and an unsecured one is not, whatever the fault was.
+    /// Callers that derive REQ-018's signal do so from the refusal, not from the fault's shape;
+    /// <c>--watch</c> derives none at all. The helper keeps the out-parameter for its own tests.
+    /// </para>
+    /// <para>
+    /// <strong>A provider whose <c>Bind</c> threw arrives here as a <c>PipelineResult.Failure</c></strong>
+    /// (#413) rather than as an exception unwinding past the door. It is a provider defect and not
+    /// an authoring fault, but the taxonomy answer is the same: nothing compiled, nothing ran.
+    /// </para>
+    /// </remarks>
+    internal static (PipelineResult Pipeline, string? Fault) RunPreTopologyAuthoringDoor(
+        ScenarioAst ast, StepKindRegistry registry, string? baseDirectory)
+    {
+        var pipelineResult = ProviderPipeline.Compile(ast, registry, SuiteNamespace, baseDirectory);
+        var stepSecretFault = TryValidateSecretReferences(ast, out var secretError, out _)
+            ? secretError
+            : null;
+
+        return (
+            pipelineResult,
+            pipelineResult.Failure is null && stepSecretFault is null
+                ? null
+                : JoinAuthoringFaults(pipelineResult.Failure?.Message, stepSecretFault));
+    }
+
+    /// <summary>
     /// The single diagnostic for the merged pre-topology authoring door: every fault it found, in
     /// a fixed order, joined the way the schema door already joins its own error list.
     /// </summary>
@@ -3606,12 +3642,15 @@ public static class ScenarioRunner
     /// </para>
     /// <para>
     /// <strong>Behaviour-preserving, which is why it could be fixed here rather than filed.</strong>
-    /// This method has exactly ONE call site outside tests — <c>WatchRunner.Compile</c> — and that
-    /// chain compares the value and does nothing else: <c>WatchRunner</c> hands it to
-    /// <c>WatchCompileResult</c>, whose get-only <c>EnvironmentHash</c> property <c>WatchSession</c>
-    /// reads for exactly one ordinal <c>string.Equals</c> against the hash of the topology it is
-    /// keeping. No persistence, no file write, no event field, no rendered line. A digest therefore
-    /// answers every question the plaintext answered.
+    /// This method has exactly ONE call site outside tests —
+    /// <see cref="ComputeTopologyFingerprint"/> — and that chain compares the value and does
+    /// nothing else: the fingerprint reaches <c>WatchCompileResult</c>, whose get-only
+    /// <c>TopologyFingerprint</c> property <c>WatchSession</c> reads for exactly one ordinal
+    /// <c>string.Equals</c> against the fingerprint of the topology it is keeping. No persistence,
+    /// no file write, no event field, no rendered line. A digest therefore answers every question
+    /// the plaintext answered. (Until #370 the call site was <c>WatchRunner.Compile</c> and this
+    /// value WAS the reuse key; it is now one of six inputs to it, which changes nothing about the
+    /// disclosure argument.)
     /// </para>
     /// <para>
     /// <strong><see cref="RunSuiteAsync"/>'s shared-environment guard is NOT a consumer of this
@@ -3641,6 +3680,75 @@ public static class ScenarioRunner
             : string.Empty;
 
     /// <summary>
+    /// The reuse key for a kept topology: a digest over EVERY input
+    /// <see cref="SuiteTopology.StartAsync"/> would receive, not over the <c>environment</c> block
+    /// alone (#370's recorded residual).
+    /// </summary>
+    /// <param name="request">The request a rebuild would be made from.</param>
+    /// <remarks>
+    /// <para>
+    /// <strong>WHY THE ENVIRONMENT HASH ALONE WAS NOT ENOUGH, twice over.</strong> Both target sets
+    /// are derived from the <c>steps</c>, and both change what the built topology IS:
+    /// </para>
+    /// <list type="number">
+    ///   <item><description>
+    ///     <c>endpointConsumingTargets</c> decides in <c>EnvironmentMapper.Map</c> whether an
+    ///     endpoint-less <c>project:</c>-form service is refused (#348) or is a legitimate
+    ///     untargeted worker. Under the environment-hash-only trigger, a save that added a step
+    ///     targeting a previously-untargeted worker left the hash unchanged, reused the topology,
+    ///     and never re-ran the refusal — that session saw #348's <c>UriFormatException</c> instead
+    ///     of the located diagnostic, for the rest of the session. `WatchRunner` carried this as a
+    ///     stated RESIDUAL; it is deleted with the residual.
+    ///   </description></item>
+    ///   <item><description>
+    ///     <c>kafkaSpeakingTargets</c> decides the STAGED FORM, not merely the confirmation level
+    ///     (REQ-023): a Kafka-speaking service is staged as a bare <c>host:port</c> authority and
+    ///     any other as a scheme-carrying URL. A save adding the FIRST Kafka step against a service
+    ///     that previously had no steps grows that set without tripping the protocol-conflict guard
+    ///     — only one family addresses the target — so the kept topology went on serving that step
+    ///     a URL where it expects an authority. Not previously reported; closed by the same widening.
+    ///   </description></item>
+    /// </list>
+    /// <para>
+    /// <strong>re-VALIDATE and re-BUILD are different questions, and the middle category is
+    /// empty.</strong> Re-validation is unconditional — every gate in
+    /// <see cref="WatchIterationPlan"/> is a pure function of the document and runs on every save
+    /// whatever this digest says. Re-building is what this digest decides. There is no input that
+    /// needs re-checking against the topology but not a rebuild, because every non-security argument
+    /// <c>StartAsync</c> receives is an input to <c>Map</c>, and Map's decisions are baked into the
+    /// topology it produced.
+    /// </para>
+    /// <para>
+    /// <strong>The cost is bounded and is stated rather than argued away.</strong> The digest moves
+    /// only when the SET OF TARGETED RESOURCE NAMES changes — not when a step's body, assertion,
+    /// header or URL path changes. The common steps-only edit still reuses the kept topology. The
+    /// set converges to a fixed point within a session, so the worst case is one extra rebuild per
+    /// newly-targeted service.
+    /// </para>
+    /// </remarks>
+    public static string ComputeTopologyFingerprint(TopologyRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var material = request.ComputeFingerprintInput(ComputeEnvironmentHash(request.Environment));
+
+        // THE BYTES ARE THE STRING'S UTF-16 CODE UNITS REINTERPRETED, NEVER TRANSCODED, and that
+        // choice is what makes the length framing above worth having. MEASURED: an earlier form
+        // used Encoding.UTF8.GetBytes, which substitutes U+FFFD for a lone surrogate — so
+        // "a\uD800", "a\uD801" and the literal "a�" produce byte-identical output of
+        // identical length. Framing separates values whose CHARACTERS differ; it cannot separate
+        // values an encoder has already collapsed to the same characters, and a target name is
+        // unconstrained author text that can carry a lone surrogate. An injective encoding fed to
+        // a lossy transcoder is not injective.
+        //
+        // This is the SAME rule ComputeEnvironmentHash applies immediately above, and for a
+        // stronger reason here: that method's input has already been through JsonSerializer, which
+        // replaces an unpaired surrogate itself, so its choice buys uniformity. THIS input has not
+        // — the target sets are raw declared strings — so here the choice buys injectivity, which
+        // is exactly the argument SecuredTargets.IdentityOf makes about its own raw declared input.
+        return Convert.ToHexString(SHA256.HashData(MemoryMarshal.AsBytes(material.AsSpan())));
+    }
+
+    /// <summary>
     /// Builds the per-topology isolation for watch mode (S08-C-01) via
     /// <c>ScenarioIsolationFactory.Create</c> — every resettable dependency the kept
     /// topology declares, composed when there is more than one, or
@@ -3650,29 +3758,37 @@ public static class ScenarioRunner
     /// </summary>
     /// <param name="topology">The kept topology to build isolation for.</param>
     /// <returns>The isolation strategy appropriate to the topology's dependencies.</returns>
-    public static IScenarioIsolation BuildWatchIsolation(SuiteTopology topology)
+    public static IScenarioIsolation BuildWatchIsolation(IKeptTopology topology)
     {
         ArgumentNullException.ThrowIfNull(topology);
         return BuildIsolation(topology);
     }
 
     /// <summary>
-    /// Runs a single scenario against an <strong>already-built</strong>
-    /// <see cref="SuiteTopology"/> (the no-rebuild re-run seam for watch mode, S08-C-01):
-    /// optionally reset+reseed → validate → compile → run → render.  The topology is neither
-    /// built nor disposed here — the watch session owns its lifetime so it survives across
-    /// re-runs while the environment is unchanged.
+    /// Runs an ALREADY-PLANNED scenario against an <strong>already-built</strong>
+    /// <see cref="IKeptTopology"/> (the no-rebuild re-run seam for watch mode, S08-C-01):
+    /// replay the build-time advisories → optionally reset+reseed → run → render. The topology is
+    /// neither built nor disposed here — the watch session owns its lifetime so it survives across
+    /// re-runs while the topology fingerprint is unchanged.
     /// </summary>
-    /// <param name="topology">The kept topology to run against (built by the caller).</param>
+    /// <param name="topology">
+    /// The kept topology to run against (built by the caller). Typed as the narrow
+    /// <see cref="IKeptTopology"/> seam rather than the concrete <see cref="SuiteTopology"/>, which
+    /// is what makes everything below assertable without Docker (#364).
+    /// </param>
     /// <param name="isolation">
     /// The state-reset strategy applied <em>before</em> the run when
     /// <paramref name="resetAndReseed"/> is set, so a reuse run starts from a known-clean
     /// dependency state.  Pass <see cref="BuildWatchIsolation"/>'s result.
     /// </param>
-    /// <param name="registry">The frozen provider registry (schema validation + pipeline).</param>
-    /// <param name="ast">The parsed scenario AST (its steps drive the event stream).</param>
-    /// <param name="yamlText">The raw YAML (re-validated + re-compiled on every re-run).</param>
-    /// <param name="scenarioName">The scenario name (event-stream <c>scenarioId</c>).</param>
+    /// <param name="plan">
+    /// The save's decided pre-topology state. It is a PRECONDITION that
+    /// <see cref="WatchIterationPlan.IsRefused"/> is <see langword="false"/>: a refused save is
+    /// rendered by <see cref="RenderWatchRefusal"/> and never reaches a topology at all, which is
+    /// #370's whole subject. The plan also carries the run id, so one save mints one run id whether
+    /// it is refused or executed.
+    /// </param>
+    /// <param name="registry">The frozen provider registry (drives the diff renderer).</param>
     /// <param name="output">The writer that receives the rendered report + raw diagnostics.</param>
     /// <param name="resetAndReseed">
     /// Whether to reset (Respawn) and re-apply the seed BEFORE the run.  Pass <see langword="false"/>
@@ -3684,7 +3800,6 @@ public static class ScenarioRunner
     /// freshly-seeded baseline, so every watch run sees the same initial state as a fresh
     /// <c>vouchfx run</c>.
     /// </param>
-    /// <param name="seedBaseDirectory">Base directory for relative seed fixture paths.</param>
     /// <param name="sharedLedger">
     /// The watch SESSION's <see cref="ResolvedSecretLedger"/> (client-key-password EDGE-007), so a
     /// passphrase resolved by the caller's topology probe is scrubbable from text emitted on this
@@ -3709,7 +3824,9 @@ public static class ScenarioRunner
     /// Re-validating and re-compiling on every re-run is deliberate: in watch mode the file
     /// changes between runs, so the kept topology may be re-used but the SCENARIO must be
     /// re-read from the latest save.  Only the topology build is skipped on reuse, never the
-    /// compile.
+    /// compile. That work now happens in <see cref="WatchIterationPlan.Create"/>, BEFORE the
+    /// reuse-vs-rebuild decision rather than after it (#370) — which is why this method takes a
+    /// plan and no longer compiles anything itself.
     /// </para>
     /// <para>
     /// <strong>Reset+reseed semantics (S08-T10):</strong> on the build path
@@ -3725,33 +3842,47 @@ public static class ScenarioRunner
     /// failure surfaces as <see cref="Verdict.EnvironmentError"/> (§12.1), never a Fail.
     /// </para>
     /// </remarks>
-    public static async Task<Verdict> RunScenarioAgainstKeptTopologyAsync(
-        SuiteTopology topology,
+    public static async Task<Verdict> RunPlannedScenarioAgainstKeptTopologyAsync(
+        IKeptTopology topology,
         IScenarioIsolation isolation,
+        WatchIterationPlan plan,
         StepKindRegistry registry,
-        ScenarioAst ast,
-        string yamlText,
-        string scenarioName,
         TextWriter output,
         bool resetAndReseed,
-        string? seedBaseDirectory = null,
+        // NO `seedBaseDirectory` PARAMETER. The plan already carries the suite directory it resolved
+        // its own compile against (WatchIterationPlan.SeedBaseDirectory), and a parameter beside it
+        // would be a second spelling of one value that nothing binds together: a caller passing a
+        // different directory would seed from one root and have compiled `file:` fields against
+        // another, silently. One value, read from the plan below.
+        //
         // Ahead of cancellationToken, not after it: CA1068 requires the token to be last on an
-        // externally-visible method. Both in-tree callers pass `cancellationToken:` by name, and
-        // a caller that passed it positionally would fail to compile rather than mis-bind (the
-        // types do not convert), so the insertion cannot silently change any call's meaning.
+        // externally-visible method. Every caller passes `cancellationToken:` by name, and a caller
+        // that passed it positionally would fail to compile rather than mis-bind (the types do not
+        // convert), so the insertion cannot silently change any call's meaning.
         ResolvedSecretLedger? sharedLedger = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(topology);
         ArgumentNullException.ThrowIfNull(isolation);
+        ArgumentNullException.ThrowIfNull(plan);
         ArgumentNullException.ThrowIfNull(registry);
-        ArgumentNullException.ThrowIfNull(ast);
-        ArgumentNullException.ThrowIfNull(yamlText);
-        ArgumentNullException.ThrowIfNull(scenarioName);
         ArgumentNullException.ThrowIfNull(output);
 
+        if (plan.IsRefused)
+        {
+            // Not defensive tidiness: a refused plan carries no pipeline, so reaching the run below
+            // would dereference null. Stating it as a precondition violation names the caller's
+            // mistake — a refusal must be rendered by RenderWatchRefusal and must never reach a
+            // topology, which is the ordering #370 exists to fix.
+            throw new InvalidOperationException(
+                "a refused WatchIterationPlan must be rendered through RenderWatchRefusal and must "
+                + "never reach a topology; running one would defeat the pre-topology gate stack.");
+        }
+
         var diffLookup = BuildDiffLookup(registry);
-        var runId = Guid.NewGuid().ToString("n");
+        var runId = plan.RunId;
+        var ast = plan.Ast;
+        var scenarioName = plan.ScenarioName;
         var buffer = new List<string>();
 
         // ── REQ-005: the declared-versus-observed confirmations (watch parity) ─
@@ -3775,9 +3906,15 @@ public static class ScenarioRunner
         if (topology.SecurityConfirmations.Count > 0)
         {
             await output.WriteLineAsync(
+                    // The remedy clause names what actually rebuilds, which is wider than the
+                    // 'environment' block it used to name: since #370 the trigger is every input
+                    // the topology was built from, so changing which services the steps target
+                    // rebuilds too. Naming only the environment block would send an author who had
+                    // just retargeted a step looking for a change they had already made.
                     "security: confirmed once when this topology was built, and replayed here — "
                     + "the endpoints are not re-probed per re-run. Save a change to the "
-                    + "'environment' block to rebuild the topology and re-confirm.")
+                    + "'environment' block, or to which services the steps target, to rebuild the "
+                    + "topology and re-confirm.")
                 .ConfigureAwait(false);
 
             foreach (var confirmation in topology.SecurityConfirmations)
@@ -3794,10 +3931,13 @@ public static class ScenarioRunner
         //
         // QUALIFIED IN THE OUTPUT, not merely here, on the same principle as the confirmations
         // line above: a stale statement is only misleading if nothing tells the reader it is
-        // stale. It is worse for this one. The rebuild trigger is the `environment` hash, and a
-        // project's endpoints come from `Properties/launchSettings.json`, which is not part of the
-        // YAML at all — so an author can delete the https URL, save, and keep being told about a
-        // downgrade that no longer happens, indefinitely.
+        // stale. It is worse for this one. The rebuild trigger is the TOPOLOGY FINGERPRINT — the
+        // `environment` block plus every other input the topology was built from, including the set
+        // of resource names the steps target (#370) — and a project's endpoints come from
+        // `Properties/launchSettings.json`, which is not part of the YAML at all. Widening the
+        // trigger did not narrow this: editing a launch profile still moves no input the fingerprint
+        // covers, so an author can delete the https URL, save, and keep being told about a downgrade
+        // that no longer happens, indefinitely.
         //
         // BOTH ADVISORIES, under the one qualifier, because the qualifier is true of both. An
         // author-declared `endpoint:` does live in the `environment` block and so does rebuild the
@@ -3919,77 +4059,23 @@ public static class ScenarioRunner
             }
         }
 
-        // ── Validate + compile the (latest-saved) scenario ────────────────────
-        if (TryCompileForRun(
-                registry, yamlText, ast, scenarioName, runId, buffer, seedBaseDirectory,
-                out var pipeline, out var earlyVerdict, out var earlyMessage))
-        {
-            if (!string.IsNullOrEmpty(earlyMessage))
-            {
-                // Issue #266, Item 4: earlyMessage carries a schema/pipeline/secret-reference
-                // diagnostic that may echo untrusted YAML content verbatim — sanitise before
-                // writing.
-                //
-                // SANITISED, NOT SCRUBBED — considered under EDGE-007 and deliberately left so.
-                //
-                // BE EXACT ABOUT WHY, because the tempting reason is FALSE on this path. It is
-                // NOT that nothing has resolved yet: on the `--watch` path the probe resolved
-                // `clientKeyPassword` at topology-start time on an EARLIER save, so when this
-                // line runs on save N the session ledger is already non-empty. That is the very
-                // error EDGE-007 corrected one sink over — the retracted comment there reasoned
-                // from what the METHOD had done rather than from what the PATH had done.
-                //
-                // The true reason is narrower and is a property of the TEXT, not of the timing:
-                // earlyMessage cannot CONTAIN a resolved value. TryCompileForRun has exactly
-                // three sources — schema validation errors, TryValidateSecretReferences's
-                // message, and ProviderPipeline's compile failure — and all three are produced
-                // before any step executes.
-                //
-                // "ALL THREE COME FROM YAML TEXT" WAS THE PREMISE AND IS NO LONGER EXACTLY TRUE
-                // (issue #413), so it is restated rather than left to decay. The third source now
-                // also carries a PROVIDER-authored exception message: a throwing `Bind` is reported
-                // as `{ExceptionType}: {Message}`, and that text is the provider's, not the
-                // document's. The CONCLUSION is unchanged, and for a stronger reason than the old
-                // premise gave — `Bind` runs at COMPILE time, before any topology and before any
-                // secret is resolved, and the v1 `IStepBinder<T>` contract hands it a YamlNode and
-                // an IBindingContext and no secret accessor at all. There is no resolved value in
-                // scope for that message to contain. Sanitising still applies to it, and for the
-                // same reason it applies to the other two: it is untrusted text reaching a
-                // terminal.
-                //
-                // Not scrubbed as belt-and-braces either, and that is a judgement rather than an
-                // oversight. This is the author's primary feedback channel under `--watch`: it is
-                // the message telling them what is wrong with the YAML they just saved. Scrubbing
-                // it would expose exactly that message to the over-redaction the session-scoped
-                // ledger makes possible (see WatchRunner's cost note — a short or stale recorded
-                // value rewrites unrelated substrings for the rest of the session), corrupting
-                // the diagnostic the author needs to act on. It would also diverge from
-                // RunSuiteAsync's identical early-exit sink, which this deliberately matches byte
-                // for byte; the two must not drift apart on a judgement only one of them records.
-                //
-                // The EveryEnvironmentErrorEmission_ gate covers EnvironmentErrorLine and does
-                // NOT reach here, which is why the reasoning lives at the site.
-                await output.WriteLineAsync(DisplaySanitiser.SanitiseForDisplay(earlyMessage))
-                    .ConfigureAwait(false);
-            }
-
-            TerminalRenderer.Render(buffer, output, diffLookup);
-            return earlyVerdict;
-        }
-
         // ── Run against the kept topology ─────────────────────────────────────
+        // No compile door here any more. Everything that could refuse this save ran in
+        // WatchIterationPlan.Create, BEFORE the reuse-vs-rebuild decision — so a refused save never
+        // reaches this method and, on the first save of a session, never reaches a container (#370).
+        var pipeline = plan.Pipeline!;
         var verdict = await RunScenarioAgainstTopologyAsync(
             ast,
             scenarioName,
             runId,
             topology,
-            pipeline!.Assembled!,
+            pipeline.Assembled!,
             pipeline.CompileReferencePaths,
             pipeline.HostResourcePlan,
             buffer,
             new NullScenarioIsolation(), // isolation reset handled above.
             output,
-            seedBaseDirectory,
+            plan.SeedBaseDirectory,
             cancellationToken,
             // Named, because the two parameters between here and it (scriptBaseDirectory,
             // livePump) are both optional and both stay at their defaults on this path.
@@ -4000,102 +4086,85 @@ public static class ScenarioRunner
     }
 
     /// <summary>
-    /// Validates and compiles <paramref name="yamlText"/> for execution, emitting the
-    /// Inconclusive scenario-started/completed pair into <paramref name="buffer"/> on any
-    /// early-exit (schema-invalid, bad secret reference, pipeline failure).  Shared by the
-    /// watch re-run path so it reproduces the suite runner's early-exit event shape exactly.
+    /// Renders a REFUSED <see cref="WatchIterationPlan"/>: the sanitised diagnostic, then the
+    /// refusal's own event pair through <see cref="TerminalRenderer"/> — byte for byte what a
+    /// refused save produced when the doors ran after the topology was up (#370).
     /// </summary>
-    /// <returns>
-    /// <see langword="true"/> when an early-exit occurred (<paramref name="earlyVerdict"/> /
-    /// <paramref name="earlyMessage"/> are set and <paramref name="pipeline"/> is
-    /// <see langword="null"/>); <see langword="false"/> when compilation succeeded
-    /// (<paramref name="pipeline"/> is set).
-    /// </returns>
-    private static bool TryCompileForRun(
-        StepKindRegistry registry,
-        string yamlText,
-        ScenarioAst ast,
-        string scenarioName,
-        string runId,
-        List<string> buffer,
-        string? seedBaseDirectory,
-        out PipelineResult? pipeline,
-        out Verdict earlyVerdict,
-        out string? earlyMessage)
+    /// <param name="plan">The refused plan. Refusing is a precondition, not a branch.</param>
+    /// <param name="registry">The frozen provider registry (drives the diff renderer).</param>
+    /// <param name="output">The writer that receives the diagnostic and the rendered report.</param>
+    /// <remarks>
+    /// <para>
+    /// <strong>SANITISED, NOT SCRUBBED — considered under EDGE-007 and deliberately left so.</strong>
+    /// </para>
+    /// <para>
+    /// BE EXACT ABOUT WHY, because the tempting reason is false on this path. It is NOT that nothing
+    /// has resolved yet: under <c>--watch</c> the probe resolved <c>clientKeyPassword</c> at
+    /// topology-start time on an EARLIER save, so when this line runs on save N the session ledger
+    /// is already non-empty. That is the very error EDGE-007 corrected one sink over — the retracted
+    /// comment there reasoned from what the METHOD had done rather than from what the PATH had done.
+    /// </para>
+    /// <para>
+    /// The true reason is narrower and is a property of the TEXT, not of the timing:
+    /// <see cref="WatchIterationPlan.Diagnostic"/> cannot CONTAIN a resolved value. It has exactly
+    /// three sources — schema validation errors, <c>TryValidateSecretReferences</c>'s message, and
+    /// <c>ProviderPipeline</c>'s compile failure — and all three are produced before any step
+    /// executes. The move that #370 makes STRENGTHENS this rather than weakening it: on the first
+    /// save of a session the doors now run before any probe has run at all.
+    /// </para>
+    /// <para>
+    /// "ALL THREE COME FROM YAML TEXT" WAS THE PREMISE AND IS NO LONGER EXACTLY TRUE (issue #413),
+    /// so it is restated rather than left to decay. The third source now also carries a
+    /// PROVIDER-authored exception message: a throwing <c>Bind</c> is reported as
+    /// <c>{ExceptionType}: {Message}</c>, and that text is the provider's, not the document's. The
+    /// CONCLUSION is unchanged, and for a stronger reason than the old premise gave — <c>Bind</c>
+    /// runs at COMPILE time, before any topology and before any secret is resolved, and the v1
+    /// <c>IStepBinder&lt;T&gt;</c> contract hands it a YamlNode and an IBindingContext and no secret
+    /// accessor at all. There is no resolved value in scope for that message to contain. Sanitising
+    /// still applies to it, and for the same reason it applies to the other two: it is untrusted
+    /// text reaching a terminal.
+    /// </para>
+    /// <para>
+    /// Not scrubbed as belt-and-braces either, and that is a judgement rather than an oversight.
+    /// This is the author's primary feedback channel under <c>--watch</c>: it is the message telling
+    /// them what is wrong with the YAML they just saved. Scrubbing it would expose exactly that
+    /// message to the over-redaction the session-scoped ledger makes possible (see
+    /// <c>WatchRunner</c>'s cost note — a short or stale recorded value rewrites unrelated
+    /// substrings for the rest of the session), corrupting the diagnostic the author needs to act
+    /// on. It would also diverge from <see cref="RunSuiteAsync"/>'s identical early-exit sink, which
+    /// this deliberately matches byte for byte; the two must not drift apart on a judgement only one
+    /// of them records.
+    /// </para>
+    /// <para>
+    /// The <c>EveryEnvironmentErrorEmission_</c> gate covers <c>EnvironmentErrorLine</c> and does NOT
+    /// reach here, which is why the reasoning lives at the site.
+    /// </para>
+    /// </remarks>
+    public static void RenderWatchRefusal(
+        WatchIterationPlan plan, StepKindRegistry registry, TextWriter output)
     {
-        pipeline = null;
-        earlyVerdict = Verdict.Inconclusive;
-        earlyMessage = null;
+        ArgumentNullException.ThrowIfNull(plan);
+        ArgumentNullException.ThrowIfNull(registry);
+        ArgumentNullException.ThrowIfNull(output);
 
-        // Takes the cause so the record carries it (#372). The message is assigned to the
-        // `earlyMessage` out-parameter by each door BELOW its own emit call, so passing it in
-        // here rather than reading a local afterwards is what stops the two drifting apart.
-        //
-        // `ledger: null` is deliberate, and the reasoning is the one this method's own terminal
-        // sink already records in full at its call site in the watch loop: the three doors below
-        // produce their text from YAML and secret REFERENCES, before any step executes, so it
-        // cannot CONTAIN a resolved value — and scrubbing it against the session-scoped ledger a
-        // `--watch` run accumulates would expose the author's primary diagnostic to
-        // over-redaction (a short or stale recorded value rewriting unrelated substrings for the
-        // rest of the session). The terminal and the record therefore make the same call.
-        void EmitInconclusive(string? cause)
+        if (!plan.IsRefused)
         {
-            var now = DateTimeOffset.UtcNow;
-            buffer.Add(EventStreamJson.ToLine(new ScenarioStartedEvent
-            {
-                RunId = runId,
-                Timestamp = now,
-                ScenarioId = scenarioName,
-            }));
-            buffer.Add(StepEventBuilder.ScenarioCompletedLine(
-                runId,
-                now,
-                scenarioName,
-                Verdict.Inconclusive,
-                new VerdictCounts { Inconclusive = 1 },
-                ledger: null,
-                cause));
+            throw new InvalidOperationException(
+                "RenderWatchRefusal was handed a plan that was not refused; a plan that passed "
+                + "every pre-topology gate must be RUN, not rendered as a refusal.");
         }
 
-        var validationResult = DocumentValidator.Validate(yamlText, registry);
-        if (!validationResult.IsValid)
+        if (!string.IsNullOrEmpty(plan.Diagnostic))
         {
-            earlyMessage = string.Join("; ", validationResult.Errors.Select(e => e.Message));
-            EmitInconclusive(earlyMessage);
-            return true;
+            // Issue #266, Item 4: the diagnostic may echo untrusted YAML content verbatim.
+            output.WriteLine(DisplaySanitiser.SanitiseForDisplay(plan.Diagnostic));
         }
 
-        // REQ-018's signal is DISCARDED here, and the discard is a statement rather than an
-        // omission: this seam is the `--watch` re-run path, whose caller returns a bare Verdict
-        // and derives no exit code. None of its three doors carries the signal — the schema door
-        // above does not call RejectsASecurityDeclaration and the pipeline door below drops
-        // ValidationFailure.IsSecurityPreflight — so there is nothing here to accumulate INTO, and
-        // inventing a flag with no consumer would read like coverage that does not exist. Watch
-        // mode's blanket absence of REQ-018 predates this scan and is not narrowed by it.
-        //
-        // THE PASS ORDER HERE IS ALSO THE RETIRED ONE: the secret pass runs BEFORE
-        // ProviderPipeline.Compile and returns at its first fault, which is exactly the ordering
-        // #399 removed from `run` and `--parallel` (both now run the two together and report both).
-        // Left as it is deliberately — unifying it is a behaviour change on a third path with its
-        // own diagnostics, filed as issue #412 — so read the "both run paths agree" claims
-        // elsewhere as scoped to `run` and `run --parallel`, which is what they say.
-        if (TryValidateSecretReferences(ast, out var secretError, out _))
-        {
-            earlyMessage = secretError;
-            EmitInconclusive(earlyMessage);
-            return true;
-        }
-
-        var pipelineResult = ProviderPipeline.Compile(ast, registry, SuiteNamespace, seedBaseDirectory);
-        if (pipelineResult.Failure is not null)
-        {
-            earlyMessage = pipelineResult.Failure.Message;
-            EmitInconclusive(earlyMessage);
-            return true;
-        }
-
-        pipeline = pipelineResult;
-        return false;
+        // SYNCHRONOUS, to match TerminalRenderer.Render beside it and the compile seam that calls
+        // this: WatchSession's compile seam is a `Func<string, WatchCompileResult>`, and making it
+        // async to accommodate one WriteLineAsync would push a Task through the reuse decision for
+        // no gain. The run path's own early-exit sink is async only because the method around it is.
+        TerminalRenderer.Render(plan.EventLines, output, BuildDiffLookup(registry));
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────
@@ -4137,7 +4206,7 @@ public static class ScenarioRunner
         ScenarioAst ast,
         string scenarioName,
         string runId,
-        SuiteTopology suite,
+        IKeptTopology suite,
         AssembledScript assembled,
         IReadOnlyList<string> compileReferencePaths,
         IReadOnlyList<HostResourcePlanEntry> hostResourcePlan,
@@ -4382,17 +4451,17 @@ public static class ScenarioRunner
     /// The RUN's <see cref="ResolvedSecretLedger"/> (client-key-password REQ-010), so this
     /// scenario's step accessor records into the same net the topology probe recorded into.
     /// On the <c>--watch</c> path it is the SESSION's ledger, threaded in from
-    /// <c>WatchRunner</c> through <see cref="RunScenarioAgainstKeptTopologyAsync"/> (EDGE-007).
+    /// <c>WatchRunner</c> through <see cref="RunPlannedScenarioAgainstKeptTopologyAsync"/> (EDGE-007).
     /// <see langword="null"/> gives the accessor a ledger private to this scenario — the
-    /// pre-REQ-010 shape. No PRODUCTION caller now takes it; one test does
-    /// (<c>KafkaServiceTargetDockerTests</c> calls the kept-topology entry point without a
-    /// ledger), so the null branch is live and not dead code.
+    /// pre-REQ-010 shape. No PRODUCTION caller now takes it; two do
+    /// (<c>KafkaServiceTargetDockerTests</c> and <c>KafkaStepTimeoutBoundDockerTests</c> call the
+    /// kept-topology entry point without a ledger), so the null branch is live and not dead code.
     /// </param>
     private static async Task<Verdict> RunScenarioCoreAsync(
         ScenarioAst ast,
         string scenarioName,
         string runId,
-        SuiteTopology suite,
+        IKeptTopology suite,
         AssembledScript assembled,
         IReadOnlyList<string> compileReferencePaths,
         Dictionary<string, object?> vars,
@@ -4789,13 +4858,13 @@ public static class ScenarioRunner
     /// <summary>
     /// Builds the appropriate <see cref="IScenarioIsolation"/> for the given
     /// <paramref name="topology"/> via <c>ScenarioIsolationFactory.Create</c>: proper
-    /// name+type dispatch over <see cref="SuiteTopology.DependencyNames"/>,
-    /// <see cref="SuiteTopology.DependencyTypes"/>, and
-    /// <see cref="SuiteTopology.DiscoveredServices"/> — resetting EVERY resettable
+    /// name+type dispatch over <see cref="IKeptTopology.DependencyNames"/>,
+    /// <see cref="IKeptTopology.DependencyTypes"/>, and
+    /// <see cref="IKeptTopology.DiscoveredServices"/> — resetting EVERY resettable
     /// dependency the topology declares (composed when there is more than one),
     /// rather than sniffing the shape of a discovered connection string.
     /// </summary>
-    private static IScenarioIsolation BuildIsolation(SuiteTopology topology) =>
+    private static IScenarioIsolation BuildIsolation(IKeptTopology topology) =>
         ScenarioIsolationFactory.Create(
             topology.DependencyNames,
             topology.DependencyTypes,
@@ -4816,9 +4885,21 @@ public static class ScenarioRunner
     /// <see cref="DependencySpec.Extra"/> is the one it was added for (S11-B-02);
     /// <see cref="SecuritySpec.Extra"/> (#353) is the second, reached through a service's or
     /// dependency's <c>security</c> block instead. Narrowing this registration to the dependency
-    /// path — a plausible cleanup while the prose named only that property — would break the
-    /// security path on the watch loop, where <c>WatchRunner</c> serialises BEFORE schema
-    /// validation and the parser is lenient where the schema is closed.
+    /// path — a plausible cleanup while the prose named only that property — would throw on any
+    /// caller that serialises an environment the schema has not closed over, and the parser is
+    /// lenient exactly where the schema is closed.
+    /// <para>
+    /// <strong><c>--watch</c> IS STILL SUCH A CALLER, and #370 did not change that.</strong> An
+    /// earlier revision of this note claimed the watch loop "now validates first"; that is false,
+    /// measured at <c>WatchIterationPlan.Create</c>, which computes the topology fingerprint —
+    /// and therefore <see cref="SerialiseEnvironment"/> — BEFORE its schema door runs, deliberately,
+    /// so that a refused save still carries a fingerprint. What #370 moved ahead of the TOPOLOGY
+    /// BUILD it did not move ahead of this serialisation, and the two are independent orderings. So
+    /// a document carrying an unbound <c>security</c> key still reaches this serialiser on a shipped
+    /// CLI path, exactly as it did before, and a throw here would surface as a spurious failure on a
+    /// document the engine was about to refuse for a correctly-stated reason.
+    /// <c>EnvironmentHashTests</c> states the same thing from the test side.
+    /// </para>
     /// </para>
     /// </remarks>
     private static readonly JsonSerializerOptions s_envSerialiserOptions =

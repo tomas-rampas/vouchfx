@@ -54,8 +54,9 @@ internal static class StepEventBuilder
     /// </summary>
     /// <param name="ledger">
     /// The run's resolved-secret ledger, or <see langword="null"/> when the caller holds none
-    /// (a door reached before any accessor exists, or the <c>--watch</c> compile seam, which
-    /// declines the scrub deliberately — see <c>ScenarioRunner.TryCompileForRun</c>).
+    /// (a door reached before any accessor exists, or a <c>--watch</c> pre-topology refusal, which
+    /// declines the scrub deliberately — see <c>WatchIterationPlan</c>'s
+    /// <c>RefusalEventLines</c> remarks).
     /// </param>
     /// <param name="message">
     /// The scenario-level cause, or <see langword="null"/> when there is none.  Empty is
