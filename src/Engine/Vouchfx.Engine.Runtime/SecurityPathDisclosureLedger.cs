@@ -101,6 +101,29 @@ public sealed class SecurityPathDisclosureLedger
     private readonly object _gate = new();
 
     /// <summary>
+    /// The substitution table <see cref="Scrub"/> works from: every recorded path in both its raw
+    /// and JSON-escaped forms, longest-first, with zero-length forms already dropped. Built lazily
+    /// on the first <see cref="Scrub"/> after a <see cref="Record"/> and nulled by
+    /// <see cref="Record"/> under <see cref="_gate"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Cached because <see cref="Scrub"/> runs per EVENT LINE, and the work it repeats is
+    /// not trivial.</strong> Each call snapshotted the dictionary, ran
+    /// <see cref="JavaScriptEncoder"/> over every entry twice, allocated a second dictionary and
+    /// sorted the result — all to rebuild a table whose inputs change at most three times per
+    /// target, during topology build, and never again for the rest of the run.
+    /// </para>
+    /// <para>
+    /// <strong>The cache changes nothing observable</strong>, which is the property that makes it
+    /// safe: it is a pure function of <c>_declaredByResolved</c>, and the only mutator invalidates
+    /// it while holding the same lock that guards the dictionary. A reader either sees a table
+    /// built from the current contents or builds one.
+    /// </para>
+    /// </remarks>
+    private KeyValuePair<string, string>[]? _orderedForms;
+
+    /// <summary>
     /// Records that <paramref name="resolved"/> was handed out for the field the author declared
     /// as <paramref name="declared"/>, so a later diagnostic quoting the resolved form can have
     /// the declared form substituted back in.
@@ -132,6 +155,12 @@ public sealed class SecurityPathDisclosureLedger
         lock (_gate)
         {
             _declaredByResolved[resolved] = declared;
+
+            // Invalidate INSIDE the lock that guards the dictionary, not beside it: a reader that
+            // observed the new entry while still holding the old table would substitute against a
+            // stale set, and the window would be exactly the one that matters - a path recorded
+            // during topology build and quoted by a client library moments later.
+            _orderedForms = null;
         }
     }
 
@@ -154,7 +183,9 @@ public sealed class SecurityPathDisclosureLedger
             return text;
         }
 
-        KeyValuePair<string, string>[] snapshot;
+        // The Count==0 fast path is kept ahead of everything: an unsecured suite records nothing,
+        // and that suite must not pay a lock-plus-build for every event line it emits.
+        KeyValuePair<string, string>[] ordered;
         lock (_gate)
         {
             if (_declaredByResolved.Count == 0)
@@ -162,48 +193,8 @@ public sealed class SecurityPathDisclosureLedger
                 return text;
             }
 
-            snapshot = new KeyValuePair<string, string>[_declaredByResolved.Count];
-            ((ICollection<KeyValuePair<string, string>>)_declaredByResolved).CopyTo(snapshot, 0);
+            ordered = _orderedForms ??= BuildOrderedForms(_declaredByResolved);
         }
-
-        // Outside the lock: build (form -> replacement) pairs. For each recorded path the raw
-        // form maps to the raw declared text, and the encoded form maps to the ENCODED declared
-        // text - substituting a raw replacement into already-escaped JSON would produce text the
-        // consumer cannot decode, which is a different corruption from the one being fixed.
-        var forms = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var (resolved, declared) in snapshot)
-        {
-            forms[resolved] = declared;
-
-            var encodedResolved = JavaScriptEncoder.Default.Encode(resolved);
-            if (!string.Equals(encodedResolved, resolved, StringComparison.Ordinal)
-                && !forms.ContainsKey(encodedResolved))
-            {
-                forms[encodedResolved] = JavaScriptEncoder.Default.Encode(declared);
-            }
-        }
-
-        // ZERO-LENGTH FORMS ARE DROPPED HERE, AND THIS GUARD IS LOAD-BEARING RATHER THAN
-        // DEFENSIVE. `string.CompareOrdinal(text, index, form, 0, 0)` returns 0 - an empty form
-        // matches vacuously at EVERY position - so the scan below would take the match, append the
-        // replacement, advance `index` by the form's length of zero, and do it again forever: an
-        // infinite loop growing a StringBuilder until the process dies.
-        //
-        // IT IS ALSO A FAILURE-MODE REGRESSION THIS GUARD REPAYS. The `string.Replace` shape the
-        // single pass replaced THREW `ArgumentException` on an empty `oldValue`, loudly and
-        // immediately. Without this filter the rewrite would have converted that throw into a
-        // silent hang, which is strictly worse: a crash names itself and a wedged suite does not.
-        //
-        // Unreachable from today's callers - `Record` rejects null, empty and whitespace on both
-        // sides, and `JavaScriptEncoder.Encode` of a non-empty string is non-empty - and written
-        // anyway, for the reason this file's own test remarks give: "the callers happen not to do
-        // that" is not evidence, it is a fact about today's callers.
-        var ordered = forms.Where(static f => f.Key.Length > 0).ToArray();
-
-        // Longest form first: a recorded directory that is a prefix of a recorded file - the
-        // ordinary shape when caCert and clientCert sit in one folder - must not pre-empt the
-        // longer replacement and strand the tail of the path it was part of.
-        Array.Sort(ordered, static (a, b) => b.Key.Length.CompareTo(a.Key.Length));
 
         // ONE PASS, AND NEVER OVER TEXT ALREADY SUBSTITUTED. The obvious implementation is a
         // sequence of string.Replace calls, one per form, and it has a defect this one does not:
@@ -254,6 +245,61 @@ public sealed class SecurityPathDisclosureLedger
         // the scrub is a targeted substitution and callers compare results ordinally.
         var result = builder.ToString();
         return string.Equals(result, text, StringComparison.Ordinal) ? text : result;
+    }
+
+    /// <summary>
+    /// Builds the longest-first substitution table for <paramref name="declaredByResolved"/>:
+    /// each recorded path in both its raw and JSON-escaped forms, zero-length forms dropped.
+    /// </summary>
+    /// <remarks>
+    /// Called under <see cref="_gate"/> and never otherwise, so it may read the dictionary
+    /// directly instead of snapshotting it. Extracted from <see cref="Scrub"/> when the result
+    /// became cacheable; the logic and its reasoning are unchanged, which is what makes the cache
+    /// a pure performance change.
+    /// </remarks>
+    private static KeyValuePair<string, string>[] BuildOrderedForms(
+        Dictionary<string, string> declaredByResolved)
+    {
+        // For each recorded path the raw form maps to the raw declared text, and the encoded form
+        // maps to the ENCODED declared text - substituting a raw replacement into already-escaped
+        // JSON would produce text the consumer cannot decode, which is a different corruption from
+        // the one being fixed.
+        var forms = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var (resolved, declared) in declaredByResolved)
+        {
+            forms[resolved] = declared;
+
+            var encodedResolved = JavaScriptEncoder.Default.Encode(resolved);
+            if (!string.Equals(encodedResolved, resolved, StringComparison.Ordinal)
+                && !forms.ContainsKey(encodedResolved))
+            {
+                forms[encodedResolved] = JavaScriptEncoder.Default.Encode(declared);
+            }
+        }
+
+        // ZERO-LENGTH FORMS ARE DROPPED HERE, AND THIS GUARD IS LOAD-BEARING RATHER THAN
+        // DEFENSIVE. `string.CompareOrdinal(text, index, form, 0, 0)` returns 0 - an empty form
+        // matches vacuously at EVERY position - so the scan below would take the match, append the
+        // replacement, advance `index` by the form's length of zero, and do it again forever: an
+        // infinite loop growing a StringBuilder until the process dies.
+        //
+        // IT IS ALSO A FAILURE-MODE REGRESSION THIS GUARD REPAYS. The `string.Replace` shape the
+        // single pass replaced THREW `ArgumentException` on an empty `oldValue`, loudly and
+        // immediately. Without this filter the rewrite would have converted that throw into a
+        // silent hang, which is strictly worse: a crash names itself and a wedged suite does not.
+        //
+        // Unreachable from today's callers - `Record` rejects null, empty and whitespace on both
+        // sides, and `JavaScriptEncoder.Encode` of a non-empty string is non-empty - and written
+        // anyway, for the reason this file's own test remarks give: "the callers happen not to do
+        // that" is not evidence, it is a fact about today's callers.
+        var ordered = forms.Where(static f => f.Key.Length > 0).ToArray();
+
+        // Longest form first: a recorded directory that is a prefix of a recorded file - the
+        // ordinary shape when caCert and clientCert sit in one folder - must not pre-empt the
+        // longer replacement and strand the tail of the path it was part of.
+        Array.Sort(ordered, static (a, b) => b.Key.Length.CompareTo(a.Key.Length));
+
+        return ordered;
     }
 
     /// <summary>

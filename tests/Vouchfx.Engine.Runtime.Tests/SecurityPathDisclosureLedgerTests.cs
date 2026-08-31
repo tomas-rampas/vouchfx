@@ -48,6 +48,7 @@ using Vouchfx.Engine.Abstractions.Security;
 using Vouchfx.Engine.Authoring.Ast;
 using Vouchfx.Engine.Authoring.Model;
 using Vouchfx.Engine.Orchestration;
+using Vouchfx.Engine.Runtime.Secrets;
 using Vouchfx.TestSupport;
 using Xunit;
 
@@ -463,6 +464,152 @@ public sealed class SecurityPathDisclosureLedgerTests
 
         Assert.Equal("could not open sub/suite/ca.pem", scrubbed);
         Assert.DoesNotContain("REWRITTEN", scrubbed, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// THE SCRUB ORDER IS SECRETS-FIRST, and this arm is the one that can tell the difference:
+    /// a revealed secret that CONTAINS a recorded resolved path is redacted whole, where
+    /// paths-first would rewrite its interior, miss the exact-match, and leak the credential.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Every other test of the two nets passes in EITHER order</strong>, which is what
+    /// made this necessary: the archived-channel arms pass <c>pathLedger: null</c> or a null
+    /// accessor, and the composed watch arm uses a secret and a path that do not overlap. An order
+    /// argued at length in a comment and enforced by nothing is a convention, not an invariant.
+    /// </para>
+    /// <para>
+    /// <strong>MEASURED, then pinned.</strong> For this input the two orders produce:
+    /// </para>
+    /// <code>
+    /// secrets-first : kafka client build failed: ***REDACTED***
+    /// paths-first   : kafka client build failed: conn=host;cert=certs/ca.pem;pw=hunter2
+    /// </code>
+    /// <para>
+    /// Note what secrets-first does NOT do: the declared path does not survive, because the path
+    /// was inside the secret and the whole value was replaced. That is correct and is the point —
+    /// the alternative keeps a prettier path and hands over <c>hunter2</c>.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void ScrubDiagnostic_WhereTheSecretContainsARecordedPath_RedactsTheSecretWhole()
+    {
+        var secrets = new ResolvedSecretLedger();
+        const string Revealed = "conn=host;cert=/suite/certs/ca.pem;pw=hunter2";
+        var (accessor, cleanup) = AccessorOver(secrets, Revealed);
+        try
+        {
+            var paths = new SecurityPathDisclosureLedger();
+            paths.Record("/suite/certs/ca.pem", "certs/ca.pem");
+
+            var scrubbed = ScenarioRunner.ScrubDiagnostic(
+                accessor, paths, $"kafka client build failed: {Revealed}");
+
+            Assert.Equal(
+                $"kafka client build failed: {SecretString.RedactedMarker}", scrubbed);
+
+            // The clause that fails under paths-first, named so the failure reads as what it is.
+            Assert.DoesNotContain("hunter2", scrubbed!, StringComparison.Ordinal);
+        }
+        finally
+        {
+            cleanup();
+        }
+    }
+
+    /// <summary>
+    /// The COST secrets-first accepts, pinned rather than only described: a revealed secret that
+    /// sits INSIDE a recorded path leaves a partially-redacted path, disclosing the surrounding
+    /// host layout.
+    /// </summary>
+    /// <remarks>
+    /// Paths-first would render this one better (<c>certs/ca.pem</c>, no marker), and that is
+    /// exactly the trade the order makes: a partial layout disclosure here buys the whole-secret
+    /// redaction in the arm above. Pinning the worse output stops a future reader from "fixing"
+    /// it by swapping the order without seeing what the swap costs.
+    /// </remarks>
+    [Fact]
+    public void ScrubDiagnostic_WhereTheSecretSitsInsideARecordedPath_LeavesAPartiallyRedactedPath()
+    {
+        var secrets = new ResolvedSecretLedger();
+        const string Revealed = "s3cr3tdir";
+        var (accessor, cleanup) = AccessorOver(secrets, Revealed);
+        try
+        {
+            var paths = new SecurityPathDisclosureLedger();
+            paths.Record("/suite/s3cr3tdir/ca.pem", "certs/ca.pem");
+
+            var scrubbed = ScenarioRunner.ScrubDiagnostic(
+                accessor,
+                paths,
+                "ssl.ca.location failed: /suite/s3cr3tdir/ca.pem: No such file");
+
+            Assert.Equal(
+                $"ssl.ca.location failed: /suite/{SecretString.RedactedMarker}/ca.pem: No such file",
+                scrubbed);
+
+            Assert.DoesNotContain(Revealed, scrubbed!, StringComparison.Ordinal);
+        }
+        finally
+        {
+            cleanup();
+        }
+    }
+
+    /// <summary>
+    /// A real <see cref="SecretAccessor"/> over a real environment resolver, recording into
+    /// <paramref name="ledger"/> the way production records — the same shape
+    /// <c>SecretObservationLeakPenetrationTests.AccessorOver</c> uses, because a hand-seeded
+    /// ledger would not prove the accessor path records at all.
+    /// </summary>
+    private static (SecretAccessor Accessor, Action Cleanup) AccessorOver(
+        ResolvedSecretLedger ledger, string value)
+    {
+        var envName = "VOUCHFX_ORDER_" + Guid.NewGuid().ToString("N");
+        Environment.SetEnvironmentVariable(envName, value);
+
+        var accessor = new SecretAccessor(
+            new SecretSourceCatalog(new ISecretResolver[] { new EnvironmentSecretResolver() }),
+            ledger);
+
+        Assert.Equal(value, accessor.Resolve($"${{secret:env/{envName}}}").Reveal());
+
+        return (accessor, () => Environment.SetEnvironmentVariable(envName, null));
+    }
+
+    /// <summary>
+    /// A <see cref="SecurityPathDisclosureLedger.Record"/> after a <see cref="SecurityPathDisclosureLedger.Scrub"/>
+    /// takes effect: the cached substitution table is invalidated rather than reused.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>Scrub</c> caches its longest-first form table because it runs per event line and the
+    /// table changes at most a few times per run. The cache is a pure performance change and must
+    /// stay one — a stale table would silently stop substituting a path recorded after the first
+    /// diagnostic, which is a reachable order: the probe records during topology build and later
+    /// targets record as their material is first read.
+    /// </para>
+    /// <para>
+    /// Ordered deliberately — scrub, record, scrub — because a test that recorded everything up
+    /// front would never build the cache before mutating it and would pass against a permanently
+    /// stale one.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void Record_AfterAScrub_InvalidatesTheCachedFormTable()
+    {
+        var ledger = new SecurityPathDisclosureLedger();
+        ledger.Record("/host/x/ca.pem", "certs/ca.pem");
+
+        // First scrub builds and caches the table.
+        Assert.Equal("open certs/ca.pem", ledger.Scrub("open /host/x/ca.pem"));
+
+        // A path recorded AFTER that must still take effect.
+        ledger.Record("/host/x/client.pem", "certs/client.pem");
+
+        Assert.Equal(
+            "open certs/ca.pem and certs/client.pem",
+            ledger.Scrub("open /host/x/ca.pem and /host/x/client.pem"));
     }
 
     /// <summary>

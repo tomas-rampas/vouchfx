@@ -5410,10 +5410,6 @@ public static class ScenarioRunner
         // instance is also carried on the exception it came from (and re-read by REQ-018's
         // Kind check), so the scrubbed copy must be local to this line.
         //
-        // The `!` is an assertion, not a fallback: Scrub is null-in/null-out (its own contract,
-        // and its first statement returns the input for null/empty) and Detail is a
-        // non-nullable string, so the result cannot be null here.
-        //
         // TWO NETS, SECRETS FIRST (issue #375). The value ledger redacts revealed secret values;
         // the path ledger substitutes the DECLARED text back over a resolved security-material
         // path a third-party client library quoted. THE ORDER IS LOAD-BEARING and must match

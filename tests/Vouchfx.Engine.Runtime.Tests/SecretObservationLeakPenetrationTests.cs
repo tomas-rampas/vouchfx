@@ -1328,6 +1328,100 @@ public sealed class SecretObservationLeakPenetrationTests
     }
 
     /// <summary>
+    /// THE SCRUB ORDER IS SECRETS-FIRST AT EVERY COMPOSITION SITE, asserted over the source of all
+    /// four rather than behaviourally at one.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Why source and not behaviour.</strong> The discriminating behavioural arms live in
+    /// <c>SecurityPathDisclosureLedgerTests</c> and exercise <c>ScrubDiagnostic</c> — one of the
+    /// four. Reaching the other three the same way needs a real accessor, a real path ledger and a
+    /// crafted overlapping pair per site, and would still say nothing about a FIFTH site added
+    /// later. The property "the value scrub is written before the path scrub" is what actually has
+    /// to hold everywhere, and it is checkable everywhere.
+    /// </para>
+    /// <para>
+    /// <strong>What each pair is.</strong> Each site composes a value-ledger call with a
+    /// path-ledger call over one string; the order decides which net loses its exact match when
+    /// the two recorded strings overlap. Secrets-first degrades to a partially-redacted path;
+    /// paths-first degrades to a mangled, still-readable secret. The full argument is on
+    /// <c>ScenarioRunner.ScrubDiagnostic</c>.
+    /// </para>
+    /// <para>
+    /// Read over COMMENT-STRIPPED source, because that argument names both calls in prose several
+    /// times over and a raw index comparison would find the comment first.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void EveryScrubComposition_AppliesTheValueLedgerBeforeThePathLedger()
+    {
+        var root = RepositoryRoot();
+
+        var runner = WithoutComments(File.ReadAllText(Path.Combine(
+            root, "src", "Engine", "Vouchfx.Engine.Runtime", "ScenarioRunner.cs")));
+        var events = WithoutComments(File.ReadAllText(Path.Combine(
+            root, "src", "Engine", "Vouchfx.Engine.Runtime", "StepEventBuilder.cs")));
+        var watch = WithoutComments(File.ReadAllText(Path.Combine(
+            root, "src", "Cli", "Vouchfx.Cli", "Watch", "WatchRunner.cs")));
+
+        // (site, source, value-ledger call, path-ledger call). Each fragment is unique within its
+        // file, so no per-method scoping is needed - and a rename that breaks that uniqueness is
+        // caught by the vacuity check below rather than silently comparing the wrong pair.
+        var sites = new (string Site, string Source, string ValueScrub, string PathScrub)[]
+        {
+            ("ScenarioRunner.ScrubDiagnostic",
+             runner,
+             "concrete.ResolvedSecrets.Scrub(text)",
+             "pathLedger?.Scrub(scrubbed)"),
+
+            ("ScenarioRunner.EnvironmentErrorLine",
+             runner,
+             "sharedLedger?.Scrub(info.Detail)",
+             "sharedPathLedger?.Scrub(scrubbed)"),
+
+            ("StepEventBuilder.ScenarioCompletedLine",
+             events,
+             "ledger?.Scrub(message)",
+             "pathLedger?.Scrub(cause)"),
+
+            ("WatchRunner.ScrubThenSanitise",
+             watch,
+             "ledger.Scrub(text)",
+             "pathLedger.Scrub(scrubbed)"),
+        };
+
+        foreach (var (site, source, valueScrub, pathScrub) in sites)
+        {
+            var valueAt = source.IndexOf(valueScrub, StringComparison.Ordinal);
+            var pathAt = source.IndexOf(pathScrub, StringComparison.Ordinal);
+
+            // VACUITY FIRST. Two -1s compare as equal-and-not-less, and a census whose patterns
+            // match nothing must say so rather than quietly asserting about absent code.
+            Assert.True(
+                valueAt >= 0,
+                $"{site}: the value-ledger call `{valueScrub}` was not found. Update this census "
+                + "to the new spelling rather than leaving it matching nothing - a pattern that "
+                + "matches nothing cannot fail, so the ordering would stop being guarded without "
+                + "anything saying so.");
+            Assert.True(
+                pathAt >= 0,
+                $"{site}: the path-ledger call `{pathScrub}` was not found. Either the composition "
+                + "was removed - in which case issue #375's substitution no longer reaches this "
+                + "channel - or it was respelled and this census needs repointing.");
+
+            Assert.True(
+                valueAt < pathAt,
+                $"{site} applies the PATH ledger before the VALUE ledger. Reversed, a resolved "
+                + "path that occurs inside a recorded secret rewrites that secret's interior, the "
+                + "value ledger's exact match then misses, and a mangled but still-readable "
+                + "credential reaches the archived event stream. Secrets-first accepts a "
+                + "partially-redacted path instead, which is strictly the lesser disclosure - the "
+                + "argument is written out on ScenarioRunner.ScrubDiagnostic and the two "
+                + "discriminating behavioural arms are in SecurityPathDisclosureLedgerTests.");
+        }
+    }
+
+    /// <summary>
     /// Removes C# comments — block first, then each line's <c>//</c> tail — so the census above
     /// can count UNANCHORED without the surrounding prose voting.
     /// </summary>

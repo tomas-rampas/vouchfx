@@ -68,6 +68,17 @@ public sealed class AsciiRuntimeOutputCensusTests
     /// log, and none of it needs a typographic character to say what it says.
     /// </para>
     /// <para>
+    /// <strong>IN means the <c>.cs</c> SOURCES of those projects, not every file they ship.</strong>
+    /// The walk below enumerates <c>*.cs</c>, so the schema resource files inside the same
+    /// projects are not covered — <c>root-language-schema.json</c> alone carries around 45 em
+    /// dashes in its <c>description</c> strings. That is deliberate rather than an oversight in
+    /// the boundary: those strings reach an editor through LSP hover as UTF-8, where nothing
+    /// re-encodes them through a console codepage, which is the entire mechanism issue #379
+    /// measured. They are inventoried alongside #472's surface, and the consistency question they
+    /// raise — the schema says <c>(DSL §3.2)</c> where the validator now emits
+    /// <c>(DSL section 3.2)</c> for the same field — is recorded there rather than settled here.
+    /// </para>
+    /// <para>
     /// <strong>OUT: <c>src/Providers</c> and <c>src/Sdk</c>, and the reason is measured, not
     /// squeamish.</strong> A provider's literals are dominated by EMITTED CSX: the
     /// <c>RequiredHelpers</c> arrays and the <c>$$"""..."""</c> step bodies are generated C# SOURCE,

@@ -143,12 +143,21 @@ public static class KafkaSecurityHelper
     ///   </description></item>
     /// </list>
     /// <para>
-    /// One measurement worth carrying forward: the v1 contract golden records this member as
+    /// One measurement worth carrying forward, and it is the opposite of what an earlier draft of
+    /// this paragraph said. The SIGNATURE golden records this member as
     /// <c>field const System.String Source</c> and does NOT pin the literal value, so editing this
-    /// string's CONTENT does not trip <c>SdkContractFreezeTests</c> — and editing this REMARKS
-    /// block, which is outside the constant altogether, cannot. Re-measured while writing this
-    /// correction: the helper-sources golden reads the constant's runtime value by reflection
-    /// (<c>BuildHelperSourceSignature</c>), so no regeneration was required for it.
+    /// string's content does not trip THAT golden — but the companion helper-sources golden
+    /// (<c>vouchfx-sdk-helper-sources.v1.txt</c>, added by #361) SHA-256s the constant's runtime
+    /// value through <c>BuildHelperSourceSignature</c>. A body edit is therefore a deliberate
+    /// golden change, and it carries a cross-version compatibility cost: a <c>const</c> inlines
+    /// into every consuming assembly, and <c>CsxAssembler</c> refuses two same-named helper
+    /// classes whose source text differs, so an out-of-tree provider built against an older SDK
+    /// breaks in any suite that also splices this helper from an in-tree one.
+    /// </para>
+    /// <para>
+    /// Editing this REMARKS block is free by comparison: it sits outside the constant altogether,
+    /// so neither golden can see it. That was re-verified when this correction was written —
+    /// <c>SdkContractFreezeTests</c> stayed green with no regeneration.
     /// </para>
     /// </remarks>
     public const string Source =
