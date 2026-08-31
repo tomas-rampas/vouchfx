@@ -508,6 +508,23 @@ public sealed class SuiteTopology : IAsyncDisposable, IKeptTopology
                 }
                 catch (Exception ex)
                 {
+                    // #420's flight recorder is still armed here, and this is the catch that
+                    // most likely fires on it. The transcript's `fail: ... should have valid
+                    // address at this point` is a console LEVEL TOKEN, so Aspire may catch that
+                    // throw internally and let StartAsync return; the fault then surfaces as
+                    // THIS gate timing out on a resource whose endpoint never materialised.
+                    // Flush BEFORE Classify: the classifier reads the attached summary off the
+                    // exception, so an order swap here would write the file and still leave the
+                    // Environment-error detail without the tail that survives in a CI log.
+                    //
+                    // Not on a cancellation the caller asked for (Ctrl-C) — see
+                    // HeadlessTopology.StartAsync's catch for why the test is on the caller's
+                    // token rather than on the exception type.
+                    if (!cancellationToken.IsCancellationRequested)
+                    {
+                        await topology.FlushDiagnosticsAsync(ex).ConfigureAwait(false);
+                    }
+
                     // Classify the gate failure as an Environment error (§12.1).
                     // imageRef is null here because health-gate failures are not image-pull failures;
                     // the classifier uses the message heuristics (timeout / unhealthy / cancelled).
@@ -535,6 +552,18 @@ public sealed class SuiteTopology : IAsyncDisposable, IKeptTopology
             }
             catch (Exception ex)
             {
+                // Flush BEFORE Classify, for the same reason and in the same order as the gate
+                // catch above: the classifier reads the capture summary off the exception, so a
+                // flush that happens afterwards writes the file and still leaves the
+                // Environment-error detail without the pointer to it. The outer net below DOES
+                // fire on this path, but it fires too late to enrich a detail that is already
+                // built - which is exactly how this site went unnoticed. Pinned structurally by
+                // DcpArmingWindowCensusTests.EveryCatchThatClassifies_FlushesFirst.
+                if (!cancellationToken.IsCancellationRequested)
+                {
+                    await topology.FlushDiagnosticsAsync(ex).ConfigureAwait(false);
+                }
+
                 var info = OrchestrationErrorClassifier.Classify(
                     ex, imageRef: null, resourceName: "discovery");
                 throw new OrchestrationException(info, ex);
@@ -599,6 +628,12 @@ public sealed class SuiteTopology : IAsyncDisposable, IKeptTopology
                     cancellationToken)
                 .ConfigureAwait(false);
 
+            // The topology is READY: gates passed, endpoints resolved, security confirmed, seed
+            // applied. That — not StartAsync returning — is the far end of #420's arming window,
+            // so this is where the recorder is dropped and its buffer released. Nothing is
+            // written; a start that worked is of no diagnostic use to anyone.
+            topology.DropDiagnostics();
+
             return new SuiteTopology(
                 topology,
                 discoveredServices,
@@ -609,8 +644,29 @@ public sealed class SuiteTopology : IAsyncDisposable, IKeptTopology
                 mapped.EndpointSelectionNotices,
                 mapped.EndpointTrustNotices);
         }
-        catch
+        catch (Exception ex)
         {
+            // Safety net for #420, and deliberately not a substitute for the catches above.
+            // Every failure between StartAsync and readiness reaches here, and each one leaves
+            // DCP's start-time traffic in the buffer, so the capture FILE is worth writing for
+            // all of them. What this net cannot do is enrich the DETAIL: by the time an
+            // OrchestrationException reaches here its Info.Detail was already built. Idempotent,
+            // so a path that flushed already makes this a no-op rather than a second file.
+            //
+            // WHICH PATHS THEREFORE GET A FILE BUT NO POINTER TO IT, named because the
+            // troubleshooting guide has to say so: the secured-endpoint probe and the seed. Both
+            // build their own OrchestrationErrorInfo inside SecuredEndpointProbe / SeedApplier
+            // rather than calling OrchestrationErrorClassifier, so there is no Classify call on
+            // those paths for a flush to precede — the annex has nowhere to attach. Fixing that
+            // would mean rebuilding a thrown OrchestrationException's Info from out here, which
+            // changes the exception a caller receives to improve a diagnostic; the file is
+            // written either way, and the guide points at it by platform rather than by name.
+            // The two paths that DO name it - the health gate and discovery - flush first.
+            if (!cancellationToken.IsCancellationRequested)
+            {
+                await topology.FlushDiagnosticsAsync(ex).ConfigureAwait(false);
+            }
+
             // Any health-gate or discovery failure: dispose the already-started topology
             // so containers started by HeadlessTopology.StartAsync do not leak.
             await topology.DisposeAsync().ConfigureAwait(false);

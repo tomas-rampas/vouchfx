@@ -1478,4 +1478,262 @@ public sealed class SecretObservationLeakPenetrationTests
         Assert.NotNull(dir);
         return dir!.FullName;
     }
+
+    // ── 9. The #420 DCP flight-recorder tail (issue #420) ────────────────────────
+    //
+    // The tail of the DCP capture buffer is composed into OrchestrationErrorInfo.Detail and so
+    // travels the SAME EnvironmentErrorLine emission path as every other environment-error
+    // detail. Two tests, because the honest answer has two halves: the ledger reaches the tail
+    // when the value survives the tail's transforms intact, and does not when it does not. Both
+    // drive the real emission path; neither reconstructs it.
+
+    /// <summary>
+    /// A recorded secret value appearing verbatim in a captured DCP warning line IS scrubbed
+    /// from the emitted environment-error event, because the tail is composed into
+    /// <c>Detail</c> and never written to the wire on its own.
+    /// </summary>
+    [Fact]
+    public async Task DcpCaptureTail_CarryingARecordedValue_IsScrubbedOnTheRealEmissionPath()
+    {
+        const string secret = "dcp-tail-secret-5k1p8";
+        var runLedger = new ResolvedSecretLedger();
+        var (_, revealed, cleanup) = AccessorOver(runLedger, secret);
+        var scratch = Path.Combine(
+            Path.GetTempPath(), "vouchfx-dcp-pentest-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var info = await ClassifiedDcpFailureCarrying(revealed, scratch);
+
+            // Pre-scrub the value really is in the detail - otherwise the assertion below would
+            // pass for the wrong reason.
+            Assert.Contains(revealed, info.Detail, StringComparison.Ordinal);
+
+            var line = ScenarioRunner.EnvironmentErrorLine(
+                runLedger, null, info, Run, DateTimeOffset.UtcNow);
+
+            Assert.DoesNotContain(revealed, line, StringComparison.Ordinal);
+            Assert.Contains(SecretString.RedactedMarker, line, StringComparison.Ordinal);
+        }
+        finally
+        {
+            cleanup();
+            DeleteBestEffort(scratch);
+        }
+    }
+
+    /// <summary>
+    /// The honest twin, and the reason the tail is documented as BEST-EFFORT scrubbed rather
+    /// than scrubbed: a recorded value containing a non-ASCII character is MUTATED by the
+    /// recorder's capture-time ASCII sanitiser, so the ledger's exact match misses it and a
+    /// readable near-copy survives into the emitted event.
+    /// </summary>
+    /// <remarks>
+    /// This is a KNOWN, ACCEPTED property, not a regression waiting to be fixed here — the
+    /// sanitiser exists because issue #379 measured a Windows console codepage mangling
+    /// non-ASCII output, and a diagnostic that must survive a console is written in ASCII. What
+    /// the test does is stop the claim drifting: any doc, comment or changelog line asserting
+    /// that the tail "is scrubbed" is contradicted by this row. The exposure is bounded by what
+    /// the tail carries — warning-level DCP lines from a topology that failed to come up, on an
+    /// engine whose <c>EnvironmentMapper</c> refuses the <c>${secret:</c> sigil outright in both
+    /// <c>services[].env</c> and <c>dependencies[].env</c>, so no resolved secret reaches a
+    /// container specification for that layer to log.
+    /// </remarks>
+    [Fact]
+    public async Task DcpCaptureTail_CarryingANonAsciiValue_DefeatsTheExactMatchLedger()
+    {
+        const string secret = "dcp-tail-é-secret-2v7";
+        const string mutated = "dcp-tail-?-secret-2v7";
+        var runLedger = new ResolvedSecretLedger();
+        var (_, revealed, cleanup) = AccessorOver(runLedger, secret);
+        var scratch = Path.Combine(
+            Path.GetTempPath(), "vouchfx-dcp-pentest-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var info = await ClassifiedDcpFailureCarrying(revealed, scratch);
+
+            var line = ScenarioRunner.EnvironmentErrorLine(
+                runLedger, null, info, Run, DateTimeOffset.UtcNow);
+
+            // The value never appears verbatim - the sanitiser already changed it - so asserting
+            // its absence would be a green test proving nothing. What survives is the mutated
+            // near-copy, and THAT is the finding this row exists to state.
+            Assert.DoesNotContain(revealed, line, StringComparison.Ordinal);
+            Assert.Contains(mutated, line, StringComparison.Ordinal);
+        }
+        finally
+        {
+            cleanup();
+            DeleteBestEffort(scratch);
+        }
+    }
+
+    /// <summary>
+    /// The PATH ledger half of the same inventory, which had none: a DECLARED security-material
+    /// path appearing in a captured DCP warning IS substituted back on the real emission path.
+    /// </summary>
+    /// <remarks>
+    /// Both rows above run the secret ledger with <c>sharedPathLedger: null</c>, so until these
+    /// two the inventory in <c>EnvironmentErrorLine</c>'s remarks asserted something about the
+    /// path ledger that nothing exercised — and cited a DCP <em>temp</em> path
+    /// (<c>…\aspire-dcp…\kubeconfig</c>) as its evidence, which that ledger would never have
+    /// recorded, because it records DECLARED text only. These rows use a genuinely declared path
+    /// instead, so the claim and the evidence are about the same thing.
+    /// </remarks>
+    [Fact]
+    public async Task DcpCaptureTail_CarryingADeclaredSecurityPath_IsSubstitutedByThePathLedger()
+    {
+        // A path shaped like a real resolved clientKey: absolute, and recorded against the
+        // declared spelling the author wrote in the document.
+        //
+        // DELIBERATELY SHORT, and the brevity is load-bearing for the same reason the helper's
+        // own message is - MEASURED while writing this row: a tail line is capped at
+        // DcpFlightRecorder.TailLineChars (120) INCLUDING the rendered timestamp, level and
+        // category prefix, which leaves about 40 characters after the helper's message text. A
+        // path under the real temp root (`C:\Users\<user>\AppData\Local\Temp\...`) is longer than
+        // that on its own, so the value was truncated away before it ever reached the detail and
+        // this row failed on its own pre-scrub guard rather than on the ledger. Rooting it at the
+        // drive/filesystem root keeps it absolute - which is what the ledger cares about - and
+        // inside the window.
+        var root = Path.GetPathRoot(Path.GetTempPath()) ?? Path.DirectorySeparatorChar.ToString();
+        var resolved = Path.Combine(root, "s", "certs", "ck.pem");
+        var pathLedger = new SecurityPathDisclosureLedger();
+        pathLedger.Record(resolved, "certs/ck.pem");
+
+        var scratch = Path.Combine(
+            Path.GetTempPath(), "vouchfx-dcp-pentest-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var info = await ClassifiedDcpFailureCarrying(resolved, scratch);
+
+            // Pre-scrub the resolved path really is in the detail, so the assertion below cannot
+            // pass because the tail never carried it.
+            Assert.Contains(resolved, info.Detail, StringComparison.Ordinal);
+
+            var line = ScenarioRunner.EnvironmentErrorLine(
+                new ResolvedSecretLedger(), pathLedger, info, Run, DateTimeOffset.UtcNow);
+
+            // Compared in its ON-THE-WIRE form: the line is JSON, so a Windows path's backslashes
+            // are escaped to pairs, and asserting the raw form would report the path "absent"
+            // because of the escaping rather than because the ledger substituted it - a green
+            // assertion proving nothing. See the twin below for the same guard stated at length.
+            Assert.DoesNotContain(
+                resolved.Replace("\\", "\\\\", StringComparison.Ordinal),
+                line,
+                StringComparison.Ordinal);
+            Assert.Contains("certs/ck.pem", line, StringComparison.Ordinal);
+        }
+        finally
+        {
+            DeleteBestEffort(scratch);
+        }
+    }
+
+    /// <summary>
+    /// The honest twin for the path ledger: the same declared path carrying one non-ASCII
+    /// character is MUTATED by the recorder's capture-time sanitiser, so the exact match misses
+    /// and the resolved host path survives into the emitted event.
+    /// </summary>
+    /// <remarks>
+    /// This is what "not hypothetical" was supposed to mean and previously did not demonstrate.
+    /// The defeat is the mutation shape, not a truncation cap — the value arrives at FULL LENGTH
+    /// and simply altered — and the surviving text is an absolute host path, which is exactly the
+    /// disclosure this ledger exists to prevent. Accepted, not fixed here, for the same reason as
+    /// its secret-ledger sibling: the sanitiser answers issue #379's console-codepage measurement,
+    /// and a diagnostic that must survive a console is written in ASCII.
+    /// </remarks>
+    [Fact]
+    public async Task DcpCaptureTail_CarryingANonAsciiDeclaredPath_DefeatsThePathLedgerToo()
+    {
+        // Built from a char code so this file's own bytes stay ASCII: U+00E9. Short for the same
+        // measured reason as the row above - see its comment on TailLineChars.
+        var accented = "ck" + (char)0xE9 + ".pem";
+        var root = Path.GetPathRoot(Path.GetTempPath()) ?? Path.DirectorySeparatorChar.ToString();
+        var resolved = Path.Combine(root, "s", "certs", accented);
+        var mutated = resolved.Replace((char)0xE9, '?');
+
+        var pathLedger = new SecurityPathDisclosureLedger();
+        pathLedger.Record(resolved, "certs/" + accented);
+
+        var scratch = Path.Combine(
+            Path.GetTempPath(), "vouchfx-dcp-pentest-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var info = await ClassifiedDcpFailureCarrying(resolved, scratch);
+
+            var line = ScenarioRunner.EnvironmentErrorLine(
+                new ResolvedSecretLedger(), pathLedger, info, Run, DateTimeOffset.UtcNow);
+
+            // MEASURED while writing this row, and it would have made both assertions below
+            // meaningless: the emitted line is JSON, so every backslash in a Windows path is
+            // escaped to a PAIR. Asserting the raw form would have found the resolved path
+            // "absent" because of the escaping rather than because of any scrub - the exact
+            // false-negative shape this suite exists to catch elsewhere. Compare against the
+            // form that is actually on the wire. No-op where the separator is '/'.
+            static string OnTheWire(string path) =>
+                path.Replace("\\", "\\\\", StringComparison.Ordinal);
+
+            // The resolved path never appears verbatim - the sanitiser already changed it - so
+            // asserting its absence alone would prove nothing. The mutated near-copy surviving is
+            // the finding.
+            Assert.DoesNotContain(OnTheWire(resolved), line, StringComparison.Ordinal);
+            Assert.Contains(OnTheWire(mutated), line, StringComparison.Ordinal);
+        }
+        finally
+        {
+            DeleteBestEffort(scratch);
+        }
+    }
+
+    /// <summary>
+    /// Drives the real #420 flush: a DCP warning carrying <paramref name="value"/> is captured,
+    /// flushed onto a topology-start exception, and classified — producing the same
+    /// <see cref="OrchestrationErrorInfo"/> the orchestration layer hands the runner.
+    /// </summary>
+    private static async Task<OrchestrationErrorInfo> ClassifiedDcpFailureCarrying(
+        string value, string scratchDirectory)
+    {
+        var recorder = new DcpFlightRecorder();
+        var logger = recorder.CreateLogger("Aspire.Hosting.Dcp");
+
+        // Deliberately SHORT, and the brevity is load-bearing rather than tidy: a tail line is
+        // capped at DcpFlightRecorder.TailLineChars (120) including the rendered timestamp,
+        // level and category prefix, so a value sitting past that cap never reaches the detail
+        // at all and both rows below would go green for the wrong reason. This message puts the
+        // value comfortably inside the window, which is what makes the ledger the thing under
+        // test rather than the truncation.
+        //
+        // ILogger.Log directly rather than the LogWarning extension: this repository's CA1848
+        // gate applies to test projects too.
+        logger.Log(
+            Microsoft.Extensions.Logging.LogLevel.Warning,
+            new Microsoft.Extensions.Logging.EventId(0),
+            "Unable to allocate a port; pw=" + value,
+            null,
+            static (state, _) => state);
+
+        var failure = new InvalidOperationException(
+            "Service broker should have valid address at this point");
+
+        await DcpCapture.FlushOnFailureAsync(
+            recorder, failure, DateTimeOffset.UtcNow, scratchDirectory);
+
+        return OrchestrationErrorClassifier.Classify(failure, imageRef: null, resourceName: "broker");
+    }
+
+    private static void DeleteBestEffort(string directory)
+    {
+        try
+        {
+            if (Directory.Exists(directory))
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
+    }
 }

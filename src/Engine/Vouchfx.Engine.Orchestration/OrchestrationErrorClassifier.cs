@@ -81,7 +81,7 @@ public static class OrchestrationErrorClassifier
 
         var message = exception.Message;
         var registryHost = ParseRegistryHost(imageRef);
-        var detail = BuildDetail(message);
+        var detail = Annotate(BuildDetail(message), message, exception);
 
         var (kind, authStatus) = ClassifyMessage(message, imageRef, containerNeverCreated);
 
@@ -367,5 +367,46 @@ public static class OrchestrationErrorClassifier
         return oneLine.Length <= MaxDetailLength
             ? oneLine
             : string.Concat(oneLine.AsSpan(0, MaxDetailLength), "...");
+    }
+
+    /// <summary>
+    /// Appends the #420 known-fault note and the DCP flight-recorder capture summary to
+    /// <paramref name="detail"/>, when either applies.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Enrichment, never reclassification.</strong> Neither the
+    /// <see cref="OrchestrationErrorKind"/> nor the <c>AuthStatus</c> moves: #420's throw already
+    /// classifies as <see cref="OrchestrationErrorKind.Provision"/>, which is the correct kind for
+    /// an orchestrator that could not provision a host port, and a diagnostic that changed the
+    /// diagnosis would be a worse trade than one that does not exist. Only the human-readable
+    /// <c>Detail</c> gains content, and <c>Detail</c> is content-only on the §14 wire — the
+    /// property, its CLR type and its JSON name are untouched, so the frozen event contract does
+    /// not move.
+    /// </para>
+    /// <para>
+    /// <strong>Why the result may exceed <see cref="MaxDetailLength"/>.</strong> That bound exists
+    /// to keep an UNBOUNDED input — a multi-kilobyte stack trace arriving as an exception message
+    /// — out of a JSON Lines record, and it still does exactly that: the message is truncated to
+    /// the same 256 characters at the same point, and the pins that assert so are unaffected
+    /// because they classify messages carrying neither signature nor annotation. What follows the
+    /// message is engine-authored and separately bounded by
+    /// <see cref="DcpCapture.MaxAnnexLength"/>. Truncating the message to make room for a pointer
+    /// to the evidence would spend the evidence to pay for the pointer.
+    /// </para>
+    /// <para>
+    /// Both inputs are read from the exception the caller already has: the signature from its
+    /// message (the same case-insensitive substring rule as every other heuristic here), and the
+    /// capture summary from <see cref="Exception.Data"/>, where
+    /// <c>HeadlessTopology.StartAsync</c> attached it on the way out. An exception carrying
+    /// neither is returned untouched, which is every classification this repository made before
+    /// the recorder existed.
+    /// </para>
+    /// </remarks>
+    private static string Annotate(string detail, string message, Exception exception)
+    {
+        var annex = DcpCapture.BuildAnnex(
+            message, exception, System.OperatingSystem.IsWindows());
+        return annex.Length == 0 ? detail : detail + " | " + annex;
     }
 }
