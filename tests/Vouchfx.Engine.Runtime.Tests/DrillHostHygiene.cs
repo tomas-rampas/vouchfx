@@ -933,13 +933,23 @@ public sealed class DrillHostSweepFixture : IDisposable
             ExitReport = _sweep();
             Announce(ExitReport, _recordPath, "exit");
         }
-        // Everything the process-table walk and the record write can raise. Not a blanket catch:
-        // a NullReferenceException out of this method is a defect in the guard and should be seen,
-        // whereas an unreadable process table at teardown is an environment fact and must not
-        // repaint the lane. An injected delegate is expected to stay inside this set.
-        catch (Exception ex) when (ex is InvalidOperationException or NotSupportedException
-                                       or System.ComponentModel.Win32Exception or IOException
-                                       or UnauthorizedAccessException)
+        // DELIBERATELY TOTAL, and the contrast with KillAndConfirm's narrow filter is the point.
+        //
+        // There the filter stays narrow because its result feeds a THROW decision taken before any
+        // test runs: a masked defect would become a false "confirmed dead", and the lane would then
+        // proceed on a lie. Here every verdict is already decided. An exception escaping disposal
+        // cannot inform anything - xUnit attributes a fixture disposal failure to the COLLECTION,
+        // so its only possible effect is to repaint a set of passing rows as failures, which is the
+        // misattribution this whole change exists to end.
+        //
+        // Nothing is lost by catching everything, because nothing is swallowed: the exception's
+        // message becomes a line in the exit report and in the record. A guard defect is demoted
+        // from "reddens unrelated rows" to "is written down", which is the right trade at teardown
+        // and the wrong one before the run.
+        //
+        // It also makes the never-throws contract absolute rather than conditional on the injected
+        // delegate's exception types - a stub that throws ArgumentException is now covered.
+        catch (Exception ex)
         {
             ExitReport = new SweepReport(
                 Array.Empty<string>(),

@@ -49,28 +49,26 @@ public sealed class DrillHostSweepCallSiteCensusTests
     private const string SweepMethod = "SweepLiveProcesses";
 
     /// <summary>
-    /// The files that may mention it at all: the guard itself and the guard's own drills.
+    /// The fewest <c>.cs</c> files this project can plausibly hold. Below it, the census is
+    /// assumed to have failed to find the source tree rather than to have found a small one.
     /// </summary>
     /// <remarks>
-    /// Both are named rather than globbed. The drills file is IN scope precisely because it is the
-    /// file that broke the property last time - a census that watched only the production source
-    /// would have passed while the fast lane was killing processes.
+    /// A floor rather than an exact count, because an exact count is a second thing to maintain
+    /// and would redden on every unrelated file added. The project held around sixty files when
+    /// this was written; twenty is far enough below that to never be reached by deletion, and far
+    /// enough above zero to catch a directory that resolved wrongly.
     /// </remarks>
-    private static readonly string[] s_censusFiles =
-    {
-        "DrillHostHygiene.cs",
-        "DrillHostSweepTests.cs",
-    };
+    private const int MinimumCensusFiles = 20;
 
     /// <summary>
-    /// The ONLY members permitted to call it, both inside <c>DrillHostSweepFixture</c> and both on
-    /// the production path.
+    /// The ONLY members permitted to name it.
     /// </summary>
     /// <remarks>
     /// <para>
     /// <c>SweepUnlessDisabled</c> is the production sweep. It is reached from the public
     /// parameterless constructor - the only one xUnit calls - and from the default of the seam that
-    /// <c>Dispose</c> runs.
+    /// <c>Dispose</c> runs. <c>SweepLiveProcesses</c> itself is permitted so the method's own body
+    /// is not an offender against its own name.
     /// </para>
     /// <para>
     /// Note what is NOT on this list: <c>Dispose</c>. It must reach the live sweep through the
@@ -81,105 +79,167 @@ public sealed class DrillHostSweepCallSiteCensusTests
     private static readonly string[] s_permittedCallers =
     {
         "SweepUnlessDisabled",
+        SweepMethod,
     };
 
+    /// <summary>Build output, which holds generated sources this census has no business reading.</summary>
+    private static readonly string[] s_excludedDirectories = { "bin", "obj" };
+
     /// <summary>
-    /// Every syntactic call to the live sweep sits in a member this census names.
+    /// Every syntactic reference to the live sweep sits in a member this census names.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <strong>Vacuity-guarded twice.</strong> "No offending call site" is also what a census that
-    /// found no FILES reports, and what one that found no CALLS AT ALL reports - the second being
-    /// reachable by renaming the method, which would leave this gate passing over a sweep it no
-    /// longer watches. Both are asserted non-zero before the real check.
+    /// <strong>REFERENCES, not just invocations, and the difference is the whole point.</strong>
+    /// The fixture's seam takes a <c>Func&lt;SweepReport&gt;</c>, so
+    /// <c>sweep: DrillHostSweep.SweepLiveProcesses</c> - a method group, never syntactically an
+    /// invocation - hands a drill the live killer just as effectively as calling it. A census that
+    /// matched only <c>InvocationExpression</c> would watch the door that was used last time while
+    /// leaving the adjacent one open. Any identifier naming the method counts.
+    /// </para>
+    /// <para>
+    /// <strong>The scope is EVERY .cs file in this project, not a whitelist.</strong> The first
+    /// version named two files, which encoded an assumption the gate exists to disprove: that the
+    /// next crossing will happen where the last one did. Both crossings so far came through doors
+    /// nobody had listed. Parsing the whole project costs well under a second and cannot be
+    /// out-of-date.
+    /// </para>
+    /// <para>
+    /// <strong>Vacuity-guarded twice.</strong> "No offending reference" is also what a census that
+    /// found no FILES reports, and what one that found no REFERENCES AT ALL reports - the second
+    /// being reachable by renaming the method, which would leave this gate passing over a sweep it
+    /// no longer watches. Both are asserted before the real check.
     /// </para>
     /// </remarks>
     [Fact]
-    public void TheLiveSweep_IsCalledOnlyFromTheFixturesProductionPath()
+    public void TheLiveSweep_IsNamedOnlyByTheFixturesProductionPath()
     {
         var files = CensusFiles();
 
-        Assert.Equal(s_censusFiles.Length, files.Count);
+        Assert.True(
+            files.Count > MinimumCensusFiles,
+            $"This census found only {files.Count} .cs file(s) under '{ProjectDirectory()}', which "
+            + $"is below the floor of {MinimumCensusFiles}. It has almost certainly resolved the "
+            + "wrong directory rather than found a small project - and a census over no files "
+            + "passes for free.");
 
-        var callSites = files.SelectMany(FindCallSites).ToList();
+        var references = files.SelectMany(FindReferences).ToList();
 
         Assert.True(
-            callSites.Count > 0,
-            $"This census found no call to '{SweepMethod}' in "
-            + string.Join(" or ", s_censusFiles)
-            + ". Either the method was renamed - in which case rename it here too, because this "
-            + "gate is now watching nothing - or the sweep was removed and this file should go "
-            + "with it.");
+            references.Count > 0,
+            $"This census found no reference to '{SweepMethod}' anywhere in the project. Either "
+            + "the method was renamed - in which case rename it here too, because this gate is now "
+            + "watching nothing - or the sweep was removed and this file should go with it.");
 
-        var offenders = callSites
+        var offenders = references
             .Where(site => !s_permittedCallers.Contains(site.Member, StringComparer.Ordinal))
             .ToList();
 
         Assert.True(
             offenders.Count == 0,
             $"'{SweepMethod}' walks the live process table and KILLS what it finds under this "
-            + "repository's CLI build output. It may only be called from "
+            + "repository's CLI build output. It may only be NAMED - called, or passed as a method "
+            + "group - from "
             + string.Join(" or ", s_permittedCallers)
-            + ", so that the fast `requires!=docker` lane - which the guard's own untraited drills "
-            + "run in - cannot reach it. New call site(s):\n"
+            + ", so that the fast `requires!=docker` lane, which the guard's own untraited drills "
+            + "run in, cannot reach it. New reference(s):\n"
             + string.Join("\n", offenders.Select(site => $"  {site.File}({site.Line}): {site.Member}"))
             + "\n\nIf a drill needs an exit sweep, inject a stub through the fixture's `sweep` "
             + "parameter. If production code needs one, add the member here and say why it can "
             + "never run outside the docker lane.");
     }
 
-    /// <summary>One syntactic call to the swept method, and the member it sits in.</summary>
+    /// <summary>One syntactic reference to the swept method, and the member it sits in.</summary>
     private sealed record CallSite(string File, int Line, string Member);
 
-    private static List<string> CensusFiles()
-    {
-        var directory = Path.GetDirectoryName(ThisFile())!;
-
-        return s_censusFiles
-            .Select(name => Path.Combine(directory, name))
-            .Where(File.Exists)
+    /// <summary>Every <c>.cs</c> file in this test project, excluding build output.</summary>
+    private static List<string> CensusFiles() =>
+        Directory
+            .EnumerateFiles(ProjectDirectory(), "*.cs", SearchOption.AllDirectories)
+            .Where(path => !IsUnderExcludedDirectory(path))
             .ToList();
+
+    private static bool IsUnderExcludedDirectory(string path)
+    {
+        var relative = Path.GetRelativePath(ProjectDirectory(), path);
+        var segments = relative.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+        return segments.Any(segment => s_excludedDirectories.Contains(segment, StringComparer.OrdinalIgnoreCase));
     }
 
     /// <summary>
-    /// This test file's own directory, resolved from the compiled assembly rather than from the
+    /// This test project's directory, resolved from the compiled assembly rather than from the
     /// working directory, which <c>dotnet test</c> does not guarantee.
     /// </summary>
-    private static string ThisFile()
+    private static string ProjectDirectory()
     {
         var assemblyDirectory = Path.GetDirectoryName(
             typeof(DrillHostSweepCallSiteCensusTests).Assembly.Location)!;
 
         // bin/<cfg>/net8.0 -> the project directory.
-        return Path.GetFullPath(Path.Combine(
-            assemblyDirectory, "..", "..", "..", nameof(DrillHostSweepCallSiteCensusTests) + ".cs"));
+        return Path.GetFullPath(Path.Combine(assemblyDirectory, "..", "..", ".."));
     }
 
-    private static IEnumerable<CallSite> FindCallSites(string path)
+    /// <summary>
+    /// Every identifier in one file that names the swept method, invoked or not.
+    /// </summary>
+    /// <remarks>
+    /// <c>DescendantNodes</c> does not descend into trivia, so a <c>&lt;see cref="..."/&gt;</c> in
+    /// documentation and the method's name in a comment are invisible here by construction - which
+    /// is the reason this is Roslyn rather than a regex, given how often this file's own prose
+    /// names the method.
+    /// </remarks>
+    private static IEnumerable<CallSite> FindReferences(string path)
     {
         var text = File.ReadAllText(path);
         var tree = CSharpSyntaxTree.ParseText(text, path: path);
         var root = tree.GetRoot();
 
-        foreach (var invocation in root.DescendantNodes().OfType<InvocationExpressionSyntax>())
+        foreach (var node in root.DescendantNodes(descendIntoTrivia: false))
         {
-            if (NameOf(invocation.Expression) != SweepMethod)
+            if (!NamesTheSweep(node))
             {
                 continue;
             }
 
-            var line = invocation.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
-            yield return new CallSite(Path.GetFileName(path), line, EnclosingMember(invocation));
+            var line = node.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+            yield return new CallSite(Path.GetFileName(path), line, EnclosingMember(node));
         }
     }
 
-    /// <summary>The invoked name, whether written bare or qualified.</summary>
-    private static string? NameOf(ExpressionSyntax expression) => expression switch
+    /// <summary>
+    /// Whether this node names the swept method, counting a qualified reference exactly once.
+    /// </summary>
+    /// <remarks>
+    /// <c>DrillHostSweep.SweepLiveProcesses</c> is a <see cref="MemberAccessExpressionSyntax"/>
+    /// whose <c>Name</c> is itself an <see cref="IdentifierNameSyntax"/> carrying the same text, so
+    /// a naive match reports one reference twice. The identifier is therefore skipped when it is
+    /// the name half of a member access that has already been counted.
+    /// </remarks>
+    private static bool NamesTheSweep(SyntaxNode node)
     {
-        IdentifierNameSyntax identifier => identifier.Identifier.ValueText,
-        MemberAccessExpressionSyntax member => member.Name.Identifier.ValueText,
-        _ => null,
-    };
+        switch (node)
+        {
+            case MemberAccessExpressionSyntax member:
+                return member.Name.Identifier.ValueText == SweepMethod;
+
+            case IdentifierNameSyntax identifier:
+                if (identifier.Identifier.ValueText != SweepMethod)
+                {
+                    return false;
+                }
+
+                // The name half of a qualified reference; the member access above counted it.
+                var isNameOfAMemberAccess =
+                    identifier.Parent is MemberAccessExpressionSyntax parent
+                    && parent.Name == identifier;
+
+                return !isNameOfAMemberAccess;
+
+            default:
+                return false;
+        }
+    }
 
     /// <summary>
     /// The method, constructor or property the call sits in - what the permitted list names.

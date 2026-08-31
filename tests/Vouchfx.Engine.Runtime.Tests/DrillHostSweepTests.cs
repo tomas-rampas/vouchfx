@@ -618,7 +618,10 @@ public sealed class DrillHostSweepTests : IDisposable
         var fixture = new DrillHostSweepFixture(
             EmptyReport(),
             ScratchLogPath(),
-            sweep: () => throw new InvalidOperationException("the process table was unreadable"));
+            // ArgumentException on purpose: it is OUTSIDE the set the process-table walk itself can
+            // raise, so this row pins the disposal catch as total rather than as a list. A narrow
+            // filter here would let this escape and redden the collection.
+            sweep: () => throw new ArgumentException("the process table was unreadable"));
 
         fixture.Dispose();
 
