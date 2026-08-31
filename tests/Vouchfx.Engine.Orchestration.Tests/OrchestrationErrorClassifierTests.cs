@@ -879,4 +879,166 @@ public sealed class OrchestrationErrorClassifierTests
         Assert.DoesNotContain("registryHost", line, StringComparison.Ordinal);
         Assert.DoesNotContain("authStatus", line, StringComparison.Ordinal);
     }
+
+    // -----------------------------------------------------------------------
+    // #420 enrichment: the known-fault note and the flight-recorder capture
+    // -----------------------------------------------------------------------
+
+    [Theory]
+    [InlineData("Service mtls-broker-https should have valid address at this point")]
+    [InlineData("Unable to allocate a network port for service 'kafka-service-broker'")]
+    public void Classify_WithAKnownFaultSignature_AppendsTheNoteWithoutMovingTheKind(string message)
+    {
+        // Arrange — the two strings #420 presents: the throw that reddens the run, and the
+        // warning that precedes it.
+        var ex = new InvalidDataException(message);
+
+        // Act
+        var info = OrchestrationErrorClassifier.Classify(ex, imageRef: null, resourceName: "startup");
+
+        // Assert — the note is appended, and it names the CAUSE rather than describing the
+        // symptom. The note originally called the fault transient and advised a re-run; the
+        // cause was later established as a deterministic state-store ownership refusal, so that
+        // advice would send an operator round a two-minute loop that never converges. The
+        // assertions below pin the corrected content on whichever platform this runs.
+        // Pinned against the note the running platform actually emits, not against a phrase
+        // hand-copied out of one of them. The hand-copied form shipped and went red on the Linux
+        // CI leg: it asserted "state store", which the Windows note contains and the
+        // other-platform note spells "state-store". Every gate here runs on Windows, so only CI
+        // could have caught it — and asserting the whole note makes the class of mistake
+        // unavailable rather than fixing this one instance of it.
+        Assert.Contains("issue 420", info.Detail, StringComparison.Ordinal);
+        Assert.Contains(
+            DcpCapture.KnownFaultNote(OperatingSystem.IsWindows()),
+            info.Detail,
+            StringComparison.Ordinal);
+        Assert.Contains(message, info.Detail, StringComparison.Ordinal);
+
+        // ... and the classification itself does not move. Provision is already the right kind
+        // for an orchestrator that could not provision a host port; a diagnostic that changed the
+        // diagnosis would be a worse trade than one that did not exist.
+        Assert.Equal(OrchestrationErrorKind.Provision, info.Kind);
+        Assert.Null(info.AuthStatus);
+    }
+
+    /// <summary>
+    /// Both known-fault notes carry what an operator needs, checked on ONE machine.
+    /// </summary>
+    /// <remarks>
+    /// The row above can only ever exercise the note for the platform it runs on, so on a Windows
+    /// developer machine the other-platform note is never read — which is exactly how a phrase
+    /// that appears in one note and not the other reached CI. This row takes both constants
+    /// directly, so a divergence between them is caught wherever the suite runs.
+    /// </remarks>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void BothKnownFaultNotes_NameTheIssueAndTheStateStore(bool isWindows)
+    {
+        var note = DcpCapture.KnownFaultNote(isWindows);
+
+        Assert.Contains("issue 420", note, StringComparison.Ordinal);
+
+        // Spelling-insensitive on the one word the two notes legitimately differ on: the Windows
+        // note says "state store" (a thing DCP opens), the other says "state-store directory"
+        // (a compound adjective). Both are correct English; asserting the CONCEPT rather than
+        // either spelling is what keeps this row from re-creating the bug it exists to prevent.
+        Assert.Contains(
+            "state", note.Replace("-", " ", StringComparison.Ordinal), StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(
+            "state store", note.Replace("-", " ", StringComparison.Ordinal), StringComparison.OrdinalIgnoreCase);
+
+        // ASCII, because it reaches the terminal (issue 379).
+        Assert.All(note, c => Assert.InRange(c, ' ', '~'));
+    }
+
+    [Theory]
+    [InlineData("Stopped waiting for resource 'db' to become healthy because it failed to start.")]
+    [InlineData("failed to pull image nonexistent.invalid/nope:latest: manifest unknown")]
+    [InlineData("connection refused")]
+    public void Classify_WithoutTheSignature_LeavesTheDetailExactlyAsItWas(string message)
+    {
+        // The enrichment must be invisible to every classification this repository made before
+        // the recorder existed - which is every message that carries neither signature nor an
+        // attached capture.
+        var ex = new InvalidOperationException(message);
+
+        var info = OrchestrationErrorClassifier.Classify(ex, imageRef: null, resourceName: "startup");
+
+        Assert.Equal(message, info.Detail);
+        Assert.DoesNotContain("issue 420", info.Detail, StringComparison.Ordinal);
+        Assert.DoesNotContain("dcp-capture", info.Detail, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Classify_WithAnAttachedCapture_CarriesThePathAndTailIntoTheDetail()
+    {
+        // On a CI runner the filesystem is discarded when the job ends, so the capture FILE may
+        // never be read by anyone. What reaches the Environment-error detail is what survives in
+        // the job log - so the path and a bounded tail have to be here, not only on disk.
+        var ex = new InvalidDataException(
+            "Service broker-https should have valid address at this point");
+        DcpCapture.Attach(
+            ex,
+            "dcp-capture: C:\\Users\\x\\AppData\\Local\\vouchfx\\dcp-capture-20260831T120000000Z.log "
+            + "| dcp-tail: warn Unable to allocate a network port for service 'broker-https'");
+
+        var info = OrchestrationErrorClassifier.Classify(ex, imageRef: null, resourceName: "startup");
+
+        Assert.Contains("dcp-capture-20260831T120000000Z.log", info.Detail, StringComparison.Ordinal);
+        Assert.Contains("Unable to allocate a network port", info.Detail, StringComparison.Ordinal);
+        Assert.Contains("issue 420", info.Detail, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Classify_EnrichedDetail_StaysBounded_AndTheAnnexHalfIsPrintableAscii()
+    {
+        // The 256-character message bound still applies to the MESSAGE, unchanged and at the same
+        // point; what follows it is engine-authored and separately bounded. This pins the
+        // composition rather than either half, so neither bound can quietly grow.
+        var ex = new InvalidDataException(
+            new string('m', 4000) + " should have valid address at this point");
+        DcpCapture.Attach(ex, "dcp-capture: " + new string('p', 4000));
+
+        var info = OrchestrationErrorClassifier.Classify(ex, imageRef: null, resourceName: "startup");
+
+        const int MessageBound = 256 + 3;
+        const int Separator = 3;
+        var bound = MessageBound + Separator + DcpCapture.MaxAnnexLength + 3;
+
+        Assert.True(
+            info.Detail.Length <= bound,
+            $"enriched detail is not bounded: {info.Detail.Length} > {bound}");
+
+        // ASCII is asserted over the ANNEX ONLY, and the row is named for that, because the
+        // engine guarantees no more. BuildDetail collapses line endings and truncates; it does
+        // NOT ASCII-fold, so a non-ASCII exception MESSAGE reaches Detail intact. An earlier
+        // version asserted over the whole of Detail and passed only because this fixture's
+        // message is 4000 'm' characters - a green test standing for a guarantee the code does
+        // not make, which is worse than an absent one because it gets cited.
+        var annex = DcpCapture.BuildAnnex(ex.Message, ex, System.OperatingSystem.IsWindows());
+        Assert.NotEmpty(annex);
+        Assert.All(annex, c => Assert.InRange(c, ' ', '~'));
+        Assert.EndsWith(annex, info.Detail, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Classify_DoesNotAsciiFoldTheExceptionMessage_WhichIsWhyTheAsciiClaimIsAnnexOnly()
+    {
+        // The complement, stated as a positive so nobody re-broadens the row above by mistake:
+        // a non-ASCII message survives into Detail verbatim. Sanitising it here would be a real
+        // change to what the classifier reports and is deliberately NOT made - the recorder's own
+        // capture path folds to ASCII at CAPTURE time, which is where the console-codepage risk
+        // documented in DcpFlightEntry actually lives.
+        // Built from a char code rather than written literally, so this source file stays pure
+        // ASCII on disk and no editor, patch tool or checkout setting can silently re-encode the
+        // one character the row is about. U+00E9 is LATIN SMALL LETTER E WITH ACUTE.
+        var nonAscii = "caf" + (char)0xE9 + "-db";
+
+        var ex = new InvalidDataException($"resource '{nonAscii}' failed to start");
+
+        var info = OrchestrationErrorClassifier.Classify(ex, imageRef: null, resourceName: "caf");
+
+        Assert.Contains(nonAscii, info.Detail, StringComparison.Ordinal);
+    }
 }

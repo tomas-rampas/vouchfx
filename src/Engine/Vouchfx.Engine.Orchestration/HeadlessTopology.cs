@@ -53,9 +53,14 @@ namespace Vouchfx.Engine.Orchestration;
 public sealed class HeadlessTopology : IAsyncDisposable
 {
     private readonly DistributedApplication _app;
+    private readonly DcpFlightRecorder? _recorder;
     private bool _disposed;
 
-    private HeadlessTopology(DistributedApplication app) => _app = app;
+    private HeadlessTopology(DistributedApplication app, DcpFlightRecorder? recorder)
+    {
+        _app = app;
+        _recorder = recorder;
+    }
 
     /// <summary>
     /// Gets the underlying <see cref="DistributedApplication"/> instance.
@@ -114,34 +119,118 @@ public sealed class HeadlessTopology : IAsyncDisposable
         // is the only teardown path in the box that does not leak.
         builder.Configuration["DcpPublisher:WaitForResourceCleanup"] = "true";
 
-        // Suppress HealthChecks log noise below Warning (§4 hard invariant), and Aspire's
-        // own lifecycle banners: the Aspire.Hosting.DistributedApplication category carries
-        // only the version banner, "Distributed application starting/started", and
-        // "Application host directory is: <path>" — where the path is the apphostprojectpath
-        // AssemblyMetadata baked at BUILD time, i.e. the release build machine's directory
-        // (/home/runner/work/...) on every customer run of the packaged tool. Nothing in the
-        // engine reads AppHostDirectory (scenario-relative paths resolve against the suite's
-        // own directory), so the line is pure misleading noise. Warning+ still passes.
+        // The #420 flight recorder, armed for the duration of THIS start and nothing else. Null
+        // only when VOUCHFX_DCP_CAPTURE=0 turned it off, in which case no provider and no filter
+        // rule are registered at all. See DcpFlightRecorder for why it is armed by default: the
+        // fault it captures clears before anyone can switch a diagnostic on.
+        var recorder = DcpFlightRecorder.CreateUnlessDisabled();
+
+        // Suppress HealthChecks log noise below Warning (§4 hard invariant), and Aspire's own
+        // BELOW-WARNING lifecycle banners on the Aspire.Hosting.DistributedApplication category.
+        //
+        // Stated as a property, not as a roster, and the roster this comment used to carry is
+        // exactly why: it enumerated the category's contents as "only the version banner,
+        // starting/started, and Application host directory", and THIS change disproved it — the
+        // "Unable to allocate a network port" line #420 turns on is a WARNING on that same
+        // category, measured off a live capture. An enumeration nothing checks is a claim of
+        // completeness, and this one was already false when it was written.
+        //
+        // The property the filter actually relies on: everything that category emits BELOW
+        // Warning is lifecycle chatter with no diagnostic value here, and one item of it is
+        // actively misleading — "Application host directory is: <path>" prints the
+        // apphostprojectpath AssemblyMetadata baked at BUILD time, i.e. the release build
+        // machine's directory (/home/runner/work/...) on every customer run of the packaged tool,
+        // while nothing in the engine reads AppHostDirectory (scenario-relative paths resolve
+        // against the suite's own directory). Warning and above still passes, which is what keeps
+        // the port-allocation warning visible.
         // Aspire.Hosting.Dcp.DcpHost is deliberately NOT filtered: its "Starting DCP with
         // arguments" line shows THIS machine's resolved DCP path — primary diagnostic
         // evidence for the DCP-path support flow (docs/kb/dcp-orchestrator-portability.md).
-        builder.Services.AddLogging(lb => lb
-            .AddFilter(
-                "Microsoft.Extensions.Diagnostics.HealthChecks",
-                LogLevel.Warning)
-            .AddFilter(
-                "Aspire.Hosting.DistributedApplication",
-                LogLevel.Warning));
+        //
+        // BESIDE those two suppressions, and deliberately not instead of them, sits the #420
+        // flight recorder. The two do opposite jobs and must not be confused: the filters above
+        // decide what a HUMAN sees on the console and are unchanged by anything below, while the
+        // recorder is a private, in-memory, bounded sink that no console reads. Its own rules are
+        // PROVIDER-SCOPED, so the console keeps exactly today's levels — DcpFlightRecorder.Register
+        // holds those three rules and why each one is there.
+        builder.Services.AddLogging(lb =>
+        {
+            lb.AddFilter(
+                    "Microsoft.Extensions.Diagnostics.HealthChecks",
+                    LogLevel.Warning)
+                .AddFilter(
+                    "Aspire.Hosting.DistributedApplication",
+                    LogLevel.Warning);
 
-        configureResources?.Invoke(builder);
+            if (recorder is not null)
+            {
+                DcpFlightRecorder.Register(lb, recorder);
+            }
+        });
 
-        var app = builder.Build();
+        DistributedApplication app;
+        try
+        {
+            configureResources?.Invoke(builder);
+            app = builder.Build();
+        }
+        catch
+        {
+            // Drop the recorder rather than flush it, and the distinction is not fussiness: DCP
+            // is not launched until StartAsync, so a failure here — an authoring fault raised
+            // from inside the configure closure, a malformed resource — cannot be the fault this
+            // recorder exists to capture, and there is nothing DCP-related in the buffer to
+            // write. The exception leaves unchanged and untyped-over, which is what lets
+            // SuiteTopology's own TopologyAuthoringException catch still see it.
+            recorder?.Dispose();
+            throw;
+        }
+
         try
         {
             await app.StartAsync(cancellationToken).ConfigureAwait(false);
         }
-        catch
+        catch (Exception ex)
         {
+            // Flush the #420 flight recorder BEFORE anything else on this path. Disposing the
+            // application logs further entries and can itself fail, and the exception being
+            // carried is the one the classifier will read: the capture must be written and
+            // annotated onto THIS instance while it is still the failure in hand.
+            //
+            // FlushOnFailureAsync never throws and always drops the recorder, so this line cannot
+            // change which exception leaves this method, only what evidence travels with it.
+            //
+            // NOT on a cancellation the CALLER asked for. A run stopped by Ctrl-C or by a
+            // caller's token is not a fault worth a capture file, and writing one would spend a
+            // retention slot that a real occurrence of #420 may need. A health-gate timeout is
+            // also an OperationCanceledException, but its token is the gate's own — hence the
+            // test on the caller's token specifically, not on the exception type.
+            //
+            // KNOWN LIMIT, stated because the sentence above overclaims on its own: the test is
+            // on WHATEVER TOKEN THIS METHOD WAS HANDED, which is only the same thing as "the
+            // caller asked to stop" when that token carries no deadline of its own. It does not
+            // for the production path — SuiteTopology forwards the runner's token untouched, so
+            // the only way it trips there is a real user cancellation. It DOES for StubTopology,
+            // which hands over a linked token with CancelAfter(startupTimeout): a start that
+            // times out there suppresses the capture, and a start timeout is the #420 shape.
+            //
+            // Left as a documented limit rather than fixed, deliberately. Fixing it properly
+            // means a SECOND CancellationToken parameter on this public method — one for
+            // "deadline", one for "the user asked to stop" — which is API surface and CA1068
+            // ordering churn for a gap that reaches only the in-repo stub fixture. If a
+            // production caller ever passes a deadline-bearing token here, this becomes a real
+            // defect and the parameter is the fix; that is the trigger to watch for.
+            if (recorder is not null && !cancellationToken.IsCancellationRequested)
+            {
+                await DcpCapture
+                    .FlushOnFailureAsync(recorder, ex, DateTimeOffset.UtcNow)
+                    .ConfigureAwait(false);
+            }
+            else
+            {
+                recorder?.Dispose();
+            }
+
             // StartAsync can fail with an Environment error (image-pull failure, DCP crash, partial
             // start).  The DistributedApplication is IAsyncDisposable and already holds resources
             // that must be released; dispose it before re-throwing so containers do not leak.
@@ -149,7 +238,15 @@ public sealed class HeadlessTopology : IAsyncDisposable
             throw;
         }
 
-        return new HeadlessTopology(app);
+        // StartAsync returned. The recorder is deliberately STILL ARMED and is handed to the
+        // returned topology — see the class remarks and DcpFlightRecorder's header for why the
+        // window has to outlive this method: the #420 transcript's `fail:` line is a console
+        // level token, so Aspire may be catching that throw internally and letting StartAsync
+        // return, leaving the fault to surface at a health gate. Dropping here would buffer the
+        // golden evidence and then discard it on exactly the fault this exists to capture.
+        // SuiteTopology and StubTopology own the far end of the window; a caller that uses
+        // HeadlessTopology directly drops it at DisposeAsync.
+        return new HeadlessTopology(app, recorder);
     }
 
     /// <summary>
@@ -264,6 +361,38 @@ public sealed class HeadlessTopology : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Writes the #420 diagnostic capture for <paramref name="failure"/> and ends this
+    /// topology's arming window. Safe to call more than once; the second call is a no-op.
+    /// </summary>
+    /// <param name="failure">
+    /// The exception about to be classified. The capture summary is attached to THIS instance,
+    /// so the call has to happen before <c>OrchestrationErrorClassifier.Classify</c> reads it if
+    /// the evidence is to reach the Environment-error detail. Calling it later still writes the
+    /// file, which is why the outer catch calls it too as a net.
+    /// </param>
+    /// <remarks>
+    /// Never throws, and never changes which exception the caller goes on to rethrow.
+    /// </remarks>
+    internal Task FlushDiagnosticsAsync(Exception failure)
+    {
+        ArgumentNullException.ThrowIfNull(failure);
+
+        return _recorder is null
+            ? Task.CompletedTask
+            : DcpCapture.FlushOnFailureAsync(_recorder, failure, DateTimeOffset.UtcNow);
+    }
+
+    /// <summary>
+    /// Ends the arming window without writing anything: the topology is up and ready, so the
+    /// buffered DCP traffic describes a start that worked and is of no use to anyone.
+    /// </summary>
+    /// <remarks>
+    /// The caller that knows the topology is READY owns this call, which is not the same moment
+    /// as StartAsync returning — see StartAsync's own remarks. Idempotent.
+    /// </remarks>
+    internal void DropDiagnostics() => _recorder?.Dispose();
+
     /// <inheritdoc />
     public async ValueTask DisposeAsync()
     {
@@ -273,6 +402,13 @@ public sealed class HeadlessTopology : IAsyncDisposable
         }
 
         _disposed = true;
+
+        // Last line of defence for the arming window. A caller that never reported the topology
+        // ready and never reported a failure — a direct HeadlessTopology user, or a path that
+        // threw somewhere neither catch covers — still ends the window here, DROPPING rather
+        // than writing: teardown is not evidence of a fault, and a capture written from here
+        // would carry no failure to attach itself to.
+        DropDiagnostics();
 
         // This is the single teardown chokepoint for the engine: SuiteTopology and StubTopology
         // both delegate their DisposeAsync to this HeadlessTopology, so the fix below covers every

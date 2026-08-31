@@ -6,6 +6,7 @@ This guide covers real failure modes, what they mean, and how to fix them.
 - [Docker is not running or not reachable](#docker-is-not-running-or-not-reachable)
 - [Transient image pull corruption: "short read" or "unexpected EOF"](#transient-image-pull-corruption-short-read-or-unexpected-eof)
 - [EnvironmentError: HealthGate timeout of 00:00:20](#environmenterror-healthgate-timeout-of-000020)
+- [Every port-publishing container fails at startup ("should have valid address at this point")](#every-port-publishing-container-fails-at-startup-should-have-valid-address-at-this-point)
 - [Private registry and air-gapped operation](#private-registry-and-air-gapped-operation)
 - [Discovery root does not exist (dotnet run path resolution gotcha)](#discovery-root-does-not-exist-dotnet-run-path-resolution-gotcha)
 - [Script body and document size limits](#script-body-and-document-size-limits)
@@ -190,6 +191,86 @@ This is **NOT a vouchfx configuration knob** (there is no `--health-check-timeou
 5. **In CI, increase runner capacity or use a faster image pull network.** If your CI runner has constrained network or disk bandwidth, image pulls take longer. Use a faster runner if available, or pre-cache the image in the runner's local Docker registry.
 
 **Why this happens:** Aspire's Distributed Cloud Provisioning (DCP) watches each resource and gives it ~20 seconds to become healthy. This is a safety net to prevent tests from hanging indefinitely. If multiple resources start concurrently, they compete for I/O (disk, network), and a large image pull can exceed 20 seconds. Pre-warming the cache is the most reliable fix.
+
+---
+
+## Every port-publishing container fails at startup ("should have valid address at this point")
+
+**Symptom:** the topology never comes up, and the logs carry one or both of these lines:
+
+```
+warn: Unable to allocate a network port for service 'my-broker-https'; service may be unreachable
+      and its clients may not work properly.
+fail: System.IO.InvalidDataException: Service my-broker-https should have valid address at this point
+      at Aspire.Hosting.Dcp.DcpModelUtilities.TryAddLocalhostAllocatedEndpoint(...)
+```
+
+Every service or dependency that publishes a container port fails; a suite that publishes none still runs, and a plain `docker run -p 0:80 nginx:alpine` still publishes a port perfectly well.
+
+**What it means — and the message points at the wrong layer.** Nothing is wrong with ports. DCP's **controller host fails to start**: it refuses its state-store directory because that directory's owner does not match the current user or token owner, and exits with code 1 about 130 ms in. With the controller dead nothing allocates ports, so Aspire waits for a port allocation that will never arrive and gives up on a fixed 60-second timeout — twice, which is the constant ~2 minutes you wait before the throw. `Unable to allocate a network port` is Aspire's *downstream* wording for "the allocation never came", not a description of the fault. It is **not a defect in your suite**, **not port exhaustion**, and **not transient**: re-running will fail identically. Full evidence in [issue #420](https://github.com/tomas-rampas/vouchfx/issues/420).
+
+**The fix (Windows):**
+
+1. Look in your `~/.dcp` folder. It holds one state-store directory per privilege level: `state` for ordinary runs and **`state.elevated` for elevated ones**.
+2. Check the owner of each (`Get-Acl ~\.dcp\state.elevated | Select-Object Owner`). The fault is one of them being owned by somebody other than you — `BUILTIN\Administrators` rather than your account, in the case that was diagnosed.
+3. Rename or delete the offending directory, **then run from a non-elevated shell**. Verified: renaming it aside took the previously-failing suite from a 2-minute failure to green in 23 seconds on the same host.
+
+**Deleting it is not enough on its own if you keep running elevated.** Measured on the same host afterwards: an elevated run recreated `state.elevated` and Windows gave the new directory to `BUILTIN\Administrators` rather than to the running account, so DCP's own ownership check refused it again and the fault returned immediately. If you must run elevated, take ownership of `state.elevated` after DCP creates it rather than expecting a delete to stick:
+
+```powershell
+takeown /f "$env:USERPROFILE\.dcp\state.elevated" /r /d Y
+```
+
+Use `$env:USERPROFILE`, not `%USERPROFILE%`: PowerShell does not expand cmd-style `%VAR%` in the arguments it passes to a native executable, so `takeown` would receive the eleven literal characters and fail. `/r` recurses; `/d Y` pre-answers the per-directory prompt that recursion raises. From `cmd.exe` the `%USERPROFILE%` form is correct and the quotes are unnecessary.
+
+**Epistemic note, since this page labels the rest:** the *diagnosis* is measured — the ownership refusal, DCP's exit code, the 60-second waits, and the fact that an elevated re-run recreates the directory under `BUILTIN\Administrators`. The `takeown` *remedy* is **inferred** from that mechanism, not executed: what was verified end to end is renaming the directory aside and running non-elevated, which took the failing suite to green in 23 seconds. If you run the `takeown` form, please say on [issue #420](https://github.com/tomas-rampas/vouchfx/issues/420) whether it held.
+
+**Why it looked intermittent.** The two state stores are per-privilege-level, so an elevated shell and an ordinary one use different directories — only one of which may be broken. A fault that follows *how you happened to launch the terminal* looks like it comes and goes on its own. The mechanism is measured (the directory selection and the ownership of the recreated directory were both observed directly); attributing the *earlier* sessions' apparent intermittency to it is **inferred**, because nobody recorded whether those shells were elevated.
+
+`winnat` and Docker Desktop restarts were the previously-suggested remedies. They are not required and do not address this cause; skip them.
+
+**The engine captures the diagnostics for you** — and that is how this was diagnosed. Raising DCP's log level after the fault appears had failed twice, because the fault stopped reproducing before the instrumented run started. So the capture is always armed instead. Whenever a topology **fails to become ready**, vouchfx writes the DCP log traffic it buffered during that start — including the `Debug`-level line quoted above, which never reaches the console — to a per-user file:
+
+| Platform | Capture file |
+| --- | --- |
+| Windows | `%LOCALAPPDATA%\vouchfx\dcp-capture-<utc-timestamp>.log` |
+| Linux, macOS | `~/.local/share/vouchfx/dcp-capture-<utc-timestamp>.log` |
+
+On **Linux** the root follows `XDG_DATA_HOME` when you have set it, exactly as every other application using that convention does; `~/.local/share` is the fallback, and is where the file lands on an unconfigured desktop or CI runner. Whether macOS honours `XDG_DATA_HOME` here is **unverified** — the engine asks .NET for the per-user local application data directory and does not implement the rule itself, and no macOS host was available to measure. `~/.local/share` is the expected location there either way; if you have `XDG_DATA_HOME` set on macOS and find the capture somewhere else, that is worth reporting.
+
+The twelve most recent captures are kept; older ones are pruned automatically. Twelve rather than a handful because #420's last occurrence was eight consecutive failures in one session, and retention below that would delete the very captures the session produced.
+
+The capture is written whenever a topology **fails to become ready** — the start itself, the health gates that follow it, service discovery, the secured-endpoint probe and the seed — because this fault can surface at any of them. On a platform with no per-user directory nothing is written and the Environment error says so rather than falling back to a shared temporary directory.
+
+**The reported Environment error names the capture file on most of those paths, but not on all of them, and it is worth knowing which.** When the failure is one the engine classifies itself — the topology start, a health gate, or service discovery — the error names the file as a platform token and quotes the last few warning lines inline, so the evidence survives in a CI log even when the runner's filesystem does not. A failure in the **secured-endpoint probe** or the **seed** reports its own message instead: those two build their error where they raise it, before the capture is written, so the file exists but nothing in the error points at it. If a run fails at either and you want the DCP traffic, look in the directory above — the newest capture is that run's.
+
+**On CI, redirect the captures or you will never see them.** A build agent's filesystem is discarded when the job ends, so a capture written to the per-user directory is destroyed unread — and CI is exactly where this fault is hardest to reproduce. Set `VOUCHFX_DCP_CAPTURE_DIR` to a directory inside the workspace, **and add an upload step for it** — the reusable `vouchfx-run.yml` workflow uploads `results.xml` and `report.html` only, so captures are not carried out unless you upload them yourself:
+
+```yaml
+env:
+  VOUCHFX_DCP_CAPTURE_DIR: ${{ github.workspace }}/vouchfx-captures
+
+# ... and, after the run:
+- uses: actions/upload-artifact@v4
+  if: always()
+  with:
+    name: vouchfx-dcp-captures
+    path: vouchfx-captures/
+```
+
+**A CI artefact is as public as an issue comment.** Actions does not mask secrets inside uploaded artefact *contents*, and on a public repository anyone can download them. Read the section below on what a capture can contain before uploading one from a job whose suite routes any credential in via `${env:NAME}`.
+
+The path is used exactly as given (no `vouchfx` subdirectory is appended) and must be **absolute** — a relative value is refused rather than resolved against the working directory, and the Environment error says so rather than quietly writing to the per-user directory instead. Note that a directory you choose keeps the permissions it already has — vouchfx narrows permissions only on a directory it creates itself, and never on one you already had. The owner-only default applies to the per-user location.
+
+When the capture shows this specific refusal, the reported **Environment error** also carries the one-line cause and remedy inline, so you do not have to open the file to know what to do. If it does not — a different DCP failure, or a reworded one — the file is where the answer will be.
+
+**If you meet a variant of this, please attach the capture to [issue #420](https://github.com/tomas-rampas/vouchfx/issues/420) — with a skim first.** A capture is a verbatim record of what Aspire logged while the topology was coming up, which includes container specifications and therefore container environment variables. Concretely, it can hold Aspire's **generated per-run passwords** for managed dependencies (throwaway, valid only for that run's container and destroyed with it), the **fixed local test credentials** your suite declares, any **host environment value you routed in** with `${env:NAME}`, and **absolute paths on your machine**. It cannot hold a `${secret:...}` value: the engine refuses that reference outright in both `services[].env` and `dependencies[].env`, so no resolved secret ever reaches a container specification for this layer to log.
+
+Everything in that list is already visible to `docker inspect` for the same containers on the same machine, so the file adds no local exposure you did not already have — but attaching it to a public issue publishes it, which is why it is worth a skim rather than a warning to keep it to yourself.
+
+The warning lines quoted inline in the Environment error are a separate question. They are part of that error's detail and pass through the engine's ordinary secret-redaction path, but they arrive there truncated and with any non-ASCII character replaced, and that redaction matches values exactly — so treat the inline tail as **best-effort** redacted rather than guaranteed. The capture file is not redacted at all.
+
+A **successful** start writes nothing at all: the buffer is discarded the moment the topology is up, so a healthy run leaves no file and produces no extra output. If you need to switch the recorder off entirely, set `VOUCHFX_DCP_CAPTURE=0` (that exact value; anything else leaves it armed).
 
 ---
 

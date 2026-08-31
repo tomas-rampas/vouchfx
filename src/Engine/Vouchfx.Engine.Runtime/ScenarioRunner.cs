@@ -5384,14 +5384,62 @@ public static class ScenarioRunner
     /// </para>
     /// <para>
     /// <strong>The scrub redacts EXACT occurrences, so any transform of a recorded value
-    /// defeats it — including the engine's own.</strong> Three upstream sites truncate the text
-    /// that becomes <see cref="OrchestrationErrorInfo.Detail"/>:
+    /// defeats it — including the engine's own.</strong> Six upstream sites transform the text
+    /// that becomes <see cref="OrchestrationErrorInfo.Detail"/>.  Three TRUNCATE:
     /// <c>OrchestrationErrorClassifier</c> (256 characters), <c>ScenarioIsolationErrors.TrimDetail</c>
     /// (200) and <c>SecuredEndpointProbe.Summarise</c> (200).  A recorded value straddling one of
     /// those caps arrives here as a PREFIX of itself, which no recorded form matches, and survives.
     /// It is not reachable on the REQ-010 probe path — <c>SecuredEndpointProbe.Failure</c> builds
-    /// its <c>Detail</c> without truncating — but a new truncation, or a new caller routing
-    /// truncated text here, would reopen it silently.
+    /// its <c>Detail</c> without truncating.
+    /// </para>
+    /// <para>
+    /// <strong>Three more arrived with the #420 DCP flight recorder, and one of them is a
+    /// different SHAPE of defeat.</strong>  This warning is a live inventory, not decoration, so
+    /// they are named here rather than left for the next reader to rediscover:
+    /// <list type="bullet">
+    ///   <item><c>DcpFlightRecorder.TailLineChars</c> (120) truncates each captured warning line
+    ///   before it is charged against the tail budget.</item>
+    ///   <item><c>DcpCapture.MaxAnnexLength</c> truncates the composed annex — note, remedy,
+    ///   location and tail together — appended to the classifier's already-truncated detail.  It
+    ///   is sized to clear the measured worst case with headroom, and a test recomputes that
+    ///   worst case from the constants, so today this cap does not fire on any composition the
+    ///   engine can build; it is listed because it is still a truncation and a future part would
+    ///   bring it back into play.  No figure is quoted here — it moved once already.</item>
+    ///   <item><c>DcpFlightEntry.Create</c> MUTATES rather than truncates: every character
+    ///   outside printable ASCII becomes <c>?</c> (issue #379's console-codepage rule, applied at
+    ///   capture time).  A recorded value carrying even one non-ASCII byte therefore reaches this
+    ///   ledger at FULL LENGTH but altered, so the exact match misses and the value survives —
+    ///   a truncation cap is not what has to be straddled for this one to fire.</item>
+    /// </list>
+    /// <strong>They defeat the <see cref="SecurityPathDisclosureLedger"/> the same way, and that
+    /// half is pinned rather than argued.</strong>  This method runs BOTH ledgers, and the path
+    /// ledger's whole job is substituting declared text back over resolved security-material
+    /// paths — while paths are exactly the shape a DCP tail line carries.  A DECLARED path
+    /// straddling <c>TailLineChars</c>, or carrying one non-ASCII character, reaches the ledger in
+    /// a form no recorded value matches and survives as an absolute host path.  Both directions
+    /// are exercised on the real emission path by
+    /// <c>SecretObservationLeakPenetrationTests.DcpCaptureTail_CarryingADeclaredSecurityPath_IsSubstitutedByThePathLedger</c>
+    /// and its <c>…_CarryingANonAsciiDeclaredPath_DefeatsThePathLedgerToo</c> twin.
+    /// </para>
+    /// <para>
+    /// An earlier version of this paragraph cited a real capture's
+    /// <c>…\AppData\Local\Temp\aspire-dcp…\kubeconfig</c> line as the evidence.  That was the
+    /// wrong evidence for this claim and is removed: this ledger records DECLARED security
+    /// material only, so a DCP temp path was never in it and could not have been missed by it.
+    /// The kubeconfig line is a genuine host-path disclosure, but it is one NEITHER ledger covers,
+    /// and it is recorded where it belongs — in <c>DcpCapture.DescribeLocation</c>'s remarks —
+    /// rather than as a defeat of a ledger it never reached.
+    /// </para>
+    /// <para>
+    /// Naming only the secret ledger above would still understate the inventory by half.
+    /// What bounds the exposure is not this scrub but what the tail carries: warning-level DCP
+    /// lines from a topology that failed to come up, on an engine whose
+    /// <c>EnvironmentMapper</c> refuses the <c>${secret:</c> sigil outright in both
+    /// <c>services[].env</c> and <c>dependencies[].env</c>, so no resolved secret reaches a
+    /// container specification for that layer to log in the first place.  The tail is documented
+    /// as best-effort-scrubbed for exactly this reason — see <c>DcpCapture.BuildSummary</c>.
+    /// A new truncation, a new mutation, or a new caller routing transformed text here would
+    /// reopen the general hole silently.
     /// </para>
     /// </remarks>
     internal static string EnvironmentErrorLine(

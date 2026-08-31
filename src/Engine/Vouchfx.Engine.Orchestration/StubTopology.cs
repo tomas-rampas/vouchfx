@@ -237,6 +237,15 @@ public sealed class StubTopology : IAsyncDisposable
             }
             catch (Exception ex)
             {
+                // Flush BEFORE Classify (#420): the classifier reads the capture summary off the
+                // exception, so the outer net below — which does fire on this path — is too late
+                // to put it in a detail that is already built. Guarded on the caller's token for
+                // the same reason as every other flush site.
+                if (!cancellationToken.IsCancellationRequested)
+                {
+                    await topology.FlushDiagnosticsAsync(ex).ConfigureAwait(false);
+                }
+
                 var info = OrchestrationErrorClassifier.Classify(ex, imageRef: null, resourceName: "appdb");
                 throw new OrchestrationException(info, ex);
             }
@@ -278,6 +287,13 @@ public sealed class StubTopology : IAsyncDisposable
                 // ResourceCreationEvidence).  Supply that structural signal so a bad image
                 // classifies as ImagePull even on this message shape, without weakening genuine
                 // HealthGate classification when the container legitimately started.
+                //
+                // Flush BEFORE Classify (#420), as at the gate above and for the same reason.
+                if (!cancellationToken.IsCancellationRequested)
+                {
+                    await topology.FlushDiagnosticsAsync(ex).ConfigureAwait(false);
+                }
+
                 var containerNeverCreated = ResourceCreationEvidence.ContainerNeverCreated(app, "web");
                 var info = OrchestrationErrorClassifier.Classify(
                     ex, imageRef: webImage, resourceName: "web", containerNeverCreated: containerNeverCreated);
@@ -290,10 +306,29 @@ public sealed class StubTopology : IAsyncDisposable
                 DatabaseReady: databaseReadyElapsed,
                 ServiceReady: sw.Elapsed - databaseReadyElapsed);
 
+            // Both gates passed: the far end of #420's arming window. Same reasoning as
+            // SuiteTopology's — see HeadlessTopology.StartAsync's remarks for why the window
+            // does not end when StartAsync returns.
+            topology.DropDiagnostics();
+
             return new StubTopology(topology, dbBuilder!, webEndpoint, timing);
         }
-        catch
+        catch (Exception ex)
         {
+            // #420 safety net, mirroring SuiteTopology: every failure between StartAsync and
+            // readiness leaves DCP's start-time traffic in the buffer, and the capture file is
+            // worth writing for all of them. Idempotent with the gate catches above.
+            //
+            // Guarded on the caller's token for the same reason as the other two flush sites: a
+            // run stopped by Ctrl-C is not a fault worth a capture, and writing one spends a
+            // retention slot a real occurrence may need. This site lacked the guard while the
+            // other two carried it, so its own comment was describing a discipline it did not
+            // follow.
+            if (!cancellationToken.IsCancellationRequested)
+            {
+                await topology.FlushDiagnosticsAsync(ex).ConfigureAwait(false);
+            }
+
             // A health-gate failure is an Environment error (§12.1).  Dispose the already-started
             // topology so containers started by HeadlessTopology.StartAsync do not leak.
             await topology.DisposeAsync().ConfigureAwait(false);
