@@ -338,7 +338,7 @@ public sealed class RespawnRelationalIsolation : IScenarioIsolation, IAsyncDispo
                 "create",
                 _dependencyName,
                 new InvalidOperationException(
-                    "connection string has no Database — the MySQL reset cannot be scoped to a single schema."));
+                    "connection string has no Database - the MySQL reset cannot be scoped to a single schema."));
         }
 
         return database;

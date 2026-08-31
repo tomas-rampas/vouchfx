@@ -40,6 +40,7 @@ using System.Threading.Tasks;
 using Vouchfx.Cli;
 using Vouchfx.Engine.Abstractions.Secrets;
 using Vouchfx.Engine.Orchestration;
+using Vouchfx.Engine.Runtime;
 using Xunit;
 
 namespace Vouchfx.Cli.Tests;
@@ -79,6 +80,109 @@ public sealed class WatchRunnerSecurityLedgerTests
         Assert.Contains("--watch: environment error during run", rendered, StringComparison.Ordinal);
         Assert.DoesNotContain(passphrase, rendered, StringComparison.Ordinal);
         Assert.Contains(SecretString.RedactedMarker, rendered, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// ISSUE #375 AT THE WATCH LOOP'S OWN TERMINAL SINK. A resolved security-material path
+    /// quoted back by a client library is substituted for the author's declared text on the
+    /// environment-error line the watch loop writes, exactly as a resolved passphrase is
+    /// redacted from it.
+    /// </summary>
+    /// <remarks>
+    /// This is the seam the review found unguarded: <c>ScrubThenSanitise</c> composed the value
+    /// ledger with the sanitiser and nothing else, so the watch loop's three terminal writes were
+    /// the one family of sinks the path ledger did not reach. Behavioural rather than source-only,
+    /// because the source census below can prove the argument is PASSED and cannot prove it is
+    /// APPLIED - the two halves fail differently and neither substitutes for the other.
+    /// </remarks>
+    [Fact]
+    public async Task OrchestrationErrorCarryingAResolvedPath_IsSubstitutedThroughTheSessionPathLedger()
+    {
+        var pathLedger = new SecurityPathDisclosureLedger();
+        var resolved = Path.Combine(Path.GetTempPath(), "vouchfx-watch-375", "certs", "client-key.pem");
+        pathLedger.Record(resolved, "certs/client-key.pem");
+
+        var output = new StringWriter();
+        var info = new OrchestrationErrorInfo(
+            Kind: OrchestrationErrorKind.Provision,
+            ResourceName: "broker",
+            RegistryHost: null,
+            AuthStatus: null,
+            Detail: $"ssl.key.location failed: {resolved}: No such file or directory");
+
+        await WatchRunner.ProcessChangeGuardedAsync(
+            _ => throw new OrchestrationException(info, new InvalidOperationException("boom")),
+            output,
+            CancellationToken.None,
+            sessionSecretLedger: null,
+            sessionPathLedger: pathLedger);
+
+        var rendered = output.ToString();
+        Assert.Contains("--watch: environment error during run", rendered, StringComparison.Ordinal);
+        Assert.DoesNotContain(resolved, rendered, StringComparison.Ordinal);
+        Assert.Contains("certs/client-key.pem", rendered, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The catch-all sink carries the same substitution, for the same reason its passphrase
+    /// sibling does: it takes whatever a provider or the platform throws, which is where a
+    /// librdkafka message with a resolved path in it actually arrives.
+    /// </summary>
+    [Fact]
+    public async Task CatchAllErrorCarryingAResolvedPath_IsSubstitutedThroughTheSessionPathLedger()
+    {
+        var pathLedger = new SecurityPathDisclosureLedger();
+        var resolved = Path.Combine(Path.GetTempPath(), "vouchfx-watch-375b", "certs", "ca.pem");
+        pathLedger.Record(resolved, "certs/ca.pem");
+
+        var output = new StringWriter();
+
+        await WatchRunner.ProcessChangeGuardedAsync(
+            _ => throw new InvalidOperationException($"ssl.ca.location failed: {resolved}"),
+            output,
+            CancellationToken.None,
+            sessionSecretLedger: null,
+            sessionPathLedger: pathLedger);
+
+        var rendered = output.ToString();
+        Assert.Contains("--watch: error during run", rendered, StringComparison.Ordinal);
+        Assert.DoesNotContain(resolved, rendered, StringComparison.Ordinal);
+        Assert.Contains("certs/ca.pem", rendered, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// BOTH nets compose at this seam, secrets first then paths, and neither defeats the other.
+    /// </summary>
+    /// <remarks>
+    /// Pinned because the two scrubs run over one string in sequence: a bug that returned the
+    /// unsubstituted input from either would leave the other's assertion passing on its own.
+    /// </remarks>
+    [Fact]
+    public async Task ASinkCarryingBothASecretAndAResolvedPath_HasBothRewritten()
+    {
+        var secretLedger = new ResolvedSecretLedger();
+        const string passphrase = "watch-both-passphrase-4d17";
+        ResolveThroughRealAccessor(secretLedger, passphrase);
+
+        var pathLedger = new SecurityPathDisclosureLedger();
+        var resolved = Path.Combine(Path.GetTempPath(), "vouchfx-watch-375c", "certs", "client.pem");
+        pathLedger.Record(resolved, "certs/client.pem");
+
+        var output = new StringWriter();
+
+        await WatchRunner.ProcessChangeGuardedAsync(
+            _ => throw new InvalidOperationException(
+                $"could not open {resolved} with passphrase '{passphrase}'"),
+            output,
+            CancellationToken.None,
+            secretLedger,
+            pathLedger);
+
+        var rendered = output.ToString();
+        Assert.DoesNotContain(passphrase, rendered, StringComparison.Ordinal);
+        Assert.DoesNotContain(resolved, rendered, StringComparison.Ordinal);
+        Assert.Contains(SecretString.RedactedMarker, rendered, StringComparison.Ordinal);
+        Assert.Contains("certs/client.pem", rendered, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -191,14 +295,29 @@ public sealed class WatchRunnerSecurityLedgerTests
         int buildCallSites = Regex.Count(source, @"SecurityConfigurationAccessor\.Build\(");
         Assert.Equal(1, buildCallSites);
 
+        // BOTH engine-supplied arguments are pinned, and both for the same reason: each is a
+        // shape that COMPILES when broken. `probeSecrets.Accessor` was optional once, and dropping
+        // it left every suite declaring `clientKeyPassword` unrunnable under `--watch`. The
+        // session path ledger (#375) is required, so it cannot be dropped - but writing `null` in
+        // its place compiles and silently drops the declared-path substitution from every event
+        // this seam's failures produce.
         Assert.True(
-            Regex.IsMatch(source, @"SecurityConfigurationAccessor\.Build\(\s*ast,\s*suiteDirectory,\s*probeSecrets\.Accessor\)"),
-            "WatchRunner's build seam must pass the probe scope's accessor to "
-            + "SecurityConfigurationAccessor.Build. Dropping it (the parameter used to be "
-            + "optional) leaves every suite declaring clientKeyPassword unrunnable under "
-            + "--watch, and fails blaming the author for the host's defect (EDGE-007).");
+            Regex.IsMatch(
+                source,
+                @"SecurityConfigurationAccessor\.Build\(\s*ast,\s*suiteDirectory,\s*"
+                + @"probeSecrets\.Accessor,\s*sessionPathLedger\)"),
+            "WatchRunner's build seam must pass the probe scope's accessor AND the session path "
+            + "ledger to SecurityConfigurationAccessor.Build. Dropping the accessor (the parameter "
+            + "used to be optional) leaves every suite declaring clientKeyPassword unrunnable "
+            + "under --watch, and fails blaming the author for the host's defect (EDGE-007). "
+            + "Passing null for the path ledger compiles and leaves a resolved certificate path "
+            + "reaching the event stream verbatim (#375).");
 
+        // Neither engine-supplied argument may be written as an explicit null anywhere in this
+        // file - the shape a reflow or a merge could leave behind while still matching a laxer
+        // regex than the one above.
         Assert.DoesNotContain("secrets: null", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("pathDisclosures: null", source, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -266,6 +385,24 @@ public sealed class WatchRunnerSecurityLedgerTests
 
         // And the step path is handed the SAME instance through the run seam.
         Assert.Contains("sharedLedger: sessionSecretLedger", source, StringComparison.Ordinal);
+
+        // THE #375 SIBLING, pinned with the same three clauses and for the same reasons. The path
+        // ledger is session-scoped for exactly the argument above: the sinks capture it before the
+        // build seam runs, so a seam-scoped instance would be a different object from the one the
+        // probe registered into on the rebuild save. And `sharedPathLedger:` on the run seam is an
+        // OPTIONAL parameter - omitting it compiles and leaves the step path substituting nothing.
+        var pathConstructions = Regex.Matches(source, @"new SecurityPathDisclosureLedger\(\)");
+        Assert.Single(pathConstructions);
+        Assert.True(
+            pathConstructions[0].Index < buildSeam,
+            "the watch session's SecurityPathDisclosureLedger must be constructed OUTSIDE the "
+            + "build seam, for the same reason its resolved-secret sibling must be: constructed "
+            + "inside it, the probe registers resolved certificate paths into an instance no "
+            + "later scrub holds (#375).");
+
+        Assert.Contains(
+            "sharedPathLedger: sessionPathLedger", source, StringComparison.Ordinal);
+
     }
 
     /// <summary>
@@ -366,22 +503,39 @@ public sealed class WatchRunnerSecurityLedgerTests
         Assert.DoesNotContain(".Message", onlyRaw, StringComparison.Ordinal);
 
         // The four scrubbing sinks, named individually so a move is legible in the failure rather
-        // than showing up only as a changed count.
-        Assert.Contains(
-            "ScrubThenSanitise($\"--watch: environment error during run: {oex.Message}\"",
-            source,
-            StringComparison.Ordinal);
-        Assert.Contains(
-            "ScrubThenSanitise(line, sessionSecretLedger)", source, StringComparison.Ordinal);
-        Assert.Contains(
-            "$\"--watch: could not read '{filePath}': {ex.Message}\"",
-            source,
-            StringComparison.Ordinal);
+        // than showing up only as a changed count. WHITESPACE-TOLERANT, deliberately: these were
+        // single-line calls until issue #375 added a third argument and the reflow reddened two
+        // of them on a tree whose behaviour was correct. A gate that fails on formatting teaches
+        // the next author to weaken it.
+        Assert.Matches(
+            @"ScrubThenSanitise\(\s*\$""--watch: environment error during run: \{oex\.Message\}""",
+            source);
+        Assert.Matches(@"ScrubThenSanitise\(\s*line,\s*sessionSecretLedger", source);
+        Assert.Matches(
+            @"\$""--watch: could not read '\{filePath\}': \{ex\.Message\}""", source);
+
+        // ISSUE #375's THIRD SEAM, pinned where the buckets already are. EVERY scrubbing sink
+        // must pass the session PATH ledger as well as the value ledger. This is the omission the
+        // review found: ScrubThenSanitise composed the value ledger with the sanitiser and nothing
+        // else, so all four of these writes sat outside the path net while their event
+        // counterparts sat inside it - and nothing failed, because a missing net is silent.
+        //
+        // Asserted over the extracted STATEMENTS rather than over the whole file, so a fifth sink
+        // added later without the argument is caught by this loop rather than by a count that a
+        // stray mention elsewhere could satisfy.
+        foreach (var statement in scrubbed)
+        {
+            Assert.Contains("sessionPathLedger", statement, StringComparison.Ordinal);
+        }
 
         // And the helper is used ONLY by those writes — no other caller composes it differently.
-        // Call sites only; the declaration is excluded by its parameter list's leading type.
-        var helperCallSites = Regex.Count(source, @"ScrubThenSanitise\((?!string\b)");
-        Assert.Equal(4, helperCallSites);
+        // Call sites only; the DECLARATION is excluded by matching its return type rather than by
+        // a lookahead on the first parameter, which stopped working the moment the parameter list
+        // wrapped onto the next line.
+        var helperMentions = Regex.Count(source, @"ScrubThenSanitise\(");
+        var helperDeclarations = Regex.Count(source, @"string\?\s+ScrubThenSanitise\(");
+        Assert.Equal(1, helperDeclarations);
+        Assert.Equal(4, helperMentions - helperDeclarations);
     }
 
     /// <summary>

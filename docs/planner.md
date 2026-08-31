@@ -306,7 +306,7 @@ With `--fail-on-gap`, the presence of the first two findings (gaps) causes exit 
 ```bash
 vouchfx plan ./tests/e2e --events ./run-history --fail-on-gap
 # Output: summary + message
-# --fail-on-gap: 2 gap finding(s) present — exiting 5.
+# --fail-on-gap: 2 gap finding(s) present - exiting 5.
 # Exit code: 5
 ```
 

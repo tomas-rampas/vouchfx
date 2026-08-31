@@ -99,7 +99,7 @@ internal sealed class TelemetryRunHook
             // through to the store-based behaviour; telemetry must never break a run.
             _diagnostics.WriteLine(
                 $"telemetry: {TelemetryInstallId.EnvVar} must be a non-empty, "
-                + "non-all-zero GUID — ignored.");
+                + "non-all-zero GUID - ignored.");
         }
         else if (envId is { } && transportConfigured)
         {

@@ -1281,7 +1281,7 @@ The engine attempted to clear a dependency's state between scenarios (the reset 
 **Symptom:**
 ```
 FAIL  my-test.e2e.yaml
-    [Schema] (line 45) unknown step type 'db-assert.oracle' — not a registered provider (expected <family>.<provider>, e.g. 'db-assert.postgres').
+    [Schema] (line 45) unknown step type 'db-assert.oracle' - not a registered provider (expected <family>.<provider>, e.g. 'db-assert.postgres').
 ```
 
 **What it means:**

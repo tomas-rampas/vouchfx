@@ -82,7 +82,7 @@ metadata:
 #
 #   (line 8) [properties] Dependency 'store' (type 'postgres') declares
 #   'security', but no security profile is wired for dependency kind 'postgres'
-#   in this release — only a 'kafka' dependency, or a declared service, can carry
+#   in this release - only a 'kafka' dependency, or a declared service, can carry
 #   a 'security' block today.
 #
 # The full exit-code table is in docs/ci-integration.md.

@@ -124,7 +124,8 @@ public sealed class PerStepLivenessTests
             }
         }, capacity: 64);
 
-        var sink = new LiveStepEventSink(pump, "liveness-run", ast.Steps, captureOriginMap, NullSecretAccessor.Instance);
+        var sink = new LiveStepEventSink(
+            pump, "liveness-run", ast.Steps, captureOriginMap, NullSecretAccessor.Instance, null);
         var vars = new Dictionary<string, object?>();
         var globals = new ScriptGlobalVariables(
             vars,
@@ -254,7 +255,8 @@ public sealed class PerStepLivenessTests
             }
         }, capacity: 64);
 
-        var sink = new LiveStepEventSink(pump, "retry-liveness-run", ast.Steps, captureOriginMap, NullSecretAccessor.Instance);
+        var sink = new LiveStepEventSink(
+            pump, "retry-liveness-run", ast.Steps, captureOriginMap, NullSecretAccessor.Instance, null);
         var vars = new Dictionary<string, object?>();
         var globals = new ScriptGlobalVariables(
             vars,

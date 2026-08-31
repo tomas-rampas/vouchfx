@@ -358,7 +358,7 @@ public static class DocumentValidator
             errors ??= new List<SchemaValidationError>();
             errors.Add(new SchemaValidationError(
                 pointer,
-                $"unknown step type '{typeValue}' — not a registered provider " +
+                $"unknown step type '{typeValue}' - not a registered provider " +
                 "(expected <family>.<provider>, e.g. 'db-assert.postgres')."));
         }
 

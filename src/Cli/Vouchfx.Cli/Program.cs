@@ -28,7 +28,7 @@ using System.CommandLine;
 using Vouchfx.Cli;
 
 var rootCommand = new RootCommand(
-    "vouchfx — compile and run declarative .e2e.yaml integration tests end-to-end.");
+    "vouchfx - compile and run declarative .e2e.yaml integration tests end-to-end.");
 
 rootCommand.Add(RunCommand.Build());
 

@@ -57,7 +57,7 @@ Telemetry ENABLED. Anonymous, aggregate usage data (versions, verdict counts,
 which built-in step kinds ran, startup timings) will be collected on each run.
 Your test contents, captured values, secrets, URLs, image names, scenario
 names and step ids are NEVER collected.
-Install id: 12345678… (anonymous; identifies this install only).
+Install id: 12345678... (anonymous; identifies this install only).
 Opt out any time with: vouchfx telemetry disable
 ```
 
@@ -84,7 +84,7 @@ This shows your current consent state and whether an install identifier exists. 
 
 ```
 Telemetry consent : enabled (opted in)
-Install id        : present (12345678…)
+Install id        : present (12345678...)
 Outbox path       : /home/user/.config/vouchfx/telemetry-outbox.jsonl
 Opt in            : vouchfx telemetry enable
 Opt out           : vouchfx telemetry disable  (or set VOUCHFX_NO_TELEMETRY=1)

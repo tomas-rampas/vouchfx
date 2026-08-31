@@ -77,7 +77,7 @@ public sealed class ReservedNamespaceSquatException : Exception
         ArgumentNullException.ThrowIfNull(violations);
 
         var lines = violations.Select(
-            v => $"  {v.AssemblyName} → {v.TypeFullName} (reserved prefix: {v.ReservedPrefix})");
+            v => $"  {v.AssemblyName} -> {v.TypeFullName} (reserved prefix: {v.ReservedPrefix})");
 
         return
             $"Suite start refused: {violations.Count} customer DLL(s) squat on reserved namespaces " +

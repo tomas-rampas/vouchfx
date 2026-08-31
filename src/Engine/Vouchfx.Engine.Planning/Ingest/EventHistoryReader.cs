@@ -147,7 +147,7 @@ internal static class EventHistoryReader
                     throw new PlanInputException(
                         $"Event-history file '{file}' is {fileInfo.Length} bytes, exceeding "
                         + $"the {MaxEventFileSizeBytes}-byte (64 MiB) limit for a single "
-                        + ".jsonl file. This is a configuration problem, not corrupt data — "
+                        + ".jsonl file. This is a configuration problem, not corrupt data - "
                         + "split the history into smaller files rather than risk an entire "
                         + "run's worth of events silently vanishing from the report.");
                 }

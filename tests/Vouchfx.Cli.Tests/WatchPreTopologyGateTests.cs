@@ -30,6 +30,7 @@ using Vouchfx.Engine.Abstractions.Secrets;
 using Vouchfx.Engine.Abstractions.Security;
 using Vouchfx.Engine.Authoring.Model;
 using Vouchfx.Engine.Orchestration;
+using Vouchfx.Engine.Runtime;
 using Vouchfx.Sdk;
 using Vouchfx.TestSupport;
 using Xunit;
@@ -624,6 +625,7 @@ public sealed class WatchPreTopologyGateTests : IDisposable
             output,
             appHostAssemblyName: "Vouchfx.Cli.Tests",
             new ResolvedSecretLedger(),
+            new SecurityPathDisclosureLedger(),
             (request, accessor, _) =>
             {
                 harness.BuildCount++;
@@ -673,6 +675,7 @@ public sealed class WatchPreTopologyGateTests : IDisposable
             output,
             appHostAssemblyName: "Vouchfx.Cli.Tests",
             new ResolvedSecretLedger(),
+            new SecurityPathDisclosureLedger(),
             (request, accessor, _) =>
             {
                 onRequest(request);

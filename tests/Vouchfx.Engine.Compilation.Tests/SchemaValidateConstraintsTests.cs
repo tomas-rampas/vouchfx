@@ -859,7 +859,7 @@ public sealed class SchemaValidateConstraintsTests
         var result = DocumentValidator.Validate(yaml, Registry);
         var error = Assert.Single(result.Errors);
         Assert.EndsWith(
-            "[properties] Property 'minSize' cannot be combined with 'size' — exactly one of the two may be set",
+            "[properties] Property 'minSize' cannot be combined with 'size' - exactly one of the two may be set",
             error.Message,
             StringComparison.Ordinal);
     }

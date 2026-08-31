@@ -1158,7 +1158,7 @@ public sealed class EnvironmentSchemaTests
             e.Message.Contains("write 'postgres'", System.StringComparison.Ordinal) &&
             // The 13-member enum exceeds MaxListedEnumValues (8): pins that
             // truncation is actually live, not merely implemented.
-            e.Message.Contains("… and 5 more", System.StringComparison.Ordinal));
+            e.Message.Contains("... and 5 more", System.StringComparison.Ordinal));
     }
 
     [Theory]
@@ -2062,9 +2062,9 @@ public sealed class EnvironmentSchemaTests
 
         Assert.DoesNotContain(longName, forbidden.Message, System.StringComparison.Ordinal);
         Assert.DoesNotContain(longKind, forbidden.Message, System.StringComparison.Ordinal);
-        Assert.Contains($"'{new string('a', 200)}… (250 chars total)'", forbidden.Message,
+        Assert.Contains($"'{new string('a', 200)}... (250 chars total)'", forbidden.Message,
             System.StringComparison.Ordinal);
-        Assert.Contains($"dependency kind '{new string('b', 200)}… (250 chars total)'", forbidden.Message,
+        Assert.Contains($"dependency kind '{new string('b', 200)}... (250 chars total)'", forbidden.Message,
             System.StringComparison.Ordinal);
 
         // The message stays O(1) in both values rather than a multiple of them.
@@ -2551,10 +2551,10 @@ public sealed class EnvironmentSchemaTests
         var onlyError = Assert.Single(result.Errors);
         Assert.Equal("/environment/services/app/httpPort", onlyError.InstanceLocation);
         Assert.Contains(
-            "[properties] Property 'httpPort' is not valid on the 'project'-form service 'app' — "
+            "[properties] Property 'httpPort' is not valid on the 'project'-form service 'app' - "
             + "a project's endpoints are discovered from its own launch profile, and 'httpPort' "
             + "names a container port rather than a listener. Remove the line; to choose WHICH "
-            + "discovered endpoint this service is addressed on, use 'endpoint' (DSL §3.2)",
+            + "discovered endpoint this service is addressed on, use 'endpoint' (DSL section 3.2)",
             onlyError.Message,
             System.StringComparison.Ordinal);
     }
@@ -2603,13 +2603,13 @@ public sealed class EnvironmentSchemaTests
 
         Assert.DoesNotContain(longName, onlyError.Message, System.StringComparison.Ordinal);
         Assert.Contains(
-            $"service '{new string('s', 200)}… (250 chars total)' — ",
+            $"service '{new string('s', 200)}... (250 chars total)' - ",
             onlyError.Message,
             System.StringComparison.Ordinal);
 
         // The remedy is the half a long name would have buried, so pin that it still arrives.
         Assert.EndsWith(
-            "use 'endpoint' (DSL §3.2)", onlyError.Message, System.StringComparison.Ordinal);
+            "use 'endpoint' (DSL section 3.2)", onlyError.Message, System.StringComparison.Ordinal);
 
         // O(1) in the offending key rather than a multiple of it.
         Assert.True(onlyError.Message.Length < 1000,

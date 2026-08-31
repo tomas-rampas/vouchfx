@@ -50,7 +50,7 @@ internal static class ScaffoldCommand
             "scaffold",
             "Generate a machine-drafted, schema-valid .e2e.yaml skeleton from a structured "
             + "JSON intent (step types, environment outline, step ids). Grounded in the live "
-            + "step catalogue — never free text. Default output is stdout; use --output to "
+            + "step catalogue - never free text. Default output is stdout; use --output to "
             + "write a file. Intent schema: "
             + "{ \"steps\":[{ \"id\",\"type\",\"label?\" }], "
             + "\"services\":[{ \"name\",\"image?\" }], "

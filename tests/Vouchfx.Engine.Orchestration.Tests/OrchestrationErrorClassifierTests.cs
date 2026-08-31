@@ -609,8 +609,13 @@ public sealed class OrchestrationErrorClassifierTests
         // Act
         var info = OrchestrationErrorClassifier.Classify(ex, imageRef: null, resourceName: "svc");
 
-        // Assert — detail is capped (with ellipsis char) so it is never >257 chars.
-        Assert.True(info.Detail.Length <= 257, $"Detail too long: {info.Detail.Length}");
+        // Assert — detail is capped so it is never longer than the 256-character bound plus the
+        // truncation marker.  The MARKER, not the bound, is what moved for issue #379: the engine's
+        // runtime-output strings are ASCII-only, so the one-character "…" became the three-character
+        // "...".  The truncation point is unchanged at 256 characters of the source message; only
+        // the width of the thing appended to it is different, which is why this number moves and
+        // nothing about BuildDetail's behaviour does.
+        Assert.True(info.Detail.Length <= 259, $"Detail too long: {info.Detail.Length}");
     }
 
     [Fact]

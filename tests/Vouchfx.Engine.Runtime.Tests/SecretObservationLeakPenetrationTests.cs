@@ -29,6 +29,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -85,9 +86,13 @@ public sealed class SecretObservationLeakPenetrationTests
     /// <see cref="ScenarioRunner.BuildStepObservation"/> the production runner uses, so a
     /// green test is a green production path — not a test-only reconstruction.
     /// </summary>
-    private static string EmitStepCompletedLine(SecretAccessor accessor, string stepId, string? rawObservation)
+    private static string EmitStepCompletedLine(
+        SecretAccessor accessor,
+        string stepId,
+        string? rawObservation,
+        SecurityPathDisclosureLedger? pathLedger = null)
     {
-        var observation = ScenarioRunner.BuildStepObservation(accessor, rawObservation);
+        var observation = ScenarioRunner.BuildStepObservation(accessor, pathLedger, rawObservation);
         return EventStreamJson.ToLine(new StepCompletedEvent
         {
             RunId = Run,
@@ -512,7 +517,8 @@ public sealed class SecretObservationLeakPenetrationTests
     private static string EmitScenarioDiagnosticLine(SecretAccessor accessor, Exception ex, TextWriter output)
     {
         var diagnosis = $"{ex.GetType().Name}: {ex.Message}";
-        var scrubbed = DisplaySanitiser.SanitiseForDisplay(ScenarioRunner.ScrubDiagnostic(accessor, diagnosis));
+        var scrubbed = DisplaySanitiser.SanitiseForDisplay(
+            ScenarioRunner.ScrubDiagnostic(accessor, pathLedger: null, diagnosis));
         output.WriteLine($"Compile/run error (Inconclusive): {scrubbed}");
         return output.ToString()!;
     }
@@ -767,7 +773,9 @@ public sealed class SecretObservationLeakPenetrationTests
         {
             // 1. The diagnosis write.
             var diagnosis = ScenarioRunner.ScrubDiagnostic(
-                accessor, $"mTLS handshake failed (key passphrase '{revealed}' rejected).");
+                accessor,
+                pathLedger: null,
+                $"mTLS handshake failed (key passphrase '{revealed}' rejected).");
 
             Assert.NotNull(diagnosis);
             Assert.DoesNotContain(revealed, diagnosis!, StringComparison.Ordinal);
@@ -810,7 +818,7 @@ public sealed class SecretObservationLeakPenetrationTests
         try
         {
             var line = ScenarioRunner.EnvironmentErrorLine(
-                runLedger, ProbeFailureCarrying(revealed), Run, DateTimeOffset.UtcNow);
+                runLedger, null, ProbeFailureCarrying(revealed), Run, DateTimeOffset.UtcNow);
 
             Assert.DoesNotContain(revealed, line, StringComparison.Ordinal);
             Assert.Contains(SecretString.RedactedMarker, line, StringComparison.Ordinal);
@@ -850,7 +858,7 @@ public sealed class SecretObservationLeakPenetrationTests
         try
         {
             var line = ScenarioRunner.EnvironmentErrorLine(
-                unrelatedRunLedger, ProbeFailureCarrying(revealed), Run, DateTimeOffset.UtcNow);
+                unrelatedRunLedger, null, ProbeFailureCarrying(revealed), Run, DateTimeOffset.UtcNow);
 
             Assert.Contains(revealed, line, StringComparison.Ordinal);
             Assert.DoesNotContain(SecretString.RedactedMarker, line, StringComparison.Ordinal);
@@ -911,7 +919,11 @@ public sealed class SecretObservationLeakPenetrationTests
     public void EnvironmentErrorLine_WithNoLedger_StillEmitsTheCompleteEvent()
     {
         var line = ScenarioRunner.EnvironmentErrorLine(
-            sharedLedger: null, ProbeFailureCarrying("nothing-was-resolved"), Run, DateTimeOffset.UtcNow);
+            sharedLedger: null,
+            sharedPathLedger: null,
+            ProbeFailureCarrying("nothing-was-resolved"),
+            Run,
+            DateTimeOffset.UtcNow);
 
         using var doc = JsonDocument.Parse(line);
         Assert.Equal(EventTypes.EnvironmentError, doc.RootElement.GetProperty("type").GetString());
@@ -1192,6 +1204,263 @@ public sealed class SecretObservationLeakPenetrationTests
         var nulls = Regex.Count(
             source, @"EnvironmentErrorLine\(\s*(?:sharedLedger\s*:\s*)?null\b");
         Assert.Equal(0, nulls);
+    }
+
+    /// <summary>
+    /// ISSUE #375's COUNTERPART TO THE GATE ABOVE: every site that emits an archived diagnostic
+    /// also passes a REAL security-path ledger, and no site passes a literal null.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Why this exists at all.</strong> The path ledger mirrors the resolved-secret
+    /// ledger at every chokepoint, but it shipped with no argument census while the ledger it
+    /// mirrors had one — so the exact omission the sibling gate was written to catch was, for the
+    /// path net, catchable by nothing. That is the #364 mechanism this whole change cites in its
+    /// own comments: an argument nobody counts is an argument the next caller can drop in silence.
+    /// </para>
+    /// <para>
+    /// <strong>Read over COMMENT-STRIPPED source.</strong> The scrub-order argument added to
+    /// <c>ScrubDiagnostic</c> names both ledgers in prose, and the parameter documentation names
+    /// them again; counted raw, those mentions vote. Stripping first is what lets the patterns
+    /// stay unanchored, which is what makes them survive a reflow.
+    /// </para>
+    /// <para>
+    /// <strong>Three families, because they fail differently.</strong> A missing path ledger on
+    /// <c>EnvironmentErrorLine</c> loses the substitution on the topology-probe channel; on
+    /// <c>ScenarioCompletedLine</c> it loses it on the JUnit/HTML scenario cause; on
+    /// <c>SecurityConfigurationAccessor.Build</c> nothing is ever RECORDED, so all three channels
+    /// silently scrub against an empty table and every one of the other assertions here still
+    /// passes. The third is the one with no behavioural symptom at all.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void EverySecurityPathLedgerArgument_IsAReadLedgerAndNeverNull()
+    {
+        var source = WithoutComments(File.ReadAllText(Path.Combine(
+            RepositoryRoot(), "src", "Engine", "Vouchfx.Engine.Runtime", "ScenarioRunner.cs")));
+
+        // ── Family 1: EnvironmentErrorLine ────────────────────────────────────────────────
+        // Five mentions: the declaration plus four call sites, exactly as the sibling gate counts
+        // them. Asserted non-zero FIRST — a rename that made every pattern match nothing would
+        // otherwise satisfy the equalities below for free.
+        var envMentions = Regex.Count(source, @"EnvironmentErrorLine\(");
+        Assert.True(
+            envMentions > 0,
+            "No EnvironmentErrorLine mention was found in ScenarioRunner.cs at all — most likely "
+            + "the chokepoint was renamed. Point this census at the new name rather than leaving "
+            + "it matching nothing: a census that matches nothing passes for free.");
+
+        var envDeclarations =
+            Regex.Count(source, @"EnvironmentErrorLine\(\s*ResolvedSecretLedger\b");
+        Assert.Equal(1, envDeclarations);
+
+        var envWithPathLedger = Regex.Count(
+            source,
+            @"EnvironmentErrorLine\(\s*(?:runSecretLedger|sharedLedger),\s*"
+            + @"(?:runPathLedger|sharedPathLedger)\b");
+        Assert.Equal(envMentions - envDeclarations, envWithPathLedger);
+
+        // ── Family 2: ScenarioCompletedLine ──────────────────────────────────────────────
+        // Every call names a path-ledger argument in the position after the value ledger. The
+        // legitimate spellings are the two run-scoped locals, the shared parameter, and the
+        // EXPLICIT `pathLedger: null` the pre-topology refusal doors write on purpose — which is
+        // counted here rather than forbidden, because at those doors no accessor exists and
+        // nothing has been recorded. What is forbidden is a call with no such argument at all.
+        var completedCalls = Regex.Count(source, @"StepEventBuilder\.ScenarioCompletedLine\(");
+        Assert.True(
+            completedCalls > 0,
+            "No StepEventBuilder.ScenarioCompletedLine call was found in ScenarioRunner.cs. "
+            + "Update this census to the new name rather than leaving it matching nothing.");
+
+        var completedWithPathArgument = Regex.Count(
+            source,
+            @"StepEventBuilder\.ScenarioCompletedLine\((?:[^()]|\([^()]*\))*?"
+            + @"(?:runPathLedger|sharedPathLedger|pathLedger\s*:\s*null)\b");
+        Assert.Equal(completedCalls, completedWithPathArgument);
+
+        // ── Family 3: the accessor build sites, where the RECORDING happens ──────────────
+        // Nothing downstream can substitute a path that was never registered, so a Build call
+        // handed no ledger disables all three channels at once with no local symptom.
+        var buildCalls = Regex.Count(source, @"SecurityConfigurationAccessor\.Build\(");
+        Assert.Equal(3, buildCalls);
+
+        var buildWithPathLedger = Regex.Count(
+            source,
+            @"SecurityConfigurationAccessor\.Build\((?:[^()]|\([^()]*\))*?"
+            + @"(?:runPathLedger|sharedPathLedger)\b");
+        Assert.Equal(buildCalls, buildWithPathLedger);
+
+        // ── The two ledgers are always passed TOGETHER, and always agree ──────────────
+        // An explicit null path ledger IS legitimate — at the pre-topology refusal doors, where
+        // no accessor has been built, nothing has been recorded and its resolved-secret twin is
+        // null for the same reason. Banning the spelling outright would therefore fail a correct
+        // tree, which is how a gate comes to be deleted rather than satisfied.
+        //
+        // The invariant that actually holds is PAIRING: wherever the value ledger is written away
+        // as null the path ledger is too, and nowhere else is either. That catches the real
+        // omission — a real secret ledger beside a null path ledger, which is a door that scrubs
+        // secrets and discloses paths — and it cannot drift, because a new refusal door has to
+        // move both counts or neither.
+        var secretNulls = Regex.Count(source, @"runSecretLedger\s*:\s*null\b");
+        var pathNulls = Regex.Count(source, @"runPathLedger\s*:\s*null\b");
+        var pairedNulls = Regex.Count(
+            source, @"runSecretLedger\s*:\s*null,\s*runPathLedger\s*:\s*null\b");
+
+        Assert.True(
+            secretNulls > 0,
+            "No `runSecretLedger: null` was found in ScenarioRunner.cs. The pre-topology refusal "
+            + "doors used to write it deliberately; if they no longer do, this pairing census is "
+            + "matching nothing and must be repointed rather than left to pass for free.");
+        Assert.Equal(secretNulls, pathNulls);
+        Assert.Equal(secretNulls, pairedNulls);
+
+        // And the accessor build sites never write theirs away at all — nothing downstream can
+        // substitute a path that was never recorded, and unlike the doors above these sites DO
+        // have a run-scoped ledger in hand.
+        var buildNulls = Regex.Count(source, @"pathDisclosures\s*:\s*null\b");
+        Assert.True(
+            buildNulls == 0,
+            $"{buildNulls} SecurityConfigurationAccessor.Build call site(s) in ScenarioRunner.cs "
+            + "pass no path ledger. Nothing is then RECORDED, so all three scrub chokepoints "
+            + "substitute against an empty table: the resolved certificate path a client library "
+            + "quoted reaches the event stream, the --events artefact and the HTML report "
+            + "verbatim, every other assertion in this file still passes, and nothing fails.");
+    }
+
+    /// <summary>
+    /// THE SCRUB ORDER IS SECRETS-FIRST AT EVERY COMPOSITION SITE, asserted over the source of all
+    /// four rather than behaviourally at one.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Why source and not behaviour.</strong> The discriminating behavioural arms live in
+    /// <c>SecurityPathDisclosureLedgerTests</c> and exercise <c>ScrubDiagnostic</c> — one of the
+    /// four. Reaching the other three the same way needs a real accessor, a real path ledger and a
+    /// crafted overlapping pair per site, and would still say nothing about a FIFTH site added
+    /// later. The property "the value scrub is written before the path scrub" is what actually has
+    /// to hold everywhere, and it is checkable everywhere.
+    /// </para>
+    /// <para>
+    /// <strong>What each pair is.</strong> Each site composes a value-ledger call with a
+    /// path-ledger call over one string; the order decides which net loses its exact match when
+    /// the two recorded strings overlap. Secrets-first degrades to a partially-redacted path;
+    /// paths-first degrades to a mangled, still-readable secret. The full argument is on
+    /// <c>ScenarioRunner.ScrubDiagnostic</c>.
+    /// </para>
+    /// <para>
+    /// Read over COMMENT-STRIPPED source, because that argument names both calls in prose several
+    /// times over and a raw index comparison would find the comment first.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void EveryScrubComposition_AppliesTheValueLedgerBeforeThePathLedger()
+    {
+        var root = RepositoryRoot();
+
+        var runner = WithoutComments(File.ReadAllText(Path.Combine(
+            root, "src", "Engine", "Vouchfx.Engine.Runtime", "ScenarioRunner.cs")));
+        var events = WithoutComments(File.ReadAllText(Path.Combine(
+            root, "src", "Engine", "Vouchfx.Engine.Runtime", "StepEventBuilder.cs")));
+        var watch = WithoutComments(File.ReadAllText(Path.Combine(
+            root, "src", "Cli", "Vouchfx.Cli", "Watch", "WatchRunner.cs")));
+
+        // (site, source, value-ledger call, path-ledger call). Each fragment is unique within its
+        // file, so no per-method scoping is needed - and a rename that breaks that uniqueness is
+        // caught by the vacuity check below rather than silently comparing the wrong pair.
+        var sites = new (string Site, string Source, string ValueScrub, string PathScrub)[]
+        {
+            ("ScenarioRunner.ScrubDiagnostic",
+             runner,
+             "concrete.ResolvedSecrets.Scrub(text)",
+             "pathLedger?.Scrub(scrubbed)"),
+
+            ("ScenarioRunner.EnvironmentErrorLine",
+             runner,
+             "sharedLedger?.Scrub(info.Detail)",
+             "sharedPathLedger?.Scrub(scrubbed)"),
+
+            ("StepEventBuilder.ScenarioCompletedLine",
+             events,
+             "ledger?.Scrub(message)",
+             "pathLedger?.Scrub(cause)"),
+
+            ("WatchRunner.ScrubThenSanitise",
+             watch,
+             "ledger.Scrub(text)",
+             "pathLedger.Scrub(scrubbed)"),
+        };
+
+        foreach (var (site, source, valueScrub, pathScrub) in sites)
+        {
+            var valueAt = source.IndexOf(valueScrub, StringComparison.Ordinal);
+            var pathAt = source.IndexOf(pathScrub, StringComparison.Ordinal);
+
+            // VACUITY FIRST. Two -1s compare as equal-and-not-less, and a census whose patterns
+            // match nothing must say so rather than quietly asserting about absent code.
+            Assert.True(
+                valueAt >= 0,
+                $"{site}: the value-ledger call `{valueScrub}` was not found. Update this census "
+                + "to the new spelling rather than leaving it matching nothing - a pattern that "
+                + "matches nothing cannot fail, so the ordering would stop being guarded without "
+                + "anything saying so.");
+            Assert.True(
+                pathAt >= 0,
+                $"{site}: the path-ledger call `{pathScrub}` was not found. Either the composition "
+                + "was removed - in which case issue #375's substitution no longer reaches this "
+                + "channel - or it was respelled and this census needs repointing.");
+
+            Assert.True(
+                valueAt < pathAt,
+                $"{site} applies the PATH ledger before the VALUE ledger. Reversed, a resolved "
+                + "path that occurs inside a recorded secret rewrites that secret's interior, the "
+                + "value ledger's exact match then misses, and a mangled but still-readable "
+                + "credential reaches the archived event stream. Secrets-first accepts a "
+                + "partially-redacted path instead, which is strictly the lesser disclosure - the "
+                + "argument is written out on ScenarioRunner.ScrubDiagnostic and the two "
+                + "discriminating behavioural arms are in SecurityPathDisclosureLedgerTests.");
+        }
+    }
+
+    /// <summary>
+    /// Removes C# comments — block first, then each line's <c>//</c> tail — so the census above
+    /// can count UNANCHORED without the surrounding prose voting.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately the same heuristic as <c>ScenarioCoreDeclarationCensusTests.WithoutComments</c>,
+    /// and acceptable for the same reason: if it ever leaves a comment standing, that comment can
+    /// only ADD to one side of an equality, so the failure direction is a loud false FAILURE with
+    /// both numbers in the message — never a silent pass.
+    /// </remarks>
+    private static string WithoutComments(string source)
+    {
+        var withoutBlocks = Regex.Replace(source, @"/\*.*?\*/", string.Empty, RegexOptions.Singleline);
+
+        var stripped = new StringBuilder(withoutBlocks.Length);
+        foreach (var line in withoutBlocks.Split('\n'))
+        {
+            stripped.Append(WithoutLineComment(line)).Append('\n');
+        }
+
+        return stripped.ToString();
+    }
+
+    /// <summary>Truncates one line at its first <c>//</c> that is not inside a string literal.</summary>
+    private static string WithoutLineComment(string line)
+    {
+        var quotes = 0;
+        for (var i = 0; i < line.Length - 1; i++)
+        {
+            if (line[i] == '"')
+            {
+                quotes++;
+            }
+            else if (quotes % 2 == 0 && line[i] == '/' && line[i + 1] == '/')
+            {
+                return line[..i];
+            }
+        }
+
+        return line;
     }
 
     /// <summary>

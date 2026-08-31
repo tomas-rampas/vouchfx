@@ -371,7 +371,7 @@ public static class YamlDocumentParser
                         $"Service '{keyScalar.Value}' declares 'endpoint' with a value at " +
                         $"line {endpointNode.Start.Line} whose node type is " +
                         $"{endpointNode.NodeType}, but 'endpoint' names a single endpoint of " +
-                        "the service's project — one scalar, e.g. 'endpoint: https'.",
+                        "the service's project - one scalar, e.g. 'endpoint: https'.",
                         endpointNode.Start.Line,
                         endpointNode.Start.Column);
                 }
@@ -419,7 +419,7 @@ public static class YamlDocumentParser
                     throw new YamlParseException(
                         $"Host port {hostPort} is pinned by two services: '{owner.Service}' for "
                         + $"container port {owner.ContainerPort}, and '{serviceName}' for container "
-                        + $"port {containerPort}. One host port publishes one container port — give "
+                        + $"port {containerPort}. One host port publishes one container port - give "
                         + "them different host ports.",
                         servicesNode.Start.Line,
                         servicesNode.Start.Column);
@@ -534,7 +534,7 @@ public static class YamlDocumentParser
                         item,
                         rawValue,
                         $"its host port {host} is below 1024. Host ports 1..1023 are privileged "
-                        + "and well-known — pinning one squats a real service's port on this "
+                        + "and well-known - pinning one squats a real service's port on this "
                         + "machine for the whole run. Pin a host port in 1024..65535. (The "
                         + "container port has no such limit.)");
                 }

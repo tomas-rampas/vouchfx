@@ -396,9 +396,9 @@ internal static class DcpPathResolver
             $"('{staleMetadataPath}') does not exist here. The runtime fallback also failed: " +
             $"{fallbackDescription}. Remedy: restore any project that carries Aspire.AppHost.Sdk " +
             $"{versionClause} so the DCP orchestration package is populated into your NuGet cache " +
-            "— e.g. 'git clone https://github.com/tomas-rampas/vouchfx && dotnet restore " +
-            "vouchfx/vouchfx.sln' — or set the ASPIRE_DCP_PATH environment variable to the " +
-            "directory containing the dcp executable (not the executable itself — Aspire derives " +
+            "- e.g. 'git clone https://github.com/tomas-rampas/vouchfx && dotnet restore " +
+            "vouchfx/vouchfx.sln' - or set the ASPIRE_DCP_PATH environment variable to the " +
+            "directory containing the dcp executable (not the executable itself - Aspire derives " +
             "the executable and extension paths from that directory).";
     }
 }

@@ -248,6 +248,26 @@ public sealed class WatchIterationPlan
     /// session-scoped ledger a <c>--watch</c> run accumulates would expose the author's primary
     /// diagnostic to over-redaction (a short or stale recorded value rewriting unrelated substrings
     /// for the rest of the session). The terminal sink makes the same call for the same reason.
+    /// <para>
+    /// <c>pathLedger: null</c> (issue #375) is null for a DIFFERENT reason, and inheriting the
+    /// one above would have been wrong: over-redaction is not a risk a path ledger has. Its
+    /// substitution is exact-resolved-path to that field's own declared text, so it cannot
+    /// rewrite an unrelated substring and cannot shorten what an author is shown — the
+    /// worst it can do is name a file the way the author named it.
+    /// </para>
+    /// <para>
+    /// The real reason is EMPTINESS, and it is structural rather than a judgement. This method
+    /// is reached only from the pre-topology refusal door: no <c>SecurityConfigurationAccessor</c>
+    /// has been built, so no resolved path has been handed to anything and no ledger in this run
+    /// holds an entry. No path ledger is in scope here to pass, and threading one in would be a
+    /// substitution against an empty table — a no-op with a parameter attached.
+    /// </para>
+    /// <para>
+    /// <strong>What would change that:</strong> a refusal door that fires AFTER the accessor is
+    /// built. If one is ever added here, the run's ledger must be threaded rather than this
+    /// null being copied — the argument above is about WHEN this door fires, not about
+    /// paths being harmless.
+    /// </para>
     /// </remarks>
     private static string[] RefusalEventLines(
         string runId, string scenarioName, string diagnostic)
@@ -268,6 +288,7 @@ public sealed class WatchIterationPlan
                 Verdict.Inconclusive,
                 new VerdictCounts { Inconclusive = 1 },
                 ledger: null,
+                pathLedger: null,
                 diagnostic),
         };
     }

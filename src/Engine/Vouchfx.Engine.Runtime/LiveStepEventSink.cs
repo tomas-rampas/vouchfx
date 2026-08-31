@@ -35,6 +35,12 @@ internal sealed class LiveStepEventSink : IStepEventSink
     private readonly ISecretAccessor _secretAccessor;
 
     /// <summary>
+    /// The run's security-path disclosure ledger, or <see langword="null"/> when the constructing
+    /// scenario holds none (issue #375).
+    /// </summary>
+    private readonly SecurityPathDisclosureLedger? _pathLedger;
+
+    /// <summary>
     /// Constructs the sink for one scenario run.
     /// </summary>
     /// <param name="pump">The live conduit to post lines to.</param>
@@ -50,12 +56,19 @@ internal sealed class LiveStepEventSink : IStepEventSink
     /// provenance regardless of which path calls it.
     /// </param>
     /// <param name="secretAccessor">The scenario's secret accessor, for observation scrubbing.</param>
+    /// <param name="pathLedger">
+    /// The run's security-path disclosure ledger, or <see langword="null"/> when the caller holds
+    /// none.  REQUIRED rather than optional (issue #375): the live path and the post-run
+    /// reconstruction must scrub identically, and an omitted argument here is a leak that shows up
+    /// only under <c>--events</c> tailing, on the one channel no later scrubber can reach.
+    /// </param>
     public LiveStepEventSink(
         LiveEventPump pump,
         string runId,
         IReadOnlyList<StepNode> steps,
         IReadOnlyDictionary<string, string> captureOriginMap,
-        ISecretAccessor secretAccessor)
+        ISecretAccessor secretAccessor,
+        SecurityPathDisclosureLedger? pathLedger)
     {
         ArgumentNullException.ThrowIfNull(pump);
         ArgumentNullException.ThrowIfNull(runId);
@@ -67,6 +80,7 @@ internal sealed class LiveStepEventSink : IStepEventSink
         _runId = runId;
         _captureOriginMap = captureOriginMap;
         _secretAccessor = secretAccessor;
+        _pathLedger = pathLedger;
 
         var byId = new Dictionary<string, StepNode>(StringComparer.Ordinal);
         foreach (var step in steps)
@@ -127,7 +141,8 @@ internal sealed class LiveStepEventSink : IStepEventSink
             return;
         }
 
-        _pump.Post(StepEventBuilder.StepAttemptLine(_runId, DateTimeOffset.UtcNow, stepId, attempt, _secretAccessor));
+        _pump.Post(StepEventBuilder.StepAttemptLine(
+            _runId, DateTimeOffset.UtcNow, stepId, attempt, _secretAccessor, _pathLedger));
     }
 
     /// <inheritdoc />
@@ -146,6 +161,7 @@ internal sealed class LiveStepEventSink : IStepEventSink
         }
 
         _pump.Post(StepEventBuilder.StepCompletedLine(
-            _runId, DateTimeOffset.UtcNow, node, outcome, captureStatus, _captureOriginMap, _secretAccessor));
+            _runId, DateTimeOffset.UtcNow, node, outcome, captureStatus, _captureOriginMap,
+            _secretAccessor, _pathLedger));
     }
 }

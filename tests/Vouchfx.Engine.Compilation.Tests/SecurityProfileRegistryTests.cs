@@ -613,7 +613,7 @@ public sealed class SecurityProfileRegistryTests
 
         var message = SecurityProfileRegistry.BuiltIn.DescribeUnknownProfile(longProfile);
 
-        Assert.Contains($"{new string('a', bound)}… (250 chars total)", message, System.StringComparison.Ordinal);
+        Assert.Contains($"{new string('a', bound)}... (250 chars total)", message, System.StringComparison.Ordinal);
         Assert.DoesNotContain(longProfile, message, System.StringComparison.Ordinal);
 
         // A value AT the bound is rendered verbatim — the truncation is exclusive, matching
@@ -651,7 +651,7 @@ public sealed class SecurityProfileRegistryTests
         var message = SecurityProfileRegistry.BuiltIn.DescribeUnknownProfile(profile);
 
         // The pair is dropped whole: the rendered value is the 'a' run, never a lone surrogate.
-        Assert.Contains($"'{new string('a', bound - 1)}… ({profile.Length} chars total)'", message,
+        Assert.Contains($"'{new string('a', bound - 1)}... ({profile.Length} chars total)'", message,
             System.StringComparison.Ordinal);
 
         for (var i = 0; i < message.Length; i++)

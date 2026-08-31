@@ -518,7 +518,7 @@ internal static class ProviderPipeline
                 Failure: new ValidationFailure(
                     $"host resource '{group.Key}' is declared by more than one kind " +
                     $"({string.Join(", ", kinds)}). Each host-resource VarName must be claimed " +
-                    "by exactly one kind — a webhook listener and an OTLP receiver (or any two " +
+                    "by exactly one kind - a webhook listener and an OTLP receiver (or any two " +
                     "distinct host-resource kinds) cannot share the same name. Rename one of them."));
         }
 
@@ -864,11 +864,11 @@ internal static class ProviderPipeline
                 var failure = ex is TargetInvocationException { InnerException: { } cause }
                     ? $"step '{node.Id}': the '{node.CanonicalType}' provider's Bind threw "
                         + $"{cause.GetType().Name}: {cause.Message}  This is a defect in the "
-                        + "provider, not in the suite — the step was never compiled and never ran."
+                        + "provider, not in the suite - the step was never compiled and never ran."
                     : $"step '{node.Id}': the engine could not invoke Bind on the "
                         + $"'{node.CanonicalType}' provider ({ex.GetType().Name}: {ex.Message}).  "
                         + "This is an engine or provider-packaging fault, not a fault in the suite "
-                        + "— the step was never compiled and never ran.";
+                        + "- the step was never compiled and never ran.";
 
                 return (boundSteps, new ValidationFailure(failure));
             }
@@ -1010,7 +1010,7 @@ internal static class ProviderPipeline
                     collisionFailure ??= new ValidationFailure(
                         $"'{serviceName}' is declared as both a service (environment.services." +
                         $"{serviceName}) and a dependency (environment.dependencies.{serviceName}). " +
-                        "A service and a dependency cannot share a name — rename one of the two.");
+                        "A service and a dependency cannot share a name - rename one of the two.");
                 }
             }
         }
@@ -1078,7 +1078,7 @@ internal static class ProviderPipeline
                             $"endpoint '{sidecarName}' collides with {sidecarOwner}. A " +
                             "dependency's own sidecar endpoint cannot share a name with a " +
                             "declared service or with another dependency's own sidecar " +
-                            "endpoint — rename one of the two.");
+                            "endpoint - rename one of the two.");
                         continue;
                     }
 
@@ -1164,7 +1164,7 @@ internal static class ProviderPipeline
                         $"host resource '{hostReq.VarName}' (kind '{hostReq.Kind}', declared by " +
                         $"step '{bound.Node.Id}') collides with {owner}. A host resource (e.g. a " +
                         "webhook listener) cannot share a name with a declared service or with a " +
-                        "dependency's own sidecar endpoint — rename one of the two.");
+                        "dependency's own sidecar endpoint - rename one of the two.");
                     continue;
                 }
 

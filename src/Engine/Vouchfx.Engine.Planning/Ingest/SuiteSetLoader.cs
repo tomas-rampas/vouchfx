@@ -137,7 +137,7 @@ internal static class SuiteSetLoader
                     $"Suite path '{suitePath}' (resolved to '{fullRoot}') is a valid, existing "
                     + "directory, but could not be FULLY enumerated because of an "
                     + $"access/infrastructure fault encountered while scanning it ({ex.GetType().Name}) "
-                    + "— this is an environment problem, NOT a malformed argument: a subdirectory "
+                    + "- this is an environment problem, NOT a malformed argument: a subdirectory "
                     + "became locked, was deleted mid-scan, or is access-denied. Exit code 2 still "
                     + "applies (the Planner has no partial-enumeration fallback), but the remedy is "
                     + "fixing the environment, not the command line.");
@@ -158,7 +158,7 @@ internal static class SuiteSetLoader
             throw new PlanInputException(
                 $"Suite path '{suitePath}' (resolved to '{fullRoot}') discovers zero "
                 + $"{ScenarioGlob} suites. An empty suite folder means there is no declared "
-                + "universe to analyse (EDGE-009) — this is a configuration error, not a finding.");
+                + "universe to analyse (EDGE-009) - this is a configuration error, not a finding.");
         }
 
         var suites = new List<PlanSuite>(files.Count);

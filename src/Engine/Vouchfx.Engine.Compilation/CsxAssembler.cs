@@ -269,7 +269,7 @@ public static class CsxAssembler
                                 $"Helper class '{className}' was declared by two fragments with " +
                                 "different source text.  Providers must emit byte-identical helper " +
                                 "source for a given class across all step instances within one suite " +
-                                "(§13.3.1).  Ensure both steps use the same provider version and " +
+                                "(section 13.3.1).  Ensure both steps use the same provider version and " +
                                 "that the helper does not embed step-specific data.");
                         }
                         // Identical — skip; already in the ordered list.
@@ -453,7 +453,7 @@ public static class CsxAssembler
         sb.Append("    catch (System.OperationCanceledException) when (__stepCts_")
           .Append(safe).Append(".IsCancellationRequested)\n");
         sb.Append("    {\n");
-        sb.Append("        // Early cooperative cut: the body observed the step token (§4, #232).\n");
+        sb.Append("        // Early cooperative cut: the body observed the step token (section 4, #232).\n");
         sb.Append("        __stepTimedOut_").Append(safe).Append(" = true;\n");
         sb.Append("        Vars[").Append(outcomeLit)
           .Append("] = new Vouchfx.Engine.Abstractions.StepOutcome(\n");
@@ -658,8 +658,8 @@ public static class CsxAssembler
         {
             throw new CsxAssemblyException(
                 $"RequiredUsings entry '{ns}' is not a bare namespace string.  " +
-                "Providers must supply bare namespace strings only — the engine emits " +
-                "the 'using' keyword and the trailing semicolon (§13.3.1).  " +
+                "Providers must supply bare namespace strings only - the engine emits " +
+                "the 'using' keyword and the trailing semicolon (section 13.3.1).  " +
                 "Remove the 'using ' prefix and/or the trailing ';' from the entry.");
         }
     }

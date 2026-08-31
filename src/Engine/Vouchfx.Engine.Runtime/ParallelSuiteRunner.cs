@@ -851,6 +851,7 @@ public static class ParallelSuiteRunner
             // No ledger: this buffer is synthesised by the fan-out itself, which owns no secret
             // accessor — the per-scenario one lives inside the core that never ran or was
             // abandoned — and the text is a fixed literal with nothing interpolated into it.
+            // Neither net applies for the same reason: no path ledger either (issue #375).
             StepEventBuilder.ScenarioCompletedLine(
                 runId,
                 now,
@@ -858,6 +859,7 @@ public static class ParallelSuiteRunner
                 Verdict.Inconclusive,
                 new VerdictCounts { Inconclusive = 1 },
                 ledger: null,
+                pathLedger: null,
                 cause),
         };
     }
@@ -889,7 +891,8 @@ public static class ParallelSuiteRunner
             }),
 
             // No ledger, and no message to scrub against one: the exception's own message is
-            // deliberately NOT carried here (§17), only its type name.
+            // deliberately NOT carried here (§17), only its type name. A type name cannot carry
+            // a host path either, so no path ledger (issue #375).
             StepEventBuilder.ScenarioCompletedLine(
                 runId,
                 now,
@@ -897,6 +900,7 @@ public static class ParallelSuiteRunner
                 Verdict.EnvironmentError,
                 new VerdictCounts { EnvError = 1 },
                 ledger: null,
+                pathLedger: null,
                 $"Scenario did not complete: {exceptionTypeName}."),
         };
     }

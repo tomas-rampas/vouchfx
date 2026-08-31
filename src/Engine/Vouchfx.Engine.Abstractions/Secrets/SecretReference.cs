@@ -109,7 +109,7 @@ public sealed record SecretReference(string Source, string Path, string Raw)
         + "reference of the form '${secret:<source>/<path>}' and nothing else. Note that a stray "
         + "'${secret:' INSIDE the path counts: the path runs to the first '}', so a second "
         + "lead-in is swallowed into it rather than starting a token of its own. A literal is "
-        + "refused by design (§17), as is a reference with any text around it.";
+        + "refused by design (section 17), as is a reference with any text around it.";
 
     // Compiled-once grammar for a secret reference. Anchored at neither end so it
     // can locate tokens embedded in a larger field value via FindAll; TryParse

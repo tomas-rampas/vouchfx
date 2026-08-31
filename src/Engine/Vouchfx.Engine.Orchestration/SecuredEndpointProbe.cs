@@ -274,7 +274,7 @@ public sealed record SecurityConfirmation(
     public override string ToString() =>
         $"security: {TargetKind} '{TargetName}' declared profile '{DeclaredProfile}' on endpoint "
         + $"'{DeclaredEndpoint}'; observed {ObservedProtocol} at {ObservedAddress}, client identity "
-        + $"{(ClientIdentityResolved ? "resolved" : "none declared")}, level {Level} — {Detail}";
+        + $"{(ClientIdentityResolved ? "resolved" : "none declared")}, level {Level}: {Detail}";
 }
 
 /// <summary>
@@ -791,7 +791,7 @@ internal static class SecuredEndpointProbe
                     clientCertificate is not null
                         ? "the broker answered a Kafka ApiVersions request over this connection, and "
                           + "REFUSED the same request on a second connection presenting no client "
-                          + "certificate — so it both accepted the declared client identity and "
+                          + "certificate - so it both accepted the declared client identity and "
                           + "requires one. Topic-level authorisation is enforced per request and is "
                           + "not confirmed here."
                         : "the broker answered a Kafka ApiVersions request over this connection. No "
@@ -819,7 +819,7 @@ internal static class SecuredEndpointProbe
                     $"declared profile '{declaredProfile}' on endpoint '{declaredEndpoint}'; the TLS "
                     + $"handshake against {observedAddress} completed, but the peer then rejected the "
                     + $"connection: {rejection}. Under TLS 1.3 a server cannot refuse a client "
-                    + "certificate during the handshake — it does so immediately afterwards, which is "
+                    + "certificate during the handshake - it does so immediately afterwards, which is "
                     + "what this reports.");
             }
 
@@ -887,8 +887,8 @@ internal static class SecuredEndpointProbe
                 $"declared profile '{declaredProfile}' on endpoint '{declaredEndpoint}'; the engine's "
                 + "own certificate validation failed with a cryptographic fault while confirming "
                 + $"{observedAddress}: {Summarise(ex)}. That is a fault in this host's certificate "
-                + "handling — a stale or corrupt entry in the host's certificate stores is the usual "
-                + "cause — and NOT a verdict on the peer, so nothing was confirmed and nothing is "
+                + "handling - a stale or corrupt entry in the host's certificate stores is the usual "
+                + "cause - and NOT a verdict on the peer, so nothing was confirmed and nothing is "
                 + "claimed.",
                 ex);
         }
@@ -943,7 +943,7 @@ internal static class SecuredEndpointProbe
                 $"declared profile '{declaredProfile}' on endpoint '{declaredEndpoint}'; the TLS "
                 + $"handshake against {observedAddress} completed, but the broker did not answer a Kafka "
                 + $"ApiVersions request over it: {Summarise(ex)}. A completed TLS 1.3 handshake does not "
-                + "prove the client certificate was accepted — the server's refusal arrives after it — "
+                + "prove the client certificate was accepted - the server's refusal arrives after it - "
                 + "so this exchange, together with the anonymous-client check that follows it, is what "
                 + "confirms authentication. Either the presented certificate was refused, or this "
                 + "endpoint is not a Kafka broker.",
@@ -1076,7 +1076,7 @@ internal static class SecuredEndpointProbe
                     $"declared profile '{declaredProfile}' on endpoint '{declaredEndpoint}'; the engine "
                     + $"could not open a second connection to {observedAddress} to confirm it REQUIRES a "
                     + $"client certificate: {Summarise(ex)}. That connection failed before any TLS, so it "
-                    + "says nothing about whether the endpoint demands an identity — nothing was "
+                    + "says nothing about whether the endpoint demands an identity - nothing was "
                     + "confirmed, so nothing is claimed.",
                     ex);
             }
@@ -1188,12 +1188,12 @@ internal static class SecuredEndpointProbe
             // take, and a message naming a profile the author did not declare is the kind of
             // false detail that costs a reader an hour.
             $"declared profile '{declaredProfile}' on endpoint '{declaredEndpoint}' and {observedAddress} answered "
-            + "a Kafka ApiVersions request with the declared client certificate — but it answered the "
+            + "a Kafka ApiVersions request with the declared client certificate - but it answered the "
             + "SAME request on a second connection presenting NO client certificate. The endpoint "
             + "therefore does not require a client certificate, so this is TLS wearing the word "
             + "'mutual': every step would run, every assertion would pass, and no client identity "
             + "would have been authenticated. Kafka's `ssl.client.auth` defaults to `none` and its "
-            + "`requested` setting behaves the same way for this purpose — set it to `required` on "
+            + "`requested` setting behaves the same way for this purpose - set it to `required` on "
             + "the broker's SSL listener, or declare `profile: tls` if server-only TLS is genuinely "
             + "what this endpoint provides.");
     }

@@ -671,6 +671,14 @@ public static class ScenarioRunner
         // method's frame.
         var runSecretLedger = new ResolvedSecretLedger();
 
+        // The #375 sibling net, created and scoped exactly as the value ledger above is: ONE per
+        // run, shared by the topology probe's security accessor and every scenario's, so a
+        // resolved security-material path handed out while the probe ran is substitutable from
+        // text emitted on a step path. Separate from `runSecretLedger` deliberately — a path is
+        // not a secret and its substitution is the field's DECLARED text, not a redaction marker
+        // (see SecurityPathDisclosureLedger's own header).
+        var runPathLedger = new SecurityPathDisclosureLedger();
+
         // ── Step 2: Validate YAML against composed JSON Schema ────────────────
         var validationResult = DocumentValidator.Validate(yamlText, registry);
         if (!validationResult.IsValid)
@@ -695,6 +703,7 @@ public static class ScenarioRunner
                 Verdict.Inconclusive,
                 new VerdictCounts { Inconclusive = 1 },
                 runSecretLedger,
+                runPathLedger,
                 string.Join("; ", validationResult.Errors.Select(e => e.Message))));
 
             foreach (var error in validationResult.Errors)
@@ -770,6 +779,7 @@ public static class ScenarioRunner
                 Verdict.Inconclusive,
                 new VerdictCounts { Inconclusive = 1 },
                 runSecretLedger,
+                runPathLedger,
                 parseFault));
 
             // Issue #266, Item 4: ex.Message can echo untrusted YAML/AST-builder text back
@@ -893,6 +903,7 @@ public static class ScenarioRunner
                 Verdict.Inconclusive,
                 new VerdictCounts { Inconclusive = 1 },
                 runSecretLedger,
+                runPathLedger,
                 authoringFault));
             // Issue #266, Item 4: both halves can echo untrusted YAML content (a step id, a field
             // value, a secret reference) back verbatim — sanitise before writing.
@@ -957,7 +968,7 @@ public static class ScenarioRunner
         try
         {
             probeSecurity = SecurityConfigurationAccessor.Build(
-                ast, seedBaseDirectory, probeSecrets.Accessor);
+                ast, seedBaseDirectory, probeSecrets.Accessor, runPathLedger);
 
             // ONE ARGUMENT LIST (#364). `TopologyRequest.ForScenario` derives BOTH protocol target
             // sets from this one `ast` — REQ-005/REQ-011's Kafka-speaking set, so a broker declared
@@ -1027,8 +1038,13 @@ public static class ScenarioRunner
             // scrub is what covers the TERMINAL write, and building the text once means the two
             // channels can never carry different redactions. DisplaySanitiser alone would not do
             // it — an ordinary printable passphrase passes through it unchanged.
-            var environmentFault =
-                runSecretLedger.Scrub($"Environment configuration error: {aex.Message}")!;
+            //
+            // BOTH NETS, in ScrubDiagnostic's order (issue #375). The event counterpart below is
+            // handed `runPathLedger` as well as `runSecretLedger`; a terminal write that applied
+            // only one of them would print a resolved certificate path the archived record does
+            // not contain, which is the divergence building the text once exists to prevent.
+            var environmentFault = runPathLedger.Scrub(
+                runSecretLedger.Scrub($"Environment configuration error: {aex.Message}")!)!;
             buffer.Add(StepEventBuilder.ScenarioCompletedLine(
                 runId,
                 now,
@@ -1036,6 +1052,7 @@ public static class ScenarioRunner
                 Verdict.Inconclusive,
                 new VerdictCounts { Inconclusive = 1 },
                 runSecretLedger,
+                runPathLedger,
                 environmentFault));
             // Issue #266, Item 4: aex.Message can echo untrusted YAML content (an
             // environment.services/dependencies reference) back verbatim — sanitise.
@@ -1069,7 +1086,8 @@ public static class ScenarioRunner
             // into oex.Info.Detail (SecuredEndpointProbe folds SecurityMaterialException.Message
             // into the probe-failure text). `runSecretLedger` is the ledger the probe recorded
             // into, so this is where that value is caught.
-            buffer.Add(EnvironmentErrorLine(runSecretLedger, oex.Info, runId, now));
+            buffer.Add(EnvironmentErrorLine(
+                runSecretLedger, runPathLedger, oex.Info, runId, now));
 
             // #372 stamped here too, and it is NOT a duplicate of the environment-error line
             // above: that record is what the HTML renderer reads for its own environment-error
@@ -1085,6 +1103,7 @@ public static class ScenarioRunner
                 Verdict.EnvironmentError,
                 new VerdictCounts { EnvError = 1 },
                 runSecretLedger,
+                runPathLedger,
                 oex.Message));
             livePump?.PostRange(buffer);
 
@@ -1209,7 +1228,8 @@ public static class ScenarioRunner
                 seedBaseDirectory,
                 cancellationToken,
                 livePump: livePump,
-                sharedLedger: runSecretLedger).ConfigureAwait(false);
+                sharedLedger: runSecretLedger,
+                sharedPathLedger: runPathLedger).ConfigureAwait(false);
 
             // The topology came up and every declared block was confirmed — reaching here at all
             // means that (a failure aborts StartAsync). What was confirmed is carried rather than
@@ -1850,6 +1870,7 @@ public static class ScenarioRunner
                         eventsReportPath,
                         eventsStreamPath,
                         runSecretLedger: null,
+                        runPathLedger: null,
                         alreadyPrintedMessage: divergentEnvironment)
                     .ConfigureAwait(false);
             }
@@ -1941,7 +1962,8 @@ public static class ScenarioRunner
                     junitReportPath,
                     eventsReportPath,
                     eventsStreamPath,
-                    runSecretLedger: null)
+                    runSecretLedger: null,
+                    runPathLedger: null)
                 .ConfigureAwait(false);
         }
 
@@ -2027,6 +2049,7 @@ public static class ScenarioRunner
                     eventsReportPath,
                     eventsStreamPath,
                     runSecretLedger: null,
+                    runPathLedger: null,
                     alreadyPrintedMessage: seedRootSplit)
                 .ConfigureAwait(false);
         }
@@ -2111,6 +2134,7 @@ public static class ScenarioRunner
                     eventsReportPath,
                     eventsStreamPath,
                     runSecretLedger: null,
+                    runPathLedger: null,
                     alreadyPrintedMessage: divergence)
                 .ConfigureAwait(false);
         }
@@ -2224,6 +2248,7 @@ public static class ScenarioRunner
                     eventsReportPath,
                     eventsStreamPath,
                     runSecretLedger: null,
+                    runPathLedger: null,
                     alreadyPrintedMessage: protocolConflict)
                 .ConfigureAwait(false);
         }
@@ -2253,6 +2278,11 @@ public static class ScenarioRunner
         // single-scenario site above: a throwing `Build` must not skip the `finally` that disposes
         // these resolvers.
         var runSecretLedger = new ResolvedSecretLedger();
+
+        // The #375 sibling net, run-scoped for the same reason and with the same lifetime as
+        // the ledger above — see RunAsync's copy of this pair for why the two are separate types.
+        var runPathLedger = new SecurityPathDisclosureLedger();
+
         var probeSecrets = CreateSecretAccessorScope(runSecretLedger);
         ISecurityConfigurationAccessor probeSecurity = NullSecurityConfigurationAccessor.Instance;
 
@@ -2264,7 +2294,8 @@ public static class ScenarioRunner
                 compilations.Count > 0
                     ? compilations[topologyIndex].ScenarioBaseDirectory
                     : seedBaseDirectory,
-                probeSecrets.Accessor);
+                probeSecrets.Accessor,
+                runPathLedger);
 
             // ONE ARGUMENT LIST (#364). `TopologyRequest.ForSuite` derives BOTH protocol target
             // sets from the SAME `runnableScenarios` list the protocol-conflict guard above was
@@ -2313,8 +2344,9 @@ public static class ScenarioRunner
             //
             // Issue #266, Item 4: aex.Message can echo untrusted YAML content back
             // verbatim — sanitise before writing.
-            var environmentFault = runSecretLedger.Scrub(
-                $"RunSuiteAsync: environment configuration error — {aex.Message}")!;
+            var environmentFault = runPathLedger.Scrub(
+                runSecretLedger.Scrub(
+                    $"RunSuiteAsync: environment configuration error - {aex.Message}")!)!;
 
             await output.WriteLineAsync(DisplaySanitiser.SanitiseForDisplay(environmentFault))
                 .ConfigureAwait(false);
@@ -2356,6 +2388,7 @@ public static class ScenarioRunner
                     eventsReportPath,
                     eventsStreamPath,
                     runSecretLedger,
+                    runPathLedger,
                     alreadyPrintedMessage: environmentFault)
                 .ConfigureAwait(false);
         }
@@ -2381,8 +2414,9 @@ public static class ScenarioRunner
             // record, into --junit/--html/--events, so it must be scrubbed BEFORE it is stamped.
             // Sanitising is display hygiene (#266 Item 4) — it neutralises control bytes and ANSI
             // sequences for a terminal, and would not redact an ordinary printable passphrase.
-            var topologyFailure =
-                runSecretLedger.Scrub($"RunSuiteAsync: topology failed to start — {oex.Message}");
+            var topologyFailure = runPathLedger.Scrub(
+                runSecretLedger.Scrub(
+                    $"RunSuiteAsync: topology failed to start - {oex.Message}"));
 
             await output.WriteLineAsync(DisplaySanitiser.SanitiseForDisplay(topologyFailure))
                 .ConfigureAwait(false);
@@ -2439,6 +2473,7 @@ public static class ScenarioRunner
                     eventsReportPath,
                     eventsStreamPath,
                     runSecretLedger,
+                    runPathLedger,
                     alreadyPrintedMessage: topologyFailure)
                 .ConfigureAwait(false);
         }
@@ -2583,6 +2618,7 @@ public static class ScenarioRunner
                             earlyVerdict.Value,
                             new VerdictCounts { Inconclusive = 1 },
                             runSecretLedger,
+                            runPathLedger,
                             earlyMessage));
                         if (!string.IsNullOrEmpty(earlyMessage))
                         {
@@ -2619,7 +2655,8 @@ public static class ScenarioRunner
                         // Detail folds the store client's own exception message, and by this
                         // point the probe and every earlier scenario have already recorded
                         // whatever they resolved.
-                        buffer.Add(EnvironmentErrorLine(runSecretLedger, oex.Info, runId, now));
+                        buffer.Add(EnvironmentErrorLine(
+                            runSecretLedger, runPathLedger, oex.Info, runId, now));
 
                         // The SAME text the terminal write below carries, built once so the two
                         // channels cannot diverge; the chokepoint scrubs it against the suite
@@ -2634,6 +2671,7 @@ public static class ScenarioRunner
                             Verdict.EnvironmentError,
                             new VerdictCounts { EnvError = 1 },
                             runSecretLedger,
+                            runPathLedger,
                             isolationFault));
                         results.Add((name, Verdict.EnvironmentError));
                         suiteAggregate = Elevate(suiteAggregate, Verdict.EnvironmentError);
@@ -2650,7 +2688,8 @@ public static class ScenarioRunner
                         // value on the terminal/CI log.
                         await output.WriteLineAsync(
                             DisplaySanitiser.SanitiseForDisplay(
-                                runSecretLedger.Scrub(isolationFault))).ConfigureAwait(false);
+                                runPathLedger.Scrub(runSecretLedger.Scrub(isolationFault))))
+                            .ConfigureAwait(false);
                         break;
                     }
 
@@ -2675,7 +2714,8 @@ public static class ScenarioRunner
                         cancellationToken,
                         scriptBaseDirectory: scenarioBaseDirectory,
                         livePump: livePump,
-                        sharedLedger: runSecretLedger).ConfigureAwait(false);
+                        sharedLedger: runSecretLedger,
+                        sharedPathLedger: runPathLedger).ConfigureAwait(false);
 
                     results.Add((name, scenarioVerdict));
                     suiteAggregate = Elevate(suiteAggregate, scenarioVerdict);
@@ -2702,7 +2742,7 @@ public static class ScenarioRunner
                         // BeginScenarioAsync path above, and this one runs AFTER the scenario,
                         // so the ledger is at its fullest here.
                         var isolationFailureLine = EnvironmentErrorLine(
-                            runSecretLedger, oex.Info, runId, DateTimeOffset.UtcNow);
+                            runSecretLedger, runPathLedger, oex.Info, runId, DateTimeOffset.UtcNow);
                         allBuffers.Add(isolationFailureLine);
                         var isolationFailureLines = new[] { isolationFailureLine };
                         livePump?.PostRange(isolationFailureLines);
@@ -2713,9 +2753,11 @@ public static class ScenarioRunner
                         // oex.Message interpolates the same Detail that event line scrubbed.
                         await output.WriteLineAsync(
                             DisplaySanitiser.SanitiseForDisplay(
-                                runSecretLedger.Scrub(
-                                    $"Isolation.EndScenarioAsync failed after '{name}': {oex.Message}; " +
-                                    "aborting suite — subsequent scenarios may run against unclean state.")))
+                                runPathLedger.Scrub(
+                                    runSecretLedger.Scrub(
+                                        $"Isolation.EndScenarioAsync failed after '{name}': {oex.Message}; "
+                                        + "aborting suite - subsequent scenarios may run against "
+                                        + "unclean state."))))
                             .ConfigureAwait(false);
                         suiteAggregate = Elevate(suiteAggregate, Verdict.EnvironmentError);
                         break;
@@ -3044,6 +3086,7 @@ public static class ScenarioRunner
         string? eventsReportPath,
         string? eventsStreamPath,
         ResolvedSecretLedger? runSecretLedger,
+        SecurityPathDisclosureLedger? runPathLedger,
         string? alreadyPrintedMessage = null)
     {
         var results = new List<(string ScenarioName, Verdict Verdict)>(compilations.Count);
@@ -3089,6 +3132,7 @@ public static class ScenarioRunner
                     earlyVerdict!.Value,
                     CountsFor(earlyVerdict.Value),
                     runSecretLedger,
+                    runPathLedger,
                     earlyMessage),
             };
 
@@ -3539,7 +3583,7 @@ public static class ScenarioRunner
                     + $"'{candidate.ScenarioName}' resolves its declared security paths against a "
                     + $"different directory than '{first.ScenarioName}' does. Every security path is "
                     + "resolved relative to its own scenario's directory (REQ-003), so one declared "
-                    + "'caCert'/'clientCert'/'clientKey' would name two different files — and REQ-005's "
+                    + "'caCert'/'clientCert'/'clientKey' would name two different files - and REQ-005's "
                     + "probe can only present one of them, on behalf of steps that would present the "
                     + "other. Put the scenarios of a secured suite in one directory.";
                 return true;
@@ -3557,7 +3601,7 @@ public static class ScenarioRunner
                 + "('caCert'/'clientCert'/'clientKey') would be read from one root and the server "
                 + "artefacts written from another, so one declared relative path would name two "
                 + "different files. Pass the same base directory as both 'seedBaseDirectory' and "
-                + "the scenarios' own base directory (the CLI does — it derives one from the other; "
+                + "the scenarios' own base directory (the CLI does - it derives one from the other; "
                 + "a direct engine embedder must too).";
             return true;
         }
@@ -3860,6 +3904,7 @@ public static class ScenarioRunner
         // that passed it positionally would fail to compile rather than mis-bind (the types do not
         // convert), so the insertion cannot silently change any call's meaning.
         ResolvedSecretLedger? sharedLedger = null,
+        SecurityPathDisclosureLedger? sharedPathLedger = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(topology);
@@ -3911,7 +3956,7 @@ public static class ScenarioRunner
                     // the topology was built from, so changing which services the steps target
                     // rebuilds too. Naming only the environment block would send an author who had
                     // just retargeted a step looking for a change they had already made.
-                    "security: confirmed once when this topology was built, and replayed here — "
+                    "security: confirmed once when this topology was built, and replayed here - "
                     + "the endpoints are not re-probed per re-run. Save a change to the "
                     + "'environment' block, or to which services the steps target, to rebuild the "
                     + "topology and re-confirm.")
@@ -3948,7 +3993,7 @@ public static class ScenarioRunner
         if (topology.EndpointSelectionNotices.Count > 0 || topology.EndpointTrustNotices.Count > 0)
         {
             await output.WriteLineAsync(
-                    "transport: selected once when this topology was built, and replayed here — "
+                    "transport: selected once when this topology was built, and replayed here - "
                     + "endpoints are not re-read per re-run. A project's endpoints come from its "
                     + "launch profile, which is not part of the 'environment' block, so editing "
                     + "one does not rebuild the topology: restart --watch to re-select.")
@@ -4042,7 +4087,8 @@ public static class ScenarioRunner
                 // what a session-scoped ledger carries and a ledger scoped to the caller's build
                 // seam does not reach. A null caller (every non-watch caller) keeps the
                 // pre-EDGE-007 behaviour.
-                buffer.Add(EnvironmentErrorLine(sharedLedger, oex.Info, runId, nowR));
+                buffer.Add(EnvironmentErrorLine(
+                    sharedLedger, sharedPathLedger, oex.Info, runId, nowR));
 
                 // Same ledger, same reason (EDGE-007) — and the same reset failure is now the
                 // scenario's own recorded cause, not only an environment-error record beside it.
@@ -4053,6 +4099,7 @@ public static class ScenarioRunner
                     Verdict.EnvironmentError,
                     new VerdictCounts { EnvError = 1 },
                     sharedLedger,
+                    sharedPathLedger,
                     oex.Message));
                 TerminalRenderer.Render(buffer, output, diffLookup);
                 return Verdict.EnvironmentError;
@@ -4079,7 +4126,8 @@ public static class ScenarioRunner
             cancellationToken,
             // Named, because the two parameters between here and it (scriptBaseDirectory,
             // livePump) are both optional and both stay at their defaults on this path.
-            sharedLedger: sharedLedger).ConfigureAwait(false);
+            sharedLedger: sharedLedger,
+            sharedPathLedger: sharedPathLedger).ConfigureAwait(false);
 
         TerminalRenderer.Render(buffer, output, diffLookup);
         return verdict;
@@ -4217,7 +4265,8 @@ public static class ScenarioRunner
         CancellationToken cancellationToken,
         string? scriptBaseDirectory = null,
         LiveEventPump? livePump = null,
-        ResolvedSecretLedger? sharedLedger = null)
+        ResolvedSecretLedger? sharedLedger = null,
+        SecurityPathDisclosureLedger? sharedPathLedger = null)
     {
         // isolation.BeginScenarioAsync is called by the suite loop (or is a no-op for RunAsync).
         _ = isolation;
@@ -4365,7 +4414,8 @@ public static class ScenarioRunner
                 cancellationToken,
                 scriptBaseDirectory: scriptBaseDirectory,
                 livePump: livePump,
-                sharedLedger: sharedLedger).ConfigureAwait(false);
+                sharedLedger: sharedLedger,
+                sharedPathLedger: sharedPathLedger).ConfigureAwait(false);
         }
         finally
         {
@@ -4473,7 +4523,8 @@ public static class ScenarioRunner
         CancellationToken cancellationToken,
         string? scriptBaseDirectory = null,
         LiveEventPump? livePump = null,
-        ResolvedSecretLedger? sharedLedger = null)
+        ResolvedSecretLedger? sharedLedger = null,
+        SecurityPathDisclosureLedger? sharedPathLedger = null)
     {
         // ── Issue #262: live scenario-started signal ──────────────────────────
         // Posted immediately, before anything else, using its OWN real-time timestamp —
@@ -4559,7 +4610,7 @@ public static class ScenarioRunner
             // probe's separately-scoped accessor records into this same net, so neither path's
             // resolved value can escape through the other's emitted text.
             securityAccessor = SecurityConfigurationAccessor.Build(
-                ast, scriptBaseDirectory ?? seedBaseDirectory, secretAccessor);
+                ast, scriptBaseDirectory ?? seedBaseDirectory, secretAccessor, sharedPathLedger);
 
             // Built once, up front (moved ahead of its former use inside the step loop below)
             // because the live sink needs it at construction time, issue #262: the map of
@@ -4581,7 +4632,8 @@ public static class ScenarioRunner
             // pre-#262 in that case.
             IStepEventSink? liveSink = livePump is null
                 ? null
-                : new LiveStepEventSink(livePump, runId, ast.Steps, captureOriginMap, secretAccessor);
+                : new LiveStepEventSink(
+                    livePump, runId, ast.Steps, captureOriginMap, secretAccessor, sharedPathLedger);
 
             var globals = new ScriptGlobalVariables(
                 vars,
@@ -4676,6 +4728,7 @@ public static class ScenarioRunner
                     Verdict.EnvironmentError,
                     new VerdictCounts { EnvError = 1 },
                     LedgerOf(secretAccessor),
+                    sharedPathLedger,
                     secretFault);
                 buffer.Add(seCompletedLine);
                 // Issue #262: the matching scenario-started was already posted live at the top
@@ -4711,6 +4764,7 @@ public static class ScenarioRunner
                     Verdict.Inconclusive,
                     new VerdictCounts { Inconclusive = 1 },
                     LedgerOf(secretAccessor),
+                    sharedPathLedger,
                     diagnosis);
                 buffer.Add(ceCompletedLine);
                 livePump?.Post(ceCompletedLine);
@@ -4722,15 +4776,17 @@ public static class ScenarioRunner
                 // real as the event stream — so scrub it through the SAME ledger the observation
                 // path uses before it leaves the engine.  Type-based redaction stays primary.
                 //
-                // Issue #266, Item 4: composed with DisplaySanitiser.SanitiseForDisplay so BOTH
-                // nets run on this write — ScrubDiagnostic redacts resolved secret VALUES first,
-                // then SanitiseForDisplay strips control characters / neutralises ANSI escape
-                // sequences the (already-scrubbed) text might still carry (e.g. from a hostile
-                // step id or an author exception message), before either ever reaches the
-                // terminal/CI log.
+                // Issue #266, Item 4: composed with DisplaySanitiser.SanitiseForDisplay so ALL
+                // nets run on this write — ScrubDiagnostic redacts resolved secret VALUES and
+                // substitutes the declared form over any resolved security-material path
+                // (issue #375), then SanitiseForDisplay strips control characters / neutralises
+                // ANSI escape sequences the (already-scrubbed) text might still carry (e.g. from
+                // a hostile step id or an author exception message), before any of it ever
+                // reaches the terminal/CI log.
+                var scrubbedDiagnosis = ScrubDiagnostic(secretAccessor, sharedPathLedger, diagnosis);
                 await output.WriteLineAsync(
-                    $"Compile/run error (Inconclusive): " +
-                    $"{DisplaySanitiser.SanitiseForDisplay(ScrubDiagnostic(secretAccessor, diagnosis))}")
+                    "Compile/run error (Inconclusive): "
+                    + DisplaySanitiser.SanitiseForDisplay(scrubbedDiagnosis))
                     .ConfigureAwait(false);
 
                 return Verdict.Inconclusive;
@@ -4776,14 +4832,16 @@ public static class ScenarioRunner
                 // Vars[VarKeys.Attempts(safeId)]; emit one step-attempt event per
                 // record so the polling timeline is renderable offline (§14).  An
                 // IMMEDIATE step writes no attempts list, so this is a no-op for it.
-                buffer.AddRange(BuildAttemptEventLines(runId, now9, node.Id, vars, secretAccessor));
+                buffer.AddRange(BuildAttemptEventLines(
+                    runId, now9, node.Id, vars, secretAccessor, sharedPathLedger));
 
                 // Issue #262: StepEventBuilder.StepCompletedLine is the SAME method
                 // LiveStepEventSink.OnStepCompleted calls in real time — this call reproduces,
                 // byte-for-byte, the pre-#262 inline Captured/Substitutions/Observation
                 // construction.
                 var stepCompletedLine = StepEventBuilder.StepCompletedLine(
-                    runId, now9, node, outcome, captureStatusRaw, captureOriginMap, secretAccessor);
+                    runId, now9, node, outcome, captureStatusRaw, captureOriginMap, secretAccessor,
+                    sharedPathLedger);
                 buffer.Add(stepCompletedLine);
 
                 var stepVerdict = outcome?.Verdict ?? Verdict.Inconclusive;
@@ -4824,6 +4882,7 @@ public static class ScenarioRunner
                 aggregate,
                 finalCounts,
                 LedgerOf(secretAccessor),
+                sharedPathLedger,
                 message: null);
             buffer.Add(scenarioCompletedLine);
 
@@ -5064,7 +5123,20 @@ public static class ScenarioRunner
         DateTimeOffset timestamp,
         string stepId,
         IReadOnlyDictionary<string, object?> vars,
-        ISecretAccessor? secretAccessor = null)
+        // BOTH REQUIRED, and `secretAccessor` lost its default to get there. C# requires optional
+        // parameters to be trailing, so a required `pathLedger` could not sit after an optional
+        // `secretAccessor`; the first attempt at this fix left `pathLedger` optional instead and
+        // justified it as "bounded — exactly one production caller passes it".
+        //
+        // THAT JUSTIFICATION WAS A COUNT, NOT A CONSTRUCTION, and this repository has already paid
+        // for the difference once: #364's `securityConfiguration` was optional, had one production
+        // caller too, and a SECOND caller (WatchRunner) was added without it — compiling cleanly
+        // and leaving every secured suite unrunnable under `--watch`. A default is exactly the
+        // shape that lets the next caller omit the net in silence. The two test callers that
+        // relied on the old default now pass `null` explicitly, which is the point: writing it
+        // is a decision, inheriting it is not.
+        ISecretAccessor? secretAccessor,
+        SecurityPathDisclosureLedger? pathLedger)
     {
         var safeId = CsxFragment.SanitiseId(stepId);
 
@@ -5081,7 +5153,8 @@ public static class ScenarioRunner
         var lines = new List<string>(attempts.Count);
         foreach (var a in attempts)
         {
-            lines.Add(StepEventBuilder.StepAttemptLine(runId, timestamp, stepId, a, secretAccessor));
+            lines.Add(StepEventBuilder.StepAttemptLine(
+                runId, timestamp, stepId, a, secretAccessor, pathLedger));
         }
 
         return lines;
@@ -5157,8 +5230,11 @@ public static class ScenarioRunner
     /// exception message), not every theoretical encoding.
     /// </para>
     /// </remarks>
-    internal static JsonElement? BuildStepObservation(ISecretAccessor accessor, string? rawObservation)
-        => ParseObservation(ScrubDiagnostic(accessor, rawObservation));
+    internal static JsonElement? BuildStepObservation(
+        ISecretAccessor accessor,
+        SecurityPathDisclosureLedger? pathLedger,
+        string? rawObservation)
+        => ParseObservation(ScrubDiagnostic(accessor, pathLedger, rawObservation));
 
     /// <summary>
     /// Applies the §17 defence-in-depth scrub net (S11-B-01) to a free-form diagnostic /
@@ -5191,10 +5267,51 @@ public static class ScenarioRunner
     /// from a deliberate <see cref="SecretString.Reveal"/> followed by author code reshaping
     /// the bytes, the documented escape hatch and the author's responsibility (§17).
     /// </remarks>
-    internal static string? ScrubDiagnostic(ISecretAccessor accessor, string? text)
-        => accessor is SecretAccessor concrete
+    internal static string? ScrubDiagnostic(
+        ISecretAccessor accessor, SecurityPathDisclosureLedger? pathLedger, string? text)
+    {
+        var scrubbed = accessor is SecretAccessor concrete
             ? concrete.ResolvedSecrets.Scrub(text)
             : text;
+
+        // The SECOND net (issue #375): a resolved security-material path this engine handed to a
+        // client library whose diagnostics it does not write. The value ledger above cannot see
+        // it — a path is not a resolved secret and is never recorded there — and the substitution
+        // is the field's own DECLARED text rather than a redaction marker, which is why it is a
+        // separate ledger rather than a second use of the first.
+        //
+        // THE ORDER IS SECRETS FIRST, AND IT IS LOAD-BEARING. THIS IS THE ONE PLACE THAT ARGUMENT
+        // IS WRITTEN OUT; every other composition of the two nets in this engine points here.
+        //
+        // Both nets replace EXACT occurrences, so whichever runs first can destroy the other's
+        // match. The two orders therefore fail differently, and the choice is which failure to
+        // accept:
+        //
+        //   SECRETS FIRST (what this does). If a recorded secret VALUE happens to occur inside a
+        //   recorded resolved PATH — a passphrase that is also a directory name is the realistic
+        //   shape, and an author who names a folder after the credential in it has done nothing
+        //   this engine forbids — the value scrub rewrites the middle of the path, so the path
+        //   ledger no longer finds its recorded form and the remainder survives:
+        //   `C:\work\[REDACTED]\ca.pem`. That is a partial HOST-LAYOUT disclosure. It is the
+        //   failure this order accepts.
+        //
+        //   PATHS FIRST. If a recorded resolved PATH occurs inside a recorded secret VALUE — any
+        //   credential that embeds a file location, a connection string with a certificate path
+        //   in it, a JSON blob a Vault resolver returned whole — the path substitution rewrites
+        //   the secret's interior, the value ledger's exact match then misses, and what reaches
+        //   the archived event stream is a MANGLED SECRET rather than a redacted one. Most of the
+        //   value is still there and is still readable.
+        //
+        // A partially-redacted path discloses where a file lives on a build agent. A mangled
+        // secret discloses most of a credential. The second is strictly worse, so the order is
+        // fixed at secrets-first and must not be reversed without a reason that outweighs that.
+        //
+        // WHAT WOULD ACTUALLY REMOVE THE TRADE-OFF, stated so nobody mistakes this for a defence
+        // of the current shape: one pass that considers both nets' recorded forms together,
+        // longest-first, and never re-scans text it has already replaced. That is a change to how
+        // the two ledgers compose, not to their order, and it is out of scope here.
+        return pathLedger?.Scrub(scrubbed) ?? scrubbed;
+    }
 
     /// <summary>
     /// The <see cref="ResolvedSecretLedger"/> <paramref name="accessor"/> records into, or
@@ -5279,11 +5396,12 @@ public static class ScenarioRunner
     /// </remarks>
     internal static string EnvironmentErrorLine(
         ResolvedSecretLedger? sharedLedger,
+        SecurityPathDisclosureLedger? sharedPathLedger,
         OrchestrationErrorInfo info,
         string runId,
         DateTimeOffset timestamp)
     {
-        if (sharedLedger is null)
+        if (sharedLedger is null && sharedPathLedger is null)
         {
             return EnvironmentErrorEvents.ToLine(info, runId, timestamp);
         }
@@ -5292,10 +5410,15 @@ public static class ScenarioRunner
         // instance is also carried on the exception it came from (and re-read by REQ-018's
         // Kind check), so the scrubbed copy must be local to this line.
         //
-        // The `!` is an assertion, not a fallback: Scrub is null-in/null-out (its own contract,
-        // and its first statement returns the input for null/empty) and Detail is a
-        // non-nullable string, so the result cannot be null here.
-        var scrubbed = sharedLedger.Scrub(info.Detail)!;
+        // TWO NETS, SECRETS FIRST (issue #375). The value ledger redacts revealed secret values;
+        // the path ledger substitutes the DECLARED text back over a resolved security-material
+        // path a third-party client library quoted. THE ORDER IS LOAD-BEARING and must match
+        // every other composition of the pair: see `ScrubDiagnostic`, which argues it once — in
+        // short, whichever net runs first can destroy the other's exact match, and the failure
+        // secrets-first accepts (a partially-redacted path) is strictly less bad than the one
+        // paths-first accepts (a mangled, still-readable secret).
+        var scrubbed = sharedLedger?.Scrub(info.Detail) ?? info.Detail;
+        scrubbed = sharedPathLedger?.Scrub(scrubbed) ?? scrubbed;
         return EnvironmentErrorEvents.ToLine(
             info with { Detail = scrubbed }, runId, timestamp);
     }

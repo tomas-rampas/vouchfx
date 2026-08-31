@@ -771,7 +771,7 @@ public static class EnvironmentMapper
             {
                 throw new ArgumentException(
                     $"Service '{name}' has both 'image' and 'project' set. " +
-                    "Exactly one must be supplied — the schema should prevent this, but the " +
+                    "Exactly one must be supplied - the schema should prevent this, but the " +
                     "mapper enforces it defensively.",
                     nameof(env));
             }
@@ -1013,7 +1013,7 @@ public static class EnvironmentMapper
                     // when 'ports:' is declared with no sibling 'httpPort:' at all.
                     throw new ArgumentException(
                         $"Service '{name}' declares 'healthCheck: {{ type: http }}' but has no " +
-                        "HTTP endpoint — it declares 'ports:' with no sibling 'httpPort:'. Add " +
+                        "HTTP endpoint - it declares 'ports:' with no sibling 'httpPort:'. Add " +
                         "'httpPort:' to expose an HTTP endpoint for this health check to probe, " +
                         "or declare a 'tcp' health check against one of the declared 'ports:' " +
                         "instead.",
@@ -1073,7 +1073,7 @@ public static class EnvironmentMapper
 
                 var message = caseInsensitiveMatch is not null
                     ? $"Unsupported dependency type '{spec.Type}' for dependency '{name}'. " +
-                      $"Dependency types are case-sensitive — did you mean '{caseInsensitiveMatch}'? " +
+                      $"Dependency types are case-sensitive - did you mean '{caseInsensitiveMatch}'? " +
                       $"Supported types: {supportedTypes}."
                     : $"Unsupported dependency type '{spec.Type}' for dependency '{name}'. " +
                       $"Supported types: {supportedTypes}.";
@@ -1149,7 +1149,7 @@ public static class EnvironmentMapper
                 {
                     throw new ArgumentException(
                         $"Dependency '{name}' image digest '{parsedImage.Digest}' does not use " +
-                        "the 'sha256:' algorithm prefix — the only digest algorithm Aspire's " +
+                        "the 'sha256:' algorithm prefix - the only digest algorithm Aspire's " +
                         "container image annotation supports.",
                         nameof(env));
                 }
@@ -1173,7 +1173,7 @@ public static class EnvironmentMapper
                         : $"tag '{parsedImage.Tag}'";
                     throw new ArgumentException(
                         $"Dependency '{name}' sets both 'image: {spec.Image}' (which already " +
-                        $"carries a {carries}) and 'version: {spec.Version}'. This is ambiguous — " +
+                        $"carries a {carries}) and 'version: {spec.Version}'. This is ambiguous - " +
                         "specify the tag/digest in exactly one place: either embed it in 'image:', " +
                         "or use 'version:' alone.",
                         nameof(env));
@@ -1196,7 +1196,7 @@ public static class EnvironmentMapper
                     throw new ArgumentException(
                         $"Dependency '{name}' sets 'image: {spec.Image}' with no tag or digest, " +
                         "and no sibling 'version:' either. This would silently float on the " +
-                        "':latest' tag, defeating the §4 determinism invariant. Either embed a " +
+                        "':latest' tag, defeating the section 4 determinism invariant. Either embed a " +
                         $"tag in 'image:' (e.g. 'image: {spec.Image}:<tag>'), or add a " +
                         "'version:' field.",
                         nameof(env));
@@ -1355,9 +1355,9 @@ public static class EnvironmentMapper
                         $"Dependency '{name}' (type '{spec.Type}') declares env entry '{key}', " +
                         "which the engine sets itself for this dependency type. That entry is " +
                         "REFUSED: the engine relies on its engine-set variables to bring this " +
-                        "dependency up in the shape every scenario shares — and on 'minio' they " +
+                        "dependency up in the shape every scenario shares - and on 'minio' they " +
                         "are the credentials ${conn:<dependency>} advertises to every other " +
-                        "scenario consuming it — so honouring an override would break other " +
+                        "scenario consuming it - so honouring an override would break other " +
                         "scenarios rather than only this one. Remove the entry, or declare the " +
                         "backend as a service with 'image:' if you need full control of its " +
                         "environment.",
@@ -1860,8 +1860,8 @@ public static class EnvironmentMapper
                                     + "'applicationUrl' to that profile (for example "
                                     + "\"applicationUrl\": \"http://localhost:5000\") and name "
                                     + "here the endpoint it produces. If instead this service is "
-                                    + "not meant to be addressed at all — a worker consuming a "
-                                    + "queue, say — remove the 'endpoint:' line: such a service "
+                                    + "not meant to be addressed at all - a worker consuming a "
+                                    + "queue, say - remove the 'endpoint:' line: such a service "
                                     + "needs no endpoint and is unaffected by this rule."
                                 : string.Empty;
 
@@ -2096,9 +2096,9 @@ public static class EnvironmentMapper
                             "endpoints from the launch profile in its 'Properties/launchSettings.json': " +
                             "add an 'applicationUrl' to that profile (for example " +
                             "\"applicationUrl\": \"http://localhost:5000\") for an HTTP service, or declare " +
-                            "it as an 'image'-form service — which is also the only form that can expose " +
+                            "it as an 'image'-form service - which is also the only form that can expose " +
                             "a non-HTTP listener such as a broker port, via 'ports:'. A project-form " +
-                            "service that no step targets — a worker consuming a queue, say — needs no " +
+                            "service that no step targets - a worker consuming a queue, say - needs no " +
                             "endpoint and is unaffected by this rule.",
                             nameof(env));
                     }
@@ -2538,7 +2538,7 @@ public static class EnvironmentMapper
             throw new ArgumentException(
                 $"{ownerLabel} '{ownerName}' env entry '{envKey}' references a ${{secret:...}} value. " +
                 "A container's environment is the wrong PLACE for a secret, whenever it would " +
-                "resolve (§17): baking a secret into a container's environment would expose it " +
+                "resolve (section 17): baking a secret into a container's environment would expose it " +
                 "via 'docker inspect' and corrupt the reproducibility envelope (which hashes the " +
                 "reference, never the value). Configure the SUT to resolve the secret itself " +
                 "instead.",
@@ -2615,7 +2615,7 @@ public static class EnvironmentMapper
                 throw new ArgumentException(
                     $"{ownerLabel} '{ownerName}' env entry '{envKey}' contains a '${{env:...}}'-" +
                     $"shaped token at position {sigil.Index} that is not well-formed. An " +
-                    "'env:' reference must exactly match '${env:NAME}' — a case-sensitive, " +
+                    "'env:' reference must exactly match '${env:NAME}' - a case-sensitive, " +
                     "lower-case 'env:' sigil (never 'ENV:'/'Env:'), immediately followed by a " +
                     "variable name starting with a letter or underscore (no spaces, no other " +
                     "leading characters), and a closing '}' with nothing else inside.",
@@ -3664,7 +3664,7 @@ public static class EnvironmentMapper
                 return bytesRead == 0
                     ? HealthCheckResult.Unhealthy(
                         $"TCP connect to {AuthorityText.Format(host, port)} succeeded, but the " +
-                        "connection was closed immediately (zero bytes read) — no backend is " +
+                        "connection was closed immediately (zero bytes read) - no backend is " +
                         "listening behind the host-published proxy.")
                     // >0 bytes: a server-speaks-first protocol greeted us unprompted.
                     : HealthCheckResult.Healthy();

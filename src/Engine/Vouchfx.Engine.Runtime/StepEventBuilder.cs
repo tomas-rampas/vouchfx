@@ -52,6 +52,12 @@ internal static class StepEventBuilder
     /// <c>SecretObservationLeakPenetrationTests
     /// .EveryScenarioCompletedEmission_InRuntime_GoesThroughTheStampingChokepoint</c>.
     /// </summary>
+    /// <param name="pathLedger">
+    /// The run's security-path disclosure ledger, or <see langword="null"/> when the caller holds
+    /// none.  Substitutes the declared form back over a resolved security-material path a
+    /// third-party client library quoted (issue #375); a path is not a secret, so it is a
+    /// separate ledger with a per-field substitution rather than a redaction marker.
+    /// </param>
     /// <param name="ledger">
     /// The run's resolved-secret ledger, or <see langword="null"/> when the caller holds none
     /// (a door reached before any accessor exists, or a <c>--watch</c> pre-topology refusal, which
@@ -99,9 +105,20 @@ internal static class StepEventBuilder
         Verdict verdict,
         VerdictCounts counts,
         ResolvedSecretLedger? ledger,
+        SecurityPathDisclosureLedger? pathLedger,
         string? message)
     {
         var cause = string.IsNullOrEmpty(message) ? null : ledger?.Scrub(message) ?? message;
+
+        // The second net (issue #375): a resolved security-material path a third-party client
+        // library quoted back at us, substituted for the DECLARED text the author wrote. Sited
+        // here for the same reason the value scrub is — two call sites disagreeing about whether
+        // to scrub is what produced the leak this shape removes.
+        //
+        // AFTER the value scrub, never before it. The order is load-bearing and is argued once, on
+        // `ScenarioRunner.ScrubDiagnostic`; a site that reversed it here would trade a partial
+        // path disclosure for a mangled secret.
+        cause = pathLedger?.Scrub(cause) ?? cause;
 
         return EventStreamJson.ToLine(new ScenarioCompletedEvent
         {
@@ -155,12 +172,17 @@ internal static class StepEventBuilder
     /// <see langword="null"/> defaults to <see cref="NullSecretAccessor.Instance"/> (nothing to
     /// scrub), matching the pre-#262 default on <c>BuildAttemptEventLines</c>.
     /// </param>
+    /// <param name="pathLedger">
+    /// The run's security-path disclosure ledger, or <see langword="null"/> when the caller holds
+    /// none (issue #375).
+    /// </param>
     internal static string StepAttemptLine(
         string runId,
         DateTimeOffset timestamp,
         string stepId,
         AttemptRecord attempt,
-        ISecretAccessor? secretAccessor)
+        ISecretAccessor? secretAccessor,
+        SecurityPathDisclosureLedger? pathLedger)
         => EventStreamJson.ToLine(new StepAttemptEvent
         {
             RunId = runId,
@@ -170,7 +192,7 @@ internal static class StepEventBuilder
             TMs = attempt.TMs,
             Outcome = attempt.Verdict,
             Observation = ScenarioRunner.BuildStepObservation(
-                secretAccessor ?? NullSecretAccessor.Instance, attempt.Observation),
+                secretAccessor ?? NullSecretAccessor.Instance, pathLedger, attempt.Observation),
         });
 
     /// <summary>
@@ -193,6 +215,11 @@ internal static class StepEventBuilder
     /// scenario by <c>ScenarioRunner.BuildCaptureOriginMap</c>.
     /// </param>
     /// <param name="secretAccessor">The scenario's secret accessor, for observation scrubbing.</param>
+    /// <param name="pathLedger">
+    /// The run's security-path disclosure ledger, or <see langword="null"/> when the caller holds
+    /// none.  Substitutes the declared form back over any resolved security-material path a
+    /// third-party client library quoted into the observation (issue #375).
+    /// </param>
     internal static string StepCompletedLine(
         string runId,
         DateTimeOffset timestamp,
@@ -200,7 +227,8 @@ internal static class StepEventBuilder
         StepOutcome? outcome,
         string? captureStatusRaw,
         IReadOnlyDictionary<string, string> captureOriginMap,
-        ISecretAccessor secretAccessor)
+        ISecretAccessor secretAccessor,
+        SecurityPathDisclosureLedger? pathLedger)
     {
         var stepVerdict = outcome?.Verdict ?? Verdict.Inconclusive;
         var durationMs = outcome?.DurationMs ?? 0L;
@@ -236,7 +264,8 @@ internal static class StepEventBuilder
             DurationMs = durationMs,
             Captured = capturedList,
             Substitutions = substitutionsList,
-            Observation = ScenarioRunner.BuildStepObservation(secretAccessor, outcome?.Observation),
+            Observation = ScenarioRunner.BuildStepObservation(
+                secretAccessor, pathLedger, outcome?.Observation),
         });
     }
 }

@@ -57,7 +57,8 @@ public sealed class LiveStepEventSinkTests
         var collected = new List<string>();
         var pump = new LiveEventPump(batch => collected.AddRange(batch), capacity: 64);
         var captureOriginMap = ScenarioRunner.BuildCaptureOriginMap(ast.Steps);
-        var sink = new LiveStepEventSink(pump, runId, ast.Steps, captureOriginMap, NullSecretAccessor.Instance);
+        var sink = new LiveStepEventSink(
+            pump, runId, ast.Steps, captureOriginMap, NullSecretAccessor.Instance, pathLedger: null);
         return (sink, pump, collected);
     }
 
@@ -138,7 +139,8 @@ public sealed class LiveStepEventSinkTests
         Assert.Single(collected);
 
         var expected = StepEventBuilder.StepAttemptLine(
-            "run-1", DateTimeOffset.UtcNow, "fetch", record, NullSecretAccessor.Instance);
+            "run-1", DateTimeOffset.UtcNow, "fetch", record, NullSecretAccessor.Instance,
+            pathLedger: null);
 
         Assert.Equal(NormaliseModuloTs(expected), NormaliseModuloTs(collected[0]));
         Assert.Contains("\"attempt\":2", collected[0]);
@@ -193,7 +195,8 @@ public sealed class LiveStepEventSinkTests
         var node = ast.Steps.Single(s => s.Id == "fetch");
         var captureOriginMap = ScenarioRunner.BuildCaptureOriginMap(ast.Steps);
         var expected = StepEventBuilder.StepCompletedLine(
-            "run-1", DateTimeOffset.UtcNow, node, outcome, "1", captureOriginMap, NullSecretAccessor.Instance);
+            "run-1", DateTimeOffset.UtcNow, node, outcome, "1", captureOriginMap,
+            NullSecretAccessor.Instance, pathLedger: null);
 
         Assert.Equal(NormaliseModuloTs(expected), NormaliseModuloTs(collected[0]));
         Assert.Contains("\"verdict\":\"PASS\"", collected[0]);
@@ -239,15 +242,20 @@ public sealed class LiveStepEventSinkTests
         var captureOriginMap = ScenarioRunner.BuildCaptureOriginMap(ast.Steps);
 
         Assert.Throws<ArgumentNullException>(() =>
-            new LiveStepEventSink(null!, "run-1", ast.Steps, captureOriginMap, NullSecretAccessor.Instance));
+            new LiveStepEventSink(
+                null!, "run-1", ast.Steps, captureOriginMap, NullSecretAccessor.Instance, null));
         Assert.Throws<ArgumentNullException>(() =>
-            new LiveStepEventSink(pump, null!, ast.Steps, captureOriginMap, NullSecretAccessor.Instance));
+            new LiveStepEventSink(
+                pump, null!, ast.Steps, captureOriginMap, NullSecretAccessor.Instance, null));
         Assert.Throws<ArgumentNullException>(() =>
-            new LiveStepEventSink(pump, "run-1", null!, captureOriginMap, NullSecretAccessor.Instance));
+            new LiveStepEventSink(
+                pump, "run-1", null!, captureOriginMap, NullSecretAccessor.Instance, null));
         Assert.Throws<ArgumentNullException>(() =>
-            new LiveStepEventSink(pump, "run-1", ast.Steps, null!, NullSecretAccessor.Instance));
+            new LiveStepEventSink(
+                pump, "run-1", ast.Steps, null!, NullSecretAccessor.Instance, null));
         Assert.Throws<ArgumentNullException>(() =>
-            new LiveStepEventSink(pump, "run-1", ast.Steps, captureOriginMap, null!));
+            new LiveStepEventSink(
+                pump, "run-1", ast.Steps, captureOriginMap, null!, null));
 
         await pump.DisposeAsync();
     }

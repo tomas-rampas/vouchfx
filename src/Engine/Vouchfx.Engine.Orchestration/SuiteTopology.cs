@@ -940,8 +940,8 @@ public sealed class SuiteTopology : IAsyncDisposable, IKeptTopology
             RegistryHost: null,
             AuthStatus: null,
             Detail: detail
-                + " A pinned port cannot be substituted — the point of pinning is that something "
-                + "else, such as a broker's advertised address, already names this number — so the "
+                + " A pinned port cannot be substituted - the point of pinning is that something "
+                + "else, such as a broker's advertised address, already names this number - so the "
                 + "run stops here rather than starting a container that would be unreachable."));
 
     /// <summary>
@@ -971,7 +971,7 @@ public sealed class SuiteTopology : IAsyncDisposable, IKeptTopology
                 + "different port and update whatever names it.",
 
             System.Net.Sockets.SocketError.AccessDenied =>
-                opening + $" The port is reserved or privileged rather than in use — on Windows, "
+                opening + $" The port is reserved or privileged rather than in use - on Windows, "
                 + "`netsh interface ipv4 show excludedportrange protocol=tcp` lists the reserved "
                 + "ranges; on Linux, ports below 1024 need elevation. Pin a port outside them.",
 

@@ -78,7 +78,7 @@ public sealed class SecurityConfigurationAccessorTests
     /// </remarks>
     private static ISecurityConfigurationAccessor BuildWithNoSecretAccessor(
         ScenarioAst ast, string? suiteDirectory) =>
-        SecurityConfigurationAccessor.Build(ast, suiteDirectory, secrets: null);
+        SecurityConfigurationAccessor.Build(ast, suiteDirectory, secrets: null, pathDisclosures: null);
 
     /// <summary>
     /// REQ-014's first acceptance: for a suite declaring a client certificate on a service,
@@ -897,7 +897,7 @@ public sealed class SecurityConfigurationAccessorTests
             var accessor = SecurityConfigurationAccessor.Build(
                 AstWithSecuredService("payments", MtlsSecurityWithPassphrase(EnvReference(variable))),
                 bed.SuiteDirectory,
-                EnvironmentSecretAccessor());
+                EnvironmentSecretAccessor(), pathDisclosures: null);
             try
             {
                 var certificates = accessor.For("payments")!.Certificates!;
@@ -943,7 +943,7 @@ public sealed class SecurityConfigurationAccessorTests
             var accessor = SecurityConfigurationAccessor.Build(
                 AstWithSecuredService("payments", MtlsSecurityWithPassphrase(EnvReference(variable))),
                 bed.SuiteDirectory,
-                EnvironmentSecretAccessor());
+                EnvironmentSecretAccessor(), pathDisclosures: null);
             try
             {
                 var certificates = accessor.For("payments")!.Certificates!;
@@ -1002,7 +1002,7 @@ public sealed class SecurityConfigurationAccessorTests
             var accessor = SecurityConfigurationAccessor.Build(
                 AstWithSecuredService("payments", MtlsSecurityWithPassphrase(EnvReference(variable))),
                 bed.SuiteDirectory,
-                EnvironmentSecretAccessor());
+                EnvironmentSecretAccessor(), pathDisclosures: null);
             try
             {
                 var certificates = accessor.For("payments")!.Certificates!;
@@ -1055,7 +1055,7 @@ public sealed class SecurityConfigurationAccessorTests
             var accessor = SecurityConfigurationAccessor.Build(
                 AstWithSecuredService("payments", MtlsSecurityWithPassphrase(EnvReference(variable))),
                 bed.SuiteDirectory,
-                EnvironmentSecretAccessor());
+                EnvironmentSecretAccessor(), pathDisclosures: null);
             try
             {
                 var certificates = accessor.For("payments")!.Certificates!;
@@ -1140,7 +1140,7 @@ public sealed class SecurityConfigurationAccessorTests
             AstWithSecuredService(
                 "payments", MtlsSecurityWithPassphrase("${secret:env/CLIENT_KEY_PASS}")),
             bed.SuiteDirectory,
-            secrets);
+            secrets, pathDisclosures: null);
         try
         {
             // Build alone, and For() alone, resolve nothing — a throwing resolver would have made
@@ -1179,7 +1179,7 @@ public sealed class SecurityConfigurationAccessorTests
             var accessor = SecurityConfigurationAccessor.Build(
                 AstWithSecuredService("payments", MtlsSecurityWithPassphrase(EnvReference(variable))),
                 bed.SuiteDirectory,
-                EnvironmentSecretAccessor());
+                EnvironmentSecretAccessor(), pathDisclosures: null);
             try
             {
                 var certificates = accessor.For("payments")!.Certificates!;
@@ -1228,7 +1228,7 @@ public sealed class SecurityConfigurationAccessorTests
             AstWithSecuredService(
                 "payments", MtlsSecurityWithPassphrase("${secret:vault/kv/client#pass}")),
             bed.SuiteDirectory,
-            VaultSecretAccessorReturning(string.Empty));
+            VaultSecretAccessorReturning(string.Empty), pathDisclosures: null);
         try
         {
             var certificates = accessor.For("payments")!.Certificates!;
@@ -1273,7 +1273,7 @@ public sealed class SecurityConfigurationAccessorTests
         var accessor = SecurityConfigurationAccessor.Build(
             AstWithSecuredService("payments", MtlsSecurityWithPassphrase(hostile)),
             bed.SuiteDirectory,
-            EnvironmentSecretAccessor());
+            EnvironmentSecretAccessor(), pathDisclosures: null);
         try
         {
             var certificates = accessor.For("payments")!.Certificates!;
@@ -1471,7 +1471,7 @@ public sealed class SecurityConfigurationAccessorTests
         };
 
         var accessor = SecurityConfigurationAccessor.Build(
-            AstWithSecuredService("payments", security), nested, EnvironmentSecretAccessor());
+            AstWithSecuredService("payments", security), nested, EnvironmentSecretAccessor(), pathDisclosures: null);
         try
         {
             var certificates = accessor.For("payments")!.Certificates!;
@@ -1549,7 +1549,7 @@ public sealed class SecurityConfigurationAccessorTests
         var accessor = SecurityConfigurationAccessor.Build(
             AstWithSecuredService("payments", MtlsSecurityWithPassphrase(declared)),
             bed.SuiteDirectory,
-            secrets);
+            secrets, pathDisclosures: null);
         try
         {
             var certificates = accessor.For("payments")!.Certificates!;
@@ -1622,7 +1622,7 @@ public sealed class SecurityConfigurationAccessorTests
         var accessor = SecurityConfigurationAccessor.Build(
             AstWithSecuredService("payments", MtlsSecurityWithPassphrase(literal)),
             bed.SuiteDirectory,
-            EnvironmentSecretAccessor());
+            EnvironmentSecretAccessor(), pathDisclosures: null);
         try
         {
             var certificates = accessor.For("payments")!.Certificates!;
@@ -1671,7 +1671,7 @@ public sealed class SecurityConfigurationAccessorTests
 
         var secrets = new ThrowingSecretAccessor();
         var accessor = SecurityConfigurationAccessor.Build(
-            AstWithSecuredService("payments", security), bed.SuiteDirectory, secrets);
+            AstWithSecuredService("payments", security), bed.SuiteDirectory, secrets, pathDisclosures: null);
         try
         {
             var certificates = accessor.For("payments")!.Certificates!;
@@ -1713,7 +1713,7 @@ public sealed class SecurityConfigurationAccessorTests
         var accessor = SecurityConfigurationAccessor.Build(
             AstWithSecuredService("payments", security),
             bed.SuiteDirectory,
-            new ThrowingSecretAccessor());
+            new ThrowingSecretAccessor(), pathDisclosures: null);
         try
         {
             var certificates = accessor.For("payments")!.Certificates!;
@@ -1768,7 +1768,7 @@ public sealed class SecurityConfigurationAccessorTests
         var accessor = SecurityConfigurationAccessor.Build(
             AstWithSecuredService("payments", security),
             bed.SuiteDirectory,
-            new ThrowingSecretAccessor());
+            new ThrowingSecretAccessor(), pathDisclosures: null);
         try
         {
             var certificates = accessor.For("payments")!.Certificates;
@@ -1814,7 +1814,7 @@ public sealed class SecurityConfigurationAccessorTests
             AstWithSecuredService(
                 "payments", MtlsSecurityWithPassphrase("${secret:env/CLIENT_KEY_PASS}")),
             bed.SuiteDirectory,
-            new ThrowingSecretAccessor());
+            new ThrowingSecretAccessor(), pathDisclosures: null);
         try
         {
             var certificates = accessor.For("payments")!.Certificates!;
@@ -2010,7 +2010,7 @@ public sealed class SecurityConfigurationAccessorTests
             AstWithSecuredService(
                 "payments", MtlsSecurityWithPassphrase("${secret:vault/kv/client#pass}")),
             bed.SuiteDirectory,
-            new FaultingSecretAccessor(fault));
+            new FaultingSecretAccessor(fault), pathDisclosures: null);
         try
         {
             var certificates = accessor.For("payments")!.Certificates!;
@@ -2044,7 +2044,7 @@ public sealed class SecurityConfigurationAccessorTests
             AstWithSecuredService(
                 "payments", MtlsSecurityWithPassphrase("${secret:vault/kv/client#pass}")),
             bed.SuiteDirectory,
-            new FaultingSecretAccessor(new OperationCanceledException()));
+            new FaultingSecretAccessor(new OperationCanceledException()), pathDisclosures: null);
         try
         {
             var certificates = accessor.For("payments")!.Certificates!;
@@ -2072,7 +2072,7 @@ public sealed class SecurityConfigurationAccessorTests
             AstWithSecuredService(
                 "payments", MtlsSecurityWithPassphrase("${secret:vault/kv/client#pass}")),
             bed.SuiteDirectory,
-            new FaultingSecretAccessor(fault));
+            new FaultingSecretAccessor(fault), pathDisclosures: null);
         try
         {
             var certificates = accessor.For("payments")!.Certificates!;
@@ -2107,7 +2107,7 @@ public sealed class SecurityConfigurationAccessorTests
             AstWithSecuredService(
                 "payments", MtlsSecurityWithPassphrase("${secret:vault/kv/client#pass}")),
             bed.SuiteDirectory,
-            new FaultingSecretAccessor(fault));
+            new FaultingSecretAccessor(fault), pathDisclosures: null);
         try
         {
             var certificates = accessor.For("payments")!.Certificates!;
@@ -2178,7 +2178,7 @@ public sealed class SecurityConfigurationAccessorTests
         var accessor = SecurityConfigurationAccessor.Build(
             AstWithSecuredService("payments", MtlsSecurityWithPassphrase($"${{secret:{source}/KEY_PASS}}")),
             bed.SuiteDirectory,
-            new ThrowingSecretAccessor());
+            new ThrowingSecretAccessor(), pathDisclosures: null);
         try
         {
             var certificates = accessor.For("payments")!.Certificates!;

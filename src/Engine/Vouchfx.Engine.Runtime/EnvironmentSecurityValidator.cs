@@ -323,7 +323,7 @@ internal static class EnvironmentSecurityValidator
             return new ValidationFailure(
                 $"{fieldPath}: '{target}' contains a '.' or '..' segment. Give the already-resolved "
                 + "in-container path of the file to create, e.g. "
-                + "'/etc/kafka/secrets/kafka.keystore.jks' — this engine does not normalise a "
+                + "'/etc/kafka/secrets/kafka.keystore.jks' - this engine does not normalise a "
                 + "container path, so a '..' segment would be copied through as a literal file name.")
             {
                 IsSecurityPreflight = true,
@@ -343,7 +343,7 @@ internal static class EnvironmentSecurityValidator
         {
             return new ValidationFailure(
                 $"{fieldPath}: '{target}' is declared more than once on '{ownerName}'. Two artefacts "
-                + "cannot land on one in-container path — which one wins is not something this engine "
+                + "cannot land on one in-container path - which one wins is not something this engine "
                 + "will decide silently.")
             {
                 IsSecurityPreflight = true,
@@ -497,7 +497,7 @@ internal static class EnvironmentSecurityValidator
             // token will not help.
             return new ValidationFailure(
                 $"{fieldPath}: '{declaredPath}' uses secret-reference syntax "
-                + $"('{SecretReference.Sigil}'), but this field takes a PATH — a file that must "
+                + $"('{SecretReference.Sigil}'), but this field takes a PATH - a file that must "
                 + "exist inside the suite directory. The syntax is refused wherever it appears in "
                 + "the value, whole or embedded in a longer path, because a secret reference "
                 + "cannot name a file: the engine reads and copies the FILE this field points at, "

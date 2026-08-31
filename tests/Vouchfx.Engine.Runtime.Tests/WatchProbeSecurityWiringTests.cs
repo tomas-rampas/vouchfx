@@ -12,7 +12,8 @@
 // composes, in the same order:
 //
 //     var probeSecrets = ScenarioRunner.CreateSecretAccessorScope(<session ledger>);
-//     probeSecurity    = SecurityConfigurationAccessor.Build(ast, suiteDirectory, probeSecrets.Accessor);
+//     probeSecurity    = SecurityConfigurationAccessor.Build(
+//                            ast, suiteDirectory, probeSecrets.Accessor, <session path ledger>);
 //
 // That composition is the thing under test, and it is materially different from what
 // SecurityConfigurationAccessorTests exercises: those tests hand `Build` a hand-rolled
@@ -93,7 +94,7 @@ public sealed class WatchProbeSecurityWiringTests
             var probeSecurity = SecurityConfigurationAccessor.Build(
                 AstWithSecuredService("payments", MtlsSecurityWithPassphrase(EnvReference(variable))),
                 bed.SuiteDirectory,
-                probeSecrets.Accessor);
+                probeSecrets.Accessor, pathDisclosures: null);
             try
             {
                 var certificates = probeSecurity.For("payments")!.Certificates!;
@@ -144,7 +145,7 @@ public sealed class WatchProbeSecurityWiringTests
             var probeSecurity = SecurityConfigurationAccessor.Build(
                 AstWithSecuredService("payments", MtlsSecurityWithPassphrase(EnvReference(variable))),
                 bed.SuiteDirectory,
-                probeSecrets.Accessor);
+                probeSecrets.Accessor, pathDisclosures: null);
             try
             {
                 var certificates = probeSecurity.For("payments")!.Certificates!;

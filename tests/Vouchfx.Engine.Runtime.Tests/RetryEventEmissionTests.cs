@@ -52,7 +52,8 @@ public sealed class RetryEventEmissionTests
             },
         };
 
-        var lines = ScenarioRunner.BuildAttemptEventLines(RunId, Ts, "poll-step", vars);
+        var lines = ScenarioRunner.BuildAttemptEventLines(
+            RunId, Ts, "poll-step", vars, secretAccessor: null, pathLedger: null);
 
         Assert.Equal(2, lines.Count);
 
@@ -92,7 +93,8 @@ public sealed class RetryEventEmissionTests
     {
         var vars = new Dictionary<string, object?>(StringComparer.Ordinal);
 
-        var lines = ScenarioRunner.BuildAttemptEventLines(RunId, Ts, "immediate-step", vars);
+        var lines = ScenarioRunner.BuildAttemptEventLines(
+            RunId, Ts, "immediate-step", vars, secretAccessor: null, pathLedger: null);
 
         Assert.Empty(lines);
     }

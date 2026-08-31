@@ -118,7 +118,7 @@ public sealed class SecuredEndpointProbeEncryptedKeyTests
             var ast = AstWithSecuredKafkaDependency(
                 "events", MtlsSecurityWithPassphrase("${secret:env/" + variable + "}"));
 
-            var accessor = SecurityConfigurationAccessor.Build(ast, bed.SuiteDirectory, secrets.Accessor);
+            var accessor = SecurityConfigurationAccessor.Build(ast, bed.SuiteDirectory, secrets.Accessor, pathDisclosures: null);
             try
             {
                 var confirmations = await SecuredEndpointProbe.ConfirmAsync(

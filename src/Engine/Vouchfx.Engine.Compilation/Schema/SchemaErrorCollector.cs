@@ -1545,7 +1545,7 @@ internal static class SchemaErrorCollector
                     if (displayKind is null)
                     {
                         return $"[properties] Dependency '{displayContainer}' declares 'security', but no " +
-                               "security profile is wired for this dependency kind in this release — " +
+                               "security profile is wired for this dependency kind in this release - " +
                                "only a 'kafka' dependency, or a declared service, can carry a 'security' " +
                                "block today. Transport security for the remaining dependency kinds " +
                                "arrives in 1.1.";
@@ -1553,7 +1553,7 @@ internal static class SchemaErrorCollector
 
                     return $"[properties] Dependency '{displayContainer}' (type '{displayKind}') declares " +
                            $"'security', but no security profile is wired for dependency kind " +
-                           $"'{displayKind}' in this release — only a 'kafka' dependency, or a declared " +
+                           $"'{displayKind}' in this release - only a 'kafka' dependency, or a declared " +
                            "service, can carry a 'security' block today. Transport security for the " +
                            "remaining dependency kinds arrives in 1.1.";
                 }
@@ -1566,7 +1566,7 @@ internal static class SchemaErrorCollector
             if (containerKind == ServiceContainerKind && propertyName == "project")
             {
                 return $"[properties] Property 'project' cannot be combined with 'image' on service " +
-                       $"'{displayContainer}' — exactly one of the two is required (DSL §3.2)";
+                       $"'{displayContainer}' - exactly one of the two is required (DSL section 3.2)";
             }
 
             // The generic text below ("Property 'httpPort' is not valid on service 'app'") is the
@@ -1593,10 +1593,10 @@ internal static class SchemaErrorCollector
             if (containerKind == ServiceContainerKind && propertyName == "httpPort")
             {
                 return $"[properties] Property 'httpPort' is not valid on the 'project'-form " +
-                       $"service '{displayContainer}' — a project's endpoints are discovered from its " +
+                       $"service '{displayContainer}' - a project's endpoints are discovered from its " +
                        "own launch profile, and 'httpPort' names a container port rather than a " +
                        "listener. Remove the line; to choose WHICH discovered endpoint this " +
-                       "service is addressed on, use 'endpoint' (DSL §3.2)";
+                       "service is addressed on, use 'endpoint' (DSL section 3.2)";
             }
 
             return $"[properties] Property '{displayProperty}' is not valid on {containerKind} '{displayContainer}'";
@@ -1614,7 +1614,7 @@ internal static class SchemaErrorCollector
             {
                 var otherNames = string.Join(", ", siblingNames.Select(n => $"'{n}'"));
                 return $"[properties] Property '{displayProperty}' cannot be combined with {otherNames} on " +
-                       $"capture entry '{displayVariable}' — exactly one of the two is required (DSL §6.1)";
+                       $"capture entry '{displayVariable}' - exactly one of the two is required (DSL section 6.1)";
             }
 
             return $"[properties] Property '{displayProperty}' is not valid on capture entry '{displayVariable}'";
@@ -1637,7 +1637,7 @@ internal static class SchemaErrorCollector
                 if (TryReadSoleRequiredNoOtherContent(ifElement, out var otherField))
                 {
                     return $"[properties] Property '{displayProperty}' cannot be combined with " +
-                           $"'{otherField}' — exactly one of the two may be set";
+                           $"'{otherField}' - exactly one of the two may be set";
                 }
             }
         }
@@ -1861,7 +1861,7 @@ internal static class SchemaErrorCollector
         var propertyName = LastPointerSegment(instanceLocation);
 
         return $"[pattern] Property name '{propertyName}' begins with an engine-reserved bookkeeping " +
-               "prefix — see this field's own description for the reserved prefix list.";
+               "prefix - see this field's own description for the reserved prefix list.";
     }
 
     /// <summary>
@@ -1896,8 +1896,8 @@ internal static class SchemaErrorCollector
         var quotedNames = string.Join(", ", matchedFieldNames.Select(n => $"'{n}'"));
 
         return matchedFieldNames.Count == 2
-            ? $"[oneOf] Exactly one of {quotedNames} may be set — both are present."
-            : $"[oneOf] Exactly one of {quotedNames} may be set — " +
+            ? $"[oneOf] Exactly one of {quotedNames} may be set - both are present."
+            : $"[oneOf] Exactly one of {quotedNames} may be set - " +
               $"{matchedFieldNames.Count.ToString(CultureInfo.InvariantCulture)} are present.";
     }
 
@@ -1912,7 +1912,7 @@ internal static class SchemaErrorCollector
     /// </summary>
     private static string FormatUnnamedTooManyOneOfMatchesError(int matchedBranchCount) =>
         $"[oneOf] {matchedBranchCount.ToString(CultureInfo.InvariantCulture)} of the alternative " +
-        "forms declared here are satisfied — exactly one may be.";
+        "forms declared here are satisfied - exactly one may be.";
 
     /// <summary>
     /// The maximum number of accepted values <see cref="FormatEnumError"/>
@@ -1982,7 +1982,7 @@ internal static class SchemaErrorCollector
             string.Equals(v, offendingValue, StringComparison.OrdinalIgnoreCase)).ToList();
 
         var suggestion = caseInsensitiveMatches.Count == 1
-            ? $" — write '{caseInsensitiveMatches[0]}'"
+            ? $" - write '{caseInsensitiveMatches[0]}'"
             : string.Empty;
 
         return $"[enum] Value '{TruncateForDisplay(offendingValue)}' is not one of the accepted values for " +
@@ -2065,7 +2065,7 @@ internal static class SchemaErrorCollector
         }
 
         var totalChars = value.Length.ToString(CultureInfo.InvariantCulture);
-        return $"{value[..cut]}… ({totalChars} chars total)";
+        return $"{value[..cut]}... ({totalChars} chars total)";
     }
 
     /// <summary>
@@ -2082,7 +2082,7 @@ internal static class SchemaErrorCollector
 
         var shown = string.Join(", ", allowedValues.Take(MaxListedEnumValues));
         var remaining = (allowedValues.Count - MaxListedEnumValues).ToString(CultureInfo.InvariantCulture);
-        return $"{shown}, … and {remaining} more";
+        return $"{shown}, ... and {remaining} more";
     }
 
     /// <summary>
@@ -2159,14 +2159,14 @@ internal static class SchemaErrorCollector
         if (LastPointerSegment(instanceLocation) == "schemaVersion")
         {
             return $"[const] '{TruncateForDisplay(offendingValue)}' is not a language schema version this " +
-                   $"engine recognises — write '{expectedValue}', or omit the field.";
+                   $"engine recognises - write '{expectedValue}', or omit the field.";
         }
 
         if (TryResolveHealthCheckTypeContainer(instanceLocation, out var serviceName))
         {
             return $"[const] Service '{serviceName}' declares 'healthCheck: {{ type: " +
                    $"{TruncateForDisplay(offendingValue)} }}', but its 'ports' declaration has no " +
-                   "sibling 'httpPort' — no HTTP endpoint exists there for anything but a 'tcp' " +
+                   "sibling 'httpPort' - no HTTP endpoint exists there for anything but a 'tcp' " +
                    $"probe to target. Add 'httpPort:' to expose one, or write 'healthCheck: {{ " +
                    $"type: {expectedValue} }}'.";
         }
@@ -2215,8 +2215,8 @@ internal static class SchemaErrorCollector
         }
 
         var quotedChoices = string.Join(", ", choices.Select(c => $"'{c}'"));
-        return $"[minProperties] Capture entry '{variableName}' must set at least one of {quotedChoices} — " +
-               "none is present (DSL §6.1).";
+        return $"[minProperties] Capture entry '{variableName}' must set at least one of {quotedChoices} - " +
+               "none is present (DSL section 6.1).";
     }
 
     /// <summary>

@@ -150,9 +150,16 @@ internal static class WatchRunner
         // surviving into a rendered diagnostic on a later save, and that is worse than either.
         var sessionSecretLedger = new ResolvedSecretLedger();
 
+        // The #375 sibling net, SESSION-scoped for exactly the reason the ledger above is: a
+        // resolved security-material path handed to a client library while the topology was built
+        // must be substitutable from text a step emits on a later save against that same kept
+        // topology. Held here rather than per-rebuild for the same reason EDGE-007 moved the
+        // secret ledger up.
+        var sessionPathLedger = new SecurityPathDisclosureLedger();
+
         await using var session = CreateSession(
             filePath, registry, output, appHostAssemblyName, sessionSecretLedger,
-            StartTopologyAsync);
+            sessionPathLedger, StartTopologyAsync);
 
         // Issue #266, Item 4: `filePath` is author/CLI-supplied and reaches a terminal verbatim
         // here. Sanitised, not scrubbed: this line is written BEFORE the first run, so no probe
@@ -164,12 +171,13 @@ internal static class WatchRunner
                 + "it was built from changes).  Press Ctrl-C to stop.")).ConfigureAwait(false);
 
         // ── Initial run ───────────────────────────────────────────────────────
-        await RunOnceFromDiskAsync(session, filePath, output, sessionSecretLedger, cancellationToken)
+        await RunOnceFromDiskAsync(
+                session, filePath, output, sessionSecretLedger, sessionPathLedger, cancellationToken)
             .ConfigureAwait(false);
 
         // ── Watch loop ──────────────────────────────────────────────────────────
         await WatchUntilCancelledAsync(
-                session, filePath, output, sessionSecretLedger, cancellationToken)
+                session, filePath, output, sessionSecretLedger, sessionPathLedger, cancellationToken)
             .ConfigureAwait(false);
 
         return ExitCodes.Success;
@@ -188,6 +196,10 @@ internal static class WatchRunner
     /// The SESSION's resolved-secret ledger (EDGE-007) — the same instance the caller's sinks
     /// already captured. See its declaration in <see cref="RunAsync"/> for why the scope must be the
     /// session and not this method.
+    /// </param>
+    /// <param name="sessionPathLedger">
+    /// The SESSION's security-path disclosure ledger (issue #375), scoped for the same reason and
+    /// over the same lifetime as <paramref name="sessionSecretLedger"/>.
     /// </param>
     /// <param name="startTopologyAsync">
     /// Builds a topology from the plan's <see cref="TopologyRequest"/> and the resolved security
@@ -217,6 +229,7 @@ internal static class WatchRunner
         TextWriter output,
         string? appHostAssemblyName,
         ResolvedSecretLedger sessionSecretLedger,
+        SecurityPathDisclosureLedger sessionPathLedger,
         Func<TopologyRequest, ISecurityConfigurationAccessor, CancellationToken, Task<IKeptTopology>>
             startTopologyAsync)
     {
@@ -281,7 +294,7 @@ internal static class WatchRunner
                 try
                 {
                     probeSecurity = SecurityConfigurationAccessor.Build(
-                        ast, suiteDirectory, probeSecrets.Accessor);
+                        ast, suiteDirectory, probeSecrets.Accessor, sessionPathLedger);
 
                     // ONE ARGUMENT LIST (#364). Both protocol target sets — REQ-005/REQ-011's
                     // Kafka-speaking set and #348's endpoint-consuming superset — were computed at
@@ -324,6 +337,10 @@ internal static class WatchRunner
                     // the probe above resolved into. Omitting this compiles (the parameter is
                     // optional) and leaves the engine building a ledger of its own per re-run.
                     sharedLedger: sessionSecretLedger,
+                    // Issue #375's sibling of the line above, and omitted for the same cost: the
+                    // parameter is optional, so leaving it out compiles and silently drops the
+                    // path substitution from every event this seam emits.
+                    sharedPathLedger: sessionPathLedger,
                     cancellationToken: ct).ConfigureAwait(false);
             },
 
@@ -353,7 +370,8 @@ internal static class WatchRunner
             // located diagnostic plus its event pair — and returns WatchCompileResult.Refused(),
             // whose Error is null, so WatchSession's guarded call prints nothing further. Only a
             // parse/AST failure, which has no events to render, still reaches this sink.
-            report: line => output.WriteLine(ScrubThenSanitise(line, sessionSecretLedger)));
+            report: line => output.WriteLine(
+                ScrubThenSanitise(line, sessionSecretLedger, sessionPathLedger)));
     }
 
     /// <summary>
@@ -385,6 +403,7 @@ internal static class WatchRunner
         // ProcessChangeGuardedAsync's parameter is nullable, and that is load-bearing rather than
         // defensive — it keeps the three pre-EDGE-007 three-argument tests compiling unchanged.
         ResolvedSecretLedger sessionSecretLedger,
+        SecurityPathDisclosureLedger sessionPathLedger,
         CancellationToken cancellationToken)
     {
         string content;
@@ -406,7 +425,9 @@ internal static class WatchRunner
             // which sink an unexpected value arrives at.
             await output.WriteLineAsync(
                 ScrubThenSanitise(
-                    $"--watch: could not read '{filePath}': {ex.Message}", sessionSecretLedger))
+                    $"--watch: could not read '{filePath}': {ex.Message}",
+                    sessionSecretLedger,
+                    sessionPathLedger))
                 .ConfigureAwait(false);
             return;
         }
@@ -415,7 +436,8 @@ internal static class WatchRunner
             ct => session.OnChangeAsync(content, ct),
             output,
             cancellationToken,
-            sessionSecretLedger).ConfigureAwait(false);
+            sessionSecretLedger,
+            sessionPathLedger).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -436,6 +458,11 @@ internal static class WatchRunner
     /// below are scrubbed through before they are sanitised. <see langword="null"/> — the default
     /// — skips the scrub and leaves the pre-EDGE-007 behaviour exactly as it was.
     /// </param>
+    /// <param name="sessionPathLedger">
+    /// The watch session's <see cref="SecurityPathDisclosureLedger"/> (issue #375), applied to the
+    /// same two messages between the value scrub and the sanitiser. <see langword="null"/> - the
+    /// default - skips it, which is what the pre-#375 three-argument tests exercise.
+    /// </param>
     /// <remarks>
     /// Extracted so the keep-watching policy is exercised at the unit level (B1) without a
     /// FileSystemWatcher or a container: a test passes a fake action that throws a non-OCE
@@ -448,7 +475,8 @@ internal static class WatchRunner
         Func<CancellationToken, Task> processChange,
         TextWriter output,
         CancellationToken cancellationToken,
-        ResolvedSecretLedger? sessionSecretLedger = null)
+        ResolvedSecretLedger? sessionSecretLedger = null,
+        SecurityPathDisclosureLedger? sessionPathLedger = null)
     {
         try
         {
@@ -469,7 +497,10 @@ internal static class WatchRunner
             // EDGE-007: and scrub first — this is the sink a failed secured build reaches, and a
             // SecuredEndpointProbe failure folds a SecurityMaterialException's text into it.
             await output.WriteLineAsync(
-                ScrubThenSanitise($"--watch: environment error during run: {oex.Message}", sessionSecretLedger))
+                ScrubThenSanitise(
+                    $"--watch: environment error during run: {oex.Message}",
+                    sessionSecretLedger,
+                    sessionPathLedger))
                 .ConfigureAwait(false);
         }
         catch (Exception ex)
@@ -491,7 +522,8 @@ internal static class WatchRunner
             await output.WriteLineAsync(
                 ScrubThenSanitise(
                     $"--watch: error during run ({ex.GetType().Name}): {ex.Message}",
-                    sessionSecretLedger))
+                    sessionSecretLedger,
+                    sessionPathLedger))
                 .ConfigureAwait(false);
         }
     }
@@ -506,9 +538,20 @@ internal static class WatchRunner
     /// The session ledger, or <see langword="null"/> to skip the scrub (pre-EDGE-007 behaviour,
     /// and what the tests that predate it exercise).
     /// </param>
+    /// <param name="pathLedger">
+    /// The session's security-path disclosure ledger (issue #375), or <see langword="null"/> to
+    /// skip its substitution. Applied BETWEEN the value scrub and the sanitiser, for the reasons
+    /// in the remarks below.
+    /// </param>
     /// <remarks>
     /// <para>
-    /// <strong>THE ORDER IS LOAD-BEARING, AND IT IS SCRUB FIRST.</strong>
+    /// <strong>BOTH NETS RUN BEFORE THE SANITISER, SECRETS FIRST, THEN PATHS.</strong> The
+    /// secrets-before-paths order is argued at length on
+    /// <c>ScenarioRunner.ScrubDiagnostic</c>; this seam follows that decision rather than
+    /// restating it, and must not diverge from it.
+    /// </para>
+    /// <para>
+    /// <strong>THE SCRUB-BEFORE-SANITISE ORDER IS LOAD-BEARING, AND IT IS SCRUB FIRST.</strong>
     /// <see cref="DisplaySanitiser"/> REWRITES text — control bytes and ANSI escape sequences are
     /// its whole subject — so a passphrase containing one no longer matches the ledger's recorded
     /// form once the sanitiser has been over it, and scrubbing second would leave the printable
@@ -525,11 +568,18 @@ internal static class WatchRunner
     /// covers what the other cannot.
     /// </para>
     /// </remarks>
-    internal static string? ScrubThenSanitise(string? text, ResolvedSecretLedger? ledger)
+    internal static string? ScrubThenSanitise(
+        string? text, ResolvedSecretLedger? ledger, SecurityPathDisclosureLedger? pathLedger)
     {
         // Null-in/null-out, matching BOTH components it composes — so it drops into any sink
         // that already tolerated the sanitiser's own nullable contract.
         var scrubbed = ledger is null ? text : ledger.Scrub(text);
+
+        // Issue #375's net, and it belongs HERE rather than after the sanitiser for the same
+        // reason the value scrub does: the sanitiser REWRITES text, so a resolved path carrying a
+        // byte it neutralises would no longer match the recorded form once it had been over it.
+        scrubbed = pathLedger is null ? scrubbed : pathLedger.Scrub(scrubbed);
+
         return DisplaySanitiser.SanitiseForDisplay(scrubbed);
     }
 
@@ -544,6 +594,7 @@ internal static class WatchRunner
         // Non-nullable for the same reason as RunOnceFromDiskAsync's: it only ever forwards the
         // session's own ledger.
         ResolvedSecretLedger sessionSecretLedger,
+        SecurityPathDisclosureLedger sessionPathLedger,
         CancellationToken cancellationToken)
     {
         var directory = Path.GetDirectoryName(filePath);
@@ -609,7 +660,12 @@ internal static class WatchRunner
                 }
 
                 await RunOnceFromDiskAsync(
-                        session, filePath, output, sessionSecretLedger, cancellationToken)
+                        session,
+                        filePath,
+                        output,
+                        sessionSecretLedger,
+                        sessionPathLedger,
+                        cancellationToken)
                     .ConfigureAwait(false);
             }
         }

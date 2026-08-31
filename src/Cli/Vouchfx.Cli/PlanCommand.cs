@@ -122,7 +122,7 @@ internal static class PlanCommand
     internal static Argument<string> BuildSuitePathArgument() => new("path")
     {
         Description = "Directory to search recursively for *.e2e.yaml suites, or a single "
-            + "*.e2e.yaml file — the declared universe the Planner analyses. Defaults to "
+            + "*.e2e.yaml file - the declared universe the Planner analyses. Defaults to "
             + "'.'. An empty directory (zero discovered suites) is a usage error (exit 2): "
             + "there is no declared universe to analyse, which is a configuration problem, "
             + "not a finding.",
@@ -145,7 +145,7 @@ internal static class PlanCommand
     internal static Option<string?> BuildEventsOption() => new("--events")
     {
         Description = "Path to a JSON Lines event history file, or a directory of *.jsonl "
-            + "files — the artefact `vouchfx run --events` writes. Omit for no history: "
+            + "files - the artefact `vouchfx run --events` writes. Omit for no history: "
             + "every declared suite/step is then reported never-run, and history-health "
             + "findings are empty (a valid, successful analysis, not an error).",
     };
@@ -168,8 +168,8 @@ internal static class PlanCommand
     /// </summary>
     internal static Option<string?> BuildOutputOption() => new("--output")
     {
-        Description = "Write the JSON coverage-and-gap report document to this file path — "
-            + "byte-identical to what --json would print to stdout — regardless of whether "
+        Description = "Write the JSON coverage-and-gap report document to this file path - "
+            + "byte-identical to what --json would print to stdout - regardless of whether "
             + "--json was also passed (--json controls stdout only). The parent directory "
             + "must already exist.",
     };
@@ -185,7 +185,7 @@ internal static class PlanCommand
         Description = "Exit with code 5 when the report contains at least one coverage or "
             + "vocabulary gap finding (history-health and suite-identity-ambiguity findings "
             + "never count). Omit to always exit 0 on a successful analysis regardless of "
-            + "how many gaps were found — gaps are data, mirroring the verdict taxonomy's "
+            + "how many gaps were found - gaps are data, mirroring the verdict taxonomy's "
             + "'only a genuine Fail breaks CI' rule.",
     };
 
@@ -425,7 +425,7 @@ internal static class PlanCommand
         {
             output.WriteLine();
             output.WriteLine(
-                $"--fail-on-gap: {gapCount} gap finding(s) present — exiting {ExitCodes.GapsFound}.");
+                $"--fail-on-gap: {gapCount} gap finding(s) present - exiting {ExitCodes.GapsFound}.");
         }
     }
 
