@@ -901,8 +901,17 @@ public sealed class OrchestrationErrorClassifierTests
         // cause was later established as a deterministic state-store ownership refusal, so that
         // advice would send an operator round a two-minute loop that never converges. The
         // assertions below pin the corrected content on whichever platform this runs.
+        // Pinned against the note the running platform actually emits, not against a phrase
+        // hand-copied out of one of them. The hand-copied form shipped and went red on the Linux
+        // CI leg: it asserted "state store", which the Windows note contains and the
+        // other-platform note spells "state-store". Every gate here runs on Windows, so only CI
+        // could have caught it — and asserting the whole note makes the class of mistake
+        // unavailable rather than fixing this one instance of it.
         Assert.Contains("issue 420", info.Detail, StringComparison.Ordinal);
-        Assert.Contains("state store", info.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(
+            DcpCapture.KnownFaultNote(OperatingSystem.IsWindows()),
+            info.Detail,
+            StringComparison.Ordinal);
         Assert.Contains(message, info.Detail, StringComparison.Ordinal);
 
         // ... and the classification itself does not move. Provision is already the right kind
@@ -910,6 +919,37 @@ public sealed class OrchestrationErrorClassifierTests
         // diagnosis would be a worse trade than one that did not exist.
         Assert.Equal(OrchestrationErrorKind.Provision, info.Kind);
         Assert.Null(info.AuthStatus);
+    }
+
+    /// <summary>
+    /// Both known-fault notes carry what an operator needs, checked on ONE machine.
+    /// </summary>
+    /// <remarks>
+    /// The row above can only ever exercise the note for the platform it runs on, so on a Windows
+    /// developer machine the other-platform note is never read — which is exactly how a phrase
+    /// that appears in one note and not the other reached CI. This row takes both constants
+    /// directly, so a divergence between them is caught wherever the suite runs.
+    /// </remarks>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void BothKnownFaultNotes_NameTheIssueAndTheStateStore(bool isWindows)
+    {
+        var note = DcpCapture.KnownFaultNote(isWindows);
+
+        Assert.Contains("issue 420", note, StringComparison.Ordinal);
+
+        // Spelling-insensitive on the one word the two notes legitimately differ on: the Windows
+        // note says "state store" (a thing DCP opens), the other says "state-store directory"
+        // (a compound adjective). Both are correct English; asserting the CONCEPT rather than
+        // either spelling is what keeps this row from re-creating the bug it exists to prevent.
+        Assert.Contains(
+            "state", note.Replace("-", " ", StringComparison.Ordinal), StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(
+            "state store", note.Replace("-", " ", StringComparison.Ordinal), StringComparison.OrdinalIgnoreCase);
+
+        // ASCII, because it reaches the terminal (issue 379).
+        Assert.All(note, c => Assert.InRange(c, ' ', '~'));
     }
 
     [Theory]
