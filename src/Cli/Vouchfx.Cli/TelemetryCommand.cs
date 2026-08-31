@@ -253,6 +253,6 @@ internal static class TelemetryCommand
         }
 
         var n = id.ToString("n");
-        return n.Length >= 8 ? n[..8] + "…" : n;
+        return n.Length >= 8 ? n[..8] + "..." : n;
     }
 }

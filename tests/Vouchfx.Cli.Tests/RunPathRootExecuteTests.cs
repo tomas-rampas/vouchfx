@@ -173,7 +173,7 @@ public sealed class RunPathRootExecuteTests : IDisposable
     /// <summary>
     /// Issue #266, Item 4: <c>AstBuilder</c>'s unknown-step-type message splices the
     /// declared, dotted step <c>type:</c> straight from the document verbatim
-    /// (<c>"unknown step type '{raw}' — no registered provider"</c>), and this is the MOST
+    /// (<c>"unknown step type '{raw}' - no registered provider"</c>), and this is the MOST
     /// reachable human-terminal surface for hostile suite content — a plain <c>vouchfx run</c>
     /// on a malformed suite reaches <see cref="RunCommand"/>'s parse-failure loop with no
     /// flag needed. The file on disk stays plain ASCII (a YAML double-quoted scalar's

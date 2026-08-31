@@ -238,7 +238,7 @@ internal sealed class SecurityProfileRegistry
     /// </para>
     /// </remarks>
     public string DescribeUnknownProfile(string profileValue) =>
-        $"unknown security profile '{TruncateForDisplay(profileValue)}' — not a registered " +
+        $"unknown security profile '{TruncateForDisplay(profileValue)}' - not a registered " +
         $"profile (registered: {RegisteredProfilesDisplayList}).";
 
     /// <summary>
@@ -290,7 +290,7 @@ internal sealed class SecurityProfileRegistry
         }
 
         var totalChars = value.Length.ToString(CultureInfo.InvariantCulture);
-        return $"{value[..cut]}… ({totalChars} chars total)";
+        return $"{value[..cut]}... ({totalChars} chars total)";
     }
 
     /// <summary>

@@ -210,7 +210,7 @@ public static class AstBuilder
                     step.Id,
                     line,
                     col,
-                    $"unknown step type '{raw}' — no registered provider");
+                    $"unknown step type '{raw}' - no registered provider");
             }
 
             return new StepKindId(family, provider);
@@ -242,7 +242,7 @@ public static class AstBuilder
             step.Id,
             line,
             col,
-            $"unknown step type '{raw}' — no registered provider");
+            $"unknown step type '{raw}' - no registered provider");
     }
 
     // -------------------------------------------------------------------------
@@ -325,7 +325,7 @@ public static class AstBuilder
             step.RawNode.Start.Line,
             step.RawNode.Start.Column,
             caseOnlyMismatch is not null
-                ? $"unknown verifyMode '{step.VerifyMode}'; verifyMode is case-sensitive — write '{caseOnlyMismatch}'"
+                ? $"unknown verifyMode '{step.VerifyMode}'; verifyMode is case-sensitive - write '{caseOnlyMismatch}'"
                 : $"unknown verifyMode '{step.VerifyMode}'; valid values are IMMEDIATE and RETRY");
     }
 

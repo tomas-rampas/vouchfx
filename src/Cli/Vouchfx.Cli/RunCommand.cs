@@ -254,7 +254,7 @@ internal static class RunCommand
     internal static Option<bool> BuildFailOnEnvironmentErrorOption() => new("--fail-on-env-error")
     {
         Description =
-            "Treat an Environment-error verdict as a CI failure (exit 3). Off by default — only "
+            "Treat an Environment-error verdict as a CI failure (exit 3). Off by default - only "
             + "Fail breaks CI. Use this to gate on infrastructure breakage (unhealthy container, "
             + "image-pull / seed / tunnel failure); the distinct code 3 keeps it separable from a "
             + "product Fail (1).",
@@ -275,7 +275,7 @@ internal static class RunCommand
     internal static Option<bool> BuildFailOnInconclusiveOption() => new("--fail-on-inconclusive")
     {
         Description =
-            "Treat an Inconclusive verdict as a CI failure (exit 4). Off by default — only Fail "
+            "Treat an Inconclusive verdict as a CI failure (exit 4). Off by default - only Fail "
             + "breaks CI. Use this to gate on results the engine could not decide (timeout, "
             + "partition outlasted grace, upstream capture unmet); the distinct code 4 keeps it "
             + "separable from a product Fail (1) and an Environment error (3).",
@@ -311,7 +311,8 @@ internal static class RunCommand
         Description =
             "Write a JUnit XML results file to <path> for CI ingestion. Rendered from the same "
             + "event stream as the terminal output; the four verdicts map to distinct JUnit "
-            + "primitives (Fail→failure, Environment-error→error, Inconclusive→skipped). Parent "
+            + "primitives: Fail maps to failure, Environment-error to error, and Inconclusive "
+            + "to skipped. Parent "
             + "directories are created as needed; an existing file is overwritten. Omit for no "
             + "JUnit report (the default).",
     };
@@ -333,7 +334,7 @@ internal static class RunCommand
     {
         Description =
             "Write the raw JSON Lines event stream to the given path. Re-emits the same event "
-            + "stream the terminal / HTML / JUnit reports are rendered from, verbatim — one JSON "
+            + "stream the terminal / HTML / JUnit reports are rendered from, verbatim - one JSON "
             + "object per line, UTF-8 without a BOM. Parent directories are created as needed; an "
             + "existing file is overwritten. Aliased as --json. Omit for no events file (the "
             + "default).",
@@ -397,8 +398,8 @@ internal static class RunCommand
     internal static Option<bool> BuildNoDecorationsOption() => new("--no-decorations")
     {
         Description =
-            "Render the terminal report as plain text — no ANSI colour and no per-verdict shape "
-            + "glyph — for a screen-reader / CI-friendly view. Off by default; when off, colour + "
+            "Render the terminal report as plain text - no ANSI colour and no per-verdict shape "
+            + "glyph - for a screen-reader / CI-friendly view. Off by default; when off, colour + "
             + "glyph are added only for an interactive TTY with NO_COLOR unset. The verdict text "
             + "tokens (PASS / FAIL / ENV_ERROR / INCONCLUSIVE) are always shown, so this loses no "
             + "information.",
@@ -747,8 +748,8 @@ internal static class RunCommand
                     DisplaySanitiser.SanitiseForDisplay(
                         $"vouchfx run: the engine failed unexpectedly and could not reach a verdict "
                         + $"({ex.GetType().FullName}: {ex.Message}).  This is an engine or provider "
-                        + "defect, not a suite failure — please report it with the suite that "
-                        + "triggered it.  Reported as Inconclusive (§12.1)."))
+                        + "defect, not a suite failure - please report it with the suite that "
+                        + "triggered it.  Reported as Inconclusive (section 12.1)."))
                     .ConfigureAwait(false);
             }
             catch (Exception writeFailure) when (

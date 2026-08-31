@@ -20,6 +20,18 @@
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
+    <!--
+      Microsoft.CodeAnalysis.CSharp (the plain compiler, not the Scripting layer the engine uses):
+      AsciiRuntimeOutputCensusTests parses the CLI and engine sources and asserts no literal token
+      carries a non-ASCII character (#379). Roslyn rather than a regex because the distinction the
+      gate needs — a LITERAL versus a COMMENT — is precisely the one a regex cannot draw reliably
+      over verbatim strings, raw strings and a `//` inside a URL, and Roslyn draws it by putting
+      comments and XML docs in trivia where no token walk can see them.
+
+      Same central version the engine already pins, so this adds no new dependency to the graph and
+      nothing to the shipped product: the reference is test-only and this project is not packable.
+    -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" />
   </ItemGroup>
 
   <ItemGroup>

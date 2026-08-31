@@ -839,7 +839,7 @@ public sealed class SecuredEndpointProbeTests : IDisposable
             // them the two live arms cover both levels through the probe itself, so a rendering
             // that dropped the token could not survive on either path.
             Assert.Contains(
-                "client identity resolved, level AuthenticatedRoundTrip —",
+                "client identity resolved, level AuthenticatedRoundTrip:",
                 confirmation.ToString(),
                 StringComparison.Ordinal);
         }
@@ -1330,7 +1330,7 @@ public sealed class SecuredEndpointProbeTests : IDisposable
             // as an authentication claim. See RenderedLine_NamesTheLevel_AndBothLevelsReadApart for
             // the both-levels pin; this one proves the composed line a live confirmation produces.
             Assert.Contains(
-                "client identity none declared, level TransportConfirmed —", line, StringComparison.Ordinal);
+                "client identity none declared, level TransportConfirmed:", line, StringComparison.Ordinal);
         }
         finally
         {
@@ -1392,9 +1392,12 @@ public sealed class SecuredEndpointProbeTests : IDisposable
             Assert.Contains(level.ToString(), line, StringComparison.Ordinal);
 
             // …in the ONE position the contract fixes: immediately after the client-identity
-            // clause and before the em dash that introduces Detail.
+            // clause and before the separator that introduces Detail. That separator stopped being
+            // an em dash when issue #379 made the confirmation line ASCII; what this pins is the
+            // POSITION, and the assertion below carries whatever the separator currently is rather
+            // than naming it in prose the next change would falsify.
             Assert.Contains(
-                $"client identity resolved, level {level} —", line, StringComparison.Ordinal);
+                $"client identity resolved, level {level}:", line, StringComparison.Ordinal);
 
             rendered[level] = line;
         }
@@ -1425,7 +1428,7 @@ public sealed class SecuredEndpointProbeTests : IDisposable
             .ToString();
 
         Assert.Contains(
-            "client identity none declared, level AuthenticatedRoundTrip —",
+            "client identity none declared, level AuthenticatedRoundTrip:",
             noIdentity,
             StringComparison.Ordinal);
 

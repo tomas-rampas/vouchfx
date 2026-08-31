@@ -88,29 +88,47 @@ public static class KafkaSecurityHelper
     /// through <see cref="ICompileReferenceContributor"/> may splice it.
     /// </para>
     /// <para>
-    /// <strong>KNOWN GAP, measured and deliberately not closed in this release</strong> (m2,
-    /// peer-review critic, fix round eight). This helper hands librdkafka the RESOLVED absolute
-    /// paths — <c>ssl.ca.location</c>, <c>ssl.certificate.location</c>, <c>ssl.key.location</c>
-    /// take nothing else (REQ-015) — and when librdkafka cannot open one, its own error text names
-    /// the path it tried. That text becomes a step observation and is archived into the §14 event
-    /// stream, against this branch's declared-path-only rule for anything archived. The engine's own
-    /// diagnostics on this path already comply (<c>SecurityMaterialException</c> names the declared
-    /// text); this is the library's text, not the engine's.
+    /// <strong>PATH DISCLOSURE: the leak this helper can cause is closed AT THE SINK, not here
+    /// (issue #375).</strong> This helper hands librdkafka the RESOLVED absolute paths —
+    /// <c>ssl.ca.location</c>, <c>ssl.certificate.location</c>, <c>ssl.key.location</c> take
+    /// nothing else (REQ-015) — and when librdkafka cannot open one, its own error text names the
+    /// path it tried. That text becomes a step observation and is archived into the §14 event
+    /// stream. The engine's own diagnostics on this path always complied
+    /// (<c>SecurityMaterialException</c> names the declared text); this is the library's text, not
+    /// the engine's, and no code written at THIS seam could constrain it.
     /// </para>
     /// <para>
-    /// The two remediations considered at THIS seam were measured, and neither is mechanical —
-    /// which is why the gap is recorded here rather than half-closed. The list is not the whole
-    /// inventory and is deliberately not counted as one: see #375, which holds the inventory,
-    /// including a third shape (scrub at the sink) measured there rather than here.
+    /// What closes it is <c>Vouchfx.Engine.Runtime.SecurityPathDisclosureLedger</c>: the engine
+    /// records (resolved path → the author's declared text) at the one accessor chokepoint that
+    /// holds both, and substitutes the declared form back at the three scrub chokepoints every
+    /// archived channel already passes through. Nothing about this helper changed, and nothing
+    /// about it needed to — which is the point of the shape that was chosen.
+    /// </para>
+    /// <para>
+    /// <strong>THIS HELPER'S leak is closed; the CLASS is not.</strong> Read the paragraph above
+    /// as being about <c>caCert</c>/<c>clientCert</c>/<c>clientKey</c> and nothing else, because
+    /// that is the whole of what the accessor chokepoint records. Sibling fields resolve an
+    /// author-declared path and are still absent from the ledger — <c>security.serverArtifacts[]
+    /// .source</c>, which sits in the very same <c>security:</c> block and is handed to Aspire's
+    /// container-file staging, plus three seed/script siblings. They are tracked as issue #473.
+    /// A reader who takes "closed at the sink" to mean the path-disclosure class is shut will site
+    /// the next fix in the wrong place.
+    /// </para>
+    /// <para>
+    /// The two remediations considered at THIS seam were measured and REJECTED, and the reasoning
+    /// is kept because it is what argues for the sink:
     /// </para>
     /// <list type="bullet">
     ///   <item><description>
     ///     <strong>Register the three resolved paths with the existing secret-scrub set.</strong>
-    ///     Not reachable from this seam. The ledger is <c>SecretAccessor.ResolvedSecrets</c>, a
-    ///     member of the CONCRETE class; <c>ISecretAccessor</c> declares exactly one member
-    ///     (<c>Resolve</c>), and the emitted script holds only the interface, through
-    ///     <c>ScriptGlobalVariables.Secrets</c>. Closing it this way means adding a member to a
-    ///     public v1 interface that the emitted CSX names by type.
+    ///     Not reachable from this seam, and wrong even where it is reachable. The ledger is
+    ///     <c>SecretAccessor.ResolvedSecrets</c>, a member of the CONCRETE class;
+    ///     <c>ISecretAccessor</c> declares exactly one member (<c>Resolve</c>), and the emitted
+    ///     script holds only the interface, through <c>ScriptGlobalVariables.Secrets</c>. Closing
+    ///     it this way means adding a member to a public v1 interface that the emitted CSX names
+    ///     by type. Separately: that ledger's substitution is the generic
+    ///     <c>SecretString.RedactedMarker</c>, and a path blanked to <c>[REDACTED]</c> is worse
+    ///     for the author than the leak is for the host.
     ///   </description></item>
     ///   <item><description>
     ///     <strong>Catch <c>KafkaException</c> and rewrite the message to the declared path.</strong>
@@ -121,13 +139,16 @@ public static class KafkaSecurityHelper
     ///     <c>ISecurityCertificateMaterial</c> exposes the RESOLVED path views only, with no
     ///     declared-text view, so the best available substitution is the field name
     ///     (<c>'caCert'</c>) — a different diagnostic rather than a redaction of the same one.
+    ///     The engine-side ledger has the declared text because it sits where that text lives.
     ///   </description></item>
     /// </list>
     /// <para>
-    /// One measurement worth carrying forward for whoever does close it: the v1 contract golden
-    /// records this member as <c>field const System.String Source</c> and does NOT pin the literal
-    /// value, so editing this string's CONTENT does not trip <c>SdkContractFreezeTests</c>. The
-    /// freeze gate is not the obstacle here; the two above are.
+    /// One measurement worth carrying forward: the v1 contract golden records this member as
+    /// <c>field const System.String Source</c> and does NOT pin the literal value, so editing this
+    /// string's CONTENT does not trip <c>SdkContractFreezeTests</c> — and editing this REMARKS
+    /// block, which is outside the constant altogether, cannot. Re-measured while writing this
+    /// correction: the helper-sources golden reads the constant's runtime value by reflection
+    /// (<c>BuildHelperSourceSignature</c>), so no regeneration was required for it.
     /// </para>
     /// </remarks>
     public const string Source =

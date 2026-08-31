@@ -3218,7 +3218,7 @@ public sealed class EnvironmentMapperTests : IDisposable
         const string expected =
             "Service 'api' env entry 'P' references a ${secret:...} value. " +
             "A container's environment is the wrong PLACE for a secret, whenever it would " +
-            "resolve (§17): baking a secret into a container's environment would expose it " +
+            "resolve (section 17): baking a secret into a container's environment would expose it " +
             "via 'docker inspect' and corrupt the reproducibility envelope (which hashes the " +
             "reference, never the value). Configure the SUT to resolve the secret itself " +
             "instead. (Parameter 'envValue')";
@@ -5306,7 +5306,7 @@ public sealed class EnvironmentMapperTests : IDisposable
         Assert.Equal(
             "Service 'api' env entry 'P' references a ${secret:...} value. " +
             "A container's environment is the wrong PLACE for a secret, whenever it would " +
-            "resolve (§17): baking a secret into a container's environment would expose it " +
+            "resolve (section 17): baking a secret into a container's environment would expose it " +
             "via 'docker inspect' and corrupt the reproducibility envelope (which hashes the " +
             "reference, never the value). Configure the SUT to resolve the secret itself " +
             "instead. (Parameter 'envValue')",

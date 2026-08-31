@@ -342,7 +342,7 @@ public sealed class SecurityProfileWiringValidatorTests : System.IDisposable
 
         Assert.NotNull(result);
         Assert.DoesNotContain(longProfile, result!.Message, System.StringComparison.Ordinal);
-        Assert.Contains($"{new string('a', bound)}… (5000 chars total)", result.Message,
+        Assert.Contains($"{new string('a', bound)}... (5000 chars total)", result.Message,
             System.StringComparison.Ordinal);
 
         // The message stays O(1) in the offending value: everything past the bound is the fixed

@@ -59,7 +59,7 @@ public interface ISecurityConfigurationAccessor
             "'For' collides with the Visual Basic 'For' keyword, which CA1716 flags for " +
             "cross-language implementers. The name is fixed by the specification this member " +
             "implements (REQ-014 names the call 'Security.For(targetName)' verbatim), it reads " +
-            "correctly at the one call site that matters — an emitted C# script block — and no " +
+            "correctly at the one call site that matters - an emitted C# script block - and no " +
             "part of this engine or its provider SDK is consumable from Visual Basic: the " +
             "emitted delegate is C# script compiled by Roslyn, and every provider implements a " +
             "C# interface contract. Renaming would trade a real, spec-pinned name for a " +

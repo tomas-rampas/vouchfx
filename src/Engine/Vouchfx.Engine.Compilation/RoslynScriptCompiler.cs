@@ -317,7 +317,7 @@ public static class RoslynScriptCompiler
             var submissionType = asm.GetType(CompiledScript.SubmissionTypeName)
                 ?? throw new InvalidOperationException(
                     $"Expected type '{CompiledScript.SubmissionTypeName}' was not found in the emitted assembly. " +
-                    "This indicates a Roslyn scripting API change — verify against the pinned version (4.14.0).");
+                    "This indicates a Roslyn scripting API change - verify against the pinned version (4.14.0).");
 
             var factoryMethod = submissionType.GetMethod(
                 CompiledScript.FactoryMethodName,
@@ -325,7 +325,7 @@ public static class RoslynScriptCompiler
                 ?? throw new InvalidOperationException(
                     $"Expected method '{CompiledScript.FactoryMethodName}' was not found on type " +
                     $"'{CompiledScript.SubmissionTypeName}'. " +
-                    "This indicates a Roslyn scripting API change — verify against the pinned version (4.14.0).");
+                    "This indicates a Roslyn scripting API change - verify against the pinned version (4.14.0).");
 
             // Bind the factory to a typed delegate ONCE so InvokeAsync pays no
             // per-call reflection cost.  The emitted factory signature is:
@@ -535,7 +535,7 @@ public static class RoslynScriptCompiler
         var submissionType = submissionAssembly.GetType(CompiledScript.SubmissionTypeName)
             ?? throw new InvalidOperationException(
                 $"Expected type '{CompiledScript.SubmissionTypeName}' was not found in the emitted assembly. " +
-                "This indicates a Roslyn scripting API change — verify against the pinned version (4.14.0).");
+                "This indicates a Roslyn scripting API change - verify against the pinned version (4.14.0).");
 
         var factoryMethod = submissionType.GetMethod(
             CompiledScript.FactoryMethodName,
@@ -543,7 +543,7 @@ public static class RoslynScriptCompiler
             ?? throw new InvalidOperationException(
                 $"Expected method '{CompiledScript.FactoryMethodName}' was not found on type " +
                 $"'{CompiledScript.SubmissionTypeName}'. " +
-                "This indicates a Roslyn scripting API change — verify against the pinned version (4.14.0).");
+                "This indicates a Roslyn scripting API change - verify against the pinned version (4.14.0).");
 
         // Bind once; no per-call reflection overhead from here on.
         var factory = factoryMethod.CreateDelegate<Func<object?[], Task<object?>>>();

@@ -162,7 +162,7 @@ internal static class ServerArtifactInjection
                 throw new ArgumentException(
                     $"{fieldPath}.target: '{target}' contains a '.' or '..' segment. Give the "
                     + "already-resolved in-container path of the file to create, e.g. "
-                    + "'/etc/kafka/secrets/kafka.keystore.jks' — this engine does not normalise a "
+                    + "'/etc/kafka/secrets/kafka.keystore.jks' - this engine does not normalise a "
                     + "container path, so a '..' segment would be copied through as a literal file "
                     + "name.",
                     nameof(security));
@@ -190,7 +190,7 @@ internal static class ServerArtifactInjection
             {
                 throw new ArgumentException(
                     $"{fieldPath}.target: '{target}' is declared more than once on "
-                    + $"'{ownerName}'. Two artefacts cannot land on one in-container path — which "
+                    + $"'{ownerName}'. Two artefacts cannot land on one in-container path - which "
                     + "one wins is not something this engine will decide silently.",
                     nameof(security));
             }

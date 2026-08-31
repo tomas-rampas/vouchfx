@@ -274,7 +274,7 @@ public sealed class ScenarioCauseArtefactTests
         ledger.Record(Canary);
 
         var cause =
-            $"RunSuiteAsync: environment configuration error — could not load the client key: "
+            $"RunSuiteAsync: environment configuration error - could not load the client key: "
             + $"the supplied password '{Canary}' was rejected.";
 
         // Not vacuous: the value really is in the text the producer hands over.
@@ -295,6 +295,7 @@ public sealed class ScenarioCauseArtefactTests
                 Verdict.Inconclusive,
                 new VerdictCounts { Inconclusive = 1 },
                 ledger,
+                pathLedger: null,
                 cause),
         };
 

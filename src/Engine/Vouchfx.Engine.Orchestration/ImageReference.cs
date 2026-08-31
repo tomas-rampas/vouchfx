@@ -159,7 +159,7 @@ internal static class ImageReferenceParser
         {
             throw new ArgumentException(
                 $"Image reference '{reference}' has leading or trailing whitespace, which is " +
-                "never part of a valid image reference — remove it.",
+                "never part of a valid image reference - remove it.",
                 nameof(reference));
         }
 
@@ -269,7 +269,7 @@ internal static class ImageReferenceParser
         {
             throw new ArgumentException(
                 $"Image reference '{reference}' has an empty path segment in its repository " +
-                $"('{repository}') — repository segments must not be empty (no leading, " +
+                $"('{repository}') - repository segments must not be empty (no leading, " +
                 "trailing, or doubled '/').",
                 nameof(reference));
         }

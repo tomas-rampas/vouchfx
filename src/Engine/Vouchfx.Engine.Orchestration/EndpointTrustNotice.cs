@@ -96,7 +96,7 @@ public sealed record EndpointTrustNotice(
         $"transport: service '{ServiceName}' is addressed at endpoint '{SelectedEndpoint}', which "
         + "is an https listener, and the engine configures NO client trust material for it. A "
         + "'project'-form service cannot declare 'security', so nothing here contributes a trust "
-        + "anchor, pins the peer or presents a client identity — vouchfx asserts nothing about "
+        + "anchor, pins the peer or presents a client identity - vouchfx asserts nothing about "
         + "the transport. For a step that makes an HTTP request to this service, the certificate "
         + "that listener presents is checked against this host's own default trust store and "
         + "nothing else: if this host does not already trust it the request fails the handshake, "

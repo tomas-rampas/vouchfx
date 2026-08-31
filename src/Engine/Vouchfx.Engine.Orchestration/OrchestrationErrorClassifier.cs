@@ -366,6 +366,6 @@ public static class OrchestrationErrorClassifier
 
         return oneLine.Length <= MaxDetailLength
             ? oneLine
-            : string.Concat(oneLine.AsSpan(0, MaxDetailLength), "…");
+            : string.Concat(oneLine.AsSpan(0, MaxDetailLength), "...");
     }
 }

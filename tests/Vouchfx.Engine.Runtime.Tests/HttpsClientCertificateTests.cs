@@ -121,7 +121,7 @@ public sealed class HttpsClientCertificateTests
     /// </summary>
     private static ISecurityConfigurationAccessor BuildWithNoSecretAccessor(
         ScenarioAst ast, string? suiteDirectory) =>
-        SecurityConfigurationAccessor.Build(ast, suiteDirectory, secrets: null);
+        SecurityConfigurationAccessor.Build(ast, suiteDirectory, secrets: null, pathDisclosures: null);
 
     private static HttpRestModel GetModel(int? expectedStatus = null) =>
         new(
@@ -249,7 +249,8 @@ public sealed class HttpsClientCertificateTests
                 AstWith(security),
                 bed.SuiteDirectory,
                 new SecretAccessor(
-                    new SecretSourceCatalog(new ISecretResolver[] { new EnvironmentSecretResolver() })));
+                    new SecretSourceCatalog(new ISecretResolver[] { new EnvironmentSecretResolver() })),
+                pathDisclosures: null);
             try
             {
                 var vars = await RunStepsAsync(
@@ -322,7 +323,8 @@ public sealed class HttpsClientCertificateTests
             AstWith(security),
             bed.SuiteDirectory,
             new SecretAccessor(
-                new SecretSourceCatalog(new ISecretResolver[] { new EnvironmentSecretResolver() })));
+                new SecretSourceCatalog(new ISecretResolver[] { new EnvironmentSecretResolver() })),
+            pathDisclosures: null);
         try
         {
             var vars = await RunStepsAsync(

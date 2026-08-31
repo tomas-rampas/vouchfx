@@ -316,8 +316,8 @@ public static class SuiteProtocolTargets
             + "addressed by both an HTTP-family step (http.rest / http.soap / "
             + "metrics-assert.prometheus) and a Kafka-family step (mq-publish.kafka / "
             + "mq-expect.kafka). The engine stages one endpoint value per target, in the "
-            + "form that target's own clients consume — an 'https://host:port' URL for the "
-            + "HTTP family, a bare 'host:port' bootstrap for the Kafka families — and one "
+            + "form that target's own clients consume - an 'https://host:port' URL for the "
+            + "HTTP family, a bare 'host:port' bootstrap for the Kafka families - and one "
             + "string cannot be both. Declare the broker and the HTTP API as two separate "
             + "entries under environment.services, each addressed by one family.";
     }

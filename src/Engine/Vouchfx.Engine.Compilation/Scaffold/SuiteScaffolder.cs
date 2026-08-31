@@ -177,7 +177,7 @@ public static partial class SuiteScaffolder
 
                     var message = caseInsensitiveMatch is not null
                         ? $"Unsupported dependency type '{dep.Type}' for dependency '{dep.Name}'. "
-                          + $"Dependency types are case-sensitive — did you mean '{caseInsensitiveMatch}'? "
+                          + $"Dependency types are case-sensitive - did you mean '{caseInsensitiveMatch}'? "
                           + $"Supported types: {string.Join(", ", KnownDependencyKinds.All)}."
                         : $"Unsupported dependency type '{dep.Type}' for dependency '{dep.Name}'. "
                           + $"Supported types: {string.Join(", ", KnownDependencyKinds.All)}.";
@@ -199,7 +199,7 @@ public static partial class SuiteScaffolder
 
         sb.Append("# Machine-drafted by ").Append(versionPart).AppendLine(".");
         sb.AppendLine(
-            "# Generated skeleton grounded in the live step catalogue — human review required before trust.");
+            "# Generated skeleton grounded in the live step catalogue - human review required before trust.");
         sb.AppendLine(
             "# Placeholders only; fill semantics before treating this document as production-ready.");
         sb.AppendLine();

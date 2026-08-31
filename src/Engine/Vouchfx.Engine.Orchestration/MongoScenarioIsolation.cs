@@ -211,7 +211,7 @@ public sealed class MongoScenarioIsolation : IScenarioIsolation, IAsyncDisposabl
                 "init",
                 _dependencyName,
                 new InvalidOperationException(
-                    "connection string has no database name — the MongoDB reset cannot be " +
+                    "connection string has no database name - the MongoDB reset cannot be " +
                     "scoped to a single database."));
         }
 

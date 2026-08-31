@@ -106,7 +106,10 @@ internal sealed class SecurityConfigurationAccessor : ISecurityConfigurationAcce
     /// scenario's secret resolvers.
     /// </remarks>
     internal static ISecurityConfigurationAccessor Build(
-        ScenarioAst ast, string? suiteDirectory, ISecretAccessor? secrets)
+        ScenarioAst ast,
+        string? suiteDirectory,
+        ISecretAccessor? secrets,
+        SecurityPathDisclosureLedger? pathDisclosures)
     {
         var services = ast.Environment?.Services;
         var dependencies = ast.Environment?.Dependencies;
@@ -121,7 +124,8 @@ internal sealed class SecurityConfigurationAccessor : ISecurityConfigurationAcce
             {
                 if (spec.Security is { } security)
                 {
-                    byTarget[name] = Project(name, "services", security, resolvedSuiteDirectory, secrets);
+                    byTarget[name] = Project(
+                        name, "services", security, resolvedSuiteDirectory, secrets, pathDisclosures);
                 }
             }
         }
@@ -158,7 +162,8 @@ internal sealed class SecurityConfigurationAccessor : ISecurityConfigurationAcce
                     continue;
                 }
 
-                byTarget[name] = Project(name, "dependencies", security, resolvedSuiteDirectory, secrets);
+                byTarget[name] = Project(
+                    name, "dependencies", security, resolvedSuiteDirectory, secrets, pathDisclosures);
             }
         }
 
@@ -207,7 +212,8 @@ internal sealed class SecurityConfigurationAccessor : ISecurityConfigurationAcce
         string ownerKindPlural,
         SecuritySpec security,
         string resolvedSuiteDirectory,
-        ISecretAccessor? secrets)
+        ISecretAccessor? secrets,
+        SecurityPathDisclosureLedger? pathDisclosures)
     {
         var fieldPathPrefix = $"environment.{ownerKindPlural}.{targetName}.security";
 
@@ -241,7 +247,8 @@ internal sealed class SecurityConfigurationAccessor : ISecurityConfigurationAcce
                 clientCert,
                 clientKey,
                 security.ClientKeyPassword,
-                secrets);
+                secrets,
+                pathDisclosures);
 
         return new SecurityConfiguration(security.Profile ?? string.Empty, certificates);
     }
@@ -323,6 +330,13 @@ internal sealed class SecurityConfigurationAccessor : ISecurityConfigurationAcce
         private readonly string? _declaredClientKeyPassword;
 
         private readonly ISecretAccessor? _secrets;
+
+        /// <summary>
+        /// The run's path-disclosure ledger, or <see langword="null"/> on a path that owns none
+        /// (a test double, or an embedding caller that built no run scope).
+        /// </summary>
+        private readonly SecurityPathDisclosureLedger? _pathDisclosures;
+
         private readonly Lazy<X509Certificate2?> _caCertificate;
         private readonly Lazy<X509Certificate2?> _clientCertificate;
         private readonly Lazy<SecretString?> _clientKeyPassword;
@@ -334,7 +348,8 @@ internal sealed class SecurityConfigurationAccessor : ISecurityConfigurationAcce
             DeclaredPath? clientCert,
             DeclaredPath? clientKey,
             string? declaredClientKeyPassword,
-            ISecretAccessor? secrets)
+            ISecretAccessor? secrets,
+            SecurityPathDisclosureLedger? pathDisclosures)
         {
             _fieldPathPrefix = fieldPathPrefix;
             _resolvedSuiteDirectory = resolvedSuiteDirectory;
@@ -343,6 +358,7 @@ internal sealed class SecurityConfigurationAccessor : ISecurityConfigurationAcce
             _clientKey = clientKey;
             _declaredClientKeyPassword = declaredClientKeyPassword;
             _secrets = secrets;
+            _pathDisclosures = pathDisclosures;
 
             // ExecutionAndPublication: one load per target however many steps resolve it
             // concurrently under `--parallel`, and the SAME instance to all of them.
@@ -599,9 +615,28 @@ internal sealed class SecurityConfigurationAccessor : ISecurityConfigurationAcce
         /// not declared at all.
         /// </summary>
         /// <remarks>
+        /// <para>
         /// An absent field is ABSENT, never a containment failure — REQ-001/REQ-024's rule that
         /// the engine synthesises nothing for an undeclared <c>caCert</c> is what makes the
         /// null-first ordering here load-bearing rather than defensive.
+        /// </para>
+        /// <para>
+        /// <strong>This is where a resolved path is registered with the run's
+        /// <see cref="SecurityPathDisclosureLedger"/> (issue #375), and it is the only place it
+        /// could be.</strong> All three public resolved-path getters funnel through here, and
+        /// this method is the single point that holds the resolved form and the declared form
+        /// together — the same relationship <c>SecretAccessor.Resolve</c> has to
+        /// <see cref="Vouchfx.Engine.Abstractions.Secrets.ResolvedSecretLedger"/>. Registering at
+        /// the three getters instead would be three chances to forget; registering at
+        /// construction would record paths for a target no step reaches, and — worse — record
+        /// one that <see cref="EnsureContained"/> is about to refuse.
+        /// </para>
+        /// <para>
+        /// AFTER the containment check, deliberately. A path that resolves outside the suite
+        /// directory is never handed to anyone, so there is no disclosure to substitute for, and
+        /// recording it would put a rejected path into the substitution table for the rest of
+        /// the run.
+        /// </para>
         /// </remarks>
         private string? ResolvedIfContained(DeclaredPath? path, string fieldName)
         {
@@ -611,6 +646,12 @@ internal sealed class SecurityConfigurationAccessor : ISecurityConfigurationAcce
             }
 
             EnsureContained(path, fieldName);
+
+            // The engine is about to hand this absolute path to a client library it does not
+            // write the diagnostics of (librdkafka's ssl.*.location, REQ-015). Record the
+            // declared form it must be reported as, so the scrub chokepoints can put it back.
+            _pathDisclosures?.Record(path.Resolved, path.Declared);
+
             return path.Resolved;
         }
 
@@ -638,11 +679,68 @@ internal sealed class SecurityConfigurationAccessor : ISecurityConfigurationAcce
             }
             catch (Exception ex) when (ex is CryptographicException or IOException or UnauthorizedAccessException)
             {
+                // ISSUE #375's sibling shape, substituted here as DEFENCE IN DEPTH — and the
+                // measurement is what makes that the honest word rather than "closed here".
+                //
+                // MEASURED on this host (.NET 8, Windows 10.0.26200), the three ways this catch is
+                // reachable through `new X509Certificate2(string)`:
+                //
+                //   file missing      CryptographicException "The system cannot find the file specified."
+                //   file locked       CryptographicException "The process cannot access the file ..."
+                //   path is a folder  CryptographicException "Unspecified error"
+                //
+                // None names the path: this constructor goes through CryptoAPI, whose messages are
+                // path-free. So there is no measured leak at THIS site. The substitution is applied
+                // anyway because the filter admits `IOException` and `UnauthorizedAccessException`
+                // too, and those are the .NET types that DO embed the path they tried — the sibling
+                // site below is where that was measured actually happening. One rule at both
+                // catches costs an allocation on an already-failing path and removes the question
+                // of which platform, which runtime and which file-open route is which.
                 throw new SecurityMaterialException(
                     $"{_fieldPathPrefix}.caCert: '{ca.Declared}' could not be read as a certificate " +
-                    $"({ex.Message}).",
+                    $"({WithDeclaredPaths(ex.Message, ca)}).",
                     ex);
             }
+        }
+
+        /// <summary>
+        /// Substitutes the declared form of every <paramref name="involved"/> path back into
+        /// <paramref name="message"/> — a platform exception's own text, which this engine does
+        /// not write and cannot constrain.
+        /// </summary>
+        /// <param name="message">The untrusted platform message.</param>
+        /// <param name="involved">
+        /// The declared paths this operation handed to the platform. A <see langword="null"/>
+        /// entry is ignored, so callers may pass a nullable field without a guard.
+        /// </param>
+        /// <remarks>
+        /// <para>
+        /// Built on a THROWAWAY <see cref="SecurityPathDisclosureLedger"/> seeded with exactly the
+        /// paths in play, rather than on the run's shared instance, and the difference is
+        /// deliberate. This must not depend on whether the shared ledger exists (an embedding
+        /// caller may have built none) nor on whether the resolved path happens to have been
+        /// registered yet (<see cref="LoadCa"/> reaches the file through the certificate view,
+        /// which does not pass <see cref="ResolvedIfContained"/>). The substitution RULE still has
+        /// exactly one implementation — the ledger's <c>Scrub</c> — which is the property that
+        /// matters; two spellings of one security rule is how the two drift.
+        /// </para>
+        /// <para>
+        /// The allocation sits on an already-failing path that is about to build an exception and
+        /// unwind, so its cost is not worth trading a correctness dependency for.
+        /// </para>
+        /// </remarks>
+        private static string WithDeclaredPaths(string message, params DeclaredPath?[] involved)
+        {
+            var ledger = new SecurityPathDisclosureLedger();
+            foreach (var path in involved)
+            {
+                if (path is not null)
+                {
+                    ledger.Record(path.Resolved, path.Declared);
+                }
+            }
+
+            return ledger.Scrub(message);
         }
 
         private X509Certificate2? LoadClient()
@@ -747,7 +845,7 @@ internal sealed class SecurityConfigurationAccessor : ISecurityConfigurationAcce
                             + $"{QuoteUntrusted(_declaredClientKeyPassword!)}. The likeliest cause is "
                             + "that the passphrase is wrong; the other is an encryption form this "
                             + $"runtime cannot read, since only the '{EncryptedPkcs8Label}' (PKCS#8) "
-                            + "form is supported — convert an openssl legacy key marked "
+                            + "form is supported - convert an openssl legacy key marked "
                             + $"'{LegacyEncryptedPemHeader}' with 'openssl pkcs8 -topk8'. The "
                             + "passphrase itself is never reported.",
                             ex);
@@ -857,24 +955,39 @@ internal sealed class SecurityConfigurationAccessor : ISecurityConfigurationAcce
                     throw new SecurityMaterialException(
                         $"{_fieldPathPrefix}.clientKey: '{_clientKey.Declared}' is an ENCRYPTED private "
                         + $"key ({encryption}) and no 'clientKeyPassword' is declared for it. Declare the "
-                        + "passphrase beside 'clientKey' as a secret reference — "
-                        + "clientKeyPassword: ${secret:env/CLIENT_KEY_PASS} — which is resolved when "
-                        + "the key material is first used, after the topology is up, and never "
-                        + "written to a report, an event or the compiled "
+                        + "passphrase beside 'clientKey' as a secret reference "
+                        + "(clientKeyPassword: ${secret:env/CLIENT_KEY_PASS}), which is resolved "
+                        + "when the key material is first used, after the topology is up, and "
+                        + "never written to a report, an event or the compiled "
                         + "script; a literal passphrase is refused. Only the "
                         + $"'{EncryptedPkcs8Label}' (PKCS#8) form can be opened that way, so a key "
                         + $"marked '{LegacyEncryptedPemHeader}' must first be converted with "
-                        + "'openssl pkcs8 -topk8'. Failing that, decrypt the key outright — "
-                        + "'openssl pkcs8 -topk8 -nocrypt -in <encrypted> -out <plain>' — and point "
-                        + "'clientKey' at the result, keeping the plaintext key inside the suite "
-                        + "directory and out of version control.",
+                        + "'openssl pkcs8 -topk8'. Failing that, decrypt the key outright with "
+                        + "'openssl pkcs8 -topk8 -nocrypt -in <encrypted> -out <plain>', then "
+                        + "point 'clientKey' at the result, keeping the plaintext key inside the "
+                        + "suite directory and out of version control.",
                         ex);
                 }
 
+                // ISSUE #375's SIBLING GAP, AND THIS IS THE ONE THAT WAS MEASURED LEAKING.
+                // Unlike LoadCa's CryptoAPI constructor, `X509Certificate2.CreateFromPemFile`
+                // opens the files through System.IO, so a missing one throws
+                // `FileNotFoundException` — an `IOException`, which this filter admits — carrying
+                // .NET's own text: "Could not find file 'C:\...\client-key.pem'." Measured on this
+                // host, 2026-08-31, alongside the LoadCa cases tabulated above; the two constructors
+                // genuinely differ, which is why the fix is applied at both catches rather than at
+                // whichever one an author happened to hit.
+                //
+                // It is REACHABLE, not hypothetical: EnvironmentSecurityValidator existence-checks
+                // both files pre-topology, so arriving here means the file changed between that
+                // check and this load — the TOCTOU window. SecuredEndpointProbe folds this Message
+                // into an environment-error Detail, so the leak would land in the §14 stream, the
+                // --events artifact and every renderer. Both declared paths are in play here, so
+                // both are substituted.
                 throw new SecurityMaterialException(
                     $"{_fieldPathPrefix}.clientCert/clientKey: '{_clientCert.Declared}' and " +
                     $"'{_clientKey.Declared}' could not be loaded as a certificate and matching private key " +
-                    $"({ex.Message}).",
+                    $"({WithDeclaredPaths(ex.Message, _clientCert, _clientKey)}).",
                     ex);
             }
             finally
@@ -997,11 +1110,11 @@ internal sealed class SecurityConfigurationAccessor : ISecurityConfigurationAcce
                     + "secret reference naming a resolvable source. IT IS DELIBERATELY NOT REPORTED "
                     + "HERE, because a value in "
                     + "this position may be the passphrase itself. Declare a reference of the form "
-                    + "'${secret:<source>/<path>}' and nothing else — for example "
-                    + "clientKeyPassword: ${secret:env/CLIENT_KEY_PASS} — which is resolved when "
+                    + "'${secret:<source>/<path>}' and nothing else - for example "
+                    + "clientKeyPassword: ${secret:env/CLIENT_KEY_PASS} - which is resolved when "
                     + "the key material is first used, after the topology is up, and never "
                     + "written to a report, an event or the compiled "
-                    + "script. A literal passphrase is refused by design (§17), as is a reference "
+                    + "script. A literal passphrase is refused by design (section 17), as is a reference "
                     + "with any text around it.");
             }
 
@@ -1085,7 +1198,7 @@ internal sealed class SecurityConfigurationAccessor : ISecurityConfigurationAcce
             {
                 throw new SecurityMaterialException(
                     $"{_fieldPathPrefix}.clientKeyPassword: a key passphrase is declared, but "
-                    + $"{QuoteUntrusted(_clientKey.Declared)} is NOT an encrypted private key — it "
+                    + $"{QuoteUntrusted(_clientKey.Declared)} is NOT an encrypted private key - it "
                     + $"carries neither the '{EncryptedPkcs8Label}' label nor a "
                     + $"'{LegacyEncryptedPemHeader}' header. A passphrase that decrypts nothing "
                     + "is a control that is not running: remove 'clientKeyPassword', or point "

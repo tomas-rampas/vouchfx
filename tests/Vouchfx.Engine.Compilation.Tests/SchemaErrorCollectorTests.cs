@@ -435,7 +435,7 @@ public sealed class SchemaErrorCollectorTests
     /// ONLY symptom was two actively-wrong "Unknown property 'code'"/"'file'"
     /// messages for the two canonical, correctly-spelled fields. This
     /// synthesises the genuine defect directly ("[oneOf] Exactly one of
-    /// 'code', 'file' may be set — both are present."), reading the
+    /// 'code', 'file' may be set - both are present."), reading the
     /// branches' own 'required' members from the schema. Also proves the
     /// interplay with the EXISTING unevaluatedProperties cascade
     /// suppression: once this genuine error is present, the two misleading
@@ -775,7 +775,7 @@ public sealed class SchemaErrorCollectorTests
         Assert.False(result.IsValid);
         var onlyError = Assert.Single(result.Errors, e => e.InstanceLocation == "/steps/0/operation");
 
-        Assert.Contains($"{new string('x', bound - 1)}… ({offending.Length} chars total)",
+        Assert.Contains($"{new string('x', bound - 1)}... ({offending.Length} chars total)",
             onlyError.Message, StringComparison.Ordinal);
 
         for (var i = 0; i < onlyError.Message.Length; i++)
