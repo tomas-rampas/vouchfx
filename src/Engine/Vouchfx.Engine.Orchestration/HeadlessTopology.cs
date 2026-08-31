@@ -125,14 +125,24 @@ public sealed class HeadlessTopology : IAsyncDisposable
         // fault it captures clears before anyone can switch a diagnostic on.
         var recorder = DcpFlightRecorder.CreateUnlessDisabled();
 
-        // Suppress HealthChecks log noise below Warning (§4 hard invariant), and Aspire's
-        // own lifecycle banners: the Aspire.Hosting.DistributedApplication category carries
-        // only the version banner, "Distributed application starting/started", and
-        // "Application host directory is: <path>" — where the path is the apphostprojectpath
-        // AssemblyMetadata baked at BUILD time, i.e. the release build machine's directory
-        // (/home/runner/work/...) on every customer run of the packaged tool. Nothing in the
-        // engine reads AppHostDirectory (scenario-relative paths resolve against the suite's
-        // own directory), so the line is pure misleading noise. Warning+ still passes.
+        // Suppress HealthChecks log noise below Warning (§4 hard invariant), and Aspire's own
+        // BELOW-WARNING lifecycle banners on the Aspire.Hosting.DistributedApplication category.
+        //
+        // Stated as a property, not as a roster, and the roster this comment used to carry is
+        // exactly why: it enumerated the category's contents as "only the version banner,
+        // starting/started, and Application host directory", and THIS change disproved it — the
+        // "Unable to allocate a network port" line #420 turns on is a WARNING on that same
+        // category, measured off a live capture. An enumeration nothing checks is a claim of
+        // completeness, and this one was already false when it was written.
+        //
+        // The property the filter actually relies on: everything that category emits BELOW
+        // Warning is lifecycle chatter with no diagnostic value here, and one item of it is
+        // actively misleading — "Application host directory is: <path>" prints the
+        // apphostprojectpath AssemblyMetadata baked at BUILD time, i.e. the release build
+        // machine's directory (/home/runner/work/...) on every customer run of the packaged tool,
+        // while nothing in the engine reads AppHostDirectory (scenario-relative paths resolve
+        // against the suite's own directory). Warning and above still passes, which is what keeps
+        // the port-allocation warning visible.
         // Aspire.Hosting.Dcp.DcpHost is deliberately NOT filtered: its "Starting DCP with
         // arguments" line shows THIS machine's resolved DCP path — primary diagnostic
         // evidence for the DCP-path support flow (docs/kb/dcp-orchestrator-portability.md).
@@ -142,7 +152,7 @@ public sealed class HeadlessTopology : IAsyncDisposable
         // decide what a HUMAN sees on the console and are unchanged by anything below, while the
         // recorder is a private, in-memory, bounded sink that no console reads. Its own rules are
         // PROVIDER-SCOPED, so the console keeps exactly today's levels — DcpFlightRecorder.Register
-        // holds those three rules, their ordering constraint, and why each one is there.
+        // holds those three rules and why each one is there.
         builder.Services.AddLogging(lb =>
         {
             lb.AddFilter(
@@ -195,6 +205,21 @@ public sealed class HeadlessTopology : IAsyncDisposable
             // retention slot that a real occurrence of #420 may need. A health-gate timeout is
             // also an OperationCanceledException, but its token is the gate's own — hence the
             // test on the caller's token specifically, not on the exception type.
+            //
+            // KNOWN LIMIT, stated because the sentence above overclaims on its own: the test is
+            // on WHATEVER TOKEN THIS METHOD WAS HANDED, which is only the same thing as "the
+            // caller asked to stop" when that token carries no deadline of its own. It does not
+            // for the production path — SuiteTopology forwards the runner's token untouched, so
+            // the only way it trips there is a real user cancellation. It DOES for StubTopology,
+            // which hands over a linked token with CancelAfter(startupTimeout): a start that
+            // times out there suppresses the capture, and a start timeout is the #420 shape.
+            //
+            // Left as a documented limit rather than fixed, deliberately. Fixing it properly
+            // means a SECOND CancellationToken parameter on this public method — one for
+            // "deadline", one for "the user asked to stop" — which is API surface and CA1068
+            // ordering churn for a gap that reaches only the in-repo stub fixture. If a
+            // production caller ever passes a deadline-bearing token here, this becomes a real
+            // defect and the parameter is the fix; that is the trigger to watch for.
             if (recorder is not null && !cancellationToken.IsCancellationRequested)
             {
                 await DcpCapture

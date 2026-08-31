@@ -3,10 +3,11 @@
 //
 // WHY THIS EXISTS, and why it is armed by default.
 // ------------------------------------------------
-// #420 presented as an intermittent, Windows-host-specific fault that appeared to clear on
-// its own. It is none of those things. This recorder captured it on its first live encounter
-// and the cause was established from that capture (see below); what looked like intermittency
-// was a deterministic refusal whose trigger came and went. The symptom:
+// #420 presented as an INTERMITTENT fault that appeared to CLEAR ON ITS OWN. It is neither.
+// This recorder captured it on its first live encounter and the cause was established from that
+// capture (see below): a deterministic refusal whose trigger came and went with how the terminal
+// happened to be launched. Windows-specific it genuinely is -- the mechanism is a Windows ACL
+// ownership check -- and that half of the original description survives intact. The symptom:
 //
 //     warn: Unable to allocate a network port for service '<name>'; ...
 //     fail: System.IO.InvalidDataException: Service <name> should have valid address at this point
@@ -92,10 +93,33 @@ internal sealed record DcpFlightEntry(
     /// The per-entry cap, in characters, applied to <see cref="Line"/>.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Bounds a single pathological entry -- a stack trace inside an exception's
     /// <c>ToString()</c>, most obviously -- so that one entry can never consume the whole
     /// buffer budget on its own and evict every DCP warning around it. Well below the
     /// buffer's own character budget, which is what makes that guarantee hold.
+    /// </para>
+    /// <para>
+    /// <strong>Applied to EVERY string the entry keeps, not only to <see cref="Line"/>, and the
+    /// earlier version of this cap did not hold the guarantee stated above.</strong>
+    /// <see cref="Create"/> charges <see cref="RetainedChars"/> for the components as well as the
+    /// rendered line, so capping only the line left the real bound at
+    /// <c>charLimit + the largest single message</c> rather than <c>charLimit</c>: a 40 KiB Debug
+    /// line was charged its full length while contributing 4 KiB of readable text, and a handful
+    /// of them emptied a 128 Ki-character buffer -- the capture arriving as three lines and a
+    /// large eviction count. That degradation begins the moment a message passes this cap.
+    /// </para>
+    /// <para>
+    /// Capping the components costs nothing that is ever read: <c>Message</c>, <c>Exception</c>
+    /// and <c>Category</c> have no production reader at all -- <see cref="DcpFlightRecorder.Tail"/>,
+    /// <see cref="DcpFlightRecorder.FormatCapture"/> and <c>DcpCapture.MentionsStateStoreRefusal</c>
+    /// each read <see cref="Line"/> and <see cref="Level"/> only -- so the budget was being spent
+    /// on state nothing consumes. With every component capped,
+    /// <see cref="RetainedChars"/> is bounded by roughly three times this constant plus the
+    /// category, which is what makes <see cref="DcpFlightRecorder.Record"/>'s
+    /// "single entry larger than the whole budget" branch the unreachable safety net its own
+    /// remark implies rather than a live path.
+    /// </para>
     /// </remarks>
     internal const int MaxLineChars = 4096;
 
@@ -127,11 +151,14 @@ internal sealed record DcpFlightEntry(
         string? message,
         Exception? exception)
     {
-        var safeCategory = ToPrintableAsciiLine(category);
-        var safeMessage = ToPrintableAsciiLine(message);
+        // Capped HERE, not only in Render: RetainedChars below charges these components, so an
+        // uncapped message was billed at full length while contributing at most MaxLineChars of
+        // readable text. See MaxLineChars' own remarks for the measurement and the consequence.
+        var safeCategory = Truncate(ToPrintableAsciiLine(category));
+        var safeMessage = Truncate(ToPrintableAsciiLine(message));
         var safeException = exception is null
             ? null
-            : ToPrintableAsciiLine(exception.ToString());
+            : Truncate(ToPrintableAsciiLine(exception.ToString()));
 
         var rendered = Render(timestamp, level, safeCategory, safeMessage, safeException);
 
@@ -184,6 +211,18 @@ internal sealed record DcpFlightEntry(
         return new string(buffer).Trim();
     }
 
+    /// <summary>
+    /// Caps one already-sanitised component at <see cref="MaxLineChars"/>, marking the cut.
+    /// </summary>
+    /// <remarks>
+    /// The same cap and the same marker <see cref="Render"/> applies to the composed line, so a
+    /// reader of any stored string sees truncation the same way wherever it happened.
+    /// </remarks>
+    private static string Truncate(string value) =>
+        value.Length <= MaxLineChars
+            ? value
+            : string.Concat(value.AsSpan(0, MaxLineChars), "...");
+
     private static string Render(
         DateTimeOffset timestamp,
         LogLevel level,
@@ -234,15 +273,26 @@ internal sealed record DcpFlightEntry(
 /// dispose is the whole synchronisation story.
 /// </para>
 /// <para>
-/// <strong>Disposal is the drop, and after it the cost is one volatile read per log
-/// statement -- not zero.</strong> Disposal clears the buffer and makes
-/// <see cref="ILogger.Log"/> return before it formats anything. What it CANNOT do is remove
-/// the filter rule: that lives in the host's <c>LoggerFilterOptions</c> for the life of the
-/// host, so Aspire goes on believing Debug is enabled for the DCP categories and goes on
-/// constructing the state object for each one. The expensive half -- invoking the formatter,
-/// rendering, allocating an entry, taking the lock -- is what the early return removes. Saying
-/// "a healthy run pays nothing" would be wrong; it pays a volatile read and whatever the
-/// caller allocated before calling in.
+/// <strong>Disposal is the drop, and after it the residual cost is small but not zero.</strong>
+/// Disposal clears the buffer and makes <see cref="ILogger.Log"/> return before it formats
+/// anything.
+/// <para>
+/// The mechanism, MEASURED on the Microsoft.Extensions.Logging 10.0.8 this solution resolves,
+/// because an earlier version of this remark got it wrong: after the drop, the AGGREGATED
+/// <c>ILogger.IsEnabled(Debug)</c> for a DCP category returns FALSE. The filter rule does
+/// survive -- it lives in the host's <c>LoggerFilterOptions</c> for the life of the host, which
+/// is what that earlier text was reaching for -- but the aggregated logger also consults each
+/// provider logger's own <c>IsEnabled</c>, and <c>RecordingLogger.IsEnabled</c> reports false
+/// once dropped. So an <c>if (logger.IsEnabled(...))</c>-guarded call site short-circuits
+/// entirely and costs one volatile read.
+/// </para>
+/// <para>
+/// What still costs something is an UNGUARDED call -- the ordinary <c>LogDebug(...)</c>
+/// extension, which builds its state object and dispatches before any level check reaches this
+/// provider. Those pay the caller's own allocation plus a volatile read here, and the early
+/// return removes the expensive half: invoking the formatter, rendering, allocating an entry
+/// and taking the lock. Saying "a healthy run pays nothing" would still be wrong; the residual
+/// is a volatile read and whatever the caller allocated before calling in.
 /// </para>
 /// </remarks>
 internal sealed class DcpFlightRecorder : ILoggerProvider

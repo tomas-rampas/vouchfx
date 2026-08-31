@@ -102,6 +102,49 @@ public sealed class DcpFlightRecorderTests
         Assert.EndsWith("...", entry.Line, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void Create_PathologicalMessageAndException_BoundsRetainedCharsNotJustTheLine()
+    {
+        // The bound that actually protects the buffer, and the one the previous cap did NOT
+        // deliver. RetainedChars charges Message and Exception as well as Line, so capping only
+        // Line left the real bound at `charLimit + largest single message`: a 40 KiB Debug line
+        // was billed 40 KiB while contributing 4 KiB of readable text, and a few of them emptied
+        // the whole 128 Ki-character budget - the capture arriving as a handful of lines and a
+        // large eviction count, on exactly the failure it exists to record.
+        //
+        // Line-only assertions cannot see this, which is why the sibling row above stayed green
+        // throughout. This one asserts the CHARGE.
+        var entry = DcpFlightEntry.Create(
+            DateTimeOffset.UnixEpoch,
+            LogLevel.Debug,
+            "Aspire.Hosting.Dcp.DcpExecutor",
+            new string('z', DcpFlightEntry.MaxLineChars * 10),
+            new InvalidOperationException(new string('y', DcpFlightEntry.MaxLineChars * 10)));
+
+        // Three capped components (line, message, exception) plus the category, with the
+        // three-character truncation marker allowed on each.
+        var bound = (3 * (DcpFlightEntry.MaxLineChars + 3)) + entry.Category.Length;
+
+        Assert.True(
+            entry.RetainedChars <= bound,
+            $"a single entry is charged {entry.RetainedChars} characters against a bound of "
+            + $"{bound}. One pathological log line can therefore evict every DCP warning around "
+            + "it, which is precisely what MaxLineChars' remarks promise cannot happen. Cap the "
+            + "COMPONENTS in Create, not only the rendered Line.");
+
+        // And the buffer's own budget really is the buffer's budget: a run of these cannot push
+        // CharCount beyond the limit by more than one entry's worth.
+        var recorder = new DcpFlightRecorder(entryLimit: 64, charLimit: 32 * 1024);
+        for (var i = 0; i < 32; i++)
+        {
+            recorder.Record(entry);
+        }
+
+        Assert.True(
+            recorder.CharCount <= (32 * 1024) + bound,
+            $"buffer overshot its character budget: {recorder.CharCount}");
+    }
+
     // -----------------------------------------------------------------------
     // Thread safety
     // -----------------------------------------------------------------------

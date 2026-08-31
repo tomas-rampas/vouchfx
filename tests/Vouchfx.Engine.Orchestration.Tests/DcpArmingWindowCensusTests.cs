@@ -147,6 +147,14 @@ public sealed class DcpArmingWindowCensusTests
         Assert.NotEmpty(returns);
 
         var offenders = returns
+            // A return inside a block-bodied lambda is not a return FROM the post-start region -
+            // it leaves the lambda. None exists in either file today; excluding them keeps a
+            // future one from reddening this rule for a reason that has nothing to do with the
+            // arming window. (Rule 3's catch enumeration has no equivalent hazard: a catch inside
+            // a lambda would still have to flush.)
+            .Where(r => !r.Ancestors()
+                .TakeWhile(a => a != postStart.Try)
+                .Any(a => a is AnonymousFunctionExpressionSyntax or LocalFunctionStatementSyntax))
             .Where(r => !drops.Any(d => DropDominates(d, r)))
             .Select(r => Describe(r))
             .ToList();
@@ -314,6 +322,55 @@ public sealed class DcpArmingWindowCensusTests
             "HeadlessTopology.StartAsync no longer hands the #420 recorder to the topology it "
             + "returns, so the arming window closes when the start returns rather than when the "
             + "topology is ready.");
+    }
+
+    /// <summary>
+    /// Rule 6 — the CALLER SET itself, so rules 1–3's <c>InlineData</c> cannot silently go stale.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Rules 1, 2 and 3 pin two files by name. That is a complete census only while those two are
+    /// the only callers of <c>HeadlessTopology.StartAsync</c> that own the far end of the arming
+    /// window — and nothing checked it. A third caller could be added tomorrow, never drop or
+    /// flush the recorder, and every row above would stay green while describing a set that no
+    /// longer matched reality: an enumeration standing in for a property, which is the failure
+    /// mode this file's own header warns about.
+    /// </para>
+    /// <para>
+    /// Modelled on <c>SuiteProtocolTargetsTests.EverySuiteTopologyStartCallSite_PassesBothTargetSets</c>,
+    /// which pins a call-site set the same way and for the same reason. A new caller reddens this
+    /// row and the fix is to add its <c>InlineData</c> above — or, if it genuinely owns no window,
+    /// to say so here.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void TheOnlyCallersOfHeadlessTopologyStartAsync_AreTheOnesThisCensusCovers()
+    {
+        var engine = Path.Combine(RepositoryRoot(), "src");
+
+        var callers = Directory
+            .EnumerateFiles(engine, "*.cs", SearchOption.AllDirectories)
+            .Where(p => File.ReadAllText(p)
+                .Contains("HeadlessTopology.StartAsync(", StringComparison.Ordinal))
+            .Select(p => Path.GetFileName(p))
+            .OrderBy(n => n, StringComparer.Ordinal)
+            .ToList();
+
+        // HeadlessTopology.cs itself is excluded: the string occurs there in its own remarks and
+        // its own declaration, not as a call.
+        var external = callers
+            .Where(n => !string.Equals(n, "HeadlessTopology.cs", StringComparison.Ordinal))
+            .ToList();
+
+        Assert.True(
+            external.Count == 2
+                && external.Contains("SuiteTopology.cs")
+                && external.Contains("StubTopology.cs"),
+            "the set of HeadlessTopology.StartAsync callers under src/ has changed, so this "
+            + "census's InlineData no longer enumerates every owner of the #420 arming window. "
+            + "Found: " + string.Join(", ", external) + ". Add the new caller to rules 1-3 (and "
+            + "give it a DropDiagnostics on its ready path and a FlushDiagnosticsAsync in its "
+            + "catches), or record here why it owns no window.");
     }
 
     // -----------------------------------------------------------------------

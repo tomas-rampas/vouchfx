@@ -28,6 +28,25 @@ using System.Globalization;
 namespace Vouchfx.Engine.Orchestration;
 
 /// <summary>
+/// Which root a capture was written under, and therefore which token — if any — can name it in
+/// an Environment-error detail without disclosing the resolved path.
+/// </summary>
+internal enum DcpCaptureRoot
+{
+    /// <summary>The per-user local application data root: the production default.</summary>
+    PerUser,
+
+    /// <summary>The directory named by <see cref="DcpCapture.DirectoryOverrideVariable"/>.</summary>
+    EnvironmentOverride,
+
+    /// <summary>
+    /// A directory passed directly to the flush by an in-process caller, with no environment
+    /// variable behind it. Only the drills reach this: no production call site supplies one.
+    /// </summary>
+    HostSupplied,
+}
+
+/// <summary>
 /// Writes, prunes and annotates the diagnostic captures produced by
 /// <see cref="DcpFlightRecorder"/> when a topology fails to come up (issue #420).
 /// </summary>
@@ -66,25 +85,6 @@ namespace Vouchfx.Engine.Orchestration;
 /// TAIL is a different question and is answered at <see cref="BuildSummary"/>.
 /// </para>
 /// </remarks>
-/// <summary>
-/// Which root a capture was written under, and therefore which token — if any — can name it in
-/// an Environment-error detail without disclosing the resolved path.
-/// </summary>
-internal enum DcpCaptureRoot
-{
-    /// <summary>The per-user local application data root: the production default.</summary>
-    PerUser,
-
-    /// <summary>The directory named by <see cref="DcpCapture.DirectoryOverrideVariable"/>.</summary>
-    EnvironmentOverride,
-
-    /// <summary>
-    /// A directory passed directly to the flush by an in-process caller, with no environment
-    /// variable behind it. Only the drills reach this: no production call site supplies one.
-    /// </summary>
-    HostSupplied,
-}
-
 internal static class DcpCapture
 {
     /// <summary>The directory, under the per-user local application data root, that holds captures.</summary>
@@ -1028,17 +1028,23 @@ internal static class DcpCapture
             var name = await WriteAsync(body, utc, directory).ConfigureAwait(false);
 
             // Which root actually holds the file, decided in the one place that knows both halves.
-            // The ENVIRONMENT override outranks an explicit argument only because production never
-            // passes one; when a caller does pass one and no variable is set, the honest answer is
-            // neither token - see DcpCaptureRoot.HostSupplied. An earlier version folded both into
-            // a single "redirected" boolean and emitted `$VOUCHFX_DCP_CAPTURE_DIR/<name>` for a
-            // variable that was not set, which is the misdirection DescribeLocation exists to
-            // prevent, committed by the method that prevents it.
-            var root = !string.IsNullOrEmpty(
-                    Environment.GetEnvironmentVariable(DirectoryOverrideVariable))
-                ? DcpCaptureRoot.EnvironmentOverride
-                : directory is not null
-                    ? DcpCaptureRoot.HostSupplied
+            //
+            // THE ARGUMENT WINS, and the order here is not free choice - it must match WriteAsync,
+            // which resolves its target as `directory ?? ResolveDirectory()`. An earlier version
+            // had the environment variable outrank the argument, so with BOTH set the file landed
+            // in the argument's directory while this token named %VOUCHFX_DCP_CAPTURE_DIR%: the
+            // precise misdirection DescribeLocation exists to prevent, committed by its own
+            // caller. Unreachable in production - no production call site passes a directory - but
+            // two functions disagreeing about which input wins is a defect whether or not anything
+            // reaches it today.
+            //
+            // A directory passed with no variable set gets neither token; see
+            // DcpCaptureRoot.HostSupplied for why the bare name is the only honest answer.
+            var root = directory is not null
+                ? DcpCaptureRoot.HostSupplied
+                : !string.IsNullOrEmpty(
+                        Environment.GetEnvironmentVariable(DirectoryOverrideVariable))
+                    ? DcpCaptureRoot.EnvironmentOverride
                     : DcpCaptureRoot.PerUser;
 
             var location = name is null

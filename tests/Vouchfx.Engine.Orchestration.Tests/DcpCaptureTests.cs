@@ -160,6 +160,43 @@ public sealed class DcpCaptureTests : IDisposable
     }
 
     [Fact]
+    public async Task FlushOnFailureAsync_WithBothADirectoryAndTheVariable_NamesTheRootTheFileIsIn()
+    {
+        // WriteAsync resolves its target as `directory ?? ResolveDirectory()`, so the ARGUMENT
+        // decides where the file lands. The token has to agree. When it did not - the variable
+        // outranking the argument here while the argument outranked it there - the file went to
+        // one place and the summary named another, which is exactly the misdirection
+        // DescribeLocation exists to prevent, committed by its own caller.
+        var original = Environment.GetEnvironmentVariable(DcpCapture.DirectoryOverrideVariable);
+        var decoy = Path.Combine(Path.GetTempPath(), "vouchfx-decoy-" + Guid.NewGuid().ToString("N"));
+        Environment.SetEnvironmentVariable(DcpCapture.DirectoryOverrideVariable, decoy);
+        try
+        {
+            var recorder = new DcpFlightRecorder();
+            var ex = new InvalidDataException("boom");
+
+            await DcpCapture.FlushOnFailureAsync(
+                recorder, ex, DateTimeOffset.UnixEpoch, _scratch);
+
+            // The file really is in the argument's directory, and the decoy was never created.
+            Assert.NotEmpty(Directory.GetFiles(
+                _scratch, DcpCapture.FileNamePrefix + "*" + DcpCapture.FileNameSuffix));
+            Assert.False(Directory.Exists(decoy));
+
+            // ... so the summary must not name the variable that did NOT decide it.
+            var summary = DcpCapture.Read(ex);
+            Assert.NotNull(summary);
+            Assert.DoesNotContain(
+                DcpCapture.DirectoryOverrideVariable, summary!, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(
+                DcpCapture.DirectoryOverrideVariable, original);
+        }
+    }
+
+    [Fact]
     public async Task FlushOnFailureAsync_WithAnInjectedDirectoryAndNoOverrideSet_NamesNoVariable()
     {
         // The end-to-end shape of the row above, through the production flush: the drills inject a
