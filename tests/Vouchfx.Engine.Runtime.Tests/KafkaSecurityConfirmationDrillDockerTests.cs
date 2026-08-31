@@ -116,7 +116,13 @@
 // REACHED its step — a step-started event exists — which is precisely the differential the
 // negatives are about, and asserts nothing about the step's own outcome.
 //
-// Run with: dotnet test --filter "requires=docker". Excluded from the unit-CI job.
+// Run with: dotnet test --filter "requires=docker" --blame-crash --blame-crash-dump-type full
+// Excluded from the unit-CI job.
+//
+// The blame flags are not optional decoration: this lane launches the CLI as a child process and
+// has crashed a test host once, with no dump. See the canonical account in DrillHostHygiene.cs
+// ("WHY THE DRILL LANE IS ALWAYS RUN WITH --blame-crash") — the frequency there is a property of
+// the LANE, not of this class.
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -146,15 +152,16 @@ namespace Vouchfx.Engine.Runtime.Tests;
 /// EDGE-004 and EDGE-005 against a live <c>confluentinc/cp-kafka:7.6.1</c> broker, each paired
 /// with the positive control that makes its negative mean something.
 /// </summary>
+[Collection(DrillHostSweepCollectionDefinition.Name)]
 public sealed class KafkaSecurityConfirmationDrillDockerTests
 {
-    private const string AppHostAssemblyName = "Vouchfx.Engine.Runtime.Tests";
+    internal const string AppHostAssemblyName = "Vouchfx.Engine.Runtime.Tests";
 
     /// <summary>The declared service name, and therefore the container-name prefix DCP allocates from.</summary>
     private const string BrokerName = "mtls-broker";
 
     /// <summary>The suite's publish step id, shared by the YAML and the CLI drills' output checks.</summary>
-    private const string StepId = "publish";
+    internal const string StepId = "publish";
 
     /// <summary>The consume step id, present only on REQ-025's produce-and-consume row.</summary>
     private const string ConsumeStepId = "consume";
@@ -173,7 +180,7 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
     private const string UnbuiltSiblingStepId = "sibling-publish";
 
     /// <summary>The in-container path the fixture's conditional entrypoint checks for the keystore.</summary>
-    private const string CheckedKeystorePath = "/etc/kafka/secrets/kafka.keystore.pem";
+    internal const string CheckedKeystorePath = "/etc/kafka/secrets/kafka.keystore.pem";
 
     /// <summary>
     /// The plausible typo EDGE-005 turns on: <c>secret</c> for <c>secrets</c>. The host file
@@ -280,13 +287,13 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
         return true;
     }
 
-    private static readonly System.Reflection.Assembly[] s_providerAssemblies =
+    internal static readonly System.Reflection.Assembly[] s_providerAssemblies =
     {
         typeof(MqPublishKafkaProvider).Assembly,
         typeof(MqExpectKafkaProvider).Assembly,
     };
 
-    private static readonly StepKindRegistry s_registry =
+    internal static readonly StepKindRegistry s_registry =
         StepKindRegistry.BuildAndFreeze(s_providerAssemblies);
 
     // ─────────────────────────────────────────────────────────────────────────────────────────
@@ -752,175 +759,14 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
     //
     // Together they say: the engine refuses to proceed at all when it cannot authenticate at the
     // transport layer, whichever way the material is wrong.
+    //
+    // ONLY THE PRESENT-INVALID HALF LIVES HERE. The ABSENT rows need no container, and a class in
+    // the drill collection cannot hold a container-free test: joining that collection makes its
+    // orphan-host sweep construct — and kill — on whatever lane runs the class, so a single
+    // untraited row would drag the sweep into the fast `requires!=docker` build job. They moved,
+    // unchanged, to KafkaSecurityConfirmationPreflightTests, which shares this class's fixture
+    // through the `internal` members below. The same reasoning moved SiblingPremises there.
     // ─────────────────────────────────────────────────────────────────────────────────────────
-
-    /// <summary>
-    /// The declared <c>clientCert</c> file is deleted. The suite must be refused before any
-    /// topology work, and no container may be created.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// <strong>Driven through <c>RunSuiteAsync</c>, not the per-scenario core the docker rows
-    /// use</strong> — because that is the seam the CLI's own <c>run</c> takes, and this variant is
-    /// entirely about what happens BEFORE a topology exists. It is also the seam carrying the
-    /// all-early-verdict guard: when every scenario has a pre-topology verdict, the suite completes
-    /// without the topology being built at all.
-    /// </para>
-    /// <para>
-    /// <strong>NOT docker-gated, and that is the claim.</strong> This row is in the unit suite
-    /// because a correct engine never reaches Docker here. A regression that started a topology is
-    /// caught by the VERDICT assertion, not by the container snapshot: THIS suite is a single
-    /// scenario whose only verdict is a pre-topology one, so it takes <c>RunSuiteAsync</c>'s
-    /// all-early-verdict guard into <c>CompleteWithoutTopologyAsync</c>, and an engine that built a
-    /// topology instead would have to reach the probe, whose failures are <c>EnvironmentError</c>
-    /// rather than the <c>Inconclusive</c> asserted below. The snapshot cannot catch it — teardown
-    /// removes the container before the run returns (measured, and recorded at the container
-    /// watcher), so a regressed engine that built, probed, failed and tore down leaves before and
-    /// after equal.
-    /// </para>
-    /// </remarks>
-    [Fact]
-    public async Task AbsentClientCertificate_IsRefusedByThePreflightWithNoTopologyWork()
-    {
-        var suiteDirectory = MaterialiseSuiteDirectory(
-            "absent-client-cert", securedEndpoint: "9093", keystoreTarget: CheckedKeystorePath);
-
-        // The ONE difference from the passing suite: its declared client certificate is gone.
-        File.Delete(Path.Combine(suiteDirectory, TestCertificateAuthority.ClientCertFileName));
-
-        var yaml = File.ReadAllText(Path.Combine(suiteDirectory, "drill.e2e.yaml"));
-        var ast = AstBuilder.Build(YamlDocumentParser.Parse(yaml), s_registry);
-
-        using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(2));
-        var containersBefore = await ListBrokerContainersAsync(cts.Token);
-
-        var scenarioNames = new List<string> { "absent-client-cert" };
-        var diagnostics = new StringWriter();
-        var result = await ScenarioRunner.RunSuiteAsync(
-            new[] { ast },
-            scenarioNames,
-            new[] { yaml },
-            s_providerAssemblies,
-            AppHostAssemblyName,
-            diagnostics,
-            seedBaseDirectory: suiteDirectory,
-            scenarioBaseDirectories: new string?[] { suiteDirectory },
-            cancellationToken: cts.Token);
-
-        var containersAfter = await ListBrokerContainersAsync(cts.Token);
-        var output = diagnostics.ToString();
-        _output.WriteLine($"verdict={result.Verdict} securityUnconfirmed={result.Assurance.Unconfirmed} refusal={result.Assurance.Refusal}");
-        _output.WriteLine("── diagnostics ──\n" + output);
-
-        // ── The classification: a pre-topology security rejection ─────────────────────────────
-        // Inconclusive, NOT EnvironmentError: the scenario never ran, and an authoring error is not
-        // an infrastructure fault. The flag is what lifts it off exit 0 all the same.
-        Assert.Equal(Verdict.Inconclusive, result.Verdict);
-        Assert.True(
-            result.Assurance.Unconfirmed,
-            "a declared-but-missing client certificate is a security rejection, so the flagless "
-            + "run must not exit 0 — see this test's exit-code derivation below.");
-
-        // ── NO TOPOLOGY WORK, argued structurally and then corroborated ───────────────────────
-        // The structural half is the stronger one, and it is scoped to THIS suite's shape rather
-        // than asserted as an engine invariant. "Every Inconclusive-with-the-flag result is
-        // pre-topology" is FALSE in general: a multi-scenario suite that builds a topology and
-        // completes normally still carries the flag forward from a scenario that failed preflight,
-        // and the parallel runner aggregates it the same way. What holds here is narrower and
-        // sufficient: this is a SINGLE scenario whose one verdict is pre-topology, so RunSuiteAsync
-        // takes its all-early-verdict guard and returns through CompleteWithoutTopologyAsync
-        // without building anything — and the only door that reaches a running topology, the
-        // confirmation probe, yields EnvironmentError rather than the Inconclusive asserted above.
-        // The message below says which pre-topology door it came through.
-        //
-        // The general form of that claim has now been wrong three times on this branch, in this
-        // file and in the engine's own comments; it is written scoped here for that reason.
-        Assert.Contains("clientCert", output, StringComparison.Ordinal);
-        Assert.Contains(
-            $"file '{TestCertificateAuthority.ClientCertFileName}' not found",
-            output,
-            StringComparison.Ordinal);
-
-        // The corroborating half, and it is WEAKER than it looks in three ways worth naming: on a
-        // host with no Docker at all both snapshots are empty and this compares nothing; even with
-        // Docker it cannot see a topology built and torn down inside the call (see this test's own
-        // remarks); and it reads GLOBAL docker state, which this row does not own.
-        //
-        // So it asserts only that no broker container APPEARED — never that the two lists are
-        // equal. MEASURED: equality fails when a PREVIOUS row's teardown completes during this
-        // one, which removes a container between the two snapshots and is not this row's doing at
-        // all. A row that fails because a sibling finished tidying up is order-coupled by
-        // construction, and a subset check is the assertion that actually matches the claim.
-        AssertNoBrokerContainerAppeared(containersBefore, containersAfter);
-    }
-
-    /// <summary>
-    /// The same absent-material suite as a plain <c>vouchfx run</c> with no gating flags, and as
-    /// <c>vouchfx validate</c> — the two invocations an author actually makes.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// <strong>The expected code is DERIVED, not assumed, and the derivation is a committed
-    /// measurement rather than an argument made here.</strong> This door produces
-    /// <c>Verdict.Inconclusive</c> with the security signal set (asserted by the row above), and
-    /// <c>Vouchfx.Cli.Tests.SecurityConfirmationExitCodeTests.
-    /// FromVerdict_SecurityPreflightRejection_ExitsInconclusiveWithoutTheFlag</c> pins
-    /// <c>ExitCodes.FromVerdict(Verdict.Inconclusive, failOnEnvironmentError: false,
-    /// failOnInconclusive: false, an UNCONFIRMED SecurityAssurance) == ExitCodes.Inconclusive</c>.
-    /// So the code is <b>4</b>, and it is NOT the 3 the two probe-failure drills in this file
-    /// expect: those abort with <c>EnvironmentError</c> from a running topology, this one never
-    /// builds a topology at all. Two security rejections, two different codes, each keeping the
-    /// code its own verdict names — which is exactly the property the carve-out was written to
-    /// preserve, and the reason assuming 3 here would have been wrong.
-    /// </para>
-    /// <para>
-    /// Not docker-gated, for the same reason as the row above.
-    /// </para>
-    /// </remarks>
-    [Fact]
-    public async Task AbsentClientCertificate_PlainVouchfxRunAndValidate_BothRefuseWithTheInconclusiveCode()
-    {
-        var cli = ResolveCliAssembly();
-        var suiteDirectory = MaterialiseSuiteDirectory(
-            "absent-client-cert-cli", securedEndpoint: "9093", keystoreTarget: CheckedKeystorePath);
-        File.Delete(Path.Combine(suiteDirectory, TestCertificateAuthority.ClientCertFileName));
-
-        var suite = Path.Combine(suiteDirectory, "drill.e2e.yaml");
-        using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(2));
-
-        var containersBefore = await ListBrokerContainersAsync(cts.Token);
-
-        var (runExit, runOutput) = await RunCliAsync(cli, "run", suite, cts.Token);
-        _output.WriteLine($"`run` exit code: {runExit}");
-        _output.WriteLine("── run output ──\n" + runOutput);
-
-        Assert.Equal(4, runExit);
-        Assert.Contains("clientCert", runOutput, StringComparison.Ordinal);
-        Assert.Contains(
-            $"file '{TestCertificateAuthority.ClientCertFileName}' not found",
-            runOutput,
-            StringComparison.Ordinal);
-        Assert.DoesNotContain($"step '{StepId}'", runOutput, StringComparison.Ordinal);
-
-        // The author-facing half: the same fault is reachable without running anything, which is
-        // what makes it a VALIDATION-time check rather than a run-time one.
-        var (validateExit, validateOutput) = await RunCliAsync(cli, "validate", suite, cts.Token);
-        _output.WriteLine($"`validate` exit code: {validateExit}");
-        _output.WriteLine("── validate output ──\n" + validateOutput);
-
-        // 4, asserted exactly: `validate`'s code for an invalid document is deterministic, and this
-        // test's own name promises a number. It is NOT the carve-out's doing — `validate` never
-        // reaches a verdict to carve out of; the two invocations agreeing on 4 here is the
-        // taxonomy's Inconclusive code being reached by two different routes.
-        Assert.Equal(4, validateExit);
-        Assert.Contains(
-            $"file '{TestCertificateAuthority.ClientCertFileName}' not found",
-            validateOutput,
-            StringComparison.Ordinal);
-
-        var containersAfter = await ListBrokerContainersAsync(cts.Token);
-        AssertNoBrokerContainerAppeared(containersBefore, containersAfter);
-    }
 
     /// <summary>
     /// Asserts no broker container APPEARED between two snapshots — deliberately a subset check
@@ -932,7 +778,7 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
     /// measured, that is exactly what failed an equality assertion here, repeatedly, in a class
     /// run. Only an ARRIVAL is evidence about the row under test, so only an arrival fails.
     /// </remarks>
-    private static void AssertNoBrokerContainerAppeared(
+    internal static void AssertNoBrokerContainerAppeared(
         IReadOnlyList<string> before, IReadOnlyList<string> after)
     {
         var appeared = after.Except(before, StringComparer.Ordinal).ToArray();
@@ -1245,7 +1091,7 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
     /// <summary>
     /// Which sibling a row writes beside the drill — the two knobs, named.
     /// </summary>
-    private enum SiblingShape
+    internal enum SiblingShape
     {
         /// <summary>Byte-identical <c>environment</c>: not folded, and its declaration is the one
         /// the probe confirmed. Row 1's carve-out.</summary>
@@ -1530,7 +1376,7 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
     /// nothing about the documents the rows actually write. Hoisting the two knob values makes that
     /// impossible to do by accident — a change reaches both sites or neither.
     /// </remarks>
-    private static string Issue410BaselineSuiteYaml() =>
+    internal static string Issue410BaselineSuiteYaml() =>
         SuiteYaml(
             Issue410SecuredEndpoint,
             CheckedKeystorePath,
@@ -1551,7 +1397,7 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
     /// the premise guard and asserted end-to-end by Row 1, and it survives the terminal path intact
     /// — measured, brackets and quotes included, in a captured run's CLI output.
     /// </remarks>
-    private const string Issue410SiblingSchemaDiagnostic =
+    internal const string Issue410SiblingSchemaDiagnostic =
         "Required properties [\"topic\"] are not present";
 
     /// <summary>
@@ -1571,7 +1417,7 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
     /// Docker-free premise guard below can assert what each shape actually produces without writing
     /// a suite directory or reaching a container. Both live in this class, so it stays private.
     /// </remarks>
-    private static string SchemaRejectedSiblingYaml(string drillYaml, SiblingShape shape)
+    internal static string SchemaRejectedSiblingYaml(string drillYaml, SiblingShape shape)
     {
         var environmentStart = drillYaml.IndexOf("environment:", StringComparison.Ordinal);
         var stepsStart = drillYaml.IndexOf("\nsteps:", StringComparison.Ordinal);
@@ -1671,113 +1517,13 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
         + "    target: " + BrokerName + "\n"
         + "    payload: '{\"id\":\"schema-rejected-sibling\"}'\n";
 
-    // Locals rather than inline array literals at the call site below: CA1861 on a repeated
+    // Locals rather than inline array literals at the call site: CA1861 on a repeated
     // constant-element argument, the same workaround FoldRejectedDivergentTests applies.
-    private static readonly bool[] s_baselineThenRejected = { true, false };
-    private static readonly SecurityAbortKind?[] s_noKindThenAuthoringFault =
+    // The call site is now SiblingPremises_AreWhatEachRowClaims in
+    // KafkaSecurityConfirmationPreflightTests; these stay here beside the fixture they describe.
+    internal static readonly bool[] s_baselineThenRejected = { true, false };
+    internal static readonly SecurityAbortKind?[] s_noKindThenAuthoringFault =
         { null, SecurityAbortKind.AuthoringFault };
-
-    /// <summary>
-    /// <strong>The bed, not the carve-out.</strong> Every premise the three rows above rest on,
-    /// asserted without a container: each sibling is schema-REJECTED, rejected OUTSIDE its
-    /// <c>security</c> node, still builds an AST (so it becomes a scenario rather than an unbuilt
-    /// document), and diverges in environment and in declared identity exactly as its row claims.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// A fixture that quietly stopped satisfying any of these would leave all three Docker rows
-    /// GREEN while measuring nothing — the identical shape would pass Row 1 for the wrong reason,
-    /// and a sibling that became AST-unbuildable would take Row 1's exit code non-zero through
-    /// #415's whole-value rule instead of through anything this issue is about. Cheap to state, and
-    /// it runs on every machine rather than only where Docker is healthy.
-    /// </para>
-    /// <para>
-    /// It deliberately does NOT assert an exit code or an assurance: those need a confirmed probe,
-    /// which needs a container. This checks only that the documents are what the rows say they are.
-    /// </para>
-    /// <para>
-    /// <strong>Why this file's Kafka-only registry gives the same verdicts the CLI's 25-provider
-    /// registry will.</strong> The two registries can disagree about a document — an unknown step
-    /// type is a schema error AND an <c>AstBuilder.Build</c> refusal to the registry that lacks the
-    /// provider, and neither to the one that has it. These fixtures are built so that no such
-    /// disagreement is possible: every step names <c>mq-publish.kafka</c>, which BOTH registries
-    /// resolve, and the fault is a MISSING REQUIRED FIELD on it — a property of that provider's own
-    /// contributed schema, identical in both. So the composed schema each registry builds rejects
-    /// this document at the same pointer for the same reason, and each builds the same AST. That
-    /// equivalence is the reason the earlier <c>http.rest</c> draft was abandoned rather than
-    /// patched: it held only for a registry that carried the provider.
-    /// </para>
-    /// </remarks>
-    [Fact]
-    public void SiblingPremises_AreWhatEachRowClaims()
-    {
-        // The SAME baseline the rows materialise — one helper, so a fixture change reaches this
-        // guard and the three rows together or not at all.
-        var drillYaml = Issue410BaselineSuiteYaml();
-        var drillAst = AstBuilder.Build(YamlDocumentParser.Parse(drillYaml), s_registry);
-        var drillIdentities = SecuredTargets.Enumerate(drillAst.Environment)
-            .Select(SecuredTargets.IdentityOf).ToArray();
-        Assert.NotEmpty(drillIdentities);
-        Assert.True(
-            DocumentValidator.Validate(drillYaml, s_registry).IsValid,
-            "the drill itself must be schema-VALID — it is the baseline every row's topology is "
-            + "built from.");
-
-        foreach (var shape in Enum.GetValues<SiblingShape>())
-        {
-            var siblingYaml = SchemaRejectedSiblingYaml(drillYaml, shape);
-
-            // (1) Schema-REJECTED — otherwise it is an ordinary sibling and no row's door opens.
-            var validation = DocumentValidator.Validate(siblingYaml, s_registry);
-            Assert.False(
-                validation.IsValid,
-                $"the {shape} sibling is schema-VALID, so no row's schema door opens for it.");
-            // (1b) The DIAGNOSTIC TEXT the rows key on, pinned here so it is checked on every
-            //      machine rather than only where Docker is healthy. Row 1 asserts this fragment in
-            //      the CLI's output to prove the sibling was refused for the reason this fixture
-            //      built it to be; if the schema library's wording moves, this guard reddens first
-            //      and says so, instead of Row 1 failing on a container host with no explanation.
-            Assert.Contains(
-                Issue410SiblingSchemaDiagnostic,
-                string.Join(" ", validation.Errors.Select(e => e.Message)),
-                StringComparison.Ordinal);
-
-            // (2) Rejected OUTSIDE the security node, asserted through the engine's OWN predicate
-            //     rather than a substring of the pointer. `SecurityDeclarationRejected` raises
-            //     unconditionally, which would take Row 1 non-zero and make Rows 2 and 3 pass
-            //     without the union or the fold ever being consulted.
-            Assert.All(
-                validation.Errors,
-                error => Assert.False(
-                    ScenarioRunner.LocatesADeclaredSecurityBlock(error.InstanceLocation),
-                    $"the {shape} sibling's schema error at '{error.InstanceLocation}' is located "
-                    + "IN its security block, so the door records SecurityDeclarationRejected and "
-                    + "every row here stops measuring what it names."));
-
-            // (3) Still AST-buildable, so it becomes a SCENARIO. An unbuilt document is #415's
-            //     rule, not this issue's, and raises on its own whatever the probe confirmed.
-            var siblingAst = AstBuilder.Build(YamlDocumentParser.Parse(siblingYaml), s_registry);
-
-            // (4) The environment knob did what its row's name says — asserted through
-            //     `FoldRejectedDivergent` itself, which IS the gate the rows turn on, rather than
-            //     through a second serialisation this test would have to keep in step with
-            //     `SerialiseEnvironment`. A folded value of `None` is the equal-environment cell.
-            var folded = ScenarioRunner.FoldRejectedDivergent(
-                new[] { drillAst, siblingAst },
-                s_baselineThenRejected,
-                s_noKindThenAuthoringFault,
-                baselineIndex: 0);
-            Assert.Equal(shape is not SiblingShape.IdenticalEnvironment, folded.Unconfirmed);
-
-            // (5) The declaration knob did too — and this is the pair that separates Rows 2 and 3.
-            var siblingIdentities = SecuredTargets.Enumerate(siblingAst.Environment)
-                .Select(SecuredTargets.IdentityOf).ToArray();
-            Assert.NotEmpty(siblingIdentities);
-            Assert.Equal(
-                shape is not SiblingShape.DivergentEnvironmentAndDeclaration,
-                drillIdentities.SequenceEqual(siblingIdentities));
-        }
-    }
 
     /// <summary>
     /// Runs the built CLI as a subprocess against one drill row's suite, with NO
@@ -1866,7 +1612,7 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
     /// failure (the integration job runs `dotnet build vouchfx.sln -c Release` before any
     /// docker-gated test), so it is a local-run guard.
     /// </remarks>
-    private static string ResolveCliAssembly()
+    internal static string ResolveCliAssembly()
     {
         var assemblyDirectory = Path.GetDirectoryName(
             typeof(KafkaSecurityConfirmationDrillDockerTests).Assembly.Location)!;
@@ -1916,7 +1662,7 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
     /// row, and nothing at all for every other caller, which is what keeps their invocation
     /// FLAGLESS.
     /// </param>
-    private static async Task<(int ExitCode, string Output)> RunCliAsync(
+    internal static async Task<(int ExitCode, string Output)> RunCliAsync(
         string cliAssembly,
         string verb,
         string suitePath,
@@ -1959,21 +1705,10 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
         }
         finally
         {
-            try
-            {
-                if (!process.HasExited)
-                {
-                    process.Kill(entireProcessTree: true);
-                }
-            }
-            catch (Exception ex) when (ex is InvalidOperationException
-                                           or System.ComponentModel.Win32Exception
-                                           or NotSupportedException)
-            {
-                // The process ended between HasExited and Kill, or the platform refused the kill.
-                // Nothing further this fixture can do, and throwing here would replace the real
-                // failure with a teardown one.
-            }
+            // Unconditional, on every exit path — see the remarks above and the race guard in
+            // ChildProcess.KillTreeQuietly, which is the one definition every child-process launch
+            // site in this assembly shares.
+            ChildProcess.KillTreeQuietly(process);
         }
     }
 
@@ -2322,7 +2057,7 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
     /// intra-assembly test parallelism (see AssemblyInfo.cs), so two rows cannot race for one
     /// directory.
     /// </remarks>
-    private static string MaterialiseSuiteDirectory(
+    internal static string MaterialiseSuiteDirectory(
         string row,
         string securedEndpoint,
         string keystoreTarget,
@@ -2330,6 +2065,27 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
         bool consumeStep = false,
         int healthCheckPort = 9092)
     {
+        // FORCE THE STALE SWEEP TO HAVE HAPPENED BEFORE ANYTHING IS WRITTEN, and this line is
+        // load-bearing rather than defensive.
+        //
+        // The sweep runs from a static field initialiser (s_swept). This class carries no static
+        // constructor, so the CLR marks it `beforefieldinit` and is free to defer the type
+        // initialiser until the first static FIELD access — a static METHOD call like this one
+        // does not compel it, and the constants this method reads are inlined at compile time and
+        // are not field accesses either. The instance constructor's `_ = s_swept` used to hide
+        // that: every caller was a row on this class, so the initialiser had always run before any
+        // test body did.
+        //
+        // MEASURED when the container-free rows moved to KafkaSecurityConfirmationPreflightTests:
+        // this method wrote the suite directory, the row deleted one certificate, and the sweep
+        // then fired mid-test at the row's first `s_registry` access and deleted the whole
+        // directory — so validation reported the CA certificate missing rather than the client
+        // one, and the row failed on an assertion about a file it had never touched.
+        //
+        // Touching the field HERE ties the ordering to the method that depends on it, rather than
+        // to who happens to be calling it.
+        _ = s_swept;
+
         var suiteDirectory = Path.Combine(Path.GetTempPath(), SuiteDirectoryPrefix + row);
         if (Directory.Exists(suiteDirectory))
         {
@@ -2899,7 +2655,7 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
     /// Lists the RUNNING containers DCP has started for <see cref="BrokerName"/>, whose names it
     /// allocates as <c>&lt;resource&gt;-&lt;eight lower-case letters&gt;</c>.
     /// </summary>
-    private static async Task<IReadOnlyList<string>> ListBrokerContainersAsync(
+    internal static async Task<IReadOnlyList<string>> ListBrokerContainersAsync(
         CancellationToken cancellationToken)
     {
         // status=running, because a name-prefix filter alone also matches a container that has
@@ -3028,16 +2784,29 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
                 UseShellExecute = false,
             })!;
 
-            // CONCURRENTLY, for the reason RunCliAsync spells out: `docker logs` on a broker that
-            // has been running for half a minute returns tens of kilobytes, and draining stdout to
-            // the end before touching stderr lets a full stderr buffer block the child forever.
-            // This helper argues that case for the CLI and used to violate it here.
-            var stdout = process.StandardOutput.ReadToEndAsync(cancellationToken);
-            var stderr = process.StandardError.ReadToEndAsync(cancellationToken);
-            await Task.WhenAll(stdout, stderr).ConfigureAwait(false);
-            await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                // CONCURRENTLY, for the reason RunCliAsync spells out: `docker logs` on a broker
+                // that has been running for half a minute returns tens of kilobytes, and draining
+                // stdout to the end before touching stderr lets a full stderr buffer block the
+                // child forever. This helper argues that case for the CLI and used to violate it
+                // here.
+                var stdout = process.StandardOutput.ReadToEndAsync(cancellationToken);
+                var stderr = process.StandardError.ReadToEndAsync(cancellationToken);
+                await Task.WhenAll(stdout, stderr).ConfigureAwait(false);
+                await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
 
-            return process.ExitCode == 0 ? await stdout : string.Empty;
+                return process.ExitCode == 0 ? await stdout : string.Empty;
+            }
+            finally
+            {
+                // Issue #378, and the sharpest instance of it in this file. The catch below
+                // returns on cancellation while the child is still running, and `using` disposes
+                // the Process OBJECT rather than the process. DockerExecAsync routes through here,
+                // and a `docker exec` runs an ARBITRARY command inside the broker for an arbitrary
+                // time — so a cancelled capture left a real orphan, not a momentary one.
+                ChildProcess.KillTreeQuietly(process);
+            }
         }
         catch (Exception ex) when (ex is OperationCanceledException
                                        or System.ComponentModel.Win32Exception

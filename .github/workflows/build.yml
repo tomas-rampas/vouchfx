@@ -318,14 +318,55 @@ jobs:
       # (The Sprint08 parallel capstone intentionally runs two topologies at once
       # via the engine's own ParallelSuiteRunner — unaffected by, and orthogonal
       # to, xUnit/VSTest scheduling.)
+      #
+      # --blame-crash is attached unconditionally (issue #378). A test-host crash was observed in
+      # this lane once in four local runs, in the ONE run that carried no dump utility — so nothing
+      # was left to attribute it with. The blame data collector hosts the tests under a sentinel
+      # that writes a dump when the host dies, which is the difference between "the host crashed"
+      # and a stack. Cost when nothing crashes: the sentinel process, and no artefact.
+      #
+      # MINI, NOT FULL, AND THE ASYMMETRY WITH THE README IS DELIBERATE.
+      # The dump produced here is uploaded as a workflow artifact, and on a public repository a
+      # workflow artifact is publicly downloadable. A full-memory dump is a verbatim copy of the
+      # test host's address space; a mini dump carries the crashing thread's stack, which together
+      # with the Sequence*.xml below (it names the test that was executing) is what #378 actually
+      # needs to attribute a crash. The README keeps `full` for LOCAL runs, where the dump never
+      # leaves the machine.
+      #
+      # STANDING ASSUMPTION, load-bearing while dumps upload: this job maps NO secrets. It has no
+      # `secrets.*` reference and no environment carrying one, so a dump from it cannot contain a
+      # repository credential. Adding a secret to this job — a registry login, a token for a
+      # private image — would put that value inside a publicly downloadable dump. If one is ever
+      # needed here, gate the upload on a non-fork condition or drop it.
       - name: Integration tests (requires=docker)
         run: >
           dotnet test vouchfx.sln
           -c Release
           --no-build
           --filter "requires=docker"
+          --blame-crash
+          --blame-crash-dump-type mini
           --collect:"XPlat Code Coverage"
           --results-directory TestResults
+
+      # Upload the blame output so the next crash arrives WITH its dump. `if: always()` because
+      # the interesting case is the failing one; a crash aborts the step above.
+      #
+      # Sequence*.xml is uploaded beside the dump because it is what names the test that was
+      # executing when the host died — the attribution the 2026-08 occurrence lacked.
+      #
+      # if-no-files-found: ignore — on a clean run TestResults holds only coverage, and a missing
+      # dump is the normal outcome rather than a fault worth warning about.
+      - name: Upload crash dumps and blame output
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: integration-crash-dumps
+          path: |
+            TestResults/**/*.dmp
+            TestResults/**/Sequence*.xml
+          if-no-files-found: ignore
+          retention-days: 7
 
   # ── Dependency vulnerability scan — ADVISORY, non-blocking ───────────────────
   # Reports known-vulnerable transitive packages across the solution so a

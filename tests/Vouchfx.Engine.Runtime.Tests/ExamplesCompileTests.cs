@@ -310,40 +310,54 @@ public sealed class ExamplesCompileTests
 
         using (process)
         {
-            // Started BEFORE the wait — see the remarks above.
-            var stdoutTask = process.StandardOutput.ReadToEndAsync();
-            var stderrTask = process.StandardError.ReadToEndAsync();
-
-            var budget = timeout ?? s_setupScriptTimeout;
-            using var deadline = new CancellationTokenSource(budget);
+            // Issue #378. The kill below the timeout branch is the SEMANTIC one — it stops the
+            // script and only then drains what the pipes hold. This outer `finally` is the
+            // backstop that makes the kill unconditional: `using` disposes the Process OBJECT and
+            // never the process, so any OTHER way out of this block — a cancellation from
+            // elsewhere, an unexpected exception type out of WaitForExitAsync — used to leave the
+            // interpreter running with nobody left to end it. On the ordinary paths the process
+            // has already exited and this is a no-op.
             try
             {
-                await process.WaitForExitAsync(deadline.Token).ConfigureAwait(false);
+                // Started BEFORE the wait — see the remarks above.
+                var stdoutTask = process.StandardOutput.ReadToEndAsync();
+                var stderrTask = process.StandardError.ReadToEndAsync();
+
+                var budget = timeout ?? s_setupScriptTimeout;
+                using var deadline = new CancellationTokenSource(budget);
+                try
+                {
+                    await process.WaitForExitAsync(deadline.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    ChildProcess.KillTreeQuietly(process);
+
+                    // Whatever the pipes yielded before the kill, on a short budget of its own:
+                    // the point is to report, not to wait a second time on a process already
+                    // declared stuck. This call cannot throw — see its remarks; that is what
+                    // keeps the sentence below the thing the caller actually receives.
+                    var partial = await DrainOrGiveUpAsync(stdoutTask, stderrTask).ConfigureAwait(false);
+                    return $"The example fixture script '{script}' did not finish within "
+                        + $"{budget.TotalSeconds:F0}s and was killed. This is a TIMEOUT, "
+                        + $"not a failure to generate — the fixture material may be absent or "
+                        + $"half-written.{partial}";
+                }
+
+                // Never a bare `await` on a read: a faulted pipe would otherwise escape this
+                // method as an opaque IO error rather than as a diagnostic naming the script.
+                // These SAY SO when a read fails rather than returning silence — see the helper.
+                var stdout = await ReadTextOrExplainAsync(stdoutTask, "stdout").ConfigureAwait(false);
+                var stderr = await ReadTextOrExplainAsync(stderrTask, "stderr").ConfigureAwait(false);
+
+                return process.ExitCode == 0
+                    ? null
+                    : $"The example fixture script '{script}' exited {process.ExitCode}.\n{stdout}\n{stderr}";
             }
-            catch (OperationCanceledException)
+            finally
             {
-                KillQuietly(process);
-
-                // Whatever the pipes yielded before the kill, on a short budget of its own:
-                // the point is to report, not to wait a second time on a process already
-                // declared stuck. This call cannot throw — see its remarks; that is what
-                // keeps the sentence below the thing the caller actually receives.
-                var partial = await DrainOrGiveUpAsync(stdoutTask, stderrTask).ConfigureAwait(false);
-                return $"The example fixture script '{script}' did not finish within "
-                    + $"{budget.TotalSeconds:F0}s and was killed. This is a TIMEOUT, "
-                    + $"not a failure to generate — the fixture material may be absent or "
-                    + $"half-written.{partial}";
+                ChildProcess.KillTreeQuietly(process);
             }
-
-            // Never a bare `await` on a read: a faulted pipe would otherwise escape this
-            // method as an opaque IO error rather than as a diagnostic naming the script.
-            // These SAY SO when a read fails rather than returning silence — see the helper.
-            var stdout = await ReadTextOrExplainAsync(stdoutTask, "stdout").ConfigureAwait(false);
-            var stderr = await ReadTextOrExplainAsync(stderrTask, "stderr").ConfigureAwait(false);
-
-            return process.ExitCode == 0
-                ? null
-                : $"The example fixture script '{script}' exited {process.ExitCode}.\n{stdout}\n{stderr}";
         }
     }
 
@@ -456,23 +470,6 @@ public sealed class ExamplesCompileTests
         // outer text is usually "One or more errors occurred".
         var reason = read.Exception?.GetBaseException().Message ?? read.Status.ToString();
         return $"<{streamName} could not be read: {reason}>";
-    }
-
-    private static void KillQuietly(Process process)
-    {
-        try
-        {
-            if (!process.HasExited)
-            {
-                process.Kill(entireProcessTree: true);
-            }
-        }
-        catch (Exception ex) when (ex is InvalidOperationException
-                                       or System.ComponentModel.Win32Exception
-                                       or NotSupportedException)
-        {
-            // Exited between the check and the kill, or the platform refused it.
-        }
     }
 
     // ── The failure paths of the setup-script runner ───────────────────────────────────
