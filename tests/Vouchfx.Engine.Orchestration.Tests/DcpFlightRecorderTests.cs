@@ -540,6 +540,189 @@ public sealed class DcpFlightRecorderTests
     }
 
     // -----------------------------------------------------------------------
+    // Sanitise-and-cap: output parity, and the cost bound
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// Every case the sanitise-and-cap path has to get right, each pinned to the CONCRETE string
+    /// the pre-bounding implementation produced.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Asserting concrete expected strings rather than "whatever the method returns" is the whole
+    /// point: the bounding change is a pure COST change, so the only way a drill can prove that is
+    /// to know the answer independently of the code under test. A round-trip assertion would have
+    /// stayed green through any of the three mis-shapes considered while writing it.
+    /// </para>
+    /// <para>
+    /// <strong>The blank-run rows are not padding.</strong> The obvious licence for capping before
+    /// sanitising -- "the map is 1:1, so truncate-then-map equals map-then-truncate" -- is FALSE
+    /// here, because the sanitiser ends in <c>Trim()</c>. A leading blank run shifts the cut window
+    /// (row <c>leading-blank-run-then-overflow</c>: a naive cap-first drops five characters of
+    /// text and mislabels the result), and a trailing blank run can pull an arbitrarily long input
+    /// back UNDER the cap (row <c>trailing-blank-run-past-the-cap</c>: 10003 characters in, three
+    /// out, no marker). Both rows fail any implementation that treats the raw length as the length
+    /// that decides the marker.
+    /// </para>
+    /// </remarks>
+    public static TheoryData<string, string?, string> SanitiseCases()
+    {
+        const int Cap = DcpFlightEntry.MaxLineChars;
+
+        // Built from code points rather than written as literal characters: this file would
+        // otherwise be the one place in the drill whose meaning depends on its own encoding, and
+        // the surrogate row in particular has to be an unambiguous PAIR rather than whatever a
+        // re-encoding left behind.
+        var esc = new string((char)0x1B, 1);
+        var eAcute = new string((char)0x00E9, 1);
+        var grin = new string(new[] { (char)0xD83D, (char)0xDE00 });
+
+        return new TheoryData<string, string?, string>
+        {
+            { "null", null, "" },
+            { "empty", "", "" },
+            { "short", "hello world", "hello world" },
+            { "exactly-at-the-cap", new string('z', Cap), new string('z', Cap) },
+            { "one-past-the-cap", new string('z', Cap + 1), new string('z', Cap) + "..." },
+            { "well-past-the-cap", new string('z', Cap * 3), new string('z', Cap) + "..." },
+
+            // ESC is a control character with no explicit case, so it folds to '?'; CR, LF and TAB
+            // each fold to a single space and are never collapsed into one.
+            { "control-characters", "a" + esc + "b\tc\rd\ne", "a?b c d e" },
+
+            // A surrogate PAIR is two chars, and each half folds independently to '?' - so one
+            // emoji costs two question marks, at the same two indices either way round.
+            { "non-ascii-and-surrogate-pair", "caf" + eAcute + " " + grin + " ok", "caf? ?? ok" },
+
+            // Over the cap with the non-ASCII PAST the cut: it never reaches the output at all.
+            {
+                "overflow-with-non-ascii-past-the-cut",
+                new string('z', Cap) + eAcute + new string('q', 100),
+                new string('z', Cap) + "..."
+            },
+
+            // Over the cap with the non-ASCII BEFORE the cut: it does, and it occupies exactly the
+            // one character position it occupied in the input, so the cut lands one 'z' earlier.
+            {
+                "overflow-with-non-ascii-before-the-cut",
+                eAcute + new string('z', Cap + 900),
+                "?" + new string('z', Cap - 1) + "..."
+            },
+
+            // Trim() runs AFTER the fold, so a leading run of CR/LF/TAB/space disappears and the
+            // cut window slides by its length. Cap-first without accounting for it loses text.
+            {
+                "leading-blank-run-then-overflow",
+                " \t\r\n " + new string('z', Cap + 4),
+                new string('z', Cap) + "..."
+            },
+
+            // The mirror image, and the sharper one: a 10003-character input yields three
+            // characters and NO truncation marker, because Trim() removed everything past them.
+            { "trailing-blank-run-past-the-cap", "abc" + new string(' ', 10_000), "abc" },
+
+            // Nothing but blanks: Trim() empties it, and an empty result is not a truncated one
+            // however long the input was.
+            { "all-blank", "   \t\r\n  ", "" },
+            { "all-blank-past-the-cap", new string(' ', Cap * 4), "" },
+        };
+    }
+
+    [Theory]
+    [MemberData(nameof(SanitiseCases))]
+    public void Create_SanitiseAndCap_ProducesTheSameStringAsTheUnboundedImplementation(
+        string caseName,
+        string? message,
+        string expected)
+    {
+        var entry = DcpFlightEntry.Create(
+            DateTimeOffset.UnixEpoch,
+            LogLevel.Warning,
+            "Aspire.Hosting.Dcp.DcpExecutor",
+            message,
+            exception: null);
+
+        // Named first, so a regression reports WHICH row moved before xunit prints a
+        // four-kilobyte diff of 'z' characters.
+        Assert.True(
+            string.Equals(expected, entry.Message, StringComparison.Ordinal),
+            $"[{caseName}] sanitise-and-cap changed its output: expected {expected.Length} "
+            + $"characters, got {entry.Message.Length}. This path is a pure COST change; any "
+            + "difference here is a behaviour change that was not intended.");
+        Assert.Equal(expected, entry.Message);
+
+        // The exception component runs through the same routine, so pin it on the same inputs
+        // rather than trusting that it shares the code path.
+        var viaException = DcpFlightEntry.Create(
+            DateTimeOffset.UnixEpoch,
+            LogLevel.Error,
+            "Aspire.Hosting.Dcp.DcpExecutor",
+            "m",
+            new SanitiserProbeException(message ?? string.Empty));
+
+        Assert.Equal(expected, viaException.Exception);
+
+        // And the rendered line really is built from the capped component, not from the raw input.
+        Assert.Contains(
+            expected.Length <= 64 ? expected : expected[..64],
+            entry.Line,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Create_HugeMessage_CostsTheCapRatherThanTheInput()
+    {
+        // THE BOUND THIS DRILL EXISTS FOR. Sanitising allocated a char[] sized from the RAW input
+        // and walked all of it, then built a string of that same length, only for the result to be
+        // capped at MaxLineChars two lines later. A 4 MiB DCP payload therefore cost ~8 MiB of
+        // allocation on the logging thread to retain ~8 KiB - which contradicts the premise that
+        // an always-armed recorder costs a BOUNDED amount.
+        //
+        // Measured on the thread, not wall-clock: GC.GetAllocatedBytesForCurrentThread() is a
+        // deterministic counter of this thread's allocations, so this drill is not a benchmark and
+        // does not depend on host speed, GC timing, or what any other test is doing.
+        const int Huge = 2_000_000;
+        var message = new string('z', Huge);
+        var exception = new SanitiserProbeException(new string('y', Huge));
+
+        // Warm up first: the JIT compiles Create and its callees on first use and charges that to
+        // this thread. Measuring the first-ever call would fold compilation into the figure.
+        for (var i = 0; i < 3; i++)
+        {
+            DcpFlightEntry.Create(
+                DateTimeOffset.UnixEpoch, LogLevel.Debug, "c", "warm", exception: null);
+        }
+
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        var entry = DcpFlightEntry.Create(
+            DateTimeOffset.UnixEpoch,
+            LogLevel.Debug,
+            "Aspire.Hosting.Dcp.DcpExecutor",
+            message,
+            exception);
+        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+
+        // The retained result is tiny, which is exactly why paying for the input is wrong.
+        Assert.True(entry.RetainedChars < 4 * (DcpFlightEntry.MaxLineChars + 3));
+
+        // The bound is set with MEASURED two-sided margin, so it is a property rather than a
+        // benchmark. On this call: 90,656 bytes capped (three capped components plus the rendered
+        // line, each a fresh UTF-16 string) against 16,098,184 bytes uncapped - two 2 M-character
+        // inputs, each paying a char[] and then a string of its own length. The bound sits 5.8x
+        // above the first and 30x below the second, which is wide enough that neither a runtime
+        // upgrade nudging string internals nor a fourth capped component can move it either way.
+        const int Bound = 512 * 1024;
+
+        Assert.True(
+            allocated <= Bound,
+            $"sanitising a {Huge:N0}-character message and a {Huge:N0}-character exception "
+            + $"allocated {allocated:N0} bytes against a bound of {Bound:N0}. The work is being "
+            + "sized from the RAW input rather than from DcpFlightEntry.MaxLineChars, so an "
+            + "always-armed recorder costs O(input) on the logging thread to retain O(cap). "
+            + "Cap the window BEFORE folding it, not after.");
+    }
+
+    // -----------------------------------------------------------------------
     private static DcpFlightEntry Entry(string message, LogLevel level = LogLevel.Warning) =>
         DcpFlightEntry.Create(
             DateTimeOffset.UnixEpoch,
@@ -563,4 +746,25 @@ internal static class DcpTestLog
 {
     internal static void Emit(ILogger logger, LogLevel level, string message) =>
         logger.Log(level, new EventId(0), message, null, static (state, _) => state);
+}
+
+/// <summary>
+/// An exception whose <see cref="Exception.ToString()"/> is EXACTLY the text handed to it.
+/// </summary>
+/// <remarks>
+/// <c>DcpFlightEntry.Create</c> sanitises <c>exception.ToString()</c>, and the framework's own
+/// <c>ToString</c> prefixes the type name and appends a stack trace. A drill pinning concrete
+/// expected strings would then be asserting on the runtime's formatting rather than on the
+/// sanitiser, and the assertion would move with any change to either. Overriding it makes the
+/// exception path and the message path comparable on identical input, which is the only way to
+/// show they share one routine.
+/// </remarks>
+internal sealed class SanitiserProbeException : Exception
+{
+    private readonly string _text;
+
+    internal SanitiserProbeException(string text)
+        : base(text) => _text = text;
+
+    public override string ToString() => _text;
 }

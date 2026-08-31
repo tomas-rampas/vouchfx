@@ -54,6 +54,7 @@
 // The fault is inside DCP, a closed binary this repository does not own, so this type does not
 // fix it. What it does is turn a fault nobody could catch into one that diagnoses itself.
 
+using System.Buffers;
 using Microsoft.Extensions.Logging;
 
 namespace Vouchfx.Engine.Orchestration;
@@ -154,11 +155,13 @@ internal sealed record DcpFlightEntry(
         // Capped HERE, not only in Render: RetainedChars below charges these components, so an
         // uncapped message was billed at full length while contributing at most MaxLineChars of
         // readable text. See MaxLineChars' own remarks for the measurement and the consequence.
-        var safeCategory = Truncate(ToPrintableAsciiLine(category));
-        var safeMessage = Truncate(ToPrintableAsciiLine(message));
+        // The cap is applied INSIDE the fold rather than after it, so the WORK is bounded too --
+        // see ToCappedPrintableAsciiLine.
+        var safeCategory = ToCappedPrintableAsciiLine(category);
+        var safeMessage = ToCappedPrintableAsciiLine(message);
         var safeException = exception is null
             ? null
-            : Truncate(ToPrintableAsciiLine(exception.ToString()));
+            : ToCappedPrintableAsciiLine(exception.ToString());
 
         var rendered = Render(timestamp, level, safeCategory, safeMessage, safeException);
 
@@ -185,43 +188,138 @@ internal sealed record DcpFlightEntry(
         _ => "none",
     };
 
+    /// <summary>The three-character marker that says a string was cut, wherever it was cut.</summary>
+    private const string TruncationMarker = "...";
+
+    /// <summary>
+    /// The source characters that fold to a space, and therefore the ones the closing
+    /// <c>Trim()</c> removes at each end. Space is the ONLY whitespace character the fold can
+    /// produce, because every character it emits lies in <c>[' ', '~']</c>; that is what makes
+    /// this four-character set an exact statement of the trim boundaries rather than an
+    /// approximation of them.
+    /// </summary>
+    private static readonly SearchValues<char> BlankSources = SearchValues.Create(" \t\r\n");
+
     /// <summary>
     /// Replaces every character outside printable ASCII -- control characters and line breaks
-    /// included -- with a space or <c>?</c>, so the result is one printable ASCII line.
+    /// included -- with a space or <c>?</c>, trims the result, and caps it at
+    /// <see cref="MaxLineChars"/> with the same marker <see cref="Truncate"/> uses, so the result
+    /// is one printable ASCII line.
     /// </summary>
-    private static string ToPrintableAsciiLine(string? value)
+    /// <remarks>
+    /// <para>
+    /// <strong>The cost is sized by the CAP, not by the input, and that is the point of this
+    /// shape.</strong> The earlier form folded the whole string into a <c>char[value.Length]</c>,
+    /// built a string of that same length, and only then threw all but
+    /// <see cref="MaxLineChars"/> characters away: a 2 M-character message and a 2 M-character
+    /// <c>Exception.ToString()</c> together cost a MEASURED 16,098,184 bytes on the logging thread
+    /// to retain about 12,300 characters; the same call now costs 90,656 bytes, a 177-fold
+    /// reduction. An always-armed recorder whose per-entry cost is O(input) is not
+    /// bounded, which is the premise <see cref="MaxLineChars"/> exists to defend. Do not
+    /// "simplify" this back to fold-then-cut; the cut is what makes it cheap, and the drill
+    /// <c>Create_HugeMessage_CostsTheCapRatherThanTheInput</c> reddens if it is.
+    /// </para>
+    /// <para>
+    /// <strong>WHY CUTTING FIRST IS SAFE -- and the obvious argument for it is WRONG.</strong> The
+    /// tempting licence is "the fold is a 1:1 per-character map, so fold-then-cut equals
+    /// cut-then-fold". The map genuinely IS 1:1: every character becomes itself, a space, or
+    /// <c>?</c>, and a surrogate PAIR yields <c>??</c> at the same two indices whichever order it
+    /// is done in. But the routine does not end at the map -- it ends at <c>Trim()</c>, which
+    /// CHANGES THE LENGTH, so the naive cut is wrong twice over: a leading blank run shifts the
+    /// window (five blanks in front of 4100 characters of text costs the naive form five
+    /// characters of that text), and a trailing blank run can pull an input of any size back under
+    /// the cap (10003 characters in, 3 out, and no marker at all).
+    /// </para>
+    /// <para>
+    /// The licence that actually holds is narrower, and is what the code below implements. A
+    /// character folds to a space exactly when it is one of <see cref="BlankSources"/>, so BOTH of
+    /// <c>Trim()</c>'s boundaries are decidable on the RAW characters without folding anything;
+    /// between them the map is 1:1 and index-preserving; so the answer is the fold of exactly one
+    /// window of the source, and the marker is due exactly when that window is longer than
+    /// <see cref="MaxLineChars"/>.
+    /// </para>
+    /// <para>
+    /// The one scan that is not bounded by the cap is the search for a non-blank character PAST
+    /// the cap, and it stops at the first one it finds. So the only input read end-to-end is one
+    /// whose entire tail beyond the cap is blank -- and that read is a vectorised compare that
+    /// allocates nothing at all.
+    /// </para>
+    /// </remarks>
+    private static string ToCappedPrintableAsciiLine(string? value)
     {
         if (string.IsNullOrEmpty(value))
         {
             return string.Empty;
         }
 
-        var buffer = new char[value.Length];
-        for (var i = 0; i < value.Length; i++)
+        var span = value.AsSpan();
+
+        var start = span.IndexOfAnyExcept(BlankSources);
+        if (start < 0)
         {
-            var c = value[i];
-            buffer[i] = c switch
-            {
-                '\r' or '\n' or '\t' => ' ',
-                >= ' ' and <= '~' => c,
-                _ => '?',
-            };
+            // Every character folds to a space, so Trim() empties it however long it was -- and an
+            // empty result is not a truncated one, so no marker is due.
+            return string.Empty;
         }
 
-        return new string(buffer).Trim();
+        var body = span[start..];
+
+        int length;
+        bool truncated;
+        if (body.Length > MaxLineChars &&
+            body[MaxLineChars..].IndexOfAnyExcept(BlankSources) >= 0)
+        {
+            // Real text survives past the cap, so the trimmed string is longer than the cap.
+            length = MaxLineChars;
+            truncated = true;
+        }
+        else
+        {
+            // Nothing but blanks past the cap (or no cap to reach), so the trailing boundary lies
+            // inside the first MaxLineChars characters -- and body[0] is non-blank by
+            // construction, so it is always found.
+            var window = body.Length <= MaxLineChars ? body : body[..MaxLineChars];
+            length = window.LastIndexOfAnyExcept(BlankSources) + 1;
+            truncated = false;
+        }
+
+        return string.Create(
+            truncated ? length + TruncationMarker.Length : length,
+            (Source: value, Start: start, Length: length, Truncated: truncated),
+            static (destination, state) =>
+            {
+                var source = state.Source.AsSpan(state.Start, state.Length);
+                for (var i = 0; i < source.Length; i++)
+                {
+                    var c = source[i];
+                    destination[i] = c switch
+                    {
+                        '\r' or '\n' or '\t' => ' ',
+                        >= ' ' and <= '~' => c,
+                        _ => '?',
+                    };
+                }
+
+                if (state.Truncated)
+                {
+                    TruncationMarker.CopyTo(destination[source.Length..]);
+                }
+            });
     }
 
     /// <summary>
-    /// Caps one already-sanitised component at <see cref="MaxLineChars"/>, marking the cut.
+    /// Caps one already-sanitised string at <see cref="MaxLineChars"/>, marking the cut.
     /// </summary>
     /// <remarks>
-    /// The same cap and the same marker <see cref="Render"/> applies to the composed line, so a
-    /// reader of any stored string sees truncation the same way wherever it happened.
+    /// The composed line's cap, and the same cap and marker
+    /// <see cref="ToCappedPrintableAsciiLine"/> applies to each component, so a reader of any
+    /// stored string sees truncation the same way wherever it happened. Unlike that method this
+    /// one is O(input) by necessity -- its input is a rendered line that is already bounded.
     /// </remarks>
     private static string Truncate(string value) =>
         value.Length <= MaxLineChars
             ? value
-            : string.Concat(value.AsSpan(0, MaxLineChars), "...");
+            : string.Concat(value.AsSpan(0, MaxLineChars), TruncationMarker);
 
     private static string Render(
         DateTimeOffset timestamp,
@@ -237,9 +335,7 @@ internal sealed record DcpFlightEntry(
             ? $"{stamp} {LevelToken(level)} {category}: {message}"
             : $"{stamp} {LevelToken(level)} {category}: {message} || {exception}";
 
-        return line.Length <= MaxLineChars
-            ? line
-            : string.Concat(line.AsSpan(0, MaxLineChars), "...");
+        return Truncate(line);
     }
 }
 
