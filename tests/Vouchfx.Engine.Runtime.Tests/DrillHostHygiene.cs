@@ -343,9 +343,14 @@ internal static class DrillHostSweep
                     break;
 
                 default:
+                    // "was NOT removed", not "could not be killed". Two different events land
+                    // here: a kill that was attempted and failed, and a kill the sweep DECLINED to
+                    // attempt because it could not verify the pid still denoted the process it had
+                    // inspected. The detail says which; the prefix must not assert the first, or a
+                    // declined kill reads as a stubborn process that does not exist.
                     unkillable.Add(
                         $"orphaned CLI host pid {candidate.Pid} ({candidate.ProcessName}) holding "
-                        + $"{held} could not be killed: {outcome.Detail}");
+                        + $"{held} was NOT removed: {outcome.Detail}");
                     break;
             }
         }
@@ -728,8 +733,12 @@ public sealed class DrillHostSweepFixture : IDisposable
     internal const string OptOutVariable = "VOUCHFX_DRILL_SWEEP";
 
     /// <summary>Runs the sweep against the live process table, unless it has been turned off.</summary>
+    /// <remarks>
+    /// The only constructor xUnit ever calls, and the only one that reaches the live process table.
+    /// Both of its arguments to the seam below are the production defaults.
+    /// </remarks>
     public DrillHostSweepFixture()
-        : this(SweepUnlessDisabled(), recordPath: null)
+        : this(SweepUnlessDisabled(), recordPath: null, sweep: SweepUnlessDisabled)
     {
     }
 
@@ -755,15 +764,42 @@ public sealed class DrillHostSweepFixture : IDisposable
     /// hide it rather than flag it.
     /// </para>
     /// </remarks>
-    internal static string ReportPath { get; } = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "vouchfx",
-        "drill-host-sweep.log");
+    internal static string ReportPath { get; } = ResolveReportPath();
 
     /// <summary>
-    /// The report a disabled sweep produces: no kills, and a line saying why nothing was looked at.
+    /// The record's absolute path: the per-user directory, or the temp directory if the platform
+    /// has no per-user one.
     /// </summary>
-    private static SweepReport SweepUnlessDisabled()
+    /// <remarks>
+    /// <strong>The fallback is not defensive padding.</strong>
+    /// <see cref="Environment.GetFolderPath(Environment.SpecialFolder)"/> returns the EMPTY STRING
+    /// rather than throwing when a folder is not defined for the platform - and
+    /// <see cref="Path.Combine(string, string, string)"/> on an empty first segment yields the
+    /// RELATIVE path <c>vouchfx/drill-host-sweep.log</c>, which resolves against the current
+    /// directory. Under <c>dotnet test</c> that is inside this repository, so the guard would
+    /// silently write its record into the tree it exists to keep clean, where .gitignore's
+    /// blacklist would hide it rather than flag it. An absolute path is asserted by the drills;
+    /// this is what makes the assertion hold on every platform rather than on this one.
+    /// </remarks>
+    private static string ResolveReportPath()
+    {
+        var localAppData = Environment.GetFolderPath(
+            Environment.SpecialFolder.LocalApplicationData);
+
+        var root = string.IsNullOrEmpty(localAppData) ? Path.GetTempPath() : localAppData;
+        return Path.GetFullPath(Path.Combine(root, "vouchfx", "drill-host-sweep.log"));
+    }
+
+    /// <summary>
+    /// The production sweep: the live process table, unless the opt-out turned it off - in which
+    /// case no process is inspected or killed and a line says so.
+    /// </summary>
+    /// <remarks>
+    /// Internal rather than private so one drill can pin it as the default of the seam below. That
+    /// assertion is what stops the seam quietly becoming a permanent no-op, which would disarm the
+    /// guard in production while every test stayed green.
+    /// </remarks>
+    internal static SweepReport SweepUnlessDisabled()
     {
         var setting = Environment.GetEnvironmentVariable(OptOutVariable);
         if (!IsDisabledBy(setting))
@@ -794,24 +830,55 @@ public sealed class DrillHostSweepFixture : IDisposable
         string.Equals(value, "0", StringComparison.Ordinal);
 
     /// <summary>Seam for the guard's own tests - takes a report instead of producing one.</summary>
-    /// <param name="report">What the sweep found.</param>
+    /// <param name="report">What the entry sweep found.</param>
     /// <param name="recordPath">
     /// Where to append. The guard's own tests pass a scratch path of their own: a drill must never
     /// write into <see cref="ReportPath"/>, whose entire value is that a line in it is a real
     /// finding rather than a fabricated one.
     /// </param>
-    internal DrillHostSweepFixture(SweepReport report, string? recordPath)
+    /// <param name="sweep">
+    /// What <see cref="Dispose"/> runs. Defaults to <see cref="SweepUnlessDisabled"/>, so the
+    /// production path is unchanged.
+    /// </param>
+    /// <remarks>
+    /// <para>
+    /// <strong><paramref name="sweep"/> exists because its absence was a measured defect, and the
+    /// shape of that defect is worth stating.</strong> The entry sweep was already injectable - a
+    /// drill hands in a fabricated <paramref name="report"/> and no process is touched. Disposal
+    /// was not: it called the live sweep directly, so the guard's OWN drills, which are untraited
+    /// and therefore run in the fast <c>requires!=docker</c> lane, killed real processes there.
+    /// </para>
+    /// <para>
+    /// That is precisely the outcome the drill classes were split apart to prevent (see
+    /// KafkaSecurityConfirmationPreflightTests), reached a second time through a different door.
+    /// A guard that kills has to be un-runnable by accident on EVERY path, not on the paths its
+    /// author was thinking about - which is why the standing census in the guard's own drills now
+    /// pins the call sites of <c>SweepLiveProcesses</c> rather than trusting this comment.
+    /// </para>
+    /// </remarks>
+    internal DrillHostSweepFixture(
+        SweepReport report, string? recordPath, Func<SweepReport>? sweep = null)
     {
         Report = report;
         _recordPath = recordPath;
+        _sweep = sweep ?? SweepUnlessDisabled;
         Announce(report, recordPath, "entry");
 
         if (report.Unkillable.Count > 0)
         {
+            // "was not removed" rather than "could not be killed": NOT every entry here is a
+            // failed kill. One of them is a kill the sweep DECLINED to attempt, because it could
+            // not read the process's start time and so could not confirm the pid still denoted the
+            // process it had inspected. Naming that as a failed kill would send the reader looking
+            // for a stubborn process when the truth is an unverifiable one. The per-line reason
+            // below says which happened; this sentence must not contradict it.
             throw new InvalidOperationException(
-                "A CLI host left behind by an earlier drill session is still running and could not "
-                + "be killed. It holds this repository's CLI build output open, so the next build "
-                + "will fail with a file lock naming no test. Kill it by hand and re-run:"
+                "A CLI host left behind by an earlier drill session is still running and was not "
+                + "removed - either the kill failed, or the sweep declined to attempt it because "
+                + "the process's identity could not be verified. It holds this repository's CLI "
+                + "build output open, so the next build will fail with a file lock naming no test. "
+                + "End the process listed below by hand (its whole tree - a CLI host has DCP "
+                + "beneath it) and re-run:"
                 + Environment.NewLine
                 + string.Join(Environment.NewLine, report.Unkillable));
         }
@@ -822,6 +889,14 @@ public sealed class DrillHostSweepFixture : IDisposable
 
     /// <summary>Where this instance records, carried so disposal writes to the same place.</summary>
     private readonly string? _recordPath;
+
+    /// <summary>What <see cref="Dispose"/> runs - the seam that keeps the fast lane safe.</summary>
+    private readonly Func<SweepReport> _sweep;
+
+    /// <summary>
+    /// The delegate disposal will run, exposed so one drill can pin its production default.
+    /// </summary>
+    internal Func<SweepReport> SweepDelegate => _sweep;
 
     /// <summary>What the exit sweep found. Null until this fixture has been disposed.</summary>
     internal SweepReport? ExitReport { get; private set; }
@@ -837,7 +912,13 @@ public sealed class DrillHostSweepFixture : IDisposable
     /// repaint a set of passing rows as failures without changing what they measured.
     /// </para>
     /// <para>
-    /// Skipped entirely when the sweep is disabled, so the opt-out means what it says on both ends.
+    /// The opt-out is honoured inside <see cref="SweepUnlessDisabled"/>, so it means what it says
+    /// on both ends of the lane.
+    /// </para>
+    /// <para>
+    /// <strong>It runs the injected delegate, never the live sweep directly.</strong> That is not
+    /// indirection for its own sake: a hard call here made the guard's own untraited drills kill
+    /// real processes in the fast lane, which is the defect this seam exists to make unreachable.
     /// </para>
     /// </remarks>
     public void Dispose()
@@ -849,18 +930,16 @@ public sealed class DrillHostSweepFixture : IDisposable
 
         try
         {
-            if (IsDisabledBy(Environment.GetEnvironmentVariable(OptOutVariable)))
-            {
-                ExitReport = new SweepReport(
-                    Array.Empty<string>(), Array.Empty<string>(), Array.Empty<string>());
-                return;
-            }
-
-            ExitReport = DrillHostSweep.SweepLiveProcesses();
+            ExitReport = _sweep();
             Announce(ExitReport, _recordPath, "exit");
         }
+        // Everything the process-table walk and the record write can raise. Not a blanket catch:
+        // a NullReferenceException out of this method is a defect in the guard and should be seen,
+        // whereas an unreadable process table at teardown is an environment fact and must not
+        // repaint the lane. An injected delegate is expected to stay inside this set.
         catch (Exception ex) when (ex is InvalidOperationException or NotSupportedException
-                                       or System.ComponentModel.Win32Exception or IOException)
+                                       or System.ComponentModel.Win32Exception or IOException
+                                       or UnauthorizedAccessException)
         {
             ExitReport = new SweepReport(
                 Array.Empty<string>(),
@@ -889,12 +968,13 @@ public sealed class DrillHostSweepFixture : IDisposable
     /// bury the lines anybody ever goes looking for.
     /// </para>
     /// <para>
-    /// <strong>That does NOT make a quiet run an empty one, and the difference is measured rather
-    /// than assumed.</strong> A skip is an observation, so it is recorded - and on a developer
-    /// machine at least one process typically cannot be inspected, so a normal run appends roughly
-    /// one <c>skipped</c> line per sweep. That is intended: it is also the evidence the sweep ran
-    /// at all. The lines worth searching for are the two that name a finding, <c>killed</c> and
-    /// <c>could not be killed</c>; grep for those, not for the file being short.
+    /// <strong>A quiet run is not necessarily an empty one.</strong> A skip is an observation, so
+    /// it is recorded, and how often one occurs is a property of the HOST rather than of the sweep:
+    /// measured at zero across two live sweeps on one machine where all twenty <c>dotnet</c>
+    /// processes were inspectable, and at one per sweep on another. A host running <c>dotnet</c>
+    /// under another account produces them; a single-user one may never. Neither is a fault. The
+    /// lines worth searching for are the two that name a finding, <c>killed</c> and <c>was NOT
+    /// removed</c>; grep for those, not for the file being short.
     /// </para>
     /// <para>
     /// Recording is best-effort by design - failing the drill lane because a log file was

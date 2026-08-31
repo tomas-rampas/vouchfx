@@ -311,10 +311,11 @@ different scopes, and the difference matters:
   inspection, so a process id recycled in between is left alone rather than killed by coincidence.
 
 What it did is recorded at `%LOCALAPPDATA%\vouchfx\drill-host-sweep.log`
-(`~/.local/share/vouchfx/` on Linux and macOS). A sweep that observed nothing writes nothing, but a
-normal run is not silent: at least one process on a developer machine usually cannot be inspected,
-so expect roughly one `skipped` line per sweep. The lines that report a finding are `killed` and
-`could not be killed` — grep for those rather than judging by the file's length.
+(`~/.local/share/vouchfx/` on Linux and macOS). A sweep that observed nothing writes nothing, so on
+many hosts the file stays empty. It is not a fault when it does not: a host running `dotnet` under
+another account, or otherwise out of reach, also produces `skipped` lines. Judge the log by the two
+lines that report a finding — `killed` and `was NOT removed` — and grep for those rather than by the
+file's length.
 
 To decline the sweep — when deliberately holding a CLI host under a debugger, say — set
 `VOUCHFX_DRILL_SWEEP=0`. Nothing is then inspected or killed at either end of the lane, and that is

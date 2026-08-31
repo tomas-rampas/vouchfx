@@ -212,6 +212,10 @@ public sealed class DrillHostSweepTests : IDisposable
         var line = Assert.Single(report.Unkillable);
         Assert.Contains("31", line, StringComparison.Ordinal);
         Assert.Contains("still running", line, StringComparison.Ordinal);
+
+        // The grep token the README and the guard's own remarks send a reader looking for. Pinned
+        // so those three cannot drift apart silently.
+        Assert.Contains("was NOT removed", line, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -227,10 +231,41 @@ public sealed class DrillHostSweepTests : IDisposable
             Unkillable: unkillable,
             Skipped: Array.Empty<string>());
 
-        var ex = Assert.Throws<InvalidOperationException>(() => new DrillHostSweepFixture(report, ScratchLogPath()));
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => new DrillHostSweepFixture(report, ScratchLogPath()));
 
         Assert.Contains("pid 31", ex.Message, StringComparison.Ordinal);
         Assert.Contains("vouchfx.dll", ex.Message, StringComparison.Ordinal);
+
+        // The action the reader has to take, including the tree - a CLI host has DCP beneath it,
+        // so ending the named pid alone would leave the orchestrator holding containers.
+        Assert.Contains("by hand", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("whole tree", ex.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The throw covers TWO different events, and its wording must not assert the wrong one. An
+    /// identity that could not be verified means the sweep DECLINED to kill - it never attempted
+    /// one - so a message saying the kill "could not" succeed would send the reader hunting a
+    /// stubborn process that does not exist.
+    /// </summary>
+    [Fact]
+    public void Fixture_DoesNotCallADeclinedKillAFailedOne()
+    {
+        var declined = new[]
+        {
+            "orphaned CLI host pid 33 (dotnet) holding x was NOT removed: its start time could "
+            + "not be read when it was inspected, so the pid could not be confirmed to still denote "
+            + "the same process and it was NOT killed",
+        };
+        var report = new SweepReport(
+            Killed: Array.Empty<string>(), Unkillable: declined, Skipped: Array.Empty<string>());
+
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => new DrillHostSweepFixture(report, ScratchLogPath()));
+
+        Assert.Contains("was not removed", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("declined to attempt it", ex.Message, StringComparison.Ordinal);
     }
 
     /// <summary>A sweep that found nothing is not a failure, and does not pretend to be one.</summary>
@@ -519,40 +554,121 @@ public sealed class DrillHostSweepTests : IDisposable
 
     // ── The exit sweep ──────────────────────────────────────────────────────────────────────
 
+    // EVERY drill below injects a STUB sweep. None of them may reach the live process table:
+    // these rows carry no requires=docker trait, so they run in the fast `requires!=docker` lane
+    // that the drill classes were split apart to keep the killer out of. A hard call inside
+    // Dispose put it back there once already (measured: a planted process holding the Debug CLI
+    // dll was killed by a fast-lane run). DrillHostSweepCallSiteCensusTests is the standing guard;
+    // these constructions are the reason it has anything to guard.
+
+    private static SweepReport EmptyReport() =>
+        new(Array.Empty<string>(), Array.Empty<string>(), Array.Empty<string>());
+
     /// <summary>
     /// Disposal runs a second sweep, so the session that leaks a host clears it before its OWN
-    /// next build rather than leaving it for the next drill run - which may be days away.
+    /// next build rather than leaving it for the next drill run - which may be days away. The
+    /// stub's report must be the one recorded, which is what makes this a test of the exit sweep
+    /// rather than of a null check.
     /// </summary>
     [Fact]
-    public void Dispose_RunsAnExitSweepAndRecordsIt()
+    public void Dispose_RunsTheExitSweepAndKeepsWhatItReported()
     {
+        var stubKilled = new[] { "killed orphaned CLI host pid 71 (dotnet) holding x" };
+        var stubReport = new SweepReport(
+            Killed: stubKilled,
+            Unkillable: Array.Empty<string>(),
+            Skipped: Array.Empty<string>());
+        var calls = 0;
+        var path = ScratchLogPath();
+
         var fixture = new DrillHostSweepFixture(
-            new SweepReport(Array.Empty<string>(), Array.Empty<string>(), Array.Empty<string>()),
-            ScratchLogPath());
+            EmptyReport(),
+            path,
+            sweep: () =>
+            {
+                calls++;
+                return stubReport;
+            });
 
         Assert.Null(fixture.ExitReport);
+        Assert.Equal(0, calls);
+
+        fixture.Dispose();
+
+        Assert.Equal(1, calls);
+        Assert.Same(stubReport, fixture.ExitReport);
+
+        // Recorded, and tagged as the EXIT phase - an exit finding means a launch site in this run
+        // did not kill its child, which is a different fact from an entry finding.
+        var line = Assert.Single(File.ReadAllLines(path));
+        Assert.Contains("[exit]", line, StringComparison.Ordinal);
+        Assert.Contains("pid 71", line, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Disposal never throws, even when the sweep it runs does. xUnit attributes a fixture
+    /// disposal failure to the collection, so an exit sweep that reddened the lane would repaint
+    /// already-decided rows as failures - the misattribution this guard exists to end, arriving
+    /// through the guard. The throwing stub is what makes this row test that claim rather than
+    /// merely not contradict it.
+    /// </summary>
+    [Fact]
+    public void Dispose_SurvivesASweepThatThrowsAndSaysSo()
+    {
+        var fixture = new DrillHostSweepFixture(
+            EmptyReport(),
+            ScratchLogPath(),
+            sweep: () => throw new InvalidOperationException("the process table was unreadable"));
 
         fixture.Dispose();
 
         Assert.NotNull(fixture.ExitReport);
+        Assert.Empty(fixture.ExitReport!.Killed);
+        var line = Assert.Single(fixture.ExitReport.Skipped);
+        Assert.Contains("exit sweep could not run", line, StringComparison.Ordinal);
+        Assert.Contains("the process table was unreadable", line, StringComparison.Ordinal);
     }
 
-    /// <summary>
-    /// Disposal never throws. xUnit attributes a fixture disposal failure to the collection, so an
-    /// exit sweep that reddened the lane would repaint already-decided rows as failures - the
-    /// misattribution this guard exists to end, arriving through the guard.
-    /// </summary>
+    /// <summary>Disposing twice sweeps once - xUnit is not the only caller of Dispose.</summary>
     [Fact]
-    public void Dispose_IsIdempotentAndNeverThrows()
+    public void Dispose_IsIdempotent()
     {
+        var calls = 0;
         var fixture = new DrillHostSweepFixture(
-            new SweepReport(Array.Empty<string>(), Array.Empty<string>(), Array.Empty<string>()),
-            ScratchLogPath());
+            EmptyReport(),
+            ScratchLogPath(),
+            sweep: () =>
+            {
+                calls++;
+                return EmptyReport();
+            });
 
         fixture.Dispose();
         var first = fixture.ExitReport;
         fixture.Dispose();
 
+        Assert.Equal(1, calls);
         Assert.Same(first, fixture.ExitReport);
+    }
+
+    /// <summary>
+    /// THE PIN. The seam's default must be the production sweep.
+    /// </summary>
+    /// <remarks>
+    /// Without this, the seam introduced to keep the killer out of the fast lane could be quietly
+    /// turned into a permanent no-op - every drill would stay green while the guard did nothing on
+    /// the lane it was written for. The default is asserted by method identity rather than by
+    /// behaviour, because asserting the behaviour would mean running the live sweep here, which is
+    /// exactly what these rows must not do.
+    /// </remarks>
+    [Fact]
+    public void Fixture_DefaultsItsExitSweepToTheProductionSweep()
+    {
+        var fixture = new DrillHostSweepFixture(EmptyReport(), ScratchLogPath());
+
+        Assert.Equal(
+            nameof(DrillHostSweepFixture.SweepUnlessDisabled),
+            fixture.SweepDelegate.Method.Name);
+        Assert.Equal(typeof(DrillHostSweepFixture), fixture.SweepDelegate.Method.DeclaringType);
     }
 }

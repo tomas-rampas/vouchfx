@@ -222,13 +222,39 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
     /// </remarks>
     private static readonly bool s_swept = SweepStaleSuiteDirectoriesOnce();
 
+    /// <summary>
+    /// Exists ONLY to remove <c>beforefieldinit</c> from this type. It has no body and must keep
+    /// none.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Without a static constructor the C# compiler marks a type <c>beforefieldinit</c>, and the
+    /// CLR may then defer the static field initialisers until the first static FIELD access. A
+    /// static METHOD call does not compel them, and neither does reading a <c>const</c>, which is
+    /// inlined at compile time. Declaring this constructor makes the type's initialiser run before
+    /// ANY static member is touched, which is the guarantee the eight <c>internal</c> statics below
+    /// need now that a sibling class reaches them.
+    /// </para>
+    /// <para>
+    /// <strong>The hazard is measured, not theoretical.</strong> When the container-free rows moved
+    /// to KafkaSecurityConfirmationPreflightTests, <c>MaterialiseSuiteDirectory</c> wrote a suite
+    /// directory, the row deleted one certificate from it, and only then did the first
+    /// <c>s_registry</c> access trigger <c>s_swept</c> - whose sweep deleted the whole directory
+    /// mid-test. The row failed reporting a MISSING CA CERTIFICATE, a file it had never touched.
+    /// </para>
+    /// <para>
+    /// This replaces the convention that used to carry it: an instance constructor that touched
+    /// <c>s_swept</c>, which held only while every caller was a row on this class. Construction
+    /// beats convention here because the next out-of-class caller cannot know to observe one.
+    /// </para>
+    /// </remarks>
+    static KafkaSecurityConfirmationDrillDockerTests()
+    {
+    }
+
     private readonly ITestOutputHelper _output;
 
-    public KafkaSecurityConfirmationDrillDockerTests(ITestOutputHelper output)
-    {
-        _output = output;
-        _ = s_swept;
-    }
+    public KafkaSecurityConfirmationDrillDockerTests(ITestOutputHelper output) => _output = output;
 
     /// <summary>
     /// Removes suite directories left by earlier RUNS, best-effort, once per process.
@@ -2065,25 +2091,10 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
         bool consumeStep = false,
         int healthCheckPort = 9092)
     {
-        // FORCE THE STALE SWEEP TO HAVE HAPPENED BEFORE ANYTHING IS WRITTEN, and this line is
-        // load-bearing rather than defensive.
-        //
-        // The sweep runs from a static field initialiser (s_swept). This class carries no static
-        // constructor, so the CLR marks it `beforefieldinit` and is free to defer the type
-        // initialiser until the first static FIELD access — a static METHOD call like this one
-        // does not compel it, and the constants this method reads are inlined at compile time and
-        // are not field accesses either. The instance constructor's `_ = s_swept` used to hide
-        // that: every caller was a row on this class, so the initialiser had always run before any
-        // test body did.
-        //
-        // MEASURED when the container-free rows moved to KafkaSecurityConfirmationPreflightTests:
-        // this method wrote the suite directory, the row deleted one certificate, and the sweep
-        // then fired mid-test at the row's first `s_registry` access and deleted the whole
-        // directory — so validation reported the CA certificate missing rather than the client
-        // one, and the row failed on an assertion about a file it had never touched.
-        //
-        // Touching the field HERE ties the ordering to the method that depends on it, rather than
-        // to who happens to be calling it.
+        // Belt to the static constructor's braces: this method must not run before the stale sweep
+        // has. The static constructor is what GUARANTEES that (see its remarks for the measured
+        // failure it prevents); this line states the dependency at the method that has it, and
+        // would keep this one method correct if the constructor were ever removed as "empty".
         _ = s_swept;
 
         var suiteDirectory = Path.Combine(Path.GetTempPath(), SuiteDirectoryPrefix + row);
@@ -2805,6 +2816,13 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
                 // the Process OBJECT rather than the process. DockerExecAsync routes through here,
                 // and a `docker exec` runs an ARBITRARY command inside the broker for an arbitrary
                 // time — so a cancelled capture left a real orphan, not a momentary one.
+                //
+                // WHAT THIS DOES AND DOES NOT REACH: the tree killed here is the local `docker`
+                // CLIENT process. The `sh -c` it started runs inside the container, in a different
+                // process namespace, and keeps running until the container itself goes. Killing the
+                // client is still right — it is the process holding this host's handles and the one
+                // that would otherwise outlive the run — but it is not a remote kill, and the
+                // container's own teardown is what ends the command.
                 ChildProcess.KillTreeQuietly(process);
             }
         }
