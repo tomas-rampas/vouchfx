@@ -436,6 +436,26 @@ public sealed class HeadlessTopology : IAsyncDisposable
             // TopologyTeardownLeakTests, not by a runtime log.
         }
 
-        await _app.DisposeAsync().ConfigureAwait(false);
+        // Guarded for the reason the catch above already states as a RULE — "teardown must never
+        // throw into the verdict path (§12.1)" — which this line contradicted by being the one
+        // teardown call left bare (issue #466). It is the final release, so nothing follows it
+        // that a swallow can skip, and it runs from `finally`/`await using` frames on every run
+        // path: an exception raised here does not merely add a fault, it REPLACES whatever
+        // verdict or exception was already in flight, and under `--parallel` lands in the slot
+        // catch-all as an EnvironmentError that exits 0. Aspire's own DisposeAsync is not
+        // documented to be throw-free, and a DCP host wedged past its cleanup timeout is exactly
+        // when it would not be. `_disposed` is already true above, so this is also the last
+        // attempt by construction — there is nothing to retry and nothing left to release.
+        try
+        {
+            await _app.DisposeAsync().ConfigureAwait(false);
+        }
+        catch (Exception)
+        {
+            // Deliberate, documented discard — same rule, same no-logging reasoning (CA1848) as
+            // the StopAsync catch above. A container the dispose failed to remove is caught by
+            // the Docker-gated TopologyTeardownLeakTests, which observes the DOCKER state rather
+            // than this method's return.
+        }
     }
 }
