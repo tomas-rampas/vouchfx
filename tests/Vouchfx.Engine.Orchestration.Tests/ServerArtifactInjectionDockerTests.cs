@@ -34,6 +34,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Aspire.Hosting.ApplicationModel;
 using Vouchfx.Engine.Authoring.Model;
+using Vouchfx.TestSupport;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -252,24 +253,46 @@ public sealed class ServerArtifactInjectionDockerTests : IDisposable
     /// Runs a process to completion and returns its standard output, failing the test on a
     /// non-zero exit code so a mistyped command reads as a fault rather than as an empty result.
     /// </summary>
+    /// <remarks>
+    /// The <c>finally</c> is the issue #475 fix. <c>using var</c> disposes the <see cref="Process"/>
+    /// OBJECT, which releases a handle and stops nothing - so the two cancellation paths here (a
+    /// cancelled read, a cancelled wait) used to return while the child ran on. NOT the
+    /// <see cref="Assert"/> below it: that runs after <c>WaitForExitAsync</c> has returned, so the
+    /// child has already exited by the time it can throw. The kill is unconditional rather than
+    /// restricted to the two paths that need it, because "this argument list always finishes in
+    /// milliseconds" is a property of today's callers, not of the helper.
+    /// </remarks>
     private static async Task<string> RunAsync(
         string fileName, string arguments, CancellationToken cancellationToken)
     {
-        using var process = Process.Start(new ProcessStartInfo(fileName, arguments)
+        Process? process = null;
+        try
         {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-        })!;
+            process = Process.Start(new ProcessStartInfo(fileName, arguments)
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+            })!;
 
-        var stdout = await process.StandardOutput.ReadToEndAsync(cancellationToken).ConfigureAwait(false);
-        var stderr = await process.StandardError.ReadToEndAsync(cancellationToken).ConfigureAwait(false);
-        await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+            var stdout = await process.StandardOutput.ReadToEndAsync(cancellationToken).ConfigureAwait(false);
+            var stderr = await process.StandardError.ReadToEndAsync(cancellationToken).ConfigureAwait(false);
+            await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
 
-        Assert.True(
-            process.ExitCode == 0,
-            $"`{fileName} {arguments}` exited {process.ExitCode}. stderr: {stderr}");
+            Assert.True(
+                process.ExitCode == 0,
+                $"`{fileName} {arguments}` exited {process.ExitCode}. stderr: {stderr}");
 
-        return stdout;
+            return stdout;
+        }
+        finally
+        {
+            if (process is not null)
+            {
+                // Kill BEFORE Dispose: disposing first releases the handle the kill needs.
+                ChildProcess.KillTreeQuietly(process);
+                process.Dispose();
+            }
+        }
     }
 }

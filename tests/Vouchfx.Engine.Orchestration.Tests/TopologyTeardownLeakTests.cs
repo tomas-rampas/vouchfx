@@ -21,6 +21,7 @@
 // Excluded from non-Docker CI:  dotnet test --filter "requires!=docker"
 using System.Diagnostics;
 using Vouchfx.Engine.Orchestration;
+using Vouchfx.TestSupport;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -249,6 +250,14 @@ public sealed class TopologyTeardownLeakTests
     /// argument list (NEVER a concatenated shell command line), captures stdout, and returns the
     /// non-empty trimmed lines. Returns an empty list on any failure.
     /// </summary>
+    /// <remarks>
+    /// Issue #475 widened the kill here from the timeout path to EVERY path. The bounded
+    /// <c>WaitForExit(int)</c> was already guarded; nothing else was. BEFORE it sit the two
+    /// <c>ReadToEndAsync()</c> calls that open the drains; AFTER it sit the parameterless
+    /// <c>WaitForExit()</c> and the two <c>GetResult()</c> calls that materialise those reads. A
+    /// throw from any of them reached the <c>using var</c> this replaced, which disposes the
+    /// <see cref="Process"/> OBJECT and stops nothing.
+    /// </remarks>
     private static List<string> RunDocker(params string[] args)
     {
         var psi = new ProcessStartInfo
@@ -264,53 +273,69 @@ public sealed class TopologyTeardownLeakTests
             psi.ArgumentList.Add(arg);
         }
 
-        using var proc = Process.Start(psi);
+        var proc = Process.Start(psi);
         if (proc is null)
         {
             return new List<string>();
         }
 
-        // Drain BOTH redirected pipes concurrently, started BEFORE the wait. Reading stdout to
-        // completion and only then reading stderr can deadlock: if docker fills the stderr pipe
-        // buffer while the parent is still blocked draining stdout, the child blocks on the full
-        // stderr pipe and the parent blocks on stdout (the deadlock the Copilot review flagged).
-        // Kicking off both reads up front lets either pipe drain freely. The wait is BOUNDED with
-        // kill-on-timeout: these are quick `docker ps/inspect/network/rm` calls, so exceeding the
-        // budget means something is wrong — we kill the tree and return empty rather than hang CI.
-        var outTask = proc.StandardOutput.ReadToEndAsync();
-        var errTask = proc.StandardError.ReadToEndAsync();
-
-        if (!proc.WaitForExit(DockerTimeoutMs))
+        try
         {
-            try
+            // Drain BOTH redirected pipes concurrently, started BEFORE the wait. Reading stdout to
+            // completion and only then reading stderr can deadlock: if docker fills the stderr pipe
+            // buffer while the parent is still blocked draining stdout, the child blocks on the full
+            // stderr pipe and the parent blocks on stdout (the deadlock the Copilot review flagged).
+            // Kicking off both reads up front lets either pipe drain freely. The wait is BOUNDED with
+            // kill-on-timeout: these are quick `docker ps/inspect/network/rm` calls, so exceeding the
+            // budget means something is wrong — we kill the tree and return empty rather than hang CI.
+            var outTask = proc.StandardOutput.ReadToEndAsync();
+            var errTask = proc.StandardError.ReadToEndAsync();
+
+            if (!proc.WaitForExit(DockerTimeoutMs))
             {
-                proc.Kill(entireProcessTree: true);
-            }
-            catch
-            {
-                // Best-effort kill; the process may already be exiting. Callers treat the empty
-                // result below as "no match", and the test's bounded settle-poll + try/finally
-                // self-cleanup absorb a one-off failure safely.
+                // Kill HERE rather than leaving it to the finally, so the abandoned-read observation
+                // below runs against a child that is already going down. The finally is the
+                // backstop, not the primary; a second call on an exited process is a no-op.
+                //
+                // ONE DELIBERATE NARROWING, recorded because it is a narrowing: this line replaced a
+                // bare `catch { }` around the kill, so an exception outside the four types
+                // Process.Kill(bool) documents would now propagate rather than be swallowed.
+                // Accepted - the filter is read off the .NET 8 reference XML, and a
+                // swallow-everything copy is exactly the drift the shared helper exists to prevent.
+                ChildProcess.KillTreeQuietly(proc);
+
+                // Observe the abandoned reads.
+                //
+                // MEASURED, and the justification this line used to carry - "a faulted
+                // ReadToEndAsync (the killed process)" - is false. These two reads take NO
+                // cancellation token, so killing the child simply drives them to EOF: both tasks end
+                // RanToCompletion, not Faulted. There is no unobserved fault here to suppress.
+                // Kept for the same reason as its sibling in SutEnvConfigDockerTests.InitializeAsync
+                // (whose reads DO take a token, and end Canceled - also not Faulted): it costs
+                // nothing, and it is the guard that would matter if either read ever did fault.
+                _ = Task.WhenAll(outTask, errTask).ContinueWith(static t => _ = t.Exception, TaskScheduler.Default);
+                return new List<string>();
             }
 
-            // Observe the abandoned reads so a faulted ReadToEndAsync (the killed process) cannot
-            // surface later as an unobserved-task exception on the finalizer thread.
-            _ = Task.WhenAll(outTask, errTask).ContinueWith(static t => _ = t.Exception, TaskScheduler.Default);
-            return new List<string>();
+            // The bounded wait returned true (process exited). The read tasks below are the real
+            // synchronisation point — GetResult() blocks until each fully-drained stream is materialised;
+            // the parameterless WaitForExit() additionally flushes any remaining async output handlers.
+            proc.WaitForExit();
+            var stdout = outTask.GetAwaiter().GetResult();
+            _ = errTask.GetAwaiter().GetResult();
+
+            return stdout
+                .Split(s_lineSeparators, StringSplitOptions.RemoveEmptyEntries)
+                .Select(line => line.Trim())
+                .Where(line => line.Length > 0)
+                .ToList();
         }
-
-        // The bounded wait returned true (process exited). The read tasks below are the real
-        // synchronisation point — GetResult() blocks until each fully-drained stream is materialised;
-        // the parameterless WaitForExit() additionally flushes any remaining async output handlers.
-        proc.WaitForExit();
-        var stdout = outTask.GetAwaiter().GetResult();
-        _ = errTask.GetAwaiter().GetResult();
-
-        return stdout
-            .Split(s_lineSeparators, StringSplitOptions.RemoveEmptyEntries)
-            .Select(line => line.Trim())
-            .Where(line => line.Length > 0)
-            .ToList();
+        finally
+        {
+            // Kill BEFORE Dispose: disposing first releases the handle the kill needs.
+            ChildProcess.KillTreeQuietly(proc);
+            proc.Dispose();
+        }
     }
 
     /// <summary>

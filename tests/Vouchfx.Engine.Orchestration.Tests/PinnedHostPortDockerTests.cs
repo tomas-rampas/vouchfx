@@ -30,6 +30,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Aspire.Hosting.ApplicationModel;
 using Vouchfx.Engine.Authoring.Model;
+using Vouchfx.TestSupport;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -358,11 +359,20 @@ public sealed class PinnedHostPortDockerTests
         return string.Join(" <- ", parts);
     }
 
+    /// <remarks>
+    /// The <c>finally</c> is the issue #475 fix. <c>using var</c> disposes the <see cref="Process"/>
+    /// OBJECT, which releases a handle and stops nothing - so the cancellation path below used to
+    /// swallow the cancellation and RETURN while the child ran on. This class's two callers pass
+    /// <c>port</c> and <c>ps</c>, both of which finish in milliseconds, but the guard is
+    /// unconditional rather than argument-dependent: the next caller to pass a long-running
+    /// argument list would otherwise re-open the hole silently.
+    /// </remarks>
     private static async Task<string> DockerAsync(string arguments, CancellationToken cancellationToken)
     {
+        Process? process = null;
         try
         {
-            using var process = Process.Start(new ProcessStartInfo("docker", arguments)
+            process = Process.Start(new ProcessStartInfo("docker", arguments)
             {
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
@@ -381,6 +391,15 @@ public sealed class PinnedHostPortDockerTests
                                        or InvalidOperationException)
         {
             return string.Empty;
+        }
+        finally
+        {
+            if (process is not null)
+            {
+                // Kill BEFORE Dispose: disposing first releases the handle the kill needs.
+                ChildProcess.KillTreeQuietly(process);
+                process.Dispose();
+            }
         }
     }
 }

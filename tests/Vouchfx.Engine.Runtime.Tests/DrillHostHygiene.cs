@@ -7,10 +7,11 @@
 // host running, and the host keeps the CLI's own DLLs mapped. The developer sees nothing until
 // the NEXT build fails with a file lock on a path that names no test.
 //
-// This file carries the two halves of the answer:
+// This file carries one half of the answer; the other half moved out of it.
 //
-//   * ChildProcess.KillTreeQuietly  - the guarded tree-kill every child-process launch site in
-//     this assembly calls from its `finally`. Sites, and what each was before:
+//   * Vouchfx.TestSupport.ChildProcess.KillTreeQuietly - the guarded tree-kill every
+//     child-process launch site in this assembly calls from its `finally`. Sites, and what each
+//     was before #378:
 //
 //       ThreeRequirementsSuiteDockerTests.RunCliAsync            guarded already
 //       KafkaAuthorisationDrillDockerTests.RunCliAsync           guarded already
@@ -25,6 +26,13 @@
 //     other four sites had no unconditional kill at all. The last three swallow cancellation and
 //     RETURN while their child runs, and one of them (DockerExecAsync) runs an arbitrary command
 //     inside a container for an arbitrary time.
+//
+//     It was `internal` to this assembly and DECLARED HERE until #475, which found the same gap
+//     in Vouchfx.Engine.Orchestration.Tests - an assembly that cannot see it. Rather than let a
+//     second copy of an exhaustive catch filter drift out of step with this one, it was lifted to
+//     tests/Vouchfx.TestSupport/ChildProcess.cs, where both lanes reference the same definition.
+//     The rationale for the filter (in particular why AggregateException is in it and why
+//     InvalidOperationException is NOT the exit race) travelled with it.
 //
 //   * DrillHostSweep + DrillHostSweepFixture - the sweep that runs before the drill lane and
 //     again after it, clearing what an earlier session left behind and what this one leaks. It
@@ -55,66 +63,6 @@ using System.Diagnostics;
 using Xunit;
 
 namespace Vouchfx.Engine.Runtime.Tests;
-
-/// <summary>The guarded tree-kill shared by every child-process launch site in this assembly.</summary>
-internal static class ChildProcess
-{
-    /// <summary>
-    /// Kills <paramref name="process"/> and everything beneath it, swallowing the races and
-    /// refusals that a kill can legitimately lose.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// <c>entireProcessTree: true</c> because a CLI child is itself a parent: DCP runs beneath it,
-    /// and killing only the CLI would leave the orchestrator holding containers with nothing left
-    /// to tear them down.
-    /// </para>
-    /// <para>
-    /// The <c>HasExited</c> test cannot be made atomic with the kill, so the catch is the real
-    /// guard rather than a courtesy. Callers invoke this from a <c>finally</c>, where ANY throw
-    /// replaces the real failure with a teardown one - which is the misattribution issue #378 is
-    /// about, arriving through the fix for it. The filter therefore covers every exception
-    /// <c>Kill(bool)</c> documents, read from the .NET 8 reference XML rather than assumed:
-    /// </para>
-    /// <list type="bullet">
-    ///   <item><description>
-    ///     <see cref="System.ComponentModel.Win32Exception"/> - "could not be terminated -or- the
-    ///     process is terminating". This, NOT <c>InvalidOperationException</c>, is the
-    ///     ended-between-the-check-and-the-kill case on this runtime.
-    ///   </description></item>
-    ///   <item><description>
-    ///     <see cref="AggregateException"/> - "not all processes in the descendant tree could be
-    ///     terminated". Reachable only through <c>entireProcessTree: true</c>, which is exactly how
-    ///     every caller here invokes it, and a partial tree kill is not worth a thrown teardown.
-    ///   </description></item>
-    ///   <item><description>
-    ///     <see cref="NotSupportedException"/> - a remote process.
-    ///   </description></item>
-    ///   <item><description>
-    ///     <see cref="InvalidOperationException"/> - documented for .NET Framework and .NET Core
-    ///     3.0 and earlier only, so it is NOT the exit race here. Kept because <c>HasExited</c>
-    ///     itself raises it when no process is associated with the object.
-    ///   </description></item>
-    /// </list>
-    /// </remarks>
-    internal static void KillTreeQuietly(Process process)
-    {
-        try
-        {
-            if (!process.HasExited)
-            {
-                process.Kill(entireProcessTree: true);
-            }
-        }
-        catch (Exception ex) when (ex is InvalidOperationException
-                                       or System.ComponentModel.Win32Exception
-                                       or NotSupportedException
-                                       or AggregateException)
-        {
-            // Terminating, partially killed, remote, or no longer associated - see the remarks.
-        }
-    }
-}
 
 /// <summary>One process the sweep considered, reduced to the facts selection needs.</summary>
 /// <param name="Pid">The process id.</param>
