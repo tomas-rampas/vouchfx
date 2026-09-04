@@ -263,6 +263,7 @@ public sealed class TopologyTeardownLeakTests
     /// The SHAPE is the house one — <c>using (proc)</c> around a <c>try/finally</c> that only kills,
     /// so the compiler emits the <c>Dispose</c> in a <c>finally</c> enclosing the explicit one. The
     /// kill inside the timeout branch is the SEMANTIC one; the <c>finally</c> is the backstop.
+    /// </para>
     /// </remarks>
     private static List<string> RunDocker(params string[] args)
     {

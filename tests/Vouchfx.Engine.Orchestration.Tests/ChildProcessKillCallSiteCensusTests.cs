@@ -135,7 +135,15 @@ public sealed class ChildProcessKillCallSiteCensusTests
     /// <strong>What this does and does not prove.</strong> It proves a killing <c>finally</c> is
     /// present in the member that launches. It does not prove the finally covers the launch, or
     /// that it kills the right variable — a determined author can satisfy this gate and still leak.
-    /// That is the accepted limit of a syntactic gate: it is aimed at the accident (several sites,
+    /// That is the limit of keying on the MEMBER, and NOT a limit of syntax: a strictly stronger
+    /// purely syntactic rule exists — require the <c>finally</c>'s kill to name the same local the
+    /// launch was assigned to, which is identifier matching <c>AssignedLocalName</c> already does
+    /// for the <c>new Process</c> path, with no dataflow. It reddens the case this one clears: a
+    /// SECOND, unguarded launch added to a member that already kills a first — which is how three
+    /// of the four original sites accreted. Deferred (issue #482) because a launch not assigned to
+    /// a named local needs a fallback to this member-level rule, so the gate becomes two rules
+    /// rather than one. Do not read this paragraph as "syntax cannot do it"; it can, and the
+    /// reason it does not yet is the two-rules cost. It is aimed at the accident (several sites,
     /// several authors, none intending to leak), not at an adversary. The behavioural half lives in
     /// <c>ChildProcessKillTreeTests</c>. Kill-versus-dispose ORDERING is deliberately absent from
     /// that list: the prescribed shape puts the <c>Dispose</c> in <c>using</c>'s own enclosing

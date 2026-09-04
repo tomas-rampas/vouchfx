@@ -383,7 +383,9 @@ public sealed class PinnedHostPortDockerTests
             // dereferencing it would raise a NullReferenceException that the filter below does not
             // admit - turning "docker could not be started" into an opaque crash. Routed instead
             // into the same empty-string result as every other start failure, which is what this
-            // helper's callers are documented to expect.
+            // helper's callers are documented to expect. The message is therefore UNREACHABLE here
+            // - the catch below converts it - and is kept only so all four sites spell the start
+            // the same way. The sibling sites' equivalents DO propagate, so theirs are live.
             process = Process.Start(new ProcessStartInfo("docker", arguments)
             {
                 RedirectStandardOutput = true,
