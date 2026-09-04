@@ -360,45 +360,64 @@ public sealed class PinnedHostPortDockerTests
     }
 
     /// <remarks>
-    /// The <c>finally</c> is the issue #475 fix. <c>using var</c> disposes the <see cref="Process"/>
-    /// OBJECT, which releases a handle and stops nothing - so the cancellation path below used to
-    /// swallow the cancellation and RETURN while the child ran on. This class's two callers pass
-    /// <c>port</c> and <c>ps</c>, both of which finish in milliseconds, but the guard is
-    /// unconditional rather than argument-dependent: the next caller to pass a long-running
-    /// argument list would otherwise re-open the hole silently.
+    /// <para>
+    /// The kill is the issue #475 fix. Disposing a <see cref="Process"/> releases a handle and stops
+    /// nothing, so the cancellation path below used to swallow the cancellation and RETURN while the
+    /// child ran on. This class's two callers pass <c>port</c> and <c>ps</c>, both of which finish in
+    /// milliseconds, but the guard is unconditional rather than argument-dependent: the next caller
+    /// to pass a long-running argument list would otherwise re-open the hole silently.
+    /// </para>
+    /// <para>
+    /// The SHAPE is the house one — the start in its own <c>try</c>, then <c>using (process)</c>
+    /// around a <c>try/finally</c> that only kills. See
+    /// <see cref="Vouchfx.TestSupport.ChildProcess.KillTreeQuietly(Process)"/> for why the kill is
+    /// never written next to a <c>Dispose()</c>.
+    /// </para>
     /// </remarks>
     private static async Task<string> DockerAsync(string arguments, CancellationToken cancellationToken)
     {
-        Process? process = null;
+        Process process;
         try
         {
+            // `?? throw` rather than `!`: a null return is a start that produced no process, and
+            // dereferencing it would raise a NullReferenceException that the filter below does not
+            // admit - turning "docker could not be started" into an opaque crash. Routed instead
+            // into the same empty-string result as every other start failure, which is what this
+            // helper's callers are documented to expect.
             process = Process.Start(new ProcessStartInfo("docker", arguments)
             {
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
-            })!;
-
-            var stdout = process.StandardOutput.ReadToEndAsync(cancellationToken);
-            var stderr = process.StandardError.ReadToEndAsync(cancellationToken);
-            await Task.WhenAll(stdout, stderr);
-            await process.WaitForExitAsync(cancellationToken);
-
-            return process.ExitCode == 0 ? await stdout : string.Empty;
+            }) ?? throw new InvalidOperationException(
+                $"Starting `docker {arguments}` returned no process object.");
         }
-        catch (Exception ex) when (ex is OperationCanceledException
-                                       or System.ComponentModel.Win32Exception
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception
                                        or InvalidOperationException)
         {
             return string.Empty;
         }
-        finally
+
+        using (process)
         {
-            if (process is not null)
+            try
             {
-                // Kill BEFORE Dispose: disposing first releases the handle the kill needs.
+                var stdout = process.StandardOutput.ReadToEndAsync(cancellationToken);
+                var stderr = process.StandardError.ReadToEndAsync(cancellationToken);
+                await Task.WhenAll(stdout, stderr);
+                await process.WaitForExitAsync(cancellationToken);
+
+                return process.ExitCode == 0 ? await stdout : string.Empty;
+            }
+            catch (Exception ex) when (ex is OperationCanceledException
+                                           or System.ComponentModel.Win32Exception
+                                           or InvalidOperationException)
+            {
+                return string.Empty;
+            }
+            finally
+            {
                 ChildProcess.KillTreeQuietly(process);
-                process.Dispose();
             }
         }
     }

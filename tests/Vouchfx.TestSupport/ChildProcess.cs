@@ -32,21 +32,24 @@ namespace Vouchfx.TestSupport;
 /// NOT stop the process, which is precisely the defect both #378 and #475 record.
 /// </para>
 /// <para>
-/// <strong>KILL BEFORE DISPOSE, and the cost of the other order is SILENCE. Measured, not
-/// reasoned.</strong> Calling <c>Dispose()</c> first and then this helper on the same object:
-/// <c>HasExited</c> raises <see cref="InvalidOperationException"/>, this method's own filter
-/// swallows it, <strong>nothing is thrown, nothing is logged, and the child is still alive
-/// afterwards</strong> — verified by re-attaching to the pid. There is no second signal. The
-/// exception filter that makes this helper safe in a <c>finally</c> is the same thing that makes
-/// the wrong order invisible, and that trade is deliberate.
+/// <strong>The shape, which every call site in the repository uses:</strong>
 /// </para>
+/// <code>
+/// var process = Process.Start(startInfo) ?? throw ...;   // its own try/catch if the start may fail
+///
+/// using (process)                                        // Dispose, in the OUTER finally
+/// {
+///     try { ... }
+///     finally { ChildProcess.KillTreeQuietly(process); } // kill, in the INNER finally
+/// }
+/// </code>
 /// <para>
-/// Nothing enforces the order. <c>ChildProcessKillCallSiteCensusTests</c> in
-/// <c>Vouchfx.Engine.Orchestration.Tests</c> gates that a killing <c>finally</c> EXISTS in each
-/// launching member; it is syntactic and cannot see ordering, and it does not read the drill lane's
-/// assembly at all. Every call site in the repository orders it correctly today. If you are adding
-/// the next one, this paragraph is the only thing standing between you and a leak that reports
-/// nothing.
+/// <c>using</c> emits its <c>Dispose</c> in a <c>finally</c> that ENCLOSES the explicit one, so the
+/// kill always runs first and the dangerous order cannot be written. That matters because the
+/// dangerous order fails silently: dispose-then-kill makes <c>HasExited</c> raise
+/// <see cref="InvalidOperationException"/>, this method's filter swallows it, and the child is left
+/// alive with nothing thrown and nothing logged (measured, by re-attaching to the pid). The shape
+/// above is preferred precisely so that no reader has to know that.
 /// </para>
 /// </remarks>
 public static class ChildProcess

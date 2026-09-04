@@ -27,27 +27,26 @@
 // Vouchfx.Cli.Tests/AsciiRuntimeOutputCensusTests): telling a real launch from the same words in
 // prose is exactly what a regex gets wrong, and this file names both methods many times over.
 //
-// The mechanism is NODE KIND, not trivia-skipping — an earlier draft credited
-// `descendIntoTrivia: false`, which is only half true and misses the more important half. That flag
-// keeps this file's `//` comments out; it does nothing about the assertion strings below, which are
-// ordinary syntax, not trivia. What makes those invisible is FindLaunchSites: it switches on
-// InvocationExpressionSyntax and ObjectCreationExpressionSyntax and returns false for everything
-// else, and a string literal — interpolated or not — is neither.
+// The mechanism is NODE KIND. `descendIntoTrivia: false` keeps this file's `//` comments out, but
+// it does nothing about the assertion strings below, which are ordinary syntax and not trivia. What
+// makes those invisible is FindLaunchSites: it switches on InvocationExpressionSyntax and
+// ObjectCreationExpressionSyntax and returns false for everything else, and a string literal —
+// interpolated or not — is neither.
 //
-// SCOPE. This project only, and the reason is NOT a missing Roslyn reference — an earlier draft of
-// this comment said it was, and that was false: Vouchfx.Engine.Runtime.Tests already parses C# with
-// CSharpSyntaxTree.ParseText in DrillHostSweepCallSiteCensusTests, so Roslyn arrives there
-// transitively with nothing to add. The real obstacle is that ONE definition cannot serve both
-// assemblies: neither can see the other's internals, and the shared home (Vouchfx.TestSupport)
-// deliberately carries no package references beyond the BCL. Two copies of a census is how a census
-// drifts, which is the same argument that moved ChildProcess out of Runtime.Tests in the first
-// place.
+// SCOPE: TWO ASSEMBLIES, not one. This census reads Vouchfx.Engine.Orchestration.Tests AND
+// Vouchfx.Engine.Runtime.Tests — the drill lane, where issue #378 found the same defect first, and
+// where the blast radius is worse: an unguarded launch there strands a CLI holding DCP, its
+// containers and its aspire-session-network-*, which surfaces later as a build failure naming no
+// test.
 //
-// RESIDUAL RISK OF THAT DEFERRAL, stated rather than left implicit: Runtime.Tests' eight
-// child-process launch sites are all guarded today, but nothing gates the ninth — and that is the
-// assembly with the WORSE blast radius, because an unguarded launch there strands a CLI holding DCP,
-// its containers and its aspire-session-network-*, which surfaces later as a build failure naming no
-// test (issue #378).
+// It can read the second assembly because it never REFERENCES it. CensusFiles enumerates .cs files
+// off disk and FindLaunchSites parses them as text, so assembly boundaries and internals visibility
+// are irrelevant — the only thing needed is a directory path, and the two projects are siblings.
+// Roslyn is already a dependency of both.
+//
+// This is also what makes the `new Process` half of the detection worth its lines: the ONLY such
+// launch in the repository is Sprint11ReferenceCapstoneTests, in the drill lane. Over the
+// Orchestration project alone that branch never fired.
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -60,16 +59,14 @@ using Xunit;
 namespace Vouchfx.Engine.Orchestration.Tests;
 
 /// <summary>
-/// Pins that every child-process launch in this project is paired with a <c>finally</c> that calls
+/// Pins that every child-process launch in the two censused test projects is paired with a
+/// <c>finally</c> that calls
 /// <see cref="Vouchfx.TestSupport.ChildProcess.KillTreeQuietly(System.Diagnostics.Process)"/>.
 /// </summary>
 /// <remarks>
-/// BOTH launch spellings are recognised, because the repository uses both: the static
-/// <c>Process.Start(...)</c> that every site in THIS assembly uses, and the
-/// <c>new Process { StartInfo = psi }</c> + <c>proc.Start()</c> pair that
-/// <c>Vouchfx.Engine.Runtime.Tests.Sprint11ReferenceCapstoneTests</c> uses. An earlier draft matched
-/// only the first and would have watched a door while the adjacent one stood open in a file next
-/// door.
+/// Both launch spellings are recognised, because the repository uses both: the static
+/// <c>Process.Start(...)</c>, and the <c>new Process { StartInfo = psi }</c> + <c>proc.Start()</c>
+/// pair that <c>Vouchfx.Engine.Runtime.Tests.Sprint11ReferenceCapstoneTests</c> uses.
 /// </remarks>
 public sealed class ChildProcessKillCallSiteCensusTests
 {
@@ -89,16 +86,32 @@ public sealed class ChildProcessKillCallSiteCensusTests
     private const string KillMethod = "KillTreeQuietly";
 
     /// <summary>
-    /// The fewest <c>.cs</c> files this project can plausibly hold. Below it, the census is assumed
-    /// to have failed to find the source tree rather than to have found a small one.
+    /// The fewest <c>.cs</c> files EACH censused project can plausibly hold. Below it, the census is
+    /// assumed to have failed to find that source tree rather than to have found a small one.
     /// </summary>
     /// <remarks>
     /// A floor rather than an exact count, for the reason the sibling census in
     /// Vouchfx.Engine.Runtime.Tests gives: an exact count is a second thing to maintain and would
-    /// redden on every unrelated file added. This project held well over sixty files when this was
-    /// written.
+    /// redden on every unrelated file added. Both projects held well over sixty files when this was
+    /// written. Applied PER ROOT, so a root that silently resolves to somewhere thin cannot hide
+    /// behind the other one's size.
     /// </remarks>
     private const int MinimumCensusFiles = 20;
+
+    /// <summary>The sibling test project this census reads in addition to its own.</summary>
+    private const string DrillLaneProjectName = "Vouchfx.Engine.Runtime.Tests";
+
+    /// <summary>
+    /// The one file whose launch sites may NOT satisfy the "this census found something" guard.
+    /// </summary>
+    /// <remarks>
+    /// <c>ChildProcessKillTreeTests</c> is this census's own companion, and it launches a child of
+    /// its own. Counting it would let the guard be satisfied by the census's own fixtures: delete
+    /// every docker class in this project and the vacuity check would still pass, over a population
+    /// consisting entirely of the test that exists to exercise the helper. Excluded so that the
+    /// guard measures the code under census rather than the census.
+    /// </remarks>
+    private const string SelfProvisionedLaunchFile = "ChildProcessKillTreeTests.cs";
 
     /// <summary>Build output, which holds generated sources this census has no business reading.</summary>
     private static readonly string[] s_excludedDirectories = { "bin", "obj" };
@@ -115,17 +128,19 @@ public sealed class ChildProcessKillCallSiteCensusTests
     /// a killing finally" would call every one of those an offender and push authors towards the
     /// worse shape. The <c>new Process</c> spelling forces the same choice: the object exists
     /// before <c>Start()</c> is called on it, so there is no single expression to sit inside a try.
-    /// (Phrased without a count deliberately. The count changed inside the very commit that
-    /// introduced this paragraph — the commit that added the census also added a launch site — and a
-    /// number in prose is a second thing to maintain that nothing verifies.)
+    /// (Phrased without a count deliberately: a number in prose is a second thing to maintain that
+    /// nothing verifies.)
     /// </para>
     /// <para>
     /// <strong>What this does and does not prove.</strong> It proves a killing <c>finally</c> is
-    /// present in the member that launches. It does not prove the finally covers the launch, that
-    /// it kills the right variable, or that the kill precedes the dispose — a determined author can
-    /// satisfy this gate and still leak. That is the accepted limit of a syntactic gate: it is
-    /// aimed at the accident (four sites, four different authors, none intending to leak), not at
-    /// an adversary. The behavioural half lives in <c>ChildProcessKillTreeTests</c>.
+    /// present in the member that launches. It does not prove the finally covers the launch, or
+    /// that it kills the right variable — a determined author can satisfy this gate and still leak.
+    /// That is the accepted limit of a syntactic gate: it is aimed at the accident (several sites,
+    /// several authors, none intending to leak), not at an adversary. The behavioural half lives in
+    /// <c>ChildProcessKillTreeTests</c>. Kill-versus-dispose ORDERING is deliberately absent from
+    /// that list: the prescribed shape puts the <c>Dispose</c> in <c>using</c>'s own enclosing
+    /// <c>finally</c>, so it is the compiler that orders them and there is nothing left for a gate
+    /// to check.
     /// </para>
     /// <para>
     /// <strong>Spellings it CANNOT see. Not an exhaustive list — a sample, and read it that way.</strong>
@@ -165,66 +180,110 @@ public sealed class ChildProcessKillCallSiteCensusTests
     /// must catch.
     /// </para>
     /// <para>
-    /// <strong>Vacuity-guarded twice.</strong> "No offending site" is also what a census that found
-    /// no FILES reports, and what one that found no LAUNCH SITES at all reports — the second being
-    /// reachable by the last docker class being deleted or by every launch being wrapped in a
-    /// helper this census cannot see. Both are asserted before the real check.
+    /// <strong>Vacuity-guarded per root.</strong> "No offending site" is also what a census that
+    /// found no FILES reports, and what one that found no LAUNCH SITES reports — the second being
+    /// reachable by the last docker class being deleted, or by every launch moving behind a helper
+    /// this census cannot see. Both are asserted for EACH root before the real check, so one
+    /// healthy tree cannot vouch for a sibling that resolved to nowhere, and the launch guard
+    /// discounts this census's own companion file (see <see cref="SelfProvisionedLaunchFile"/>) so
+    /// it cannot be satisfied by the fixtures the census brought with it.
     /// </para>
     /// </remarks>
     [Fact]
     public void EveryProcessLaunch_SitsInAMemberThatKillsTheTreeInAFinally()
     {
-        var files = CensusFiles();
+        var launches = new List<LaunchSite>();
 
-        Assert.True(
-            files.Count > MinimumCensusFiles,
-            $"This census found only {files.Count} .cs file(s) under '{ProjectDirectory()}', which "
-            + $"is below the floor of {MinimumCensusFiles}. It has almost certainly resolved the "
-            + "wrong directory rather than found a small project - and a census over no files "
-            + "passes for free.");
+        foreach (var root in CensusRoots())
+        {
+            Assert.True(
+                Directory.Exists(root),
+                $"This census is configured to read '{root}', which does not exist. It reads two "
+                + "sibling test projects by PATH, so a project rename moves the directory out from "
+                + "under it and would otherwise leave half the population silently uncensused.");
 
-        var launches = files.SelectMany(FindLaunchSites).ToList();
+            var files = CensusFiles(root);
 
-        Assert.True(
-            launches.Count > 0,
-            $"This census found no child-process launch - neither `{ProcessType}.{StartMethod}` nor "
-            + $"`new {ProcessType}` followed by `.{StartMethod}()` - anywhere in the project. Either "
-            + "every child-process launch moved out of this assembly - in which case this gate is "
-            + "now watching nothing and should move with them - or it is being reached through a "
-            + "spelling this census does not recognise, which is worse, because the gate reports "
-            + "itself green either way.");
+            Assert.True(
+                files.Count > MinimumCensusFiles,
+                $"This census found only {files.Count} .cs file(s) under '{root}', which is below "
+                + $"the floor of {MinimumCensusFiles}. It has almost certainly resolved the wrong "
+                + "directory rather than found a small project - and a census over no files passes "
+                + "for free.");
+
+            var found = files.SelectMany(file => FindLaunchSites(root, file)).ToList();
+
+            Assert.True(
+                found.Any(site => !site.File.Equals(SelfProvisionedLaunchFile, StringComparison.OrdinalIgnoreCase)),
+                $"This census found no child-process launch under '{root}' - neither "
+                + $"`{ProcessType}.{StartMethod}` nor `new {ProcessType}` followed by "
+                + $"`.{StartMethod}()`, discounting {SelfProvisionedLaunchFile}, which is this "
+                + "census's own companion and must not be able to vouch for the project. Either "
+                + "every launch moved out of that project - in which case this gate is now watching "
+                + "nothing there and should move with them - or they are being reached through a "
+                + "spelling this census does not recognise, which is worse, because the gate reports "
+                + "itself green either way.");
+
+            launches.AddRange(found);
+        }
 
         var offenders = launches.Where(site => !site.HasKillingFinally).ToList();
 
         Assert.True(
             offenders.Count == 0,
             $"Starting a child gives you a {ProcessType} object whose lifetime is not the child's. "
-            + $"`using var` disposes the {ProcessType} OBJECT and stops nothing, so a launch whose "
-            + $"member has no `finally` calling `{KillMethod}` orphans its child on every path that "
-            + "is not a clean completion - a cancelled `docker build` keeps building (issue #475), "
-            + "and a CLI child keeps DCP, its containers and its network alive (issue #378). "
-            + "Unguarded launch site(s):\n"
-            + string.Join("\n", offenders.Select(site => $"  {site.File}({site.Line}): {site.Member}"))
-            + $"\n\nFix shape: capture the {ProcessType} in a local, do the work in a `try`, and in "
-            + $"the `finally` call `ChildProcess.{KillMethod}(proc)` and THEN `proc.Dispose()`. The "
-            + "order matters and this census cannot check it: dispose-first leaves the child ALIVE "
-            + "and throws nothing at all, because the kill's own exception filter swallows the "
-            + $"InvalidOperationException it causes. See the remarks on `{KillMethod}`.");
+            + $"Disposing it releases a handle and stops nothing, so a launch whose member has no "
+            + $"`finally` calling `{KillMethod}` orphans its child on every path that is not a clean "
+            + "completion - a cancelled `docker build` keeps building (issue #475), and a CLI child "
+            + "keeps DCP, its containers and its network alive (issue #378). Unguarded launch "
+            + "site(s):\n"
+            + string.Join("\n", offenders.Select(site => $"  {site.Display}"))
+            + "\n\nFix shape (the one every site in both projects uses - it makes the ordering a "
+            + "compiler guarantee rather than something you have to remember):\n\n"
+            + $"    var proc = {ProcessType}.{StartMethod}(psi) ?? throw ...;\n"
+            + "\n"
+            + "    using (proc)\n"
+            + "    {\n"
+            + "        try { ... }\n"
+            + $"        finally {{ ChildProcess.{KillMethod}(proc); }}\n"
+            + "    }\n\n"
+            + "Put the start in its own try/catch above the `using` if the start itself may fail. "
+            + "Do NOT write the kill and a `Dispose()` next to each other in one finally: `using` "
+            + "already emits the dispose in an enclosing finally, which is what puts the kill first "
+            + $"and keeps it there. See the remarks on `{KillMethod}`.");
     }
 
     /// <summary>One child-process launch, and whether its member kills the tree in a finally.</summary>
-    private sealed record LaunchSite(string File, int Line, string Member, bool HasKillingFinally);
+    private sealed record LaunchSite(string Root, string File, int Line, string Member, bool HasKillingFinally)
+    {
+        /// <summary>The site as an offender message names it: project, file, line, member.</summary>
+        internal string Display => $"{Path.GetFileName(Root)}/{File}({Line}): {Member}";
+    }
 
-    /// <summary>Every <c>.cs</c> file in this test project, excluding build output.</summary>
-    private static List<string> CensusFiles() =>
+    /// <summary>
+    /// The project directories this census reads.
+    /// </summary>
+    /// <remarks>
+    /// Paths, not assembly references - which is the whole reason a second project is reachable at
+    /// all. Nothing here loads the drill lane's assembly or needs to see its internals; the files
+    /// are read as text.
+    /// </remarks>
+    private static string[] CensusRoots() => new[]
+    {
+        ProjectDirectory(),
+        Path.GetFullPath(Path.Combine(ProjectDirectory(), "..", DrillLaneProjectName)),
+    };
+
+    /// <summary>Every <c>.cs</c> file under one root, excluding build output.</summary>
+    private static List<string> CensusFiles(string root) =>
         Directory
-            .EnumerateFiles(ProjectDirectory(), "*.cs", SearchOption.AllDirectories)
-            .Where(path => !IsUnderExcludedDirectory(path))
+            .EnumerateFiles(root, "*.cs", SearchOption.AllDirectories)
+            .Where(path => !IsUnderExcludedDirectory(root, path))
             .ToList();
 
-    private static bool IsUnderExcludedDirectory(string path)
+    private static bool IsUnderExcludedDirectory(string root, string path)
     {
-        var relative = Path.GetRelativePath(ProjectDirectory(), path);
+        var relative = Path.GetRelativePath(root, path);
         var segments = relative.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
 
         return segments.Any(segment => s_excludedDirectories.Contains(segment, StringComparer.OrdinalIgnoreCase));
@@ -252,7 +311,7 @@ public sealed class ChildProcessKillCallSiteCensusTests
     /// exists precisely to prove the helper tolerates a Process with no child attached, from being
     /// reported as an unguarded launch.
     /// </remarks>
-    private static IEnumerable<LaunchSite> FindLaunchSites(string path)
+    private static IEnumerable<LaunchSite> FindLaunchSites(string root, string path)
     {
         var tree = CSharpSyntaxTree.ParseText(File.ReadAllText(path), path: path);
 
@@ -274,6 +333,7 @@ public sealed class ChildProcessKillCallSiteCensusTests
             }
 
             yield return new LaunchSite(
+                root,
                 Path.GetFileName(path),
                 node.GetLocation().GetLineSpan().StartLinePosition.Line + 1,
                 EnclosingMemberName(node),
@@ -422,13 +482,12 @@ public sealed class ChildProcessKillCallSiteCensusTests
 
     /// <summary>The member a launch sits in, qualified by its namespace and type path.</summary>
     /// <remarks>
-    /// <strong>Agrees with <see cref="EnclosingMemberBody(SyntaxNode)"/> about lambdas.</strong> That
-    /// method treats a lambda as its own guarding scope; an earlier version of this one walked
-    /// straight past lambdas to the enclosing method, so an offender inside one was LABELLED with a
-    /// member whose <c>finally</c> was not the one being judged. The label now says so explicitly.
-    /// Only the message is affected — the verdict always came from
-    /// <see cref="EnclosingMemberBody(SyntaxNode)"/> — but a message that names the wrong member
-    /// sends the reader to the wrong code.
+    /// <strong>Must agree with <see cref="EnclosingMemberBody(SyntaxNode)"/> about lambdas.</strong>
+    /// That method treats a lambda as its own guarding scope, so a label that walked past the lambda
+    /// to the enclosing method would send a reader to a <c>finally</c> that was not the one judged.
+    /// Only the message is affected — the verdict always comes from
+    /// <see cref="EnclosingMemberBody(SyntaxNode)"/> — but a message naming the wrong member is a
+    /// message pointing at the wrong code.
     /// </remarks>
     private static string EnclosingMemberName(SyntaxNode node)
     {

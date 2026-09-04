@@ -131,9 +131,20 @@ public sealed class ChildProcessKillTreeTests
         Assert.Null(thrown);
     }
 
+    /// <summary>How long the child would sleep if nothing killed it, in seconds.</summary>
+    /// <remarks>
+    /// A ceiling on the damage this file can do, not a duration anything waits for. These rows run
+    /// in the blocking <c>requires!=docker</c> CI job, so if the kill ever regresses, EVERY failing
+    /// row strands a child for this long on the runner and on the developer's machine. Sixty
+    /// seconds is four times <see cref="DeathBudgetMs"/> — long enough that the child cannot expire
+    /// on its own and fake a pass — and short enough that a regression cleans up after itself well
+    /// inside one run.
+    /// </remarks>
+    private const int ChildLifetimeSeconds = 60;
+
     /// <summary>
-    /// Starts a shell running a several-minute command, hands it to <paramref name="body"/>, and
-    /// kills the tree on every path out.
+    /// Starts a shell running a long command, hands it to <paramref name="body"/>, and kills the
+    /// tree on every path out.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -143,9 +154,8 @@ public sealed class ChildProcessKillTreeTests
     /// row that measures the rule obeys it.
     /// </para>
     /// <para>
-    /// The command is a long sleep rather than an infinite loop so that a failure of these rows
-    /// leaks a process that expires on its own within minutes rather than one that outlives the
-    /// session.
+    /// The command is a bounded sleep rather than an infinite loop so that a failure of these rows
+    /// leaks a process that expires on its own rather than one that outlives the session.
     /// </para>
     /// </remarks>
     private static void WithLongLivedChild(Action<Process> body)
@@ -160,32 +170,34 @@ public sealed class ChildProcessKillTreeTests
 
         if (OperatingSystem.IsWindows())
         {
-            // `ping -n 300 127.0.0.1` is the portable-on-Windows sleep: no `sleep` binary ships
-            // with the OS, and `timeout` refuses to run with stdin redirected.
+            // `ping -n <n> 127.0.0.1` is the portable-on-Windows sleep: no `sleep` binary ships
+            // with the OS, and `timeout` refuses to run with stdin redirected. The count is one
+            // ping per second after the first, so it is the seconds figure within a second.
             info.FileName = "cmd.exe";
             info.ArgumentList.Add("/c");
-            info.ArgumentList.Add("ping -n 300 127.0.0.1 > nul");
+            info.ArgumentList.Add($"ping -n {ChildLifetimeSeconds} 127.0.0.1 > nul");
         }
         else
         {
             info.FileName = "/bin/sh";
             info.ArgumentList.Add("-c");
-            info.ArgumentList.Add("sleep 300");
+            info.ArgumentList.Add($"sleep {ChildLifetimeSeconds}");
         }
 
         var process = Process.Start(info)
             ?? throw new InvalidOperationException(
                 $"Failed to start the long-lived test child '{info.FileName}'.");
 
-        try
+        using (process)
         {
-            body(process);
-        }
-        finally
-        {
-            // Kill BEFORE Dispose: disposing first releases the handle the kill needs.
-            ChildProcess.KillTreeQuietly(process);
-            process.Dispose();
+            try
+            {
+                body(process);
+            }
+            finally
+            {
+                ChildProcess.KillTreeQuietly(process);
+            }
         }
     }
 }
