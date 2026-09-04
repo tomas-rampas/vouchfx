@@ -923,7 +923,10 @@ internal static class ProviderPipeline
     /// Builds the standard "nothing could be compiled" <see cref="PipelineResult"/> around a
     /// diagnostic message: no assembled script and no partial plan of any kind.
     /// </summary>
-    /// <param name="message">The already-composed, already-scrubbed diagnostic.</param>
+    /// <param name="failure">
+    /// A failure record the caller ALREADY HOLDS, passed through intact rather than rebuilt from
+    /// its message — which is the whole reason this overload exists beside the string one.
+    /// </param>
     /// <remarks>
     /// Extracted because <see cref="Compile"/> returns this exact nine-line shape from six
     /// provider-fault sites and half a dozen guard sites, and six copies of one rule read as six
@@ -1166,7 +1169,7 @@ internal static class ProviderPipeline
     /// <see langword="true"/> for <c>Resources</c>/<c>HostResources</c>. Both are TOLERANT of a
     /// missing interface (they return an empty sequence rather than throwing) and both return a
     /// possibly-LAZY <see cref="IEnumerable{T}"/>, so the provider's iterator body runs during
-    /// the caller's enumeration — long after <see cref="MethodInfo.Invoke"/> returned, with no
+    /// the caller's enumeration — long after <see cref="MethodInfo"/>'s <c>Invoke</c> returned, with no
     /// wrapper to unwrap. An unwrapped throw there IS the provider's own.
     /// </description></item>
     /// <item><description>

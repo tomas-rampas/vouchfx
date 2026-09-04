@@ -807,6 +807,7 @@ public static class ParallelSuiteRunner
     /// <c>StepCompletedEvent.Observation</c> are <c>JsonElement?</c>, assigned on the produce side
     /// from <c>ScenarioRunner.BuildStepObservation</c>, and a <c>JsonElement</c> serialises
     /// property names verbatim, so SUT-controlled content can form the needle.
+    /// </para>
     /// <para>
     /// <strong>What makes that harmless is WHERE it can appear, not that it cannot.</strong>
     /// <c>Observation</c> rides only on step events, so a needle formed inside one sits on a line
