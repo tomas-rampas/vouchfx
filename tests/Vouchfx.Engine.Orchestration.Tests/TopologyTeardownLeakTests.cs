@@ -56,11 +56,25 @@ public sealed class TopologyTeardownLeakTests
     /// <summary>The executable every production call in this class runs.</summary>
     private const string DockerExecutable = "docker";
 
+    /// <summary>
+    /// What the docker CLI says when the thing it was asked to inspect is no longer there.
+    /// </summary>
+    /// <remarks>
+    /// The ONE message token <see cref="TryReadLabel"/> is allowed to treat as "not ours" instead of
+    /// as a failure. Kept as a named constant so widening it is a visible edit rather than a
+    /// looser-looking string literal, and <c>internal</c> so <c>DockerCliFailurePolicyTests</c> can
+    /// pin the JOINT between this filter and <see cref="DescribeCliFailure"/> — see that row for
+    /// what it does and does not prove.
+    /// </remarks>
+    internal const string VanishedContainerMarker = "No such object";
+
     /// <summary>How much of a failing child's stderr a failure message carries.</summary>
     /// <remarks>
     /// Enough for the line that matters ("Cannot connect to the Docker daemon at ...", "No such
     /// object: ...") and bounded so a child that dumps a help screen cannot bury the exit code
-    /// under it.
+    /// under it. Not free to shrink: <see cref="VanishedContainerMarker"/> has to survive the cut,
+    /// which is what <c>VanishedContainerFailure_IsStillRecognisableFromTheAssembledMessage</c>
+    /// holds it to.
     /// </remarks>
     private const int StderrBudget = 2_000;
 
@@ -211,14 +225,13 @@ public sealed class TopologyTeardownLeakTests
 
         foreach (var id in candidates)
         {
-            var name = RunDockerSingle("inspect", "--format", $"{{{{index .Config.Labels \"{DcpNameLabel}\"}}}}", id);
+            var name = TryReadLabel(id, DcpNameLabel);
             if (name is null || !name.StartsWith(runToken, StringComparison.Ordinal))
             {
                 continue;
             }
 
-            var pid = RunDockerSingle(
-                "inspect", "--format", $"{{{{index .Config.Labels \"{CreatorProcessIdLabel}\"}}}}", id);
+            var pid = TryReadLabel(id, CreatorProcessIdLabel);
             if (!string.IsNullOrWhiteSpace(pid))
             {
                 return pid;
@@ -226,6 +239,47 @@ public sealed class TopologyTeardownLeakTests
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Reads one label off one container, treating a container that has vanished as "not ours"
+    /// rather than as a failure.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Why one named exception rather than a best-effort runner.</strong> The candidate
+    /// list comes from a <c>docker ps</c> that enumerates EVERY DCP-labelled container on the host,
+    /// including other runs'. Any of those can be removed between the enumerate and the inspect, and
+    /// <c>docker inspect</c> then exits non-zero with <c>No such object</c>. Under the strict
+    /// policy that throw escapes <see cref="TryDiscoverCreatorPidForProbe"/> into the test's outer
+    /// <c>try</c> with <c>creatorPid</c> still null — so the <c>finally</c>'s guard is false,
+    /// <see cref="ForceCleanupForThisRun"/> never runs, and THIS run's probe container and its
+    /// <c>aspire-session-network-*</c> are left to <c>DisposeAsync</c> alone, which is the code
+    /// under test and therefore the thing that may be broken. Leaking residue when the code under
+    /// test is suspect is the wrong failure mode; the standing rule is that a run sweeps up after
+    /// itself.
+    /// </para>
+    /// <para>
+    /// The catch is deliberately narrow in three ways, because a wider one would put the hazard
+    /// back: ONE exception type, ONE message token, and it sits in this caller rather than in the
+    /// runner, so it cannot reach the assertion queries or the settle poll. Everything else — a
+    /// daemon that is down, a timeout, any other non-zero exit — still throws, and still names the
+    /// exit code and stderr. Matching on message text is a known-brittle mechanism: the docker CLI
+    /// is free to reword it, and if it does this degrades to the pre-fix behaviour of failing loud
+    /// with the real reason, which is the safe direction.
+    /// </para>
+    /// </remarks>
+    private static string? TryReadLabel(string containerId, string labelKey)
+    {
+        try
+        {
+            return RunDockerSingle("inspect", "--format", $"{{{{index .Config.Labels \"{labelKey}\"}}}}", containerId);
+        }
+        catch (InvalidOperationException ex)
+            when (ex.Message.Contains(VanishedContainerMarker, StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
     }
 
     /// <summary>
@@ -294,17 +348,41 @@ public sealed class TopologyTeardownLeakTests
     /// <see cref="ForceCleanupForThisRun"/>), where the polarity inverts: that code runs from a
     /// <c>finally</c>, so a throw REPLACES the real verdict with a teardown failure — issue #378's
     /// misattribution — over failures that are not defects (<c>docker rm -f</c> racing DCP's own
-    /// teardown for a container that has already gone). It is reachable only by naming
-    /// <c>RunDockerBestEffort</c>, so it cannot be selected by accident, and
-    /// <c>DockerCliFailurePolicyTests</c> pins that no other member names it.
+    /// teardown for a container that has already gone).
+    /// </para>
+    /// <para>
+    /// <strong>Two mechanisms keep it out of reach, and they cover different ground.</strong> This
+    /// type is <c>private</c>, so nothing outside <see cref="TopologyTeardownLeakTests"/> can NAME
+    /// <see cref="Tolerate"/> at all — the whole cross-file surface is the two
+    /// <c>RunCli…</c> seams below, neither of which takes a policy, so tolerance costs an author
+    /// the word <c>BestEffort</c> and the compiler enforces it. Inside this class the compiler has
+    /// nothing to say, so <c>DockerCliFailurePolicyTests</c> takes over: it pins that every
+    /// reference to <see cref="Tolerate"/> sits in a member whose name ends <c>BestEffort</c>, and
+    /// that no member of this class other than <see cref="ForceCleanupForThisRun"/> invokes one.
+    /// The first version of that gate policed only the second spelling, which left
+    /// <c>RunCli(…, Tolerate, …)</c> — then <c>internal</c> — reachable from any file in the
+    /// assembly while the gate stayed green; the visibility change is what closed that, and the
+    /// census is what keeps the remaining, in-class half honest.
     /// </para>
     /// </remarks>
-    internal enum CliFailurePolicy
+    private enum CliFailurePolicy
     {
         /// <summary>Throw, naming the command, the exit code and stderr. The default.</summary>
         Fail = 0,
 
-        /// <summary>Return an empty list. Legitimate only where nothing is asserted on it.</summary>
+        /// <summary>
+        /// Return an empty list.
+        /// </summary>
+        /// <remarks>
+        /// Empty, NOT the failing child's stdout — a partially-successful enumerate is discarded
+        /// rather than half-trusted. That is deliberate ("do not act on the output of a command
+        /// that failed") and it is a real, if tiny, behaviour change from the pre-fix helper, which
+        /// returned whatever a non-zero-exiting <c>docker ps</c> had printed: the one caller,
+        /// <see cref="ForceCleanupForThisRun"/>, would now leave those containers unremoved.
+        /// <c>docker ps</c> is all-or-nothing in practice, so the exposure is a partial write to a
+        /// pipe before a failure — but it is a cost, not an absence of one. Legitimate only where
+        /// nothing is asserted on the result.
+        /// </remarks>
         Tolerate = 1,
     }
 
@@ -314,7 +392,7 @@ public sealed class TopologyTeardownLeakTests
     /// expiring — throws.
     /// </summary>
     private static List<string> RunDocker(params string[] args) =>
-        RunCli(DockerExecutable, CliFailurePolicy.Fail, args);
+        RunCliStrict(DockerExecutable, args);
 
     /// <summary>
     /// As <see cref="RunDocker(string[])"/>, but a child that fails yields an empty list instead
@@ -322,22 +400,48 @@ public sealed class TopologyTeardownLeakTests
     /// remarks on <see cref="CliFailurePolicy"/> for why, and why nothing else may use it.
     /// </summary>
     private static List<string> RunDockerBestEffort(params string[] args) =>
-        RunCli(DockerExecutable, CliFailurePolicy.Tolerate, args);
+        RunCliBestEffort(DockerExecutable, args);
+
+    /// <summary>
+    /// The strict runner over an arbitrary executable — the whole of this helper's behaviour except
+    /// the hard-coded <see cref="DockerExecutable"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>This pair, not <c>RunCli</c>, is the assembly-visible surface.</strong> The
+    /// executable is a parameter so <c>DockerCliFailurePolicyTests</c> can drive the real code path
+    /// with a child whose exit code and stderr it chooses, in the blocking non-Docker lane and on
+    /// every platform — a test that could only run where a docker daemon does would leave this
+    /// helper's whole point, that it never reports a failure as "nothing survives", pinned by
+    /// nothing. The POLICY is deliberately not a parameter here: exposing it was what let a caller
+    /// in any file select tolerance without typing <c>BestEffort</c>.
+    /// </para>
+    /// </remarks>
+    internal static List<string> RunCliStrict(string fileName, params string[] args) =>
+        RunCli(fileName, CliFailurePolicy.Fail, args);
+
+    /// <summary>
+    /// The tolerant runner over an arbitrary executable. See <see cref="RunCliStrict"/> for why the
+    /// executable is a parameter, and <see cref="CliFailurePolicy"/> for what tolerance costs.
+    /// </summary>
+    /// <remarks>
+    /// Named for the choice it makes, like <see cref="RunDockerBestEffort(string[])"/>, so the
+    /// single <c>BestEffort</c> suffix rule covers both and the census has one predicate rather
+    /// than a list of blessed members.
+    /// </remarks>
+    internal static List<string> RunCliBestEffort(string fileName, params string[] args) =>
+        RunCli(fileName, CliFailurePolicy.Tolerate, args);
 
     /// <summary>
     /// Runs <paramref name="fileName"/> with the supplied arguments via <see cref="Process"/> using
     /// an argument list (NEVER a concatenated shell command line), captures both pipes, and returns
     /// the non-empty trimmed stdout lines of a child that exited 0.
     /// </summary>
-    /// <param name="fileName">
-    /// The executable. Every production call passes <see cref="DockerExecutable"/>; the parameter
-    /// exists so <c>DockerCliFailurePolicyTests</c> can drive the real code path with a child whose
-    /// exit code and stderr it chooses, in the blocking non-Docker lane and on every platform. A
-    /// test that could only run where a docker daemon does would leave this helper's whole point —
-    /// that it never reports a failure as "nothing survives" — pinned by nothing.
-    /// </param>
-    /// <param name="policy">See <see cref="CliFailurePolicy"/>. Not defaulted: the two entry points
-    /// above are how a caller chooses, and they are named for the choice.</param>
+    /// <param name="fileName">The executable. Every production call passes
+    /// <see cref="DockerExecutable"/>.</param>
+    /// <param name="policy">See <see cref="CliFailurePolicy"/>. Not defaulted, and not reachable
+    /// from outside this class: the four entry points above are how a caller chooses, and they are
+    /// named for the choice.</param>
     /// <param name="args">Arguments, passed as a list rather than a command line.</param>
     /// <returns>
     /// Under <see cref="CliFailurePolicy.Tolerate"/>, an empty list for every failure. Under
@@ -372,7 +476,7 @@ public sealed class TopologyTeardownLeakTests
     /// kill inside the timeout branch is the SEMANTIC one; the <c>finally</c> is the backstop.
     /// </para>
     /// </remarks>
-    internal static List<string> RunCli(string fileName, CliFailurePolicy policy, params string[] args)
+    private static List<string> RunCli(string fileName, CliFailurePolicy policy, params string[] args)
     {
         var psi = new ProcessStartInfo
         {
@@ -520,7 +624,7 @@ public sealed class TopologyTeardownLeakTests
         var trimmed = stderr?.Trim();
         var detail = string.IsNullOrEmpty(trimmed)
             ? "(no stderr)"
-            : trimmed.Length <= StderrBudget ? trimmed : trimmed[..StderrBudget] + " …(stderr truncated)";
+            : trimmed.Length <= StderrBudget ? trimmed : TruncateWithoutSplittingASurrogatePair(trimmed);
 
         return $"`{command}` {what} ({code}): {detail}"
             + " — reported rather than swallowed because this helper's callers ask which containers"
@@ -530,19 +634,55 @@ public sealed class TopologyTeardownLeakTests
     }
 
     /// <summary>
+    /// Cuts <paramref name="text"/> to <see cref="StderrBudget"/> without leaving an unpaired
+    /// surrogate at the seam.
+    /// </summary>
+    /// <remarks>
+    /// A fixed index can land between the halves of a surrogate pair, and this string is UNTRUSTED
+    /// — it is whatever the child wrote to stderr. The message it lands in is written into TRX,
+    /// which is XML, and a lone surrogate is the recorded XML-safety defect class in this
+    /// repository (it throws at <c>Encoding.GetString</c> rather than degrading). Probability here
+    /// is negligible; the fix is backing off one character, so there is no reason to carry the
+    /// exposure.
+    /// </remarks>
+    private static string TruncateWithoutSplittingASurrogatePair(string text)
+    {
+        var cut = StderrBudget;
+        if (char.IsHighSurrogate(text[cut - 1]))
+        {
+            cut--;
+        }
+
+        return text[..cut] + " …(stderr truncated)";
+    }
+
+    /// <summary>
     /// Convenience for docker commands expected to emit a single value: returns the first
     /// non-empty trimmed stdout line, or <see langword="null"/> if there is none.
     /// </summary>
     /// <remarks>
-    /// Strict, because it inherits <see cref="RunDocker(string[])"/> and its only caller is the
-    /// probe-discovery poll, where loud is right for the same reason: if docker is genuinely
-    /// broken, failing with the real reason beats polling for 60 s and then reporting a
-    /// PRECONDITION message that blames DCP for creating no container. There is deliberately no
-    /// best-effort sibling. The one case that argues for one — <c>docker inspect</c> losing a race
-    /// against a concurrent removal of some OTHER run's DCP container, which the poll would
-    /// previously have skipped over — now surfaces as a loud failure naming "No such object". That
-    /// is a true statement of what happened, and if it ever proves noisy the fix is a second
-    /// explicitly-named entry point, never a silent empty here.
+    /// <para>
+    /// Strict, because it inherits <see cref="RunDocker(string[])"/>. There is deliberately no
+    /// best-effort sibling.
+    /// </para>
+    /// <para>
+    /// <strong>The "loud beats silent" argument does NOT reach here, and an earlier draft of this
+    /// comment wrongly claimed it did.</strong> Everywhere else in this class a false empty is a
+    /// false PASS, and that asymmetry is the whole justification for strictness. At this call site
+    /// there is no such asymmetry: the only caller is the probe-discovery poll, a null return there
+    /// means "not ours" and the loop simply moves on, and the worst outcome of enough nulls is the
+    /// LOUD 60 s PRECONDITION failure. Both options are loud, so loudness does not discriminate
+    /// between them, and asserting that one is the commoner cause without measuring it would be
+    /// guesswork dressed as a reason.
+    /// </para>
+    /// <para>
+    /// It is strict for two other reasons. First, consistency: one runner with one default, so a
+    /// future caller does not have to work out which spelling this site earned. Second — and this
+    /// is the one with teeth — the consequence of the vanished-container race is not a noisy
+    /// message but SKIPPED CLEANUP, because the throw escapes with <c>creatorPid</c> still null and
+    /// the <c>finally</c>'s guard never fires. That is handled where it arises, by
+    /// <see cref="TryReadLabel"/>'s one named exception, rather than by loosening this runner.
+    /// </para>
     /// </remarks>
     private static string? RunDockerSingle(params string[] args)
     {
