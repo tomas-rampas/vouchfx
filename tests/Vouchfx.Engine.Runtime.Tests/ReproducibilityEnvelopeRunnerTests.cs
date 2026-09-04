@@ -273,6 +273,97 @@ public sealed class ReproducibilityEnvelopeRunnerTests
     }
 
     // -------------------------------------------------------------------------
+    // 3b. Unhashable-but-not-absent fixture → same null hash, no throw (issue #466).
+    // -------------------------------------------------------------------------
+
+    /// <summary>
+    /// A declared seed fixture that cannot be hashed for a reason OTHER than the file being
+    /// absent must also be recorded with a <see langword="null"/> content hash — the envelope
+    /// must never crash a run, and "absent" was never the only way a fixture fails to hash.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// WHAT WAS UNPINNED, AND WHY IT MATTERED (issue #466). <c>ScenarioRunner.
+    /// HashFixtureOrNull</c> caught <see cref="FileNotFoundException"/> ALONE.
+    /// <c>SeedFixtures.ComputeContentHash</c> has four other routes to the outside world and
+    /// none of them raises that type: <c>ArgumentException.ThrowIfNullOrEmpty</c> on an empty
+    /// declared path (what this test drives, because it is the one arm reachable
+    /// deterministically on every platform), <c>Path.GetFullPath</c> raising
+    /// <see cref="ArgumentException"/>/<see cref="PathTooLongException"/>/
+    /// <see cref="NotSupportedException"/>, and <c>File.ReadAllBytes</c> raising
+    /// <see cref="UnauthorizedAccessException"/> or a plain <see cref="IOException"/> for a
+    /// file that is locked, or is deleted in the window between the <c>File.Exists</c> check
+    /// and the read. The catch is now the IO family, named, so all of them land here.
+    /// </para>
+    /// <para>
+    /// An escape from here is not merely a bad diagnostic: the envelope is built on the RUN
+    /// path, so the throw unwound into <c>ParallelSuiteRunner</c>'s per-slot catch-all and was
+    /// classified as <c>Verdict.EnvironmentError</c> — which, on a run that executed nothing,
+    /// exits 0 (#390). A one-character YAML typo produced a green CI build.
+    /// </para>
+    /// <para>
+    /// MEASURED RED against the narrow catch: <c>System.ArgumentException : The value cannot be
+    /// an empty string. (Parameter 'relativePath')</c> propagating out of
+    /// <see cref="ScenarioRunner.BuildReproducibilityEnvelope"/>.
+    /// </para>
+    /// <para>
+    /// THE LOCKED-FILE ARM IS DELIBERATELY NOT DRIVEN HERE. It is the more consequential of the
+    /// two in production, but .NET 6 removed <c>FileStream</c>'s advisory locking on Unix, so a
+    /// <c>FileShare.None</c> handle blocks a read on Windows and not on Linux — a test built on
+    /// it would be a Windows-only pin masquerading as a cross-platform one. Both arms are the
+    /// same single <c>when</c> clause, so this test moves if that clause narrows.
+    /// </para>
+    /// <para>
+    /// An empty <c>sql</c> item reaches the envelope rather than being refused upstream:
+    /// <c>$defs/seed</c>'s items carry no <c>minLength</c>, and <c>ParseSeedSqlSequence</c>
+    /// takes each item's raw scalar text as written. The <c>Assert.Single</c> below is what
+    /// proves it arrived — a schema that later rejects it would fail here rather than silently
+    /// make this test prove nothing.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void UnhashableFixturePath_RecordedWithNullHash_DoesNotThrow()
+    {
+        var baseDir = Path.Combine(
+            Path.GetTempPath(), "vouchfx-repro-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(baseDir);
+
+        try
+        {
+            var yaml = """
+                environment:
+                  dependencies:
+                    orders-db:
+                      type: postgres
+                  seed:
+                    orders-db:
+                      sql: [ "" ]
+                steps:
+                  - id: noop
+                    type: http.rest
+                    target: api
+                    method: GET
+                    path: /api
+                    expect:
+                      status: 200
+                """;
+
+            var ast = BuildAst(yaml);
+
+            // Must not throw.
+            var envelope = ScenarioRunner.BuildReproducibilityEnvelope(ast, baseDir);
+
+            var fixture = Assert.Single(envelope.Fixtures);
+            Assert.Equal(string.Empty, fixture.Reference);
+            Assert.Null(fixture.ContentHash);
+        }
+        finally
+        {
+            try { Directory.Delete(baseDir, recursive: true); } catch (IOException) { }
+        }
+    }
+
+    // -------------------------------------------------------------------------
     // 4. No seed, no secrets → empty arrays, still emits a valid envelope.
     // -------------------------------------------------------------------------
 

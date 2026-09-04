@@ -5948,8 +5948,26 @@ public static class ScenarioRunner
     /// Computes a fixture's content hash via the shared
     /// <c>SeedFixtures.ComputeContentHash</c> routine, returning a
     /// <see cref="FixtureDigest"/> with a <see langword="null"/> hash (rather than
-    /// throwing) when the file is absent at envelope-build time.
+    /// throwing) whenever the fixture cannot be hashed at envelope-build time — because the
+    /// file is absent, and since issue #466 also because it is unreadable, inaccessible, or
+    /// named by a path the filesystem rejects.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>KNOWN RESIDUAL, and it is a property of <see cref="FixtureDigest"/> rather than
+    /// of this method (SEC-MINOR-2).</strong> The envelope distinguishes "no fixture" (no row)
+    /// from "a fixture that could not be hashed" (a row with a <see langword="null"/>
+    /// <see cref="FixtureDigest.ContentHash"/>), but it does NOT distinguish the REASONS: an
+    /// absent file and a present-but-unreadable one both record <see langword="null"/>. Two
+    /// runs whose fixture was unreadable therefore compare EQUAL on that row even though the
+    /// bytes may have differed, which weakens the input-equivalence claim the envelope exists
+    /// to make. Widening the catch above did not create that conflation — an absent file
+    /// already recorded <see langword="null"/> — but it did enlarge the set of causes that
+    /// land in it, so it is stated here rather than left to be rediscovered. Fixing it means
+    /// changing the <see cref="FixtureDigest"/> shape, which is a frozen-adjacent trust
+    /// artefact and not something to reshape inside a bug fix; it is filed as a follow-up.
+    /// </para>
+    /// </remarks>
     private static FixtureDigest HashFixtureOrNull(string baseDirectory, string relativePath)
     {
         try
@@ -5957,11 +5975,42 @@ public static class ScenarioRunner
             var hash = SeedFixtures.ComputeContentHash(baseDirectory, relativePath);
             return new FixtureDigest(relativePath, hash);
         }
-        catch (FileNotFoundException)
+        catch (Exception ex) when (
+            ex is IOException
+            or UnauthorizedAccessException
+            or ArgumentException
+            or NotSupportedException)
         {
             // The envelope must never crash a run: a missing seed fixture is already
             // classified as an Environment error by the seed applier (§12.1).  Record
             // the reference without a hash so the envelope remains a faithful account.
+            //
+            // WIDENED FROM FileNotFoundException ALONE (issue #466), because that single type
+            // did not cover the routes ComputeContentHash actually has to the outside world,
+            // and an escape from HERE is not a diagnostic — the envelope is built on the run
+            // path, so the throw unwound into ParallelSuiteRunner's slot catch-all and became
+            // an EnvironmentError that exits 0 on a run that executed nothing (#390). The
+            // reachable set, read off ComputeContentHash: Path.GetFullPath raises
+            // ArgumentException (invalid characters), PathTooLongException (an IOException) and
+            // NotSupportedException; ArgumentException.ThrowIfNullOrEmpty raises
+            // ArgumentException for an empty declared path; and File.ReadAllBytes raises
+            // UnauthorizedAccessException, or a plain IOException when the file is locked or is
+            // deleted in the window between the File.Exists check and the read. FileNotFoundException
+            // is an IOException, so the original case is a subset rather than a sibling.
+            //
+            // NOT a bare `catch (Exception)`: an OutOfMemoryException or a cancellation raised
+            // through this frame is not "the fixture could not be hashed" and must not be
+            // recorded as a null hash. This is the IO family, named.
+            //
+            // THIS IS THE OPPOSITE ANSWER TO ProviderPipeline's SIX PROVIDER GUARDS, WHICH CATCH
+            // EVERYTHING. The two are not in conflict, and the reason is written out ONCE, in
+            // ProviderPipeline.DescribeProviderFault's remarks — the short version being that
+            // over-catching there costs a sentence and over-catching HERE corrupts the
+            // reproducibility envelope while the run continues. Deliberately not restated: this
+            // comment used to carry its own copy of that argument, complete with a headline
+            // ("the escape destinations differ") that was false in both copies, and two
+            // independently-maintained statements of one rule is the drift class this repository
+            // treats as a defect. If the trade changes, it changes in one place.
             return new FixtureDigest(relativePath, ContentHash: null);
         }
     }

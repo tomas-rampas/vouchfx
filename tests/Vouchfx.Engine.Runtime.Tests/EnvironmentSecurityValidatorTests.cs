@@ -547,6 +547,24 @@ public sealed class EnvironmentSecurityValidatorTests : IDisposable
     private static readonly StepKindRegistry s_pipelineRegistry =
         StepKindRegistry.BuildAndFreeze(new[] { typeof(ScriptCsharpProvider).Assembly });
 
+    /// <summary>
+    /// Also pins <see cref="ValidationFailure.IsSecurityPreflight"/> surviving the trip through
+    /// <see cref="ProviderPipeline.Compile"/> — the assertion
+    /// <c>SecurityProfileWiringValidatorTests</c> already makes twice for the OTHER preflight
+    /// producer, and which this one, the older of the two, had never had at the Compile level.
+    /// </summary>
+    /// <remarks>
+    /// <strong>This pins that the flag ARRIVES, not that anything reads it.</strong> Measured:
+    /// <c>grep -rn "IsSecurityPreflight" src/</c> finds writers, the declaration and comments,
+    /// and no production consumer; <c>ExitCodes.FromVerdict</c> keys REQ-018 on
+    /// <c>securityAssurance?.Unconfirmed</c> instead. The flag's own remarks name PR D as the
+    /// intended consumer and that wiring does not exist. Pinning it now is worth one line
+    /// because the day PR D lands, the thing most likely to have quietly broken is the
+    /// pass-through — a <c>Refuse</c>-style refactor that rebuilds the record from its message
+    /// would drop it with every existing test still green. Asserted inline on the existing
+    /// missing-file document rather than in a new test: a second copy of the same 15-line YAML
+    /// for one assertion is the duplication this file otherwise avoids.
+    /// </remarks>
     [Fact]
     public void Compile_DeclaredSecurityFileMissing_ReturnsPipelineFailure_AssembledIsNull()
     {
@@ -573,6 +591,10 @@ public sealed class EnvironmentSecurityValidatorTests : IDisposable
         Assert.Null(result.Assembled);
         Assert.NotNull(result.Failure);
         Assert.Contains("clientCert", result.Failure!.Message, StringComparison.Ordinal);
+        Assert.True(
+            result.Failure.IsSecurityPreflight,
+            "the preflight marker must survive Compile's pass-through (see this test's remarks: "
+            + "nothing reads it yet, which is exactly why the pass-through needs a pin).");
     }
 
     [Fact]

@@ -633,12 +633,29 @@ public static class ParallelSuiteRunner
             // WHAT THIS CATCH CANNOT TELL APART, TRACKED AS ISSUE #466. `EnvironmentError` is the
             // RIGHT classification for a genuine infrastructure fault and the WRONG one for an
             // engine or provider defect, which — on a run that executed nothing — exits 0. This
-            // frame cannot distinguish the two: it sees only an exception type. Issue #413 closed
-            // the one route that was known to arrive here (a throwing provider `Bind`, now a
-            // `PipelineResult.Failure` returned before this frame is ever reached), and #466 holds
-            // the general question, because reclassifying every escape would move `EnvironmentError`
-            // semantics for real infra faults too and that is a design decision rather than a fix.
-            // Do NOT widen this catch without reading it.
+            // frame cannot distinguish the two: it sees only an exception type. Reclassifying
+            // every escape would move `EnvironmentError` semantics for real infra faults too, and
+            // `SecurityAbortKind.TopologyUnavailable` sits deliberately outside every
+            // `SecurityAssurance.Unconfirmed` disjunct, so a reclassification here would move
+            // security semantics as well. Do NOT widen this catch without reading it.
+            //
+            // THE ANSWER HAS BEEN TO NARROW WHAT CAN REACH IT, not to reclassify what does. Issue
+            // #413 closed the first known route (a throwing provider `Bind`); #466 closed the
+            // rest of `ProviderPipeline.Compile`'s provider surface the same way — `Validate`,
+            // `Resources`, `HostResources`, `Emit` and the directly-called
+            // `ICompileReferenceContributor.CompileReferenceAssemblies` (SIX `DescribeProviderFault`
+            // call sites in total, counting Bind's), plus `CsxAssembler.Assemble`, which refuses
+            // provider-EMITTED content and is guarded separately because the exception cannot name
+            // a step. Each is a `PipelineResult.Failure` returned before this frame is reached.
+            //
+            // WHAT THAT DOES AND DOES NOT LICENCE. It closes every route THROUGH
+            // `ProviderPipeline.Compile`, which is where every known escape had been. It is NOT a
+            // claim that no provider code can ever reach this frame again: a provider also runs
+            // inside the compiled CSX at step-execution time, on the far side of the topology, and
+            // that is a different frame with its own handling. The honest statement is the narrow
+            // one — the compile-time provider surface is closed — and what still arrives here is
+            // an engine fault in a frame no guard covers, or a genuine infrastructure fault, which
+            // is what this classification is FOR.
             // Leave a minimal, redaction-safe trace (exception TYPE only, never the message — §17)
             // on this slot's raw writer so a genuine engine fault is at least diagnosable; the raw
             // writers flush in declaration order, so this stays deterministic.

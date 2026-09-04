@@ -10,6 +10,20 @@
 //   • ICompileReferenceContributor is also TOLERANT: providers that omit it
 //     contribute no extra compile references.
 //   • All other reflectors (Bind / Validate / Emit) throw on missing interface.
+//   • Every call INTO a provider from this pipeline — Bind / Validate / Resources /
+//     HostResources / Emit reflectively, plus ICompileReferenceContributor.
+//     CompileReferenceAssemblies directly — is GUARDED (issues #413 and #466): a provider
+//     that throws produces a PipelineResult.Failure naming the step, the provider type and
+//     the member, never an exception a caller has to classify. See DescribeProviderFault,
+//     which owns the single spelling of that diagnostic, and Compile's own inline remarks for
+//     why the alternative (classifying at ParallelSuiteRunner's slot catch-all) would move
+//     EnvironmentError semantics for real infrastructure faults.
+//   • AND SO IS CsxAssembler.Assemble, which is not a call into a provider at all but the
+//     place provider-EMITTED CONTENT is refused (§13.3.1). CsxFragment performs no
+//     constructor validation, so a fragment that breaks a rule is built cleanly inside the
+//     provider's own Emit and no per-step guard can see it. Listed here beside the six
+//     because it was found missing exactly by being absent from a list like this one; see
+//     DescribeAssemblyFault for why its failure names the suite rather than a step.
 //   • RETRY is COMPILED, not rejected (Sprint 6): each step's VerifyMode and
 //     Timeout are threaded into a StepCompilePlan so CsxAssembler can wrap RETRY
 //     steps in the engine-owned polling loop (§7).  The execution-time rejection
@@ -18,6 +32,7 @@
 //     pattern so callers need no conditional logic change.
 
 using System.Reflection;
+using System.Text.Encodings.Web;
 using Vouchfx.Engine.Abstractions;
 using Vouchfx.Engine.Authoring.Ast;
 using Vouchfx.Engine.Authoring.Model;
@@ -93,17 +108,35 @@ internal sealed record HostResourcePlanEntry(
 /// rather than letting it propagate immediately — see <see cref="ProviderPipeline.BindAllSteps"/>'s
 /// own remarks for why. <see langword="null"/> when materialisation succeeded (the overwhelming
 /// majority of steps; every Core provider's <c>HostResources</c> is a pure, throw-free
-/// projection). <see cref="ProviderPipeline.Compile"/>'s Pass 2 rethrows this — preserving the
-/// original stack trace via <see cref="System.Runtime.ExceptionServices.ExceptionDispatchInfo"/>
-/// — immediately after this step's own <c>Validate</c> has had a chance to produce a clean
-/// diagnostic for whatever invalid model condition may have caused it.
+/// projection). <see cref="ProviderPipeline.Compile"/>'s Pass 2 reads this — immediately after
+/// this step's own <c>Validate</c> has had a chance to produce a clean diagnostic for whatever
+/// invalid model condition may have caused it — and turns it into a
+/// <see cref="PipelineResult.Failure"/> naming the provider (issue #466). It used to RETHROW it
+/// there instead, which escaped <see cref="ProviderPipeline.Compile"/> altogether and reached
+/// <c>ParallelSuiteRunner</c>'s slot catch-all, where a provider defect was mislabelled as an
+/// infrastructure fault — and, on a run where nothing executed, exited 0. (Only on such a run:
+/// a sibling scenario that Fails still elevates the suite to <c>Verdict.Fail</c> and exits 1.
+/// The unqualified "exited 0" this sentence used to carry was the outlier among the three
+/// sites that state it.)
 /// </param>
+/// <remarks>
+/// <para>
+/// <strong><see cref="Exception"/>, not
+/// <see cref="System.Runtime.ExceptionServices.ExceptionDispatchInfo"/>, since #466.</strong>
+/// The EDI was here for one capability: <c>Throw()</c> rethrowing in Pass 2 with the Pass-1
+/// stack intact. There is no rethrow any more — <c>grep -rn "\.Throw()" src/Engine/</c> finds
+/// nothing but prose — and every remaining consumer reads the exception's type and message,
+/// which a plain reference carries identically. Keeping the EDI would have been a type
+/// signalling a rethrow that no longer exists, which is the same false-signal class as a stale
+/// comment.
+/// </para>
+/// </remarks>
 internal sealed record BoundStep(
     Vouchfx.Engine.Authoring.Ast.StepNode Node,
     IStepProvider Instance,
     object Model,
     IReadOnlyList<HostResourceRequirement> HostResources,
-    System.Runtime.ExceptionServices.ExceptionDispatchInfo? HostResourcesFailure = null);
+    Exception? HostResourcesFailure = null);
 
 /// <summary>
 /// Records a model-validation failure surfaced during the pipeline's validate stage.
@@ -280,12 +313,7 @@ internal static class ProviderPipeline
         var environmentSecurityFailure = EnvironmentSecurityValidator.Validate(ast, resolvedSuiteDirectory);
         if (environmentSecurityFailure is not null)
         {
-            return new PipelineResult(
-                Assembled: null,
-                ResourcePlan: Array.Empty<ResourcePlanEntry>(),
-                CompileReferencePaths: Array.Empty<string>(),
-                HostResourcePlan: Array.Empty<HostResourcePlanEntry>(),
-                Failure: environmentSecurityFailure);
+            return Refuse(environmentSecurityFailure);
         }
 
         // Security-profile wiring invariant (authenticated-infrastructure-mtls, slice C —
@@ -298,12 +326,7 @@ internal static class ProviderPipeline
             SecurityProfileWiringValidator.Validate(ast, securityProfileRegistry ?? SecurityProfileRegistry.BuiltIn);
         if (securityProfileWiringFailure is not null)
         {
-            return new PipelineResult(
-                Assembled: null,
-                ResourcePlan: Array.Empty<ResourcePlanEntry>(),
-                CompileReferencePaths: Array.Empty<string>(),
-                HostResourcePlan: Array.Empty<HostResourcePlanEntry>(),
-                Failure: securityProfileWiringFailure);
+            return Refuse(securityProfileWiringFailure);
         }
 
         // REQ-023 (amended 2026-08-04): one target, one staged form. A target addressed by BOTH
@@ -348,12 +371,7 @@ internal static class ProviderPipeline
         var protocolConflict = SuiteProtocolTargets.DescribeProtocolConflict(new[] { (ScenarioAst?)ast });
         if (protocolConflict is not null)
         {
-            return new PipelineResult(
-                Assembled: null,
-                ResourcePlan: Array.Empty<ResourcePlanEntry>(),
-                CompileReferencePaths: Array.Empty<string>(),
-                HostResourcePlan: Array.Empty<HostResourcePlanEntry>(),
-                Failure: new ValidationFailure(protocolConflict));
+            return Refuse(protocolConflict);
         }
 
         // ── Pass 1: Bind every step exactly ONCE, retaining the model and its
@@ -362,15 +380,10 @@ internal static class ProviderPipeline
         // to discover host-resource names before the main loop reached that step). See
         // BuildProjectContext's own remarks for why deriving DeclaredServices needs
         // every step's host-resource contribution up front regardless of step order.
-        var (boundSteps, registryFailure) = BindAllSteps(ast, registry);
+        var (boundSteps, registryFailure) = BindAllSteps(ast, registry, resolvedSuiteDirectory);
         if (registryFailure is not null)
         {
-            return new PipelineResult(
-                Assembled: null,
-                ResourcePlan: Array.Empty<ResourcePlanEntry>(),
-                CompileReferencePaths: Array.Empty<string>(),
-                HostResourcePlan: Array.Empty<HostResourcePlanEntry>(),
-                Failure: registryFailure);
+            return Refuse(registryFailure);
         }
 
         // Build the declared-services/dependencies project context from the retained
@@ -386,12 +399,7 @@ internal static class ProviderPipeline
         // key, keyed only by name).
         if (hostResourceServiceCollision is not null)
         {
-            return new PipelineResult(
-                Assembled: null,
-                ResourcePlan: Array.Empty<ResourcePlanEntry>(),
-                CompileReferencePaths: Array.Empty<string>(),
-                HostResourcePlan: Array.Empty<HostResourcePlanEntry>(),
-                Failure: hostResourceServiceCollision);
+            return Refuse(hostResourceServiceCollision);
         }
 
         // ── Pass 2: Validate / Resources / CompileReferences / Emit over the RETAINED
@@ -417,40 +425,141 @@ internal static class ProviderPipeline
                 node.Capture,
                 projectCtx.DeclaredServices);
 
-            // ── Validate ──────────────────────────────────────────────────────
-            var validResult = ReflectValidate(instance, model, projectCtx);
+            // ── Validate (GUARDED — issue #466) ───────────────────────────────
+            // Unguarded, a throwing Validate unwound past Compile, past the runner, and into
+            // ParallelSuiteRunner's per-slot catch-all, which classifies ANY escape as
+            // EnvironmentError + TopologyUnavailable — and on a run that executed nothing that
+            // is exit 0 (#390). A provider defect produced a GREEN build, exactly the shape
+            // #413's own rationale condemns. Same channel and same reasoning as Bind's guard:
+            // the fault is a provider defect rather than an authoring one, but the taxonomy
+            // answer is identical — the step was never compiled, nothing ran, Inconclusive.
+            //
+            // NARROWING, NOT RECLASSIFYING. The slot catch-all is deliberately untouched (see
+            // its own remarks): it sees only an exception type and cannot tell a genuine
+            // infrastructure fault — for which EnvironmentError is CORRECT, §12.1 — from an
+            // engine defect, and TopologyUnavailable sits outside every SecurityAssurance
+            // Unconfirmed disjunct, so moving it would move security semantics. What changes
+            // here is only what can still REACH that frame.
+            //
+            // THE CATCH IS UNFILTERED for the same reason Bind's is: no cancellation token
+            // reaches IStepValidator<T>.Validate — the v1 contract passes a model and an
+            // IProjectContext and nothing else — so a cancellation surfacing here is not a stop
+            // anybody requested, and there is nothing for a filter to preserve.
+            //
+            // THAT BOUNDS WHAT THE ENGINE ASKED FOR; IT SAYS NOTHING ABOUT WHOSE FAULT THE
+            // CANCELLATION IS. A provider may hold its own CancellationTokenSource, and an
+            // HttpClient's default timeout surfaces as TaskCanceledException, which IS an
+            // OperationCanceledException. Calling those a provider defect would send an author
+            // to audit code that is not at fault — the failure mode the unwrappedIsProviderFault
+            // split exists to avoid. The ATTRIBUTION is DescribeProviderFault's to make, and
+            // IsHostCondition is where it is made.
+            ValidationResult validResult;
+            try
+            {
+                validResult = ReflectValidate(instance, model, projectCtx);
+            }
+            catch (Exception ex)
+            {
+                return Refuse(
+                    DescribeProviderFault(
+                        node,
+                        instance,
+                        "Validate",
+                        ex,
+                        unwrappedIsProviderFault: false,
+                        resolvedSuiteDirectory));
+            }
+
             if (!validResult.IsValid)
             {
-                return new PipelineResult(
-                    Assembled: null,
-                    ResourcePlan: Array.Empty<ResourcePlanEntry>(),
-                    CompileReferencePaths: Array.Empty<string>(),
-                    HostResourcePlan: Array.Empty<HostResourcePlanEntry>(),
-                    Failure: new ValidationFailure(
-                        $"Step '{node.Id}' model validation failed: " +
-                        string.Join("; ", validResult.Errors)));
+                // SCRUBBED (SEC-MAJOR-1 follow-up, issue #466). `validResult.Errors` is
+                // FREE-FORM PROVIDER-AUTHORED TEXT — the same category as the exception
+                // messages the six guards splice, on the same channel, reaching the same
+                // archived artefacts — and it reached them unscrubbed while the guard three
+                // lines above did not. That a provider RETURNED this string rather than THREW
+                // it changes nothing an archived artefact can tell apart.
+                //
+                // NOT AN ACADEMIC CASE, and "every Core provider is careful" is not the
+                // argument: the provider model exists so that out-of-tree providers exist, a
+                // `Validate` is handed `ctx.SuiteDirectory` and routinely resolves paths
+                // against it (ScriptCsharpProvider's own not-found guard is the in-tree
+                // example of a Validate that had to be written carefully to avoid exactly
+                // this), and #357's rule is stated absolutely because nothing downstream can
+                // redact an artefact that has already been uploaded.
+                return Refuse(
+                    $"Step '{node.Id}' model validation failed: " +
+                    ScrubSuiteDirectory(
+                        string.Join("; ", validResult.Errors), resolvedSuiteDirectory));
             }
 
             // G-A (gatekeeper, fix round 3): a HostResources() throw captured back in Pass 1
-            // (BindAllSteps) is rethrown HERE — after this exact step's OWN Validate, just
+            // (BindAllSteps) is surfaced HERE — after this exact step's OWN Validate, just
             // above, has already had its chance to turn whatever invalid model condition
             // triggered it into the clean ValidationFailure returned above instead. Reaching
             // this line means Validate found the model FINE, so whatever HostResources threw
-            // is a genuine bug Validate does not already cover — surfaced as the same raw
-            // exception it always was, just no longer able to pre-empt a diagnosable
-            // environment/model error from a DIFFERENT, earlier-bound step (BindAllSteps runs
-            // Pass 1 for every step before Pass 2 validates any of them). ExceptionDispatchInfo
-            // preserves the original stack trace across the Pass 1 → Pass 2 deferral.
-            bound.HostResourcesFailure?.Throw();
-
-            // ── Resources (tolerant) ──────────────────────────────────────────
-            foreach (var req in ReflectResources(instance, model))
+            // is a genuine bug Validate does not already cover.
+            //
+            // THE POSITION IS G-A's AND IS LOAD-BEARING; THE TERMINAL SHAPE IS #466's. This
+            // line still sits exactly where the rethrow sat — after this step's Validate, so a
+            // model problem still becomes a clean ValidationFailure first, and still unable to
+            // pre-empt a diagnosable error from a DIFFERENT, earlier-bound step (BindAllSteps
+            // runs Pass 1 for every step before Pass 2 validates any of them; pinned by
+            // ProviderPipelineTests.Compile_TargetingStepPrecedesThrowingListenerStep_
+            // ReturnsWrongTargetDiagnostic). What changed is where it goes: it used to be
+            // `bound.HostResourcesFailure?.Throw()`, an ExceptionDispatchInfo rethrow that
+            // preserved the Pass-1 stack and then escaped Compile entirely — and on the
+            // --parallel path the slot catch-all mislabelled that escape as an infrastructure
+            // fault worth exit 0 (#466). It is a PROVIDER defect, so it now lands in the same
+            // ValidationFailure channel as the other five guarded provider calls. Pass 1 now
+            // carries the plain Exception rather than an ExceptionDispatchInfo: the EDI existed
+            // for Throw()'s stack preservation, and with no rethrow left there is nothing it
+            // does that a reference does not (see BoundStep.HostResourcesFailure's remarks).
+            //
+            // UNWRAPPED IS A PROVIDER FAULT HERE. ReflectHostResources is tolerant of a missing
+            // interface and returns a possibly-lazy IEnumerable, so BindAllSteps' ToList() runs
+            // the provider's own iterator body after Invoke has already returned — there is no
+            // TargetInvocationException to unwrap on that path, and blaming the engine for it
+            // would be wrong.
+            if (bound.HostResourcesFailure is { } hostResourcesFailure)
             {
-                resourcePlan.Add(new ResourcePlanEntry(
-                    StepId: node.Id,
-                    Requirement: req,
-                    ProviderTypeName: instance.GetType().FullName
-                        ?? instance.GetType().Name));
+                return Refuse(
+                    DescribeProviderFault(
+                        node,
+                        instance,
+                        "HostResources",
+                        hostResourcesFailure,
+                        unwrappedIsProviderFault: true,
+                        resolvedSuiteDirectory));
+            }
+
+            // ── Resources (tolerant, GUARDED — issue #466) ────────────────────
+            // The try WRAPS THE foreach RATHER THAN THE CALL, and that is the whole point:
+            // ReflectResources hands back the provider's own IEnumerable, which for a C#
+            // iterator does not execute a line of its body until this loop pulls the first
+            // element. A try around the call alone would have caught nothing a real provider
+            // throws. Same channel, same reasoning, same unwrapped-is-the-provider's-fault
+            // reading as the host-resource guard above.
+            try
+            {
+                foreach (var req in ReflectResources(instance, model))
+                {
+                    resourcePlan.Add(new ResourcePlanEntry(
+                        StepId: node.Id,
+                        Requirement: req,
+                        ProviderTypeName: instance.GetType().FullName
+                            ?? instance.GetType().Name));
+                }
+            }
+            catch (Exception ex)
+            {
+                return Refuse(
+                    DescribeProviderFault(
+                        node,
+                        instance,
+                        "Resources",
+                        ex,
+                        unwrappedIsProviderFault: true,
+                        resolvedSuiteDirectory));
             }
 
             // ── Host resources (tolerant, S07-F-01a) ──────────────────────────
@@ -465,21 +574,74 @@ internal static class ProviderPipeline
                     Requirement: hostReq));
             }
 
-            // ── Compile references (tolerant) ─────────────────────────────────
-            if (instance is ICompileReferenceContributor cr)
+            // ── Compile references (tolerant, GUARDED — issue #466) ───────────
+            // THE FIFTH PROVIDER CALL IN THIS LOOP, and the one #466's own list does not name
+            // because it is not dispatched reflectively — it is a direct call on a provider's
+            // ICompileReferenceContributor. That distinction does not reach the failure mode:
+            // the code being entered is still the provider's, an escape still unwinds past
+            // Compile, and ParallelSuiteRunner's slot catch-all still classifies it as
+            // EnvironmentError → exit 0. Guarding the four reflective surfaces and leaving this
+            // one bare would close the hole for the members a provider declares through an
+            // interface method and leave it open for the one it declares through an interface
+            // PROPERTY, which is not a distinction anybody could defend afterwards.
+            //
+            // BOTH LINES INSIDE THE try ARE PROVIDER-REACHABLE. The property getter runs the
+            // provider's own code; and Assembly.Location raises NotSupportedException for a
+            // dynamic or single-file-bundled assembly, which is likewise the provider's choice
+            // of what to hand back. The enumerable may be lazy, so — exactly as for Resources
+            // above — the try wraps the foreach, not the property read.
+            try
             {
-                foreach (var asm in cr.CompileReferenceAssemblies)
+                if (instance is ICompileReferenceContributor cr)
                 {
-                    var loc = asm.Location;
-                    if (!string.IsNullOrEmpty(loc) && compileRefLocations.Add(loc))
+                    foreach (var asm in cr.CompileReferenceAssemblies)
                     {
-                        compileRefPaths.Add(loc);
+                        var loc = asm.Location;
+                        if (!string.IsNullOrEmpty(loc) && compileRefLocations.Add(loc))
+                        {
+                            compileRefPaths.Add(loc);
+                        }
                     }
                 }
             }
+            catch (Exception ex)
+            {
+                return Refuse(
+                    DescribeProviderFault(
+                        node,
+                        instance,
+                        "CompileReferenceAssemblies",
+                        ex,
+                        unwrappedIsProviderFault: true,
+                        resolvedSuiteDirectory));
+            }
 
-            // ── Emit ──────────────────────────────────────────────────────────
-            var fragment = ReflectEmit(instance, model, compileCtx);
+            // ── Emit (GUARDED — issue #466) ───────────────────────────────────
+            // The LAST reflective surface, and the one a provider is most likely to throw from
+            // in practice (Emit is where string composition, path resolution and model
+            // projection all happen). Same channel and same reasoning as the three above.
+            //
+            // IT IS NOT THE LAST PLACE PROVIDER CONTENT CAN FAIL THE COMPILE, and the guard
+            // around CsxAssembler.Assemble below is the other half: CsxFragment performs no
+            // constructor validation, so a fragment that breaks a §13.3.1 rule is built
+            // successfully HERE and refused THERE.
+            CsxFragment fragment;
+            try
+            {
+                fragment = ReflectEmit(instance, model, compileCtx);
+            }
+            catch (Exception ex)
+            {
+                return Refuse(
+                    DescribeProviderFault(
+                        node,
+                        instance,
+                        "Emit",
+                        ex,
+                        unwrappedIsProviderFault: false,
+                        resolvedSuiteDirectory));
+            }
+
             fragments.Add(new StepCompilePlan(
                 StepId: node.Id,
                 Fragment: fragment,
@@ -510,16 +672,18 @@ internal static class ProviderPipeline
                 .Distinct(StringComparer.Ordinal)
                 .OrderBy(k => k, StringComparer.Ordinal);
 
-            return new PipelineResult(
-                Assembled: null,
-                ResourcePlan: Array.Empty<ResourcePlanEntry>(),
-                CompileReferencePaths: Array.Empty<string>(),
-                HostResourcePlan: Array.Empty<HostResourcePlanEntry>(),
-                Failure: new ValidationFailure(
-                    $"host resource '{group.Key}' is declared by more than one kind " +
-                    $"({string.Join(", ", kinds)}). Each host-resource VarName must be claimed " +
-                    "by exactly one kind - a webhook listener and an OTLP receiver (or any two " +
-                    "distinct host-resource kinds) cannot share the same name. Rename one of them."));
+            // SCRUBBED for the reason the census in ScrubSuiteDirectory's remarks records:
+            // VarName and Kind come off a HostResourceRequirement the PROVIDER constructed.
+            // They are identifiers rather than free-form diagnostics, and nothing in tree puts
+            // a path in one - but nothing validates their shape beyond non-empty either, so
+            // this closes the category rather than the instance. The scrub is a targeted
+            // substitution and a no-op when the directory does not occur.
+            return Refuse(ScrubSuiteDirectory(
+                $"host resource '{group.Key}' is declared by more than one kind " +
+                $"({string.Join(", ", kinds)}). Each host-resource VarName must be claimed " +
+                "by exactly one kind - a webhook listener and an OTLP receiver (or any two " +
+                "distinct host-resource kinds) cannot share the same name. Rename one of them.",
+                resolvedSuiteDirectory));
         }
 
         // SUT configuration surface (point 3): ScenarioRunner ALSO stages a container-reachable
@@ -550,20 +714,44 @@ internal static class ProviderPipeline
             var containerVarName = varName + ScenarioRunner.ContainerVarSuffix;
             if (distinctListenerVarNames.Contains(containerVarName))
             {
-                return new PipelineResult(
-                    Assembled: null,
-                    ResourcePlan: Array.Empty<ResourcePlanEntry>(),
-                    CompileReferencePaths: Array.Empty<string>(),
-                    HostResourcePlan: Array.Empty<HostResourcePlanEntry>(),
-                    Failure: new ValidationFailure(
-                        $"host resource '{containerVarName}' collides with the engine-" +
-                        $"synthesised container-reachable alias of host resource '{varName}' (staged at " +
-                        $"'{varName}{ScenarioRunner.ContainerVarSuffix}'). Rename one of the two " +
-                        "host resources (webhook listeners / OTLP receivers) so the alias is unambiguous."));
+                // Scrubbed: same provider-supplied VarName provenance as the guard above.
+                return Refuse(ScrubSuiteDirectory(
+                    $"host resource '{containerVarName}' collides with the engine-" +
+                    $"synthesised container-reachable alias of host resource '{varName}' (staged at " +
+                    $"'{varName}{ScenarioRunner.ContainerVarSuffix}'). Rename one of the two " +
+                    "host resources (webhook listeners / OTLP receivers) so the alias is unambiguous.",
+                    resolvedSuiteDirectory));
             }
         }
 
-        var assembled = CsxAssembler.Assemble(fragments);
+        // ── CSX assembly (GUARDED — GATE-MAJOR-1, issue #466) ─────────────────────
+        // THE SIXTH ESCAPE ROUTE, and the one the six per-step guards above cannot reach.
+        // CsxAssembler.Assemble refuses provider-EMITTED content that breaks §13.3.1 — a
+        // RequiredUsings entry that is not a bare namespace, or two fragments declaring one
+        // helper class with different source text — and CsxFragment performs NO constructor
+        // validation, so the offending fragment is constructed cleanly inside the provider's
+        // own Emit and the Emit guard sees nothing. The CsxAssemblyException lands HERE, on
+        // this line, in the same frame as the six guards, and took the identical unguarded
+        // route to ParallelSuiteRunner's slot catch-all → EnvironmentError → exit 0. Nothing
+        // in src/ or tests/ catches CsxAssemblyException outside CsxAssembler itself, and this
+        // seam had never been exercised through Compile at all — only at the assembler's own
+        // unit level, where a throw is the asserted outcome rather than an escape.
+        //
+        // ATTRIBUTED TO THE SUITE, NOT GUESSED ONTO A STEP: see DescribeAssemblyFault, which
+        // records why the exception cannot name a fragment.
+        //
+        // Broad catch, for the reason DescribeProviderFault's remarks give for the six above:
+        // the alternative destination for anything that gets past this is the exit-0 path this
+        // whole issue closes.
+        AssembledScript assembled;
+        try
+        {
+            assembled = CsxAssembler.Assemble(fragments);
+        }
+        catch (Exception ex)
+        {
+            return Refuse(DescribeAssemblyFault(ex, resolvedSuiteDirectory));
+        }
 
         return new PipelineResult(
             Assembled: assembled,
@@ -732,6 +920,540 @@ internal static class ProviderPipeline
     }
 
     /// <summary>
+    /// Builds the standard "nothing could be compiled" <see cref="PipelineResult"/> around a
+    /// diagnostic message: no assembled script and no partial plan of any kind.
+    /// </summary>
+    /// <param name="message">The already-composed, already-scrubbed diagnostic.</param>
+    /// <remarks>
+    /// Extracted because <see cref="Compile"/> returns this exact nine-line shape from six
+    /// provider-fault sites and half a dozen guard sites, and six copies of one rule read as six
+    /// rules. Every failure return in this file discards the partially-built plan for the same
+    /// reason: the caller must not be handed a resource plan derived from a compile that never
+    /// finished.
+    /// </remarks>
+    private static PipelineResult Refuse(ValidationFailure failure) =>
+        new(Assembled: null,
+            ResourcePlan: Array.Empty<ResourcePlanEntry>(),
+            CompileReferencePaths: Array.Empty<string>(),
+            HostResourcePlan: Array.Empty<HostResourcePlanEntry>(),
+            Failure: failure);
+
+    /// <summary>
+    /// <see cref="Refuse(ValidationFailure)"/> for a plain message — an ordinary failure with
+    /// <see cref="ValidationFailure.IsSecurityPreflight"/> left <see langword="false"/>.
+    /// </summary>
+    /// <param name="message">The already-composed, already-scrubbed diagnostic.</param>
+    /// <remarks>
+    /// <para>
+    /// The <see cref="ValidationFailure"/> overload above exists so the FOUR sites that already
+    /// HOLD a failure object — the two security preflights, the registry lookup, and the
+    /// host-resource/service collision (<see cref="BuildProjectContext"/>'s <c>out</c>
+    /// parameter is typed <see cref="ValidationFailure"/>, so it binds that overload too) —
+    /// pass it through intact instead of rebuilding it from its <c>Message</c>. Overload
+    /// resolution already sends each site to the right one; this is descriptive, not a rule the
+    /// call sites have to remember.
+    /// </para>
+    /// <para>
+    /// <strong>WHY, STATED IN THE RIGHT TENSE.</strong> The only field a rebuild would lose is
+    /// <see cref="ValidationFailure.IsSecurityPreflight"/>, and that flag has <em>no production
+    /// consumer today</em> — MEASURED: <c>grep -rn "IsSecurityPreflight" src/</c> finds writers,
+    /// this declaration, and comments, and nothing that reads it.
+    /// <c>ExitCodes.FromVerdict</c> keys REQ-018 on <c>securityAssurance?.Unconfirmed</c>, never
+    /// on this flag, and <c>ScenarioRunner.RunPreTopologyAuthoringDoor</c> discards the record
+    /// and returns a plain string. The flag's own remarks name PR D as the intended consumer;
+    /// that wiring does not exist. An earlier revision of THIS remark asserted the overload
+    /// "protects the marker REQ-018's exit-code decision keys on" — present tense, and false.
+    /// </para>
+    /// <para>
+    /// The shape still stands on its own terms: preserving the identity of a record you were
+    /// handed is the correct default, and rebuilding it from one field would be the wrong one
+    /// on the day a consumer does land — which is exactly when nobody would be looking. That is
+    /// a smaller claim than the one it replaces, and it is the true one.
+    /// </para>
+    /// </remarks>
+    private static PipelineResult Refuse(string message) =>
+        Refuse(new ValidationFailure(message));
+
+    /// <summary>
+    /// Replaces every occurrence of the resolved suite directory in free-form diagnostic text
+    /// with the literal words <c>the suite directory</c> — in both the raw spelling and the
+    /// JSON-escaped one (SEC-MAJOR-1, issue #466).
+    /// </summary>
+    /// <param name="text">The exception message as the provider (or the BCL) wrote it.</param>
+    /// <param name="resolvedSuiteDirectory">
+    /// The absolute host directory <see cref="Compile"/> resolves this scenario's relative
+    /// paths against — the value already in scope for the whole of Pass 2.
+    /// </param>
+    /// <remarks>
+    /// <para>
+    /// <strong>Why this is needed at all, given the scrub chokepoint downstream.</strong> This
+    /// message reaches <c>ScenarioCompletedEvent.Message</c>, and from there the §14 event
+    /// stream, the <c>--events</c> artifact, the JUnit <c>message</c> attribute and the HTML
+    /// report — every one archived and uploaded. It does pass <c>ScenarioRunner</c>'s scrub
+    /// chokepoint, and the two nets there run in the right order, but neither can help: this
+    /// door runs PRE-TOPOLOGY, and <c>SecurityPathDisclosureLedger</c> is populated only at
+    /// topology-build time by <c>SecurityConfigurationAccessor</c> — so both ledgers are empty
+    /// by construction here, and that ledger only ever holds security-material paths in any
+    /// case. As <c>ScriptCsharpProvider</c> puts it for the same class of leak: a net cannot
+    /// replace what was never recorded into it.
+    /// </para>
+    /// <para>
+    /// <strong>The route is live and in-tree.</strong> <c>ScriptCsharpProvider.Emit</c> reads
+    /// <c>File.ReadAllText(Path.GetFullPath(Path.Combine(ctx.SuiteDirectory, model.File)))</c>
+    /// and its own comment accepts the TOCTOU race against <c>Validate</c>'s existence check. A
+    /// file deleted in that window yields <c>Could not find file 'D:\…\suite\x.csx'.</c> — a BCL
+    /// message carrying the absolute host path, straight into the guard this scrub protects.
+    /// </para>
+    /// <para>
+    /// <strong>Substitution, not redaction, and the wording is not new.</strong> Naming the
+    /// CONCEPT the path resolves against keeps a relative path diagnosable while disclosing
+    /// nothing about the host's layout. <c>EnvironmentSecurityValidator</c> ("resolves outside
+    /// the suite directory") and <c>ScriptCsharpProvider</c> ("relative to the suite directory")
+    /// already write exactly this phrase for exactly this reason (#357), and
+    /// <see cref="SecurityPathDisclosureLedger"/> chose substitution over <c>[REDACTED]</c> on
+    /// the same argument.
+    /// </para>
+    /// <para>
+    /// <strong>Both spellings, and the escaped one first.</strong> A provider message that
+    /// embeds serialised JSON carries the path with doubled separators
+    /// (<c>D:\\src\\…</c>), which a raw-only match does not see — and which any consumer of the
+    /// on-disk <c>--events</c> artifact recovers by JSON-decoding. That bypass has shipped once
+    /// already; <see cref="SecurityPathDisclosureLedger"/>'s own remarks record it. The escaped
+    /// form is replaced first because it is the longer, more specific one; the two cannot in
+    /// fact overlap (the raw form is not a substring of the escaped form — <c>D:\s</c> does not
+    /// occur inside <c>D:\\s</c>), so the order is defensive rather than load-bearing.
+    /// </para>
+    /// <para>
+    /// <strong>THE FULL CENSUS OF WHAT REACHES A <see cref="ValidationFailure"/> IN THIS FILE,
+    /// so the next reviewer does not have to re-derive it.</strong> Every construction site was
+    /// classified by the PROVENANCE of each value it interpolates. Routed through this scrub:
+    /// the six <see cref="DescribeProviderFault"/> sites and
+    /// <see cref="DescribeAssemblyFault"/> (a provider's exception message);
+    /// <see cref="Compile"/>'s model-validation failure (<c>ValidationResult.Errors</c> —
+    /// free-form provider-authored text, the same category as an exception message and on the
+    /// same channel); and the three sites that interpolate a
+    /// <see cref="HostResourceRequirement"/>'s <c>VarName</c>/<c>Kind</c> (two in
+    /// <see cref="Compile"/>'s collision guards, one in
+    /// <see cref="BuildProjectContext"/>) — identifiers rather than diagnostics, and nothing
+    /// in tree puts a path in one, but nothing validates their shape beyond non-empty either.
+    /// Deliberately NOT routed, because no value they interpolate is provider-authored:
+    /// <c>EnvironmentSecurityValidator</c>'s and <c>SecurityProfileWiringValidator</c>'s own
+    /// failures; <c>SuiteProtocolTargets.DescribeProtocolConflict</c>; the registry-lookup
+    /// internal error (<c>node.CanonicalType</c>); and <see cref="BuildProjectContext"/>'s
+    /// other two collision messages, which interpolate
+    /// <c>environment.services</c>/<c>environment.dependencies</c> map keys and engine-composed
+    /// owner text only.
+    /// </para>
+    /// <para>
+    /// <strong>ONE OF THOSE DOES QUOTE THE SUITE DIRECTORY, AND IT IS A DELIBERATE EXCEPTION
+    /// RATHER THAN AN OVERSIGHT — do not "fix" it.</strong>
+    /// <c>EnvironmentSecurityValidator</c>'s malformed-base-directory guard writes
+    /// <c>suite directory '&lt;suiteDirectory&gt;' is not a valid path (&lt;ex.Message&gt;)</c>
+    /// and reaches the archived stream unscrubbed. The census's governing reason still holds —
+    /// both values are engine- and BCL-supplied, neither is provider-authored — and the message
+    /// is exempt on its own terms: its entire SUBJECT is that the suite directory is malformed,
+    /// so substituting the words "the suite directory" for it would produce the tautology
+    /// <c>suite directory 'the suite directory' is not a valid path</c> and leave the author
+    /// nothing to correct. Note also that #357's no-resolved-path rule is stated inside that
+    /// file against the two containment/existence messages that FOLLOW it; that guard sits
+    /// above it and is not one of them. An earlier revision of this census claimed those
+    /// failures were "already bound by #357's rule at their own sites", which was false for
+    /// this one.
+    /// </para>
+    /// <para>
+    /// <strong>RESIDUAL, stated rather than implied: a path OUTSIDE the suite directory is NOT
+    /// handled.</strong> A provider that names a temp file, a NuGet cache entry, a home
+    /// directory or any other absolute path still discloses it verbatim. This scrub closes the
+    /// one path the engine itself computed and handed the provider; it is not a general
+    /// path-disclosure net, and there is no general one to reach for here — the ledger that
+    /// would be the candidate is empty at this stage and scoped to security material anyway.
+    /// The comparison is <see cref="StringComparison.Ordinal"/>, matching
+    /// <see cref="SecurityPathDisclosureLedger"/>'s, so a differently-cased spelling of the same
+    /// directory on a case-insensitive filesystem is likewise unhandled; in practice the path in
+    /// the message is the one the engine composed from this same string.
+    /// </para>
+    /// <para>
+    /// <strong>NO PATH-BOUNDARY CHECK, AND THAT IS A DECISION RATHER THAN AN OMISSION.</strong>
+    /// The replace is an unbounded substring match, so a suite at <c>D:\a\suite</c> rewrites a
+    /// diagnostic's mention of the SIBLING <c>D:\a\suite-backup\x.json</c> into
+    /// <c>the suite directory-backup\x.json</c> — a misnamed path. Not fixed, on the severity
+    /// reasoning <see cref="SecurityPathDisclosureLedger"/> already wrote for its own
+    /// substitution and which applies here verbatim: the substitution only ever makes text
+    /// SHORTER and LESS specific, so the failure mode is a misnamed path in a diagnostic and
+    /// never a disclosure. The direction of the error is the safe one.
+    /// </para>
+    /// <para>
+    /// The ledger's own single-pass longest-first scan is NOT the precedent to copy here, and
+    /// the distinction matters: it solves a MULTI-FORM problem (a replacement containing a later
+    /// form's recorded string, so a second pass rewrites text the first pass produced), and this
+    /// method has exactly one form and cannot have that fault. What would be needed here instead
+    /// is a boundary predicate — "the character after the match is a separator, or a quote, or a
+    /// space, or end-of-input" — which has to be right in the JSON-ESCAPED spelling too, where
+    /// the separator is doubled. That is a bespoke character-class scanner inside a
+    /// security-relevant function, traded against a cosmetic defect whose worst outcome is a
+    /// confusing filename. Revisit if a real diagnostic is ever observed to be mangled this way.
+    /// </para>
+    /// <para>
+    /// <strong>AND A SUITE DIRECTORY THAT IS ITSELF A FILESYSTEM ROOT IS DELIBERATELY NOT
+    /// SUBSTITUTED</strong> — see the guard's own comment for why replacing <c>/</c> or
+    /// <c>C:\</c> would corrupt the diagnostic rather than protect it. The rule is "the
+    /// directory equals its own root", so it also covers a bare UNC share
+    /// (<c>\\server\share</c>); a share name IS a host fact, so that one is a real if narrow
+    /// residual, accepted because a suite rooted at a share root is not a shape the engine has
+    /// any other reason to expect.
+    /// </para>
+    /// </remarks>
+    private static string ScrubSuiteDirectory(string text, string resolvedSuiteDirectory)
+    {
+        if (string.IsNullOrEmpty(text) || string.IsNullOrEmpty(resolvedSuiteDirectory))
+        {
+            return text;
+        }
+
+        // REFUSE TO SUBSTITUTE A FILESYSTEM ROOT. A suite run from `/` or `C:\` would make this
+        // a search-and-replace for one or three characters that occur in every path, every URL
+        // and most punctuation in the diagnostic - the substitution would corrupt the message
+        // far worse than the disclosure it is removing, and `/` in particular appears in text
+        // that has nothing to do with the filesystem. A root also discloses nothing: it is not
+        // a fact about the host worth hiding. `IsNullOrEmpty` above does not cover this, since
+        // a root is a perfectly ordinary non-empty path string.
+        if (Path.GetPathRoot(resolvedSuiteDirectory) is { } root
+            && string.Equals(
+                root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+                resolvedSuiteDirectory.TrimEnd(
+                    Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+                StringComparison.Ordinal))
+        {
+            return text;
+        }
+
+        const string Concept = "the suite directory";
+
+        var escaped = JavaScriptEncoder.Default.Encode(resolvedSuiteDirectory);
+        var scrubbed = string.Equals(escaped, resolvedSuiteDirectory, StringComparison.Ordinal)
+            ? text
+            : text.Replace(escaped, Concept, StringComparison.Ordinal);
+
+        return scrubbed.Replace(resolvedSuiteDirectory, Concept, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The ONE spelling of the diagnostic every guarded provider call reports (issue #466):
+    /// the five reflective surfaces <c>Bind</c>, <c>Validate</c>, <c>Resources</c>,
+    /// <c>HostResources</c> and <c>Emit</c>, plus the directly-called
+    /// <c>ICompileReferenceContributor.CompileReferenceAssemblies</c>.
+    /// </summary>
+    /// <param name="node">The step whose provider threw.</param>
+    /// <param name="instance">The provider instance, for its <see cref="Type.FullName"/>.</param>
+    /// <param name="member">
+    /// The member that threw, spelled exactly as the provider author declares it (<c>Bind</c> /
+    /// <c>Validate</c> / <c>Resources</c> / <c>HostResources</c> / <c>Emit</c> /
+    /// <c>CompileReferenceAssemblies</c>).
+    /// </param>
+    /// <param name="ex">The exception as caught, wrapper and all.</param>
+    /// <param name="unwrappedIsProviderFault">
+    /// How to read an exception that is NOT a <see cref="TargetInvocationException"/>, and the
+    /// answer differs by surface rather than being a caller preference:
+    /// <list type="bullet">
+    /// <item><description>
+    /// <see langword="false"/> for <c>Bind</c>/<c>Validate</c>/<c>Emit</c>. Those three resolve
+    /// the closed generic interface and the <see cref="MethodInfo"/> through
+    /// <see cref="FindGenericInterface"/> BEFORE invoking anything, so an unwrapped throw came
+    /// from the engine's own plumbing and blaming the provider would send a reader to read a
+    /// method that never ran.
+    /// </description></item>
+    /// <item><description>
+    /// <see langword="true"/> for <c>Resources</c>/<c>HostResources</c>. Both are TOLERANT of a
+    /// missing interface (they return an empty sequence rather than throwing) and both return a
+    /// possibly-LAZY <see cref="IEnumerable{T}"/>, so the provider's iterator body runs during
+    /// the caller's enumeration — long after <see cref="MethodInfo.Invoke"/> returned, with no
+    /// wrapper to unwrap. An unwrapped throw there IS the provider's own.
+    /// </description></item>
+    /// <item><description>
+    /// <see langword="true"/> for <c>CompileReferenceAssemblies</c>. It is not dispatched
+    /// reflectively at all — a direct interface PROPERTY read — so there is never a wrapper, and
+    /// both the getter and the <c>Assembly.Location</c> read the engine performs on what it
+    /// returns are the provider's own choices.
+    /// </description></item>
+    /// </list>
+    /// </param>
+    /// <param name="resolvedSuiteDirectory">
+    /// Threaded through to <see cref="ScrubSuiteDirectory"/>; see that method for why the
+    /// exception's message cannot be spliced verbatim.
+    /// </param>
+    /// <returns>
+    /// A message naming the step id, the canonical step type, the provider type's full name,
+    /// the member, and the originating exception's own type and (scrubbed) message — enough to
+    /// identify the broken provider from CI output alone, without a debugger.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// Only <see cref="TargetInvocationException"/> is unwrapped, and only one level, because
+    /// that wrapper is the only one the engine itself introduces. The provider's OWN inner
+    /// chain below that point is then WALKED and appended (see
+    /// <see cref="DescribeCauseChain"/>): a provider that wraps its real failure —
+    /// <c>InvalidOperationException("save failed", inner: SocketException)</c> — otherwise
+    /// reported nothing but "save failed", which names the symptom and hides the cause.
+    /// </para>
+    /// <para>
+    /// <strong>THE STACK IS STILL DROPPED, and on a §17 argument rather than a convenience
+    /// one.</strong> A stack trace carries PDB source paths — the build machine's directory
+    /// layout, not merely this run's suite directory — into the same archived artefacts
+    /// <see cref="ScrubSuiteDirectory"/> exists to protect, and no scrub in this engine covers
+    /// them. Inner-exception MESSAGES carry no such risk: they are the same category as the
+    /// outer message and go through the same scrub, message by message.
+    /// </para>
+    /// <para>
+    /// <strong>THE ATTRIBUTION SENTENCE IS CONDITIONED ON THE TYPE, because the catches that
+    /// feed it are deliberately unfiltered.</strong> Three arms, in order of how confidently
+    /// blame can be assigned:
+    /// <list type="bullet">
+    /// <item><description>
+    /// <see cref="IsHostCondition"/> — <see cref="OutOfMemoryException"/> /
+    /// <see cref="OperationCanceledException"/>: a process- or host-level condition that can
+    /// surface through ANY frame.
+    /// </description></item>
+    /// <item><description>
+    /// <see cref="IsEnvironmentalCondition"/> — the filesystem family: reported as a filesystem
+    /// condition that MAY be a provider defect or may be the host's or the author's. This arm is
+    /// not hypothetical: the single most likely production trigger of the <c>Emit</c> guard is
+    /// <c>ScriptCsharpProvider.Emit</c>'s accepted TOCTOU race against its own <c>Validate</c>
+    /// existence check, so a <c>.csx</c> deleted, locked by antivirus, or on an unreadable share
+    /// produces a <see cref="FileNotFoundException"/> here — and telling the author that
+    /// <c>Vouchfx.Steps.Script.Csharp.ScriptCsharpProvider</c> is defective would be both false
+    /// and an accusation against a Core provider.
+    /// </description></item>
+    /// <item><description>
+    /// Everything else keeps the strong, actionable claim, which is the whole value of the
+    /// diagnostic for the ordinary case.
+    /// </description></item>
+    /// </list>
+    /// The two conditional arms are SIBLINGS rather than one widened predicate: they say
+    /// different things, and a filesystem fault is a materially different investigation from an
+    /// OOM.
+    /// </para>
+    /// <para>
+    /// <strong>Why the catches stay broad here while
+    /// <c>ScenarioRunner.HashFixtureOrNull</c>'s is deliberately narrow — the two are not in
+    /// conflict, and the reason is the COST OF OVER-CATCHING, not the destination.</strong> An
+    /// earlier revision of this paragraph headlined it as "the escape destinations differ",
+    /// which is false: an exception escaping EITHER guard reaches <c>ParallelSuiteRunner</c>'s
+    /// slot catch-all and can exit 0. What differs is what an over-broad catch COSTS. Here it
+    /// costs a slightly over-confident sentence — mitigated by the three arms above — while
+    /// catching too little costs the green build this issue exists to prevent. There it is
+    /// recorded as a null content hash in the reproducibility envelope and the run CONTINUES,
+    /// so an over-broad catch silently corrupts a trust artefact rather than mis-wording a
+    /// refusal that was going to stop the run anyway. Broad plus careful wording here; narrow
+    /// and named there.
+    /// </para>
+    /// <para>
+    /// This is the CANONICAL statement of that trade. <c>ScenarioRunner.HashFixtureOrNull</c>
+    /// points here rather than restating it — two independently-maintained copies of one
+    /// argument is the prose-drift class this repository treats as a defect, and this branch's
+    /// own history is that the second copy is the one that goes stale.
+    /// </para>
+    /// </remarks>
+    private static string DescribeProviderFault(
+        Vouchfx.Engine.Authoring.Ast.StepNode node,
+        IStepProvider instance,
+        string member,
+        Exception ex,
+        bool unwrappedIsProviderFault,
+        string resolvedSuiteDirectory)
+    {
+        var providerTypeName = instance.GetType().FullName ?? instance.GetType().Name;
+
+        var cause = ex is TargetInvocationException { InnerException: { } inner } ? inner : ex;
+        var providerFault = ex is TargetInvocationException || unwrappedIsProviderFault;
+        var causeText = DescribeCauseChain(cause, resolvedSuiteDirectory);
+
+        if (!providerFault)
+        {
+            // NOT "the provider is fine, the engine is broken". This arm covers the reflective
+            // plumbing failing BEFORE a provider's method body runs, and most of what reaches
+            // it is the PROVIDER's doing: ReflectValidate/ReflectEmit's own "returned null for
+            // provider 'X'", an InvalidCastException from a member declared with the wrong
+            // return type, FindGenericInterface's "does not implement the required generic
+            // interface". Those are provider defects that happen to be detected by the engine
+            // rather than thrown from inside the provider. What the arm really says is WHERE
+            // the fault was detected and that the suite is not at fault; the quoted cause text
+            // is what tells the reader which of the two it is.
+            return $"step '{node.Id}': the engine could not invoke {member} on the "
+                + $"'{node.CanonicalType}' provider ({providerTypeName}) "
+                + $"({cause.GetType().Name}: {causeText}).  The fault is in the provider or in "
+                + "how it is packaged, or in the engine's own dispatch - not in the suite. Read "
+                + "the message above to tell which. The step was never compiled and never ran.";
+        }
+
+        string attribution;
+        if (IsHostCondition(cause))
+        {
+            attribution = $"{cause.GetType().Name} is a process- or host-level condition rather "
+                + $"than necessarily a defect in the provider ({providerTypeName}) - it can be "
+                + "raised through any frame. The step was never compiled and never ran.";
+        }
+        else if (IsEnvironmentalCondition(cause))
+        {
+            attribution = $"{cause.GetType().Name} is a filesystem condition: it may be a defect "
+                + $"in the provider ({providerTypeName}), or it may be the host's or the "
+                + "suite's - a file removed, locked or unreadable while the step was being "
+                + "compiled produces exactly this. The step was never compiled and never ran.";
+        }
+        else
+        {
+            attribution = $"This is a defect in the provider ({providerTypeName}), not in the "
+                + "suite - the step was never compiled and never ran.";
+        }
+
+        return $"step '{node.Id}': the '{node.CanonicalType}' provider's {member} threw "
+            + $"{cause.GetType().Name}: {causeText}  {attribution}";
+    }
+
+    /// <summary>
+    /// Renders <paramref name="cause"/>'s message followed by its inner-exception chain, each
+    /// message scrubbed, to a bounded depth.
+    /// </summary>
+    /// <param name="cause">The exception the engine decided to blame, already unwrapped once.</param>
+    /// <param name="resolvedSuiteDirectory">Passed to <see cref="ScrubSuiteDirectory"/> per link.</param>
+    /// <remarks>
+    /// <para>
+    /// <strong>THE BOUND IS FOUR LINKS, AND IT IS A BOUND ON THE DIAGNOSTIC, NOT ON THE
+    /// EXCEPTION.</strong> Three reasons to have one at all: a chain is attacker-influenced in
+    /// the sense that a provider composes it, this text lands in an archived artefact and a
+    /// JUnit XML attribute where an unbounded string is a denial-of-service on the reader and
+    /// on the renderer, and <see cref="AggregateException"/>-shaped or self-referential chains
+    /// exist. Four is chosen because the shape this exists for — a provider's own wrapper over
+    /// a client library's wrapper over the real transport fault — is three deep, so four leaves
+    /// one link of headroom without inviting a wall of text.
+    /// </para>
+    /// <para>
+    /// A chain truncated by the bound says so explicitly rather than trailing off, so a reader
+    /// who needs the rest knows there IS a rest. Each link is scrubbed individually: a nested
+    /// message quotes a path exactly as readily as the outer one does.
+    /// </para>
+    /// </remarks>
+    private static string DescribeCauseChain(Exception cause, string resolvedSuiteDirectory)
+    {
+        const int MaxLinks = 4;
+
+        var text = ScrubSuiteDirectory(cause.Message, resolvedSuiteDirectory);
+        var inner = cause.InnerException;
+        var depth = 1;
+
+        while (inner is not null && depth < MaxLinks)
+        {
+            text += $" -> {inner.GetType().Name}: "
+                + ScrubSuiteDirectory(inner.Message, resolvedSuiteDirectory);
+            inner = inner.InnerException;
+            depth++;
+        }
+
+        if (inner is not null)
+        {
+            text += " -> (inner exception chain truncated)";
+        }
+
+        return text;
+    }
+
+    /// <summary>
+    /// The suite-level counterpart of <see cref="DescribeProviderFault"/>, for a failure of
+    /// <see cref="CsxAssembler.Assemble"/> over the fragments the providers emitted
+    /// (GATE-MAJOR-1, issue #466).
+    /// </summary>
+    /// <param name="ex">The exception <c>Assemble</c> threw.</param>
+    /// <param name="resolvedSuiteDirectory">Threaded to <see cref="ScrubSuiteDirectory"/>.</param>
+    /// <remarks>
+    /// <para>
+    /// <strong>ATTRIBUTED TO THE SUITE, NOT TO A STEP, AND THAT IS A LIMITATION OF THE
+    /// EXCEPTION RATHER THAN A CHOICE.</strong> <see cref="CsxAssemblyException"/> carries a
+    /// message and nothing else, and neither of its two throw sites records which fragment was
+    /// at fault: the helper-collision site names the CLASS declared twice, and the bare-namespace
+    /// site names the offending <c>RequiredUsings</c> ENTRY. Guessing a step from either would be
+    /// a confident wrong answer of exactly the kind <c>BindAllSteps</c>' own R-1 remark documents
+    /// the cost of. The entry or class name the exception does carry is spliced through, so the
+    /// author still has the string to grep their providers for.
+    /// </para>
+    /// <para>
+    /// <strong>Why this seam needed a guard at all.</strong> It is provider-EMITTED content
+    /// failing a §13.3.1 rule — a <c>RequiredUsings</c> entry that is not a bare namespace, or
+    /// two fragments declaring one helper class with different source text — and
+    /// <c>CsxFragment</c> performs no constructor validation, so the fragment is built cleanly
+    /// inside <c>Emit</c> and the Emit guard cannot see it. The throw lands at the
+    /// <c>Assemble</c> call and took the identical route to exit 0 that the six per-step guards
+    /// close. Nothing in <c>src/</c> or <c>tests/</c> catches
+    /// <see cref="CsxAssemblyException"/> outside <c>CsxAssembler</c> itself, and it had never
+    /// been exercised through <see cref="Compile"/>.
+    /// </para>
+    /// </remarks>
+    private static string DescribeAssemblyFault(Exception ex, string resolvedSuiteDirectory)
+    {
+        var causeText = DescribeCauseChain(ex, resolvedSuiteDirectory);
+
+        return ex is CsxAssemblyException
+            ? "suite CSX assembly failed: one of this suite's providers emitted a CsxFragment "
+                + $"the assembler refused ({ex.GetType().Name}: {causeText}).  This is a defect "
+                + "in a provider, not in the suite. The exception does not identify which "
+                + "fragment, so no step is named - nothing was compiled and no step ran."
+            : "suite CSX assembly failed: the engine could not assemble the emitted fragments "
+                + $"({ex.GetType().Name}: {causeText}).  Nothing was compiled and no step ran.";
+    }
+
+    /// <summary>
+    /// <see langword="true"/> for the exception types that can be raised through ANY frame and
+    /// are therefore never, on their own, evidence that the frame they surfaced in is defective.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately a short, named list rather than a heuristic.
+    /// <see cref="OutOfMemoryException"/> covers <see cref="InsufficientMemoryException"/>, and
+    /// <see cref="OperationCanceledException"/> covers
+    /// <see cref="System.Threading.Tasks.TaskCanceledException"/>. <c>StackOverflowException</c>
+    /// is absent because it cannot be caught at all on .NET Core, so listing it would suggest a
+    /// coverage this method does not have.
+    /// </remarks>
+    private static bool IsHostCondition(Exception cause) =>
+        cause is OutOfMemoryException or OperationCanceledException;
+
+    /// <summary>
+    /// <see langword="true"/> for the filesystem family — an exception that may equally be a
+    /// provider defect, a host condition, or the suite's own doing, so the diagnostic must not
+    /// pick one.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>A SIBLING OF <see cref="IsHostCondition"/>, NOT A WIDENING OF IT.</strong> The two
+    /// produce different sentences because they describe different investigations: an
+    /// <see cref="OutOfMemoryException"/> tells an author to look at the host, a
+    /// <see cref="FileNotFoundException"/> tells them to look at a file — which might be the
+    /// provider's bug, their own missing fixture, or an antivirus scanner holding a lock. Folding
+    /// the filesystem family into <see cref="IsHostCondition"/> would have made both read as
+    /// "process- or host-level", which is wrong for the second.
+    /// </para>
+    /// <para>
+    /// <strong>The most likely production trigger of the <c>Emit</c> guard is in this family.</strong>
+    /// <c>ScriptCsharpProvider.Emit</c> reads its <c>file:</c> reference with
+    /// <c>File.ReadAllText</c> and its own comment accepts the TOCTOU race against the existence
+    /// check <c>Validate</c> performed earlier; the test double
+    /// <c>StubSuitePathLeakingEmitProvider</c> models that route verbatim. Without this arm a
+    /// deleted or locked <c>.csx</c> produced "This is a defect in the provider
+    /// (Vouchfx.Steps.Script.Csharp.ScriptCsharpProvider)" — false, and an accusation against a
+    /// Core provider.
+    /// </para>
+    /// <para>
+    /// <see cref="IOException"/> is matched by base type deliberately, so
+    /// <see cref="FileNotFoundException"/>, <see cref="DirectoryNotFoundException"/>,
+    /// <see cref="PathTooLongException"/> and the rest of the family come with it;
+    /// <see cref="UnauthorizedAccessException"/> is named separately because it does not derive
+    /// from <see cref="IOException"/>. Note the contrast with
+    /// <c>ScenarioRunner.HashFixtureOrNull</c>'s catch filter, which enumerates a similar family
+    /// for a different purpose: there the set decides WHETHER to swallow, here it decides only
+    /// what the message SAYS.
+    /// </para>
+    /// </remarks>
+    private static bool IsEnvironmentalCondition(Exception cause) =>
+        cause is IOException or UnauthorizedAccessException;
+
+    /// <summary>
     /// Pass 1 of <see cref="Compile"/> (M5 fix, fix round 2): binds every step in
     /// <paramref name="ast"/> exactly ONCE, materialising each one's
     /// <see cref="IHostResourceContributor{TModel}"/> contribution alongside the model, and
@@ -764,7 +1486,7 @@ internal static class ProviderPipeline
     /// but WRONG "unknown target" diagnostic — naming the targeting step, not the one whose
     /// <c>HostResources()</c> actually threw — because Pass 2 returns on the FIRST failing
     /// step's <see cref="ValidationResult"/>, in step order, before the later, declaring
-    /// step's own <see cref="BoundStep.HostResourcesFailure"/> is ever rethrown. This is
+    /// step's own <see cref="BoundStep.HostResourcesFailure"/> is ever reported. This is
     /// accepted, not fixed: the alternative (propagate immediately, the pre-G-A behaviour)
     /// reintroduces the ORIGINAL bug G-A exists to prevent — a community provider's own
     /// model-shaped bug that its OWN <c>Validate</c> could have explained cleanly instead
@@ -784,8 +1506,17 @@ internal static class ProviderPipeline
     /// In both cases the bound-steps list is incomplete and must not be used, mirroring every
     /// other early-return failure in this file.
     /// </returns>
+    /// <param name="ast">The normalised scenario AST.</param>
+    /// <param name="registry">The frozen provider registry.</param>
+    /// <param name="resolvedSuiteDirectory">
+    /// The absolute host directory this scenario's relative paths resolve against, threaded in
+    /// solely so a throwing <c>Bind</c>'s message can have it substituted out before it reaches
+    /// an archived artefact (SEC-MAJOR-1 — see <see cref="ScrubSuiteDirectory"/>). REQUIRED
+    /// rather than defaulted: an optional parameter here would let a future caller silently opt
+    /// out of a disclosure scrub, which is the one kind of default this file should not offer.
+    /// </param>
     internal static (List<BoundStep> BoundSteps, ValidationFailure? RegistryFailure) BindAllSteps(
-        ScenarioAst ast, StepKindRegistry registry)
+        ScenarioAst ast, StepKindRegistry registry, string resolvedSuiteDirectory)
     {
         var boundSteps = new List<BoundStep>(ast.Steps.Count);
         foreach (var node in ast.Steps)
@@ -836,10 +1567,17 @@ internal static class ProviderPipeline
             // THE CATCH IS DELIBERATELY UNFILTERED, including OperationCanceledException, and that
             // differs from RunCommand's own backstop for a reason rather than by accident: no
             // cancellation token reaches IStepBinder<T>.Bind — the v1 contract passes a YamlNode
-            // and an IBindingContext and nothing else — so a cancellation raised in here is not a
-            // stop anybody requested, it is a provider doing something odd, and it is a compile-
-            // time defect like any other. RunCommand's frame DOES receive a token and must tell a
-            // user stop from a timeout; this one has no such distinction to make.
+            // and an IBindingContext and nothing else — so a cancellation surfacing in here is
+            // not a stop anybody requested, and there is nothing for a filter to preserve.
+            // RunCommand's frame DOES receive a token and must tell a user stop from a timeout;
+            // this one has no such distinction to make.
+            //
+            // WHAT THAT ARGUMENT DOES NOT ESTABLISH is whose fault the cancellation is. "The
+            // engine passed no token" bounds what was REQUESTED; a provider holding its own CTS,
+            // or an HttpClient default timeout arriving as TaskCanceledException (an
+            // OperationCanceledException), is neither a requested stop nor evidence of a defect.
+            // The diagnostic's ATTRIBUTION is DescribeProviderFault's job, and IsHostCondition
+            // is where OperationCanceledException is given a sentence that is true of it.
             //
             // ORDERING IS UNCHANGED: this returns on the FIRST throwing step, in step order,
             // exactly where the propagation used to unwind from.
@@ -861,16 +1599,20 @@ internal static class ProviderPipeline
                 // an invocation". Both map to the same ValidationFailure channel and the same
                 // Inconclusive verdict — what differs is only which component the diagnostic
                 // blames, which is the whole value of a diagnostic here.
-                var failure = ex is TargetInvocationException { InnerException: { } cause }
-                    ? $"step '{node.Id}': the '{node.CanonicalType}' provider's Bind threw "
-                        + $"{cause.GetType().Name}: {cause.Message}  This is a defect in the "
-                        + "provider, not in the suite - the step was never compiled and never ran."
-                    : $"step '{node.Id}': the engine could not invoke Bind on the "
-                        + $"'{node.CanonicalType}' provider ({ex.GetType().Name}: {ex.Message}).  "
-                        + "This is an engine or provider-packaging fault, not a fault in the suite "
-                        + "- the step was never compiled and never ran.";
-
-                return (boundSteps, new ValidationFailure(failure));
+                //
+                // The two-armed wording moved into DescribeProviderFault when issue #466 gave the
+                // other five provider calls the same guard: SIX call sites, one spelling.
+                // `unwrappedIsProviderFault: false` is the Bind/Validate/Emit reading of an
+                // UNWRAPPED exception — those three go through FindGenericInterface first, so an
+                // unwrapped throw is engine plumbing.
+                return (boundSteps, new ValidationFailure(
+                    DescribeProviderFault(
+                        node,
+                        instance,
+                        "Bind",
+                        ex,
+                        unwrappedIsProviderFault: false,
+                        resolvedSuiteDirectory)));
             }
 
             // ── Host resources (tolerant, S07-F-01a) — GUARDED and DEFERRED (G-A,
@@ -882,13 +1624,15 @@ internal static class ProviderPipeline
             // whole compile before a community provider's OWN Validate ever got a chance to
             // turn whatever invalid model condition triggered the throw into a clean,
             // located diagnostic instead of a raw reflection exception. The exception is
-            // captured onto this step's BoundStep and rethrown by Compile's Pass 2,
+            // captured onto this step's BoundStep and reported by Compile's Pass 2,
             // immediately after THAT step's own Validate has run (see BoundStep.
             // HostResourcesFailure's own remarks) — so a bad model that Validate can
-            // explain never even reaches this rethrow, and only a genuine HostResources bug
-            // Validate does NOT already cover surfaces as the raw exception it always was. ──
+            // explain never even reaches that point, and only a genuine HostResources bug
+            // Validate does NOT already cover surfaces there, as a ValidationFailure naming
+            // the provider (issue #466 changed the terminal shape from a rethrow; the
+            // POSITION, after this step's own Validate, is G-A's and is unchanged). ──
             List<HostResourceRequirement> hostResources;
-            System.Runtime.ExceptionServices.ExceptionDispatchInfo? hostResourcesFailure = null;
+            Exception? hostResourcesFailure = null;
             try
             {
                 hostResources = ReflectHostResources(instance, model).ToList();
@@ -896,7 +1640,7 @@ internal static class ProviderPipeline
             catch (Exception ex)
             {
                 hostResources = new List<HostResourceRequirement>();
-                hostResourcesFailure = System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex);
+                hostResourcesFailure = ex;
             }
 
             boundSteps.Add(new BoundStep(node, instance, model, hostResources, hostResourcesFailure));
@@ -1145,8 +1889,9 @@ internal static class ProviderPipeline
         // way. There is nothing left here that can throw on a per-step basis, so no per-step
         // catch/continue is needed (contrast the pre-M5 pre-pass, which called Bind
         // speculatively a second time and had to swallow exactly that class of exception).
-        // This method itself never reads HostResourcesFailure — Compile's Pass 2 rethrows it,
-        // after that step's own Validate has had its chance (see BoundStep's own remarks).
+        // This method itself never reads HostResourcesFailure — Compile's Pass 2 turns it into
+        // a ValidationFailure, after that step's own Validate has had its chance (see
+        // BoundStep's own remarks).
         foreach (var bound in boundSteps)
         {
             foreach (var hostReq in bound.HostResources)
@@ -1160,11 +1905,18 @@ internal static class ProviderPipeline
                 // collision's message, which is the one an author fixes first.)
                 if (reservedSvcNames.TryGetValue(hostReq.VarName, out var owner))
                 {
-                    collisionFailure ??= new ValidationFailure(
+                    // Scrubbed: VarName and Kind are PROVIDER-supplied (this method's
+                    // suiteDirectory parameter is the same value Compile scrubs against). The
+                    // other two collision messages in this method interpolate only
+                    // environment.services / environment.dependencies map keys and
+                    // engine-composed owner text, so they carry nothing a provider chose and
+                    // are deliberately left alone.
+                    collisionFailure ??= new ValidationFailure(ScrubSuiteDirectory(
                         $"host resource '{hostReq.VarName}' (kind '{hostReq.Kind}', declared by " +
                         $"step '{bound.Node.Id}') collides with {owner}. A host resource (e.g. a " +
                         "webhook listener) cannot share a name with a declared service or with a " +
-                        "dependency's own sidecar endpoint - rename one of the two.");
+                        "dependency's own sidecar endpoint - rename one of the two.",
+                        suiteDirectory));
                     continue;
                 }
 

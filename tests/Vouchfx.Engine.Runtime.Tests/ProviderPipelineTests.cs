@@ -904,7 +904,7 @@ public sealed class ProviderPipelineTests
         // M5 fix (fix round 2): BuildProjectContext no longer binds — it reads the
         // already-bound BoundStep list from ProviderPipeline.BindAllSteps (Compile's own
         // Pass 1), never re-binding a step a second time.
-        var (boundSteps, registryFailure) = ProviderPipeline.BindAllSteps(ast, s_registry);
+        var (boundSteps, registryFailure) = ProviderPipeline.BindAllSteps(ast, s_registry, Directory.GetCurrentDirectory());
         Assert.Null(registryFailure);
         var ctx = ProviderPipeline.BuildProjectContext(
             ast, Directory.GetCurrentDirectory(), boundSteps, out _);
@@ -935,7 +935,7 @@ public sealed class ProviderPipelineTests
         var doc = YamlDocumentParser.Parse(yaml);
         var ast = AstBuilder.Build(doc, s_registry);
 
-        var (boundSteps, registryFailure) = ProviderPipeline.BindAllSteps(ast, s_registry);
+        var (boundSteps, registryFailure) = ProviderPipeline.BindAllSteps(ast, s_registry, Directory.GetCurrentDirectory());
         Assert.Null(registryFailure);
         var ctx = ProviderPipeline.BuildProjectContext(
             ast, Directory.GetCurrentDirectory(), boundSteps, out _);
@@ -972,7 +972,7 @@ public sealed class ProviderPipelineTests
         var doc = YamlDocumentParser.Parse(yaml);
         var ast = AstBuilder.Build(doc, s_registry);
 
-        var (boundSteps, registryFailure) = ProviderPipeline.BindAllSteps(ast, s_registry);
+        var (boundSteps, registryFailure) = ProviderPipeline.BindAllSteps(ast, s_registry, Directory.GetCurrentDirectory());
         Assert.Null(registryFailure);
         var ctx = ProviderPipeline.BuildProjectContext(
             ast, Directory.GetCurrentDirectory(), boundSteps, out var collisionFailure);
@@ -1011,7 +1011,7 @@ public sealed class ProviderPipelineTests
         var doc = YamlDocumentParser.Parse(yaml);
         var ast = AstBuilder.Build(doc, s_registry);
 
-        var (boundSteps, registryFailure) = ProviderPipeline.BindAllSteps(ast, s_registry);
+        var (boundSteps, registryFailure) = ProviderPipeline.BindAllSteps(ast, s_registry, Directory.GetCurrentDirectory());
         Assert.Null(registryFailure);
         var ctx = ProviderPipeline.BuildProjectContext(
             ast, Directory.GetCurrentDirectory(), boundSteps, out var collisionFailure);
@@ -1065,7 +1065,7 @@ public sealed class ProviderPipelineTests
         var doc = YamlDocumentParser.Parse(yaml);
         var ast = AstBuilder.Build(doc, s_registry);
 
-        var (_, failure) = ProviderPipeline.BindAllSteps(ast, s_registry);
+        var (_, failure) = ProviderPipeline.BindAllSteps(ast, s_registry, Directory.GetCurrentDirectory());
 
         Assert.NotNull(failure);
         Assert.Contains("will-throw", failure!.Message, StringComparison.Ordinal);
@@ -1113,7 +1113,7 @@ public sealed class ProviderPipelineTests
     /// longer does: a step whose <c>Bind</c> SUCCEEDS but whose <c>HostResources()</c>
     /// enumerator throws (from <c>HostResourceRequirement</c>'s own ctor validation) is now
     /// CAUGHT in <c>BindAllSteps</c> and deferred onto that step's own <c>BoundStep.
-    /// HostResourcesFailure</c> — see <see cref="Compile_HostResourcesThrows_ValidateSucceeds_RethrowsUnwrappedAfterValidate"/>
+    /// HostResourcesFailure</c> — see <see cref="Compile_HostResourcesThrows_ValidateSucceeds_ReturnsFailureNamingTheProvider"/>
     /// and <see cref="Compile_HostResourcesThrows_ValidateAlsoFails_ReturnsValidateFailureNotTheException"/>
     /// for where it resurfaces (or doesn't).
     /// </summary>
@@ -1133,7 +1133,7 @@ public sealed class ProviderPipelineTests
         var doc = YamlDocumentParser.Parse(yaml);
         var ast = AstBuilder.Build(doc, s_registry);
 
-        var (boundSteps, registryFailure) = ProviderPipeline.BindAllSteps(ast, s_registry);
+        var (boundSteps, registryFailure) = ProviderPipeline.BindAllSteps(ast, s_registry, Directory.GetCurrentDirectory());
 
         Assert.Null(registryFailure);
         var bound = Assert.Single(boundSteps);
@@ -1144,13 +1144,34 @@ public sealed class ProviderPipelineTests
     /// <summary>
     /// G-A fix (gatekeeper, fix round 3): reaching this exact step's own <c>Validate</c> and
     /// finding it valid means whatever <c>HostResources()</c> threw is a genuine bug Validate
-    /// does not already cover — <see cref="ProviderPipeline.Compile"/>'s Pass 2 rethrows the
-    /// captured exception, unwrapped (via <c>ExceptionDispatchInfo</c>, not reflection
-    /// <c>Invoke</c>, so no <see cref="System.Reflection.TargetInvocationException"/>
-    /// wrapper), immediately after that <c>Validate</c> call.
+    /// does not already cover, so it is surfaced immediately after that <c>Validate</c> call.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// SUPERSEDES ITS OWN PRE-#466 VERSION, which was named
+    /// <c>…_RethrowsUnwrappedAfterValidate</c> and asserted
+    /// <c>Assert.Throws&lt;ArgumentException&gt;</c>. The POSITION it pinned — after this step's
+    /// own <c>Validate</c> — is G-A's and is unchanged; only the terminal shape moved. That
+    /// rethrow escaped <see cref="ProviderPipeline.Compile"/> altogether, and on the
+    /// <c>--parallel</c> path the per-slot catch-all classified the escape as
+    /// <c>Verdict.EnvironmentError</c>, which exits 0 on a run that executed nothing (#390) —
+    /// a green build over a provider defect. It is now a <c>PipelineResult.Failure</c> in the
+    /// same channel a throwing <c>Bind</c> already used (#413).
+    /// </para>
+    /// <para>
+    /// The unwrapped-ness the old name carried is still asserted, and still matters — but the
+    /// reason no longer involves <c>ExceptionDispatchInfo</c>, which this same change removed
+    /// from <c>BoundStep</c> in favour of a plain <see cref="System.Exception"/> reference.
+    /// The property holds because of WHERE the exception is captured, not what holds it:
+    /// <c>BindAllSteps</c> catches it around <c>ReflectHostResources(...).ToList()</c>, and the
+    /// throw comes out of the provider's own iterator body during enumeration — after
+    /// <c>MethodInfo.Invoke</c> has already returned — so there is no reflection wrapper for
+    /// anything to unwrap and no
+    /// <see cref="System.Reflection.TargetInvocationException"/> may appear in the diagnostic.
+    /// </para>
+    /// </remarks>
     [Fact]
-    public void Compile_HostResourcesThrows_ValidateSucceeds_RethrowsUnwrappedAfterValidate()
+    public void Compile_HostResourcesThrows_ValidateSucceeds_ReturnsFailureNamingTheProvider()
     {
         const string yaml = """
             environment:
@@ -1165,8 +1186,20 @@ public sealed class ProviderPipelineTests
         var doc = YamlDocumentParser.Parse(yaml);
         var ast = AstBuilder.Build(doc, s_registry);
 
-        Assert.Throws<ArgumentException>(
-            () => ProviderPipeline.Compile(ast, s_registry, SuiteNamespace));
+        var result = ProviderPipeline.Compile(ast, s_registry, SuiteNamespace);
+
+        Assert.NotNull(result.Failure);
+        Assert.Null(result.Assembled);
+
+        var message = result.Failure!.Message;
+        Assert.Contains("will-throw", message, StringComparison.Ordinal);
+        Assert.Contains("stub.throwing-hostresource", message, StringComparison.Ordinal);
+        Assert.Contains("HostResources", message, StringComparison.Ordinal);
+        Assert.Contains(nameof(ArgumentException), message, StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            nameof(System.Reflection.TargetInvocationException),
+            message,
+            StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -1236,12 +1269,17 @@ public sealed class ProviderPipelineTests
         var result = ProviderPipeline.Compile(ast, s_registry, SuiteNamespace);
 
         // The WRONG diagnostic: step-target's own validation failure, naming 'cb' as
-        // unknown — never step-listener's real HostResources exception, which this pins as
-        // UNREACHED (a non-null Failure with no unhandled exception escaping Compile proves
-        // it: an unrethrown HostResourcesFailure would instead surface as a thrown
-        // ArgumentException propagating out of this very call, exactly as
-        // Compile_HostResourcesThrows_ValidateSucceeds_RethrowsUnwrappedAfterValidate, above,
-        // demonstrates for the single-step case).
+        // unknown — never step-listener's real HostResources fault, which this pins as
+        // UNREACHED.
+        //
+        // THE DISCRIMINATOR IS THE MESSAGE, AND SINCE #466 IT HAS TO BE. Before #466 a REACHED
+        // HostResourcesFailure escaped Compile as a thrown ArgumentException, so "Compile
+        // returned at all" was itself proof the rethrow had not been reached; it is now a
+        // PipelineResult.Failure like this one, so both outcomes return normally and only the
+        // message tells them apart. The Contains assertions below already carried that weight
+        // (the HostResources diagnostic names step-listener and neither 'cb' nor "neither a
+        // declared service"); the DoesNotContain pair states it outright rather than leaving
+        // it to be re-derived.
         Assert.NotNull(result.Failure);
         Assert.Contains("step-target", result.Failure!.Message, StringComparison.Ordinal);
         Assert.Contains("'cb'", result.Failure.Message, StringComparison.Ordinal);
@@ -1249,6 +1287,8 @@ public sealed class ProviderPipelineTests
             "neither a declared service",
             result.Failure.Message,
             StringComparison.Ordinal);
+        Assert.DoesNotContain("step-listener", result.Failure.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("HostResources", result.Failure.Message, StringComparison.Ordinal);
         Assert.Null(result.Assembled);
     }
 
