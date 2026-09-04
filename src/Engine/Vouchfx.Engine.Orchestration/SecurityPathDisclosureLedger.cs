@@ -237,8 +237,10 @@ public sealed class SecurityPathDisclosureLedger
         // only ever makes text shorter and more declared, so no host layout escapes this way. And
         // it is not reachable through the three SECURITY-material fields, whose declared text a
         // containment check has already refused if it was rooted - there, every replacement is
-        // relative and no replacement can contain a form. That premise does NOT extend to the
-        // sites added by #473: `environment.seed[].sql` passes through no rooted-path refusal (no
+        // relative and no replacement can contain a form. It ALSO holds for #473's
+        // `security.serverArtifacts[].source`, which goes through the same containment refusal.
+        // Where it stops is exactly one field: `environment.seed[].sql` passes through no
+        // rooted-path refusal (no
         // schema pattern, no containment call), so an author who writes an absolute path has an
         // absolute REPLACEMENT recorded, and the never-rescan scan is what keeps that harmless
         // rather than the shape of the inputs. An earlier version of this paragraph claimed the
