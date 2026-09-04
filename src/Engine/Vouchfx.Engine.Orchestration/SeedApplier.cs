@@ -271,8 +271,18 @@ internal static class SeedApplier
             // alone, so the ledger buys nothing there, while every path that SURVIVES this check
             // is one whose resolved form is about to be handed to File.ReadAllTextAsync. Recording
             // at the resolution keeps "the ledger holds every resolved path this method opened"
-            // true by construction. Record ignores a pair whose halves are equal, which is the
-            // case an author who declared an absolute path lands in.
+            // true by construction.
+            //
+            // AN AUTHOR WHO DECLARED AN ABSOLUTE PATH IS RECORDED, NOT SKIPPED - do not read the
+            // equal-halves short-circuit as covering that case. `Record` compares ORDINALLY, and
+            // `Path.GetFullPath(Path.Combine(...))` normalises separators and `..`/`.` segments,
+            // so `C:/data/seed.sql` resolves to `C:\data\seed.sql` and is not ordinal-equal to
+            // what the author wrote. Nothing refuses a rooted seed path either: `seedDependency.
+            // sql` carries no pattern in the schema, and no containment check runs on this path -
+            // "relative to the suite" is prose, not a constraint. So the pair IS recorded and the
+            // replacement is an absolute path. Harmless, and the ledger's own severity note says
+            // why: the single-pass never-rescan scan absorbs it, and the worst outcome is a
+            // MISNAMED path in a diagnostic, never a wider disclosure.
             pathDisclosures?.Record(resolvedPath, sqlFile);
 
             if (!File.Exists(resolvedPath))

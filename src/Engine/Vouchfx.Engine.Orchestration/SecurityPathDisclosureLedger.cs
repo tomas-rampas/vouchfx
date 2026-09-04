@@ -136,8 +136,12 @@ public sealed class SecurityPathDisclosureLedger
     /// <strong>Cached because <see cref="Scrub"/> runs per EVENT LINE, and the work it repeats is
     /// not trivial.</strong> Each call snapshotted the dictionary, ran
     /// <see cref="JavaScriptEncoder"/> over every entry twice, allocated a second dictionary and
-    /// sorted the result — all to rebuild a table whose inputs change at most three times per
-    /// target, during topology build, and never again for the rest of the run.
+    /// sorted the result — all to rebuild a table that is written only during topology build and
+    /// never again for the rest of the run. It is no longer bounded at three entries per target:
+    /// since #473 it also holds every <c>security.serverArtifacts[].source</c> and every
+    /// <c>environment.seed[].sql</c>, so the table scales with what the suite declares. That makes
+    /// the cache worth more than when it was written, not less — the repeated work it removes grows
+    /// with the same count.
     /// </para>
     /// <para>
     /// <strong>The cache changes nothing observable</strong>, which is the property that makes it
@@ -231,9 +235,15 @@ public sealed class SecurityPathDisclosureLedger
         // BE PRECISE ABOUT SEVERITY, because overstating it is how a fix gets reverted later: the
         // consequence is a MISNAMED path in a diagnostic, never a disclosure - the substitution
         // only ever makes text shorter and more declared, so no host layout escapes this way. And
-        // with today's callers it is not reachable at all: every recorded form is a rooted
-        // absolute path and every replacement is the author's relative text, so no replacement can
-        // contain a form. It is written this way because `Record` is an ordinary internal method
+        // it is not reachable through the three SECURITY-material fields, whose declared text a
+        // containment check has already refused if it was rooted - there, every replacement is
+        // relative and no replacement can contain a form. That premise does NOT extend to the
+        // sites added by #473: `environment.seed[].sql` passes through no rooted-path refusal (no
+        // schema pattern, no containment call), so an author who writes an absolute path has an
+        // absolute REPLACEMENT recorded, and the never-rescan scan is what keeps that harmless
+        // rather than the shape of the inputs. An earlier version of this paragraph claimed the
+        // rooted-form property held for every recorded pair; it did not survive the second and
+        // third recording sites. It is written this way because `Record` is an ordinary internal method
         // with no such constraint on it, this class is NEW so there is no house-style debt to
         // weigh against, and a scan that cannot revisit its own output is not more code than one
         // that can.

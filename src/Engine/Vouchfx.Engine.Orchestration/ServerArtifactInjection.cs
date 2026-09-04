@@ -147,6 +147,17 @@ internal static class ServerArtifactInjection
             // Record ignores a null/blank/equal pair itself, so no guard here: `resolvedSource` is
             // non-null whenever containment returned null, and an author who wrote an absolute
             // path was already refused by containment.
+            //
+            // THE SIBLING SITE ARGUES THE OPPOSITE ORDER, and both are right — say so here so the
+            // next recording site does not have to guess which precedent to follow.
+            // SecurityConfigurationAccessor records AFTER its guard, on the grounds that a path the
+            // guard is about to refuse should not enter the table. This site records BEFORE,
+            // because the guard it precedes is an existence check rather than a refusal, and the
+            // value survives it into foreign code either way. The discriminator is not
+            // before-versus-after: it is whether the intervening check DECIDES the path is
+            // illegitimate (record after) or merely reports that it is missing (record before).
+            // A spurious entry costs nothing in either direction — the worst it can do is
+            // substitute the author's own declared text for a resolved path.
             pathDisclosures?.Record(resolvedSource, artifacts[i].Source);
 
             // Existence is REQ-004's check and has already run pre-topology on every production
