@@ -79,7 +79,19 @@ internal static class ServerArtifactInjection
     /// </param>
     /// <param name="pathDisclosures">
     /// The run's <see cref="SecurityPathDisclosureLedger"/>, or <see langword="null"/> for a caller
-    /// that has none (every non-production <c>Map</c> call site).
+    /// that has none.
+    /// <para>
+    /// <strong>REQUIRED, not optional, and that is a deliberate asymmetry with
+    /// <c>EnvironmentMapper.Map</c> and <c>SuiteTopology.StartAsync</c>.</strong> Those two are
+    /// optional because ~205 and ~60 pre-existing test call sites respectively would otherwise have
+    /// to pass <see langword="null"/> to assert something their own inputs already state — ceremony
+    /// that gets copied without being read. This method is <c>internal</c> and has FOUR call sites
+    /// in the whole repository (two in <c>EnvironmentMapper</c>, two in
+    /// <c>ServerArtifactPathDisclosureTests</c>), so that argument does not reach it, and a
+    /// required parameter closes the hop with the COMPILER instead of with a census. Pass
+    /// <see langword="null"/> explicitly to mean "this caller has no run to scrub for" — a
+    /// statement, where an omitted argument is an accident.
+    /// </para>
     /// <para>
     /// <strong>This is the recording site #473 exists for, and it is here because this is where
     /// both halves of the pair are in hand.</strong> Every diagnostic THIS method raises names the
@@ -109,7 +121,7 @@ internal static class ServerArtifactInjection
         string ownerKindPlural,
         string ownerName,
         string resolvedSuiteDirectory,
-        SecurityPathDisclosureLedger? pathDisclosures = null)
+        SecurityPathDisclosureLedger? pathDisclosures)
     {
         if (security?.ServerArtifacts is not { Count: > 0 } artifacts)
         {

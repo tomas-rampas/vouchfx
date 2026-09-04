@@ -633,16 +633,11 @@ internal sealed class SecurityConfigurationAccessor : ISecurityConfigurationAcce
         /// one that <see cref="EnsureContained"/> is about to refuse.
         /// </para>
         /// <para>
-        /// <strong>It is no longer the only recording site in the engine, and the claim above is
-        /// now SCOPED to this accessor for that reason.</strong> Before #473 it read "the only
-        /// place it could be", full stop, and that was accurate when written; the qualifier three
-        /// lines up was added by the same change that made it necessary, not by a reader tightening
-        /// wording that was already narrow. #473 added the two siblings that hold both halves and
-        /// were
-        /// discarding the declared one — <c>ServerArtifactInjection.Plan</c> for
+        /// It is not the only recording site in the engine. #473 added two siblings that hold both
+        /// halves — <c>ServerArtifactInjection.Plan</c> for
         /// <c>security.serverArtifacts[].source</c>, and <c>SeedApplier</c> for each resolved seed
-        /// SQL path. Both live in <c>Vouchfx.Engine.Orchestration</c>, which is why the ledger type
-        /// itself moved down there; this accessor's relationship to it is unchanged.
+        /// SQL path — both in <c>Vouchfx.Engine.Orchestration</c>, which is why the ledger type
+        /// lives there. This accessor's relationship to it is unchanged.
         /// </para>
         /// <para>
         /// AFTER the containment check, deliberately. A path that resolves outside the suite

@@ -19,11 +19,14 @@
 // serialised JSON survives a raw-only match and is recoverable from the on-disk --events artifact
 // by any consumer that JSON-decodes it.
 //
-// #473's FIRST ATTEMPT LIFTED THE WEAKER COPY AND LEFT THE STRONGER ONE IN THE TREE. That would
-// have shipped a "shared" assertion blind to the one spelling the ledger was built for, under a
-// header claiming this check must not be copied — while a second copy sat two files away. Both
-// copies are now deleted and the STRONGER predicate is the one below, so the fold strengthened all
-// seven call sites rather than levelling them down to the weaker of the two.
+// #473's FIRST ATTEMPT LIFTED THE WEAKER COPY AND LEFT THE STRONGER ONE IN THE TREE — a "shared"
+// assertion missing the one spelling the ledger was built for, under a header claiming this check
+// must not be copied, while a second copy sat two files away. Both copies are now deleted and the
+// union of the two predicates is the one below. Be precise about what that union buys, because
+// overstating it is how the claim gets reverted later: on Windows the escaped form is caught by the
+// rooted-token clause regardless, so the folded check adds MESSAGE PRECISION rather than extra
+// detection there — the method's own remarks give the measurement and the two cases where it does
+// more than that.
 //
 // The rules must be ONE set of rules for the same reason the divergence happened: the original
 // suite had already burned a measured correction into them (trimming '.' from the FRONT turns the
@@ -98,15 +101,35 @@ public static class HostPathDisclosure
     /// token with no separator is not a path reference.
     /// </para>
     /// <para>
-    /// <strong>(b) is not belt-and-braces, and it is why the two former copies of this method were
-    /// not interchangeable.</strong> A Windows path is full of <c>\</c>, which encodes to
-    /// <c>\\</c>; the token scan in (c) is defeated by that escaping, because
-    /// <c>C:\\work\\certs</c> is not what <see cref="Path.IsPathRooted"/> was shown, and (a)'s raw
-    /// substring does not match it either. So a resolved path already embedded in serialised JSON —
-    /// an event line, the <c>--events</c> artifact — passes (a) and (c) and is still recoverable by
-    /// any consumer that JSON-decodes it. This is the same reasoning, over the same spelling, that
-    /// <c>SecurityPathDisclosureLedger.BuildOrderedForms</c> applies when it registers both forms of
-    /// every recorded path.
+    /// <strong>WHAT (b) ACTUALLY BUYS, measured rather than assumed — and it is NOT extra detection
+    /// on Windows.</strong> The token scan in (c) is NOT defeated by the escaping, which is the
+    /// intuitive but wrong reason to keep (b). Measured under .NET 8 on Win32NT:
+    /// <c>Path.IsPathRooted(@"C:\\work\\suite")</c> is <see langword="true"/> — Windows tests
+    /// <c>path[1] == ':'</c> after a valid drive letter and the doubled separators are irrelevant
+    /// to it — and the same holds for the escaped UNC form <c>\\\\host\\\\share</c>. So on Windows
+    /// (c) catches an escaped path anyway, and (b) adds no detection there.
+    /// </para>
+    /// <para>
+    /// It is kept for two smaller but real reasons. FIRST, MESSAGE QUALITY: (c) reports a mangled
+    /// token and blames the generic rule, while (b) says the channel disclosed this host directory
+    /// in its escaped form — which is the difference between a reader fixing the leak and a reader
+    /// arguing with the assertion. SECOND, (a) is the SPECIFIC guarantee ("this host directory must
+    /// not appear") and (c) is a generic sweep whose verdict depends on the analysing platform;
+    /// <c>Path.IsPathRooted</c> is documented to mean "starts with <c>/</c>" on Unix, so a
+    /// Windows-produced artifact examined on a Linux runner is a shape (c) would not flag —
+    /// inferred from that documented behaviour, not measured here, since this suite runs on
+    /// Windows.
+    /// </para>
+    /// <para>
+    /// Also measured: a POSIX path is unchanged by <see cref="JsonEncodedText"/> (no backslashes to
+    /// escape), so for such a fixture (b) short-circuits on the equality guard below and (a) is
+    /// what catches it. (b) is therefore only ever load-bearing for backslash-bearing paths.
+    /// </para>
+    /// <para>
+    /// The spelling itself is the same one
+    /// <c>SecurityPathDisclosureLedger.BuildOrderedForms</c> registers, which is the reason the two
+    /// former copies of this method were not interchangeable — one knew about the escaped form and
+    /// the other did not.
     /// </para>
     /// </remarks>
     public static void AssertNoAbsoluteHostPath(string channel, string text, string hostDirectory)

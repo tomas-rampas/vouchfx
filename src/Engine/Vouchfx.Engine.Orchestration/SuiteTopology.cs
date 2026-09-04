@@ -458,8 +458,22 @@ public sealed class SuiteTopology : IAsyncDisposable, IKeptTopology
         // only. Its sole decision there is whether an endpoint-less project-form service is a
         // refused authoring fault or an untargeted worker service; the probe has no use for it.
         var endpointTargets = endpointConsumingTargets ?? EmptyTargets;
+        // `pathDisclosures:` NAMED, not positional, and the naming is load-bearing rather than
+        // stylistic. Map's parameter is OPTIONAL (205 test call sites want the permissive default),
+        // so dropping the argument here compiles, runs, and silently stops recording every
+        // `security.serverArtifacts[].source` on both the `run` and `--watch` paths — with the
+        // whole suite green, because the two arms that prove the ledger reaches
+        // ServerArtifactInjection.Plan call Map DIRECTLY rather than through this method. The guard
+        // is EnvironmentMapperLedgerHopCensusTests, and it greps for the NAME: the repo's census
+        // idiom looks for `pathDisclosures:`, which the positional spelling this replaced would
+        // never have matched. Naming the argument is what makes it visible to the mechanism that
+        // protects it.
         var mapped = EnvironmentMapper.Map(
-            environment, resolvedSeedBaseDirectory, kafkaTargets, endpointTargets, pathDisclosures);
+            environment,
+            resolvedSeedBaseDirectory,
+            kafkaTargets,
+            endpointTargets,
+            pathDisclosures: pathDisclosures);
 
         // EDGE-012's bind pre-flight, AFTER Map's eager validation and before any container. The
         // order matters to the author, not to the outcome: a document that is invalid for a plain

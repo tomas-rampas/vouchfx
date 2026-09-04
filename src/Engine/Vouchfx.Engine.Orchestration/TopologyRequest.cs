@@ -261,9 +261,20 @@ public sealed record TopologyRequest(
     /// <c>TopologyRequestCoverageCensusTests</c> green (it reflects over parameter LISTS, never a
     /// body), and keeps every test green, because no test invokes this method — the production
     /// starter needs Docker. The feature would be dead on both run paths with the suite fully
-    /// green. What actually guards it is the source-scanning census
+    /// green. What guards THIS hop — and only this one — is the source-scanning census
     /// <c>SuiteProtocolTargetsTests.EverySuiteTopologyStartCallSite_PassesBothTargetSets</c>, which
     /// requires <c>pathDisclosures:</c> inside this call's own argument window.
+    /// </para>
+    /// <para>
+    /// <strong>There are FOUR hops, and no single mechanism covers them; saying otherwise is how
+    /// the third one shipped unguarded.</strong> Caller → this method is the required parameter
+    /// above. This method → <c>SuiteTopology.StartAsync</c> is the census just named.
+    /// <c>SuiteTopology.StartAsync</c> → <c>EnvironmentMapper.Map</c> is
+    /// <c>EnvironmentMapperLedgerHopCensusTests</c> (added by #473's peer review, after that hop
+    /// was found passing the argument positionally into an optional parameter with nothing
+    /// watching). <c>Map</c> → <c>ServerArtifactInjection.Plan</c> is a required parameter again.
+    /// The seed chain is required end to end and needs no census. Adding a fifth hop means
+    /// choosing a mechanism for it, not assuming one of these reaches it.
     /// </para>
     /// <para>
     /// <strong>Do NOT reason about this by analogy to <paramref name="securityConfiguration"/>.</strong>

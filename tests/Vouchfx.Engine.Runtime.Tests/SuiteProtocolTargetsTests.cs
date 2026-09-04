@@ -612,9 +612,14 @@ public sealed class SuiteProtocolTargetsTests
             "These SuiteTopology.StartAsync call sites omit endpointConsumingTargets or "
             + "pathDisclosures. Both are OPTIONAL on StartAsync, so an omission compiles and runs "
             + "clean: without the first, #348's refusal can never fire on that path; without the "
-            + "second, no resolved security-artefact or seed path is recorded, so nothing "
-            + "downstream can substitute it out of an archived diagnostic (#473) — and unlike "
-            + "securityConfiguration, the ledger has no runtime guard that would notice. Sites: "
+            + "second, the ledger never enters the start sequence at all, so NEITHER the seed "
+            + "paths nor the security-artefact paths are recorded and nothing downstream can "
+            + "substitute either out of an archived diagnostic (#473) — and unlike "
+            + "securityConfiguration, the ledger has no runtime guard that would notice. "
+            + "THIS GUARD COVERS ONE HOP OF FOUR, and only this one: the hops into "
+            + "TopologyRequest.StartAsync and into ServerArtifactInjection.Plan are closed by "
+            + "required parameters, and the hop from SuiteTopology into EnvironmentMapper.Map by "
+            + "EnvironmentMapperLedgerHopCensusTests. Sites: "
             + string.Join(", ", unwired));
     }
 

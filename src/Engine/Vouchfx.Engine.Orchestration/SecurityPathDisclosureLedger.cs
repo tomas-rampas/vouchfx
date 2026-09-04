@@ -42,11 +42,22 @@
 // from every one of them without inverting the dependency. Moving it DOWN reaches all four
 // recording sites with no cycle: Runtime -> Orchestration, and the CLI references both.
 //
-// IT STOPS HERE, and Abstractions is the line it must not cross. Providers and the SDK reference
-// Abstractions, and none of them has any business with the engine's host paths; a ledger there
-// would be reachable from twenty-five provider assemblies, and the lower the type sits the more
-// places can quietly start recording into it. Orchestration is the LOWEST assembly that holds a
-// recording site, which is the whole of the argument for this being its home.
+// THE RULE FOR WHERE IT LIVES, stated so the FIFTH recording site does not have to re-derive it:
+// the lowest assembly that EVERY recording site can reference AND THAT SHIPS IN NO PACKAGE.
+//
+// The second clause is not padding, and it is the one a literal reading of the first would lose.
+// Measured: Vouchfx.Engine.Authoring and Vouchfx.Engine.Compilation both set
+// <IsPackable>true</IsPackable>; Vouchfx.Engine.Orchestration and Vouchfx.Engine.Runtime do not. A
+// future recording site in Authoring would be "lower", and following the first clause alone would
+// move a security type onto a SHIPPED NuGet surface — a public type an external consumer can hold,
+// with the versioning obligations that follow, acquired by accident while chasing a dependency
+// edge. Today the two clauses coincide and Orchestration satisfies both, which is exactly why it
+// costs nothing to write the rule properly now rather than after it has been broken.
+//
+// AND ABSTRACTIONS IS THE LINE IT MUST NOT CROSS regardless of either clause. Providers and the
+// SDK reference Abstractions, and none of them has any business with the engine's host paths; a
+// ledger there would be reachable from twenty-five provider assemblies, and the lower the type
+// sits the more places can quietly start recording into it.
 //
 // SCOPE AND MEMORY MODEL (§5). One instance per run, constructed beside the run's
 // ResolvedSecretLedger and shared by the topology build, the topology probe's accessor and every
@@ -68,19 +79,26 @@ using System.Text.Encodings.Web;
 namespace Vouchfx.Engine.Orchestration;
 
 /// <summary>
-/// A run-scoped map of resolved absolute security-material paths to the declared text the
-/// author wrote for them, used to substitute the declared form back into free-form diagnostic
-/// text an out-of-engine client library built (issue #375).
+/// A run-scoped map of resolved absolute host paths this run handed onward to the declared text
+/// the author wrote for each, used to substitute the declared form back into free-form diagnostic
+/// text built outside the engine (issue #375, widened by #473).
 /// </summary>
 /// <remarks>
 /// <para>
+/// <strong>NOT ONLY SECURITY MATERIAL, since #473.</strong> The map also holds every resolved
+/// <c>environment.seed[].sql</c> path, which is not security material by any reading. What the
+/// entries have in common is the property the file header states — the engine handed the resolved
+/// form to something whose diagnostic text it does not write — not the field family they came
+/// from.
+/// </para>
+/// <para>
 /// <strong>Substitution, not redaction.</strong> Every recorded path is replaced by its OWN
 /// declared text, which is what <c>EnvironmentSecurityValidator.ValidatePath</c>,
-/// <c>ServerArtifactInjection.Plan</c> and <c>SecurityConfigurationAccessor</c>'s own throw
-/// sites already write for the same fields (#357). The result is a diagnostic an author can
-/// act on that discloses nothing about the host's directory layout - never
-/// <c>[REDACTED]</c>, which would be strictly worse than the leak for everything except the
-/// disclosure.
+/// <c>ServerArtifactInjection.Plan</c>, <c>SeedApplier</c> and
+/// <c>SecurityConfigurationAccessor</c>'s own throw sites already write for the same fields
+/// (#357). The result is a diagnostic an author can act on that discloses nothing about the
+/// host's directory layout - never <c>[REDACTED]</c>, which would be strictly worse than the leak
+/// for everything except the disclosure.
 /// </para>
 /// <para>
 /// <strong>Both forms are scrubbed</strong> - the raw path and the
@@ -240,15 +258,11 @@ public sealed class SecurityPathDisclosureLedger
         // relative and no replacement can contain a form. It ALSO holds for #473's
         // `security.serverArtifacts[].source`, which goes through the same containment refusal.
         // Where it stops is exactly one field: `environment.seed[].sql` passes through no
-        // rooted-path refusal (no
-        // schema pattern, no containment call), so an author who writes an absolute path has an
-        // absolute REPLACEMENT recorded, and the never-rescan scan is what keeps that harmless
-        // rather than the shape of the inputs. An earlier version of this paragraph claimed the
-        // rooted-form property held for every recorded pair; it did not survive the second and
-        // third recording sites. It is written this way because `Record` is an ordinary internal method
-        // with no such constraint on it, this class is NEW so there is no house-style debt to
-        // weigh against, and a scan that cannot revisit its own output is not more code than one
-        // that can.
+        // rooted-path refusal (no schema pattern, no containment call), so an author who writes an
+        // absolute path has an absolute REPLACEMENT recorded. The never-rescan scan is what keeps
+        // that harmless, rather than any property of the inputs — which is the whole reason it is
+        // written this way: `Record` is an ordinary internal method with no such constraint on it,
+        // and a scan that cannot revisit its own output is not more code than one that can.
         //
         // The scan walks the input once. At each position it tries the recorded forms
         // longest-first, so a directory that prefixes a file still loses to the file; on a match
