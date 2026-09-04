@@ -63,7 +63,11 @@ namespace Vouchfx.Engine.Orchestration.Tests;
 /// <summary>
 /// Pins <see cref="TopologyTeardownLeakTests.CliFailurePolicy"/>: a failing child never reads as
 /// "nothing survives" on the strict path, still reads as nothing to do on the tolerant one, and the
-/// tolerant one is reachable from exactly one member.
+/// tolerant one is reachable only through a member named for the choice — and, inside the
+/// leak-assertion type, only from the self-cleanup net. Not "from exactly one member": an earlier
+/// draft of this line said that, and it is false four ways over
+/// (<c>ForceCleanupForThisRun</c>, the two <c>…BestEffort</c> runners, and this file's own row).
+/// The authoritative statement is the two-rule <c>&lt;remarks&gt;</c> on the test below.
 /// </summary>
 public sealed class DockerCliFailurePolicyTests
 {
@@ -97,9 +101,21 @@ public sealed class DockerCliFailurePolicyTests
     /// rules.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// A suffix rather than a list of blessed names, because there are already two
     /// (<c>RunDockerBestEffort</c>, <c>RunCliBestEffort</c>) and a list is a second thing to
     /// maintain. It also means a third added later arrives inside the fence rather than outside it.
+    /// </para>
+    /// <para>
+    /// The predicate is NAME-ONLY — it does not check that the callee has anything to do with a CLI
+    /// failure policy. No other <c>…BestEffort</c> member exists in this project today, but the
+    /// spelling is house idiom one file-move away: <c>Vouchfx.Cli.Tests/PlanCommandTests</c> and
+    /// <c>Vouchfx.Engine.Runtime.Tests/SecretObservationLeakPenetrationTests</c> both have a
+    /// <c>DeleteBestEffort(string)</c>. If one lands in <c>TopologyTeardownLeakTests</c>, calling it
+    /// outside the self-cleanup net reddens rule 2 with an offender message about docker failure
+    /// policy and vacuous greens — the wrong hazard named at the worst moment. Fail-closed, so this
+    /// costs a confusing red rather than a miss.
+    /// </para>
     /// </remarks>
     private const string TolerantSuffix = "BestEffort";
 
@@ -301,7 +317,7 @@ public sealed class DockerCliFailurePolicyTests
     /// </para>
     /// </remarks>
     [Fact]
-    public void ToleranceIsReachableOnlyThroughABestEffortMember_AndOnlyFromTheSelfCleanupNet()
+    public void ToleranceIsReachableOnlyThroughABestEffortMember_AndInTheLeakTypeOnlyFromTheCleanupNet()
     {
         var root = ProjectDirectory();
 
@@ -542,7 +558,17 @@ public sealed class DockerCliFailurePolicyTests
     /// It is safe because it is keyed on SHAPE, not on a member name or a file: an equality operand
     /// or a constant pattern. Neither can put the value anywhere. Everything that can — an
     /// argument, an assignment, a local's initialiser, a field's — is still an offender wherever it
-    /// is written.
+    /// is written. The kind check is what makes that safe rather than lucky: a bare
+    /// <c>BinaryExpressionSyntax</c> exemption would have admitted
+    /// <c>maybePolicy ?? CliFailurePolicy.Tolerate</c> and <c>Fail | Tolerate</c>, both of which
+    /// SELECT. An enum admits no user-defined operator, so <c>==</c>/<c>!=</c> cannot be subverted.
+    /// </para>
+    /// <para>
+    /// Deliberately NARROWER than "all reads", and the residue is a false positive rather than a
+    /// false negative: <c>policy == (CliFailurePolicy.Tolerate)</c> (parent is the parenthesis) and
+    /// a <c>case CliFailurePolicy.Tolerate:</c> label in a switch STATEMENT (Roslyn emits
+    /// <c>CaseSwitchLabelSyntax</c> holding the expression directly, not a constant pattern) both
+    /// redden. Fail-closed, so the cost is a nuisance red, never a miss.
     /// </para>
     /// </remarks>
     private static bool IsPolicyTest(MemberAccessExpressionSyntax access) =>
