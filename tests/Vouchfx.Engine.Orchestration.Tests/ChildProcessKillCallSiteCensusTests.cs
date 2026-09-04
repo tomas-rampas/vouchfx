@@ -246,8 +246,11 @@ public sealed class ChildProcessKillCallSiteCensusTests
             + "keeps DCP, its containers and its network alive (issue #378). Unguarded launch "
             + "site(s):\n"
             + string.Join("\n", offenders.Select(site => $"  {site.Display}"))
-            + "\n\nFix shape (the one every site in both projects uses - it makes the ordering a "
-            + "compiler guarantee rather than something you have to remember):\n\n"
+            + "\n\nFix shape (the house shape - it makes the ordering a compiler guarantee rather "
+            + "than something you have to remember). `using var proc = ...;` at method scope with "
+            + "the kill in an inner `finally` earns the same guarantee and is what most drill-lane "
+            + "sites use; what is NOT acceptable is a kill and a `Dispose()` written next to each "
+            + "other, where the order is yours to get wrong:\n\n"
             + $"    var proc = {ProcessType}.{StartMethod}(psi) ?? throw ...;\n"
             + "\n"
             + "    using (proc)\n"

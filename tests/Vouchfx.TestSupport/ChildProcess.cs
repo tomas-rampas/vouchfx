@@ -32,7 +32,10 @@ namespace Vouchfx.TestSupport;
 /// NOT stop the process, which is precisely the defect both #378 and #475 record.
 /// </para>
 /// <para>
-/// <strong>The shape, which every call site in the repository uses:</strong>
+/// <strong>The shape.</strong> Two spellings earn the guarantee and both are in use: the
+/// <c>using (process)</c> block below, and <c>using var process = ...;</c> at method scope with the
+/// kill in an inner <c>finally</c> (most drill-lane sites). What is NOT acceptable is a kill and a
+/// <c>Dispose()</c> written next to each other, where the order is the author's to get wrong:
 /// </para>
 /// <code>
 /// var process = Process.Start(startInfo) ?? throw ...;   // its own try/catch if the start may fail

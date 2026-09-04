@@ -248,8 +248,16 @@ public sealed class TopologyTeardownLeakTests
     /// <summary>
     /// Runs the <c>docker</c> CLI with the supplied arguments via <see cref="Process"/> using an
     /// argument list (NEVER a concatenated shell command line), captures stdout, and returns the
-    /// non-empty trimmed lines. Returns an empty list on any failure.
+    /// non-empty trimmed lines.
     /// </summary>
+    /// <returns>
+    /// An empty list when the CLI ran but yielded nothing usable — a null process handle, the
+    /// bounded wait expiring, or a non-zero exit. A failure to START <c>docker</c> at all (it is
+    /// absent from PATH, say) PROPAGATES as <see cref="System.ComponentModel.Win32Exception"/>, and
+    /// deliberately so: this helper's callers ask it which containers and networks survive, and an
+    /// empty list is the answer meaning "none". Converting "docker could not be run" into that
+    /// answer would turn a broken environment into a silently passing leak assertion.
+    /// </returns>
     /// <remarks>
     /// <para>
     /// Issue #475 widened the kill here from the timeout path to EVERY path. The bounded
