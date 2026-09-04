@@ -26,12 +26,25 @@ public sealed class TopologyRequestCoverageCensusTests
 {
     /// <summary>
     /// The parameters of <see cref="SuiteTopology.StartAsync"/> that are DOCUMENT-DERIVED — i.e.
-    /// everything except the cancellation token and the security accessor, whose exclusion is a
-    /// decision recorded in <see cref="TopologyRequest"/>'s own header (the accessor owns
-    /// certificate lifetimes and is not a document input, so it must not enter the fingerprint).
+    /// everything except the cancellation token, the security accessor and the path-disclosure
+    /// ledger, whose exclusions are decisions recorded in <see cref="TopologyRequest"/>'s own
+    /// header. Neither excluded value is derived from the document, so neither may enter the
+    /// topology fingerprint: the accessor owns certificate lifetimes, and the ledger is a mutable
+    /// run-scoped sink whose identity differs between two runs of the same document — a
+    /// fingerprint that saw it would rebuild <c>--watch</c>'s topology on every save.
     /// </summary>
+    /// <remarks>
+    /// An entry here is a claim that something is NOT a document input, and adding one is the
+    /// cheap way to make the census below go quiet about a parameter it should have caught. Each
+    /// name added must be justified in <see cref="TopologyRequest"/>'s header AND must be a
+    /// required parameter of <c>TopologyRequest.StartAsync</c>, which is what replaces the census
+    /// as the thing that stops it being omitted.
+    /// </remarks>
     private static readonly HashSet<string> Excluded =
-        new(StringComparer.Ordinal) { "cancellationToken", "securityConfiguration" };
+        new(StringComparer.Ordinal)
+        {
+            "cancellationToken", "securityConfiguration", "pathDisclosures",
+        };
 
     /// <summary>
     /// EVERY document-derived parameter of <see cref="SuiteTopology.StartAsync"/> has a matching
@@ -67,6 +80,67 @@ public sealed class TopologyRequestCoverageCensusTests
             .ToHashSet(StringComparer.Ordinal);
 
         Assert.Equal(startParameters, members);
+    }
+
+    /// <summary>
+    /// Every name in <see cref="Excluded"/> that is a real <see cref="SuiteTopology.StartAsync"/>
+    /// parameter (i.e. everything but the cancellation token) is a REQUIRED parameter of
+    /// <c>TopologyRequest.StartAsync</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is what the exclusion list COSTS, asserted rather than trusted. Excluding a name tells
+    /// the census above to stop looking at it, so the only thing left preventing #364's defect —
+    /// an optional argument dropped at a call site, compiling clean and reading correct — is that
+    /// the one production seam takes it as a required parameter. An excluded parameter that were
+    /// ALSO optional at that seam would have no gate at all.
+    /// </para>
+    /// <para>
+    /// The cancellation token is exempt from the "required" half only in the sense that it is
+    /// already required there; it is asserted alongside the others rather than special-cased,
+    /// because a token that acquired a default would be the same silent-omission shape.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void EveryExcludedStartAsyncParameter_IsRequiredOnTopologyRequestStartAsync()
+    {
+        var startParameterNames = typeof(SuiteTopology)
+            .GetMethod(nameof(SuiteTopology.StartAsync), BindingFlags.Public | BindingFlags.Static)!
+            .GetParameters()
+            .Select(p => p.Name!)
+            .ToHashSet(StringComparer.Ordinal);
+
+        var requestParameters = typeof(TopologyRequest)
+            .GetMethod(nameof(TopologyRequest.StartAsync), BindingFlags.Public | BindingFlags.Instance)!
+            .GetParameters();
+
+        // The premise, asserted before anything is concluded from it: every excluded name really is
+        // a parameter of the method the census reflects over. A name that has been renamed away
+        // would otherwise silently excuse itself.
+        foreach (var excluded in Excluded)
+        {
+            Assert.True(
+                startParameterNames.Contains(excluded),
+                $"'{excluded}' is in the exclusion list but is not a parameter of "
+                + "SuiteTopology.StartAsync. Either it was renamed — in which case the census above "
+                + "is now silently ignoring nothing — or the exclusion is stale. Re-point it.");
+
+            var match = requestParameters.SingleOrDefault(
+                p => string.Equals(p.Name, excluded, StringComparison.Ordinal));
+
+            Assert.True(
+                match is not null,
+                $"'{excluded}' is excluded from the TopologyRequest census but is not a parameter "
+                + "of TopologyRequest.StartAsync at all, so nothing carries it to the topology. "
+                + "An excluded value must still reach StartAsync through the one production seam.");
+
+            Assert.False(
+                match!.IsOptional,
+                $"TopologyRequest.StartAsync's '{excluded}' is OPTIONAL. Excluding a name from the "
+                + "census above removes the only reflective gate on it, so the required parameter "
+                + "is what is left preventing #364's defect: an omitted optional argument compiles "
+                + "clean and reads correct. Make it required, or make it a member of the record.");
+        }
     }
 
     /// <summary>

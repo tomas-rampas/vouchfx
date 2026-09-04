@@ -98,21 +98,34 @@ public static class KafkaSecurityHelper
     /// the engine's, and no code written at THIS seam could constrain it.
     /// </para>
     /// <para>
-    /// What closes it is <c>Vouchfx.Engine.Runtime.SecurityPathDisclosureLedger</c>: the engine
-    /// records (resolved path → the author's declared text) at the one accessor chokepoint that
-    /// holds both, and substitutes the declared form back at the three scrub chokepoints every
-    /// archived channel already passes through. Nothing about this helper changed, and nothing
-    /// about it needed to — which is the point of the shape that was chosen.
+    /// What closes it is <c>Vouchfx.Engine.Orchestration.SecurityPathDisclosureLedger</c>: the
+    /// engine records (resolved path → the author's declared text) at each chokepoint that hands
+    /// the resolved form to code the engine does not write, and substitutes the declared form back
+    /// at the three scrub chokepoints every archived channel already passes through. Nothing about
+    /// this helper changed, and nothing about it needed to — which is the point of the shape that
+    /// was chosen. (The ledger was born in
+    /// <c>Vouchfx.Engine.Runtime</c> and #473 lifted it DOWN into Orchestration, because the
+    /// sibling recording sites live there and Runtime references Orchestration rather than the
+    /// reverse. The namespace here is corrected rather than the type renamed.)
     /// </para>
     /// <para>
-    /// <strong>THIS HELPER'S leak is closed; the CLASS is not.</strong> Read the paragraph above
-    /// as being about <c>caCert</c>/<c>clientCert</c>/<c>clientKey</c> and nothing else, because
-    /// that is the whole of what the accessor chokepoint records. Sibling fields resolve an
-    /// author-declared path and are still absent from the ledger — <c>security.serverArtifacts[]
-    /// .source</c>, which sits in the very same <c>security:</c> block and is handed to Aspire's
-    /// container-file staging, plus three seed/script siblings. They are tracked as issue #473.
-    /// A reader who takes "closed at the sink" to mean the path-disclosure class is shut will site
-    /// the next fix in the wrong place.
+    /// <strong>WHAT THE LEDGER NOW COVERS, and where it still does not reach.</strong> #375
+    /// recorded exactly <c>caCert</c>/<c>clientCert</c>/<c>clientKey</c>, at the accessor
+    /// chokepoint. #473 added the two sibling sites that hold both halves and discarded the
+    /// declared one: <c>security.serverArtifacts[].source</c>, which sits in the very same
+    /// <c>security:</c> block and is handed to Aspire's container-file staging, and each resolved
+    /// <c>environment.seed</c> SQL path, whose diagnostics splice a BCL or driver message the
+    /// engine did not write.
+    /// </para>
+    /// <para>
+    /// The ledger substitutes into text the ENGINE DID NOT WRITE, and that is the boundary of what
+    /// it is for. Every engine-owned diagnostic names the declared path by construction instead
+    /// (#357) — <c>SeedFixtures</c>' fixture-not-found throw and <c>script.csharp</c>'s
+    /// <c>file:</c>-not-found refusal are the two #473 examined and left on that side of the line,
+    /// the latter also being structurally unable to reach the ledger at all, since a provider
+    /// references only <c>Vouchfx.Sdk</c> and <c>Vouchfx.Engine.Abstractions</c>. A path that
+    /// reaches a diagnostic through neither route is still invisible to both mechanisms; that is
+    /// the ledger's stated limit, not an open ticket.
     /// </para>
     /// <para>
     /// The two remediations considered at THIS seam were measured and REJECTED, and the reasoning

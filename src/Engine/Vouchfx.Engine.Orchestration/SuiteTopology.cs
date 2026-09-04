@@ -79,6 +79,15 @@ public sealed class SuiteTopology : IAsyncDisposable, IKeptTopology
     private readonly EnvironmentSpec? _environment;
     private readonly string _seedBaseDirectory;
 
+    /// <summary>
+    /// The run's security-path disclosure ledger (#375), or <see langword="null"/> for an
+    /// embedding caller that has none. Retained for the SAME reason the two fields above are: a
+    /// re-seed against the kept topology resolves the same declared paths again, and a resolved
+    /// path recorded only on the initial seed would leave the second one's diagnostics
+    /// unscrubbable (#473).
+    /// </summary>
+    private readonly SecurityPathDisclosureLedger? _pathDisclosures;
+
     private bool _disposed;
 
     private SuiteTopology(
@@ -89,7 +98,8 @@ public sealed class SuiteTopology : IAsyncDisposable, IKeptTopology
         string seedBaseDirectory,
         IReadOnlyList<SecurityConfirmation> securityConfirmations,
         IReadOnlyList<EndpointSelectionNotice> endpointSelectionNotices,
-        IReadOnlyList<EndpointTrustNotice> endpointTrustNotices)
+        IReadOnlyList<EndpointTrustNotice> endpointTrustNotices,
+        SecurityPathDisclosureLedger? pathDisclosures)
     {
         _inner = inner;
         DiscoveredServices = discoveredServices;
@@ -100,6 +110,7 @@ public sealed class SuiteTopology : IAsyncDisposable, IKeptTopology
         SecurityConfirmations = securityConfirmations;
         EndpointSelectionNotices = endpointSelectionNotices;
         EndpointTrustNotices = endpointTrustNotices;
+        _pathDisclosures = pathDisclosures;
     }
 
     /// <summary>
@@ -296,6 +307,32 @@ public sealed class SuiteTopology : IAsyncDisposable, IKeptTopology
     /// <see langword="null"/> is the PERMISSIVE default — no refusal — matching
     /// <see cref="EnvironmentMapper.Map"/>'s own.
     /// </param>
+    /// <param name="pathDisclosures">
+    /// The run's <see cref="SecurityPathDisclosureLedger"/> (#375), threaded to the two recording
+    /// sites this start sequence owns — <see cref="EnvironmentMapper.Map"/>, and through it
+    /// <c>ServerArtifactInjection.Plan</c>, for <c>security.serverArtifacts[].source</c>; and
+    /// <see cref="SeedApplier"/> for each resolved seed SQL file (#473). Also retained on the
+    /// returned instance, so <see cref="ReseedAsync"/> records against the same ledger.
+    /// <para>
+    /// <strong>Optional HERE, and what actually guards it is a source census, not that optionality
+    /// being compensated one frame up.</strong> It is optional because roughly sixty pre-existing
+    /// Docker test call sites build topologies that scrub nothing, and forcing each to pass
+    /// <see langword="null"/> would be ceremony carrying no information — the same argument
+    /// <paramref name="securityConfiguration"/>'s own note makes. <c>TopologyRequest.StartAsync</c>
+    /// takes it as REQUIRED, which stops ITS callers from omitting it, but that says nothing about
+    /// the forwarding call inside <c>TopologyRequest</c> itself, where this parameter's default
+    /// applies again. Deleting the argument there compiles and leaves every test green. The guard
+    /// is <c>SuiteProtocolTargetsTests.EverySuiteTopologyStartCallSite_PassesBothTargetSets</c>,
+    /// which requires <c>pathDisclosures:</c> in the one production call's argument window.
+    /// </para>
+    /// <para>
+    /// <strong>Unlike <paramref name="securityConfiguration"/>, this has no runtime backstop.</strong>
+    /// Step 0 below refuses to start a security-declaring suite with no accessor; there is no
+    /// equivalent for the ledger and there cannot be, because a run that records nothing is
+    /// indistinguishable at run time from a suite with no paths worth recording. Do not carry the
+    /// accessor's reasoning across to it.
+    /// </para>
+    /// </param>
     /// <param name="cancellationToken">
     /// Propagated to <see cref="HeadlessTopology.StartAsync"/>, to each
     /// health-gate <c>WaitForResourceHealthyAsync</c> call, to REQ-005's probe, and to the seed
@@ -321,13 +358,21 @@ public sealed class SuiteTopology : IAsyncDisposable, IKeptTopology
         string? seedBaseDirectory = null,
         ISecurityConfigurationAccessor? securityConfiguration = null,
         IReadOnlySet<string>? kafkaSpeakingTargets = null,
-        // Ahead of cancellationToken, not after it: CA1068 requires the token to be last on an
-        // externally-visible method. Verified before inserting — every call site in src/ and
-        // tests/ passes `cancellationToken:` by name, and a caller that passed it positionally
-        // would fail to compile rather than mis-bind (IReadOnlySet<string> and CancellationToken
-        // do not convert), so the insertion cannot silently change any call's meaning. Same
-        // reasoning, same wording, as RunPlannedScenarioAgainstKeptTopologyAsync's own note.
+        // THE NEXT TWO PARAMETERS ARE BOTH INSERTED AHEAD OF cancellationToken, not after it, and
+        // for the same reason: CA1068 requires the token to be last on an externally-visible
+        // method. Verified before each insertion — every call site in src/ and tests/ passes
+        // `cancellationToken:` BY NAME, and a caller that passed it positionally would fail to
+        // compile rather than mis-bind, because neither inserted type converts to
+        // CancellationToken (IReadOnlySet<string> does not; nor does
+        // SecurityPathDisclosureLedger, a sealed class unrelated to it). So neither insertion can
+        // silently change any call's meaning. Same reasoning, same wording, as
+        // RunPlannedScenarioAgainstKeptTopologyAsync's own note.
+        //
+        // `pathDisclosures` (#473) was added under this rule after `endpointConsumingTargets`
+        // (#348) — stated here rather than left to be re-derived, because the argument is about
+        // the POSITION and applies to whatever is inserted next.
         IReadOnlySet<string>? endpointConsumingTargets = null,
+        SecurityPathDisclosureLedger? pathDisclosures = null,
         CancellationToken cancellationToken = default)
     {
         var gateTimeout = startupTimeout ?? TimeSpan.FromSeconds(120);
@@ -414,7 +459,7 @@ public sealed class SuiteTopology : IAsyncDisposable, IKeptTopology
         // refused authoring fault or an untargeted worker service; the probe has no use for it.
         var endpointTargets = endpointConsumingTargets ?? EmptyTargets;
         var mapped = EnvironmentMapper.Map(
-            environment, resolvedSeedBaseDirectory, kafkaTargets, endpointTargets);
+            environment, resolvedSeedBaseDirectory, kafkaTargets, endpointTargets, pathDisclosures);
 
         // EDGE-012's bind pre-flight, AFTER Map's eager validation and before any container. The
         // order matters to the author, not to the outcome: a document that is invalid for a plain
@@ -625,6 +670,7 @@ public sealed class SuiteTopology : IAsyncDisposable, IKeptTopology
                     environment,
                     discoveredServices,
                     resolvedSeedBaseDirectory,
+                    pathDisclosures,
                     cancellationToken)
                 .ConfigureAwait(false);
 
@@ -642,7 +688,8 @@ public sealed class SuiteTopology : IAsyncDisposable, IKeptTopology
                 resolvedSeedBaseDirectory,
                 securityConfirmations,
                 mapped.EndpointSelectionNotices,
-                mapped.EndpointTrustNotices);
+                mapped.EndpointTrustNotices,
+                pathDisclosures);
         }
         catch (Exception ex)
         {
@@ -765,6 +812,7 @@ public sealed class SuiteTopology : IAsyncDisposable, IKeptTopology
                 _environment,
                 DiscoveredServices,
                 _seedBaseDirectory,
+                _pathDisclosures,
                 cancellationToken)
             .ConfigureAwait(false);
     }
@@ -841,6 +889,7 @@ public sealed class SuiteTopology : IAsyncDisposable, IKeptTopology
         EnvironmentSpec? environment,
         IReadOnlyDictionary<string, object> discoveredServices,
         string seedBaseDirectory,
+        SecurityPathDisclosureLedger? pathDisclosures,
         CancellationToken cancellationToken)
     {
         var dependencyTypes = BuildDependencyTypeMap(environment);
@@ -849,6 +898,7 @@ public sealed class SuiteTopology : IAsyncDisposable, IKeptTopology
             discoveredServices,
             dependencyTypes,
             seedBaseDirectory,
+            pathDisclosures,
             cancellationToken);
     }
 

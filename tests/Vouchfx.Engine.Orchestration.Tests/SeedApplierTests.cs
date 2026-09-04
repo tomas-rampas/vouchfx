@@ -61,6 +61,7 @@ public sealed class SeedApplierTests
             discovered,
             types,
             baseDir,
+            pathDisclosures: null,
             ct: CancellationToken.None);
 
     // ── Null / empty seed is a no-op ──────────────────────────────────────────

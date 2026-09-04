@@ -1,4 +1,4 @@
-// Vouchfx.Engine.Runtime - SecurityPathDisclosureLedger (issue #375).
+// Vouchfx.Engine.Orchestration - SecurityPathDisclosureLedger (issue #375; lifted here by #473).
 //
 // A run-scoped record of the RESOLVED absolute host paths this run handed to a third-party
 // client library, together with the DECLARED text the author wrote for each one, used as a
@@ -15,33 +15,57 @@
 // later reader of it. Two nets, two meanings, one boundary.
 //
 // WHAT IT IS FOR, precisely. #357's rule is enforced at each ENGINE-OWNED diagnostic site: the
-// validator, the artefact planner, the seed applier and this accessor's own throw sites all
-// name the declared path by construction. It cannot be enforced at a site the engine does not
+// validator, the artefact planner, the seed applier and the security accessor's own throw sites
+// all name the declared path by construction. It cannot be enforced at a site the engine does not
 // write - most acutely librdkafka, which is handed `ssl.ca.location` / `ssl.certificate.location`
 // / `ssl.key.location` as resolved absolute paths and, on a load failure, builds its own message
 // quoting them back. That text reaches the engine as a caught exception's Message inside a Kafka
 // provider's guarded region, becomes the step's Observation, and travels into the §14 event
 // stream, the --events artifact and the HTML report. Nothing between the provider and the wire
 // could redact it, because nothing there knew which strings were paths. This ledger is what
-// knows: it is populated at the single accessor chokepoint that holds Declared and Resolved
-// together, and it is read at the same three scrub chokepoints the secret ledger is read at.
+// knows: it is populated at each chokepoint that holds Declared and Resolved together AND HANDS
+// THE RESOLVED FORM ONWARD to code the engine does not write, and it is read at the same three
+// scrub chokepoints the secret ledger is read at.
+//
+// THE SECOND HALF OF THAT CONDITION IS NOT DECORATION. Two sites hold both halves and record
+// nothing, correctly: EnvironmentSecurityValidator.ValidatePath and SeedFixtures.ComputeContentHash
+// both resolve an author-declared path and both compose their own diagnostics, which name the
+// declared text by construction (#357). Neither hands the resolved form to a client library, a
+// daemon or the BCL in a way that can quote it back. Recording there would add entries that can
+// never match anything, and - worse for the next reader - would suggest the ledger is a general
+// register of resolved paths rather than a net under foreign text.
+//
+// WHY IT LIVES IN Vouchfx.Engine.Orchestration (#473). It was born in Vouchfx.Engine.Runtime,
+// beside the single accessor chokepoint that then populated it. #473 found the SAME leak class at
+// three sibling sites that resolve an author-declared path and discard the declared half - and all
+// of them are in THIS assembly, which Runtime references, so a ledger in Runtime was unreachable
+// from every one of them without inverting the dependency. Moving it DOWN reaches all four
+// recording sites with no cycle: Runtime -> Orchestration, and the CLI references both.
+//
+// IT STOPS HERE, and Abstractions is the line it must not cross. Providers and the SDK reference
+// Abstractions, and none of them has any business with the engine's host paths; a ledger there
+// would be reachable from twenty-five provider assemblies, and the lower the type sits the more
+// places can quietly start recording into it. Orchestration is the LOWEST assembly that holds a
+// recording site, which is the whole of the argument for this being its home.
 //
 // SCOPE AND MEMORY MODEL (§5). One instance per run, constructed beside the run's
-// ResolvedSecretLedger and shared by the topology probe's accessor and every scenario's, so a
-// path registered while the probe ran is scrubbable from text emitted on a step path. It holds
-// plain Default-ALC System.Strings; nothing here roots the collectible AssemblyLoadContext.
+// ResolvedSecretLedger and shared by the topology build, the topology probe's accessor and every
+// scenario's, so a path registered while the topology was built is scrubbable from text emitted on
+// a step path. It holds plain Default-ALC System.Strings; nothing here roots the collectible
+// AssemblyLoadContext.
 //
 // WHAT IT DELIBERATELY DOES NOT DO. It does not scrub paths it was never handed. A resolved
-// path that reaches a diagnostic without passing through the accessor's resolved-path getters
-// is invisible to it, exactly as ResolvedSecretLedger is blind to a secret that was never
-// resolved. The property test in SecurityDiagnosticPathDisclosureTests is what covers the
-// sibling sites; this ledger covers the one site that is structurally out of the engine's hands.
+// path that reaches a diagnostic without passing through one of the recording sites is invisible
+// to it, exactly as ResolvedSecretLedger is blind to a secret that was never resolved. The
+// property test in SecurityDiagnosticPathDisclosureTests is what covers the engine-owned
+// diagnostics that name a declared path by construction; this ledger covers the sites whose text
+// is built somewhere the engine does not write - librdkafka, the Docker daemon, the BCL.
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Text;
 using System.Text.Encodings.Web;
 
-namespace Vouchfx.Engine.Runtime;
+namespace Vouchfx.Engine.Orchestration;
 
 /// <summary>
 /// A run-scoped map of resolved absolute security-material paths to the declared text the
@@ -79,9 +103,10 @@ namespace Vouchfx.Engine.Runtime;
 /// public for the same reason. Keeping every member internal makes it an OPAQUE token to anyone
 /// outside this assembly's <c>InternalsVisibleTo</c> friends: an embedder can hold one and pass
 /// it along, and can only ever pass <see langword="null"/>, which is today's behaviour. It is
-/// also why this type lives in <c>Vouchfx.Engine.Runtime</c> and not in
+/// also why this type stops at <c>Vouchfx.Engine.Orchestration</c> and does not descend into
 /// <c>Vouchfx.Engine.Abstractions</c> — providers and the SDK reference Abstractions, and none
-/// of them has any business with the engine's host paths.
+/// of them has any business with the engine's host paths. See this file's header for why
+/// Orchestration rather than <c>Vouchfx.Engine.Runtime</c>, where it was born (#473).
 /// </para>
 /// </remarks>
 public sealed class SecurityPathDisclosureLedger

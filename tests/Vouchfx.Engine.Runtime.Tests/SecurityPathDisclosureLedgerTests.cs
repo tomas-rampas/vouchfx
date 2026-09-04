@@ -63,18 +63,6 @@ public sealed class SecurityPathDisclosureLedgerTests
 {
     private const string Run = "run-375";
 
-    /// <summary>
-    /// CA1861, and the same separator set <c>SecurityDiagnosticPathDisclosureTests</c> uses: the
-    /// property assertion below is deliberately the same predicate, so the two files cannot come
-    /// to disagree about what "names an absolute host path" means.
-    /// </summary>
-    private static readonly char[] s_tokenSeparators =
-        { ' ', '\t', '\r', '\n', '"', '\'', '<', '>', '&', ';', ',', '(', ')', '[', ']' };
-
-    private static readonly char[] s_pathSeparators = { '\\', '/' };
-
-    private static readonly char[] s_trailingPunctuation = { '.', ':' };
-
     private static SecuritySpec MtlsSecurity() =>
         new(
             Profile: "mtls",
@@ -711,34 +699,29 @@ public sealed class SecurityPathDisclosureLedgerTests
     }
 
     /// <summary>
-    /// The property <c>SecurityDiagnosticPathDisclosureTests</c> asserts, restated over the same
-    /// token predicate: no rooted token survives anywhere in the rendered text.
+    /// No rooted token, and no host directory in either its raw or its JSON-escaped form, survives
+    /// anywhere in the rendered text.
     /// </summary>
     /// <remarks>
-    /// A property rather than an expected string, for the reason that file records: an expected
-    /// string passes for a sibling channel leaking some OTHER host path, which is the failure
-    /// this class is guarding against reintroducing.
+    /// <para>
+    /// The predicate itself lives in <see cref="HostPathDisclosure.AssertNoAbsoluteHostPath"/>
+    /// (Vouchfx.TestSupport). This file used to carry its own COPY of it — the separator arrays and
+    /// the scan — and that copy is what #473 deleted, because the two had already diverged: this
+    /// one asserted the JSON-escaped form of the host directory and
+    /// <c>SecurityDiagnosticPathDisclosureTests</c>' did not. The shared version now carries the
+    /// stronger predicate (the escaped check folded in), so delegating here loses nothing and gains
+    /// the other six call sites an assertion they did not have.
+    /// </para>
+    /// <para>
+    /// A property rather than an expected string: an expected string passes for a sibling channel
+    /// leaking some OTHER host path, which is the failure this class guards against reintroducing.
+    /// </para>
+    /// <para>
+    /// This wrapper survives so the four call sites above read exactly as they did, and so the
+    /// <c>suiteDirectory</c> parameter name — which is what a reader of those calls sees — stays
+    /// the local vocabulary rather than the shared method's more general <c>hostDirectory</c>.
+    /// </para>
     /// </remarks>
     private static void AssertNoAbsoluteHostPath(string channel, string text, string suiteDirectory)
-    {
-        Assert.DoesNotContain(suiteDirectory, text, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain(
-            JsonEncodedText.Encode(suiteDirectory).ToString(), text, StringComparison.OrdinalIgnoreCase);
-
-        foreach (var token in text.Split(s_tokenSeparators, StringSplitOptions.RemoveEmptyEntries))
-        {
-            var candidate = token.TrimEnd(s_trailingPunctuation);
-            if (candidate.Length < 2 || candidate.IndexOfAny(s_pathSeparators) < 0)
-            {
-                continue;
-            }
-
-            Assert.False(
-                Path.IsPathRooted(candidate),
-                $"{channel} names an absolute host path '{candidate}'. A diagnostic that reaches "
-                + "an archived channel must name the declared path (#357's rule, extended to "
-                + "third-party client text by issue #375), never a resolved one. Full text: "
-                + text);
-        }
-    }
+        => HostPathDisclosure.AssertNoAbsoluteHostPath(channel, text, suiteDirectory);
 }

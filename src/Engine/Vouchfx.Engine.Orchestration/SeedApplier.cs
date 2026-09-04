@@ -101,6 +101,13 @@ internal static class SeedApplier
     /// <param name="seedBaseDirectory">
     /// The base directory against which relative fixture file paths are resolved.
     /// </param>
+    /// <param name="pathDisclosures">
+    /// The run's <see cref="SecurityPathDisclosureLedger"/>, or <see langword="null"/> for a
+    /// caller that has none (#473). Every diagnostic THIS type raises names the author's declared
+    /// file by construction, but two of them splice a caught exception's own message after it, and
+    /// that half is written by the BCL and the ADO.NET driver rather than by this engine — see
+    /// <see cref="ApplySqlSeedAsync"/> for the recording site and what it closes.
+    /// </param>
     /// <param name="ct">
     /// Propagated to all async I/O.  Must be the last parameter (CA1068).
     /// </param>
@@ -118,6 +125,7 @@ internal static class SeedApplier
         IReadOnlyDictionary<string, object> discoveredServices,
         IReadOnlyDictionary<string, string> dependencyTypes,
         string seedBaseDirectory,
+        SecurityPathDisclosureLedger? pathDisclosures,
         CancellationToken ct)
     {
         if (seed is null || seed.Dependencies.Count == 0)
@@ -138,6 +146,7 @@ internal static class SeedApplier
                     discoveredServices,
                     dependencyTypes,
                     seedBaseDirectory,
+                    pathDisclosures,
                     ct)
                 .ConfigureAwait(false);
         }
@@ -153,6 +162,7 @@ internal static class SeedApplier
         IReadOnlyDictionary<string, object> discoveredServices,
         IReadOnlyDictionary<string, string> dependencyTypes,
         string seedBaseDirectory,
+        SecurityPathDisclosureLedger? pathDisclosures,
         CancellationToken ct)
     {
         var hasSql = dependencySeed.Sql is { Count: > 0 };
@@ -194,6 +204,7 @@ internal static class SeedApplier
                 relationalKind.Value,
                 discoveredServices,
                 seedBaseDirectory,
+                pathDisclosures,
                 ct)
             .ConfigureAwait(false);
     }
@@ -209,6 +220,7 @@ internal static class SeedApplier
         RelationalStoreKind relationalKind,
         IReadOnlyDictionary<string, object> discoveredServices,
         string seedBaseDirectory,
+        SecurityPathDisclosureLedger? pathDisclosures,
         CancellationToken ct)
     {
         // Resolve the connection string from the discovered services BEFORE touching
@@ -231,13 +243,38 @@ internal static class SeedApplier
         // detail becomes an OrchestrationException message, which reaches the §14
         // environment-error event and — on the suite path — is stamped onto every scenario's
         // ScenarioCompletedEvent.message, so it lands in the event stream, the JUnit `message`
-        // attribute and the HTML report. `resolvedPath` is an absolute host path and no scrubber
-        // covers one. Diagnostics below therefore name the DECLARED file; only the filesystem
-        // calls take the resolved one.
+        // attribute and the HTML report. `resolvedPath` is an absolute host path. Diagnostics
+        // below therefore name the DECLARED file; only the filesystem calls take the resolved one.
+        //
+        // #473 CORRECTS THE LAST SENTENCE OF THAT PARAGRAPH — "no scrubber covers one" was true
+        // when it was written and is not true now — AND CLOSES THE HALF THE PARAGRAPH MISSED.
+        // Naming the declared file is only half of each message: two of the three diagnostics on
+        // this path splice `TrimDetail(ex.Message)` after it, and THAT half is written by the BCL,
+        // which quotes the path it was actually given. Measured shapes, both reachable after the
+        // File.Exists below has already agreed the file is there:
+        //
+        //   UnauthorizedAccessException  "Access to the path '<resolved>' is denied."
+        //   IOException                  "The process cannot access the file '<resolved>' because
+        //                                 it is being used by another process."
+        //
+        // Recording the pair here is what lets the three scrub chokepoints put the author's own
+        // text back — the same net, for the same reason, as `security.serverArtifacts[].source`.
+        // It also covers the execution-failure message further down, which interpolates a driver's
+        // text this engine equally does not write.
         var files = new List<(string Declared, string Resolved)>(sqlFiles.Count);
         foreach (var sqlFile in sqlFiles)
         {
             var resolvedPath = Path.GetFullPath(Path.Combine(seedBaseDirectory, sqlFile));
+
+            // Recorded BEFORE the existence check, for the reason ServerArtifactInjection.Plan's
+            // own recording site states: the not-found throw already names the declared text
+            // alone, so the ledger buys nothing there, while every path that SURVIVES this check
+            // is one whose resolved form is about to be handed to File.ReadAllTextAsync. Recording
+            // at the resolution keeps "the ledger holds every resolved path this method opened"
+            // true by construction. Record ignores a pair whose halves are equal, which is the
+            // case an author who declared an absolute path lands in.
+            pathDisclosures?.Record(resolvedPath, sqlFile);
+
             if (!File.Exists(resolvedPath))
             {
                 throw ProvisionError(

@@ -64,6 +64,7 @@ public sealed class SeedApplierDispatchTests
                         ["events"] = "kafka",
                     },
                     seedBaseDirectory: dir,
+                    pathDisclosures: null,
                     ct: CancellationToken.None));
 
             Assert.Equal(OrchestrationErrorKind.Provision, ex.Info.Kind);
@@ -145,6 +146,7 @@ public sealed class SeedApplierDispatchTests
                         ["orders-db"] = relationalType,
                     },
                     seedBaseDirectory: dir,
+                    pathDisclosures: null,
                     ct: CancellationToken.None));
 
             // Accepted, not rejected: the error is the SQL-specific "file not found"
@@ -206,6 +208,7 @@ public sealed class SeedApplierDispatchTests
                         ["dep"] = nonRelationalType,
                     },
                     seedBaseDirectory: dir,
+                    pathDisclosures: null,
                     ct: CancellationToken.None));
 
             Assert.Equal(OrchestrationErrorKind.Provision, ex.Info.Kind);
@@ -261,6 +264,7 @@ public sealed class SeedApplierDispatchTests
                         ["orders-db"] = wrongCaseType,
                     },
                     seedBaseDirectory: dir,
+                    pathDisclosures: null,
                     ct: CancellationToken.None));
 
             Assert.Equal(OrchestrationErrorKind.Provision, ex.Info.Kind);
@@ -300,6 +304,7 @@ public sealed class SeedApplierDispatchTests
                         ["orders-db"] = "postgres",
                     },
                     seedBaseDirectory: dir,
+                    pathDisclosures: null,
                     ct: CancellationToken.None));
 
             Assert.Contains("first-missing.sql", ex.Info.Detail, StringComparison.Ordinal);

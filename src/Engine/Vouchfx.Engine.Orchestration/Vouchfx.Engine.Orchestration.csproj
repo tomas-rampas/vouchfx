@@ -28,6 +28,30 @@
     <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
       <_Parameter1>Vouchfx.Engine.Runtime.Tests</_Parameter1>
     </AssemblyAttribute>
+    <!-- #473 lifted SecurityPathDisclosureLedger down from Vouchfx.Engine.Runtime into this
+         assembly, because its new recording sites (ServerArtifactInjection, SeedApplier) live
+         here and Runtime references Orchestration, not the other way round.
+
+         THIS GRANT MOVED WITH THE TYPE; it is not a new licence. It was on the Runtime csproj,
+         recorded there as scoped to this one use, and it is removed from that file by the same
+         change. WatchRunnerSecurityLedgerTests seeds a ledger through the internal Record and
+         reads the internal Count, to prove the watch loop's own sinks apply it (#375). Widening
+         those members to public to avoid the grant would give away the opaque-token shape the
+         type exists to keep.
+
+         NO EQUIVALENT GRANT TO THE `vouchfx` CLI ASSEMBLY, deliberately, and that was a real
+         choice rather than an omission. The CLI needs exactly ONE internal member - Scrub, at one
+         call site - and granting it this assembly's internals would hand it SeedApplier,
+         SeedFixtures, ServerArtifactInjection and the mapper's internals to reach that one
+         method. It goes through Vouchfx.Engine.Runtime.SecurityPathScrub instead, which is a
+         forwarder in an assembly the CLI is already trusted with; see that file's header.
+
+         SCOPED TO THAT ONE USE: this is not a general licence for Vouchfx.Cli.Tests to reach into
+         orchestration internals. A new use needs its own justification recorded here, or it
+         belongs in Vouchfx.Engine.Orchestration.Tests. -->
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>Vouchfx.Cli.Tests</_Parameter1>
+    </AssemblyAttribute>
   </ItemGroup>
 
   <!-- Kestrel for the host-owned ephemeral webhook listener (S07-F-01a).

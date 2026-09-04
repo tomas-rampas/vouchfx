@@ -251,12 +251,19 @@ public sealed class ScriptCsharpProvider
                 // path, and this diagnostic ships to CI artefacts and dashboards — a wider
                 // audience than whoever runs the suite. ScenarioRunner.ScrubDiagnostic applies
                 // two scrub nets — ResolvedSecrets.Scrub (recorded secret VALUES) and
-                // SecurityPathDisclosureLedger (security-material paths, recorded only by
-                // SecurityConfigurationAccessor, #375) — and a script `file:` path is NEITHER,
-                // so nothing downstream substitutes or redacts it. This message does reach a
-                // scrub chokepoint (the authoring-fault event line takes both ledgers), but a
-                // net cannot replace what was never recorded into it: omitting the resolved
-                // path here is the only guard, exactly as #357 required.
+                // SecurityPathDisclosureLedger (security-material and seed paths; #375, widened
+                // by #473) — and a script `file:` path is NEITHER, so nothing downstream
+                // substitutes or redacts it. This message does reach a scrub chokepoint (the
+                // authoring-fault event line takes both ledgers), but a net cannot replace what
+                // was never recorded into it: omitting the resolved path here is the only guard,
+                // exactly as #357 required.
+                //
+                // AND IT IS THE ONLY GUARD AVAILABLE HERE, structurally — #473 examined this site
+                // and deliberately changed nothing. A provider assembly references only
+                // Vouchfx.Sdk and Vouchfx.Engine.Abstractions; the ledger lives in
+                // Vouchfx.Engine.Orchestration, so no provider can reach one to record into even
+                // if it wanted to. That is a property of the assembly graph, not an omission, and
+                // it is why this message must go on naming the declared path by construction.
                 //
                 // The declared form is the actionable half and the resolved form never was — the
                 // same fix, with the same measured outcome, that slice D applied to

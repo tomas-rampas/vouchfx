@@ -202,12 +202,22 @@ internal static class WatchRunner
     /// over the same lifetime as <paramref name="sessionSecretLedger"/>.
     /// </param>
     /// <param name="startTopologyAsync">
-    /// Builds a topology from the plan's <see cref="TopologyRequest"/> and the resolved security
-    /// accessor. The production value is <see cref="StartTopologyAsync"/>, which is
-    /// <c>TopologyRequest.StartAsync</c> and nothing else; a test substitutes a starter returning a
-    /// double, which is what makes everything downstream of this seam — confirmation rendering,
-    /// transport-notice replay, reset/reseed ordering, the target sets the request carries —
-    /// assertable at unit speed for the first time (#364).
+    /// Builds a topology from the plan's <see cref="TopologyRequest"/>, the resolved security
+    /// accessor and the session's path-disclosure ledger. The production value is
+    /// <see cref="StartTopologyAsync"/>, which is <c>TopologyRequest.StartAsync</c> and nothing
+    /// else; a test substitutes a starter returning a double, which is what makes everything
+    /// downstream of this seam — confirmation rendering, transport-notice replay, reset/reseed
+    /// ordering, the target sets the request carries — assertable at unit speed for the first
+    /// time (#364).
+    /// <para>
+    /// <strong>The LEDGER is passed to the starter for the same reason the accessor is</strong>
+    /// (see the remarks below): this method already holds
+    /// <paramref name="sessionPathLedger"/> and the starter could have captured it, but an
+    /// argument a test can SEE arrive is what distinguishes "the topology was built with the
+    /// session's ledger" from "the topology was built". #473's whole subject is a resolved host
+    /// path reaching an archived artefact because the half that could substitute it was never
+    /// handed down.
+    /// </para>
     /// </param>
     /// <remarks>
     /// <para>
@@ -230,8 +240,8 @@ internal static class WatchRunner
         string? appHostAssemblyName,
         ResolvedSecretLedger sessionSecretLedger,
         SecurityPathDisclosureLedger sessionPathLedger,
-        Func<TopologyRequest, ISecurityConfigurationAccessor, CancellationToken, Task<IKeptTopology>>
-            startTopologyAsync)
+        Func<TopologyRequest, ISecurityConfigurationAccessor, SecurityPathDisclosureLedger,
+            CancellationToken, Task<IKeptTopology>> startTopologyAsync)
     {
         // The kept-topology isolation is rebuilt by the build seam each time a NEW topology is
         // built (it must bind to the new topology's connection string); held here so the run
@@ -302,7 +312,8 @@ internal static class WatchRunner
                     // in ScenarioRunner. Each of them was dropped from one of those three lists at
                     // some point. The plan's TopologyRequest is now the only list there is, and its
                     // two factories derive both sets from one input.
-                    var topology = await startTopologyAsync(plan.Request, probeSecurity, ct)
+                    var topology = await startTopologyAsync(
+                            plan.Request, probeSecurity, sessionPathLedger, ct)
                         .ConfigureAwait(false);
                     isolation = ScenarioRunner.BuildWatchIsolation(topology);
                     return topology;
@@ -388,8 +399,10 @@ internal static class WatchRunner
     private static async Task<IKeptTopology> StartTopologyAsync(
         TopologyRequest request,
         ISecurityConfigurationAccessor securityConfiguration,
+        SecurityPathDisclosureLedger sessionPathLedger,
         CancellationToken cancellationToken)
-        => await request.StartAsync(securityConfiguration, cancellationToken).ConfigureAwait(false);
+        => await request.StartAsync(securityConfiguration, sessionPathLedger, cancellationToken)
+            .ConfigureAwait(false);
 
     /// <summary>
     /// Reads the file from disk and processes one re-run through the session, catching any
@@ -578,7 +591,12 @@ internal static class WatchRunner
         // Issue #375's net, and it belongs HERE rather than after the sanitiser for the same
         // reason the value scrub does: the sanitiser REWRITES text, so a resolved path carrying a
         // byte it neutralises would no longer match the recorded form once it had been over it.
-        scrubbed = pathLedger is null ? scrubbed : pathLedger.Scrub(scrubbed);
+        // Through the Runtime forwarder, not `pathLedger.Scrub` directly: `Scrub` is internal to
+        // Vouchfx.Engine.Orchestration and this assembly is not one of its friends. See
+        // SecurityPathScrub's own header for why that is a deliberate seam rather than an
+        // obstacle — the alternative was granting the CLI Orchestration's entire internal surface
+        // to reach one method.
+        scrubbed = SecurityPathScrub.Apply(pathLedger, scrubbed);
 
         return DisplaySanitiser.SanitiseForDisplay(scrubbed);
     }

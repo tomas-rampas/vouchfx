@@ -1384,10 +1384,17 @@ public sealed class SecretObservationLeakPenetrationTests
              "ledger?.Scrub(message)",
              "pathLedger?.Scrub(cause)"),
 
+            // RE-POINTED, NOT RELAXED (#473). This site no longer calls `pathLedger.Scrub`
+            // directly: SecurityPathDisclosureLedger moved to Vouchfx.Engine.Orchestration, whose
+            // internals the CLI assembly is deliberately NOT granted, so the call goes through the
+            // Runtime forwarder SecurityPathScrub.Apply. The composition, and the ORDER this census
+            // exists to pin, are unchanged — the value scrub still runs first and this is still an
+            // offset comparison over the two calls. Only the spelling of the second one moved, and
+            // the census caught that itself rather than going quietly green.
             ("WatchRunner.ScrubThenSanitise",
              watch,
              "ledger.Scrub(text)",
-             "pathLedger.Scrub(scrubbed)"),
+             "SecurityPathScrub.Apply(pathLedger, scrubbed)"),
         };
 
         foreach (var (site, source, valueScrub, pathScrub) in sites)

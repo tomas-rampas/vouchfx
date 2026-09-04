@@ -19,20 +19,6 @@
     <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
       <_Parameter1>Vouchfx.Engine.Compilation.MemoryHarness</_Parameter1>
     </AssemblyAttribute>
-    <!-- WatchRunnerSecurityLedgerTests seeds a SecurityPathDisclosureLedger to prove the watch
-         loop's own terminal sinks apply it (issue #375). The TYPE is public (it appears on a
-         public ScenarioRunner signature the CLI calls) but every MEMBER is internal, deliberately:
-         it is an opaque token to anyone outside this assembly's friends. A behavioural test has to
-         seed one, and widening Record/Scrub to public to avoid this grant would give away exactly
-         the encapsulation that shape exists to keep.
-
-         SCOPED TO THAT ONE USE: this grant exists solely for SecurityPathDisclosureLedger seeding.
-         It is not a general licence for Vouchfx.Cli.Tests to reach into engine internals. A new
-         use needs its own justification recorded here, or it belongs in
-         Vouchfx.Engine.Runtime.Tests, which already owns engine-internal coverage. -->
-    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
-      <_Parameter1>Vouchfx.Cli.Tests</_Parameter1>
-    </AssemblyAttribute>
   </ItemGroup>
 
   <ItemGroup>
