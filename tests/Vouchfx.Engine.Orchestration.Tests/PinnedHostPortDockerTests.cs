@@ -30,6 +30,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Aspire.Hosting.ApplicationModel;
 using Vouchfx.Engine.Authoring.Model;
+using Vouchfx.TestSupport;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -358,29 +359,68 @@ public sealed class PinnedHostPortDockerTests
         return string.Join(" <- ", parts);
     }
 
+    /// <remarks>
+    /// <para>
+    /// The kill is the issue #475 fix. Disposing a <see cref="Process"/> releases a handle and stops
+    /// nothing, so the cancellation path below used to swallow the cancellation and RETURN while the
+    /// child ran on. This class's two callers pass <c>port</c> and <c>ps</c>, both of which finish in
+    /// milliseconds, but the guard is unconditional rather than argument-dependent: the next caller
+    /// to pass a long-running argument list would otherwise re-open the hole silently.
+    /// </para>
+    /// <para>
+    /// The SHAPE is the house one — the start in its own <c>try</c>, then <c>using (process)</c>
+    /// around a <c>try/finally</c> that only kills. See
+    /// <see cref="Vouchfx.TestSupport.ChildProcess.KillTreeQuietly(Process)"/> for why the kill is
+    /// never written next to a <c>Dispose()</c>.
+    /// </para>
+    /// </remarks>
     private static async Task<string> DockerAsync(string arguments, CancellationToken cancellationToken)
     {
+        Process process;
         try
         {
-            using var process = Process.Start(new ProcessStartInfo("docker", arguments)
+            // `?? throw` rather than `!`: a null return is a start that produced no process, and
+            // dereferencing it would raise a NullReferenceException that the filter below does not
+            // admit - turning "docker could not be started" into an opaque crash. Routed instead
+            // into the same empty-string result as every other start failure, which is what this
+            // helper's callers are documented to expect. The message is therefore UNREACHABLE here
+            // - the catch below converts it - and is kept only so all four sites spell the start
+            // the same way. The sibling sites' equivalents DO propagate, so theirs are live.
+            process = Process.Start(new ProcessStartInfo("docker", arguments)
             {
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
-            })!;
-
-            var stdout = process.StandardOutput.ReadToEndAsync(cancellationToken);
-            var stderr = process.StandardError.ReadToEndAsync(cancellationToken);
-            await Task.WhenAll(stdout, stderr);
-            await process.WaitForExitAsync(cancellationToken);
-
-            return process.ExitCode == 0 ? await stdout : string.Empty;
+            }) ?? throw new InvalidOperationException(
+                $"Starting `docker {arguments}` returned no process object.");
         }
-        catch (Exception ex) when (ex is OperationCanceledException
-                                       or System.ComponentModel.Win32Exception
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception
                                        or InvalidOperationException)
         {
             return string.Empty;
+        }
+
+        using (process)
+        {
+            try
+            {
+                var stdout = process.StandardOutput.ReadToEndAsync(cancellationToken);
+                var stderr = process.StandardError.ReadToEndAsync(cancellationToken);
+                await Task.WhenAll(stdout, stderr);
+                await process.WaitForExitAsync(cancellationToken);
+
+                return process.ExitCode == 0 ? await stdout : string.Empty;
+            }
+            catch (Exception ex) when (ex is OperationCanceledException
+                                           or System.ComponentModel.Win32Exception
+                                           or InvalidOperationException)
+            {
+                return string.Empty;
+            }
+            finally
+            {
+                ChildProcess.KillTreeQuietly(process);
+            }
         }
     }
 }

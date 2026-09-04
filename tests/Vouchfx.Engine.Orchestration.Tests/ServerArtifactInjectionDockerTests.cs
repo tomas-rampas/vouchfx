@@ -34,6 +34,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Aspire.Hosting.ApplicationModel;
 using Vouchfx.Engine.Authoring.Model;
+using Vouchfx.TestSupport;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -252,24 +253,59 @@ public sealed class ServerArtifactInjectionDockerTests : IDisposable
     /// Runs a process to completion and returns its standard output, failing the test on a
     /// non-zero exit code so a mistyped command reads as a fault rather than as an empty result.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The kill is the issue #475 fix. Disposing a <see cref="Process"/> releases a handle and stops
+    /// nothing, so the two cancellation paths here (a cancelled read, a cancelled wait) used to
+    /// return while the child ran on. NOT the <see cref="Assert"/> below: that runs after
+    /// <c>WaitForExitAsync</c> has returned, so the child has already exited by the time it can
+    /// throw. The kill is unconditional rather than restricted to the two paths that need it,
+    /// because "this argument list always finishes in milliseconds" is a property of today's
+    /// callers, not of the helper.
+    /// </para>
+    /// <para>
+    /// <strong>Both pipes are drained concurrently, and the reason is not stylistic.</strong>
+    /// Awaiting stdout to completion and only then reading stderr deadlocks whenever the child
+    /// fills the stderr buffer while the parent is still blocked on stdout — the failure written up
+    /// at <c>TopologyTeardownLeakTests.RunCli</c>. That it cannot happen for a short
+    /// <c>docker ps</c> is the same "property of today's callers" this method's own kill refuses to
+    /// rely on, so the drain does not rely on it either.
+    /// </para>
+    /// </remarks>
     private static async Task<string> RunAsync(
         string fileName, string arguments, CancellationToken cancellationToken)
     {
-        using var process = Process.Start(new ProcessStartInfo(fileName, arguments)
+        var process = Process.Start(new ProcessStartInfo(fileName, arguments)
         {
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
-        })!;
+        }) ?? throw new InvalidOperationException(
+            $"Starting `{fileName} {arguments}` returned no process object.");
 
-        var stdout = await process.StandardOutput.ReadToEndAsync(cancellationToken).ConfigureAwait(false);
-        var stderr = await process.StandardError.ReadToEndAsync(cancellationToken).ConfigureAwait(false);
-        await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+        using (process)
+        {
+            try
+            {
+                // Both reads STARTED before either is awaited — see the remarks.
+                var stdoutTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
+                var stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
+                await Task.WhenAll(stdoutTask, stderrTask).ConfigureAwait(false);
+                await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
 
-        Assert.True(
-            process.ExitCode == 0,
-            $"`{fileName} {arguments}` exited {process.ExitCode}. stderr: {stderr}");
+                var stdout = await stdoutTask.ConfigureAwait(false);
+                var stderr = await stderrTask.ConfigureAwait(false);
 
-        return stdout;
+                Assert.True(
+                    process.ExitCode == 0,
+                    $"`{fileName} {arguments}` exited {process.ExitCode}. stderr: {stderr}");
+
+                return stdout;
+            }
+            finally
+            {
+                ChildProcess.KillTreeQuietly(process);
+            }
+        }
     }
 }

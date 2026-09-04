@@ -10,8 +10,15 @@
     emitted by the same canonicalisation, so a member that is frozen one way in
     one golden is frozen the same way in the other.
 
-    Pure reflection over System.Reflection — it takes an Assembly and never
-    references any Vouchfx.* type — so this project carries no ProjectReferences.
+    It also hosts the other pieces that would otherwise be duplicated across test
+    assemblies: TestCertificateAuthority / TestCertificateStoreGuard (the mTLS
+    certificate bed) and ChildProcess.KillTreeQuietly (the guarded tree-kill every
+    child-process launch site calls from its `finally`, lifted here by #475 once a
+    second assembly needed it).
+
+    The standing constraint is BCL-only: nothing here references any Vouchfx.* type,
+    so this project carries no ProjectReferences and can be referenced by any test
+    assembly without creating a cycle.
   -->
   <PropertyGroup>
     <IsPackable>false</IsPackable>

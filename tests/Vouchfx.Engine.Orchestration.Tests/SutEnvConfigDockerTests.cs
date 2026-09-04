@@ -32,6 +32,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Vouchfx.Engine.Authoring.Model;
 using Vouchfx.Engine.Orchestration;
+using Vouchfx.TestSupport;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -151,23 +152,70 @@ public sealed class SutEnvConfigDockerTests : IAsyncLifetime
             psi.ArgumentList.Add(SutImageTag);
             psi.ArgumentList.Add(buildDir);
 
-            using var proc = Process.Start(psi)
+            var proc = Process.Start(psi)
                 ?? throw new InvalidOperationException("Failed to start 'docker build' process.");
-            using var cts = new CancellationTokenSource(BuildTimeout);
-            var stdoutTask = proc.StandardOutput.ReadToEndAsync(cts.Token);
-            var stderrTask = proc.StandardError.ReadToEndAsync(cts.Token);
-            await proc.WaitForExitAsync(cts.Token);
-            var stdout = await stdoutTask;
-            var stderr = await stderrTask;
 
-            _output.WriteLine("=== docker build stdout ===");
-            _output.WriteLine(stdout);
-            if (proc.ExitCode != 0)
+            using (proc)
             {
-                _output.WriteLine("=== docker build stderr ===");
-                _output.WriteLine(stderr);
-                throw new InvalidOperationException(
-                    $"'docker build -t {SutImageTag} {buildDir}' exited {proc.ExitCode}. See test output for the log.");
+                Task<string>? stdoutTask = null;
+                Task<string>? stderrTask = null;
+                try
+                {
+                    using var cts = new CancellationTokenSource(BuildTimeout);
+                    stdoutTask = proc.StandardOutput.ReadToEndAsync(cts.Token);
+                    stderrTask = proc.StandardError.ReadToEndAsync(cts.Token);
+                    await proc.WaitForExitAsync(cts.Token);
+                    var stdout = await stdoutTask;
+                    var stderr = await stderrTask;
+
+                    _output.WriteLine("=== docker build stdout ===");
+                    _output.WriteLine(stdout);
+                    if (proc.ExitCode != 0)
+                    {
+                        _output.WriteLine("=== docker build stderr ===");
+                        _output.WriteLine(stderr);
+                        throw new InvalidOperationException(
+                            $"'docker build -t {SutImageTag} {buildDir}' exited {proc.ExitCode}. See test output for the log.");
+                    }
+                }
+                finally
+                {
+                    // Issue #475. This is the site the issue was actually about: `BuildTimeout`
+                    // blowing makes WaitForExitAsync throw, and nothing here stopped the child - so
+                    // the docker CLI client kept running while the outer finally deleted the build
+                    // context out from under it.
+                    //
+                    // What the kill does and does not reach, stated rather than assumed: the child
+                    // is the docker CLI CLIENT; the build itself executes in the daemon. Killing the
+                    // client is what removes the orphan a post-run sweep would find, and the
+                    // resulting client disconnect is BuildKit's own cancellation signal - it is not
+                    // a guarantee that the daemon-side build stops, and nothing here claims one.
+                    ChildProcess.KillTreeQuietly(proc);
+
+                    // Observe the two reads, which are abandoned on every path out of the try that
+                    // is not a clean completion.
+                    //
+                    // MEASURED: running this exact shape - both reads taking cts.Token, the CTS
+                    // firing, then the kill - leaves both tasks CANCELED, not Faulted, and a
+                    // canceled task never raises UnobservedTaskException. Nothing here is swallowing
+                    // a fault today. Two more results from the same probe, because they are what a
+                    // reader will otherwise assume: Dispose does NOT end these reads (they sit
+                    // WaitingForActivation after it), and it is the KILL that brings them to
+                    // RanToCompletion, when the cancellation check does not win that race first, by
+                    // producing EOF.
+                    //
+                    // The block stays because it costs nothing, NOT because a token-less spelling
+                    // would make it matter: the sibling site (TopologyTeardownLeakTests.RunCli)
+                    // drops the token and its reads end RanToCompletion - also not Faulted. What the
+                    // ContinueWith suppresses is a Faulted task, and the token does not govern that:
+                    // an IO error on the pipe faults the read either way, and EOF completes it
+                    // either way. Belt-and-braces, not a fault-swallow.
+                    if (stdoutTask is not null && stderrTask is not null)
+                    {
+                        _ = Task.WhenAll(stdoutTask, stderrTask)
+                            .ContinueWith(static t => _ = t.Exception, TaskScheduler.Default);
+                    }
+                }
             }
         }
         finally
