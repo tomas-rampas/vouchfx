@@ -205,7 +205,7 @@ public sealed class SutEnvConfigDockerTests : IAsyncLifetime
                     // producing EOF.
                     //
                     // The block stays because it costs nothing, NOT because a token-less spelling
-                    // would make it matter: the sibling site (TopologyTeardownLeakTests.RunDocker)
+                    // would make it matter: the sibling site (TopologyTeardownLeakTests.RunCli)
                     // drops the token and its reads end RanToCompletion - also not Faulted. What the
                     // ContinueWith suppresses is a Faulted task, and the token does not govern that:
                     // an IO error on the pipe faults the read either way, and EOF completes it

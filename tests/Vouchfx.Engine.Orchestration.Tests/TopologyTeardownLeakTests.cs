@@ -53,6 +53,17 @@ public sealed class TopologyTeardownLeakTests
     /// <summary>Bound for a single docker CLI call so a wedged process can never hang CI.</summary>
     private const int DockerTimeoutMs = 30_000;
 
+    /// <summary>The executable every production call in this class runs.</summary>
+    private const string DockerExecutable = "docker";
+
+    /// <summary>How much of a failing child's stderr a failure message carries.</summary>
+    /// <remarks>
+    /// Enough for the line that matters ("Cannot connect to the Docker daemon at ...", "No such
+    /// object: ...") and bounded so a child that dumps a help screen cannot bury the exit code
+    /// under it.
+    /// </remarks>
+    private const int StderrBudget = 2_000;
+
     private readonly ITestOutputHelper _output;
 
     public TopologyTeardownLeakTests(ITestOutputHelper output) => _output = output;
@@ -221,22 +232,42 @@ public sealed class TopologyTeardownLeakTests
     /// Force-removes every container and network carrying the supplied label selector. Strictly
     /// scoped — it only ever names resources DCP stamped with this run's creatorProcessId.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>This is the ONE member allowed to run docker under
+    /// <see cref="CliFailurePolicy.Tolerate"/>, and the reason is the consequence of being wrong,
+    /// not convenience.</strong> Everywhere else in this class a docker call that fails and reports
+    /// an empty list is read as "no residue survives" — a false PASS on the very leak the class
+    /// exists to catch. Here the polarity inverts: this member runs from the test's
+    /// <c>finally</c>, so a throw out of it REPLACES the real verdict with a teardown failure,
+    /// which is the misattribution issue #378 is about, and it would do so over failures that are
+    /// not defects at all. <c>docker rm -f</c> legitimately exits non-zero when the container is
+    /// already gone — a race this method is guaranteed to run into, because DCP's own teardown is
+    /// removing the same resources concurrently.
+    /// </para>
+    /// <para>
+    /// Nothing here is asserted on, which is what makes tolerating safe: the return of every call
+    /// below either drives a removal or is discarded. The outer <c>catch</c> remains as the
+    /// backstop for anything the policy does not cover (an <c>_output</c> write after the test
+    /// completes, say).
+    /// </para>
+    /// </remarks>
     private void ForceCleanupForThisRun(string labelSelector)
     {
         try
         {
-            var leftoverContainers = RunDocker("ps", "-a", "--filter", labelSelector, "--format", "{{.Names}}");
+            var leftoverContainers = RunDockerBestEffort("ps", "-a", "--filter", labelSelector, "--format", "{{.Names}}");
             foreach (var name in leftoverContainers)
             {
                 _output.WriteLine($"Self-cleanup: docker rm -f {name}");
-                RunDocker("rm", "-f", name);
+                RunDockerBestEffort("rm", "-f", name);
             }
 
-            var leftoverNetworks = RunDocker("network", "ls", "--filter", labelSelector, "--format", "{{.Name}}");
+            var leftoverNetworks = RunDockerBestEffort("network", "ls", "--filter", labelSelector, "--format", "{{.Name}}");
             foreach (var name in leftoverNetworks)
             {
                 _output.WriteLine($"Self-cleanup: docker network rm {name}");
-                RunDocker("network", "rm", name);
+                RunDockerBestEffort("network", "rm", name);
             }
         }
         catch
@@ -246,19 +277,87 @@ public sealed class TopologyTeardownLeakTests
     }
 
     /// <summary>
-    /// Runs the <c>docker</c> CLI with the supplied arguments via <see cref="Process"/> using an
-    /// argument list (NEVER a concatenated shell command line), captures stdout, and returns the
-    /// non-empty trimmed lines.
+    /// How a child that RAN but did not succeed is reported back to the caller.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// There is no correct blanket answer, because the two ways of being wrong have opposite
+    /// costs. Every caller of this helper asks docker WHICH containers and networks survive
+    /// teardown, and an empty list is the answer meaning "none". So a failure reported as an empty
+    /// list is a false PASS on the one defect this class exists to catch — a broken or slow docker
+    /// daemon silently turns the leak assertion green. That is why <see cref="Fail"/> is the
+    /// default and the one a caller gets by reaching for the obviously-named
+    /// <c>RunDocker</c>.
+    /// </para>
+    /// <para>
+    /// <see cref="Tolerate"/> exists for the self-cleanup safety net alone (see
+    /// <see cref="ForceCleanupForThisRun"/>), where the polarity inverts: that code runs from a
+    /// <c>finally</c>, so a throw REPLACES the real verdict with a teardown failure — issue #378's
+    /// misattribution — over failures that are not defects (<c>docker rm -f</c> racing DCP's own
+    /// teardown for a container that has already gone). It is reachable only by naming
+    /// <c>RunDockerBestEffort</c>, so it cannot be selected by accident, and
+    /// <c>DockerCliFailurePolicyTests</c> pins that no other member names it.
+    /// </para>
+    /// </remarks>
+    internal enum CliFailurePolicy
+    {
+        /// <summary>Throw, naming the command, the exit code and stderr. The default.</summary>
+        Fail = 0,
+
+        /// <summary>Return an empty list. Legitimate only where nothing is asserted on it.</summary>
+        Tolerate = 1,
+    }
+
+    /// <summary>
+    /// Runs the <c>docker</c> CLI with the supplied arguments and returns the non-empty trimmed
+    /// stdout lines. Any failure — a failure to start, a non-zero exit, or the bounded wait
+    /// expiring — throws.
+    /// </summary>
+    private static List<string> RunDocker(params string[] args) =>
+        RunCli(DockerExecutable, CliFailurePolicy.Fail, args);
+
+    /// <summary>
+    /// As <see cref="RunDocker(string[])"/>, but a child that fails yields an empty list instead
+    /// of throwing. Legitimate ONLY in <see cref="ForceCleanupForThisRun(string)"/> — see the
+    /// remarks on <see cref="CliFailurePolicy"/> for why, and why nothing else may use it.
+    /// </summary>
+    private static List<string> RunDockerBestEffort(params string[] args) =>
+        RunCli(DockerExecutable, CliFailurePolicy.Tolerate, args);
+
+    /// <summary>
+    /// Runs <paramref name="fileName"/> with the supplied arguments via <see cref="Process"/> using
+    /// an argument list (NEVER a concatenated shell command line), captures both pipes, and returns
+    /// the non-empty trimmed stdout lines of a child that exited 0.
+    /// </summary>
+    /// <param name="fileName">
+    /// The executable. Every production call passes <see cref="DockerExecutable"/>; the parameter
+    /// exists so <c>DockerCliFailurePolicyTests</c> can drive the real code path with a child whose
+    /// exit code and stderr it chooses, in the blocking non-Docker lane and on every platform. A
+    /// test that could only run where a docker daemon does would leave this helper's whole point —
+    /// that it never reports a failure as "nothing survives" — pinned by nothing.
+    /// </param>
+    /// <param name="policy">See <see cref="CliFailurePolicy"/>. Not defaulted: the two entry points
+    /// above are how a caller chooses, and they are named for the choice.</param>
+    /// <param name="args">Arguments, passed as a list rather than a command line.</param>
     /// <returns>
-    /// An empty list when the CLI ran but yielded nothing usable — a null process handle, the
-    /// bounded wait expiring, or a non-zero exit. A failure to START <c>docker</c> at all (it is
-    /// absent from PATH, say) PROPAGATES as <see cref="System.ComponentModel.Win32Exception"/>, and
-    /// deliberately so: this helper's callers ask it which containers and networks survive, and an
-    /// empty list is the answer meaning "none". Converting "docker could not be run" into that
-    /// answer would turn a broken environment into a silently passing leak assertion.
+    /// Under <see cref="CliFailurePolicy.Tolerate"/>, an empty list for every failure. Under
+    /// <see cref="CliFailurePolicy.Fail"/> an empty list means one thing only — the child exited 0
+    /// and printed nothing — because every other outcome throws.
     /// </returns>
     /// <remarks>
+    /// <para>
+    /// <strong>An empty list is never a failure signal under <see cref="CliFailurePolicy.Fail"/>,
+    /// and that is the whole point.</strong> The callers ask which containers and networks survive
+    /// teardown; "none" is what an empty list means to them. Converting "docker could not be run",
+    /// "docker exited 1" or "docker never came back" into that answer would turn a broken
+    /// environment into a silently passing leak assertion — the exact vacuous green this class
+    /// exists to detect. So all three propagate: a failure to START the child as whatever
+    /// <see cref="Process.Start(ProcessStartInfo)"/> raises (a
+    /// <see cref="System.ComponentModel.Win32Exception"/> when the executable is absent from PATH),
+    /// and the other two as an <see cref="InvalidOperationException"/> naming the command, the exit
+    /// code and stderr — because "docker ps exited 1: Cannot connect to the Docker daemon" is
+    /// diagnosable and "assertion failed" is not.
+    /// </para>
     /// <para>
     /// Issue #475 widened the kill here from the timeout path to EVERY path. The bounded
     /// <c>WaitForExit(int)</c> was already guarded; nothing else was. BEFORE it sit the two
@@ -273,11 +372,11 @@ public sealed class TopologyTeardownLeakTests
     /// kill inside the timeout branch is the SEMANTIC one; the <c>finally</c> is the backstop.
     /// </para>
     /// </remarks>
-    private static List<string> RunDocker(params string[] args)
+    internal static List<string> RunCli(string fileName, CliFailurePolicy policy, params string[] args)
     {
         var psi = new ProcessStartInfo
         {
-            FileName = "docker",
+            FileName = fileName,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
@@ -288,10 +387,29 @@ public sealed class TopologyTeardownLeakTests
             psi.ArgumentList.Add(arg);
         }
 
-        var proc = Process.Start(psi);
+        Process? proc;
+        try
+        {
+            proc = Process.Start(psi);
+        }
+        catch (Exception ex) when (policy == CliFailurePolicy.Tolerate
+                                       && ex is System.ComponentModel.Win32Exception
+                                           or InvalidOperationException
+                                           or PlatformNotSupportedException
+                                           or ObjectDisposedException
+                                           or System.IO.FileNotFoundException)
+        {
+            // Tolerant path ONLY. Under Fail this propagates untouched — see the remarks. Here
+            // there is nothing to clean up if docker cannot be run at all, and a throw from the
+            // test's finally would cost the real verdict. The filter is the set
+            // Process.Start(ProcessStartInfo) documents, read off the .NET 8 reference XML rather
+            // than assumed, for the same reason ChildProcess.KillTreeQuietly's is.
+            return new List<string>();
+        }
+
         if (proc is null)
         {
-            return new List<string>();
+            return OnCliFailure(policy, fileName, args, exitCode: null, stderr: null, "started no process");
         }
 
         using (proc)
@@ -304,7 +422,7 @@ public sealed class TopologyTeardownLeakTests
                 // stderr pipe and the parent blocks on stdout (the deadlock the Copilot review flagged).
                 // Kicking off both reads up front lets either pipe drain freely. The wait is BOUNDED with
                 // kill-on-timeout: these are quick `docker ps/inspect/network/rm` calls, so exceeding the
-                // budget means something is wrong — we kill the tree and return empty rather than hang CI.
+                // budget means something is wrong — we kill the tree rather than hang CI.
                 var outTask = proc.StandardOutput.ReadToEndAsync();
                 var errTask = proc.StandardError.ReadToEndAsync();
 
@@ -330,7 +448,15 @@ public sealed class TopologyTeardownLeakTests
                     // Canceled - also not Faulted): it costs nothing, and it is the guard that would
                     // matter if either read ever did fault.
                     _ = Task.WhenAll(outTask, errTask).ContinueWith(static t => _ = t.Exception, TaskScheduler.Default);
-                    return new List<string>();
+
+                    // Reporting comes AFTER the kill and after that observation, deliberately: the
+                    // ordering above was settled over four review rounds and is unchanged. The only
+                    // thing that moved is the verdict this branch returns — killing was always
+                    // right, reporting an empty list was the hazard, because a wedged docker then
+                    // reads as "no residue survives".
+                    return OnCliFailure(
+                        policy, fileName, args, exitCode: null, stderr: null,
+                        $"did not exit within {DockerTimeoutMs} ms (its process tree was killed)");
                 }
 
                 // The bounded wait returned true (process exited). The read tasks below are the real
@@ -338,7 +464,12 @@ public sealed class TopologyTeardownLeakTests
                 // the parameterless WaitForExit() additionally flushes any remaining async output handlers.
                 proc.WaitForExit();
                 var stdout = outTask.GetAwaiter().GetResult();
-                _ = errTask.GetAwaiter().GetResult();
+                var stderr = errTask.GetAwaiter().GetResult();
+
+                if (proc.ExitCode != 0)
+                {
+                    return OnCliFailure(policy, fileName, args, proc.ExitCode, stderr, "exited non-zero");
+                }
 
                 return stdout
                     .Split(s_lineSeparators, StringSplitOptions.RemoveEmptyEntries)
@@ -354,9 +485,65 @@ public sealed class TopologyTeardownLeakTests
     }
 
     /// <summary>
+    /// Applies <paramref name="policy"/> to a child that ran and did not succeed: an empty list
+    /// under <see cref="CliFailurePolicy.Tolerate"/>, otherwise a throw carrying enough to
+    /// diagnose it.
+    /// </summary>
+    /// <returns>An empty list, under <see cref="CliFailurePolicy.Tolerate"/> only.</returns>
+    /// <exception cref="InvalidOperationException">Under <see cref="CliFailurePolicy.Fail"/>.</exception>
+    private static List<string> OnCliFailure(
+        CliFailurePolicy policy, string fileName, string[] args, int? exitCode, string? stderr, string what)
+    {
+        if (policy == CliFailurePolicy.Tolerate)
+        {
+            return new List<string>();
+        }
+
+        throw new InvalidOperationException(DescribeCliFailure(fileName, args, exitCode, stderr, what));
+    }
+
+    /// <summary>
+    /// The failure text: the command as it was run, what went wrong, the exit code, and stderr.
+    /// </summary>
+    /// <remarks>
+    /// Separated from <see cref="OnCliFailure"/> so it can be asserted on directly. A leak test that
+    /// dies saying <c>docker ps exited non-zero (exit code 1): Cannot connect to the Docker daemon</c>
+    /// is diagnosable; one that dies saying "assertion failed" is not, and the difference is the
+    /// whole reason this path throws rather than returning empty.
+    /// </remarks>
+    internal static string DescribeCliFailure(
+        string fileName, string[] args, int? exitCode, string? stderr, string what)
+    {
+        var command = string.Join(" ", new[] { fileName }.Concat(args));
+        var code = exitCode is null ? "no exit code" : $"exit code {exitCode.Value}";
+
+        var trimmed = stderr?.Trim();
+        var detail = string.IsNullOrEmpty(trimmed)
+            ? "(no stderr)"
+            : trimmed.Length <= StderrBudget ? trimmed : trimmed[..StderrBudget] + " …(stderr truncated)";
+
+        return $"`{command}` {what} ({code}): {detail}"
+            + " — reported rather than swallowed because this helper's callers ask which containers"
+            + " and networks survive teardown, and an empty list is the answer meaning 'none'."
+            + " Returning empty for a failed docker call would turn a broken environment into a"
+            + " silently passing leak assertion.";
+    }
+
+    /// <summary>
     /// Convenience for docker commands expected to emit a single value: returns the first
     /// non-empty trimmed stdout line, or <see langword="null"/> if there is none.
     /// </summary>
+    /// <remarks>
+    /// Strict, because it inherits <see cref="RunDocker(string[])"/> and its only caller is the
+    /// probe-discovery poll, where loud is right for the same reason: if docker is genuinely
+    /// broken, failing with the real reason beats polling for 60 s and then reporting a
+    /// PRECONDITION message that blames DCP for creating no container. There is deliberately no
+    /// best-effort sibling. The one case that argues for one — <c>docker inspect</c> losing a race
+    /// against a concurrent removal of some OTHER run's DCP container, which the poll would
+    /// previously have skipped over — now surfaces as a loud failure naming "No such object". That
+    /// is a true statement of what happened, and if it ever proves noisy the fix is a second
+    /// explicitly-named entry point, never a silent empty here.
+    /// </remarks>
     private static string? RunDockerSingle(params string[] args)
     {
         var lines = RunDocker(args);

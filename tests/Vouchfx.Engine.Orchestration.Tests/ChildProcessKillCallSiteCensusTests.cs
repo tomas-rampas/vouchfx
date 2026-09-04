@@ -13,7 +13,7 @@
 // The third is the one with teeth: when BuildTimeout blew, WaitForExitAsync threw, the object was
 // disposed, and the docker client kept running while the outer finally deleted the build context
 // out from under it — the orphan shape #378 closed in the drill lane. A fourth site,
-// TopologyTeardownLeakTests.RunDocker, killed on its timeout path only, which is the same
+// TopologyTeardownLeakTests.RunCli, killed on its timeout path only, which is the same
 // half-guard #378 found in ExamplesCompileTests.
 //
 // A behavioural test can prove the helper kills (ChildProcessKillTreeTests does). It cannot prove

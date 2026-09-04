@@ -267,7 +267,7 @@ public sealed class ServerArtifactInjectionDockerTests : IDisposable
     /// <strong>Both pipes are drained concurrently, and the reason is not stylistic.</strong>
     /// Awaiting stdout to completion and only then reading stderr deadlocks whenever the child
     /// fills the stderr buffer while the parent is still blocked on stdout — the failure written up
-    /// at <c>TopologyTeardownLeakTests.RunDocker</c>. That it cannot happen for a short
+    /// at <c>TopologyTeardownLeakTests.RunCli</c>. That it cannot happen for a short
     /// <c>docker ps</c> is the same "property of today's callers" this method's own kill refuses to
     /// rely on, so the drain does not rely on it either.
     /// </para>

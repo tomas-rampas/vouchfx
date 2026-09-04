@@ -95,7 +95,7 @@ public sealed class ChildProcessKillTreeTests
     /// ended-between-the-check-and-the-kill window is not entered and no exception filter is
     /// exercised. The real race is by definition not deterministically producible; what this row
     /// pins is the branch that makes the common case — <c>finally</c> after a clean completion, or a
-    /// second call layered on an earlier one (as <c>TopologyTeardownLeakTests.RunDocker</c> now
+    /// second call layered on an earlier one (as <c>TopologyTeardownLeakTests.RunCli</c> now
     /// does) — cost nothing and throw nothing.
     /// </remarks>
     [Fact]
