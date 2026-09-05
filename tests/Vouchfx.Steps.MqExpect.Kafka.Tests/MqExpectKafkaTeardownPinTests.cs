@@ -22,19 +22,27 @@
 //   * Dispose() is the vendor's supported teardown: for a consumer handle it routes to
 //     rd_kafka_destroy_flags(handle, RD_KAFKA_DESTROY_F_NO_CONSUMER_CLOSE), which performs
 //     NO leave-group round trip.  It is not free and is not claimed to be — it still
-//     terminates the handle's internal threads and returns when they are joined, and #367
-//     measured that at 16 ms against a refused bootstrap and 94-110 ms against a
-//     connect-refused peer.  What the flag removes is the unbounded part.
+//     terminates the handle's internal threads and returns when they are joined, and that
+//     cost is UNMEASURED for this path.  #367's 16 ms / 94-110 ms figures do NOT transfer:
+//     they are the PRODUCER handle (the same ReleaseHandle takes plain rd_kafka_destroy for
+//     a producer, destroy_flags only for a consumer) and both probes ran against brokers
+//     the client never reached, so no fetcher or coordinator thread existed to join.
 //   * Removing Close() is not a new code path.  Measured from the IL: Close() is
 //     `ConsumerClose(); Dispose(true); GC.SuppressFinalize(this)`, and ConsumerClose()
 //     throws on any non-zero ErrorCode from rd_kafka_consumer_close.  So whenever the
 //     broker was uncooperative — the case #468 is about — the throw skipped Close()'s own
 //     Dispose(true), the old bare `catch {}` swallowed it, and the handle was released by
 //     the outer Dispose(), i.e. by exactly the mechanism that is now the only one.
+//   * Unsubscribe() is the one real alternative and it was considered, not overlooked: the
+//     pinned package's own Consumer`2.Dispose remarks name it alongside Close().  It is
+//     rejected because rd_kafka_unsubscribe returns once the request is enqueued, so an
+//     Unsubscribe() immediately followed by destroy_flags most likely tears the handle down
+//     before the LeaveGroup is transmitted — inferred, not probed.  It carries none of
+//     Close()'s disqualifiers, so it is the candidate to revisit if the joined-consumer
+//     fault-injection harness ever lands.  Full adjudication in the provider's remarks.
 //
-// So there is no in-between fix available.  Re-adding Close() re-adds an uncancellable
-// native call to the step's critical path; the only "bound" for it is one the memory
-// model forbids.
+// Re-adding Close() therefore re-adds an uncancellable native call to the step's critical
+// path, and the only "bound" for it is one the memory model forbids.
 //
 // These tests are non-docker: they read the EMITTED CSX text, not a live broker.  The scan
 // is line-scoped and never truncates a line (see AssertNoCloseCall), because a stripper
@@ -89,13 +97,16 @@ public sealed class MqExpectKafkaTeardownPinTests
         "rd_kafka_t, a native use-after-free (§5). Dispose() routes to " +
         "rd_kafka_destroy_flags(handle, RD_KAFKA_DESTROY_F_NO_CONSUMER_CLOSE), which " +
         "performs no leave-group round trip; it still joins the handle's internal threads, " +
-        "so it is bounded, not free. Removing Close() is not a new path: on the failure " +
-        "case #468 is about, ConsumerClose() threw, the old bare catch swallowed it, and " +
-        "the handle was already released by that same Dispose(). The trade is that the " +
-        "group keeps a silent member until the broker evicts it, then empties as Close() " +
-        "would have made it empty — a delay, no persistent state — and it is a throwaway " +
-        "single-member group per attempt with auto-commit off, so Close() bought nothing. " +
-        "If you need the group left promptly, that is a redesign, not a re-added call.";
+        "so it is bounded, not free, and its cost on this path is unmeasured (#367's " +
+        "figures are the producer handle against a never-connected broker and do not " +
+        "transfer). Removing Close() is not a new path: on the failure case #468 is about, " +
+        "ConsumerClose() threw, the old bare catch swallowed it, and the handle was " +
+        "already released by that same Dispose(). The trade is that the group keeps a " +
+        "silent member until the broker evicts it, then empties as Close() would have made " +
+        "it empty — a delay, no persistent state — and it is a throwaway single-member " +
+        "group per attempt with auto-commit off, so Close() bought nothing. Unsubscribe() " +
+        "was adjudicated and rejected (see the provider remarks), not overlooked. If you " +
+        "need the group left promptly, that is a redesign, not a re-added call.";
 
     private readonly MqExpectKafkaProvider _provider = new();
 
@@ -175,9 +186,16 @@ public sealed class MqExpectKafkaTeardownPinTests
     /// stripper would have.  A <c>.Close(</c> mentioned in a TRAILING comment on a code
     /// line therefore fails the pin; that is the safe direction for a regression pin, and
     /// it is why the provider keeps its <c>Close()</c> prose on whole comment lines.
-    /// Residual limit, stated rather than hidden: this is a textual pin over emitted
+    /// Residual limits, stated rather than hidden.  This is a textual pin over emitted
     /// source, so it cannot see a call reached through a delegate or reflection, nor one
-    /// split across a line break between the receiver and the member name.
+    /// split across a line break between the receiver and the member name.  Its REACH is
+    /// narrower than "the emitted CSX" too: the two regions run from
+    /// <c>ExpectAsync</c> to the end of the helper class, so nothing declared BEFORE
+    /// <c>ExpectAsync</c> is scanned, and <see cref="CsxFragment.StatementBlock"/> — the
+    /// per-step block that calls into the helper — is never scanned at all.  A
+    /// <c>Close()</c> re-added in either place would not be caught here.  Both are
+    /// currently free of consumer handling, which is why the regions are drawn where they
+    /// are; widen them if that stops being true.
     /// </remarks>
     private static void AssertNoCloseCall(string region, string path)
     {
