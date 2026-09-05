@@ -178,12 +178,23 @@ public sealed class SecurityDiagnosticPathDisclosureTests
     /// it.
     /// </para>
     /// <para>
-    /// <strong>THE PROVIDER IS NOT A MOCK OF THE ROUTE, IT IS THE ROUTE.</strong>
-    /// <c>stub.suite-path-leaking-emit</c> does exactly what <c>ScriptCsharpProvider.Emit</c>
-    /// does — <c>File.ReadAllText(Path.GetFullPath(Path.Combine(ctx.SuiteDirectory, …)))</c> —
-    /// against a file that is not there, which is the in-tree TOCTOU race that provider's own
-    /// comment accepts. The path in the diagnostic is therefore whatever the BCL really wrote,
-    /// not a hand-forged string.
+    /// <strong>THE DIAGNOSTIC IS THE BCL'S OWN, NOT A HAND-FORGED STRING</strong> — which is the
+    /// part of this stub's value that still holds. <c>stub.suite-path-leaking-emit</c> performs
+    /// a real <c>File.ReadAllText(Path.GetFullPath(Path.Combine(ctx.SuiteDirectory, …)))</c>
+    /// against a file that is not there, so the path this test scrubs is whatever the BCL
+    /// really wrote.
+    /// </para>
+    /// <para>
+    /// <strong>IT IS NO LONGER A COPY OF AN IN-TREE PROVIDER'S BEHAVIOUR, and the older claim
+    /// that it "is not a mock of the route, it IS the route" has to go with that (issue
+    /// #488).</strong> The claim rested on <c>ScriptCsharpProvider.Emit</c> doing the same bare
+    /// read and accepting the TOCTOU race against its own existence check; that read is now
+    /// wrapped in <c>ReadAuthorFile</c> and re-raises a message naming only the declared path,
+    /// so no Core provider does what this stub does. That does NOT weaken the test — the scrub
+    /// is a general net over EVERY provider's <c>Emit</c>, in-tree or out, and a stub is the
+    /// only way to exercise it once the in-tree providers are individually well-behaved. What
+    /// changes is the fidelity claim: this is now a deliberate stand-in for an arbitrary
+    /// provider that hands a resolved path to the BCL, not a mirror of a specific one.
     /// </para>
     /// <para>
     /// MEASURED RED before the substitution: the event stream, the JUnit <c>message</c>

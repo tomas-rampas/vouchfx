@@ -800,7 +800,38 @@ public sealed class HtmlRenderer
                 }
 
                 var reference = GetStrFromObject(fixture, "reference") ?? "(unknown)";
-                var contentHash = GetStrFromObject(fixture, "contentHash") ?? "(absent)";
+
+                // CAUSE-NEUTRAL BY CONSTRUCTION (issue #484). The token names what the
+                // envelope KNOWS — that this row carries no hash — and deliberately not
+                // why, because the wire record does not carry a why. FixtureDigest has
+                // two fields, and a null ContentHash is the whole of what the producer
+                // recorded; any word here about the file's state would be this renderer
+                // inventing a cause from an absence.
+                //
+                // The token this replaced, "(absent)", named one: it read as a claim
+                // about the FILE. That was defensible while ScenarioRunner.HashFixtureOrNull
+                // caught FileNotFoundException alone, and stopped being so when issue #466
+                // widened the catch to IOException / UnauthorizedAccessException /
+                // ArgumentException / NotSupportedException.
+                //
+                // COUNT IT EXACTLY, because the over-broad version of this sentence was itself
+                // a finding. Five causes now record a null, and "(absent)" was FALSE for three
+                // of them: a locked file, a permission denial, and a path the filesystem
+                // rejects. It stayed TRUE for the other two — a file that was never there, and
+                // one deleted between the existence check and the read, which IS absent by the
+                // time the read fails. A token that is right about two cases in five is still
+                // a token that lies to a reader, which is the whole reason to replace it.
+                //
+                // Do not "improve" this by rendering a cause. The envelope cannot supply one,
+                // and the alternative — widening FixtureDigest to carry a reason — was
+                // considered and refused on merit: the ambiguity is close to unreachable (the
+                // engine READ every one of these files earlier in the run, so a null means a
+                // file stopped being readable mid-run — a permission change, a lock, a
+                // deletion, or a transient fault on a network share, which needs no change of
+                // accessibility at all) and no envelope comparator exists in the engine for the
+                // conflation to mislead. A frozen-adjacent trust artefact is not reshaped for a
+                // harm nothing can currently suffer.
+                var contentHash = GetStrFromObject(fixture, "contentHash") ?? "(no hash recorded)";
 
                 output.WriteLine(string.Format(
                     CultureInfo.InvariantCulture,

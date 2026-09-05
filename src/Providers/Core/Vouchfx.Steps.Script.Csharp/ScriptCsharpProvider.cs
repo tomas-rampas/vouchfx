@@ -242,8 +242,41 @@ public sealed class ScriptCsharpProvider
 
         if (hasFile)
         {
-            var resolvedPath = System.IO.Path.GetFullPath(
-                System.IO.Path.Combine(ctx.SuiteDirectory, model.File!));
+            // GUARDED FOR EXACTLY THE REASON THE FileInfo.Length STAT BELOW IS, and this call
+            // sat outside every try directly ABOVE the comment stating the rule it broke
+            // (found in peer review of #488). Validate's contract is to NEVER throw — an
+            // unhandled exception here surfaces as a provider fault rather than a clean
+            // ValidationResult.Failure — and Path.GetFullPath is a throwing route:
+            // ArgumentException, NotSupportedException, or PathTooLongException (an
+            // IOException). Measured on net8.0: a declared path carrying an embedded NUL
+            // raises `ArgumentException: Null character in path.`, which is the arm the
+            // companion test drives.
+            //
+            // NOT A VERDICT CHANGE, checked before making it: an escaping throw was caught by
+            // ProviderPipeline's own Validate guard and turned into a compile refusal, and a
+            // ValidationResult.Failure is turned into a compile refusal too — both land on
+            // Inconclusive (§12.1). What changes is the TEXT: an authoring fault naming the
+            // author's own declared path, instead of a provider-defect report about a method
+            // the author cannot fix.
+            //
+            // Type name only, never the resolved path — the same rule as both guards below.
+            // Note the resolved path does not even exist as a value on this arm: the call that
+            // would have produced it is the one that threw.
+            string resolvedPath;
+            try
+            {
+                resolvedPath = System.IO.Path.GetFullPath(
+                    System.IO.Path.Combine(ctx.SuiteDirectory, model.File!));
+            }
+            catch (Exception ex) when (ex is ArgumentException
+                or System.IO.IOException
+                or NotSupportedException
+                or System.Security.SecurityException)
+            {
+                return ValidationResult.Failure(
+                    $"script.csharp: could not resolve file '{model.File}', relative to the "
+                    + $"suite directory: {ex.GetType().Name}");
+            }
 
             if (!System.IO.File.Exists(resolvedPath))
             {
@@ -409,8 +442,7 @@ public sealed class ScriptCsharpProvider
         // Validate already confirmed the file exists; a same-run TOCTOU race here is
         // an accepted, narrow edge case.
         var source = model.File is not null
-            ? System.IO.File.ReadAllText(
-                System.IO.Path.GetFullPath(System.IO.Path.Combine(ctx.SuiteDirectory, model.File)))
+            ? ReadAuthorFile(model.File, ctx.SuiteDirectory)
             : model.Code!;
 
         // The outcome key is engine-derived only (never from author input).
@@ -486,5 +518,111 @@ public sealed class ScriptCsharpProvider
             RequiredUsings: s_usings,
             RequiredHelpers: Array.Empty<string>(),
             StatementBlock: sb.ToString());
+    }
+
+    /// <summary>
+    /// Reads the author's external <c>.csx</c> body, re-raising any read failure as a
+    /// diagnostic that names the <strong>declared</strong> path and never the resolved one
+    /// (issue #488, in #357's shape).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>THE RESOLVED PATH IS A LOCAL OF THIS METHOD AND LEAVES IT ONLY AS BYTES.</strong>
+    /// <c>File.ReadAllText</c> quotes the absolute host path back in its own message —
+    /// <c>UnauthorizedAccessException: Access to the path '&lt;resolved&gt;' is denied.</c>, or
+    /// <c>IOException: The process cannot access the file '&lt;resolved&gt;' …</c> for a locked
+    /// one. An <c>Emit</c> throw is caught by <c>ProviderPipeline</c> and folded into a compile
+    /// refusal whose text <c>DescribeProviderFault</c> composes, and that reaches
+    /// <c>--events</c>, the JUnit XML and the HTML report — an audience wider than whoever ran
+    /// the suite. <strong>It is NOT <c>ScenarioRunner</c>'s
+    /// <c>$"{ex.GetType().Name}: {ex.Message}"</c>:</strong> that spelling belongs to the
+    /// scenario-level catch-all, the route an <c>Emit</c> throw cannot take because the pipeline
+    /// catches it first. An earlier revision of this paragraph cited it and would have sent a
+    /// checker to read the wrong method.
+    /// </para>
+    /// <para>
+    /// <strong>AND THE DISCLOSURE IS CONDITIONAL, WHICH IS WHAT MAKES THIS GUARD NECESSARY
+    /// RATHER THAN MERELY TIDY.</strong> Between the throw and the artefact sits
+    /// <c>ProviderPipeline.ScrubSuiteDirectory</c>, which substitutes the literal text "the
+    /// suite directory" for the resolved suite directory. For an ordinary in-suite
+    /// <c>file: fixtures/x.csx</c> that already reduced the leak to
+    /// <c>the suite directory\fixtures\x.csx</c> — incidental cover, not a guarantee, since it
+    /// depends on a scrub in another assembly that knows nothing about this read.
+    /// <strong>Where it does NOT apply, and this guard is the only protection, is a declared
+    /// path that resolves OUTSIDE the suite directory</strong> — an unbounded substring replace
+    /// finds no match, and the full host path ships. Nothing refuses such a path: <c>file</c>
+    /// carries <c>minLength: 1</c> and no <c>pattern</c> in this provider's own schema fragment
+    /// above, and <c>Validate</c> performs an existence check and a size check with no
+    /// containment check. Both cases are driven by
+    /// <c>Emit_FileUnreadable_DiagnosticNamesDeclaredPathNeverResolvedPath</c>'s two rows.
+    /// </para>
+    /// <para>
+    /// <strong>A SECOND, UNPLANNED BENEFIT, recorded because it is a reason not to "simplify"
+    /// the thrown type back to the original.</strong> <c>DescribeProviderFault</c> chooses its
+    /// attribution sentence from <c>IsEnvironmentalCondition</c>, which is
+    /// <c>cause is IOException or UnauthorizedAccessException</c>. The two path-shape routes
+    /// through the guard below — <see cref="ArgumentException"/> and
+    /// <see cref="NotSupportedException"/> — would fall to the <c>else</c> arm and be reported
+    /// as <c>"This is a defect in the provider (ScriptCsharpProvider)"</c>, which is a false
+    /// accusation for a path the AUTHOR wrote. Re-raising as
+    /// <see cref="System.IO.IOException"/> lands every route in the non-accusatory
+    /// filesystem-condition arm instead, so the change improves attribution as well as
+    /// disclosure. Narrowing the thrown type would give that back.
+    /// </para>
+    /// <para>
+    /// <strong>NAMING THE DECLARED PATH IS THE ONLY GUARD AVAILABLE, structurally</strong> — the
+    /// same reason <c>Validate</c>'s not-found and stat guards give a few dozen lines above. #473
+    /// examined this provider and wrote that reason INTO those guards, judging the provider
+    /// "already compliant" and filing the rest as #488; that judgement was true of the messages
+    /// <c>Validate</c> composes and not of the read below, which is the gap being closed here. A
+    /// provider assembly references only <c>Vouchfx.Sdk</c> and
+    /// <c>Vouchfx.Engine.Abstractions</c>; <c>SecurityPathDisclosureLedger</c> lives in
+    /// <c>Vouchfx.Engine.Orchestration</c>, so no provider can record a declared/resolved pair
+    /// into one even if it wanted to, and a scrub net cannot substitute what was never recorded.
+    /// That is a property of the assembly graph, not an omission.
+    /// </para>
+    /// <para>
+    /// <strong>NO INNER EXCEPTION, AND THAT IS LOAD-BEARING RATHER THAN TIDINESS.</strong>
+    /// <c>ProviderPipeline.DescribeProviderFault</c> WALKS the thrown exception's inner chain
+    /// and appends each message, precisely so a provider that wraps its real failure does not
+    /// hide the cause. Attaching the original here would therefore put the BCL's
+    /// resolved-path message straight back into the artefact this guard exists to keep it out
+    /// of. The exception TYPE NAME is reported instead — the same trade
+    /// <c>Validate</c>'s stat guard already makes, and it is the actionable half: an author
+    /// reading <c>UnauthorizedAccessException</c> against their own declared path knows what to
+    /// check.
+    /// </para>
+    /// <para>
+    /// The catch is the IO family NAMED, never a bare <c>catch (Exception)</c>: an
+    /// <c>OutOfMemoryException</c> raised through this frame is not "the file could not be
+    /// read" and must not be relabelled as one. The full route list, matching the catch arm for
+    /// arm: <c>Path.GetFullPath</c> raises <see cref="ArgumentException"/> (invalid characters),
+    /// <see cref="NotSupportedException"/>, and <c>PathTooLongException</c> — which is an
+    /// <see cref="System.IO.IOException"/>; <c>File.ReadAllText</c> raises
+    /// <see cref="UnauthorizedAccessException"/>, a plain <see cref="System.IO.IOException"/>
+    /// for a locked file or one deleted under it, and
+    /// <see cref="System.Security.SecurityException"/> where a caller lacks the demanded
+    /// permission. The resolve sits INSIDE the guard with the read precisely because the first
+    /// three of those come from it, and its message is no more vetted than the read's.
+    /// </para>
+    /// </remarks>
+    private static string ReadAuthorFile(string declaredPath, string suiteDirectory)
+    {
+        try
+        {
+            return System.IO.File.ReadAllText(
+                System.IO.Path.GetFullPath(
+                    System.IO.Path.Combine(suiteDirectory, declaredPath)));
+        }
+        catch (Exception ex) when (ex is System.IO.IOException
+            or UnauthorizedAccessException
+            or System.Security.SecurityException
+            or ArgumentException
+            or NotSupportedException)
+        {
+            throw new System.IO.IOException(
+                $"script.csharp: could not read file '{declaredPath}', relative to the suite "
+                + $"directory: {ex.GetType().Name}");
+        }
     }
 }

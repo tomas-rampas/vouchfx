@@ -1001,11 +1001,24 @@ internal static class ProviderPipeline
     /// replace what was never recorded into it.
     /// </para>
     /// <para>
-    /// <strong>The route is live and in-tree.</strong> <c>ScriptCsharpProvider.Emit</c> reads
+    /// <strong>The route is real, and its worked example is now closed at the source — which
+    /// changes the example, not the rule (issue #488).</strong> This paragraph used to cite
+    /// <c>ScriptCsharpProvider.Emit</c>'s bare
     /// <c>File.ReadAllText(Path.GetFullPath(Path.Combine(ctx.SuiteDirectory, model.File)))</c>
-    /// and its own comment accepts the TOCTOU race against <c>Validate</c>'s existence check. A
-    /// file deleted in that window yields <c>Could not find file 'D:\…\suite\x.csx'.</c> — a BCL
-    /// message carrying the absolute host path, straight into the guard this scrub protects.
+    /// as live: a file deleted in the TOCTOU window against <c>Validate</c>'s existence check
+    /// yielded <c>Could not find file 'D:\…\suite\x.csx'.</c>, a BCL message carrying the
+    /// absolute host path straight into the guard this scrub protects. That read is now wrapped
+    /// (<c>ScriptCsharpProvider.ReadAuthorFile</c>) and re-raises a message naming only the
+    /// declared path, so the specific instance is gone.
+    /// </para>
+    /// <para>
+    /// <strong>The CLASS is not, and this scrub is not thereby redundant.</strong> Any provider
+    /// — in this repository or out of tree — can still hand a resolved path to the BCL and let
+    /// the resulting message escape through this door, and no provider can reach
+    /// <c>SecurityPathDisclosureLedger</c> to do better. This scrub remains the only general net
+    /// on this route; what it can never be is a substitute for a provider naming the declared
+    /// path itself, because it covers only paths under the suite directory (see the residual
+    /// note above) and a resolved path that escapes it is untouched.
     /// </para>
     /// <para>
     /// <strong>Substitution, not redaction, and the wording is not new.</strong> Naming the

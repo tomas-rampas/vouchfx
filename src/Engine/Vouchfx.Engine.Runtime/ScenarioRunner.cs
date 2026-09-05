@@ -5779,18 +5779,35 @@ public static class ScenarioRunner
     /// the sibling path-valued security fields are excluded.
     /// </para>
     /// <para>
-    /// Fixture hashing reuses <c>SeedFixtures.ComputeContentHash</c> (Orchestration)
-    /// so the envelope records the SAME hash the seed applier computes — no
-    /// duplicate hashing routine, no project cycle (the Runtime layer references
-    /// both Abstractions and Orchestration).
+    /// Fixture hashing reuses <c>SeedFixtures.ComputeContentHash</c> (Orchestration) because a
+    /// second hashing routine would be a second definition of what a fixture's hash IS, and
+    /// because the helper's placement lets the Runtime layer call it without a project cycle
+    /// (Runtime already references both Abstractions and Orchestration).
+    /// <strong>NOT because the seed applier computes the same hash — it computes none
+    /// (issue #484).</strong> This sentence used to read "so the envelope records the SAME hash
+    /// the seed applier computes"; <c>SeedApplier</c> reads each SQL file with
+    /// <c>File.ReadAllTextAsync</c> and executes it, and hashes nothing. <c>SeedFixtures</c>'s
+    /// own remarks carry the standing instruction against exactly this claim — "do not restore
+    /// the shared-caller premise without a call site to point at" — and this is the endpoint of
+    /// the cross-reference that instruction was written for. The envelope is the helper's only
+    /// production caller.
     /// </para>
     /// <para>
-    /// <strong>Missing-fixture behaviour:</strong> if a fixture file is absent at
-    /// envelope-build time, the fixture is recorded with a <see langword="null"/>
-    /// content hash rather than throwing — the envelope must never crash a run, and
-    /// a missing seed file is already classified as an Environment error by the seed
-    /// applier (§12.1).  Recording the reference without a hash keeps the envelope a
-    /// faithful, non-fatal account of what the run referenced.
+    /// <strong>Unhashable-fixture behaviour:</strong> if a fixture <em>cannot be hashed</em>
+    /// at envelope-build time, it is recorded with a <see langword="null"/> content hash
+    /// rather than throwing — the envelope must never crash a run, and the condition is
+    /// already reported by whichever stage owns the file: an unreadable seed fixture, for ANY
+    /// reason and not only absence, fails <c>SeedApplier</c>'s guarded read and becomes an
+    /// <c>OrchestrationException</c> (Provision) → Environment error, while an unreadable
+    /// <c>script.csharp</c> <c>file:</c> fails the provider's own guarded read and becomes a
+    /// compile refusal → Inconclusive (§12.1).  Recording the reference without a hash keeps
+    /// the envelope a faithful, non-fatal account of what the run referenced rather than a
+    /// second, worse report of a fault already reported.
+    /// <strong>Absence is one cause among several and not the heading it
+    /// once was here (issue #484):</strong> this paragraph was written when
+    /// <see cref="HashFixtureOrNull"/> caught <see cref="FileNotFoundException"/> alone, and
+    /// issue #466 widened it to the whole IO family.  The set of causes, and the decision not
+    /// to record WHICH one occurred, are stated once at <see cref="HashFixtureOrNull"/>.
     /// </para>
     /// <para>
     /// Exposed as <see langword="internal"/> so the no-docker S05-B-03 tests can
@@ -5876,9 +5893,14 @@ public static class ScenarioRunner
     /// when <see langword="null"/>.
     /// </param>
     /// <returns>
-    /// One <see cref="FixtureDigest"/> per referenced fixture file.  A fixture whose
-    /// file is absent is recorded with a <see langword="null"/> content hash (the
-    /// envelope never throws — see <see cref="BuildReproducibilityEnvelope"/>).
+    /// One <see cref="FixtureDigest"/> per referenced fixture file.  A fixture that
+    /// <strong>cannot be hashed</strong> — for ANY of the reasons
+    /// <see cref="HashFixtureOrNull"/> catches, of which an absent file is only one — is
+    /// recorded with a <see langword="null"/> content hash (the envelope never throws — see
+    /// <see cref="BuildReproducibilityEnvelope"/>).  This sentence used to name absence as the
+    /// condition, which stopped being true when issue #466 widened that catch; the set of
+    /// causes is stated once, at <see cref="HashFixtureOrNull"/>, and this is a pointer to it
+    /// rather than a second copy.
     /// </returns>
     private static IReadOnlyList<FixtureDigest> CollectFixtureDigests(
         SeedSpec? seed,
@@ -5963,9 +5985,50 @@ public static class ScenarioRunner
     /// bytes may have differed, which weakens the input-equivalence claim the envelope exists
     /// to make. Widening the catch above did not create that conflation — an absent file
     /// already recorded <see langword="null"/> — but it did enlarge the set of causes that
-    /// land in it, so it is stated here rather than left to be rediscovered. Fixing it means
-    /// changing the <see cref="FixtureDigest"/> shape, which is a frozen-adjacent trust
-    /// artefact and not something to reshape inside a bug fix; it is filed as a follow-up.
+    /// land in it, so it is stated here rather than left to be rediscovered.
+    /// </para>
+    /// <para>
+    /// <strong>DECIDED, NOT DEFERRED (issue #484): the shape does not change, and the reason is
+    /// merit rather than the freeze.</strong> An earlier revision of this paragraph ended "it is
+    /// filed as a follow-up", which is no longer where this stands. The §14 event-wire freeze
+    /// WOULD have permitted an additive third field for the v1.x series — that is measured, from
+    /// <c>EventContractFreezeTests</c>'s own additive-evolution clause and the two precedents in
+    /// its history — so "frozen" was never the argument, and stating it as one invited a future
+    /// reader to reopen the question the moment they checked the freeze rules and found room.
+    /// </para>
+    /// <para>
+    /// The argument is REACHABILITY, in two steps that must both hold before the conflation can
+    /// mislead anyone. FIRST, reaching a <see langword="null"/> at all is already close to
+    /// unreachable, and the reason is a FULL READ rather than a stat. This method runs at
+    /// SCENARIO COMPLETION, alongside the <c>ScenarioCompletedEvent</c> — and by then the engine
+    /// has already read every byte of every file it is about to hash: <c>SeedApplier</c>'s
+    /// <c>File.ReadAllTextAsync</c> for each declared seed SQL file, at topology start and again
+    /// at each reseed, and <c>ScriptCsharpProvider</c>'s own <c>File.ReadAllText</c> for a
+    /// <c>script.csharp</c> <c>file:</c> reference, at compile time, against the same base
+    /// directory this collector is handed. So a <see langword="null"/> here means a file the
+    /// engine successfully read earlier in the run has stopped being readable since.
+    /// </para>
+    /// <para>
+    /// <strong>Do NOT rest this leg on <c>Validate</c>'s existence check or the seed applier's,
+    /// which an earlier revision of this paragraph did.</strong> This branch's own guards
+    /// measure that <c>File.Exists</c> and <c>FileInfo.Length</c> both SUCCEED on a locked or
+    /// permission-denied file that a read then refuses — a stat proves nothing about
+    /// readability, so citing one made the argument weaker than the facts support, and citing it
+    /// HERE contradicted a measurement written a few files away.
+    /// </para>
+    /// <para>
+    /// SECOND, and decisively, <strong>no envelope comparator exists anywhere in
+    /// <c>src/</c></strong>: nothing in the engine reads two envelopes and reports them
+    /// equivalent, so there is no consumer for two null rows to deceive. Harm needs BOTH
+    /// compared runs to hit the same transient window AND a comparator to compare them.
+    /// </para>
+    /// <para>
+    /// So the residual is documented, the human-facing renderer was made cause-neutral instead
+    /// (<c>HtmlRenderer</c>'s fixture row — it was printing "(absent)", a cause the widened catch
+    /// had made one possibility among several), and <see cref="FixtureDigest"/> is left alone.
+    /// <strong>The fact that would change this answer is a comparator</strong> — if one is ever
+    /// built, the second step of the argument collapses and the field becomes worth its additive
+    /// change. Reopen on that, not on a fresh reading of the freeze rules.
     /// </para>
     /// </remarks>
     private static FixtureDigest HashFixtureOrNull(string baseDirectory, string relativePath)
@@ -5981,8 +6044,12 @@ public static class ScenarioRunner
             or ArgumentException
             or NotSupportedException)
         {
-            // The envelope must never crash a run: a missing seed fixture is already
-            // classified as an Environment error by the seed applier (§12.1).  Record
+            // The envelope must never crash a run, and it is not the reporter of record for
+            // any of these conditions: an unreadable seed fixture — for ANY reason, not only
+            // absence — fails SeedApplier's guarded read and is already an Environment error
+            // (§12.1), and an unreadable script.csharp file: fails ScriptCsharpProvider's own
+            // guarded read and is already a compile refusal (Inconclusive). Naming only the
+            // absent case here, as this comment used to, understated that (issue #484). Record
             // the reference without a hash so the envelope remains a faithful account.
             //
             // WIDENED FROM FileNotFoundException ALONE (issue #466), because that single type

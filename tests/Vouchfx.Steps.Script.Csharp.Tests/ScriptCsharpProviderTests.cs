@@ -23,12 +23,17 @@
 //      'code' body.
 //  14. Size bound (plain resource limit, NOT a crash-closer): 'code'/'file' body size
 //      is capped at 64 KiB.
+//  15. Path disclosure (#488): when Emit's read of the 'file' reference fails, the
+//      diagnostic that escapes names the DECLARED path and never the resolved absolute
+//      host path — asserted through the shared HostPathDisclosure predicate, and only
+//      after the raw BCL failure has been pinned as containing that resolved path.
 using System.IO;
 using System.Linq;
 using Vouchfx.Engine.Abstractions;
 using Vouchfx.Engine.Compilation;
 using Vouchfx.Sdk;
 using Vouchfx.Steps.Script.Csharp;
+using Vouchfx.TestSupport;
 using Xunit;
 using YamlDotNet.RepresentationModel;
 
@@ -721,6 +726,214 @@ public sealed class ScriptCsharpProviderTests : IDisposable
         var fragment = _provider.Emit(model, ctx);
 
         Assert.Contains(fileContent, fragment.StatementBlock, StringComparison.Ordinal);
+    }
+
+    // ── 13c-bis. Validate: an unresolvable 'file' fails cleanly, never throws ──
+
+    /// <summary>
+    /// <c>Validate</c>'s contract is to NEVER throw. A declared <c>file</c> path that
+    /// <c>Path.GetFullPath</c> cannot resolve must therefore come back as a
+    /// <see cref="ValidationResult"/> failure naming the declared path, not as an exception.
+    /// </summary>
+    /// <remarks>
+    /// Found in peer review of #488: the resolve sat outside every <c>try</c>, immediately above
+    /// the sibling <c>FileInfo.Length</c> stat whose own comment states the never-throw rule.
+    /// The trigger is an embedded NUL — measured on net8.0 as
+    /// <c>ArgumentException: Null character in path.</c> — which is also the one route whose BCL
+    /// message happens to carry no path, so the disclosure assertion here is a guard against a
+    /// future message rather than a present leak.
+    /// </remarks>
+    [Fact]
+    public void Validate_FilePathUnresolvable_ReturnsFailure_DoesNotThrow()
+    {
+        var declaredPath = "fixtures/bad\0name.csx";
+        var model = new ScriptCsharpModel(Code: null, File: declaredPath);
+        var ctx = new StubProjectContext(_root);
+
+        // The premise: the resolve this guard wraps really does throw for this input.
+        Assert.ThrowsAny<ArgumentException>(
+            () => Path.GetFullPath(Path.Combine(_root, declaredPath)));
+
+        var result = _provider.Validate(model, ctx);
+
+        Assert.False(result.IsValid);
+        var error = Assert.Single(result.Errors);
+        Assert.Contains("script.csharp", error, StringComparison.Ordinal);
+        Assert.Contains("ArgumentException", error, StringComparison.Ordinal);
+        HostPathDisclosure.AssertNoAbsoluteHostPath(
+            "the script.csharp Validate resolve diagnostic", error, _root);
+    }
+
+    // ── 13d. Emit: an unreadable 'file' discloses no resolved host path (#488) ──
+
+    /// <summary>
+    /// When <c>Emit</c>'s read of the referenced <c>.csx</c> file fails, the diagnostic that
+    /// escapes must name the <strong>declared</strong> path the author wrote and never the
+    /// resolved absolute host path — #357's rule, in the shape #473 applied to
+    /// <c>SeedFixtures</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// WHY THE ESCAPE MATTERS, stated with its actual condition rather than unconditionally.
+    /// <c>ProviderPipeline</c> catches an <c>Emit</c> throw and folds it into a compile refusal
+    /// whose text <c>DescribeProviderFault</c> composes — <c>"step '&lt;id&gt;': the
+    /// '&lt;type&gt;' provider's Emit threw &lt;Type&gt;: &lt;chain&gt;  &lt;attribution&gt;"</c>
+    /// — and that reaches <c>--events</c>, the JUnit XML and the HTML report. Between the throw
+    /// and the artefact sits <c>ScrubSuiteDirectory</c>, which substitutes the literal text
+    /// "the suite directory" for the resolved suite directory. <strong>So an in-suite
+    /// <c>file:</c> was already partly covered, and the guard is load-bearing for a path that
+    /// resolves OUTSIDE the suite directory</strong> — which nothing refuses: <c>file</c>
+    /// carries <c>minLength: 1</c> and no <c>pattern</c> in the schema, and <c>Validate</c> runs
+    /// an existence check and a size check with no containment check. Both cases are driven
+    /// below, and the escaping row asserts that it really does escape.
+    /// </para>
+    /// <para>
+    /// NO PROVIDER-SIDE ALTERNATIVE EXISTS. No provider assembly can reach
+    /// <c>SecurityPathDisclosureLedger</c> (a provider references only <c>Vouchfx.Sdk</c> and
+    /// <c>Vouchfx.Engine.Abstractions</c>), and the declared/resolved pair was never recorded
+    /// into one, so omitting the resolved path AT THE SOURCE is the only guard available —
+    /// exactly the reasoning <c>Validate</c>'s not-found and stat guards already carry.
+    /// </para>
+    /// <para>
+    /// THE PREMISE IS PINNED IN THE TEST, not assumed, because the whole case rests on it: the
+    /// raw BCL failure is asserted to contain the resolved path BEFORE the provider's own
+    /// diagnostic is asserted not to. Without that first assertion a future BCL that stopped
+    /// quoting the path would turn this into a test that passes while proving nothing.
+    /// </para>
+    /// <para>
+    /// <strong>THE WHOLE INNER CHAIN IS ASSERTED, NOT JUST <c>Message</c>, and that is the point
+    /// of this test rather than a flourish.</strong> The guard's design depends on attaching NO
+    /// inner exception, because <c>ProviderPipeline.DescribeCauseChain</c> walks up to four
+    /// links and appends each one's message. <see cref="Exception.Message"/> does not include
+    /// inner messages, so a maintainer adding <c>innerException: ex</c> would reinstate the full
+    /// disclosure while a <c>Message</c>-only assertion stayed green. The rendered chain is
+    /// therefore reproduced here in <c>DescribeCauseChain</c>'s own shape and asserted over,
+    /// alongside an explicit <see langword="null"/> check on the inner exception for a legible
+    /// failure.
+    /// </para>
+    /// <para>
+    /// <strong>THE TRIGGER IS SYNTHETIC AND SAYING SO MATTERS.</strong> A directory in the
+    /// file's place cannot occur in production: <c>File.Exists</c> returns
+    /// <see langword="false"/> for a directory — asserted below rather than claimed — so
+    /// <c>Validate</c> refuses the step first and <c>Emit</c> is never reached. It is used
+    /// because it is the one trigger that is deterministic on both platforms (CI runs on
+    /// ubuntu-latest, this suite is authored on Windows) and needs no <c>FileShare</c>
+    /// emulation, whose Unix behaviour is advisory. <strong>The production shapes are the two
+    /// <c>Validate</c> genuinely cannot pre-empt</strong> — measured on net8.0, both
+    /// <c>File.Exists</c> and <c>FileInfo.Length</c> SUCCEED on an exclusively-locked file and
+    /// on an ACL-denied one that <c>File.ReadAllText</c> then refuses with
+    /// <see cref="IOException"/> / <see cref="UnauthorizedAccessException"/> naming the resolved
+    /// path. All three reach the same guarded read, so the synthetic trigger exercises the same
+    /// code path the real ones take.
+    /// </para>
+    /// </remarks>
+    /// <param name="escapesSuiteDirectory">
+    /// <see langword="false"/> drives an ordinary in-suite relative path;
+    /// <see langword="true"/> drives one that resolves outside the suite directory — the case
+    /// <c>ScrubSuiteDirectory</c> cannot cover and the only one where this guard is the sole
+    /// protection.
+    /// </param>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Emit_FileUnreadable_DiagnosticNamesDeclaredPathNeverResolvedPath(
+        bool escapesSuiteDirectory)
+    {
+        // `outsideRoot` is a sibling of the suite directory, not a child, so a declared path
+        // reaching it genuinely leaves the tree ScrubSuiteDirectory knows about.
+        var outsideRoot = Path.Combine(
+            Path.GetTempPath(), "vouchfx-script-outside-" + Guid.NewGuid().ToString("n"));
+
+        try
+        {
+            string declaredPath;
+            string hostDirectory;
+
+            if (escapesSuiteDirectory)
+            {
+                Directory.CreateDirectory(outsideRoot);
+
+                // The author writes a traversal; nothing in the schema or in Validate refuses
+                // one. The host directory at risk is the one it lands in, not the suite's.
+                declaredPath = Path.GetRelativePath(
+                    _root, Path.Combine(outsideRoot, "escaped.csx"));
+                hostDirectory = outsideRoot;
+            }
+            else
+            {
+                declaredPath = "fixtures/unreadable-" + Guid.NewGuid().ToString("n") + ".csx";
+                hostDirectory = _root;
+            }
+
+            var resolvedPath = Path.GetFullPath(Path.Combine(_root, declaredPath));
+
+            // THE ROW'S OWN PRECONDITION: the escaping row must actually escape, or it silently
+            // degrades into a duplicate of the in-suite row.
+            Assert.Equal(
+                escapesSuiteDirectory,
+                !resolvedPath.StartsWith(
+                    _root + Path.DirectorySeparatorChar, StringComparison.Ordinal));
+
+            // A directory where the file should be. Asserting File.Exists is false records, as
+            // an executable fact, why this trigger is synthetic: Validate would refuse first.
+            Directory.CreateDirectory(resolvedPath);
+            Assert.False(
+                File.Exists(resolvedPath),
+                "File.Exists must be false for a directory — this is why the trigger is "
+                + "synthetic and Validate would refuse such a step before Emit ran.");
+
+            // ── Premise, asserted rather than assumed ────────────────────────
+            var raw = Assert.ThrowsAny<Exception>(() => File.ReadAllText(resolvedPath));
+            Assert.Contains(hostDirectory, raw.Message, StringComparison.Ordinal);
+
+            // ── The property under test ─────────────────────────────────────
+            var model = new ScriptCsharpModel(Code: null, File: declaredPath);
+            var ctx = new StubCompileContext("unreadable-step", _root);
+
+            var thrown = Assert.ThrowsAny<Exception>(() => _provider.Emit(model, ctx));
+
+            const string Channel = "the script.csharp Emit file-read diagnostic";
+
+            // (1) The message itself.
+            HostPathDisclosure.AssertNoAbsoluteHostPath(Channel, thrown.Message, hostDirectory);
+
+            // (2) THE GATE ON THE DESIGN: no inner exception to walk. Stated directly so the
+            // failure names the edit that caused it.
+            Assert.Null(thrown.InnerException);
+
+            // (3) And the property over the chain AS THE PIPELINE RENDERS IT, so the guarantee
+            // does not depend on (2) being the check a future maintainer happens to read. This
+            // mirrors ProviderPipeline.DescribeCauseChain's shape and its four-link bound.
+            var rendered = thrown.Message;
+            var link = thrown.InnerException;
+            for (var depth = 1; link is not null && depth < 4; depth++)
+            {
+                rendered += $" -> {link.GetType().Name}: {link.Message}";
+                link = link.InnerException;
+            }
+
+            HostPathDisclosure.AssertNoAbsoluteHostPath(
+                Channel + " (message + rendered inner-exception chain)", rendered, hostDirectory);
+
+            // The declared path is the actionable half and must survive: a diagnostic that
+            // disclosed nothing AND identified nothing would satisfy the rule while being
+            // useless.
+            Assert.Contains(declaredPath, thrown.Message, StringComparison.Ordinal);
+            Assert.Contains("script.csharp", thrown.Message, StringComparison.Ordinal);
+        }
+        finally
+        {
+            try
+            {
+                Directory.Delete(outsideRoot, recursive: true);
+            }
+            catch (IOException)
+            {
+            }
+            catch (UnauthorizedAccessException)
+            {
+            }
+        }
     }
 
     /// <summary>

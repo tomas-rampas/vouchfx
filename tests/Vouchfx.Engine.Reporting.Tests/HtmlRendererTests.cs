@@ -567,4 +567,81 @@ public sealed class HtmlRendererTests
         Assert.True(s2 > headingB);
         Assert.True(s3 > headingB);
     }
+
+    // -------------------------------------------------------------------------
+    // Test 8 (issue #484): a fixture row carrying a NULL contentHash renders a
+    // CAUSE-NEUTRAL token.
+    //
+    // Every other envelope test in this assembly — and the one in
+    // ReproducibilityEnvelopeRenderTests — constructs only HASHED fixtures, so the
+    // null branch of this renderer had no coverage at all and the token it printed
+    // was free to say something the engine cannot know. Since issue #466 widened
+    // ScenarioRunner.HashFixtureOrNull's catch to the whole IO family, a null hash
+    // no longer means the file was absent: it means the fixture could not be hashed,
+    // for a reason the envelope deliberately does not record. The report must
+    // therefore not name one.
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void Render_FixtureWithNullContentHash_RendersCauseNeutralToken()
+    {
+        var lines = new[]
+        {
+            Line(new ScenarioStartedEvent { RunId = "run-484", ScenarioId = "unhashable-fixture" }),
+            Line(new ReproducibilityEnvelopeEvent
+            {
+                RunId = "run-484",
+                ScenarioId = "unhashable-fixture",
+                EnvSchemaVersion = ReproducibilityEnvelope.CurrentSchemaVersion,
+                SecretReferences = Array.Empty<SecretReferenceDigest>(),
+                Fixtures = new[]
+                {
+                    // The shape under test: a declared fixture the engine could not hash.
+                    new FixtureDigest("fixtures/unreadable.sql", ContentHash: null),
+                },
+            }),
+            Line(new ScenarioCompletedEvent
+            {
+                RunId = "run-484",
+                ScenarioId = "unhashable-fixture",
+                Verdict = Verdict.Pass,
+                Counts = new VerdictCounts { Pass = 1 },
+            }),
+        };
+
+        using var writer = new StringWriter();
+        HtmlRenderer.Render(lines, writer);
+        var output = writer.ToString();
+
+        // The row is still rendered — a fixture the engine could not hash is part of
+        // what the run referenced, so dropping it would make the envelope a less
+        // faithful account than recording it without a hash.
+        Assert.Contains("fixtures/unreadable.sql", output, StringComparison.Ordinal);
+
+        // SCOPED TO THE FIXTURE ROW, not the whole document, and deliberately: the
+        // cause-neutrality rule binds THIS <li> and nothing else. Asserting
+        // DoesNotContain("missing"/"denied"/…) over the entire report would make an
+        // unrelated future shell string — a heading, a legend, a verdict label — redden
+        // this test with a failure that named the wrong thing entirely.
+        var rowStart = output.IndexOf(
+            "<li><span class=\"mono\">fixtures/unreadable.sql", StringComparison.Ordinal);
+        Assert.True(rowStart >= 0, "The fixture row must be present to be asserted over.");
+        var rowEnd = output.IndexOf("</li>", rowStart, StringComparison.Ordinal);
+        Assert.True(rowEnd > rowStart, "The fixture row must be a well-formed <li>.");
+        var fixtureRow = output[rowStart..(rowEnd + "</li>".Length)];
+
+        // THE LOCK, and it is asserted BEFORE the replacement token so that a run
+        // against the defect fails naming the defect rather than naming its fix. The
+        // property is "the report must not tell a reader WHY the hash is missing" —
+        // the envelope does not know. "(absent)", the token this replaced, asserted a
+        // cause the widened catch had already made one possibility among several.
+        Assert.DoesNotContain("(absent)", fixtureRow, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("missing", fixtureRow, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("not found", fixtureRow, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("denied", fixtureRow, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("deleted", fixtureRow, StringComparison.OrdinalIgnoreCase);
+
+        // And the row carries the cause-neutral token in place of it.
+        Assert.Contains("(no hash recorded)", fixtureRow, StringComparison.Ordinal);
+    }
 }

@@ -77,8 +77,37 @@ public sealed record SecretReferenceDigest(
 /// </param>
 /// <param name="ContentHash">
 /// The lower-case hex SHA-256 of the fixture file's raw bytes, or
-/// <see langword="null"/> when the fixture file was absent at envelope-build time
-/// (recorded without a hash rather than crashing the run — see the class remarks).
+/// <see langword="null"/> when the fixture <strong>could not be hashed</strong> at
+/// envelope-build time (recorded without a hash rather than crashing the run — see the
+/// class remarks).
+/// <para>
+/// <strong>A null hash does NOT mean the file was absent, and reading it that way is the
+/// specific error this wording exists to prevent (issue #484).</strong> An earlier revision
+/// of this paragraph said "when the fixture file was absent", which was true only while
+/// <c>ScenarioRunner.HashFixtureOrNull</c> caught <see cref="System.IO.FileNotFoundException"/>
+/// alone. Issue #466 widened that catch to <see cref="System.IO.IOException"/> /
+/// <see cref="System.UnauthorizedAccessException"/> / <see cref="System.ArgumentException"/> /
+/// <see cref="System.NotSupportedException"/>, so an absent file, a locked one, a
+/// permission-denied one, a path the filesystem rejects and a file deleted between the
+/// existence check and the read now all record the SAME null. That widening was the correct
+/// fix — a narrower catch let the throw unwind into the suite runner's slot catch-all and exit
+/// 0 on a run that executed nothing — and it is not to be reversed to restore this sentence.
+/// </para>
+/// <para>
+/// <strong>The reason is deliberately not recorded, and that is a decision rather than an
+/// omission.</strong> The obvious alternative — a third field naming the cause — was refused
+/// on merit and not on cost, even though the §14 freeze permits an additive field for the
+/// v1.x series. Two facts carry it. First, reaching a null needs a file to stop being readable
+/// mid-run: the engine has already READ every byte of every file it hashes here — the seed
+/// applier's <c>File.ReadAllTextAsync</c> at topology start, the script provider's
+/// <c>File.ReadAllText</c> at compile time — before this envelope is assembled at scenario
+/// completion. (The gate is the read, not an existence or size check: those two are measured to
+/// succeed on a locked or permission-denied file and so prove nothing about readability.)
+/// Second, and decisively, no envelope COMPARATOR exists anywhere in <c>src/</c>, so there is
+/// nothing in the engine that two equal-looking null rows could currently mislead. Harm needs
+/// both compared runs to hit the same window. Revisit this if a comparator is ever built — that
+/// is the fact that changes the answer, not a fresh opinion about the shape.
+/// </para>
 /// </param>
 public sealed record FixtureDigest(
     [property: JsonPropertyName("reference")] string Reference,
