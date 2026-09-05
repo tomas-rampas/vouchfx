@@ -54,6 +54,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.RegularExpressions;
 using Vouchfx.Engine.Abstractions;
 using Vouchfx.Sdk;
 using Xunit;
@@ -65,7 +66,7 @@ namespace Vouchfx.Steps.MqExpect.Kafka.Tests;
 /// <c>consumer.Dispose()</c> and no <c>Close()</c> call, on the plain path and the Avro
 /// path alike.
 /// </summary>
-public sealed class MqExpectKafkaTeardownPinTests
+public sealed partial class MqExpectKafkaTeardownPinTests
 {
     /// <summary>Declaration site of the plain (string/string) consume helper.</summary>
     private const string PlainDecl =
@@ -177,19 +178,57 @@ public sealed class MqExpectKafkaTeardownPinTests
     // ── Assertions ────────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Fails if any CODE line in the region contains a <c>.Close(</c> call.
+    /// Matches a close CALL on a single line: a member access to <c>Close</c> or
+    /// <c>CloseAsync</c> followed by an argument list, tolerating any run of whitespace at
+    /// each of the two places C# permits one — after the <c>.</c> and before the <c>(</c>.
+    /// </summary>
+    /// <remarks>
+    /// The whitespace tolerance is the whole point.  An exact <c>".Close("</c> substring
+    /// test is GREEN on <c>consumer.Close ()</c> and on <c>consumer.Close\t()</c>, both of
+    /// which compile to the identical call — so the pin would have reported a pass over
+    /// exactly the call it exists to forbid.  A gate must not depend on the formatting
+    /// habits of whoever re-adds the defect.
+    /// <para>
+    /// <c>CloseAsync</c> is matched DELIBERATELY.  The pinned Confluent.Kafka 2.14.2
+    /// <c>IConsumer&lt;K,V&gt;</c> declares no such member, so today the alternative can
+    /// only ever match nothing; if a package bump adds one it is the same defect — a
+    /// leave-group round trip on the step's critical path, racing the <c>finally</c>'s
+    /// <c>Dispose()</c> on the same <c>rd_kafka_t</c> — and a pin widened only after that
+    /// bump is a pin that missed it once.
+    /// </para>
+    /// <para>
+    /// <c>Closed</c> and <c>Closing</c> are deliberately NOT matched.  Neither names a
+    /// teardown call: they are state and event names, and invoking one would not release
+    /// the handle, so a red on them is a red this pin cannot justify — and the cheapest
+    /// way to silence an unjustifiable red is to weaken the pattern, which costs the real
+    /// check.  The optional suffix is exactly <c>Async</c> for that reason, not a looser
+    /// <c>Close\w*</c>.
+    /// </para>
+    /// </remarks>
+    [GeneratedRegex(@"\.\s*Close(?:Async)?\s*\(", RegexOptions.None)]
+    private static partial Regex CloseCallPattern();
+
+    /// <summary>
+    /// Fails if any CODE line in the region contains a <c>Close()</c> or
+    /// <c>CloseAsync()</c> call — see <see cref="CloseCallPattern"/> for exactly which
+    /// spellings that covers and which near-miss identifiers it deliberately ignores.
     /// </summary>
     /// <remarks>
     /// Line-scoped by construction: a line is either skipped whole (it is nothing but a
     /// comment) or examined in full.  No line is ever truncated, so no code can be hidden
     /// behind a <c>//</c> that shares its line — the defect a cut-at-first-<c>//</c>
-    /// stripper would have.  A <c>.Close(</c> mentioned in a TRAILING comment on a code
+    /// stripper would have.  A <c>Close()</c> mentioned in a TRAILING comment on a code
     /// line therefore fails the pin; that is the safe direction for a regression pin, and
     /// it is why the provider keeps its <c>Close()</c> prose on whole comment lines.
     /// Residual limits, stated rather than hidden.  This is a textual pin over emitted
     /// source, so it cannot see a call reached through a delegate or reflection, nor one
-    /// split across a line break between the receiver and the member name.  Its REACH is
-    /// narrower than "the emitted CSX" too: the two regions run from
+    /// whose tokens are separated by anything other than whitespace — a comment interposed
+    /// as <c>consumer./*…*/Close()</c> is not matched — nor one split across a line break
+    /// at either joint the pattern spans: between the <c>.</c> and the member name, or
+    /// between the member name and its <c>(</c>.  A break BEFORE the <c>.</c> is still
+    /// caught (measured), because the pattern never needs the receiver and the <c>.</c>
+    /// travels onto the continuation line with the member name.  Its
+    /// REACH is narrower than "the emitted CSX" too: the two regions run from
     /// <c>ExpectAsync</c> to the end of the helper class, so nothing declared BEFORE
     /// <c>ExpectAsync</c> is scanned, and <see cref="CsxFragment.StatementBlock"/> — the
     /// per-step block that calls into the helper — is never scanned at all.  A
@@ -201,9 +240,14 @@ public sealed class MqExpectKafkaTeardownPinTests
     {
         foreach (var line in CodeLines(region))
         {
-            Assert.True(
-                !line.Contains(".Close(", StringComparison.Ordinal),
-                $"The emitted '{path}' path calls Close() on its consumer:\n" +
+            var match = CloseCallPattern().Match(line);
+            if (!match.Success)
+                continue;
+
+            Assert.Fail(
+                $"The emitted '{path}' path calls Close() on its consumer — matched " +
+                $"'{match.Value}' (the pin accepts any whitespace between the '.', the " +
+                "member name and the '(', so reformatting the call does not hide it):\n" +
                 $"    {line.Trim()}\n" +
                 WhyNoClose);
         }
