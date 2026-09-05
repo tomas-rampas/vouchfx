@@ -34,8 +34,11 @@
 //
 // Memory model (§5) — the leak-critical concern for this provider:
 //   • A Confluent.Kafka consumer owns a NATIVE librdkafka handle.  The emitted helper
-//     creates exactly one consumer per step and Close()es then Dispose()s it in a
-//     finally so no native handle survives the collectible AssemblyLoadContext.Unload().
+//     creates exactly one consumer per step and Dispose()s it in a finally so no native
+//     handle survives the collectible AssemblyLoadContext.Unload().  Dispose() is the
+//     ONLY teardown call — Close() was removed under #468.  Dispose() is bounded (it
+//     joins the handle's threads) but makes no leave-group round trip; see the s_helpers
+//     remarks for the full accounting.
 //     'using var' is prohibited in CSX, so disposal is explicit in a finally.
 using System.Text.Json;
 using Vouchfx.Engine.Abstractions;
@@ -415,9 +418,70 @@ public sealed class MqExpectKafkaProvider
     /// </para>
     /// <para>
     /// LEAK GATE (§5): the <c>Confluent.Kafka</c> consumer owns a native librdkafka
-    /// handle.  Exactly one consumer is created per step and is <c>Close()</c>ed then
-    /// <c>Dispose()</c>d in a <c>finally</c> so no native handle survives the
-    /// collectible-ALC unload.
+    /// handle.  Exactly one consumer is created per step and is <c>Dispose()</c>d in a
+    /// <c>finally</c> so no native handle survives the collectible-ALC unload.
+    /// </para>
+    /// <para>
+    /// NO <c>Close()</c> (#468).  <c>IConsumer&lt;K,V&gt;.Close()</c> is an uncancellable
+    /// blocking leave-group round trip: in the pinned Confluent.Kafka 2.14.2 it has no
+    /// <c>CancellationToken</c> and no <c>TimeSpan</c> overload, and the package binds
+    /// <c>rd_kafka_consumer_close</c> (blocking), not <c>rd_kafka_consumer_close_queue</c>.
+    /// The emitted consumer config sets no timeout keys at all, so every bound is a
+    /// librdkafka default rather than anything this repo chose — per librdkafka's
+    /// documented defaults that is <c>socket.timeout.ms</c> at 60s, and which timeout
+    /// actually governs <c>rd_kafka_consumer_close()</c> is an inference, not probed here.
+    /// </para>
+    /// <para>
+    /// Bounding the wait is FORBIDDEN, not merely unattractive.  Every <c>Task.Run</c> /
+    /// <c>Wait(timeout)</c> shape compiles its lambda and display class into the
+    /// COLLECTIBLE submission assembly and leaves an abandoned frame on a thread stack;
+    /// <c>RoslynScriptCompiler.RunIsolatedAsync</c> calls <c>Unload()</c> in the same
+    /// <c>finally</c> the awaited body returns to.  The frame does not block that unload
+    /// "forever" — it defers it by exactly the unbounded interval the bound was meant to
+    /// avoid, and NOTHING observes the deferral.  The memory-leak CI gate asserts
+    /// collection inside a bounded window, so the failure is loud in CI and silent in
+    /// production, which is the worst split available.  Independently of §5 at all, the
+    /// abandoned <c>Close()</c> would race the <c>finally</c>'s <c>Dispose()</c> on the
+    /// same <c>rd_kafka_t</c> — two threads tearing down one native handle, a
+    /// use-after-free.  <c>CsxAssembler</c> already states the rule ("no task
+    /// abandonment").
+    /// </para>
+    /// <para>
+    /// <c>Dispose()</c> is the vendor's supported teardown: for a consumer handle
+    /// <c>SafeKafkaHandle.ReleaseHandle</c> routes to
+    /// <c>rd_kafka_destroy_flags(handle, RD_KAFKA_DESTROY_F_NO_CONSUMER_CLOSE)</c>, which
+    /// performs NO leave-group round trip.  It is NOT non-blocking and is not claimed to
+    /// be — it still terminates the handle's internal threads and returns when they are
+    /// joined, which #367 measured at 16ms against a refused bootstrap and 94-110ms
+    /// against a connect-refused peer ("bounded but not token-bounded").  What the flag
+    /// removes is the unbounded part.
+    /// </para>
+    /// <para>
+    /// Removing <c>Close()</c> is NOT a new code path — it is the path the old code
+    /// already took whenever the broker was uncooperative, which is precisely the case
+    /// #468 is about.  From the IL: <c>Close()</c> is
+    /// <c>ConsumerClose(); Dispose(true); GC.SuppressFinalize(this)</c>, and
+    /// <c>SafeKafkaHandle.ConsumerClose()</c> throws <c>KafkaException</c> on any non-zero
+    /// <c>ErrorCode</c> from <c>rd_kafka_consumer_close</c>.  So on the failure path the
+    /// throw skipped <c>Close()</c>'s own <c>Dispose(true)</c>, the old bare <c>catch</c>
+    /// swallowed it, and the handle was released by the outer <c>Dispose()</c> — by
+    /// exactly the mechanism that is now the only one.  On the success path <c>Close()</c>
+    /// had already disposed and suppressed finalization, so the outer <c>Dispose()</c> was
+    /// a no-op.  (That an unreachable broker yields a non-zero <c>ErrorCode</c> is
+    /// librdkafka's documented behaviour, inferred here rather than probed.)
+    /// </para>
+    /// <para>
+    /// The accepted cost is a DELAY, not a residue.  Without a prompt LeaveGroup the group
+    /// keeps a live-but-silent member and stays <c>Stable</c>/<c>PreparingRebalance</c>
+    /// until the broker evicts it — per librdkafka's documented <c>session.timeout.ms</c>
+    /// default that is 45s, not probed here — after which it becomes <c>Empty</c>, which
+    /// is where <c>Close()</c> would have put it, only sooner.  No persistent broker-side
+    /// state is added, which is the answer to "can I point this at a shared broker".  It
+    /// is cheap here and only here: the group is
+    /// <c>"vouchfx-expect-" + a fresh Guid per attempt</c>, a throwaway single-member
+    /// group that nothing rejoins, and <c>EnableAutoCommit</c> is <c>false</c> so
+    /// <c>Close()</c> would commit no offsets either.  A provider that reused a stable
+    /// group id could NOT make this trade.
     /// </para>
     /// <para>
     /// IDEMPOTENT single poll (§7): the helper consumes whatever is available within a
@@ -445,8 +509,8 @@ public sealed class MqExpectKafkaProvider
         "    /// </summary>\n" +
         "    /// <remarks>\n" +
         "    /// LEAK GATE (§5): the consumer owns a native librdkafka handle and is\n" +
-        "    /// Close()ed then Dispose()d in the finally so no handle survives the\n" +
-        "    /// collectible AssemblyLoadContext.Unload().  CSX disallows using-var\n" +
+        "    /// Dispose()d in the finally so no handle survives the collectible\n" +
+        "    /// AssemblyLoadContext.Unload().  CSX disallows using-var\n" +
         "    /// declarations (§13.3.1), so disposal is explicit.\n" +
         "    /// Expected key / payloadContains / header VALUES / json expected VALUES are\n" +
         "    /// resolved INSIDE the guarded region BEFORE the consumer is built via\n" +
@@ -486,6 +550,18 @@ public sealed class MqExpectKafkaProvider
         "                .ConfigureAwait(false);\n" +
         "            return;\n" +
         "        }\n" +
+        "        // budgetGoverned selects NOTHING on this path, and that is deliberate (#232):\n" +
+        "        // there is no client-level transport timeout for the flag to lift — this\n" +
+        "        // consumer config sets none — and the poll below is already bounded by the\n" +
+        "        // hard 1s 'deadline' local plus a ct re-check between Consume() slices.  That\n" +
+        "        // 1s window is one ATTEMPT's drain, not the step budget: the RETRY runner owns\n" +
+        "        // the overall timeout and re-invokes this helper, so widening it here would\n" +
+        "        // change retry granularity, not the bound.  The teardown is Dispose() only\n" +
+        "        // (#468); it is bounded (it joins the handle's threads) and makes no\n" +
+        "        // leave-group round trip, so no UNCANCELLABLE call remains for a widened\n" +
+        "        // bound to help with either.  Discarded explicitly on BOTH paths so neither\n" +
+        "        // reads as budget-aware.\n" +
+        "        _ = budgetGoverned;\n" +
         "        var sw = System.Diagnostics.Stopwatch.StartNew();\n" +
         "        // Read the bootstrap-servers string staged by the orchestrator under the key\n" +
         "        // this step's Emit chose at COMPILE time — VarKeys.Connection for a dependency\n" +
@@ -614,13 +690,48 @@ public sealed class MqExpectKafkaProvider
         "        }\n" +
         "        finally\n" +
         "        {\n" +
-        "            // LEAK GATE (§5): close then release the native librdkafka handle within\n" +
-        "            // this step, before the collectible ALC unloads.  Close() commits final\n" +
-        "            // offsets and leaves the group cleanly; a Close() failure must not mask\n" +
-        "            // the outcome, so it is swallowed before the unconditional Dispose().\n" +
+        "            // LEAK GATE (§5): release the native librdkafka handle within this step,\n" +
+        "            // before the collectible ALC unloads.  Dispose() is the ONLY teardown call.\n" +
+        "            // For a consumer handle it routes to rd_kafka_destroy_flags(handle,\n" +
+        "            // RD_KAFKA_DESTROY_F_NO_CONSUMER_CLOSE), which performs NO leave-group round\n" +
+        "            // trip.  It is bounded, not free: it still joins the handle's internal\n" +
+        "            // threads (#367 measured 16ms against a refused bootstrap, 94-110ms against\n" +
+        "            // a connect-refused peer).  The flag removes the UNBOUNDED part.\n" +
+        "            //\n" +
+        "            // Close() was REMOVED (#468).  It is an uncancellable blocking leave-group\n" +
+        "            // round trip: no CancellationToken and no TimeSpan overload exists in the\n" +
+        "            // pinned Confluent.Kafka 2.14.2, and this config sets no timeout keys, so\n" +
+        "            // every bound is a librdkafka default with nothing able to cut it (per its\n" +
+        "            // documented defaults, socket.timeout.ms at 60s; which timeout governs\n" +
+        "            // consumer_close is inferred, not probed here).\n" +
+        "            //\n" +
+        "            // This is NOT a new code path.  Close() is ConsumerClose() then\n" +
+        "            // Dispose(true), and ConsumerClose() throws on a non-zero ErrorCode — so\n" +
+        "            // whenever the broker was uncooperative, the throw skipped Close()'s own\n" +
+        "            // Dispose(true), the old bare catch swallowed it, and the handle was\n" +
+        "            // released by this very Dispose().  On success Close() had already disposed\n" +
+        "            // and suppressed finalization, making the outer Dispose() a no-op.\n" +
+        "            //\n" +
+        "            // Bounding it is FORBIDDEN, not merely unattractive: any Task.Run /\n" +
+        "            // Wait(timeout) shape compiles its lambda into the COLLECTIBLE submission\n" +
+        "            // assembly and abandons a frame, and RunIsolatedAsync unloads that ALC in\n" +
+        "            // the same finally this body returns to.  It would not block Unload()\n" +
+        "            // 'forever' — it defers it by exactly the unbounded interval the bound was\n" +
+        "            // meant to avoid, unobserved: loud in the leak CI gate, silent in\n" +
+        "            // production.  And the abandoned Close() would race this Dispose() on the\n" +
+        "            // same rd_kafka_t — a native use-after-free, which disqualifies the shape\n" +
+        "            // on its own.\n" +
+        "            //\n" +
+        "            // Accepted cost is a DELAY, not a residue: with no prompt LeaveGroup the\n" +
+        "            // group keeps a live-but-silent member (Stable/PreparingRebalance) until\n" +
+        "            // the broker evicts it — documented session.timeout.ms default 45s, not\n" +
+        "            // probed here — and only THEN becomes Empty, which is where Close() would\n" +
+        "            // have put it, sooner.  No persistent broker-side state is added.  It is a\n" +
+        "            // throwaway single-member group ('vouchfx-expect-' + a fresh Guid per\n" +
+        "            // attempt) that nothing rejoins, and EnableAutoCommit is false so Close()\n" +
+        "            // would commit no offsets either.\n" +
         "            if (consumer is not null)\n" +
         "            {\n" +
-        "                try { consumer.Close(); } catch { }\n" +
         "                consumer.Dispose();  // explicit Dispose() in finally (§13.3.1).\n" +
         "            }\n" +
         "            sw.Stop();\n" +
@@ -752,8 +863,9 @@ public sealed class MqExpectKafkaProvider
         "    /// polling); broker/registry/deserialize failure = EnvironmentError.  Never Inconclusive.\n" +
         "    /// </summary>\n" +
         "    /// <remarks>\n" +
-        "    /// LEAK GATE (§5): the consumer (native librdkafka handle) is Close()ed + Dispose()d\n" +
-        "    /// AND the registry client Dispose()d in the finally.  using-var is illegal in CSX.\n" +
+        "    /// LEAK GATE (§5): the consumer (native librdkafka handle) is Dispose()d — never\n" +
+        "    /// Close()d, see ExpectAsync's teardown and #468 — AND the registry client is\n" +
+        "    /// Dispose()d in the finally.  using-var is illegal in CSX.\n" +
         "    /// Expected values are resolved BEFORE the consumer/registry are built, so a missing\n" +
         "    /// secret OR a missing registry URL is reachable with no broker contacted.\n" +
         "    /// </remarks>\n" +
@@ -775,14 +887,14 @@ public sealed class MqExpectKafkaProvider
         "        System.Threading.CancellationToken ct,\n" +
         "        bool budgetGoverned)\n" +
         "    {\n" +
-        "        // The step token bounds the POLL: the consume loop below re-checks ct between\n" +
-        "        // Consume() slices, so a governed step stops consuming at its budget and there is\n" +
-        "        // no client-level transport timeout for this flag to lift.  But that is NOT the\n" +
-        "        // whole step: consumer.Close() in the teardown below is not token-bounded and can\n" +
-        "        // extend the step past its budget, the same class of defect #367 fixed in\n" +
-        "        // mq-publish.kafka's flush.  Tracked as #468 and deliberately NOT fixed here —\n" +
-        "        // unlike the flush, its cost has not been measured, and doing so needs a\n" +
-        "        // group-joined consumer against a broker that stops answering.\n" +
+        "        // budgetGoverned selects NOTHING on this path either (#232): no client-level\n" +
+        "        // transport timeout is set for the flag to lift, and the consume loop below is\n" +
+        "        // bounded by the same hard 1s per-attempt 'deadline' plus a ct re-check between\n" +
+        "        // Consume() slices, with the RETRY runner owning the overall timeout.  The\n" +
+        "        // UNCANCELLABLE teardown that used to make that claim incomplete —\n" +
+        "        // consumer.Close() — is gone (#468); the teardown is now Dispose() only, which\n" +
+        "        // is bounded and makes no leave-group round trip.  See ExpectAsync for the\n" +
+        "        // identical reasoning and the full cost accounting.\n" +
         "        _ = budgetGoverned;\n" +
         "        var sw = System.Diagnostics.Stopwatch.StartNew();\n" +
         "        var bootstrap = vars.TryGetValue(bootstrapKey, out var c) && c is string s ? s : null;\n" +
@@ -899,9 +1011,13 @@ public sealed class MqExpectKafkaProvider
         "        }\n" +
         "        finally\n" +
         "        {\n" +
+        "            // LEAK GATE (§5): Dispose() only — never Close().  See ExpectAsync's\n" +
+        "            // teardown for the full reasoning (#468): Close() is an uncancellable\n" +
+        "            // blocking leave-group round trip; bounding it would abandon a frame inside\n" +
+        "            // the collectible ALC (§5) and race this Dispose() on the same rd_kafka_t.\n" +
+        "            // Dispose() is bounded but makes no leave-group round trip.\n" +
         "            if (consumer is not null)\n" +
         "            {\n" +
-        "                try { consumer.Close(); } catch { }\n" +
         "                consumer.Dispose();\n" +
         "            }\n" +
         "            if (registry is not null)\n" +
