@@ -13,7 +13,7 @@
 // hide it. SuiteProtocolTargetsTests excludes SuiteTopology.cs from its scan BY FILENAME (it is the
 // declaring file for the call that census greps). That census only ever looks for
 // `SuiteTopology.StartAsync(`, which is a different symbol. And the two arms proving the ledger
-// reaches Plan — Map_ThreadsTheLedgerToAServicesArtefacts and its dependency twin — call
+// reaches Plan — Map_ThreadsTheLedgerToTheArtefactsOfAService and its dependency twin — call
 // EnvironmentMapper.Map DIRECTLY, so they exercise hop 4 and say nothing about hop 3.
 //
 // Measured before this file existed: deleting `, pathDisclosures` from that call compiled clean and

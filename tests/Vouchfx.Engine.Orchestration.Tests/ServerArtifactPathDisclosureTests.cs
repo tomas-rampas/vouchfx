@@ -131,7 +131,7 @@ public sealed class ServerArtifactPathDisclosureTests : IDisposable
     /// exactly the leak this issue is about, and neither half's own test would see it.
     /// </remarks>
     [Fact]
-    public void Map_ThreadsTheLedgerToAServicesArtefacts()
+    public void Map_ThreadsTheLedgerToTheArtefactsOfAService()
     {
         var ledger = new SecurityPathDisclosureLedger();
 
@@ -152,7 +152,7 @@ public sealed class ServerArtifactPathDisclosureTests : IDisposable
     /// compiles clean and reads correct.
     /// </remarks>
     [Fact]
-    public void Map_ThreadsTheLedgerToADependencysArtefacts()
+    public void Map_ThreadsTheLedgerToTheArtefactsOfADependency()
     {
         var ledger = new SecurityPathDisclosureLedger();
 
