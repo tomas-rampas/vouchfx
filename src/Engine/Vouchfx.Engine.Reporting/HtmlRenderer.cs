@@ -809,28 +809,20 @@ public sealed class HtmlRenderer
                 // inventing a cause from an absence.
                 //
                 // The token this replaced, "(absent)", named one: it read as a claim
-                // about the FILE. That was defensible while ScenarioRunner.HashFixtureOrNull
-                // caught FileNotFoundException alone, and stopped being so when issue #466
-                // widened the catch to IOException / UnauthorizedAccessException /
-                // ArgumentException / NotSupportedException.
+                // about the FILE. Five causes reach this branch since #466 widened
+                // ScenarioRunner.HashFixtureOrNull's catch to the IO family, and "(absent)"
+                // was FALSE for three — a locked file, a permission denial, and a path the
+                // filesystem rejects. It stayed true for the other two: a file that was never
+                // there, and one deleted between the existence check and the read, which IS
+                // absent by the time the read fails. Right about two cases in five is still a
+                // token that lies to a reader.
                 //
-                // COUNT IT EXACTLY, because the over-broad version of this sentence was itself
-                // a finding. Five causes now record a null, and "(absent)" was FALSE for three
-                // of them: a locked file, a permission denial, and a path the filesystem
-                // rejects. It stayed TRUE for the other two — a file that was never there, and
-                // one deleted between the existence check and the read, which IS absent by the
-                // time the read fails. A token that is right about two cases in five is still
-                // a token that lies to a reader, which is the whole reason to replace it.
-                //
-                // Do not "improve" this by rendering a cause. The envelope cannot supply one,
-                // and the alternative — widening FixtureDigest to carry a reason — was
-                // considered and refused on merit: the ambiguity is close to unreachable (the
-                // engine READ every one of these files earlier in the run, so a null means a
-                // file stopped being readable mid-run — a permission change, a lock, a
-                // deletion, or a transient fault on a network share, which needs no change of
-                // accessibility at all) and no envelope comparator exists in the engine for the
-                // conflation to mislead. A frozen-adjacent trust artefact is not reshaped for a
-                // harm nothing can currently suffer.
+                // Do not "improve" this by rendering a cause; the envelope carries none. The
+                // alternative — a Reason field on FixtureDigest — is deliberately NOT taken
+                // yet, and the reasoning lives at HashFixtureOrNull. Two things it does not
+                // rest on, because both are wrong: the §14 freeze (which permits an additive
+                // field), and "no consumer exists" (this event's charter is diffing by
+                // out-of-process consumers). It is simply cheap to reverse later.
                 var contentHash = GetStrFromObject(fixture, "contentHash") ?? "(no hash recorded)";
 
                 output.WriteLine(string.Format(

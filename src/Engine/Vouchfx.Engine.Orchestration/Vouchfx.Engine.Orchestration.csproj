@@ -12,10 +12,9 @@
     </AssemblyAttribute>
     <!-- Expose SeedFixtures.ComputeContentHash (S05-A-02) to the runner so the
          reproducibility envelope (S05-B-03) can content-hash fixtures without a
-         duplicate hashing routine. NOT "the same hash the seed applier computes"
-         (what this comment used to say, corrected under issue #484): SeedApplier
-         reads and executes each SQL file and hashes nothing, and the envelope is
-         this helper's only production caller. See SeedFixtures' own remarks. -->
+         duplicate hashing routine. NOT "the same hash the seed applier computes":
+         SeedApplier reads and executes each SQL file and hashes nothing, and the
+         envelope is this helper's only production caller. -->
     <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
       <_Parameter1>Vouchfx.Engine.Runtime</_Parameter1>
     </AssemblyAttribute>

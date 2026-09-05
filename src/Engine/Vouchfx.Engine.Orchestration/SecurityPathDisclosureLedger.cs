@@ -30,10 +30,16 @@
 // THE SECOND HALF OF THAT CONDITION IS NOT DECORATION. Two sites hold both halves and record
 // nothing, correctly: EnvironmentSecurityValidator.ValidatePath and SeedFixtures.ComputeContentHash
 // both resolve an author-declared path and both compose their own diagnostics, which name the
-// declared text by construction (#357). Neither hands the resolved form to a client library, a
-// daemon or the BCL in a way that can quote it back. Recording there would add entries that can
-// never match anything, and - worse for the next reader - would suggest the ledger is a general
-// register of resolved paths rather than a net under foreign text.
+// declared text by construction (#357). Recording there would add entries that can never match
+// anything, and - worse for the next reader - would suggest the ledger is a general register of
+// resolved paths rather than a net under foreign text.
+//
+// THE TWO SITES REACH THAT CONCLUSION BY DIFFERENT ROUTES, and only one of them is a property of
+// the site. ValidatePath never hands the resolved form to foreign code. ComputeContentHash DOES -
+// File.ReadAllBytes takes the resolved path and the BCL quotes it back on a lock or a denial - and
+// is safe only because its single production caller, ScenarioRunner.HashFixtureOrNull, catches
+// that exception and discards the message with it. Same verdict, weaker guarantee: that one holds
+// only while the CALLER holds. See that method's own comment for what a second caller would break.
 //
 // WHY IT LIVES IN Vouchfx.Engine.Orchestration (#473). It was born in Vouchfx.Engine.Runtime,
 // beside the single accessor chokepoint that then populated it. #473 found the SAME leak class at

@@ -42,30 +42,24 @@ namespace Vouchfx.Engine.Orchestration;
 /// shared-caller premise without a call site to point at.
 /// </para>
 /// <para>
-/// <strong>That is a statement about ONE exception, not about this type.</strong> The
-/// file read itself raises <see cref="IOException"/> /
-/// <see cref="UnauthorizedAccessException"/> naming the RESOLVED path, so do not read the
-/// paragraph above, or the fixed throw below it, as saying every message this type can
-/// produce is path-clean.
+/// <strong>That is a statement about ONE exception, not about this type.</strong> The file read
+/// itself raises <see cref="IOException"/> / <see cref="UnauthorizedAccessException"/> naming the
+/// RESOLVED path, so do not read the paragraph above, or the fixed throw below it, as saying
+/// every message this type can produce is path-clean.
 /// </para>
 /// <para>
-/// <strong>THOSE DO NOT ESCAPE, AND THIS PARAGRAPH USED TO SAY THEY DID (issue #484).</strong>
-/// It read "the sole caller's catch does not cover either, so those DO escape. Tracked as
-/// issue #488" — false when it was written. The sole caller,
-/// <c>ScenarioRunner.HashFixtureOrNull</c>, catches <see cref="IOException"/> /
-/// <see cref="UnauthorizedAccessException"/> / <see cref="ArgumentException"/> /
-/// <see cref="NotSupportedException"/> and records a null content hash, so a read failure
-/// here degrades the envelope rather than escaping it, and the resolved path in the BCL's
-/// message is discarded with the exception.
+/// <strong>Those do not escape, and the reason is the CALLER rather than this type.</strong>
+/// <c>ScenarioRunner.HashFixtureOrNull</c> — measured, the only production caller — catches
+/// <see cref="IOException"/> / <see cref="UnauthorizedAccessException"/> /
+/// <see cref="ArgumentException"/> / <see cref="NotSupportedException"/> and records a hashless
+/// fixture row, so a read failure degrades the envelope and the BCL's message is discarded with
+/// the exception.
 /// </para>
 /// <para>
-/// <strong>The defect class matters more than the instance, which is why it is named here.</strong>
-/// This wording was authored by PR #491 against a PRE-WIDENING reading of that catch — issue
-/// #466 had already widened it from <see cref="FileNotFoundException"/> alone to the IO family
-/// before #491 described it. A claim about a remote call site, verified once and then restated
-/// from memory, goes stale silently: nothing compiles differently and no test reddens. When
-/// editing any statement here about what the caller catches, RE-READ the caller's catch clause
-/// rather than the previous sentence about it.
+/// <strong>STANDING INSTRUCTION.</strong> Every claim in this file about what the caller catches
+/// is a claim about a remote call site: nothing compiles differently and no test reddens when one
+/// goes stale. Before editing any of them, RE-READ the caller's catch clause — not the previous
+/// sentence about it.
 /// </para>
 /// </remarks>
 internal static class SeedFixtures
@@ -138,36 +132,23 @@ internal static class SeedFixtures
         // message on the shapes File.Exists cannot pre-empt: a sharing violation
         // (`IOException: The process cannot access the file '<resolved>' …`), a permission denial
         // (`UnauthorizedAccessException: Access to the path '<resolved>' is denied.`), or the file
-        // vanishing in the window between the check above and this read. The File.Exists check
-        // above genuinely cannot pre-empt any of them: it answers "is there a file here", not
-        // "can this process read it", and it returned TRUE for every one of those shapes.
+        // vanishing in the window between the check above and this read. File.Exists cannot
+        // pre-empt any of them — it answers "is there a file here", not "can this process read
+        // it", and returned TRUE for every one of those shapes. (Nor would a stat: FileInfo.Length
+        // is measured to succeed on both a FileShare.None-locked file and an ACL-denied one. That
+        // probe was taken for ScriptCsharpProvider.Validate, which is where the stat lives; this
+        // method performs none.)
         //
-        // (The measurement that a STAT is no better either — FileInfo.Length succeeds on both a
-        // FileShare.None-locked file and an ACL-denied one — was taken for
-        // ScriptCsharpProvider.Validate, which is where the stat lives. This method performs no
-        // stat, so cite it as the neighbouring evidence it is rather than as something happening
-        // here; an earlier draft of this comment attributed the probe to this method.)
-        //
-        // NONE OF THOSE MESSAGES REACHES AN ARTEFACT. ScenarioRunner.HashFixtureOrNull — measured,
-        // the ONLY production caller of this method — catches IOException /
+        // NONE OF THOSE MESSAGES REACHES AN ARTEFACT — because ScenarioRunner.HashFixtureOrNull,
+        // measured as the ONLY production caller, catches IOException /
         // UnauthorizedAccessException / ArgumentException / NotSupportedException and records a
-        // null content hash, so the BCL's message is discarded with the exception object and the
-        // envelope degrades instead. That widening is issue #466's, and it is what closed the
-        // SeedFixtures half of issue #488.
+        // hashless fixture row, discarding the message with the exception object.
         //
-        // WHAT THIS COMMENT SAID BEFORE, AND WHY THE CORRECTION IS THE POINT (issue #484): it
-        // claimed "ScenarioRunner.HashFixtureOrNull catches FileNotFoundException only, so none of
-        // those escapes is swallowed", and treated the fix as an open decision #488 owned. Both
-        // halves were false when written — #466 had widened that catch the day before — because
-        // the sentence was composed from an earlier reading of a remote call site rather than from
-        // the call site. That is the standing hazard for every claim in this file about what the
-        // caller does: it cannot redden a test and it cannot fail a build.
-        //
-        // THE GUARANTEE IS THEREFORE CONDITIONAL ON A CATCH IN ANOTHER PROJECT, and that is the
-        // live risk rather than this line. A SECOND caller, or a narrowing of that catch, puts the
+        // SO THE GUARANTEE IS CONDITIONAL ON A CATCH IN ANOTHER PROJECT, and that is the live
+        // risk rather than this line. A SECOND caller, or a narrowing of that catch, puts the
         // resolved path straight into --events / --junit / --html. If either happens, this read
         // needs its own guard re-raising a message that names the DECLARED path, exactly as the
-        // throw above does and as ScriptCsharpProvider.Emit now does for its own file read.
+        // throw above does and as ScriptCsharpProvider.ReadAuthorFile does for its own file read.
         var bytes = File.ReadAllBytes(resolvedPath);
         var hash = SHA256.HashData(bytes);
         return Convert.ToHexString(hash).ToLower(CultureInfo.InvariantCulture);

@@ -175,10 +175,9 @@ public sealed class ReproducibilityEnvelopeTests
         var fixtures = new List<FixtureDigest>
         {
             new("fixtures/orders.sql", "aabbcc"),
-            // The COULD-NOT-BE-HASHED shape. Not "missing-at-build-time", which is what this
-            // comment used to say (issue #484): since #466 widened HashFixtureOrNull's catch to
-            // the IO family, a null hash covers a locked file, a permission denial and a
-            // rejected path as well as an absent one, and the envelope records no cause.
+            // The COULD-NOT-BE-HASHED shape — a locked file, a permission denial or a rejected
+            // path as much as an absent one, with no cause recorded. Serialises as a row with
+            // no contentHash KEY at all (WhenWritingNull), never an explicit null.
             new("fixtures/catalog.json", null),
         };
 

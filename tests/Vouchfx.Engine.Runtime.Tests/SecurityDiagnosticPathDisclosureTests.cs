@@ -185,16 +185,13 @@ public sealed class SecurityDiagnosticPathDisclosureTests
     /// really wrote.
     /// </para>
     /// <para>
-    /// <strong>IT IS NO LONGER A COPY OF AN IN-TREE PROVIDER'S BEHAVIOUR, and the older claim
-    /// that it "is not a mock of the route, it IS the route" has to go with that (issue
-    /// #488).</strong> The claim rested on <c>ScriptCsharpProvider.Emit</c> doing the same bare
-    /// read and accepting the TOCTOU race against its own existence check; that read is now
-    /// wrapped in <c>ReadAuthorFile</c> and re-raises a message naming only the declared path,
-    /// so no Core provider does what this stub does. That does NOT weaken the test — the scrub
-    /// is a general net over EVERY provider's <c>Emit</c>, in-tree or out, and a stub is the
-    /// only way to exercise it once the in-tree providers are individually well-behaved. What
-    /// changes is the fidelity claim: this is now a deliberate stand-in for an arbitrary
-    /// provider that hands a resolved path to the BCL, not a mirror of a specific one.
+    /// <strong>IT IS NOT A COPY OF ANY IN-TREE PROVIDER'S BEHAVIOUR (issue #488).</strong> Since
+    /// <c>ScriptCsharpProvider</c>'s read moved into <c>ReadAuthorFile</c>, no Core provider does
+    /// what this stub does. That does not weaken the test: the scrub is a general net over EVERY
+    /// provider's <c>Emit</c>, in-tree or out, and a stub is the only way to exercise it once the
+    /// in-tree providers are individually well-behaved. Read it as a deliberate stand-in for an
+    /// arbitrary provider that hands a resolved path to the BCL, not as a mirror of a specific
+    /// one.
     /// </para>
     /// <para>
     /// MEASURED RED before the substitution: the event stream, the JUnit <c>message</c>

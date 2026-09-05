@@ -1001,24 +1001,21 @@ internal static class ProviderPipeline
     /// replace what was never recorded into it.
     /// </para>
     /// <para>
-    /// <strong>The route is real, and its worked example is now closed at the source — which
-    /// changes the example, not the rule (issue #488).</strong> This paragraph used to cite
-    /// <c>ScriptCsharpProvider.Emit</c>'s bare
-    /// <c>File.ReadAllText(Path.GetFullPath(Path.Combine(ctx.SuiteDirectory, model.File)))</c>
-    /// as live: a file deleted in the TOCTOU window against <c>Validate</c>'s existence check
-    /// yielded <c>Could not find file 'D:\…\suite\x.csx'.</c>, a BCL message carrying the
+    /// <strong>The route is real; its in-tree worked example is now closed at the source (issue
+    /// #488).</strong> <c>ScriptCsharpProvider.Emit</c> used to read its <c>file:</c> reference
+    /// bare, so a file deleted in the TOCTOU window against <c>Validate</c>'s existence check
+    /// yielded <c>Could not find file 'D:\…\suite\x.csx'.</c> — a BCL message carrying the
     /// absolute host path straight into the guard this scrub protects. That read is now wrapped
-    /// (<c>ScriptCsharpProvider.ReadAuthorFile</c>) and re-raises a message naming only the
-    /// declared path, so the specific instance is gone.
+    /// and re-raises a message naming only the declared path.
     /// </para>
     /// <para>
-    /// <strong>The CLASS is not, and this scrub is not thereby redundant.</strong> Any provider
-    /// — in this repository or out of tree — can still hand a resolved path to the BCL and let
-    /// the resulting message escape through this door, and no provider can reach
+    /// <strong>The CLASS is not closed, and this scrub is not thereby redundant.</strong> Any
+    /// provider — in this repository or out of tree — can still hand a resolved path to the BCL
+    /// and let the resulting message escape through this door, and no provider can reach
     /// <c>SecurityPathDisclosureLedger</c> to do better. This scrub remains the only general net
-    /// on this route; what it can never be is a substitute for a provider naming the declared
-    /// path itself, because it covers only paths under the suite directory (see the residual
-    /// note above) and a resolved path that escapes it is untouched.
+    /// on the route; what it can never be is a substitute for a provider naming the declared
+    /// path itself, since it covers only paths under the suite directory (see the residual note
+    /// above) and a resolved path that escapes it is untouched.
     /// </para>
     /// <para>
     /// <strong>Substitution, not redaction, and the wording is not new.</strong> Naming the
@@ -1235,9 +1232,13 @@ internal static class ProviderPipeline
     /// not hypothetical: the single most likely production trigger of the <c>Emit</c> guard is
     /// <c>ScriptCsharpProvider.Emit</c>'s accepted TOCTOU race against its own <c>Validate</c>
     /// existence check, so a <c>.csx</c> deleted, locked by antivirus, or on an unreadable share
-    /// produces a <see cref="FileNotFoundException"/> here — and telling the author that
+    /// arrives here — and telling the author that
     /// <c>Vouchfx.Steps.Script.Csharp.ScriptCsharpProvider</c> is defective would be both false
-    /// and an accusation against a Core provider.
+    /// and an accusation against a Core provider. <strong>It arrives as a plain
+    /// <see cref="IOException"/>, not the <see cref="FileNotFoundException"/> this sentence used
+    /// to name (issue #488):</strong> that provider now guards its own read and re-raises, so
+    /// the BCL type never reaches this method. Behaviour is unchanged — both are matched by the
+    /// same base-type test below — but the type named here must match what actually arrives.
     /// </description></item>
     /// <item><description>
     /// Everything else keeps the strong, actionable claim, which is the whole value of the
@@ -1447,13 +1448,24 @@ internal static class ProviderPipeline
     /// </para>
     /// <para>
     /// <strong>The most likely production trigger of the <c>Emit</c> guard is in this family.</strong>
-    /// <c>ScriptCsharpProvider.Emit</c> reads its <c>file:</c> reference with
-    /// <c>File.ReadAllText</c> and its own comment accepts the TOCTOU race against the existence
-    /// check <c>Validate</c> performed earlier; the test double
-    /// <c>StubSuitePathLeakingEmitProvider</c> models that route verbatim. Without this arm a
-    /// deleted or locked <c>.csx</c> produced "This is a defect in the provider
+    /// <c>ScriptCsharpProvider.Emit</c> reads its <c>file:</c> reference from disk and accepts a
+    /// TOCTOU race against the existence check <c>Validate</c> performed earlier. Without this
+    /// arm a deleted or locked <c>.csx</c> produced "This is a defect in the provider
     /// (Vouchfx.Steps.Script.Csharp.ScriptCsharpProvider)" — false, and an accusation against a
     /// Core provider.
+    /// </para>
+    /// <para>
+    /// <strong>TWO DETAILS THAT USED TO BE HERE ARE NOW FALSE, and the arm is unaffected by both
+    /// (issue #488).</strong> That provider no longer calls <c>File.ReadAllText</c> bare: the
+    /// read is wrapped in <c>ReadAuthorFile</c>, which re-raises an engine-authored
+    /// <see cref="IOException"/> naming the author's declared path — so what reaches this family
+    /// is that type rather than the BCL's, still inside the family and still routed to the same
+    /// arm. And <c>StubSuitePathLeakingEmitProvider</c> no longer "models that route verbatim";
+    /// no Core provider does what the stub does any more. The stub remains a valid exercise of
+    /// this arm and of the suite-directory scrub — it is now a deliberate stand-in for an
+    /// arbitrary provider that hands a resolved path to the BCL, which is what the scrub is a
+    /// net for — but it is not a mirror of a specific in-tree provider. The matching retraction
+    /// is at the stub's own test.
     /// </para>
     /// <para>
     /// <see cref="IOException"/> is matched by base type deliberately, so

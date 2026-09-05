@@ -1,13 +1,10 @@
-// Non-docker tests for S05-A-02: SeedFixtures.ComputeContentHash — the content-hash routine
-// the reproducibility envelope (S05-B-03) uses.  Deterministic, byte-exact SHA-256; no
-// database needed.
+// Non-docker tests for S05-A-02: SeedFixtures.ComputeContentHash — the content-hash routine the
+// reproducibility envelope (S05-B-03) uses, and its only production caller.  Deterministic,
+// byte-exact SHA-256; no database needed.
 //
-// CORRECTED under issue #484: this header used to call it "the shared content-hash routine the
-// seed applier uses and the reproducibility envelope will reuse".  Both halves were wrong —
-// SeedApplier reads and executes each SQL file and hashes nothing, so there is no sharing, and
-// the envelope reuses it in the present tense, not the future.  SeedFixtures' own remarks carry
-// the standing instruction not to restore the shared-caller premise without a call site to
-// point at; this file was one of the three places still asserting it.
+// NOT "the routine the seed applier uses": SeedApplier reads and executes each SQL file and
+// hashes nothing.  SeedFixtures' own remarks carry the standing instruction against restoring
+// that shared-caller premise without a call site to point at.
 
 using System.Security.Cryptography;
 using Vouchfx.Engine.Orchestration;
