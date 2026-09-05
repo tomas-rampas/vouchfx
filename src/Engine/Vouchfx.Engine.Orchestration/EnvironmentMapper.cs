@@ -646,6 +646,12 @@ public static class EnvironmentMapper
     /// the one shared topology's <c>environment</c> block came from.
     /// </para>
     /// </param>
+    /// <param name="pathDisclosures">
+    /// The run's <see cref="SecurityPathDisclosureLedger"/>, threaded straight through to
+    /// <see cref="ServerArtifactInjection.Plan"/> and used nowhere else in this method (#473).
+    /// <see langword="null"/> — the default — records nothing, which is correct for every caller
+    /// that has no run to scrub for.
+    /// </param>
     /// <param name="kafkaSpeakingTargets">
     /// The declared target names the suite's own steps address with <c>mq-publish.kafka</c> /
     /// <c>mq-expect.kafka</c>, as computed by <see cref="SuiteProtocolTargets"/>. REQ-023 (as
@@ -722,7 +728,8 @@ public static class EnvironmentMapper
         EnvironmentSpec? env,
         string? suiteDirectory = null,
         IReadOnlySet<string>? kafkaSpeakingTargets = null,
-        IReadOnlySet<string>? endpointConsumingTargets = null)
+        IReadOnlySet<string>? endpointConsumingTargets = null,
+        SecurityPathDisclosureLedger? pathDisclosures = null)
     {
         // ----------------------------------------------------------------
         // Null / empty environment — no resources, no health gates.
@@ -1438,14 +1445,14 @@ public static class EnvironmentMapper
         foreach (var (name, spec) in services)
         {
             serviceArtifacts[name] = ServerArtifactInjection.Plan(
-                spec.Security, "services", name, resolvedSuiteDirectory);
+                spec.Security, "services", name, resolvedSuiteDirectory, pathDisclosures);
         }
 
         var dependencyArtifacts = new Dictionary<string, IReadOnlyList<ServerArtifactGroup>>(StringComparer.Ordinal);
         foreach (var (name, spec) in dependencies)
         {
             dependencyArtifacts[name] = ServerArtifactInjection.Plan(
-                spec.Security, "dependencies", name, resolvedSuiteDirectory);
+                spec.Security, "dependencies", name, resolvedSuiteDirectory, pathDisclosures);
         }
 
         // ----------------------------------------------------------------

@@ -983,7 +983,7 @@ public static class ScenarioRunner
             // Metadata, doc.Environment, …)`), and this `ast` was built from this `doc`.
             suite = await TopologyRequest
                 .ForScenario(ast, appHostAssemblyName, seedBaseDirectory)
-                .StartAsync(probeSecurity, cancellationToken)
+                .StartAsync(probeSecurity, runPathLedger, cancellationToken)
                 .ConfigureAwait(false);
         }
         catch (ArgumentException aex)
@@ -2310,7 +2310,7 @@ public static class ScenarioRunner
                     runnableScenarios,
                     appHostAssemblyName,
                     seedBaseDirectory)
-                .StartAsync(probeSecurity, cancellationToken)
+                .StartAsync(probeSecurity, runPathLedger, cancellationToken)
                 .ConfigureAwait(false);
         }
         catch (ArgumentException aex)

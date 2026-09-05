@@ -12,9 +12,16 @@
 
     It also hosts the other pieces that would otherwise be duplicated across test
     assemblies: TestCertificateAuthority / TestCertificateStoreGuard (the mTLS
-    certificate bed) and ChildProcess.KillTreeQuietly (the guarded tree-kill every
+    certificate bed), ChildProcess.KillTreeQuietly (the guarded tree-kill every
     child-process launch site calls from its `finally`, lifted here by #475 once a
-    second assembly needed it).
+    second assembly needed it), and HostPathDisclosure.AssertNoAbsoluteHostPath (the
+    "no resolved host path reached this channel" property, lifted here by #473 after
+    two divergent private copies were found in Vouchfx.Engine.Runtime.Tests).
+
+    THIS LIST IS AN INDEX, AND KEEPING IT CURRENT IS THE POINT OF IT: an entry that
+    is missing is a helper the next author does not know exists, and a helper nobody
+    knows exists gets copied instead of shared. That is precisely how the two
+    divergent copies #473 collapsed came about.
 
     The standing constraint is BCL-only: nothing here references any Vouchfx.* type,
     so this project carries no ProjectReferences and can be referenced by any test

@@ -77,6 +77,37 @@ internal static class ServerArtifactInjection
     /// path to two different files — containment cannot detect that divergence, because a path
     /// resolved against the wrong base is still contained within THAT base.
     /// </param>
+    /// <param name="pathDisclosures">
+    /// The run's <see cref="SecurityPathDisclosureLedger"/>, or <see langword="null"/> for a caller
+    /// that has none.
+    /// <para>
+    /// <strong>REQUIRED, not optional, and that is a deliberate asymmetry with
+    /// <c>EnvironmentMapper.Map</c> and <c>SuiteTopology.StartAsync</c>.</strong> Those two are
+    /// optional because ~205 and ~60 pre-existing test call sites respectively would otherwise have
+    /// to pass <see langword="null"/> to assert something their own inputs already state — ceremony
+    /// that gets copied without being read. This method is <c>internal</c> and has FOUR call sites
+    /// in the whole repository (two in <c>EnvironmentMapper</c>, two in
+    /// <c>ServerArtifactPathDisclosureTests</c>), so that argument does not reach it, and a
+    /// required parameter closes the hop with the COMPILER instead of with a census. Pass
+    /// <see langword="null"/> explicitly to mean "this caller has no run to scrub for" — a
+    /// statement, where an omitted argument is an accident.
+    /// </para>
+    /// <para>
+    /// <strong>This is the recording site #473 exists for, and it is here because this is where
+    /// both halves of the pair are in hand.</strong> Every diagnostic THIS method raises names the
+    /// declared text by construction — that is #357's rule and the throws below observe it. What
+    /// this method cannot constrain is the text of a failure raised by the code it hands
+    /// <paramref name="resolvedSuiteDirectory"/>-rooted absolute paths to:
+    /// <c>WithContainerFiles</c> streams the bytes through the Docker daemon API, and a file that
+    /// becomes unreadable, or a stage the daemon rejects, between this eager check and container
+    /// start produces a message the engine did not write. That message escapes the
+    /// <c>Configure</c> closure, is wrapped as <c>OrchestrationErrorInfo.Detail</c> by
+    /// <c>SuiteTopology.StartAsync</c>, and reaches the §14 event stream, <c>--events</c>, JUnit
+    /// and the HTML report — the same channel, and the same shape, as the librdkafka leak that
+    /// created the ledger. Recording the pair here is what lets the three scrub chokepoints
+    /// substitute the author's own text back into it.
+    /// </para>
+    /// </param>
     /// <returns>
     /// The groups to apply, or an empty list when the owner declares no artefacts.
     /// </returns>
@@ -89,7 +120,8 @@ internal static class ServerArtifactInjection
         SecuritySpec? security,
         string ownerKindPlural,
         string ownerName,
-        string resolvedSuiteDirectory)
+        string resolvedSuiteDirectory,
+        SecurityPathDisclosureLedger? pathDisclosures)
     {
         if (security?.ServerArtifacts is not { Count: > 0 } artifacts)
         {
@@ -112,6 +144,33 @@ internal static class ServerArtifactInjection
             {
                 throw new ArgumentException($"{fieldPath}.source: {containment}", nameof(security));
             }
+
+            // #473: the pair, recorded the moment it exists and BEFORE the existence check below.
+            //
+            // BEFORE, not after, and the ordering is the point rather than an accident. The
+            // existence check's own throw already names only the declared text, so recording after
+            // it would buy nothing for that path — while a `source` that resolves cleanly and is
+            // then rejected by the daemon is precisely the case the ledger is for, and it reaches
+            // that daemon whether or not File.Exists agreed a moment earlier. Recording at the
+            // resolution keeps "the ledger knows every resolved path this method handed onward"
+            // true by construction, rather than true for the subset of them that survived a
+            // sibling guard.
+            //
+            // Record ignores a null/blank/equal pair itself, so no guard here: `resolvedSource` is
+            // non-null whenever containment returned null, and an author who wrote an absolute
+            // path was already refused by containment.
+            //
+            // THE SIBLING SITE ARGUES THE OPPOSITE ORDER, and both are right — say so here so the
+            // next recording site does not have to guess which precedent to follow.
+            // SecurityConfigurationAccessor records AFTER its guard, on the grounds that a path the
+            // guard is about to refuse should not enter the table. This site records BEFORE,
+            // because the guard it precedes is an existence check rather than a refusal, and the
+            // value survives it into foreign code either way. The discriminator is not
+            // before-versus-after: it is whether the intervening check DECIDES the path is
+            // illegitimate (record after) or merely reports that it is missing (record before).
+            // A spurious entry costs nothing in either direction — the worst it can do is
+            // substitute the author's own declared text for a resolved path.
+            pathDisclosures?.Record(resolvedSource, artifacts[i].Source);
 
             // Existence is REQ-004's check and has already run pre-topology on every production
             // path. Repeated here because this stage is what actually hands the path to the Docker

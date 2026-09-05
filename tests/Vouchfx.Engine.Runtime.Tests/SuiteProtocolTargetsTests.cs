@@ -486,7 +486,8 @@ public sealed class SuiteProtocolTargetsTests
         Assert.Empty(SuiteProtocolTargets.EndpointConsuming((ScenarioAst?)null));
 
     /// <summary>
-    /// EVERY production call site of <c>SuiteTopology.StartAsync</c> passes BOTH target sets.
+    /// EVERY production call site of <c>SuiteTopology.StartAsync</c> passes BOTH target sets AND
+    /// the run's path-disclosure ledger.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -508,8 +509,31 @@ public sealed class SuiteProtocolTargetsTests
     /// shape this text-level guard cannot see.
     /// </para>
     /// <para>
+    /// <strong>EXTENDED TO <c>pathDisclosures</c> (#473), because the required-parameter design
+    /// alone moved the same defect one frame down rather than closing it.</strong>
+    /// <c>TopologyRequest.StartAsync</c> takes the ledger as a REQUIRED parameter, which stops a
+    /// caller of THAT method from omitting it — but it then forwards the value to
+    /// <c>SuiteTopology.StartAsync</c>, where the parameter is optional. Measured: deleting the
+    /// single line <c>pathDisclosures: pathDisclosures,</c> from that forwarding call compiles,
+    /// leaves <c>TopologyRequestCoverageCensusTests</c> green (it reflects over parameter LISTS and
+    /// never over a body), and leaves every test green, because no test invokes
+    /// <c>TopologyRequest.StartAsync</c> at all — the production starter needs Docker. The whole
+    /// feature would be dead on both production run paths with the suite fully green. This guard is
+    /// the thing that sees it, and it sees it the same way it already sees a dropped target set.
+    /// </para>
+    /// <para>
+    /// <strong>The ledger has no runtime backstop, and that is the asymmetry with
+    /// <c>securityConfiguration</c>.</strong> An omitted accessor is caught at run time by
+    /// <c>SuiteTopology.StartAsync</c>'s Step 0 guard, which refuses to start a security-declaring
+    /// suite without one — so that argument has two independent nets. An omitted ledger has no
+    /// equivalent and cannot have one: recording nothing is indistinguishable at run time from a
+    /// suite that declares no paths worth recording, which is the overwhelmingly common case. A
+    /// static check is therefore the ONLY thing that can notice, and the argument by analogy to
+    /// <c>securityConfiguration</c> does not carry across.
+    /// </para>
+    /// <para>
     /// Scoped to <c>src/</c> deliberately. The ~60 Docker test call sites hand in an
-    /// <c>EnvironmentSpec</c> directly and want the permissive default; requiring the argument
+    /// <c>EnvironmentSpec</c> directly and want the permissive default; requiring the arguments
     /// there would be ceremony asserting something their own environments already state.
     /// </para>
     /// <para>
@@ -543,10 +567,16 @@ public sealed class SuiteProtocolTargetsTests
                 // COUNTED WITHIN EACH CALL'S OWN ARGUMENT LIST, not anywhere in the file. A
                 // whole-file search inflates in the FALSE-PASS direction: a comment mentioning
                 // `endpointConsumingTargets:` — and this fix added several — would satisfy the
-                // guard for a call that never passes it.
+                // guard for a call that never passes it. #473 adds `pathDisclosures:` to the same
+                // window and the same rule: BOTH must appear, so a call passing one and dropping
+                // the other is unwired, not partially wired.
                 Passes: file.Offsets
-                    .Count(offset => ArgumentWindow(file.Text, offset)
-                        .Contains("endpointConsumingTargets:", StringComparison.Ordinal))))
+                    .Count(offset =>
+                    {
+                        var window = ArgumentWindow(file.Text, offset);
+                        return window.Contains("endpointConsumingTargets:", StringComparison.Ordinal)
+                            && window.Contains("pathDisclosures:", StringComparison.Ordinal);
+                    })))
             .Where(file => file.Calls > 0)
             .OrderBy(file => file.Name, StringComparer.Ordinal)
             .ToList();
@@ -568,8 +598,9 @@ public sealed class SuiteProtocolTargetsTests
             + string.Join(", ", callSites.Select(f => $"{f.Name} x{f.Calls}"))
             + ". If you ADDED a caller: prefer routing it through TopologyRequest, which owns the "
             + "whole document-derived argument list (#364). If it must call StartAsync directly, "
-            + "pass both kafkaSpeakingTargets and endpointConsumingTargets derived from the same "
-            + "scenarios, then update this expected count. If you REMOVED one, just update the count.");
+            + "pass kafkaSpeakingTargets and endpointConsumingTargets derived from the same "
+            + "scenarios, and pathDisclosures (#473), then update this expected count. If you "
+            + "REMOVED one, just update the count.");
 
         var unwired = callSites
             .Where(file => file.Passes < file.Calls)
@@ -578,8 +609,17 @@ public sealed class SuiteProtocolTargetsTests
 
         Assert.True(
             unwired.Count == 0,
-            "These SuiteTopology.StartAsync call sites pass kafkaSpeakingTargets but not "
-            + "endpointConsumingTargets, so #348's refusal can never fire on their path: "
+            "These SuiteTopology.StartAsync call sites omit endpointConsumingTargets or "
+            + "pathDisclosures. Both are OPTIONAL on StartAsync, so an omission compiles and runs "
+            + "clean: without the first, #348's refusal can never fire on that path; without the "
+            + "second, the ledger never enters the start sequence at all, so NEITHER the seed "
+            + "paths nor the security-artefact paths are recorded and nothing downstream can "
+            + "substitute either out of an archived diagnostic (#473) — and unlike "
+            + "securityConfiguration, the ledger has no runtime guard that would notice. "
+            + "THIS GUARD COVERS ONE HOP OF FOUR, and only this one: the hops into "
+            + "TopologyRequest.StartAsync and into ServerArtifactInjection.Plan are closed by "
+            + "required parameters, and the hop from SuiteTopology into EnvironmentMapper.Map by "
+            + "EnvironmentMapperLedgerHopCensusTests. Sites: "
             + string.Join(", ", unwired));
     }
 

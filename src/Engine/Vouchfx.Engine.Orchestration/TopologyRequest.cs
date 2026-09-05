@@ -28,12 +28,24 @@
 //     lives there because that is where it already lived when there were three call sites; it was
 //     re-pointed from 3 to 1 rather than duplicated here.
 //
-// WHAT IS DELIBERATELY *NOT* A MEMBER. `securityConfiguration` owns X509Certificate2 instances with
-// a per-build disposal contract — each caller builds it inside its own `try` and disposes it in its
-// own `finally`. It is also not derived from the document, so it must not enter the topology
-// fingerprint (ScenarioRunner.ComputeTopologyFingerprint) either. It is therefore a parameter of
-// StartAsync below, not a property of the request. The census excludes it by name, and that
-// exclusion is the one place the decision is recorded as a decision.
+// WHAT IS DELIBERATELY *NOT* A MEMBER — two things now, and they share one property: neither is
+// derived from the document, so neither may enter the topology fingerprint
+// (ScenarioRunner.ComputeTopologyFingerprint). Both are parameters of StartAsync below rather than
+// properties of the request, and the census excludes each by name; those exclusions are the one
+// place the decisions are recorded as decisions.
+//
+//   • `securityConfiguration` owns X509Certificate2 instances with a per-build disposal contract —
+//     each caller builds it inside its own `try` and disposes it in its own `finally`.
+//
+//   • `pathDisclosures` (#473) is a MUTABLE run-scoped sink. Two runs of the same document must
+//     reuse one kept topology, and a fingerprint that saw this would rebuild on every save simply
+//     because the ledger is a different object — turning --watch into `run` in a loop, which is
+//     #370's residual in a new place rather than a nicety.
+//
+// BOTH ARE REQUIRED PARAMETERS OF StartAsync BELOW, and that is not the same statement as "not a
+// member". SuiteTopology.StartAsync takes each optionally, for ~60 pre-existing test call sites
+// that need neither; this seam is the single production call, so an argument omitted here — the
+// exact #364 defect — must not compile.
 
 using System;
 using System.Collections.Generic;
@@ -235,9 +247,49 @@ public sealed record TopologyRequest(
     /// record: the caller owns the certificates' lifetime and disposes them in its own
     /// <c>finally</c>, and it is not a document input so it must not reach the fingerprint.
     /// </param>
+    /// <param name="pathDisclosures">
+    /// The run's <c>SecurityPathDisclosureLedger</c> (#375), threaded to the recording sites the
+    /// start sequence owns (#473). Not a member of this record for the same two reasons the
+    /// accessor is not: it is not a document input, so it must not reach the fingerprint, and it
+    /// is a mutable run-scoped sink whose lifetime the caller owns.
+    /// <para>
+    /// <strong>REQUIRED, not optional — but that only moves #364's defect one frame down, so it is
+    /// not the guard.</strong> Making it required stops a caller of THIS method from omitting it.
+    /// It does nothing about the line below, which forwards the value to
+    /// <c>SuiteTopology.StartAsync</c>, where the parameter IS optional: measured, deleting
+    /// <c>pathDisclosures: pathDisclosures,</c> from that call compiles, keeps
+    /// <c>TopologyRequestCoverageCensusTests</c> green (it reflects over parameter LISTS, never a
+    /// body), and keeps every test green, because no test invokes this method — the production
+    /// starter needs Docker. The feature would be dead on both run paths with the suite fully
+    /// green. What guards THIS hop — and only this one — is the source-scanning census
+    /// <c>SuiteProtocolTargetsTests.EverySuiteTopologyStartCallSite_PassesBothTargetSets</c>, which
+    /// requires <c>pathDisclosures:</c> inside this call's own argument window.
+    /// </para>
+    /// <para>
+    /// <strong>There are FOUR hops, and no single mechanism covers them; saying otherwise is how
+    /// the third one shipped unguarded.</strong> Caller → this method is the required parameter
+    /// above. This method → <c>SuiteTopology.StartAsync</c> is the census just named.
+    /// <c>SuiteTopology.StartAsync</c> → <c>EnvironmentMapper.Map</c> is
+    /// <c>EnvironmentMapperLedgerHopCensusTests</c> (added by #473's peer review, after that hop
+    /// was found passing the argument positionally into an optional parameter with nothing
+    /// watching). <c>Map</c> → <c>ServerArtifactInjection.Plan</c> is a required parameter again.
+    /// The seed chain is required end to end and needs no census. Adding a fifth hop means
+    /// choosing a mechanism for it, not assuming one of these reaches it.
+    /// </para>
+    /// <para>
+    /// <strong>Do NOT reason about this by analogy to <paramref name="securityConfiguration"/>.</strong>
+    /// That argument has a RUNTIME backstop — <c>SuiteTopology.StartAsync</c>'s Step 0 refuses to
+    /// start a security-declaring suite without an accessor — so it is guarded twice. The ledger
+    /// has none and can have none: recording nothing looks, at run time, exactly like a suite with
+    /// no paths worth recording, which is the common case. The static census is the only thing that
+    /// can notice, which is why it was extended rather than the requirement being trusted.
+    /// </para>
+    /// </param>
     /// <param name="cancellationToken">Propagated to the whole start sequence.</param>
     public Task<SuiteTopology> StartAsync(
-        ISecurityConfigurationAccessor? securityConfiguration, CancellationToken cancellationToken)
+        ISecurityConfigurationAccessor? securityConfiguration,
+        SecurityPathDisclosureLedger? pathDisclosures,
+        CancellationToken cancellationToken)
         => SuiteTopology.StartAsync(
             Environment,
             AppHostAssemblyName,
@@ -246,6 +298,7 @@ public sealed record TopologyRequest(
             securityConfiguration: securityConfiguration,
             kafkaSpeakingTargets: KafkaSpeakingTargets,
             endpointConsumingTargets: EndpointConsumingTargets,
+            pathDisclosures: pathDisclosures,
             cancellationToken: cancellationToken);
 
     /// <summary>

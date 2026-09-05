@@ -25,6 +25,7 @@ using Vouchfx.Engine.Authoring;
 using Vouchfx.Engine.Runtime;
 using Vouchfx.Sdk;
 using Vouchfx.Steps.HttpRest;
+using Vouchfx.TestSupport;
 using Xunit;
 
 namespace Vouchfx.Engine.Runtime.Tests;
@@ -87,23 +88,6 @@ public sealed class SecurityDiagnosticPathDisclosureTests
         """;
 
     private static readonly string[] s_scenarioNames = { "missing-artefact" };
-
-    /// <summary>CA1861: the token separators and path separators are fields, not inline arrays.</summary>
-    /// <remarks>
-    /// <c>&amp;</c> and <c>;</c> are separators so an HTML-escaped quote (<c>&amp;#39;</c>) splits
-    /// off the path it wraps instead of gluing itself to the front of it.
-    /// </remarks>
-    private static readonly char[] s_tokenSeparators =
-        { ' ', '\t', '\r', '\n', '"', '\'', '<', '>', '&', ';', ',', '(', ')', '[', ']' };
-
-    private static readonly char[] s_pathSeparators = { '\\', '/' };
-
-    /// <summary>
-    /// Trimmed from the END only. Trimming <c>.</c> from the FRONT would turn the author's own
-    /// <c>./certs/client.pem</c> into the rooted-looking <c>/certs/client.pem</c> and fail a
-    /// correct message — measured, on the first run of this test.
-    /// </summary>
-    private static readonly char[] s_trailingPunctuation = { '.', ':' };
 
     [Fact]
     public async Task MissingSecurityArtefact_NoWrittenArtefactNamesAnAbsoluteHostPath()
@@ -344,31 +328,13 @@ public sealed class SecurityDiagnosticPathDisclosureTests
     /// by any one expected string.
     /// </summary>
     /// <remarks>
-    /// Two checks, and the second is the one that generalises. (a) The suite directory itself must
-    /// not appear — that is the specific leak this suite triggers, and a substring test catches it
-    /// even where no token boundary exists. (b) No whitespace- or quote-delimited token may be a
-    /// rooted path CONTAINING a separator: that is what a leaked host path looks like on either
-    /// platform (<c>C:\…</c> / <c>\\host\…</c> on Windows, <c>/…/…</c> elsewhere), and it holds for
-    /// a path this suite never names. The separator clause is what keeps ordinary message text out
-    /// of the net — a bare <c>drive:</c>-shaped token with no separator is not a path reference.
+    /// The rules themselves live in <see cref="HostPathDisclosure.AssertNoAbsoluteHostPath"/>
+    /// (Vouchfx.TestSupport). #473 needed the SAME property from
+    /// <c>Vouchfx.Engine.Orchestration.Tests</c>, which cannot see a private member of this
+    /// assembly, so the check was LIFTED rather than copied — see that file's header for why this
+    /// particular assertion must not have two copies. This wrapper survives so the three call
+    /// sites above read exactly as they did.
     /// </remarks>
     private static void AssertNoAbsoluteHostPath(string channel, string text, string suiteDirectory)
-    {
-        Assert.DoesNotContain(suiteDirectory, text, StringComparison.OrdinalIgnoreCase);
-
-        foreach (var token in text.Split(s_tokenSeparators, StringSplitOptions.RemoveEmptyEntries))
-        {
-            var candidate = token.TrimEnd(s_trailingPunctuation);
-            if (candidate.Length < 2 || candidate.IndexOfAny(s_pathSeparators) < 0)
-            {
-                continue;
-            }
-
-            Assert.False(
-                Path.IsPathRooted(candidate),
-                $"{channel} names an absolute host path '{candidate}'. A validation-time security "
-                + "diagnostic must name the declared path and the concept it resolves against "
-                + $"(#357's rule), never a resolved one. Full text: {text}");
-        }
-    }
+        => HostPathDisclosure.AssertNoAbsoluteHostPath(channel, text, suiteDirectory);
 }

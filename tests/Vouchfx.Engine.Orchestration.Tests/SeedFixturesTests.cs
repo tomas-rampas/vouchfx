@@ -4,6 +4,7 @@
 
 using System.Security.Cryptography;
 using Vouchfx.Engine.Orchestration;
+using Vouchfx.TestSupport;
 using Xunit;
 
 namespace Vouchfx.Engine.Orchestration.Tests;
@@ -89,26 +90,60 @@ public sealed class SeedFixturesTests
         }
     }
 
+    /// <summary>
+    /// A missing fixture raises <see cref="FileNotFoundException"/> naming the author's DECLARED
+    /// path and the concept it resolves against — never the resolved absolute host path, and never
+    /// in <see cref="FileNotFoundException.FileName"/> either (#357's rule, applied by #473).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The absence is asserted BEFORE the presence</strong>, so a break fails on the leak
+    /// rather than on a missing phrase — the convention
+    /// <c>SecurityDiagnosticPathDisclosureTests</c> established, and the reason the shared
+    /// <see cref="HostPathDisclosure.AssertNoAbsoluteHostPath"/> is used here rather than a third
+    /// hand-written variant. (There were TWO before #473 — one in
+    /// <c>SecurityDiagnosticPathDisclosureTests</c> and one in
+    /// <c>SecurityPathDisclosureLedgerTests</c>, and they had diverged; both are now delegating
+    /// wrappers over the shared one.)
+    /// </para>
+    /// <para>
+    /// <strong><see cref="FileNotFoundException.FileName"/> is asserted separately, and NOT via
+    /// <c>ToString()</c>.</strong> That property is appended to the exception's full text as
+    /// "File name: '…'", so a message that lost its resolved path while the <c>fileName</c>
+    /// constructor argument kept one would still disclose it to any sink that formats the whole
+    /// exception. Running the property assertion over <c>ToString()</c> was the first attempt and
+    /// it is unusable — measured: the full text also carries the STACK TRACE, whose frames name
+    /// this repository's own compile-time source paths, so the check fails on
+    /// <c>…\SeedFixtures.cs:line</c> for every exception ever thrown. A stack frame is not a
+    /// runtime disclosure of the author's environment; the <c>FileName</c> property is the part
+    /// this code chooses, so that is the part asserted.
+    /// </para>
+    /// <para>
+    /// This test remains the ONLY observer of the message: the single production call site,
+    /// <c>ScenarioRunner.HashFixtureOrNull</c>, catches and swallows it, and the seed applier never
+    /// calls this at all, doing its own existence check instead. The rule is applied here anyway
+    /// because "unreachable" is a fact about today's caller rather than a property of the method —
+    /// see the throw's own comment.
+    /// </para>
+    /// </remarks>
     [Fact]
-    public void ComputeContentHash_MissingFile_ThrowsFileNotFoundNamingResolvedPath()
+    public void ComputeContentHash_MissingFile_ThrowsFileNotFoundNamingDeclaredPathOnly()
     {
         var dir = NewTempDir();
         try
         {
             var relative = Path.Combine("fixtures", "absent.json");
-            var expectedFull = Path.GetFullPath(Path.Combine(dir, relative));
 
-            // Act + Assert — a missing file raises a clear FileNotFoundException whose
-            // message names the resolved absolute path.  This test is the ONLY observer of
-            // that message: the single production call site
-            // (ScenarioRunner.HashFixtureOrNull) catches and swallows it, and the seed
-            // applier — contrary to an older comment here — never calls this at all, doing
-            // its own existence check instead.  That is why this message is allowed to keep
-            // a resolved absolute path when every sibling diagnostic lost one (#357): it
-            // reaches no artefact.  If a caller ever observes it, the path must go.
             var ex = Assert.Throws<FileNotFoundException>(
                 () => SeedFixtures.ComputeContentHash(dir, relative));
-            Assert.Contains(expectedFull, ex.Message, StringComparison.Ordinal);
+
+            HostPathDisclosure.AssertNoAbsoluteHostPath(
+                "the seed-fixture not-found message", ex.Message, dir);
+            HostPathDisclosure.AssertNoAbsoluteHostPath(
+                "the seed-fixture not-found exception's FileName", ex.FileName ?? string.Empty, dir);
+
+            Assert.Contains(relative, ex.Message, StringComparison.Ordinal);
+            Assert.Equal(relative, ex.FileName);
         }
         finally
         {

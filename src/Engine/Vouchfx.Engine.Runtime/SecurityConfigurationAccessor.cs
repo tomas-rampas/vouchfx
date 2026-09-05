@@ -41,6 +41,7 @@ using Vouchfx.Engine.Abstractions.Secrets;
 using Vouchfx.Engine.Abstractions.Security;
 using Vouchfx.Engine.Authoring.Ast;
 using Vouchfx.Engine.Authoring.Model;
+using Vouchfx.Engine.Orchestration;
 
 namespace Vouchfx.Engine.Runtime;
 
@@ -622,14 +623,21 @@ internal sealed class SecurityConfigurationAccessor : ISecurityConfigurationAcce
         /// </para>
         /// <para>
         /// <strong>This is where a resolved path is registered with the run's
-        /// <see cref="SecurityPathDisclosureLedger"/> (issue #375), and it is the only place it
-        /// could be.</strong> All three public resolved-path getters funnel through here, and
-        /// this method is the single point that holds the resolved form and the declared form
-        /// together — the same relationship <c>SecretAccessor.Resolve</c> has to
+        /// <see cref="SecurityPathDisclosureLedger"/> (issue #375), and it is the only place IN
+        /// THIS ACCESSOR it could be.</strong> All three public resolved-path getters funnel
+        /// through here, and this method is the single point that holds the resolved form and the
+        /// declared form together — the same relationship <c>SecretAccessor.Resolve</c> has to
         /// <see cref="Vouchfx.Engine.Abstractions.Secrets.ResolvedSecretLedger"/>. Registering at
         /// the three getters instead would be three chances to forget; registering at
         /// construction would record paths for a target no step reaches, and — worse — record
         /// one that <see cref="EnsureContained"/> is about to refuse.
+        /// </para>
+        /// <para>
+        /// It is not the only recording site in the engine. #473 added two siblings that hold both
+        /// halves — <c>ServerArtifactInjection.Plan</c> for
+        /// <c>security.serverArtifacts[].source</c>, and <c>SeedApplier</c> for each resolved seed
+        /// SQL path — both in <c>Vouchfx.Engine.Orchestration</c>, which is why the ledger type
+        /// lives there. This accessor's relationship to it is unchanged.
         /// </para>
         /// <para>
         /// AFTER the containment check, deliberately. A path that resolves outside the suite

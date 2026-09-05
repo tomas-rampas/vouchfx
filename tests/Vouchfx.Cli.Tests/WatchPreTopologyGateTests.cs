@@ -300,6 +300,16 @@ public sealed class WatchPreTopologyGateTests : IDisposable
             """);
 
         Assert.Equal(2, harness.BuildCount);
+
+        // #473, asserted on THIS arm because it is the only one that builds twice. The session's
+        // path-disclosure ledger must reach the starter, and it must be the SAME INSTANCE on both
+        // builds — reference equality, not a null check, because the ledger's whole value is its
+        // lifetime: a resolved `serverArtifacts[].source` or seed SQL path recorded while one
+        // topology was built has to stay substitutable from text a later save emits. A starter
+        // handed a fresh ledger per build would satisfy every not-null assertion and silently drop
+        // everything the previous build recorded.
+        Assert.Equal(2, harness.PathLedgers.Count);
+        Assert.All(harness.PathLedgers, l => Assert.Same(harness.SessionPathLedger, l));
     }
 
     /// <summary>
@@ -625,12 +635,13 @@ public sealed class WatchPreTopologyGateTests : IDisposable
             output,
             appHostAssemblyName: "Vouchfx.Cli.Tests",
             new ResolvedSecretLedger(),
-            new SecurityPathDisclosureLedger(),
-            (request, accessor, _) =>
+            harness.SessionPathLedger,
+            (request, accessor, pathLedger, _) =>
             {
                 harness.BuildCount++;
                 harness.Requests.Add(request);
                 harness.Accessors.Add(accessor);
+                harness.PathLedgers.Add(pathLedger);
                 var fake = new FakeKeptTopology();
                 fake.Services["api"] = "http://127.0.0.1:1";
                 configure?.Invoke(fake);
@@ -676,7 +687,7 @@ public sealed class WatchPreTopologyGateTests : IDisposable
             appHostAssemblyName: "Vouchfx.Cli.Tests",
             new ResolvedSecretLedger(),
             new SecurityPathDisclosureLedger(),
-            (request, accessor, _) =>
+            (request, accessor, _, _) =>
             {
                 onRequest(request);
                 onAccessor?.Invoke(accessor);
@@ -702,6 +713,21 @@ public sealed class WatchPreTopologyGateTests : IDisposable
         public List<TopologyRequest> Requests { get; } = new();
 
         public List<ISecurityConfigurationAccessor> Accessors { get; } = new();
+
+        /// <summary>
+        /// The path-disclosure ledger each build was handed (#473). Captured for the same reason
+        /// <see cref="Accessors"/> is: it is the argument whose omission would be invisible — the
+        /// session would build a topology whose resolved host paths nothing downstream can
+        /// substitute, and every existing assertion would stay green.
+        /// </summary>
+        public List<SecurityPathDisclosureLedger> PathLedgers { get; } = new();
+
+        /// <summary>
+        /// The ledger handed to <c>CreateSession</c>, held so an arm can assert that the SAME
+        /// instance reached the starter. A fresh one per build would satisfy a not-null check and
+        /// still lose every path the previous build recorded (#473).
+        /// </summary>
+        public SecurityPathDisclosureLedger SessionPathLedger { get; } = new();
 
         public List<FakeKeptTopology> Topologies { get; } = new();
     }
