@@ -182,9 +182,11 @@ public sealed class HttpRestProvider
     /// <para>
     /// <strong>IT COUNTS NODES, NOT BYTES, and the difference is reachable rather than
     /// theoretical.</strong> <c>ScalarToJsonNode</c> wraps the scalar's existing string
-    /// instance, so an aliased 1 MB scalar costs ONE node per alias site: a body aliasing it
-    /// 10,000 times is ~11,000 nodes — comfortably inside this budget — and serialises to
-    /// gigabytes. This constant therefore does not cap the materialised tree at any
+    /// instance, so an aliased scalar costs ONE node per alias site however long that string is.
+    /// A body that aliases one large scalar many times therefore stays well inside this
+    /// budget while serialising to far more than its node count suggests. How much more is
+    /// bounded by the 1 MiB document cap ScenarioDiscovery applies before reading a file,
+    /// not by this constant. This constant therefore does not cap the materialised tree at any
     /// particular size, and no claim here says it does. Widening it to a byte budget is a
     /// separate change with its own message and its own rows; issue #505 tracks the larger
     /// version of the same gap upstream of this provider.

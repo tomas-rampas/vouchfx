@@ -545,7 +545,7 @@ public sealed class HttpRestBodyTests
     /// per anchor while the walk re-materialises a copy at every alias site. The budget stops
     /// the walk at 50,000 nodes, which is thousandths of a second of work. Note what the row
     /// does and does not prove: the same document has ALREADY been expanded once, unbounded,
-    /// by schema validation on the engine path (measured at ~2.5 MB of JSON for this shape),
+    /// by schema validation on the engine path,
     /// so what the budget buys is a named refusal instead of this provider materialising a far
     /// heavier <c>JsonNode</c> tree — not the prevention of an out-of-memory condition. That
     /// larger gap is issue #505.
@@ -587,10 +587,12 @@ public sealed class HttpRestBodyTests
     /// billion-laughs row above uses a one-character payload, so it structurally cannot
     /// observe size at all; scale the payload instead of the branching factor and the budget
     /// sees nothing. <c>ScalarToJsonNode</c> wraps the scalar's existing string instance, so
-    /// each alias site costs exactly one node however long that string is. The figures below
-    /// are kept small enough to be a unit test (~2 MB) while making the ratio unmistakable;
-    /// nothing stops an author scaling them further. Asserted as a PROPERTY — bytes per node —
-    /// rather than an exact length, so it cannot break on a formatting change.
+    /// each alias site costs exactly one node however long that string is. This fixture is NOT a
+    /// reachable suite: ScenarioDiscovery refuses any document larger than
+    /// MaxDocumentSizeBytes (1 MiB) before reading it, and this one is larger, so it
+    /// illustrates the ratio and claims nothing about a document the engine would accept.
+    /// Asserted as a PROPERTY — bytes per node — rather than an exact length, so it cannot
+    /// break on a formatting change.
     /// </remarks>
     [Fact]
     public void Bind_LargeScalarAliasedManyTimes_StaysInsideTheNodeBudget()
