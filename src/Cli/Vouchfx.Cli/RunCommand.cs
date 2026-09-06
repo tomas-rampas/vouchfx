@@ -1617,7 +1617,10 @@ internal static class RunCommand
         {
             var workingDirectory = ResolveWorkingDirectory(discoveryRoot);
             changeSet = new GitChangeSet(
-                changedSinceRef, workingDirectory, SystemProcessRunner.Instance, cancellationToken);
+                changedSinceRef,
+                workingDirectory,
+                SystemProcessRunner.Instance,
+                cancellationToken: cancellationToken);
         }
 
         return ScenarioSelector.Apply(discovered, criteria, changeSet, matchRecoveredMetadata);
