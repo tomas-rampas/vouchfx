@@ -96,8 +96,9 @@ public enum SecurityAbortKind
     /// construction, and both runners fold it in with <see cref="SecurityAssurance.Worse"/>; the
     /// declaration and the refusal are therefore paired at the document, and a secured unbuilt
     /// document raises on either path. Until #415 closed, the sequential path instead CONCATENATED
-    /// each unbuilt document's declaration into one suite-wide <see cref="Declared"/> and took only
-    /// the refusal, while <see cref="Confirmed"/> was compared by target NAME — so an unbuilt
+    /// each unbuilt document's declaration into one suite-wide <see cref="SecurityAssurance.Declared"/>
+    /// and took only the refusal, while <see cref="SecurityAssurance.Confirmed"/> was compared by
+    /// target NAME — so an unbuilt
     /// document's declaration counted as confirmed as soon as a SIBLING's probe confirmed the same
     /// name, bypassing the shared-<c>environment</c> divergence guard, which walks <c>scenarios</c>
     /// alone. On an identical suite with the topology up and the probe confirming that name,

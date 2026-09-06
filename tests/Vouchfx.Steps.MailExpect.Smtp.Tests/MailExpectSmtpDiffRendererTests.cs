@@ -15,7 +15,7 @@ namespace Vouchfx.Steps.MailExpect.Smtp.Tests;
 
 /// <summary>
 /// Non-docker unit tests for <see cref="MailExpectSmtpProvider"/>'s
-/// <see cref="IStepDiffRenderer"/> implementation.
+/// <see cref="Vouchfx.Sdk.IStepDiffRenderer"/> implementation.
 /// </summary>
 public sealed class MailExpectSmtpDiffRendererTests
 {

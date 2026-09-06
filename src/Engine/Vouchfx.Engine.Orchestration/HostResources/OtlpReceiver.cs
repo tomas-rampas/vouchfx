@@ -412,8 +412,10 @@ public sealed class OtlpReceiver : IAsyncDisposable
     /// Parses a single OTLP JSON span object into a <see cref="CapturedSpan"/>. Trace/span/
     /// parent-span ids are stored lower-cased exactly as received (the OTLP/HTTP JSON mapping
     /// encodes them as lower-case hex strings, matching the W3C traceparent hex segments — see
-    /// <see cref="Vouchfx.Steps.TraceExpect.Otlp.TraceExpectOtlpProvider"/> for the
-    /// traceparent-derived trace-id extraction this is designed to match against).
+    /// <c>Vouchfx.Steps.TraceExpect.Otlp.TraceExpectOtlpProvider</c> for the
+    /// traceparent-derived trace-id extraction this is designed to match against; that provider
+    /// assembly is downstream of this one and deliberately not referenced here, so it is named
+    /// in plain text rather than as a cref).
     /// </summary>
     private static CapturedSpan ParseSpan(JsonElement span, string serviceName, DateTimeOffset capturedAt)
     {

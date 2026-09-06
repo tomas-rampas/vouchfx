@@ -64,7 +64,8 @@ namespace Vouchfx.Engine.Runtime.Serialisation;
 /// <c>ScenarioRunner.SerialiseEnvironment</c> so that a <see cref="YamlMappingNode"/> in that
 /// graph is serialised correctly rather than throwing
 /// <see cref="InvalidOperationException"/> (S11-B-02). Two properties depend on the
-/// registration — <see cref="DependencySpec.Extra"/> and <see cref="SecuritySpec.Extra"/>
+/// registration — <see cref="Vouchfx.Engine.Authoring.Model.DependencySpec.Extra"/> and
+/// <see cref="Vouchfx.Engine.Authoring.Model.SecuritySpec.Extra"/>
 /// (#353) — so it may not be narrowed to either one's path.
 /// </para>
 /// <para>
@@ -163,7 +164,7 @@ internal sealed class YamlNodeJsonConverter : JsonConverter<YamlNode>
     /// mapping key.  The straightforward cast <c>(YamlScalarNode)kv.Key</c> throws
     /// <see cref="InvalidCastException"/> for such keys, replicating the bug the converter
     /// was written to fix.  This helper handles the scalar case directly and falls back to
-    /// <see cref="YamlNode.ToString"/> for any other node type, which is deterministic and
+    /// <see cref="YamlNode.ToString()"/> for any other node type, which is deterministic and
     /// never throws.
     /// </remarks>
     private static string KeyToString(YamlNode key) => key switch

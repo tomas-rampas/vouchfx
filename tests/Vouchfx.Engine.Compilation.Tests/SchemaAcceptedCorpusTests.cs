@@ -171,8 +171,8 @@ public sealed class SchemaAcceptedCorpusTests
     }
 
     /// <summary>
-    /// Every document under <c>Corpus/Accepted</c> (excluding the
-    /// scalar-coercion tranche, see <see cref="ScalarCoercionCase_WillBeAcceptedInFutureTranche"/>)
+    /// Every document under <c>Corpus/Accepted</c> — <see cref="AcceptedFiles"/> excludes
+    /// nothing, the scalar-coercion tranche having landed (see the RETIRED note below) —
     /// must validate through <see cref="DocumentValidator"/> against the full
     /// Core registry. On failure, the assertion message names the file and
     /// every error's location and message — the whole point of this gate is

@@ -32,7 +32,7 @@ public sealed class ProjectContextDescriptionsTests
     /// <summary>
     /// G-C (gatekeeper, fix round 3): unlike the five private copies this helper replaced,
     /// <c>DescribeDeclaredSurfaces</c> is a PUBLIC API on a contract frozen for the whole v1.x
-    /// engine series — a null <paramref name="ctx"/> argument must fail fast with a located
+    /// engine series — a null <c>ctx</c> argument must fail fast with a located
     /// <see cref="ArgumentNullException"/>, not an NRE from whichever line happens to
     /// dereference it first.
     /// </summary>

@@ -387,17 +387,6 @@ public sealed class RunParallelAsyncTests
         Assert.Equal(Verdict.EnvironmentError, result.Verdict);
     }
 
-    /// <summary>
-    /// The REAL core — the one the fakes above stand in for — must record the refusal the fold reads.
-    /// Two doors reach it before any container starts, and both are exercised here: a preflight
-    /// rejection of a declared artefact path (REQ-003/REQ-004) and a root-schema rejection of the
-    /// declaration itself (REQ-021's per-kind narrowing).
-    /// </summary>
-    /// <remarks>
-    /// Non-Docker by construction: both return from
-    /// <c>RunScenarioOwningTopologyAsync</c> before <c>SuiteTopology.StartAsync</c> is called at
-    /// all. Without this the fold's input was tested only through fakes that always supplied it.
-    /// </remarks>
     // Both documents are written out in full rather than assembled from an interpolated
     // `securityBlock` fragment. That assembly is how the first version of this test silently stopped
     // testing anything: a MULTI-LINE interpolation value is spliced into a raw string literal
@@ -453,6 +442,17 @@ public sealed class RunParallelAsyncTests
               status: 200
         """;
 
+    /// <summary>
+    /// The REAL core — the one the fakes above stand in for — must record the refusal the fold reads.
+    /// Two doors reach it before any container starts, and both are exercised here: a preflight
+    /// rejection of a declared artefact path (REQ-003/REQ-004) and a root-schema rejection of the
+    /// declaration itself (REQ-021's per-kind narrowing).
+    /// </summary>
+    /// <remarks>
+    /// Non-Docker by construction: both return from
+    /// <c>RunScenarioOwningTopologyAsync</c> before <c>SuiteTopology.StartAsync</c> is called at
+    /// all. Without this the fold's input was tested only through fakes that always supplied it.
+    /// </remarks>
     [Theory]
     // A declared clientCert that does not exist → EnvironmentSecurityValidator (preflight door).
     [InlineData("services", "clientCert")]

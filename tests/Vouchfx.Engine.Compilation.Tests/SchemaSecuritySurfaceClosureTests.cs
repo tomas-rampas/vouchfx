@@ -264,7 +264,7 @@ public sealed class SchemaSecuritySurfaceClosureTests
     /// <summary>
     /// G-POSITIVE (gatekeeper): switching <c>$defs/security</c> to <c>unevaluatedProperties:
     /// false</c> did NOT trigger the same annotation-dropping cascade that forced
-    /// <see cref="SchemaErrorCollector.SuppressUnevaluatedPropertiesCascade"/> into existence
+    /// <c>SchemaErrorCollector.SuppressUnevaluatedPropertiesCascade</c> into existence
     /// for <c>$defs/step</c> — verified empirically (see the class remarks and this file's own
     /// Finding 1/2 above) — but <c>SuppressUnevaluatedPropertiesCascade</c>'s OWN scoping is
     /// deliberately confined to the step surface (<see cref="SchemaErrorCollector.TryGetStepScope"/>

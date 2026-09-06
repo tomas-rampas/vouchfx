@@ -433,7 +433,7 @@ public sealed class HeadlessTopologySelfHealTests
     }
 
     /// <summary>
-    /// Snapshots an environment variable's current value, sets it to <paramref name="value"/>
+    /// Snapshots an environment variable's current value, sets it to <c>value</c>
     /// (<see langword="null"/> to unset), and restores the original value on
     /// <see cref="Dispose"/>.
     /// </summary>
