@@ -18,6 +18,15 @@
     <ProjectReference Include="..\..\src\Engine\Vouchfx.Engine.Compilation\Vouchfx.Engine.Compilation.csproj" />
     <ProjectReference Include="..\..\src\Providers\Core\Vouchfx.Steps.Script.Csharp\Vouchfx.Steps.Script.Csharp.csproj" />
     <ProjectReference Include="..\..\src\Sdk\Vouchfx.Sdk\Vouchfx.Sdk.csproj" />
+
+    <!--
+      Issue #488: this assembly asserts that Emit's file-read diagnostic names no absolute host
+      path. HostPathDisclosure.AssertNoAbsoluteHostPath is the ONE predicate for that property
+      (#357/#375/#473), and its own header records what a fourth private copy would cost — the two
+      earlier copies had already silently diverged on the JSON-escaped spelling. Referencing the
+      shared project is the alternative to repeating that mistake.
+    -->
+    <ProjectReference Include="..\Vouchfx.TestSupport\Vouchfx.TestSupport.csproj" />
   </ItemGroup>
 
 </Project>

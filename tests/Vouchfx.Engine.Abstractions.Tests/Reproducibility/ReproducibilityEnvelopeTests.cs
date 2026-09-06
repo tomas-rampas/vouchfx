@@ -175,7 +175,10 @@ public sealed class ReproducibilityEnvelopeTests
         var fixtures = new List<FixtureDigest>
         {
             new("fixtures/orders.sql", "aabbcc"),
-            new("fixtures/catalog.json", null), // missing-at-build-time shape
+            // The COULD-NOT-BE-HASHED shape — a locked file, a permission denial or a rejected
+            // path as much as an absent one, with no cause recorded. Serialises as a row with
+            // no contentHash KEY at all (WhenWritingNull), never an explicit null.
+            new("fixtures/catalog.json", null),
         };
 
         var envelope = ReproducibilityEnvelope.Compute(

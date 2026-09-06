@@ -800,7 +800,30 @@ public sealed class HtmlRenderer
                 }
 
                 var reference = GetStrFromObject(fixture, "reference") ?? "(unknown)";
-                var contentHash = GetStrFromObject(fixture, "contentHash") ?? "(absent)";
+
+                // CAUSE-NEUTRAL BY CONSTRUCTION (issue #484). The token names what the
+                // envelope KNOWS — that this row carries no hash — and deliberately not
+                // why, because the wire record does not carry a why. FixtureDigest has
+                // two fields, and a null ContentHash is the whole of what the producer
+                // recorded; any word here about the file's state would be this renderer
+                // inventing a cause from an absence.
+                //
+                // The token this replaced, "(absent)", named one: it read as a claim
+                // about the FILE. Five causes reach this branch since #466 widened
+                // ScenarioRunner.HashFixtureOrNull's catch to the IO family, and "(absent)"
+                // was FALSE for three — a locked file, a permission denial, and a path the
+                // filesystem rejects. It stayed true for the other two: a file that was never
+                // there, and one deleted between the existence check and the read, which IS
+                // absent by the time the read fails. Right about two cases in five is still a
+                // token that lies to a reader.
+                //
+                // Do not "improve" this by rendering a cause; the envelope carries none. The
+                // alternative — a Reason field on FixtureDigest — is deliberately NOT taken
+                // yet, and the reasoning lives at HashFixtureOrNull. Two things it does not
+                // rest on, because both are wrong: the §14 freeze (which permits an additive
+                // field), and "no consumer exists" (this event's charter is diffing by
+                // out-of-process consumers). It is simply cheap to reverse later.
+                var contentHash = GetStrFromObject(fixture, "contentHash") ?? "(no hash recorded)";
 
                 output.WriteLine(string.Format(
                     CultureInfo.InvariantCulture,

@@ -76,9 +76,47 @@ public sealed record SecretReferenceDigest(
 /// The fixture's relative path / label, exactly as declared in the seed block.
 /// </param>
 /// <param name="ContentHash">
-/// The lower-case hex SHA-256 of the fixture file's raw bytes, or
-/// <see langword="null"/> when the fixture file was absent at envelope-build time
-/// (recorded without a hash rather than crashing the run — see the class remarks).
+/// The lower-case hex SHA-256 of the fixture file's raw bytes, or <see langword="null"/> when
+/// the fixture <strong>could not be hashed</strong> at envelope-build time.
+/// <para>
+/// <strong>ON THE WIRE THERE IS NO NULL — THE <c>contentHash</c> KEY IS ABSENT.</strong>
+/// <c>EventStreamJson.Options</c> sets <c>DefaultIgnoreCondition = WhenWritingNull</c>, so this
+/// row serialises as <c>{"reference":"fixtures/x.sql"}</c>. This type's documented audience is
+/// the JSON Lines consumers, so state the contract in their terms: <strong>a fixture row
+/// carrying no <c>contentHash</c> key means the engine could not hash that file — NOT that the
+/// file was absent.</strong>
+/// </para>
+/// <para>
+/// The causes are an absent file, a locked one, a permission-denied one, a path the filesystem
+/// rejects, and one deleted between the existence check and the read — every member of the IO
+/// family <c>ScenarioRunner.HashFixtureOrNull</c> catches. The envelope deliberately records
+/// WHICH it was nowhere.
+/// </para>
+/// <para>
+/// <strong>Consumers cannot date this from the stream.</strong> The semantics changed in #466
+/// (before then only an absent file produced a hashless row) and
+/// <see cref="ReproducibilityEnvelope.CurrentSchemaVersion"/> did not move for it and does not
+/// move now — so two archived streams either side of that change are indistinguishable by
+/// <c>envSchemaVersion</c>. Anything reading archived envelopes must assume the broader meaning.
+/// </para>
+/// <para>
+/// <strong>Not recording the cause is a decision, and a CHEAP-TO-REVERSE one</strong> — which is
+/// the honest defence, not "nobody is affected". A <c>Reason</c> field is purely additive and
+/// the §14 freeze permits it for v1.x; envelopes archived before it lands lack it whichever way
+/// the call goes; and the rows are already indistinguishable today. So the cost of adding it
+/// later is roughly the cost of adding it now, minus the renderer work already done. It is not
+/// added yet because reaching a hashless row needs a file to stop being readable mid-run — the
+/// engine has already READ every byte of every file it hashes here (the seed applier's
+/// <c>File.ReadAllTextAsync</c>, the script provider's <c>File.ReadAllText</c>) before this
+/// envelope is assembled at scenario completion. The gate is the READ; an existence or size
+/// check is not, both being measured to succeed on a locked or permission-denied file.
+/// </para>
+/// <para>
+/// Do NOT rest the case on "no comparator exists in <c>src/</c>". That is true and irrelevant:
+/// this event's charter (see <c>ReproducibilityEnvelopeEvent</c>) is reproducibility diffing by
+/// consumers OUT of process, so absence of an in-tree comparator says nothing about who is
+/// affected.
+/// </para>
 /// </param>
 public sealed record FixtureDigest(
     [property: JsonPropertyName("reference")] string Reference,
