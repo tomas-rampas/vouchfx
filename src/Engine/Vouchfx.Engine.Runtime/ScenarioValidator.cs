@@ -49,7 +49,7 @@ public enum ValidationStage
 {
     /// <summary>
     /// The document failed composed-JSON-Schema validation (§8) — it never reached the
-    /// parser. Corresponds to <see cref="DocumentValidator.Validate"/>.
+    /// parser. Corresponds to <see cref="DocumentValidator.Validate(string, StepKindRegistry)"/>.
     /// </summary>
     Schema,
 

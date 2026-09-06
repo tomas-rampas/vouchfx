@@ -14,5 +14,61 @@
          packages (S08 T4 / S08-F-03). Test projects also pin this to false in
          tests/Directory.Build.props. -->
     <IsPackable>false</IsPackable>
+    <!-- Doc-comment gate (#430, #490). The C# compiler only PARSES XML doc comments
+         when it is asked to emit a documentation file; without this property it
+         silently ignores them, so malformed and wrong doc XML shipped invisibly —
+         `dotnet build -warnaserror` never saw it, `dotnet format` does not validate
+         doc XML, and the repo's Roslyn censuses parse with `descendIntoTrivia: false`,
+         which makes comments invisible by construction. Before this line only 6 of
+         77 projects opted in individually, so the blind spot covered the engine
+         (including Vouchfx.Engine.Orchestration, the largest and most heavily
+         documented project) and every test assembly. Setting it HERE — once, for
+         every project — is the whole point: a partial rollout recreates the blind
+         spot in whichever projects are missed.
+
+         Combined with TreatWarningsAsErrors above, a malformed or unresolvable doc
+         comment is now a BUILD ERROR: CS1570 (malformed XML), CS1571 (duplicate
+         <param>), CS1572 (<param> for a non-existent parameter), CS1574/CS1580/CS1581
+         (unresolvable cref), CS1587 (doc comment not on a valid language element),
+         CS1734 (<paramref> for a non-existent parameter) and CS0419 (cref matching
+         several overloads — add the signature, e.g. `M(int)` rather than `M`).
+
+         SUPPRESSED BY DEFAULT, AND ONLY BY DEFAULT — do NOT "helpfully" delete the
+         opt-out that goes with them:
+           CS1591  missing XML comment for a publicly visible type or member
+           CS1573  parameter has no matching <param> tag
+         This repository does not document every public member and does not intend
+         to; requiring that across 77 projects is a different and far larger project
+         than the gate this property exists to provide. What is wanted is only
+         *malformed* or *wrong* documentation — a comment that names the wrong thing
+         is a defect; an absent comment is a choice. Suppressing these two keeps the
+         gate mechanical and false-positive free, which is what makes it survivable.
+
+         BUT SIX PROJECTS ALREADY ENFORCED MORE THAN THAT, and a blanket NoWarn here
+         would silently take it away from them. Vouchfx.Sdk, Vouchfx.Sdk.Testing,
+         Vouchfx.Engine.Abstractions, .Authoring, .Compilation and .Planning each set
+         GenerateDocumentationFile=true under the TreatWarningsAsErrors above with NO
+         NoWarn of their own, which made CS1591 and CS1573 build ERRORS in those
+         projects — two of them (Vouchfx.Sdk, Vouchfx.Sdk.Testing) being SHIPPED
+         packages whose XML docs are part of the package contract. Relaxing that as a
+         side effect of a repo-wide default would be a gate loss, invisible until the
+         first undocumented public member appeared in a published API. So the
+         suppression is applied in Directory.Build.targets instead, conditioned on
+         VouchfxDocumentEveryPublicMember, and each of those six sets that property to
+         true. Nothing regresses today (measured: none of the six emits either warning
+         at the time of writing) — this keeps it that way.
+
+         ONE PUBLISHED PACKAGE GREW, and it is not one of the six. Vouchfx.Cli is
+         IsPackable + PackAsTool, and every assembly reachable from it now generates a
+         documentation file, so the tool package carries XML for the engine and all 25
+         Core providers where it previously carried it for five assemblies. Measured
+         inside the packed nupkg: tools/net8.0/any now holds 37 .xml entries totalling
+         2.9 MB, including the tool's own — which is named vouchfx.xml, after the
+         AssemblyName rather than the project. Measured against a build of the parent
+         commit in a scratch worktree, the same output previously held five Vouchfx*.xml
+         totalling 1.1 MB. Harmless — XML docs for assemblies nobody references as a
+         library — but it is a change to what a published artefact contains, so it is
+         written down rather than discovered. -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
   </PropertyGroup>
 </Project>

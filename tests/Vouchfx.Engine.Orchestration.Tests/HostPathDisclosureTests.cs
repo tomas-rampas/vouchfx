@@ -58,7 +58,7 @@ public sealed class HostPathDisclosureTests
     /// <strong>This is the arm the folded check exists for, and asserting the MESSAGE is what makes
     /// it discriminating rather than merely green.</strong> "It threw" is not enough: on Windows the
     /// generic rooted-token clause also fires for <c>C:\\work\\…</c>, because
-    /// <see cref="System.IO.Path.IsPathRooted"/> needs only a drive and a separator and is
+    /// <see cref="System.IO.Path.IsPathRooted(string)"/> needs only a drive and a separator and is
     /// indifferent to the doubling. So an arm that asserted only <c>Throws</c> would pass on
     /// Windows with the escaped check deleted, and the drill would report the fold as covered when
     /// it is not — which is exactly the failure this file was written in response to.
@@ -127,7 +127,7 @@ public sealed class HostPathDisclosureTests
     /// <remarks>
     /// The separator clause is what keeps ordinary message text out of the net. Without it, a
     /// perfectly innocent <c>note:</c> or <c>C:</c> in prose would fail every diagnostic on Windows,
-    /// where <see cref="System.IO.Path.IsPathRooted"/> is true for a bare drive specifier.
+    /// where <see cref="System.IO.Path.IsPathRooted(string)"/> is true for a bare drive specifier.
     /// </remarks>
     [Fact]
     public void DriveShapedTokenWithNoSeparator_IsAccepted()

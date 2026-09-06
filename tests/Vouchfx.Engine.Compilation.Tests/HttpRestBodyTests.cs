@@ -20,6 +20,28 @@
 //      reference-only observation (source/path coordinates, no secret value).
 //   6. Execution: a GET with no body still works unchanged (no content sent).
 //
+// Issue #346 additions (Bind, non-docker): the YAML-to-JSON walk behind a structured
+// body is BOUNDED in depth and in total nodes produced, so a mistake in a suite file
+// gets a catchable exception naming the step. Every row below calls Bind DIRECTLY, and
+// that is not incidental: the engine validates a document against the composed JSON
+// Schema first, and the YamlDotNet serialiser inside that conversion refuses anything
+// past 49 nesting levels of its own accord, so the depth bound is a backstop for
+// exactly this shape of caller. See HttpRestProvider's own block comment for the
+// measurements.
+//
+//   7. A body nested one level past the depth bound is refused, with the line and
+//      column of the offending node; a body AT the bound still binds.
+//   8. An anchored-and-repeatedly-aliased body (the billion-laughs shape) is refused
+//      by the node budget, and a shared anchor used a legitimate two or three times
+//      still expands at every site — the budget is deliberately NOT a visited-node
+//      set, which would change what the language means.
+//   9. An ordinary structured body still round-trips byte-for-byte: the bound must be
+//      invisible to a real suite.
+//  10. The node budget counts NODES, NOT BYTES, and the row proves it rather than
+//      leaving the limitation to prose: a large scalar aliased many times stays well
+//      inside the budget and still produces a body orders of magnitude larger than the
+//      node count suggests.
+//
 // The in-process responder is an extension of the JSON responder in
 // HttpRestCaptureTests: it ECHOES the inbound request body back as the response
 // body AND records it for direct assertion, so the sent body can be observed
@@ -461,7 +483,257 @@ public sealed class HttpRestBodyTests
         }
     }
 
+    // ── 7-9. Issue #346: the structured-body walk is bounded ──────────────────
+
+    /// <summary>
+    /// A structured <c>body:</c> nested exactly to the depth bound still binds. This is
+    /// the row that keeps the bound honest: the limit is a ceiling, not a discount.
+    /// </summary>
+    [Fact]
+    public void Bind_StructuredBodyAtDepthLimit_StillBinds()
+    {
+        var model = BindYaml(DeepBodyYaml("deep-but-legal", levels: 64));
+
+        Assert.NotNull(model.Body);
+
+        // 63 nested objects and one leaf string: the whole chain survived.
+        Assert.Equal(63, CountOccurrences(model.Body!, "\"k\":"));
+        Assert.Contains("\"k\":\"leaf\"", model.Body!, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A structured <c>body:</c> nested one level past the depth bound is refused with a
+    /// catchable exception that names the step and the limit.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The document is 65 levels deep, one past the bound.
+    /// </para>
+    /// <para>
+    /// The line/column assertion is here because the message ADVERTISES a position, and an
+    /// advertised position that nobody checks is a claim rather than a feature. The offending
+    /// node is the 65th <c>k:</c>'s value — a plain scalar the parser read at one place, so the
+    /// mark is meaningful for this shape. It deliberately is not advertised for the node-budget
+    /// message, where an alias site carries the anchor's mark instead; see
+    /// <c>HttpRestProvider.DescribeMark</c>.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void Bind_StructuredBodyBeyondDepthLimit_ThrowsNamingStepAndLimit()
+    {
+        var yaml = DeepBodyYaml("deep-body", levels: 65);
+
+        var ex = Assert.Throws<InvalidOperationException>(() => BindYaml(yaml));
+
+        Assert.Contains("step 'deep-body'", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("nests more than 64 levels deep", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("authoring fault", ex.Message, StringComparison.Ordinal);
+
+        // DeepBodyYaml writes 4 header lines, then `body:`, then one `k:` per level indented
+        // two spaces further each time, then the leaf. The 65th body node is therefore the
+        // leaf scalar on line 70, indented 65 * 2 spaces, i.e. 1-based column 131.
+        Assert.Contains("reached at line 70, column 131", ex.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// An anchored-and-repeatedly-aliased <c>body:</c> — the billion-laughs shape — is
+    /// refused by the node budget, with a message that names the step and the limit.
+    /// </summary>
+    /// <remarks>
+    /// The document below is nine lines and shallow, so nothing about it trips the depth
+    /// bound; its expansion is over 120,000 nodes because YamlDotNet shares one node instance
+    /// per anchor while the walk re-materialises a copy at every alias site. The budget stops
+    /// the walk at 50,000 nodes, which is thousandths of a second of work. Note what the row
+    /// does and does not prove: the same document has ALREADY been expanded once, unbounded,
+    /// by schema validation on the engine path,
+    /// so what the budget buys is a named refusal instead of this provider materialising a far
+    /// heavier <c>JsonNode</c> tree — not the prevention of an out-of-memory condition. That
+    /// larger gap is issue #505.
+    /// </remarks>
+    [Fact]
+    public void Bind_AliasAmplifiedBody_ThrowsNamingStepAndLimit()
+    {
+        const string yaml = """
+            id: laughing-body
+            target: svc
+            method: POST
+            path: /orders
+            body:
+              a: &a ["x","x","x","x","x","x","x","x","x","x"]
+              b: &b [*a, *a, *a, *a, *a, *a, *a, *a, *a, *a]
+              c: &c [*b, *b, *b, *b, *b, *b, *b, *b, *b, *b]
+              d: &d [*c, *c, *c, *c, *c, *c, *c, *c, *c, *c]
+              e: [*d, *d, *d, *d, *d, *d, *d, *d, *d, *d]
+            """;
+
+        var ex = Assert.Throws<InvalidOperationException>(() => BindYaml(yaml));
+
+        Assert.Contains("step 'laughing-body'", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("expands to more than 50000 JSON nodes", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("authoring fault", ex.Message, StringComparison.Ordinal);
+
+        // No line/column: the node a budget breach lands on is a SHARED node carrying the
+        // anchor's mark, not the alias site's, so the message deliberately advertises none.
+        Assert.DoesNotContain("reached at line", ex.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The node budget counts NODES, NOT BYTES: a large scalar aliased many times stays far
+    /// inside the budget and still binds to a body orders of magnitude larger than the node
+    /// count suggests.
+    /// </summary>
+    /// <remarks>
+    /// This row exists because the limitation is easy to state and easy to lose. The
+    /// billion-laughs row above uses a one-character payload, so it structurally cannot
+    /// observe size at all; scale the payload instead of the branching factor and the budget
+    /// sees nothing. <c>ScalarToJsonNode</c> wraps the scalar's existing string instance, so
+    /// each alias site costs exactly one node however long that string is. This fixture is NOT a
+    /// reachable suite: ScenarioDiscovery refuses any document larger than
+    /// MaxDocumentSizeBytes (1 MiB) before reading it, and this one is larger, so it
+    /// illustrates the ratio and claims nothing about a document the engine would accept.
+    /// Asserted as a PROPERTY — bytes per node — rather than an exact length, so it cannot
+    /// break on a formatting change.
+    /// </remarks>
+    [Fact]
+    public void Bind_LargeScalarAliasedManyTimes_StaysInsideTheNodeBudget()
+    {
+        const int aliasSites = 500;
+        const int payloadLength = 4096;
+
+        var sb = new StringBuilder();
+        sb.Append("id: fat-scalar\n");
+        sb.Append("target: svc\n");
+        sb.Append("method: POST\n");
+        sb.Append("path: /orders\n");
+        sb.Append("body:\n");
+        sb.Append("  seed: &s \"").Append('x', payloadLength).Append("\"\n");
+        for (var i = 0; i < aliasSites; i++)
+            sb.Append("  k").Append(i).Append(": *s\n");
+
+        var model = BindYaml(sb.ToString());
+
+        Assert.NotNull(model.Body);
+
+        // The whole body is 1 mapping + 1 anchored scalar + 500 alias sites = 502 nodes,
+        // about one per cent of the 50,000-node budget...
+        const int nodesProduced = 1 + 1 + aliasSites;
+        Assert.True(nodesProduced < 50_000 / 50, $"expected a small node count, got {nodesProduced}");
+
+        // ...and yet the bound body is over two megabytes, i.e. thousands of bytes per node.
+        Assert.True(
+            model.Body!.Length > aliasSites * payloadLength,
+            $"expected a body larger than {aliasSites * payloadLength} chars, got {model.Body.Length}");
+        Assert.True(
+            model.Body.Length / nodesProduced > 1000,
+            $"expected far more than 1000 chars per node, got {model.Body.Length / nodesProduced}");
+    }
+
+    /// <summary>
+    /// A shared anchor referenced from two sites still expands at BOTH — the defence is a
+    /// node budget, not a visited-node set, and an alias is a shared node rather than a
+    /// cycle.
+    /// </summary>
+    [Fact]
+    public void Bind_SharedAnchorUsedTwice_ExpandsAtEverySite()
+    {
+        const string yaml = """
+            id: shared-anchor
+            target: svc
+            method: POST
+            path: /orders
+            body:
+              defaults: &d
+                region: eu
+                tier: gold
+              primary: *d
+              secondary: *d
+            """;
+
+        var model = BindYaml(yaml);
+
+        Assert.NotNull(model.Body);
+        var node = System.Text.Json.Nodes.JsonNode.Parse(model.Body!);
+        Assert.NotNull(node);
+        Assert.Equal("eu", (string?)node!["defaults"]!["region"]);
+        Assert.Equal("eu", (string?)node["primary"]!["region"]);
+        Assert.Equal("gold", (string?)node["secondary"]!["tier"]);
+    }
+
+    /// <summary>
+    /// An ordinary structured <c>body:</c> — nested objects, an array of objects, mixed
+    /// scalar types and a surviving <c>{placeholder}</c> — round-trips exactly as before
+    /// the bound was added. The bound must be invisible to a real suite.
+    /// </summary>
+    [Fact]
+    public void Bind_OrdinaryStructuredBody_RoundTripsUnchanged()
+    {
+        const string yaml = """
+            id: place-order
+            target: svc
+            method: POST
+            path: /orders
+            body:
+              customer:
+                id: "{customerId}"
+                loyalty:
+                  tier: gold
+                  points: 4210
+              lines:
+                - sku: ABC-1
+                  quantity: 2
+                  unitPrice: 19.99
+                - sku: DEF-2
+                  quantity: 1
+                  unitPrice: 4.5
+              express: true
+              note: null
+            """;
+
+        var model = BindYaml(yaml);
+
+        Assert.NotNull(model.Body);
+        Assert.Equal(
+            "{\"customer\":{\"id\":\"{customerId}\",\"loyalty\":{\"tier\":\"gold\",\"points\":4210}},"
+            + "\"lines\":[{\"sku\":\"ABC-1\",\"quantity\":2,\"unitPrice\":19.99},"
+            + "{\"sku\":\"DEF-2\",\"quantity\":1,\"unitPrice\":4.5}],"
+            + "\"express\":true,\"note\":null}",
+            model.Body);
+    }
+
     // ── Helpers ────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Builds a single-step YAML document whose <c>body:</c> is a chain of
+    /// <paramref name="levels"/> nodes: <c>levels - 1</c> nested mappings and a leaf
+    /// scalar. The body node itself is depth 1, so <c>levels = 64</c> sits exactly on the
+    /// provider's bound and <c>levels = 65</c> is one past it.
+    /// </summary>
+    private static string DeepBodyYaml(string stepId, int levels)
+    {
+        var sb = new StringBuilder();
+        sb.Append("id: ").Append(stepId).Append('\n');
+        sb.Append("target: svc\n");
+        sb.Append("method: POST\n");
+        sb.Append("path: /orders\n");
+        sb.Append("body:\n");
+        for (var i = 0; i < levels - 1; i++)
+            sb.Append(new string(' ', (i + 1) * 2)).Append("k:\n");
+        sb.Append(new string(' ', levels * 2)).Append("leaf\n");
+        return sb.ToString();
+    }
+
+    /// <summary>Counts non-overlapping occurrences of <paramref name="needle"/>.</summary>
+    private static int CountOccurrences(string haystack, string needle)
+    {
+        var count = 0;
+        var at = 0;
+        while ((at = haystack.IndexOf(needle, at, StringComparison.Ordinal)) >= 0)
+        {
+            count++;
+            at += needle.Length;
+        }
+        return count;
+    }
 
     /// <summary>
     /// Parses a single-step YAML mapping and binds it through the provider.

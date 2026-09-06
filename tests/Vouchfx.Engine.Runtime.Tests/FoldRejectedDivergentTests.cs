@@ -81,8 +81,9 @@ public sealed class FoldRejectedDivergentTests
         """;
 
     /// <summary>
-    /// The four cells. <paramref name="secondSuite"/> is the scenario under test; the first
-    /// scenario is always the schema-valid baseline at index 0.
+    /// The four cells. The SECOND scenario — selected by <paramref name="secondIsSchemaValid"/> and
+    /// <paramref name="secondDiverges"/> — is the scenario under test; the first scenario is
+    /// always the schema-valid baseline at index 0.
     /// </summary>
     [Theory]
 

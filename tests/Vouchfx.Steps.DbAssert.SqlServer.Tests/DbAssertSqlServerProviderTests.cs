@@ -570,7 +570,7 @@ public sealed class DbAssertSqlServerProviderTests
     // ── 19. Registry: provider discoverable ──────────────────────────────────
 
     /// <summary>
-    /// Scanning the provider assembly via <see cref="StepKindRegistry.BuildAndFreeze"/>
+    /// Scanning the provider assembly via <see cref="StepKindRegistry.BuildAndFreeze(System.Collections.Generic.IEnumerable{System.Reflection.Assembly})"/>
     /// discovers <see cref="DbAssertSqlServerProvider"/> at key
     /// <c>"db-assert.sqlserver"</c>.
     /// </summary>

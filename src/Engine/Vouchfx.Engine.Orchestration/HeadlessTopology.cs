@@ -47,7 +47,7 @@ namespace Vouchfx.Engine.Orchestration;
 /// <para>
 /// This type is intentionally minimal for S01-A-01. The full Postgres / Kafka / service topology
 /// is wired in subsequent tasks (S01-A-02 onwards). Extend by supplying a
-/// <paramref name="configureResources"/> callback.
+/// <c>configureResources</c> callback to <see cref="StartAsync"/>.
 /// </para>
 /// </remarks>
 public sealed class HeadlessTopology : IAsyncDisposable

@@ -807,9 +807,9 @@ public sealed class HttpRestExecutionTests
     /// <summary>
     /// Minimal <see cref="IProjectContext"/> stub for validation tests. Both maps default
     /// empty; a test that needs its <c>target</c> to reconcile against a declared service
-    /// (REQ-012) passes <paramref name="services"/>, and a test proving M1's dependency-
-    /// target rejection (fix round 2) passes <paramref name="dependencies"/> — see
-    /// <see cref="StubProjectContext(IReadOnlyDictionary{string,IReadOnlyList{string}}?, IReadOnlyDictionary{string,string}?)"/>.
+    /// (REQ-012) passes <c>services</c>, and a test proving M1's dependency-
+    /// target rejection (fix round 2) passes <c>dependencies</c> — see
+    /// <see cref="StubProjectContext(IReadOnlyDictionary{string, DeclaredServiceInfo}, IReadOnlyDictionary{string, string})"/>.
     /// </summary>
     private sealed class StubProjectContext : IProjectContext
     {

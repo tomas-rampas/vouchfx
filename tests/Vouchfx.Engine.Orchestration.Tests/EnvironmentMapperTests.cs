@@ -5227,7 +5227,7 @@ public sealed class EnvironmentMapperTests : IDisposable
     /// as <c>${secret:...}</c> is — on both the dependency and the service surface.
     /// </summary>
     /// <remarks>
-    /// Red before the fix: <see cref="SecretReference.Sigil"/> is lower-case and the comparison
+    /// Red before the fix: <see cref="Vouchfx.Engine.Abstractions.Secrets.SecretReference.Sigil"/> is lower-case and the comparison
     /// was <see cref="StringComparison.Ordinal"/>, so a wrong-case attempt matched nothing and
     /// reached the container as opaque literal text. No value ever leaked — nothing in the engine
     /// resolves <c>${SECRET:</c> either — but the author believes they wrote a secret reference,
@@ -5238,7 +5238,7 @@ public sealed class EnvironmentMapperTests : IDisposable
     /// well-formed or not: the match can therefore only ever turn a silent pass-through into a
     /// refusal, never reject something previously delivered. It would NOT be safe on a
     /// secret-SUPPORTING field, where a case-insensitive sigil would have to agree with
-    /// <see cref="SecretReference"/>'s own case-sensitive token pattern.
+    /// <see cref="Vouchfx.Engine.Abstractions.Secrets.SecretReference"/>'s own case-sensitive token pattern.
     /// </para>
     /// <para>
     /// The mixed-case rows matter as much as the fully-upper one: a single wrong character is the

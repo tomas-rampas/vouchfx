@@ -1393,7 +1393,7 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
     /// The #410 rows' baseline suite, built from the SAME three arguments
     /// <see cref="MaterialiseSuiteDirectoryWithSchemaRejectedSibling"/> hands to
     /// <see cref="MaterialiseSuiteDirectory"/> (which forwards them to <see cref="SuiteYaml"/>), so
-    /// <see cref="SiblingPremises_AreWhatEachRowClaims"/> can build the same baseline without
+    /// <see cref="KafkaSecurityConfirmationPreflightTests.SiblingPremises_AreWhatEachRowClaims"/> can build the same baseline without
     /// writing a directory and the two cannot drift apart.
     /// </summary>
     /// <remarks>

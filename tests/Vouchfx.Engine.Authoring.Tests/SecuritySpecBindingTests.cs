@@ -34,7 +34,7 @@ public sealed class SecuritySpecBindingTests
     /// missing a RETYPE, and a retype is the more thoroughly binary-breaking of the two.
     /// Nullability is deliberately outside this guard: <c>string?</c> and <c>string</c> are the
     /// same CLR type, so a nullability flip is source-affecting but not binary-breaking, and it
-    /// is invisible to <see cref="System.Type.Name"/> by construction.
+    /// is invisible to <see cref="System.Reflection.MemberInfo.Name"/> by construction.
     /// </summary>
     private static readonly string[] s_primaryConstructorSignature =
     {

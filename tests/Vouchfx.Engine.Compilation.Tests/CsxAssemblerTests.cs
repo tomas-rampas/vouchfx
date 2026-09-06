@@ -271,7 +271,7 @@ public sealed class CsxAssemblerTests
 
     /// <summary>
     /// End-to-end B-04 proof: two <see cref="CsxFragment"/>s are assembled by
-    /// <see cref="CsxAssembler.Assemble"/>, compiled once by
+    /// <see cref="CsxAssembler.Assemble(IReadOnlyList{ValueTuple{string, CsxFragment}})"/>, compiled once by
     /// <see cref="RoslynScriptCompiler.CompileOnce"/>, and run through the
     /// collectible ALC via <see cref="RoslynScriptCompiler.RunIsolatedAsync"/>.
     /// Both steps' <c>Vars</c> keys must be written, confirming the multi-step

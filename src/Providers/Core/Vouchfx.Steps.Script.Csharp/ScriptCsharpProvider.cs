@@ -56,7 +56,7 @@ namespace Vouchfx.Steps.Script.Csharp;
 /// <strong><c>code</c> vs. <c>file</c>.</strong> Exactly one is required
 /// (enforced by <see cref="Validate"/>, not the JSON Schema's <c>oneOf</c>
 /// alone — the model-level check gives a clear step-scoped
-/// <see cref="ValidationResult.Failure(string)"/> message instead of a generic
+/// <see cref="ValidationResult.Failure(string[])"/> message instead of a generic
 /// schema-validation error). <c>file</c> is resolved relative to
 /// <see cref="IProjectContext.SuiteDirectory"/> / <see cref="ICompileContext.SuiteDirectory"/>
 /// (the scenario's own directory) and its content is read once, at compile

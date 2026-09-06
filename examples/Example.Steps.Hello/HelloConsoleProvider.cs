@@ -187,7 +187,7 @@ public sealed class HelloConsoleProvider
     ///         <c>Vars</c> under the engine's canonical outcome key, which the runner
     ///         reads back after the isolated run.</item>
     /// </list>
-    /// The message/expectation literals are emitted via <see cref="JsonSerializer.Serialize"/>
+    /// The message/expectation literals are emitted via <see cref="JsonSerializer.Serialize{TValue}(TValue, JsonSerializerOptions)"/>
     /// so author text containing quotes, braces or backslashes becomes a SAFE C# string
     /// literal — never breaking out of the emitted code.
     /// </remarks>
