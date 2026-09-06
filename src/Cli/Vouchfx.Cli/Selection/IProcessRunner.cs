@@ -20,7 +20,9 @@
 //
 // Cancellation surfaces AS CANCELLATION: an implementation throws OperationCanceledException, and
 // GitChangeSet.RunGit deliberately does not map it to ChangeSetException — a cancelled run is not
-// a usage error, and the CLI's existing cancellation path handles it from there.
+// a usage error. Which handler in RunCommand.ExecuteAsync then receives it, and how that handler
+// words the result, is that file's business and is deliberately not restated here — describing
+// another file's control flow is how this header would rot. Issue #502 tracks one such wording.
 //
 // This interface is `internal` to Vouchfx.Cli with one production implementation and test
 // fakes. It is NOT part of the frozen v1 SDK surface (blueprint §13.8) and no golden pins it,

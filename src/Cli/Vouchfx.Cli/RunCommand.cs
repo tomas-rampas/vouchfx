@@ -1586,13 +1586,13 @@ internal static class RunCommand
     /// Forwarded verbatim to <see cref="ScenarioSelector.Apply"/>: <see langword="false"/> keeps
     /// issue #411's recovered metadata out of the match, which is what <c>--watch</c> passes.
     /// </param>
-    /// <returns>The selected subset, in discovery order.</returns>
     /// <param name="cancellationToken">
     /// The run's cancellation token, forwarded to the git shell-out. Only the
     /// <c>--changed-since</c> arm observes it — the filtering below is a pure in-memory pass over
     /// an already-built change-set, so <see cref="ScenarioSelector.Apply"/> neither takes it nor
     /// needs it.
     /// </param>
+    /// <returns>The selected subset, in discovery order.</returns>
     /// <exception cref="ChangeSetException">
     /// Thrown when <c>--changed-since</c> is set but the change-set cannot be computed.
     /// </exception>

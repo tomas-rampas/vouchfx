@@ -48,8 +48,16 @@
 // that reads the INHERITED stdin — a `credential.helper` in `!shell` form, say — gets an
 // immediate end-of-file and therefore fails closed, and the child can no longer consume the
 // CLI's own stdin. The bound on a genuinely interactive prompt is the time budget below, not the
-// redirection. (Deliberately NOT accompanied by GIT_TERMINAL_PROMPT=0: `Run` has no environment
-// seam, and a git-specific variable does not belong in a generic runner.)
+// redirection.
+//
+// DELIBERATELY NOT ACCOMPANIED BY GIT_TERMINAL_PROMPT=0, and that is now a tracked question rather
+// than a closed one: `Run` has no environment seam, and issue #500 tracks the environment seam and
+// subsumes this. Two things worth carrying into it rather than re-deriving. First, the objection is
+// not merely that a git-specific variable is out of place in a generic runner — it is that the
+// runner has nowhere to put ANY variable. Second, one variable would not buy what it looks like it
+// buys: failing closed needs the SET — `-c credential.helper=`, GIT_TERMINAL_PROMPT=0, and
+// GIT_ASKPASS / core.askPass — because a credential helper that prompts through its own UI answers
+// to none of them. (Inferred from git's documented behaviour; nobody probed it.)
 
 using System.Diagnostics;
 using System.Globalization;
@@ -198,6 +206,21 @@ internal sealed class SystemProcessRunner : IProcessRunner
             startInfo.ArgumentList.Add(argument);
         }
 
+        // One source for both delays so the loser of a race can be cancelled rather than left
+        // holding a timer that fires minutes after the CLI has gone. LINKED to the caller's token,
+        // which is how cancellation is raced against the budget rather than polled: signalling the
+        // caller's token cancels the pending delay, so whichever WhenAny is outstanding completes
+        // at once and control reaches the `finally` — and therefore the tree-kill — instead of
+        // sitting out the remainder of the ceiling.
+        //
+        // CONSTRUCTED BEFORE THE LAUNCH, and that placement is the whole of its subtlety. It used
+        // to sit inside `using (process)`, which put a call that CAN throw between Process.Start
+        // and the `try` whose `finally` issues the kill — a gap in which a throw would have
+        // abandoned a live child. Hoisted here so the gap holds nothing throwable at all and
+        // "every path issues the kill" is a property of the SHAPE rather than of a reader having
+        // checked each statement in between.
+        using var timers = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+
         // The launch sits ABOVE the try/finally on purpose: until Process.Start returns there is
         // nothing to kill and nothing to dispose, and a failed start must surface as a
         // ProcessLaunchException rather than be swallowed by cleanup for a child that never
@@ -222,16 +245,12 @@ internal sealed class SystemProcessRunner : IProcessRunner
         // raise InvalidOperationException, the guard swallows it, and the child is left alive with
         // nothing thrown and nothing logged. Same shape, and same reasoning, as the test suite's
         // Vouchfx.TestSupport.ChildProcess.KillTreeQuietly.
+        //
+        // `timers` now outlives this block rather than being disposed inside it, which changes
+        // nothing that matters: what the code depends on is `timers.Cancel()` in the `finally`
+        // below, and that still runs before either dispose.
         using (process)
         {
-            // One source for both delays so the loser of a race can be cancelled rather than left
-            // holding a timer that fires minutes after the CLI has gone. LINKED to the caller's
-            // token, which is how cancellation is raced against the budget rather than polled:
-            // signalling the caller's token cancels the pending delay, so whichever WhenAny is
-            // outstanding completes at once and control reaches the `finally` — and therefore the
-            // tree-kill — instead of sitting out the remainder of the ceiling.
-            using var timers = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-
             Task<string>? standardOutput = null;
             Task<string>? standardError = null;
             Exception? captureFault = null;
@@ -294,7 +313,8 @@ internal sealed class SystemProcessRunner : IProcessRunner
                     // Checked FIRST, and before `settled` is consulted: the caller withdrawing is
                     // not a property of the child, so neither a timed-out read nor a faulted one
                     // should be reported ahead of it. The throw itself waits until after the
-                    // `finally`, exactly as the timeout does, so the child is dead before it.
+                    // `finally`, exactly as the timeout does, so the tree-kill has been ISSUED
+                    // before it.
                     cancelled = true;
                 }
                 else if (!settled)
@@ -308,7 +328,7 @@ internal sealed class SystemProcessRunner : IProcessRunner
                     // `await standardOutput` below — as neither of the two exceptions
                     // GitChangeSet.RunGit maps, so it escaped as an unhandled crash. Captured
                     // here and re-raised as ProcessCaptureException AFTER the finally, so the
-                    // child is dead before the throw exactly as on the timeout path.
+                    // tree-kill is issued before the throw exactly as on the timeout path.
                     captureFault = reads.Exception is { } aggregate
                         ? aggregate.InnerExceptions[0]
                         : new OperationCanceledException("The output capture was cancelled.");
@@ -369,9 +389,15 @@ internal sealed class SystemProcessRunner : IProcessRunner
                 // FIRST because it is what closes the child's copies of the pipe handles. Only
                 // once every writer is gone can a pending read reach end-of-file, so a sequence
                 // that tried to settle the reads before killing would be waiting on the very thing
-                // the kill releases. Killing first also means the timed-out child is dead BEFORE
-                // this method throws, which is the leak #481 is about: `Run` hands the caller no
-                // handle, so a child abandoned here can never be reclaimed by anybody.
+                // the kill releases. Killing first also means the kill has been ISSUED for the
+                // timed-out child before this method throws — issued, NOT awaited: nothing here
+                // calls WaitForExit, and both TerminateProcess and SIGKILL return once the request
+                // is queued, so the child may still be dying as the throw unwinds. (This is why the
+                // suite asserts death by POLLING over a window rather than sampling once the
+                // instant `Run` returns — see SystemProcessRunnerTests.DeathWindow, used by both
+                // the timeout row and the cancellation row.) Issuing it is nevertheless what closes
+                // the leak #481 is about: `Run` hands the caller no handle, so a child never asked
+                // to die here could never be reclaimed by anybody.
                 //
                 // The kill runs on the SUCCESS path too. It is a no-op there (the child has
                 // exited, so HasExited short-circuits) and it is what makes "every path issues the
@@ -395,9 +421,14 @@ internal sealed class SystemProcessRunner : IProcessRunner
                 Observe(standardOutput);
                 Observe(standardError);
 
-                // The token, not a bare OperationCanceledException: the CLI's cancellation path
-                // distinguishes "this token" from an unrelated cancellation, and GitChangeSet.RunGit
-                // maps none of its three catches over this type, so it propagates untouched.
+                // The token overload, matching the shape the `ThrowIfCancellationRequested` at the
+                // top of this method produces. NO CLI CODE READS THE TOKEN BACK OFF THE EXCEPTION —
+                // `grep -rn "\.CancellationToken" src/Cli` over the CLI sources returns nothing
+                // (measured 2026-09-06), and RunCommand.ExecuteAsync's cancellation filter tests
+                // the token object IT holds, so a bare OperationCanceledException would route
+                // identically today. The token is carried for a debugger and for a future consumer,
+                // not for a mechanism that exists. What DOES matter here: GitChangeSet.RunGit maps
+                // none of its three catches over this type, so it propagates untouched.
                 throw new OperationCanceledException(cancellationToken);
             }
 
@@ -422,10 +453,15 @@ internal sealed class SystemProcessRunner : IProcessRunner
                 Observe(standardOutput);
                 Observe(standardError);
 
+                // "No output is REPORTED", not "no output was CAPTURED": one string serves both
+                // branches, and only the read-timeout one failed to capture. The exit-timeout
+                // branch is reached with both streams read IN FULL, and discards them — see
+                // IProcessRunner's "carries no partial output". Capture is the branch's business;
+                // what this exception carries is the property common to both.
                 throw new ProcessTimeoutException(
                     string.Create(
                         CultureInfo.InvariantCulture,
-                        $"'{fileName}' exceeded the {_budget.TotalSeconds:0.###}s process budget: {exceeded}. No output was captured. A tree-kill was issued for the direct child; if that child had already exited (the shape in which a surviving grandchild holds the pipes) the kill reached an empty tree, and that grandchild is still running beyond this runner's reach."),
+                        $"'{fileName}' exceeded the {_budget.TotalSeconds:0.###}s process budget: {exceeded}. No output is reported. A tree-kill was issued for the direct child; if that child had already exited (the shape in which a surviving grandchild holds the pipes) the kill reached an empty tree, and that grandchild is still running beyond this runner's reach."),
                     _budget);
             }
 
