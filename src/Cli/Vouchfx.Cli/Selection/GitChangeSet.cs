@@ -11,8 +11,11 @@
 //
 // git prints repo-relative, forward-slash paths; we resolve them against the repo root to
 // absolute, normalise separators to '/', and store them in a case-tolerant set. A non-zero
-// git exit (bad ref, not a repo) or a launch failure (git not installed) is wrapped in a
+// git exit (bad ref, not a repo), a launch failure (git not installed) or a timeout (a wedged
+// git, or one whose grandchild holds the capture pipes open — #481/#392) is wrapped in a
 // ChangeSetException, which the CLI maps to a usage error (exit 2) — NEVER a crash.
+
+using System.Globalization;
 
 namespace Vouchfx.Cli.Selection;
 
@@ -151,9 +154,29 @@ internal sealed class GitChangeSet : IChangeSet
     }
 
     /// <summary>
-    /// Runs a git subcommand, mapping a launch failure or non-zero exit to a
-    /// <see cref="ChangeSetException"/> with the captured stderr for diagnosis.
+    /// Runs a git subcommand, mapping a launch failure, a timeout, a failed output capture, or a
+    /// non-zero exit to a <see cref="ChangeSetException"/> with the captured stderr for diagnosis.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Every exception <see cref="IProcessRunner.Run"/> documents is mapped here, and that
+    /// is a correctness requirement rather than tidiness.</strong> This is the only catch between
+    /// the runner and <c>RunCommand</c>, which handles <see cref="ChangeSetException"/> and nothing
+    /// else. An unmapped runner exception therefore does not degrade to a worse message — it
+    /// escapes as an unhandled crash, which for the timeout case would convert a hang into a
+    /// stack trace and be strictly worse than the hang it replaced. The claim is scoped to the
+    /// documented set on purpose: a fake runner in a test can throw anything, and the three catches
+    /// below are checked against <see cref="IProcessRunner"/>'s <c>exception</c> tags, not against
+    /// every type an arbitrary implementation might invent.
+    /// </para>
+    /// <para>
+    /// <strong>All three map to the SAME exception, so the CLI still exits 2 (usage error).</strong>
+    /// That is deliberate and is NOT an assertion that a wedged git is a usage mistake: whether
+    /// selection-infrastructure failure deserves an exit code of its own belongs to issues #480
+    /// and #466-B, and answering it here — quietly, in a bug fix — would change the CLI's
+    /// documented exit-code contract as a side effect of stopping a hang.
+    /// </para>
+    /// </remarks>
     private static ProcessResult RunGit(
         IProcessRunner processRunner,
         string workingDirectory,
@@ -169,6 +192,22 @@ internal sealed class GitChangeSet : IChangeSet
         {
             throw new ChangeSetException(
                 $"Could not run git for {operation}. Is git installed and on PATH? ({ex.Message})",
+                ex);
+        }
+        catch (ProcessTimeoutException ex)
+        {
+            throw new ChangeSetException(
+                string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"git {operation} did not complete within the {ex.Budget.TotalSeconds:0.###}s process budget, so its direct child was killed. Any process that child had already left behind is beyond the runner's reach and may still be running. A change-set cannot be computed from a partial capture, so selection is refused rather than narrowed."),
+                ex);
+        }
+        catch (ProcessCaptureException ex)
+        {
+            // The inner exception rather than ex.Message: the runner's own message already names
+            // the executable, and repeating it here would read as two nested failures.
+            throw new ChangeSetException(
+                $"Could not read the output of git {operation}: {ex.InnerException?.Message ?? ex.Message}. A change-set cannot be computed from a partial capture, so selection is refused rather than narrowed.",
                 ex);
         }
 
