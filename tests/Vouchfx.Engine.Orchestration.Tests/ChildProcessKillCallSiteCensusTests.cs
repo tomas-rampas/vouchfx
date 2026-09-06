@@ -1,4 +1,4 @@
-// The standing guard on EVERY child-process launch site in this assembly — issue #475.
+// The standing guard on EVERY child-process launch site in the censused trees — issues #475, #481.
 //
 // WHY THIS FILE EXISTS, AND WHY THE BEHAVIOURAL TEST BESIDE IT IS NOT ENOUGH
 // ─────────────────────────────────────────────────────────────────────────
@@ -19,8 +19,8 @@
 // A behavioural test can prove the helper kills (ChildProcessKillTreeTests does). It cannot prove
 // that the NEXT launch site somebody adds calls it, and "the next one" is how all four of these
 // arrived — nobody wrote a site intending to leak. So the property that needs a gate is
-// syntactic: every child-process launch in this project sits in a member with a `finally` that
-// kills.
+// syntactic: every child-process launch in every censused tree sits in a member with a `finally`
+// that kills.
 //
 // ROSLYN, NOT A REGEX, for the reason the house idiom gives (see
 // Vouchfx.Engine.Runtime.Tests/DrillHostSweepCallSiteCensusTests and
@@ -33,20 +33,34 @@
 // ObjectCreationExpressionSyntax and returns false for everything else, and a string literal —
 // interpolated or not — is neither.
 //
-// SCOPE: TWO ASSEMBLIES, not one. This census reads Vouchfx.Engine.Orchestration.Tests AND
-// Vouchfx.Engine.Runtime.Tests — the drill lane, where issue #378 found the same defect first, and
-// where the blast radius is worse: an unguarded launch there strands a CLI holding DCP, its
-// containers and its aspire-session-network-*, which surfaces later as a build failure naming no
-// test.
+// SCOPE: THREE ROOTS — THE PRODUCTION TREE AND TWO TEST ASSEMBLIES. This census reads the whole of
+// src/, plus Vouchfx.Engine.Orchestration.Tests and Vouchfx.Engine.Runtime.Tests — the latter being
+// the drill lane, where issue #378 found the same defect first, and where the blast radius is worse
+// than here: an unguarded launch there strands a CLI holding DCP, its containers and its
+// aspire-session-network-*, which surfaces later as a build failure naming no test.
 //
-// It can read the second assembly because it never REFERENCES it. CensusFiles enumerates .cs files
-// off disk and FindLaunchSites parses them as text, so assembly boundaries and internals visibility
-// are irrelevant — the only thing needed is a directory path, and the two projects are siblings.
-// Roslyn is already a dependency of both.
+// WHY src/ JOINED, AND WHAT ITS ABSENCE COST — issue #481. Until then this census read the two test
+// projects and nothing else, so the production tree had never been censused at all. src/ holds
+// exactly ONE child-process launch, Vouchfx.Cli.Selection.SystemProcessRunner, on the
+// customer-facing `--changed-since` path — and it carried the defect this file exists to catch,
+// with additions. It disposed the Process on no path; the launch sat outside any try that owned
+// cleanup, so a throw out of the output capture abandoned a live child with nothing left holding a
+// reference to it; and it had no time bound at all. No gate could see any of that, because every
+// gate was aimed at the test lanes. That is the wrong way round. A leaked child in a test lane
+// costs a developer a rerun; the same leak in src/ costs a customer a wedged CLI holding a git
+// process they were never handed a way to reclaim. A census that watches only the test lanes is
+// watching the lane where the blast radius is smallest.
+//
+// It can read trees it does not reference. CensusFiles enumerates .cs files off disk and
+// FindLaunchSites parses them as text, so assembly boundaries, internals visibility and project
+// references are all irrelevant — the only thing needed is a directory path, and every root is
+// reachable by walking up from this project's own directory to the repository root. Roslyn is a
+// dependency of this project, which is the only assembly that has to load at all.
 //
 // This is also what makes the `new Process` half of the detection worth its lines: the ONLY such
 // launch in the repository is Sprint11ReferenceCapstoneTests, in the drill lane. Over the
-// Orchestration project alone that branch never fired.
+// Orchestration project alone that branch never fired, and src/ does not fire it either — the
+// production launch uses the static `Process.Start` spelling.
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -59,14 +73,25 @@ using Xunit;
 namespace Vouchfx.Engine.Orchestration.Tests;
 
 /// <summary>
-/// Pins that every child-process launch in the two censused test projects is paired with a
-/// <c>finally</c> that calls
-/// <see cref="Vouchfx.TestSupport.ChildProcess.KillTreeQuietly(System.Diagnostics.Process)"/>.
+/// Pins that every child-process launch in the three censused trees — <c>src/</c> and the two test
+/// projects named in the header — is paired with a <c>finally</c> that calls a member named
+/// <c>KillTreeQuietly</c>.
 /// </summary>
 /// <remarks>
+/// <para>
+/// What is matched is the bare identifier (see <see cref="KillMethod"/>), not a resolved symbol.
+/// The two test projects satisfy it with
+/// <see cref="Vouchfx.TestSupport.ChildProcess.KillTreeQuietly(System.Diagnostics.Process)"/>;
+/// <c>src/</c> cannot — that project is <c>IsPackable=false</c> and referenced only by test
+/// assemblies, so product code has no way to call it — and satisfies the census with its own copy
+/// on <c>Vouchfx.Cli.Selection.SystemProcessRunner</c>. The two copies are held to one catch filter
+/// by <c>Vouchfx.Cli.Tests.ProcessKillGuardParityTests</c>, which parses both sources.
+/// </para>
+/// <para>
 /// Both launch spellings are recognised, because the repository uses both: the static
 /// <c>Process.Start(...)</c>, and the <c>new Process { StartInfo = psi }</c> + <c>proc.Start()</c>
 /// pair that <c>Vouchfx.Engine.Runtime.Tests.Sprint11ReferenceCapstoneTests</c> uses.
+/// </para>
 /// </remarks>
 public sealed class ChildProcessKillCallSiteCensusTests
 {
@@ -86,20 +111,30 @@ public sealed class ChildProcessKillCallSiteCensusTests
     private const string KillMethod = "KillTreeQuietly";
 
     /// <summary>
-    /// The fewest <c>.cs</c> files EACH censused project can plausibly hold. Below it, the census is
+    /// The fewest <c>.cs</c> files EACH censused root can plausibly hold. Below it, the census is
     /// assumed to have failed to find that source tree rather than to have found a small one.
     /// </summary>
     /// <remarks>
     /// A floor rather than an exact count, for the reason the sibling census in
     /// Vouchfx.Engine.Runtime.Tests gives: an exact count is a second thing to maintain and would
-    /// redden on every unrelated file added. Both projects held well over sixty files when this was
-    /// written. Applied PER ROOT, so a root that silently resolves to somewhere thin cannot hide
-    /// behind the other one's size.
+    /// redden on every unrelated file added. Each test project held well over sixty files when this
+    /// was written, and <c>src/</c> — a tree of dozens of projects — several times that again, so
+    /// one floor comfortably serves all three. Applied PER ROOT, so a root that silently resolves to
+    /// somewhere thin cannot hide behind another one's size.
     /// </remarks>
     private const int MinimumCensusFiles = 20;
 
     /// <summary>The sibling test project this census reads in addition to its own.</summary>
     private const string DrillLaneProjectName = "Vouchfx.Engine.Runtime.Tests";
+
+    /// <summary>The production source tree, censused since issue #481 — see the header.</summary>
+    /// <remarks>
+    /// A directory name rather than a project name, unlike <see cref="DrillLaneProjectName"/>:
+    /// <c>src/</c> is a tree of dozens of projects and this census wants all of them, present and
+    /// future. Nothing here reads a <c>.csproj</c> or needs one to exist, so a project added under
+    /// <c>src/</c> is censused from its first file without anybody remembering to list it here.
+    /// </remarks>
+    private const string SourceRootName = "src";
 
     /// <summary>
     /// The one file whose launch sites may NOT satisfy the "this census found something" guard.
@@ -114,6 +149,12 @@ public sealed class ChildProcessKillCallSiteCensusTests
     private const string SelfProvisionedLaunchFile = "ChildProcessKillTreeTests.cs";
 
     /// <summary>Build output, which holds generated sources this census has no business reading.</summary>
+    /// <remarks>
+    /// Enough for all three roots, checked rather than assumed when <c>src/</c> joined: over that
+    /// tree <c>git status --ignored</c> reports <c>bin/</c> and <c>obj/</c> and nothing else, and no
+    /// root holds a vendored or generated directory these two do not already cover. Should one
+    /// appear, adding it here is the whole fix — the exclusion is applied per root.
+    /// </remarks>
     private static readonly string[] s_excludedDirectories = { "bin", "obj" };
 
     /// <summary>
@@ -196,6 +237,18 @@ public sealed class ChildProcessKillCallSiteCensusTests
     /// discounts this census's own companion file (see <see cref="SelfProvisionedLaunchFile"/>) so
     /// it cannot be satisfied by the fixtures the census brought with it.
     /// </para>
+    /// <para>
+    /// <strong>Over <c>src/</c> that guard is load-bearing rather than incidental.</strong> Each
+    /// test root holds several launch sites, so its guard would survive any one of them moving. The
+    /// production root holds exactly ONE — <c>SystemProcessRunner</c> — so its guard is satisfied by
+    /// a single site, and the day that launch moves behind a helper this census cannot see, the
+    /// <c>src/</c> root reddens on the vacuity assertion instead of passing over an empty
+    /// population. That is the intended behaviour, and it is why the guard is asserted per root
+    /// rather than over the union: a production tree whose only launch has become invisible is
+    /// precisely the state issue #481 found, and it must not be able to hide behind two healthy test
+    /// lanes. The correct response to that red is to teach the census the new spelling, or to move
+    /// the root, never to delete the assertion.
+    /// </para>
     /// </remarks>
     [Fact]
     public void EveryProcessLaunch_SitsInAMemberThatKillsTheTreeInAFinally()
@@ -206,9 +259,11 @@ public sealed class ChildProcessKillCallSiteCensusTests
         {
             Assert.True(
                 Directory.Exists(root),
-                $"This census is configured to read '{root}', which does not exist. It reads two "
-                + "sibling test projects by PATH, so a project rename moves the directory out from "
-                + "under it and would otherwise leave half the population silently uncensused.");
+                $"This census is configured to read '{root}', which does not exist. It reads the "
+                + "production source tree and two test projects by PATH, all resolved by walking up "
+                + "from this project's own directory, so renaming or moving any of them takes that "
+                + "root out from under this census and would otherwise leave part of the population "
+                + "silently uncensused.");
 
             var files = CensusFiles(root);
 
@@ -226,11 +281,11 @@ public sealed class ChildProcessKillCallSiteCensusTests
                 $"This census found no child-process launch under '{root}' - neither "
                 + $"`{ProcessType}.{StartMethod}` nor `new {ProcessType}` followed by "
                 + $"`.{StartMethod}()`, discounting {SelfProvisionedLaunchFile}, which is this "
-                + "census's own companion and must not be able to vouch for the project. Either "
-                + "every launch moved out of that project - in which case this gate is now watching "
-                + "nothing there and should move with them - or they are being reached through a "
-                + "spelling this census does not recognise, which is worse, because the gate reports "
-                + "itself green either way.");
+                + "census's own companion and must not be able to vouch for the tree it sits in. "
+                + "Either every launch moved out of that root - in which case this gate is now "
+                + "watching nothing there and should move with them - or they are being reached "
+                + "through a spelling this census does not recognise, which is worse, because the "
+                + "gate reports itself green either way.");
 
             launches.AddRange(found);
         }
@@ -242,9 +297,10 @@ public sealed class ChildProcessKillCallSiteCensusTests
             $"Starting a child gives you a {ProcessType} object whose lifetime is not the child's. "
             + $"Disposing it releases a handle and stops nothing, so a launch whose member has no "
             + $"`finally` calling `{KillMethod}` orphans its child on every path that is not a clean "
-            + "completion - a cancelled `docker build` keeps building (issue #475), and a CLI child "
-            + "keeps DCP, its containers and its network alive (issue #378). Unguarded launch "
-            + "site(s):\n"
+            + "completion - a cancelled `docker build` keeps building (issue #475), a CLI child "
+            + "keeps DCP, its containers and its network alive (issue #378), and a `--changed-since` "
+            + "git call abandons a child the caller was never handed a way to reclaim (issue #481). "
+            + "Unguarded launch site(s):\n"
             + string.Join("\n", offenders.Select(site => $"  {site.Display}"))
             + "\n\nFix shape (the house shape - it makes the ordering a compiler guarantee rather "
             + "than something you have to remember). `using var proc = ...;` at method scope with "
@@ -267,22 +323,39 @@ public sealed class ChildProcessKillCallSiteCensusTests
     /// <summary>One child-process launch, and whether its member kills the tree in a finally.</summary>
     private sealed record LaunchSite(string Root, string File, int Line, string Member, bool HasKillingFinally)
     {
-        /// <summary>The site as an offender message names it: project, file, line, member.</summary>
+        /// <summary>The site as an offender message names it: root, file, line, member.</summary>
+        /// <remarks>
+        /// The root is named by its last path segment, so a test-project site reads
+        /// <c>Vouchfx.Engine.Runtime.Tests/Foo.cs</c> and a production one reads <c>src/Foo.cs</c> —
+        /// the tree, not the project, on that side. Locating the file is left to
+        /// <see cref="Member"/>, which is qualified by its namespace and type path.
+        /// </remarks>
         internal string Display => $"{Path.GetFileName(Root)}/{File}({Line}): {Member}";
     }
 
     /// <summary>
-    /// The project directories this census reads.
+    /// The directories this census reads: this project, the drill lane, and the production source
+    /// tree.
     /// </summary>
     /// <remarks>
-    /// Paths, not assembly references - which is the whole reason a second project is reachable at
-    /// all. Nothing here loads the drill lane's assembly or needs to see its internals; the files
-    /// are read as text.
+    /// <para>
+    /// Paths, not assembly references - which is the whole reason anything beyond this project is
+    /// reachable at all. Nothing here loads the drill lane's assembly, or any of the assemblies
+    /// under <c>src/</c>, and nothing needs to see their internals; the files are read as text.
+    /// </para>
+    /// <para>
+    /// Resolved by walking up from this project's own directory, which
+    /// <see cref="ProjectDirectory"/> derives from the compiled assembly: one <c>..</c> reaches
+    /// <c>tests/</c>, where the drill lane is a sibling, and a second reaches the repository root,
+    /// where <c>src/</c> sits. Each is checked for existence before it is enumerated, so a move that
+    /// invalidates one of these relative walks reddens rather than quietly censusing nothing.
+    /// </para>
     /// </remarks>
     private static string[] CensusRoots() => new[]
     {
         ProjectDirectory(),
         Path.GetFullPath(Path.Combine(ProjectDirectory(), "..", DrillLaneProjectName)),
+        Path.GetFullPath(Path.Combine(ProjectDirectory(), "..", "..", SourceRootName)),
     };
 
     /// <summary>Every <c>.cs</c> file under one root, excluding build output.</summary>

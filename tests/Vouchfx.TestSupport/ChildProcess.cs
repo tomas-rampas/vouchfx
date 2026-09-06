@@ -14,6 +14,29 @@
 // launches a child (Runtime, Orchestration, Cli) and it is not packable — nothing here ships, so
 // making the type `public` moves no product surface and touches no golden.
 //
+// A SECOND COPY EXISTS IN src/, AND A GATE PINS IT TO THIS ONE — #481
+// ───────────────────────────────────────────────────────────────────
+// The lift above put every TEST lane on one definition; it could not reach product code. #481 gave
+// Vouchfx.Cli.Selection.SystemProcessRunner a child of its own to reclaim when its process budget
+// expires, and the very property that makes this project the right home — IsPackable=false,
+// referenced only by test projects — is what stops src/ referencing it. So
+// src/Cli/Vouchfx.Cli/Selection/SystemProcessRunner.cs carries its own KillTreeQuietly. That copy
+// is forced by the assembly graph, not chosen, and it is the exact drift the paragraph above warns
+// about — so it is gated: tests/Vouchfx.Cli.Tests/ProcessKillGuardParityTests.cs parses BOTH
+// sources with Roslyn and fails when the two catch filters do not name the same set of types.
+//
+// THE REFERENCE RUNS BOTH WAYS, AND THIS PARAGRAPH IS THE HALF THAT WAS MISSING. Three things
+// follow for anyone editing this file:
+//
+//   * Widening or narrowing the catch filter below reddens a test in a DIFFERENT assembly,
+//     Vouchfx.Cli.Tests. Change both copies, and the remarks on both, in the same edit.
+//   * That gate locates this file by the hard-coded relative path
+//     `tests/Vouchfx.TestSupport/ChildProcess.cs` and asserts it exists, so renaming or moving
+//     this file fails the gate outright rather than silently comparing nothing.
+//   * The identifier `KillTreeQuietly` is load-bearing in a second gate as well:
+//     Vouchfx.Engine.Orchestration.Tests.ChildProcessKillCallSiteCensusTests matches the bare
+//     name when deciding whether a child-process launch sits in a member with a killing `finally`.
+//
 // Pure BCL: this file references no Vouchfx.* type, which is the standing constraint on this
 // project (see the .csproj header).
 using System;

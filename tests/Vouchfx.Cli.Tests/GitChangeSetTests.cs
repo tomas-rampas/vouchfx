@@ -21,14 +21,31 @@ public sealed class GitChangeSetTests
     private sealed class FakeProcessRunner : IProcessRunner
     {
         private readonly Dictionary<string, ProcessResult> _byVerb = new();
-        private readonly bool _throwLaunch;
+        private readonly Exception? _refusal;
 
-        public FakeProcessRunner(bool throwLaunch = false) => _throwLaunch = throwLaunch;
+        public FakeProcessRunner()
+        {
+        }
+
+        private FakeProcessRunner(Exception refusal) => _refusal = refusal;
 
         public List<(string FileName, IReadOnlyList<string> Args, string WorkingDirectory)> Calls
         {
             get;
         } = new();
+
+        /// <summary>
+        /// A runner that refuses every call with <paramref name="refusal"/>.
+        /// </summary>
+        /// <remarks>
+        /// Takes the exception rather than a flag per failure mode: IProcessRunner now has THREE
+        /// throwing outcomes (a launch failure, a timeout, and a failed output capture), and every
+        /// one of them must be mapped by GitChangeSet.RunGit — an unmapped one escapes as an
+        /// unhandled crash, because RunCommand catches ChangeSetException and nothing else. A
+        /// parameterised refusal keeps adding cover for the next one a one-line change rather than
+        /// a fourth boolean, which the third outcome then proved by costing exactly one row.
+        /// </remarks>
+        public static FakeProcessRunner Refusing(Exception refusal) => new(refusal);
 
         public FakeProcessRunner With(string verb, int exit, string stdout = "", string stderr = "")
         {
@@ -36,13 +53,21 @@ public sealed class GitChangeSetTests
             return this;
         }
 
-        public ProcessResult Run(string fileName, IReadOnlyList<string> arguments, string workingDirectory)
+        // The token is accepted and ignored: a canned runner has nothing to cancel, and every row
+        // here calls the constructor with the default (CancellationToken.None). What cancellation
+        // does to a REAL child is SystemProcessRunnerTests' row 5, which needs a live process to
+        // say anything true about it.
+        public ProcessResult Run(
+            string fileName,
+            IReadOnlyList<string> arguments,
+            string workingDirectory,
+            CancellationToken cancellationToken = default)
         {
             Calls.Add((fileName, arguments, workingDirectory));
 
-            if (_throwLaunch)
+            if (_refusal is not null)
             {
-                throw new ProcessLaunchException("git not found on PATH");
+                throw _refusal;
             }
 
             var verb = SubcommandOf(arguments);
@@ -177,11 +202,81 @@ public sealed class GitChangeSetTests
     [Fact]
     public void GitNotInstalled_SurfacesChangeSetException_NotCrash()
     {
-        var runner = new FakeProcessRunner(throwLaunch: true);
+        var runner = FakeProcessRunner.Refusing(new ProcessLaunchException("git not found on PATH"));
 
         var ex = Assert.Throws<ChangeSetException>(
             () => new GitChangeSet("main", workingDirectory: RepoRoot, runner));
         Assert.Contains("git", ex.Message, System.StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// A wedged git (#481) surfaces as a <see cref="ChangeSetException"/> like every other runner
+    /// failure, so the CLI still exits 2 rather than crashing.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the row that stops the timeout fix from being a REGRESSION. <c>RunGit</c> caught
+    /// only <see cref="ProcessLaunchException"/> before #481; adding a second throwing outcome to
+    /// <see cref="IProcessRunner"/> without mapping it here would have converted a hang into an
+    /// unhandled crash — strictly worse than the hang it replaced, and invisible until a customer
+    /// hit it.
+    /// </para>
+    /// <para>
+    /// The exit code is deliberately unchanged at 2 (usage error): whether selection-infrastructure
+    /// failure deserves a code of its own belongs to issues #480 and #466-B, and this fix must not
+    /// answer it quietly.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void GitTimesOut_SurfacesChangeSetException_NamingTheBudget()
+    {
+        var runner = FakeProcessRunner.Refusing(
+            new ProcessTimeoutException("'git' exceeded its budget.", System.TimeSpan.FromSeconds(90)));
+
+        var ex = Assert.Throws<ChangeSetException>(
+            () => new GitChangeSet("main", workingDirectory: RepoRoot, runner));
+
+        // The budget and the operation, both named: an operator reading this line needs to know
+        // that a ceiling was hit (not that git is missing) and which call hit it.
+        Assert.Contains("90s", ex.Message, System.StringComparison.Ordinal);
+        Assert.Contains("repository-root lookup", ex.Message, System.StringComparison.Ordinal);
+        Assert.IsType<ProcessTimeoutException>(ex.InnerException);
+    }
+
+    /// <summary>
+    /// A read that faults mid-capture (#481) surfaces as a <see cref="ChangeSetException"/> too.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The third throwing outcome, and the one that was previously an unhandled crash rather than
+    /// a bad message. <c>Task.WhenAll</c> faults as soon as either read faults and
+    /// <c>Task.WhenAny</c> returns the first task to reach ANY terminal state, so a faulted read
+    /// won the runner's race exactly like a successful one and then resurfaced at the await of the
+    /// captured text — as a raw <see cref="IOException"/>, which <c>RunGit</c> did not catch. The
+    /// runner now converts it to <see cref="ProcessCaptureException"/>; this row is the half that
+    /// pins the mapping.
+    /// </para>
+    /// <para>
+    /// It is not <see cref="ProcessLaunchException"/> precisely so this message does not ask an
+    /// operator whether git is on PATH for a git that started and then failed part-way, so the row
+    /// asserts the mapped message names the READ rather than the PATH.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void GitOutputCaptureFails_SurfacesChangeSetException_NotCrash()
+    {
+        var runner = FakeProcessRunner.Refusing(
+            new ProcessCaptureException(
+                "Reading the output of 'git' failed: The pipe has been ended.",
+                new IOException("The pipe has been ended.")));
+
+        var ex = Assert.Throws<ChangeSetException>(
+            () => new GitChangeSet("main", workingDirectory: RepoRoot, runner));
+
+        Assert.Contains("read the output", ex.Message, System.StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("repository-root lookup", ex.Message, System.StringComparison.Ordinal);
+        Assert.DoesNotContain("PATH", ex.Message, System.StringComparison.Ordinal);
+        Assert.IsType<ProcessCaptureException>(ex.InnerException);
     }
 
     [Fact]
