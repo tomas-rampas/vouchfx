@@ -77,6 +77,86 @@ public sealed class HttpRestProvider
             "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS",
         };
 
+    // ── Structured-body bounds (issue #346) ────────────────────────
+    //
+    // YamlToJsonElement walks an author-written structured `body:` and materialises a
+    // JsonNode tree. Unbounded, two ordinary-looking suite files end the process instead
+    // of producing a diagnostic — and "the engine exits with no diagnostic" is the worst
+    // failure mode a test tool has, because it is indistinguishable from a crash in the
+    // system under test:
+    //
+    //   • Deep nesting. The walk recurses once per YAML level, so a deep enough mapping
+    //     exhausts the thread stack INSIDE the walk. StackOverflowException cannot be
+    //     caught, so there is no verdict, no event stream and no artefacts.
+    //   • Alias amplification. YamlDotNet's representation model shares ONE node instance
+    //     across every alias site, while this walk re-materialises a fresh copy at each
+    //     site. An anchored-and-repeatedly-aliased body therefore expands multiplicatively
+    //     — the billion-laughs shape — giving an out-of-memory condition or a hang.
+    //
+    // A suite author is trusted input (script.csharp hands them arbitrary C#), so these
+    // bounds are mistake-catching and robustness, NOT a security boundary. What they buy
+    // is a CATCHABLE throw: issue #413 already made a throwing Bind a reported
+    // Inconclusive carrying a diagnostic that names the step, so raising an ordinary
+    // exception BEFORE the stack or the heap gives out lands in machinery that already
+    // works. No new error channel is invented here.
+    //
+    // WHY A NODE BUDGET AND NOT A VISITED-NODE SET. An alias is a SHARED node, not
+    // necessarily a cycle. `*defaults` under two keys is legitimate YAML that MUST expand
+    // twice, and the representation model offers no way to tell that apart from the
+    // amplifying case except by measuring the result. A visited set would change the
+    // language's semantics — the second and later expansions of a shared node would be
+    // dropped or refused — so the defence is a budget on the nodes PRODUCED, which is
+    // exactly the quantity amplification blows up. A legitimate re-expansion costs its
+    // own nodes and nothing more; a billion-laughs body runs the budget out.
+    //
+    // MEASURED, and it bounds what these constants can honestly claim. On this host
+    // (net8.0, default 1 MiB main-thread stack) the UNBOUNDED walk survived 3,800 nesting
+    // levels and overflowed by 4,000; YamlDotNet's own YamlStream.Load — which produces
+    // the node this walk receives, and runs upstream of every provider — survived 2,600
+    // and overflowed by 2,800. On that host the LOADER therefore dies first, so a document
+    // deep enough to overflow this walk cannot reach it through the engine's own parse.
+    // That margin is ~1,200 levels, is not a property either component promises, and can
+    // invert on a smaller stack or beneath a deeper caller. The bound below closes this
+    // provider's share of the class regardless; the loader's share is upstream of every
+    // provider and is not issue #346.
+
+    /// <summary>
+    /// Maximum nesting depth accepted for a structured <c>body:</c>; the body node itself
+    /// is depth 1.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// MEASURED, not guessed — but measured against the SERIALISER rather than the stack.
+    /// On the pinned runtime a 65-level <c>JsonNode</c> tree serialises and a 66-level one
+    /// throws <see cref="System.Text.Json.JsonException"/>, matching the documented default
+    /// of <see cref="System.Text.Json.JsonSerializerOptions.MaxDepth"/>. Bounding the walk
+    /// at 64 therefore accepts exactly the bodies the <c>JsonSerializer.Serialize</c> call
+    /// in <see cref="Bind(YamlNode, IBindingContext)"/> can actually produce: a deeper body
+    /// was never going to reach the wire, so refusing it earlier costs nothing and buys a
+    /// message that names the step instead of a serialiser path expression.
+    /// </para>
+    /// <para>
+    /// It is also far inside the stack: 64 frames of this walk against the ~3,900 measured
+    /// above is roughly sixty times the headroom. No hand-authored request body approaches
+    /// either figure.
+    /// </para>
+    /// </remarks>
+    private const int MaxBodyDepth = 64;
+
+    /// <summary>
+    /// Maximum number of JSON nodes a structured <c>body:</c> may expand into.
+    /// </summary>
+    /// <remarks>
+    /// PICKED, not measured — there is no natural ceiling to measure against here, only a
+    /// judgement about headroom. A hand-authored request body runs to tens or a few hundred
+    /// nodes and a generated bulk payload to a few thousand, so 50,000 leaves between one
+    /// and three orders of magnitude of room while capping the materialised tree at a few
+    /// megabytes: milliseconds of work, not an out-of-memory condition. The count is of
+    /// nodes PRODUCED, so an aliased subtree is charged its full expansion at every site,
+    /// which is what makes this the amplification defence rather than a size limit.
+    /// </remarks>
+    private const int MaxBodyNodes = 50_000;
+
     // ── CsxFragment components ────────────────────────────────────────────────
 
     /// <summary>
@@ -583,12 +663,20 @@ public sealed class HttpRestProvider
         string? body = null;
         if (mapping.Children.TryGetValue(new YamlScalarNode("body"), out var bodyNode))
         {
-            body = bodyNode switch
+            if (bodyNode is YamlScalarNode bodyScalar)
             {
-                YamlScalarNode scalar => scalar.Value ?? string.Empty,
-                // Mapping / sequence: serialise the YAML structure to a JSON string.
-                _ => JsonSerializer.Serialize(YamlToJsonElement(bodyNode)),
-            };
+                body = bodyScalar.Value ?? string.Empty;
+            }
+            else
+            {
+                // Mapping / sequence: serialise the YAML structure to a JSON string, under
+                // the depth and node bounds documented on MaxBodyDepth / MaxBodyNodes
+                // (issue #346).  The step mapping is threaded in so a breach can name the
+                // step; it is read only on the failure path.
+                var budget = MaxBodyNodes;
+                body = JsonSerializer.Serialize(
+                    YamlToJsonElement(bodyNode, mapping, depth: 1, ref budget));
+            }
         }
 
         HttpExpect? expect = null;
@@ -974,9 +1062,47 @@ public sealed class HttpRestProvider
     /// A scalar whose YAML style is quoted is always treated as a string (the author
     /// explicitly quoted it), so a quoted <c>"123"</c> survives as a JSON string.
     /// </para>
+    /// <para>
+    /// The walk is BOUNDED in two independent dimensions (issue #346): nesting depth
+    /// against <see cref="MaxBodyDepth"/>, and total nodes produced against
+    /// <see cref="MaxBodyNodes"/>. A breach of either throws
+    /// <see cref="InvalidOperationException"/> — an ordinary, catchable exception raised
+    /// before the stack or the heap gives out, which the engine already reports as an
+    /// Inconclusive scenario naming the step (issue #413). See the constants for why the
+    /// figures are what they are, and why an alias is met with a node budget rather than a
+    /// visited-node set.
+    /// </para>
     /// </remarks>
-    private static System.Text.Json.Nodes.JsonNode? YamlToJsonElement(YamlNode node)
+    /// <param name="node">The YAML node to convert.</param>
+    /// <param name="step">
+    /// The whole step mapping, carried purely so a breach can name the offending step in
+    /// its message; read only on the failure path.
+    /// </param>
+    /// <param name="depth">Nesting depth of <paramref name="node"/>; the body node is 1.</param>
+    /// <param name="budget">
+    /// Remaining node allowance, decremented once per node PRODUCED and shared across the
+    /// whole walk. Passed by reference because an alias expansion has to be charged against
+    /// the same allowance as its siblings — that sharing is the amplification defence.
+    /// </param>
+    /// <exception cref="InvalidOperationException">
+    /// The body nests deeper than <see cref="MaxBodyDepth"/>, or expands to more than
+    /// <see cref="MaxBodyNodes"/> nodes.
+    /// </exception>
+    private static System.Text.Json.Nodes.JsonNode? YamlToJsonElement(
+        YamlNode node,
+        YamlMappingNode step,
+        int depth,
+        ref int budget)
     {
+        if (depth > MaxBodyDepth)
+            throw new InvalidOperationException(DescribeBodyTooDeep(step, node));
+
+        // Charge the node BEFORE materialising it: the budget bounds work still to be done,
+        // not work already completed, so an amplifying alias stops AT the ceiling rather
+        // than one whole subtree past it.
+        if (--budget < 0)
+            throw new InvalidOperationException(DescribeBodyTooLarge(step, node));
+
         switch (node)
         {
             case YamlMappingNode map:
@@ -985,7 +1111,7 @@ public sealed class HttpRestProvider
                     foreach (var (k, v) in map.Children)
                     {
                         var key = k is YamlScalarNode ks ? ks.Value ?? string.Empty : k.ToString();
-                        obj[key] = YamlToJsonElement(v);
+                        obj[key] = YamlToJsonElement(v, step, depth + 1, ref budget);
                     }
                     return obj;
                 }
@@ -993,7 +1119,7 @@ public sealed class HttpRestProvider
                 {
                     var arr = new System.Text.Json.Nodes.JsonArray();
                     foreach (var item in seq.Children)
-                        arr.Add(YamlToJsonElement(item));
+                        arr.Add(YamlToJsonElement(item, step, depth + 1, ref budget));
                     return arr;
                 }
             case YamlScalarNode scalar:
@@ -1001,6 +1127,71 @@ public sealed class HttpRestProvider
             default:
                 return System.Text.Json.Nodes.JsonValue.Create(node.ToString());
         }
+    }
+
+    /// <summary>
+    /// Names the step a diagnostic is about, for the bound-breach messages below.
+    /// </summary>
+    /// <remarks>
+    /// The step id is read from the step mapping rather than from
+    /// <see cref="IBindingContext"/>, which is an empty marker interface in the frozen v1
+    /// contract and carries no id. <c>StepSpec.RawNode</c> is documented as the FULL step
+    /// mapping including the common fields, so <c>id</c> is present on every step the
+    /// engine binds. A test that binds a bare provider fragment directly has no <c>id</c>
+    /// key; that case gets a neutral phrase rather than an empty quoted string.
+    /// </remarks>
+    private static string DescribeStep(YamlMappingNode step)
+    {
+        var id = GetScalar(step, "id");
+        return id.Length == 0 ? "an http.rest step" : "step '" + id + "'";
+    }
+
+    /// <summary>
+    /// Renders the 1-based line and column of <paramref name="node"/> for a diagnostic.
+    /// </summary>
+    private static string DescribeMark(YamlNode node)
+    {
+        return "line "
+            + node.Start.Line.ToString(CultureInfo.InvariantCulture)
+            + ", column "
+            + node.Start.Column.ToString(CultureInfo.InvariantCulture);
+    }
+
+    /// <summary>
+    /// Message for a structured <c>body:</c> that nests deeper than
+    /// <see cref="MaxBodyDepth"/>.
+    /// </summary>
+    private static string DescribeBodyTooDeep(YamlMappingNode step, YamlNode offending)
+    {
+        return "http.rest: the 'body' of "
+            + DescribeStep(step)
+            + " nests more than "
+            + MaxBodyDepth.ToString(CultureInfo.InvariantCulture)
+            + " levels deep (reached at "
+            + DescribeMark(offending)
+            + "). This is an authoring fault, not a fault in the service under test: "
+            + "flatten the body, or send it as a pre-serialised JSON string, and re-run. "
+            + "The limit exists because an unbounded walk of a deeply nested body "
+            + "overflows the stack, which ends the run with no verdict at all.";
+    }
+
+    /// <summary>
+    /// Message for a structured <c>body:</c> that expands past
+    /// <see cref="MaxBodyNodes"/> nodes.
+    /// </summary>
+    private static string DescribeBodyTooLarge(YamlMappingNode step, YamlNode offending)
+    {
+        return "http.rest: the 'body' of "
+            + DescribeStep(step)
+            + " expands to more than "
+            + MaxBodyNodes.ToString(CultureInfo.InvariantCulture)
+            + " JSON nodes (reached at "
+            + DescribeMark(offending)
+            + "). This is an authoring fault, not a fault in the service under test. A "
+            + "YAML anchor expands in full at every '*alias' that refers to it, so a few "
+            + "lines can describe an enormous body: check for aliases under 'body', or "
+            + "split the payload across steps. The limit exists because an unbounded "
+            + "expansion exhausts memory, which ends the run with no verdict at all.";
     }
 
     /// <summary>
