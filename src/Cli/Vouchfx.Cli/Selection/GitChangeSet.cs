@@ -47,7 +47,8 @@ internal sealed class GitChangeSet : IChangeSet
     /// <param name="workingDirectory">A directory inside the working tree to run git in.</param>
     /// <param name="processRunner">The seam used to invoke git.</param>
     /// <exception cref="ChangeSetException">
-    /// Thrown when git is unavailable, the directory is not a repository, or the ref is bad.
+    /// Thrown when git is unavailable, the directory is not a repository, the ref is bad, a git
+    /// call outlasts the per-call process budget, or its output capture fails.
     /// </exception>
     public GitChangeSet(string changedSinceRef, string workingDirectory, IProcessRunner processRunner)
     {

@@ -34,6 +34,11 @@
 //     The rationale for the filter (in particular why AggregateException is in it and why
 //     InvalidOperationException is NOT the exit race) travelled with it.
 //
+//     #481 then forced the second copy after all, in the one lane a lift cannot reach: product
+//     code cannot reference a test-only project, so Vouchfx.Cli.Selection.SystemProcessRunner
+//     carries its own KillTreeQuietly, and tests/Vouchfx.Cli.Tests/ProcessKillGuardParityTests.cs
+//     parses both sources and fails when the two catch filters diverge.
+//
 //   * DrillHostSweep + DrillHostSweepFixture - the sweep that runs before the drill lane and
 //     again after it, clearing what an earlier session left behind and what this one leaks. It
 //     mirrors the philosophy of the container leak check in

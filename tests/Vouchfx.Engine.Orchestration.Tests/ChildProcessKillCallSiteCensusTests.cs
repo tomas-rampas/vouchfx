@@ -74,13 +74,24 @@ namespace Vouchfx.Engine.Orchestration.Tests;
 
 /// <summary>
 /// Pins that every child-process launch in the three censused trees — <c>src/</c> and the two test
-/// projects named in the header — is paired with a <c>finally</c> that calls
-/// <see cref="Vouchfx.TestSupport.ChildProcess.KillTreeQuietly(System.Diagnostics.Process)"/>.
+/// projects named in the header — is paired with a <c>finally</c> that calls a member named
+/// <c>KillTreeQuietly</c>.
 /// </summary>
 /// <remarks>
+/// <para>
+/// What is matched is the bare identifier (see <see cref="KillMethod"/>), not a resolved symbol.
+/// The two test projects satisfy it with
+/// <see cref="Vouchfx.TestSupport.ChildProcess.KillTreeQuietly(System.Diagnostics.Process)"/>;
+/// <c>src/</c> cannot — that project is <c>IsPackable=false</c> and referenced only by test
+/// assemblies, so product code has no way to call it — and satisfies the census with its own copy
+/// on <c>Vouchfx.Cli.Selection.SystemProcessRunner</c>. The two copies are held to one catch filter
+/// by <c>Vouchfx.Cli.Tests.ProcessKillGuardParityTests</c>, which parses both sources.
+/// </para>
+/// <para>
 /// Both launch spellings are recognised, because the repository uses both: the static
 /// <c>Process.Start(...)</c>, and the <c>new Process { StartInfo = psi }</c> + <c>proc.Start()</c>
 /// pair that <c>Vouchfx.Engine.Runtime.Tests.Sprint11ReferenceCapstoneTests</c> uses.
+/// </para>
 /// </remarks>
 public sealed class ChildProcessKillCallSiteCensusTests
 {

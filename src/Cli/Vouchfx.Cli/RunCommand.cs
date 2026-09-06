@@ -193,7 +193,8 @@ internal static class RunCommand
     {
         Description =
             "Select only scenarios whose file changed since this git ref (committed diff vs "
-            + "the ref plus the dirty working tree). Requires a git repository.",
+            + "the ref plus the dirty working tree). Each git call is bounded by a 2-minute "
+            + "budget. Requires a git repository.",
     };
 
     /// <summary>
@@ -1061,8 +1062,10 @@ internal static class RunCommand
         }
 
         // Apply the test-selection language BEFORE the runner: narrow the discovered
-        // scenarios by tag/owner/path/change-set (BP §16). A bad --changed-since (no repo,
-        // git missing, bad ref) is a usage error (exit 2), not a crash.
+        // scenarios by tag/owner/path/change-set (BP §16). Every way a --changed-since
+        // change-set can fail to be computed — no repo, git missing, bad ref, a git call that
+        // outlasts its process budget, a failed output capture — surfaces as a
+        // ChangeSetException, which the catch below maps to a usage error (exit 2), not a crash.
         //
         // ISSUE #411'S RECOVERED METADATA IS SCOPED OUT OF THE WATCH PATH, and the argument is
         // `!watch` rather than a second selection call so there is still exactly one. Selection

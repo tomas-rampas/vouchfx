@@ -15,7 +15,7 @@
 //
 // This interface is `internal` to Vouchfx.Cli with one production implementation and test
 // fakes. It is NOT part of the frozen v1 SDK surface (blueprint §13.8) and no golden pins it,
-// so adding the exception type below moves no contract.
+// so adding the two exception types below moves no contract.
 
 namespace Vouchfx.Cli.Selection;
 
