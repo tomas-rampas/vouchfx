@@ -53,7 +53,15 @@ public sealed class GitChangeSetTests
             return this;
         }
 
-        public ProcessResult Run(string fileName, IReadOnlyList<string> arguments, string workingDirectory)
+        // The token is accepted and ignored: a canned runner has nothing to cancel, and every row
+        // here calls the constructor with the default (CancellationToken.None). What cancellation
+        // does to a REAL child is SystemProcessRunnerTests' row 5, which needs a live process to
+        // say anything true about it.
+        public ProcessResult Run(
+            string fileName,
+            IReadOnlyList<string> arguments,
+            string workingDirectory,
+            CancellationToken cancellationToken = default)
         {
             Calls.Add((fileName, arguments, workingDirectory));
 

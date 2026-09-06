@@ -21,16 +21,24 @@
 //      already gone within a second and a bounded wait would be satisfied immediately, while
 //      the read that runs first still never returns. The budget has to cover the READS.
 //
-// ABANDON, DO NOT AWAIT. `ReadToEndAsync(CancellationToken)` cancellation is not reliably
-// honoured on a pending anonymous-pipe read — #392 measured the read task sitting at
-// `WaitingForActivation` indefinitely after the token was signalled. So the timeout path races
-// the reads against a delay and WALKS AWAY from the losers; it never waits for them to
-// acknowledge anything, because waiting for an unresponsive read is the hang this file exists
-// to remove. Abandoning is CHEAPER THAN HANGING, NOT FREE: `Process`'s captured streams are
-// `FileStream`s opened `isAsync: false`, so `ReadToEndAsync` runs as a blocking read on a
-// thread-pool thread, and that thread stays occupied until the pipe delivers end-of-file. The
-// abandoned read therefore outlives this method by however long the writer that is still
-// holding the pipe survives.
+// ABANDON, DO NOT AWAIT. Cancelling a pending anonymous-pipe read does not reliably end it, and
+// the mechanism is the one stated below: `Process`'s captured streams are `FileStream`s opened
+// `isAsync: false`, so `ReadToEndAsync` runs as a blocking read on a thread-pool thread, and a
+// token can be observed only BETWEEN reads, never during one. (INFERRED from that `FileStream`
+// construction; not measured here.) #392 MEASURED the adjacent fact, and only that: reads issued
+// as `ReadToEndAsync()` with no token at all — none was passed, none was signalled — were still
+// at `WaitingForActivation` in a SINGLE sample four seconds after the child had exited, on that
+// caller's success path. So the timeout path races the reads against a delay and WALKS AWAY from
+// the losers; it never waits for them to acknowledge anything, because waiting for an
+// unresponsive read is the hang this file exists to remove. Abandoning is CHEAPER THAN HANGING,
+// NOT FREE: the thread the blocking read occupies stays occupied until the pipe delivers
+// end-of-file, so the abandoned read outlives this method by however long the writer that is
+// still holding the pipe survives.
+//
+// THE CALLER'S TOKEN IS THE SECOND WAY OUT, and it is not the budget in disguise. The budget
+// bounds an UNATTENDED call; the token is how an operator's Ctrl+C reaches the `finally` below
+// while the CLI is still alive to run it. Both paths converge on the same tree-kill; they differ
+// only in what they throw, because a cancelled run is not a failed one.
 //
 // STDIN IS REDIRECTED AND CLOSED IMMEDIATELY, and what that buys is narrower than it looks. It
 // does NOT stop git prompting for credentials: git's terminal prompt reads /dev/tty on POSIX and
@@ -76,8 +84,10 @@ internal sealed class SystemProcessRunner : IProcessRunner
     /// <para>
     /// It is a CEILING, not a latency target: the only thing it decides is how long a genuinely
     /// wedged child is allowed to hold the CLI before the run is failed and a tree-kill issued
-    /// against that child. Two minutes is short enough that an operator waits it out rather than
-    /// reaching for Ctrl+C, which is the behaviour that leaves the orphan behind.
+    /// against that child. It is not the only way out, and deliberately so — <see cref="Run"/>
+    /// observes the caller's cancellation token, so a Ctrl+C reaches the same tree-kill without
+    /// waiting for this ceiling. What the ceiling bounds is the UNATTENDED case, where there is
+    /// nobody to press it.
     /// </para>
     /// <para>
     /// Tests inject a short budget through the internal constructor instead of inheriting this
@@ -129,7 +139,11 @@ internal sealed class SystemProcessRunner : IProcessRunner
     public static SystemProcessRunner Instance { get; } = new(DefaultBudget);
 
     /// <inheritdoc />
-    public ProcessResult Run(string fileName, IReadOnlyList<string> arguments, string workingDirectory)
+    public ProcessResult Run(
+        string fileName,
+        IReadOnlyList<string> arguments,
+        string workingDirectory,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(fileName);
         ArgumentNullException.ThrowIfNull(arguments);
@@ -150,19 +164,25 @@ internal sealed class SystemProcessRunner : IProcessRunner
         // has no SynchronizationContext" is FALSE for the test host, where xunit v2 installs an
         // AsyncTestSyncContext around every test method and rows 3 and 4 call Run directly on the
         // xunit test thread. Drop one ConfigureAwait(false) below and this paragraph stops holding.
-        return RunCoreAsync(fileName, arguments, workingDirectory).GetAwaiter().GetResult();
+        return RunCoreAsync(fileName, arguments, workingDirectory, cancellationToken)
+            .GetAwaiter().GetResult();
     }
 
     /// <summary>
     /// Launches the child, drains both streams and waits for exit, all within
-    /// <see cref="_budget"/>, issuing the guarded tree-kill and releasing both pipes on every
-    /// exit path.
+    /// <see cref="_budget"/> and the caller's token, issuing the guarded tree-kill and releasing
+    /// both pipes on every exit path.
     /// </summary>
     private async Task<ProcessResult> RunCoreAsync(
         string fileName,
         IReadOnlyList<string> arguments,
-        string workingDirectory)
+        string workingDirectory,
+        CancellationToken cancellationToken)
     {
+        // Before the launch, not after: a token already signalled when the call arrives should
+        // leave no child behind to reclaim.
+        cancellationToken.ThrowIfCancellationRequested();
+
         var startInfo = new ProcessStartInfo
         {
             FileName = fileName,
@@ -205,14 +225,27 @@ internal sealed class SystemProcessRunner : IProcessRunner
         using (process)
         {
             // One source for both delays so the loser of a race can be cancelled rather than left
-            // holding a timer that fires minutes after the CLI has gone.
-            using var timers = new CancellationTokenSource();
+            // holding a timer that fires minutes after the CLI has gone. LINKED to the caller's
+            // token, which is how cancellation is raced against the budget rather than polled:
+            // signalling the caller's token cancels the pending delay, so whichever WhenAny is
+            // outstanding completes at once and control reaches the `finally` — and therefore the
+            // tree-kill — instead of sitting out the remainder of the ceiling.
+            using var timers = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
 
             Task<string>? standardOutput = null;
             Task<string>? standardError = null;
             Exception? captureFault = null;
             string? exceeded = null;
-            var exitCode = 0;
+            var cancelled = false;
+
+            // NULL, NOT 0, and that is the whole point of it. Every path that reaches the return
+            // below either assigns a real exit code or throws first, so zero would be correct
+            // today — but GitChangeSet.RunGit treats `ExitCode != 0` as THE failure signal, so a
+            // future path that fell through without assigning would report a failed git as a
+            // successful one with empty output: AddPaths would build an empty change-set and
+            // `--changed-since` would select nothing while exiting 0, having tested nothing. A
+            // null that is dereferenced at the return turns that mistake into a throw.
+            int? exitCode = null;
 
             try
             {
@@ -222,8 +255,15 @@ internal sealed class SystemProcessRunner : IProcessRunner
                 // fills one pipe's buffer while this runner reads only the other one deadlocks,
                 // which is the older hazard the original sequential ReadToEnd pair was written
                 // for and which this preserves.
-                standardOutput = process.StandardOutput.ReadToEndAsync();
-                standardError = process.StandardError.ReadToEndAsync();
+                //
+                // CancellationToken.None is EXPLICIT rather than an oversight the analyser argued
+                // us out of: the caller's token is deliberately NOT forwarded here. A pending read
+                // on an `isAsync: false` FileStream cannot observe a token mid-read, so forwarding
+                // one would end the TASK while leaving the underlying blocking read holding its
+                // thread — the same abandonment performed below, dressed up as cooperation. The
+                // reads are abandoned explicitly instead, and the token reaches the delay races.
+                standardOutput = process.StandardOutput.ReadToEndAsync(CancellationToken.None);
+                standardError = process.StandardError.ReadToEndAsync(CancellationToken.None);
                 var reads = Task.WhenAll(standardOutput, standardError);
 
                 // The WhenAll promise is a task in its own right and needs its OWN observer:
@@ -235,13 +275,29 @@ internal sealed class SystemProcessRunner : IProcessRunner
 
                 var elapsed = Stopwatch.StartNew();
 
-                // SETTLED, NOT SUCCEEDED — and the distinction is the bug this names. WhenAny
-                // returns the first task to reach ANY terminal state, and WhenAll faults as soon
-                // as either read faults, so winning this race says only that the reads STOPPED.
-                var settled = await Task.WhenAny(reads, Task.Delay(_budget, timers.Token))
-                    .ConfigureAwait(false) == reads;
+                // THE RACE DECIDES WHEN TO LOOK, NOT WHAT IS TRUE. Its result is discarded on
+                // purpose: `Task.WhenAny` returns whichever task it OBSERVED first, so a delay
+                // whose timer fires microseconds before an already-complete `reads` is handed
+                // back as the winner — and reading that as "the reads did not finish" threw away
+                // a complete capture and reported a timeout for a successful run. The state of
+                // `reads` is the fact; which task won is an artefact of the observation.
+                //
+                // SETTLED, NOT SUCCEEDED — and that distinction survives the change. `reads`
+                // faults as soon as either read faults, so `IsCompleted` says only that the reads
+                // STOPPED; the branch below is what tells apart a capture from a fault.
+                _ = await Task.WhenAny(reads, Task.Delay(_budget, timers.Token))
+                    .ConfigureAwait(false);
+                var settled = reads.IsCompleted;
 
-                if (!settled)
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    // Checked FIRST, and before `settled` is consulted: the caller withdrawing is
+                    // not a property of the child, so neither a timed-out read nor a faulted one
+                    // should be reported ahead of it. The throw itself waits until after the
+                    // `finally`, exactly as the timeout does, so the child is dead before it.
+                    cancelled = true;
+                }
+                else if (!settled)
                 {
                     exceeded = "its output streams never reached end-of-file, which a grandchild "
                         + "holding the inherited pipe handles is enough to cause";
@@ -273,11 +329,29 @@ internal sealed class SystemProcessRunner : IProcessRunner
                         remaining = MinimumExitWait;
                     }
 
-                    var exit = process.WaitForExitAsync();
-                    var finished = await Task.WhenAny(exit, Task.Delay(remaining, timers.Token))
-                        .ConfigureAwait(false) == exit;
+                    // The token IS forwarded here, unlike to the reads above: waiting for exit
+                    // is an event subscription rather than a blocking pipe read, so it can observe
+                    // a token, and a cancelled wait settles this race on its own rather than
+                    // depending solely on the linked delay.
+                    var exit = process.WaitForExitAsync(cancellationToken);
 
-                    if (finished)
+                    // Observed like every other task here. The exit-timeout branch below abandons
+                    // it, and `Dispose` → `Close()` → `StopWatchingForExit()` means its promise
+                    // may then never complete at all — so this is cheap insurance rather than a
+                    // known fault path, and it makes "every task in this method has an observer"
+                    // true by construction instead of by inspection.
+                    Observe(exit);
+
+                    // Same reasoning as the read race above: the winner says when to look, the
+                    // task's own state says what happened.
+                    _ = await Task.WhenAny(exit, Task.Delay(remaining, timers.Token))
+                        .ConfigureAwait(false);
+
+                    if (cancellationToken.IsCancellationRequested)
+                    {
+                        cancelled = true;
+                    }
+                    else if (exit.IsCompletedSuccessfully)
                     {
                         exitCode = process.ExitCode;
                     }
@@ -316,10 +390,21 @@ internal sealed class SystemProcessRunner : IProcessRunner
                 timers.Cancel();
             }
 
+            if (cancelled)
+            {
+                Observe(standardOutput);
+                Observe(standardError);
+
+                // The token, not a bare OperationCanceledException: the CLI's cancellation path
+                // distinguishes "this token" from an unrelated cancellation, and GitChangeSet.RunGit
+                // maps none of its three catches over this type, so it propagates untouched.
+                throw new OperationCanceledException(cancellationToken);
+            }
+
             if (captureFault is not null)
             {
-                AbandonRead(standardOutput);
-                AbandonRead(standardError);
+                Observe(standardOutput);
+                Observe(standardError);
 
                 throw new ProcessCaptureException(
                     $"Reading the output of '{fileName}' failed: {captureFault.Message}",
@@ -328,11 +413,14 @@ internal sealed class SystemProcessRunner : IProcessRunner
 
             if (exceeded is not null)
             {
-                // ONLY NOW do we give up on the reads. This does not wait for them; it attaches an
-                // observer so that whatever they eventually reach does not become an unobserved
-                // task exception, and then walks away.
-                AbandonRead(standardOutput);
-                AbandonRead(standardError);
+                // Nothing here waits for the reads; it attaches an observer so that whatever they
+                // eventually reach does not become an unobserved task exception, and walks away.
+                // Whether they are still outstanding depends on which branch set `exceeded`: on
+                // the read-timeout branch they are, on the exit-timeout branch they completed
+                // before the exit wait even began and these calls are near no-ops. Cheap in both
+                // cases, and stating that is cheaper than a branch to avoid it.
+                Observe(standardOutput);
+                Observe(standardError);
 
                 throw new ProcessTimeoutException(
                     string.Create(
@@ -345,7 +433,8 @@ internal sealed class SystemProcessRunner : IProcessRunner
             // lookups rather than waits — the captured text is held by the tasks, so the stream
             // disposal in the finally above cannot take it away.
             return new ProcessResult(
-                exitCode,
+                exitCode ?? throw new InvalidOperationException(
+                    "SystemProcessRunner reached its return without an exit code, which no path above can do. Returning a fabricated 0 here would report a failed git as a successful one with empty output."),
                 await standardOutput!.ConfigureAwait(false),
                 await standardError!.ConfigureAwait(false));
         }
@@ -373,20 +462,15 @@ internal sealed class SystemProcessRunner : IProcessRunner
     }
 
     /// <summary>
-    /// Observes an abandoned read's eventual outcome without waiting for it.
-    /// </summary>
-    /// <remarks>
-    /// No claim is made here about WHEN, or whether, the read settles — that depends on a writer
-    /// this runner may no longer be able to reach. The only guarantee is that if it faults, the
-    /// fault is observed and so kept off <see cref="TaskScheduler.UnobservedTaskException"/>,
-    /// where it would surface later as a finalizer-thread event attributed to nothing in
-    /// particular.
-    /// </remarks>
-    private static void AbandonRead(Task? read) => Observe(read);
-
-    /// <summary>
     /// Attaches an observer to <paramref name="task"/>'s eventual fault, and nothing else.
     /// </summary>
+    /// <remarks>
+    /// No claim is made here about WHEN, or whether, the task settles — for an abandoned read that
+    /// depends on a writer this runner may no longer be able to reach. The only guarantee is that
+    /// if it faults, the fault is observed and so kept off
+    /// <see cref="TaskScheduler.UnobservedTaskException"/>, where it would surface later as a
+    /// finalizer-thread event attributed to nothing in particular.
+    /// </remarks>
     private static void Observe(Task? task) =>
         task?.ContinueWith(static settled => _ = settled.Exception, TaskScheduler.Default);
 

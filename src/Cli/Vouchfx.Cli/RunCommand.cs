@@ -189,12 +189,21 @@ internal static class RunCommand
     };
 
     /// <summary>The <c>--changed-since</c> option: a git ref bounding the change-set.</summary>
+    /// <remarks>
+    /// The budget figure is INTERPOLATED from <see cref="SystemProcessRunner.DefaultBudget"/>
+    /// rather than restated, so moving the constant moves this text with it. It is spelled as the
+    /// budget rather than as the true worst case: a call that spends the whole budget on its reads
+    /// is still given a one-second floor to reap the child, so the ceiling is a second above the
+    /// figure shown. "About" carries that second — quoting 121s would be precise about a number no
+    /// operator can act on.
+    /// </remarks>
     internal static Option<string?> BuildChangedSinceOption() => new("--changed-since")
     {
         Description =
             "Select only scenarios whose file changed since this git ref (committed diff vs "
-            + "the ref plus the dirty working tree). Each git call is bounded by a 2-minute "
-            + "budget. Requires a git repository.",
+            + "the ref plus the dirty working tree). Each git call is bounded by a budget of about "
+            + FormattableString.Invariant($"{SystemProcessRunner.DefaultBudget.TotalSeconds:0.###}s")
+            + ", and can be cancelled with Ctrl+C. Requires a git repository.",
     };
 
     /// <summary>
@@ -1080,7 +1089,8 @@ internal static class RunCommand
         IReadOnlyList<DiscoveredScenario> selected;
         try
         {
-            selected = SelectScenarios(discovered, criteria, path, matchRecoveredMetadata: !watch);
+            selected = SelectScenarios(
+                discovered, criteria, path, matchRecoveredMetadata: !watch, runCancellationToken);
         }
         catch (ChangeSetException ex)
         {
@@ -1577,8 +1587,19 @@ internal static class RunCommand
     /// issue #411's recovered metadata out of the match, which is what <c>--watch</c> passes.
     /// </param>
     /// <returns>The selected subset, in discovery order.</returns>
+    /// <param name="cancellationToken">
+    /// The run's cancellation token, forwarded to the git shell-out. Only the
+    /// <c>--changed-since</c> arm observes it — the filtering below is a pure in-memory pass over
+    /// an already-built change-set, so <see cref="ScenarioSelector.Apply"/> neither takes it nor
+    /// needs it.
+    /// </param>
     /// <exception cref="ChangeSetException">
     /// Thrown when <c>--changed-since</c> is set but the change-set cannot be computed.
+    /// </exception>
+    /// <exception cref="OperationCanceledException">
+    /// Thrown when <paramref name="cancellationToken"/> is signalled during the git shell-out.
+    /// Deliberately NOT a <see cref="ChangeSetException"/>: the caller maps that to a usage error,
+    /// and a Ctrl+C is not one.
     /// </exception>
     /// <remarks>
     /// Exposed as <see langword="internal"/> so the no-docker test can assert that an empty
@@ -1588,13 +1609,15 @@ internal static class RunCommand
         IReadOnlyList<DiscoveredScenario> discovered,
         SelectionCriteria criteria,
         string discoveryRoot,
-        bool matchRecoveredMetadata = true)
+        bool matchRecoveredMetadata = true,
+        CancellationToken cancellationToken = default)
     {
         IChangeSet changeSet = NullChangeSet.Instance;
         if (criteria.ChangedSinceRef is { } changedSinceRef)
         {
             var workingDirectory = ResolveWorkingDirectory(discoveryRoot);
-            changeSet = new GitChangeSet(changedSinceRef, workingDirectory, SystemProcessRunner.Instance);
+            changeSet = new GitChangeSet(
+                changedSinceRef, workingDirectory, SystemProcessRunner.Instance, cancellationToken);
         }
 
         return ScenarioSelector.Apply(discovered, criteria, changeSet, matchRecoveredMetadata);

@@ -49,7 +49,9 @@
 // wall-clock to the production ceiling would make this file slow in order to prove nothing extra,
 // and it would force RunGraceWindow to track a constant chosen for a cold `git status` on a huge
 // repository. Row 3 and row 4 keep using Instance: they exercise the happy and the launch-failure
-// paths, where the budget is never approached and the shared instance is the thing shipped.
+// paths, where the budget is never approached and the shared instance is the thing shipped. Row 5
+// injects a budget for the OPPOSITE reason — one so long it cannot be reached, so that a call
+// which ends is one the cancellation token ended.
 //
 // PORTABILITY
 // ───────────
@@ -103,10 +105,11 @@ public sealed class SystemProcessRunnerTests
     /// the child before it ever wrote the file — turning a healthy runner into a row that fails on
     /// its own teardown machinery. The window that matters is process start to first write:
     /// measured at 190-220ms over five warm runs of the Windows shape (<c>powershell.exe
-    /// -NoProfile -NonInteractive</c>) on the maintainer's host, and an order of magnitude below
-    /// that for the <c>/bin/sh</c> shape CI runs. Three seconds is roughly fifteen times the
-    /// measured warm figure, which absorbs a cold interpreter start without making either row
-    /// slow.
+    /// -NoProfile -NonInteractive</c>) on the maintainer's host. Three seconds is roughly fifteen
+    /// times that warm figure, which absorbs a cold interpreter start without making either row
+    /// slow. The <c>/bin/sh</c> shape CI runs has NOT been measured, and no figure is claimed for
+    /// it here — a number carried over from the Windows shape would inherit an authority it never
+    /// earned in the lane that gates merges.
     /// </para>
     /// </remarks>
     private static readonly TimeSpan TestBudget = TimeSpan.FromSeconds(3);
@@ -271,6 +274,92 @@ public sealed class SystemProcessRunnerTests
 
             var timeout = await Assert.ThrowsAsync<ProcessTimeoutException>(() => work);
             Assert.Equal(TestBudget, timeout.Budget);
+        }
+        finally
+        {
+            KillTreeQuietly(pid, startedUtc);
+            await DrainAsync(work);
+            TryDeleteDirectory(directory);
+        }
+    }
+
+    /// <summary>
+    /// The budget row 5 injects: far above <see cref="RunGraceWindow"/> on purpose.
+    /// </summary>
+    /// <remarks>
+    /// If the row passes, it is the TOKEN that ended the call and nothing else — a budget anywhere
+    /// near the grace window would let a runner that ignores the token pass on the ceiling's
+    /// timing, which is the one confusion this row exists to rule out.
+    /// </remarks>
+    private static readonly TimeSpan UnreachableBudget = TimeSpan.FromMinutes(5);
+
+    /// <summary>
+    /// Row 5 — a signalled token ends the call promptly and leaves no live child.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The behaviour this pins is not "Run returns sooner", it is WHOSE cleanup runs. Before the
+    /// token was threaded through, a Ctrl+C during <c>--changed-since</c> signalled a token that
+    /// nothing on this path observed: System.CommandLine waited out its termination budget and
+    /// then force-killed the CLI, at which point <c>Run</c>'s <c>finally</c> — and therefore the
+    /// tree-kill — never ran and the git child was orphaned. That is the very leak #481 is about,
+    /// on the path where an operator is most likely to intervene.
+    /// </para>
+    /// <para>
+    /// FAIL-FAST LIKE ROWS 1 AND 2, and for the same reason: this assembly is a blocking CI gate
+    /// with no per-test timeout, so <c>Run</c> is launched on a background task and the row
+    /// asserts FIRST that it completed inside <see cref="RunGraceWindow"/>. A runner that ignored
+    /// the token would fail this row in ten seconds rather than sitting on
+    /// <see cref="UnreachableBudget"/> for five minutes.
+    /// </para>
+    /// <para>
+    /// The child is killed by the row's own <c>finally</c> on every path, exactly as in rows 1
+    /// and 2 — an assertion that fails must not leave a live child on the agent.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task Run_WhenTheCallerCancels_ThrowsOperationCanceledAndLeavesNoLiveChild()
+    {
+        var startedUtc = DateTime.UtcNow;
+        var directory = CreateScratchDirectory();
+        var pidFile = Path.Combine(directory, "child.pid");
+        var shape = NeverExitingChild(pidFile);
+        var runner = new SystemProcessRunner(UnreachableBudget);
+        using var cancellation = new CancellationTokenSource();
+
+        var work = Task.Run(
+            () => runner.Run(shape.FileName, shape.Arguments, directory, cancellation.Token));
+        int? pid = null;
+        try
+        {
+            // Cancelled only once the child is known to be RUNNING. Cancelling earlier could be
+            // answered by the pre-launch ThrowIfCancellationRequested, which would leave the row
+            // asserting nothing about a live child.
+            pid = await Task.Run(() => WaitForPid(pidFile, PidBudget));
+            Assert.True(
+                pid is not null,
+                FormattableString.Invariant(
+                    $"The never-exiting child did not write its pid to '{pidFile}' within {PidBudget.TotalSeconds:F0}s, so this row could not establish that a child was ever running. That is a defect in the row, not in SystemProcessRunner."));
+
+            cancellation.Cancel();
+
+            var finished = await Task.WhenAny(work, Task.Delay(RunGraceWindow)) == work;
+            Assert.True(
+                finished,
+                FormattableString.Invariant(
+                    $"SystemProcessRunner.Run did not return within {RunGraceWindow.TotalSeconds:F0}s of its cancellation token being signalled, against a child that never exits and a {UnreachableBudget.TotalMinutes:F0}-minute budget it cannot have reached. The token is not being raced against the budget, so a Ctrl+C reaches this runner's cleanup only after the process is force-killed — which is to say, never."));
+
+            // ThrowsAny rather than Throws: TaskCanceledException derives from
+            // OperationCanceledException, and the property under test is that cancellation
+            // surfaces AS cancellation — never as ProcessTimeoutException, which GitChangeSet
+            // maps to a usage error and would exit 2 for a Ctrl+C.
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => work);
+
+            var dead = await Task.Run(() => WaitForDeath(pid, startedUtc, DeathWindow));
+            Assert.True(
+                dead,
+                FormattableString.Invariant(
+                    $"SystemProcessRunner.Run returned on cancellation but child pid {pid} was still alive {DeathWindow.TotalSeconds:F0}s later. Cancellation must reach the same tree-kill the timeout path does; a cancelled call that abandons its child is the orphan #481 exists to prevent. The window is there because the kill is asynchronous, not because a live child is tolerable."));
         }
         finally
         {

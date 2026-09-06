@@ -13,7 +13,10 @@
 // absolute, normalise separators to '/', and store them in a case-tolerant set. A non-zero
 // git exit (bad ref, not a repo), a launch failure (git not installed) or a timeout (a wedged
 // git, or one whose grandchild holds the capture pipes open — #481/#392) is wrapped in a
-// ChangeSetException, which the CLI maps to a usage error (exit 2) — NEVER a crash.
+// ChangeSetException, which the CLI maps to a usage error (exit 2) — NEVER a crash. A CANCELLED
+// call is the exception to that rule and propagates as OperationCanceledException: an operator's
+// Ctrl+C is not a usage error, and the token exists so that it reaches the runner's tree-kill
+// instead of the process being force-killed with that cleanup unrun.
 
 using System.Globalization;
 
@@ -46,11 +49,23 @@ internal sealed class GitChangeSet : IChangeSet
     /// </param>
     /// <param name="workingDirectory">A directory inside the working tree to run git in.</param>
     /// <param name="processRunner">The seam used to invoke git.</param>
+    /// <param name="cancellationToken">
+    /// Cancels the git calls. Threaded through so a Ctrl+C during a wedged <c>--changed-since</c>
+    /// reaches the runner's cleanup rather than waiting out the per-call budget; it surfaces as
+    /// <see cref="OperationCanceledException"/>, NOT as a <see cref="ChangeSetException"/>.
+    /// </param>
     /// <exception cref="ChangeSetException">
     /// Thrown when git is unavailable, the directory is not a repository, the ref is bad, a git
     /// call outlasts the per-call process budget, or its output capture fails.
     /// </exception>
-    public GitChangeSet(string changedSinceRef, string workingDirectory, IProcessRunner processRunner)
+    /// <exception cref="OperationCanceledException">
+    /// Thrown when <paramref name="cancellationToken"/> is signalled during a git call.
+    /// </exception>
+    public GitChangeSet(
+        string changedSinceRef,
+        string workingDirectory,
+        IProcessRunner processRunner,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(workingDirectory);
         ArgumentNullException.ThrowIfNull(processRunner);
@@ -65,7 +80,7 @@ internal sealed class GitChangeSet : IChangeSet
                 $"Invalid git ref '{changedSinceRef}': must not start with '-'.");
         }
 
-        var repoRoot = ResolveRepoRoot(workingDirectory, processRunner);
+        var repoRoot = ResolveRepoRoot(workingDirectory, processRunner, cancellationToken);
 
         var changed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -77,6 +92,7 @@ internal sealed class GitChangeSet : IChangeSet
             processRunner,
             workingDirectory,
             $"diff for ref '{changedSinceRef}'",
+            cancellationToken,
             "diff", "--name-only", "--end-of-options", $"{changedSinceRef}...HEAD");
         AddPaths(changed, repoRoot, diff.StandardOutput, status: false);
 
@@ -89,6 +105,7 @@ internal sealed class GitChangeSet : IChangeSet
             processRunner,
             workingDirectory,
             "working-tree status",
+            cancellationToken,
             "-c", "core.quotepath=false", "status", "--porcelain");
         AddPaths(changed, repoRoot, status.StandardOutput, status: true);
 
@@ -133,12 +150,16 @@ internal sealed class GitChangeSet : IChangeSet
     /// Resolves the absolute repository root so repo-relative git output can be made
     /// absolute.  A non-repository directory surfaces as a <see cref="ChangeSetException"/>.
     /// </summary>
-    private static string ResolveRepoRoot(string workingDirectory, IProcessRunner processRunner)
+    private static string ResolveRepoRoot(
+        string workingDirectory,
+        IProcessRunner processRunner,
+        CancellationToken cancellationToken)
     {
         var result = RunGit(
             processRunner,
             workingDirectory,
             "repository-root lookup",
+            cancellationToken,
             "rev-parse", "--show-toplevel");
 
         var root = result.StandardOutput.Trim();
@@ -160,7 +181,7 @@ internal sealed class GitChangeSet : IChangeSet
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <strong>Every exception <see cref="IProcessRunner.Run"/> documents is mapped here, and that
+    /// <strong>Every FAILURE <see cref="IProcessRunner.Run"/> documents is mapped here, and that
     /// is a correctness requirement rather than tidiness.</strong> This is the only catch between
     /// the runner and <c>RunCommand</c>, which handles <see cref="ChangeSetException"/> and nothing
     /// else. An unmapped runner exception therefore does not degrade to a worse message — it
@@ -177,17 +198,26 @@ internal sealed class GitChangeSet : IChangeSet
     /// and #466-B, and answering it here — quietly, in a bug fix — would change the CLI's
     /// documented exit-code contract as a side effect of stopping a hang.
     /// </para>
+    /// <para>
+    /// <strong><see cref="OperationCanceledException"/> is the one documented outcome that must
+    /// NOT be mapped, and the three catches are typed narrowly so that it cannot be.</strong> It
+    /// is the caller withdrawing rather than a mistake in what they typed, so mapping it would
+    /// print a usage message and exit 2 for a Ctrl+C. A <c>catch (Exception)</c>, or a filter loose
+    /// enough to admit it, would do exactly that; the narrowness here is load-bearing rather than
+    /// stylistic. It propagates untouched to the CLI's existing cancellation path.
+    /// </para>
     /// </remarks>
     private static ProcessResult RunGit(
         IProcessRunner processRunner,
         string workingDirectory,
         string operation,
+        CancellationToken cancellationToken,
         params string[] arguments)
     {
         ProcessResult result;
         try
         {
-            result = processRunner.Run("git", arguments, workingDirectory);
+            result = processRunner.Run("git", arguments, workingDirectory, cancellationToken);
         }
         catch (ProcessLaunchException ex)
         {

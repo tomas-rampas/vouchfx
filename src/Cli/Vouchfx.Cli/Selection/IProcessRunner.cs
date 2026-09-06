@@ -5,13 +5,22 @@
 // a fake runner that returns canned `git diff` / `git status` output (or a non-zero exit /
 // a launch failure) and assert how GitChangeSet parses and surfaces each case.
 //
-// THE SEAM CARRIES NO CancellationToken, AND THAT IS A DECISION RATHER THAN AN OMISSION.
-// ─────────────────────────────────────────────────────────────────────────────────────
-// The only call site is RunCommand.SelectScenarios, which is synchronous and has no token in
-// scope; threading one in would ripple through ScenarioSelector.Apply for a path whose natural
-// bound is a constant. So the DOCUMENTED CEILING is the whole mechanism here: the runner owns a
-// budget, and exceeding it is reported as ProcessTimeoutException rather than negotiated with a
-// caller that has nothing to say about it.
+// TWO INDEPENDENT BOUNDS: THE RUNNER'S BUDGET AND THE CALLER'S TOKEN.
+// ──────────────────────────────────────────────────────────────────
+// The budget is what stops a wedged child from holding the CLI when nobody is watching, and
+// exceeding it is reported as ProcessTimeoutException. The TOKEN is what lets somebody who IS
+// watching stop sooner: `vouchfx run --changed-since` passes the run's cancellation token down
+// through RunCommand.SelectScenarios and GitChangeSet to here, so a Ctrl+C reaches an
+// implementation's cleanup and gets the child tree-killed. Without it the token was signalled and
+// nothing on this path observed it, leaving System.CommandLine's ProcessTerminationTimeout
+// watchdog (Program.cs) to force-kill the CLI with the runner's `finally` never run — the orphan
+// #481 exists to prevent, on the path where an operator is most likely to intervene. (Inferred
+// from that watchdog's documented contract and from Program.cs setting it for a non-watch `run`;
+// not measured here.)
+//
+// Cancellation surfaces AS CANCELLATION: an implementation throws OperationCanceledException, and
+// GitChangeSet.RunGit deliberately does not map it to ChangeSetException — a cancelled run is not
+// a usage error, and the CLI's existing cancellation path handles it from there.
 //
 // This interface is `internal` to Vouchfx.Cli with one production implementation and test
 // fakes. It is NOT part of the frozen v1 SDK surface (blueprint §13.8) and no golden pins it,
@@ -46,6 +55,9 @@ internal interface IProcessRunner
     /// <param name="fileName">The executable to launch (e.g. <c>git</c>).</param>
     /// <param name="arguments">The argument vector (each element passed verbatim — no shell quoting).</param>
     /// <param name="workingDirectory">The working directory to launch the process in.</param>
+    /// <param name="cancellationToken">
+    /// Cancels the call; an implementation must still reclaim its child before it throws.
+    /// </param>
     /// <returns>The captured <see cref="ProcessResult"/>.</returns>
     /// <remarks>
     /// <para>
@@ -57,11 +69,15 @@ internal interface IProcessRunner
     /// the implementation — see <see cref="SystemProcessRunner"/> for the production ceiling.
     /// </para>
     /// <para>
-    /// <strong>A timed-out read is ABANDONED, not awaited.</strong> Cancellation of a pending
-    /// anonymous-pipe read is not reliably honoured (#392 measured the read task sitting at
-    /// <c>WaitingForActivation</c> indefinitely after its token was signalled), so an
-    /// implementation that waited for the cancelled read to acknowledge would simply move the hang.
-    /// The contract is therefore that on the timeout path a tree-kill is issued for the direct
+    /// <strong>A timed-out read is ABANDONED, not awaited.</strong> Cancelling a pending
+    /// anonymous-pipe read does not reliably end it: a <see cref="System.Diagnostics.Process"/>
+    /// capture stream is a <see cref="FileStream"/> opened <c>isAsync: false</c>, so
+    /// <c>ReadToEndAsync</c> blocks a thread-pool thread and a token can be observed only BETWEEN
+    /// reads, never during one (inferred from that <see cref="FileStream"/> construction; not
+    /// measured). #392 measured the adjacent fact: reads issued with no token at all were still
+    /// <c>WaitingForActivation</c> in a single sample four seconds after the child had exited. So
+    /// an implementation that waited for a cancelled read to acknowledge would simply move the
+    /// hang. The contract is therefore that on the timeout path a tree-kill is issued for the direct
     /// child and whatever the reads had produced is discarded — <see cref="ProcessTimeoutException"/>
     /// carries no partial output, because a partial capture is exactly the input that makes a
     /// change-set silently wrong rather than loudly absent.
@@ -85,7 +101,17 @@ internal interface IProcessRunner
     /// <exception cref="ProcessCaptureException">
     /// Thrown when the child launches but reading one of its output streams fails.
     /// </exception>
-    ProcessResult Run(string fileName, IReadOnlyList<string> arguments, string workingDirectory);
+    /// <exception cref="OperationCanceledException">
+    /// Thrown when <paramref name="cancellationToken"/> is signalled, after the same tree-kill the
+    /// timeout path issues. Distinct from every exception above BECAUSE it is not a failure of the
+    /// child: it is the caller withdrawing, and the CLI's cancellation path — not its usage-error
+    /// path — is what receives it.
+    /// </exception>
+    ProcessResult Run(
+        string fileName,
+        IReadOnlyList<string> arguments,
+        string workingDirectory,
+        CancellationToken cancellationToken = default);
 }
 
 /// <summary>
