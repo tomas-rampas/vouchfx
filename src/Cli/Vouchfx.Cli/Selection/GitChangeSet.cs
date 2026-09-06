@@ -23,14 +23,39 @@
 // The bare name "git" used to be handed to the runner, and on Windows that is NOT a PATH lookup.
 // .NET starts a process with `lpApplicationName = null`, putting everything in the command line
 // (`Process.Windows.cs`, "we don't need this since all the info is in commandLine"), so Windows
-// applies ITS OWN search order for an unqualified name — and that order consults the calling
-// executable's directory and the CURRENT DIRECTORY BEFORE `PATH`. The working directory below is
-// derived from the discovery root, i.e. the directory holding the suite under test, so a `git.exe`
-// planted in an untrusted repository ran instead of the real git — on the very flag whose purpose
-// is to make CI selection cheap, and in the exact usage the flag was designed for (`vouchfx run
-// --changed-since main` in a freshly cloned repository). A ROOTED `ProcessStartInfo.FileName`
-// removes the question rather than answering it: both `CreateProcess` and `execve` take a rooted
-// path literally and search nothing.
+// applies ITS OWN search order to the unqualified name. What that search order buys an attacker
+// is stated below at the two different confidence levels the evidence supports — the first is
+// MEASURED, the second was probed and did NOT reproduce.
+//
+// MEASURED, on this host (Windows 11, net8.0, UseShellExecute = false). An impostor `git.exe`
+// placed in the APPLICATION LOAD DIRECTORY — beside the calling executable — is launched in
+// preference to the real git on `PATH`: the probe's child printed the impostor's marker, exit 0,
+// while the identical call with the impostor removed printed `git version 2.54.0.windows.1`. That
+// directory is the first entry in the documented search order, and it is not hypothetical for a
+// tool installed as a dotnet global tool: everything in `~/.dotnet/tools` is writable by the user,
+// and one file dropped there takes over every git call this file makes. That precedence — the
+// application load directory ahead of `PATH` — is the whole of what this change removes.
+//
+// NOT CLOSED, and saying so is the point of the paragraph. An attacker-writable directory sitting
+// EARLIER IN `PATH` than git's own still wins, because the search below takes the first `PATH`
+// match and launches that. Nothing here re-orders or vets `PATH`; the change moves the resolution
+// from "whatever Windows searches" to "`PATH`, in order, and nothing else", which is strictly
+// smaller but is not empty.
+//
+// PROBED AND DID NOT REPRODUCE — the CURRENT-DIRECTORY story this header used to tell. The claim
+// was that `ProcessStartInfo.WorkingDirectory` is derived from the discovery root, so a `git.exe`
+// committed into an untrusted repository won. It is wrong on paper and wrong in measurement.
+// On paper: the documented search order names the CURRENT DIRECTORY OF THE CALLING PROCESS, while
+// `WorkingDirectory` sets `lpCurrentDirectory` FOR THE CHILD and takes no part in resolving the
+// command line's module name. In measurement, on this host, neither spelling won — with the
+// impostor present in the plant directory and absent from the application load directory, both
+// `WorkingDirectory = <plant dir>` and `Directory.SetCurrentDirectory(<plant dir>)` launched the
+// real git. So that scenario is NOT what this fix closes, and the past tense it was written in
+// ("ran instead of the real git") was never earned.
+//
+// A ROOTED `ProcessStartInfo.FileName` removes the whole question rather than answering it: both
+// `CreateProcess` and `execve` take a rooted path literally and search nothing. That is worth
+// doing for the measured hazard alone, and it makes the unmeasured one moot as a side effect.
 //
 // This is a DIFFERENT hazard from the two guards already here, and neither addressed it. The
 // leading-dash refusal plus `--end-of-options` defends git's own OPTION PARSING; `ArgumentList`
@@ -284,14 +309,26 @@ internal sealed class GitChangeSet : IChangeSet
         }
         catch (ProcessLaunchException ex)
         {
-            // The INNER message, not the runner's own — for a second reason on top of the one the
-            // capture catch below gives. Since #499 the runner is handed git's ABSOLUTE path, so
-            // its message ("Could not start '<path>': ...") now quotes a host path, and host paths
-            // do not go into user-facing diagnostics (#375/#473/#488). Taking the inner message
-            // keeps the informative half — the operating system's own reason — and structurally
-            // cannot carry the path, rather than scrubbing it back out afterwards.
-            var reason = ex.InnerException?.Message is { Length: > 0 } inner ? $" ({inner})" : string.Empty;
-            throw new ChangeSetException(GitUnavailable(operation) + reason, ex);
+            // NO REASON CLAUSE AT ALL, and the deletion is the fix rather than a simplification.
+            // Both candidate sources for one carry the host path. MEASURED on this host (net8.0,
+            // Windows) by starting a rooted, non-existent git: Process.Start throws
+            // System.ComponentModel.Win32Exception whose own message is
+            //
+            //     An error occurred trying to start process '<resolved git path>' with working
+            //     directory '<discovery root>'. The system cannot find the file specified.
+            //
+            // SystemProcessRunner wraps THAT as the inner exception of the ProcessLaunchException
+            // and quotes the file name again in the outer one, so `ex.Message` and
+            // `ex.InnerException?.Message` both name a path — the inner one names two, and since
+            // #499 the first of them is where git lives on this host. Host paths do not go into
+            // user-facing diagnostics (#375/#473/#488).
+            //
+            // Scrubbing or sentence-splitting would keep the operating system's reason, at the
+            // cost of a rule that has to stay correct against a message .NET composes and
+            // localises. GitUnavailable already tells the author the one thing they can act on,
+            // so the clause is dropped instead. The exception is still chained, so the full
+            // detail remains available to a debugger and to anything that walks InnerException.
+            throw new ChangeSetException(GitUnavailable(operation), ex);
         }
         catch (ProcessTimeoutException ex)
         {
@@ -359,8 +396,9 @@ internal sealed class GitChangeSet : IChangeSet
     /// <strong>A NON-ROOTED ENTRY IS SKIPPED, NOT RESOLVED, AND THAT IS THE POINT OF THE METHOD.</strong>
     /// <c>PATH</c> is itself an ordered list that may contain a relative entry, and an EMPTY element
     /// means "the current directory" on some platforms. Resolving either against the process's
-    /// current directory would reopen — one indirection further along — exactly the search-order
-    /// hole this resolution closes, since that directory is the suite under test's. The test is
+    /// current directory would put back — one indirection further along — the ambient-directory
+    /// term this whole resolution exists to remove from the answer. Skipping is cheap and the
+    /// entries it skips are not ones a correctly installed git occupies. The test is
     /// <see cref="Path.IsPathFullyQualified(string)"/> rather than <see cref="Path.IsPathRooted(string)"/>
     /// because the latter accepts the Windows drive-relative form <c>C:dir</c>, which resolves
     /// against that drive's current directory and is therefore not rooted in any useful sense.

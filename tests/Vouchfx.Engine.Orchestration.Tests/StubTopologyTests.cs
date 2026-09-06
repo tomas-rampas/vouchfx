@@ -192,7 +192,7 @@ public sealed class StubTopologyTests
     /// <summary>
     /// A3 — resolves the <c>"web"</c> container HTTP endpoint via the retained
     /// <see cref="Aspire.Hosting.ApplicationModel.IResourceBuilder{T}"/> pattern
-    /// and proves it is reachable by issuing an <see cref="HttpClient.GetAsync(string)"/> request.
+    /// and proves it is reachable by issuing an <see cref="HttpClient.GetAsync(Uri)"/> request.
     /// </summary>
     /// <remarks>
     /// §4 footgun note: <c>app.GetEndpoint(name, scheme)</c> does not exist as a

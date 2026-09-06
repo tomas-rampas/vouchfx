@@ -358,11 +358,13 @@ public sealed class GitChangeSetTests
     /// Every git call is launched by a ROOTED file name, never the bare name <c>git</c>.
     /// </summary>
     /// <remarks>
-    /// This is the whole of #499 expressed as an assertion. A bare, unqualified name is not a PATH
-    /// lookup on Windows: the OS searches the calling executable's directory and the CURRENT
-    /// DIRECTORY first, and the current directory here is the one holding the suite under test —
-    /// so a <c>git.exe</c> committed into an untrusted repository won. A rooted name is taken
-    /// literally by both <c>CreateProcess</c> and <c>execve</c>, so there is no search to lose.
+    /// This is the whole of #499 expressed as an assertion. A bare, unqualified name is not a
+    /// <c>PATH</c> lookup on Windows; the OS applies its own search order, whose FIRST entry is the
+    /// calling executable's own directory — measured on this host: an impostor <c>git.exe</c>
+    /// dropped beside the caller is launched in preference to the real git on <c>PATH</c>, which
+    /// for a dotnet global tool means one user-writable file in <c>~/.dotnet/tools</c>. A rooted
+    /// name is taken literally by both <c>CreateProcess</c> and <c>execve</c>, so there is no
+    /// search to lose. GitChangeSet's header records what was probed and did NOT reproduce.
     /// </remarks>
     [Fact]
     public void EveryGitCall_IsLaunchedByARootedPath_NotTheBareName()
@@ -433,31 +435,79 @@ public sealed class GitChangeSetTests
     }
 
     /// <summary>
-    /// A launch failure reports the operating system's reason WITHOUT the resolved path.
+    /// A launch failure does not disclose the resolved git path, driven by a REAL
+    /// <see cref="System.Diagnostics.Process"/> launch failure rather than a hand-built exception.
     /// </summary>
     /// <remarks>
-    /// The runner quotes the file name it was handed, which since #499 is an absolute path to git
-    /// on this host. Host paths do not go into user-facing diagnostics (#375/#473/#488), so the
-    /// mapping takes the INNER message — the informative half — rather than the runner's own.
+    /// <para>
+    /// <strong>The first two assertions are the point of the row.</strong> An earlier version of
+    /// this test constructed the <see cref="ProcessLaunchException"/> itself, with a path-free
+    /// <see cref="IOException"/> inside it, and then asserted that the mapping added no path — so
+    /// it pinned a property of its own fixture and would have passed against a mapping that
+    /// disclosed everything the BCL actually hands it. This row instead makes
+    /// <see cref="SystemProcessRunner"/> fail for real against a rooted, unlaunchable path and
+    /// asserts the raw failure DOES name that path, in both the runner's message and its inner
+    /// one, before asserting the mapped message does not. The pattern is #488's, recorded in
+    /// CHANGELOG.md: assert the raw BCL failure names the path first, so the assertion that
+    /// matters cannot degrade into a vacuous pass.
+    /// </para>
+    /// <para>
+    /// Measured, and it is why the mapping now carries no reason clause at all: .NET composes BOTH
+    /// the executable path AND the working directory into the <c>Win32Exception</c> message, so
+    /// <c>InnerException.Message</c> is the SOURCE of the leak rather than a path-free half of it.
+    /// Measured on Windows; the assertion is safe to run everywhere because
+    /// <c>Process.Unix.cs</c>'s <c>ForkAndExecProcess</c> reaches the SAME
+    /// <c>CreateExceptionForErrorStartingProcess(message, errno, resolvedFilename, cwd)</c> helper
+    /// on its failure paths (read from the dotnet/runtime release/8.0 source, not measured here).
+    /// </para>
+    /// <para>
+    /// Nothing is launched: the candidate is a rooted path under the temp directory that is
+    /// deliberately never created, so the failure happens inside <c>CreateProcess</c>/<c>execve</c>
+    /// and the row leaves no child, no file and no directory behind. The working directory is the
+    /// temp directory itself, which exists on every host — a non-existent one would fail for a
+    /// second reason and blur what is being measured.
+    /// </para>
     /// </remarks>
     [Fact]
-    public void LaunchFailure_NamesTheReason_ButNotTheResolvedPath()
+    public void LaunchFailure_DoesNotDiscloseTheResolvedPath()
     {
-        var runner = FakeProcessRunner.Refusing(
-            new ProcessLaunchException(
-                $"Could not start '{FakeGitPath}': Access is denied.",
-                new IOException("Access is denied.")));
+        var hostDirectory = Path.Combine(
+            Path.GetTempPath(), "vouchfx-absent-git-" + Guid.NewGuid().ToString("N"));
+        var absentGit = Path.Combine(
+            hostDirectory, OperatingSystem.IsWindows() ? "git.exe" : "git");
+        Assert.False(Directory.Exists(hostDirectory)); // nothing is created, so nothing is left.
 
-        var ex = Assert.Throws<ChangeSetException>(() => NewChangeSet("main", runner));
+        // A short budget: the launch fails inside CreateProcess/execve, so no wait is ever
+        // entered and the ceiling only bounds a pathological host.
+        var runner = new SystemProcessRunner(System.TimeSpan.FromSeconds(10));
+
+        // (1) The raw BCL failure DOES name the resolved path — otherwise (3) proves nothing.
+        var raw = Assert.Throws<ProcessLaunchException>(
+            () => runner.Run(absentGit, new[] { "rev-parse" }, Path.GetTempPath()));
+
+        Assert.Contains(absentGit, raw.Message, System.StringComparison.Ordinal);
+
+        // (2) ...and so does the INNER exception, which is the composed Win32Exception. This is
+        // the assertion that retires the claim that taking the inner message "structurally cannot
+        // carry the path": it carries the executable path AND the working directory.
+        var inner = Assert.IsAssignableFrom<System.ComponentModel.Win32Exception>(raw.InnerException);
+        Assert.Contains(absentGit, inner.Message, System.StringComparison.Ordinal);
+        Assert.Contains(
+            Path.GetTempPath().TrimEnd(Path.DirectorySeparatorChar),
+            inner.Message,
+            System.StringComparison.Ordinal);
+
+        // (3) The mapped, user-facing message names neither.
+        var mapped = Assert.Throws<ChangeSetException>(
+            () => new GitChangeSet("main", Path.GetTempPath(), runner, () => absentGit));
 
         Assert.Contains(
-            "Is git installed and on PATH?", ex.Message, System.StringComparison.Ordinal);
-        Assert.Contains("Access is denied.", ex.Message, System.StringComparison.Ordinal);
+            "Is git installed and on PATH?", mapped.Message, System.StringComparison.Ordinal);
 
         // The repo's shared property assertion (#357/#375/#473) rather than a DoesNotContain on
         // this one literal: it also refuses any OTHER rooted token the mapping might later grow.
         HostPathDisclosure.AssertNoAbsoluteHostPath(
-            "the change-set launch-failure message", ex.Message, FakeGitDirectory);
+            "the change-set launch-failure message", mapped.Message, hostDirectory);
     }
 
     // ---- The PATH search itself (#499) ------------------------------------------------

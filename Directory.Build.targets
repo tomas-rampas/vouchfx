@@ -1,0 +1,25 @@
+<Project>
+  <!-- The doc-comment gate's two suppressions (#430, #490), applied HERE rather than in
+       Directory.Build.props so a project can opt out of them.
+
+       Directory.Build.props is imported before the project's own content, so a project
+       cannot set a flag that props would see. Directory.Build.targets is imported AFTER
+       it, so the condition below reads a property the project set for itself. NoWarn is
+       consumed by the compiler well after both, so setting it here is equivalent to
+       setting it there for every project that does not opt out.
+
+       See Directory.Build.props for why CS1591 (missing XML comment) and CS1573 (missing
+       <param>) are suppressed by default, and for the six projects that opt out because
+       they enforced both as build errors before the repo-wide GenerateDocumentationFile
+       existed. Those projects set:
+
+           <VouchfxDocumentEveryPublicMember>true</VouchfxDocumentEveryPublicMember>
+
+       Suppression is the quiet default and requiring documentation is the explicit,
+       per-project exception: the gate this repository wants is malformed-or-wrong
+       documentation, not absent documentation, and only the projects whose public
+       surface is a published contract hold the stricter line. -->
+  <PropertyGroup Condition="'$(VouchfxDocumentEveryPublicMember)' != 'true'">
+    <NoWarn>$(NoWarn);CS1591;CS1573</NoWarn>
+  </PropertyGroup>
+</Project>
