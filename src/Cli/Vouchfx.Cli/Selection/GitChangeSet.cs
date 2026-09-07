@@ -23,39 +23,59 @@
 // The bare name "git" used to be handed to the runner, and on Windows that is NOT a PATH lookup.
 // .NET starts a process with `lpApplicationName = null`, putting everything in the command line
 // (`Process.Windows.cs`, "we don't need this since all the info is in commandLine"), so Windows
-// applies ITS OWN search order to the unqualified name. What that search order buys an attacker
-// is stated below at the two different confidence levels the evidence supports — the first is
-// MEASURED, the second was probed and did NOT reproduce.
+// applies ITS OWN search order to the unqualified name. TWO of that order's terms are reachable
+// from here, and BOTH were measured to beat `PATH` on a default host.
 //
-// MEASURED, on this host (Windows 11, net8.0, UseShellExecute = false). An impostor `git.exe`
-// placed in the APPLICATION LOAD DIRECTORY — beside the calling executable — is launched in
-// preference to the real git on `PATH`: the probe's child printed the impostor's marker, exit 0,
-// while the identical call with the impostor removed printed `git version 2.54.0.windows.1`. That
-// directory is the first entry in the documented search order, and it is not hypothetical for a
-// tool installed as a dotnet global tool: everything in `~/.dotnet/tools` is writable by the user,
-// and one file dropped there takes over every git call this file makes. That precedence — the
-// application load directory ahead of `PATH` — is the whole of what this change removes.
+// Every measurement below was taken on Windows 11 build 26200.9168, net8.0, from a console app
+// calling `Process.Start` with `UseShellExecute = false` and a bare `FileName`, against a planted
+// `git.exe` that prints a marker. Two positive controls run in the same harness, so that a "not
+// found" is never mistaken for a harness that cannot see an impostor: placing the plant directory
+// ON `PATH` runs the marker, and removing the impostor again runs the real git.
+//
+// (1) THE APPLICATION LOAD DIRECTORY — beside the calling executable. An impostor there ran in
+// preference to the real git on `PATH` (marker, exit 0); with the impostor removed, the identical
+// call printed `git version 2.54.0.windows.1`. That is not hypothetical for a tool installed as a
+// dotnet global tool: everything in `~/.dotnet/tools` is writable by the user, and one file
+// dropped there takes over every git call this file makes.
+//
+// (2) THE CALLING PROCESS'S CURRENT DIRECTORY, which also beats `PATH`, on a host where
+// `NoDefaultCurrentDirectoryInExePath` is absent — see the next paragraph, because that condition
+// is the whole reason this term was once written off. With the impostor present only in that
+// directory and no git on `PATH` at all, the marker ran (exit 0); with the real git added to
+// `PATH`, the marker STILL ran. `cd untrusted-repo && vouchfx run . --changed-since main` gives
+// the CLI exactly that current directory — the process inherits the shell's, and nothing in this
+// CLI ever calls `Directory.SetCurrentDirectory` — so a `git.exe` committed at the root of the
+// repository under test won, needing no write access to the user's profile, which makes it at
+// least as reachable as (1).
+//
+// AN EARLIER REVISION OF THIS HEADER RECORDED (2) AS "PROBED AND DID NOT REPRODUCE", AND THAT
+// NON-REPRODUCTION WAS AN ARTEFACT OF THE MEASURING ENVIRONMENT. `NoDefaultCurrentDirectoryInExePath`
+// suppresses the current-directory term, and it is NOT a Windows default: measured on this host,
+// `Machine=''` and `User=''`, while `Process='1'` in the environment this repository's tooling runs
+// under. So every probe that inherited that environment was measuring a host with the term already
+// switched off. (Which link in the chain sets it was not established; Git Bash was ruled out —
+// launched from a parent without the variable, it does not add it.) Clearing it in the CALLING
+// process flips the row. The child's environment block is not consulted at all: measured, SETTING
+// the variable in `psi.Environment` while the caller's block lacked it did not re-suppress the
+// term, so a fix or a probe applied there changes nothing.
+//
+// ONE HALF OF THE OLD CORRECTION STANDS, restated because it is easy to re-break: the original
+// filing named the wrong MECHANISM. `ProcessStartInfo.WorkingDirectory` sets `lpCurrentDirectory`
+// FOR THE CHILD and takes no part in resolving the command line's module name. The term that wins
+// is the calling process's own current directory, which this CLI inherits from the shell rather
+// than sets. The mechanism was wrong; the substance was right.
+//
+// A ROOTED `ProcessStartInfo.FileName` removes the whole question rather than answering it: both
+// `CreateProcess` and `execve` take a rooted path literally and search nothing. So this change
+// removes the search entirely — every term of it, including the application load directory, the
+// calling process's current directory, and the system and Windows directories — and puts `PATH`,
+// in order, in their place.
 //
 // NOT CLOSED, and saying so is the point of the paragraph. An attacker-writable directory sitting
 // EARLIER IN `PATH` than git's own still wins, because the search below takes the first `PATH`
 // match and launches that. Nothing here re-orders or vets `PATH`; the change moves the resolution
 // from "whatever Windows searches" to "`PATH`, in order, and nothing else", which is strictly
 // smaller but is not empty.
-//
-// PROBED AND DID NOT REPRODUCE — the CURRENT-DIRECTORY story this header used to tell. The claim
-// was that `ProcessStartInfo.WorkingDirectory` is derived from the discovery root, so a `git.exe`
-// committed into an untrusted repository won. It is wrong on paper and wrong in measurement.
-// On paper: the documented search order names the CURRENT DIRECTORY OF THE CALLING PROCESS, while
-// `WorkingDirectory` sets `lpCurrentDirectory` FOR THE CHILD and takes no part in resolving the
-// command line's module name. In measurement, on this host, neither spelling won — with the
-// impostor present in the plant directory and absent from the application load directory, both
-// `WorkingDirectory = <plant dir>` and `Directory.SetCurrentDirectory(<plant dir>)` launched the
-// real git. So that scenario is NOT what this fix closes, and the past tense it was written in
-// ("ran instead of the real git") was never earned.
-//
-// A ROOTED `ProcessStartInfo.FileName` removes the whole question rather than answering it: both
-// `CreateProcess` and `execve` take a rooted path literally and search nothing. That is worth
-// doing for the measured hazard alone, and it makes the unmeasured one moot as a side effect.
 //
 // THE ONLY WINDOWS CANDIDATE IS `git.exe`, AND WIDENING THAT IS A SHELL-INJECTION SINK. The
 // resolution replaces the OS search, so its candidate set must not be larger than the one it
@@ -408,6 +428,19 @@ internal sealed class GitChangeSet : IChangeSet
     /// against that drive's current directory and is therefore not rooted in any useful sense.
     /// </para>
     /// <para>
+    /// <strong>AN ENTRY IS USED VERBATIM — NEITHER UNQUOTED NOR TRIMMED.</strong> Both are
+    /// <c>cmd.exe</c> behaviours rather than <c>CreateProcess</c> ones, so either would resolve an
+    /// entry the OS search this replaces does not. Measured on this host (Windows 11 build
+    /// 26200.9168, net8.0), by a bare-name <c>Process.Start</c> with <c>UseShellExecute = false</c>
+    /// from a console app, against a directory holding one real executable: the entry spelt plainly
+    /// LAUNCHED; spelt with a leading space, a trailing space, a leading tab, or wrapped in literal
+    /// quotes it was NOT FOUND in all four cases. This search returns exactly those five answers.
+    /// Trimming was the live defect rather than a hypothetical one: it made a leading-space entry
+    /// resolve, and a leading-space entry written FIRST — the shape <c>PATH=%PATH%; C:\tools</c>
+    /// leaves behind — then shadowed a real git in a later entry, promoting a directory Windows
+    /// ignores into the highest-priority one here.
+    /// </para>
+    /// <para>
     /// <strong>ONE CANDIDATE PER ENTRY, AND ON WINDOWS IT IS <c>.exe</c> — NOT <c>PATHEXT</c>.</strong>
     /// The header records the two measurements behind that: the OS search this replaces appends
     /// only <c>.exe</c>, and a <c>.cmd</c>/<c>.bat</c> candidate would be launched through
@@ -418,6 +451,15 @@ internal sealed class GitChangeSet : IChangeSet
     /// check, accepting any of the three bits rather than computing what the effective user may
     /// actually run; that is the same approximation <c>which</c> makes, and erring towards "found"
     /// costs at worst a launch failure that is already mapped.
+    /// </para>
+    /// <para>
+    /// <strong>A POSIX MATCH WITHOUT AN EXECUTE BIT IS SKIPPED AND THE SEARCH CONTINUES — the one
+    /// place the "resolve nothing the OS would not" rule is knowingly relaxed.</strong> Where an
+    /// earlier entry holds a non-executable <c>git</c> and a later one holds a real one, this
+    /// search returns the later, whereas a resolution that stopped at the first existing file
+    /// would refuse. It is admitted rather than overlooked: the file skipped is one no caller
+    /// could have launched, so the divergence is between a refusal and a genuinely executable
+    /// later entry, never between two runnable binaries.
     /// </para>
     /// <para>
     /// Takes <c>PATH</c> as an argument rather than reading the environment so that the search can
@@ -434,20 +476,8 @@ internal sealed class GitChangeSet : IChangeSet
 
         var fileName = CandidateFileName(name, OperatingSystem.IsWindows());
 
-        foreach (var rawEntry in pathVariable.Split(Path.PathSeparator))
+        foreach (var entry in pathVariable.Split(Path.PathSeparator))
         {
-            // Surrounding WHITESPACE only. A quoted Windows entry ("C:\Program Files\Git\cmd") is
-            // deliberately NOT unquoted: quote-stripping is a cmd.exe behaviour, not a
-            // CreateProcess one, so stripping here would resolve an entry the OS search this
-            // replaces does not — the widening this method exists to refuse. Measured on this
-            // host, net8.0, against a directory holding one real executable: with the entry spelt
-            // with literal quotes, a bare-name Process.Start (UseShellExecute = false) threw
-            // Win32Exception "The system cannot find the file specified"; with the same entry
-            // unquoted it launched (exit 2); and `cmd.exe /c` against the QUOTED entry launched it
-            // too (exit 2, not 9009). So a quoted entry is "not found" here, which is the answer
-            // the bare-name launch gave before #499 introduced this search at all.
-            var entry = rawEntry.Trim();
-
             if (entry.Length == 0 || !Path.IsPathFullyQualified(entry))
             {
                 continue;

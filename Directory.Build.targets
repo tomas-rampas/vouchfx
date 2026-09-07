@@ -18,7 +18,16 @@
        Suppression is the quiet default and requiring documentation is the explicit,
        per-project exception: the gate this repository wants is malformed-or-wrong
        documentation, not absent documentation, and only the projects whose public
-       surface is a published contract hold the stricter line. -->
+       surface is a published contract hold the stricter line.
+
+       THIS FILE IS SILENTLY SHADOWABLE, AND NOTHING WOULD REPORT IT. MSBuild imports only the
+       NEAREST Directory.Build.targets found walking up from a project, so a new one added under
+       tests/, src/ or examples/ would replace this file for every project beneath it rather than
+       adding to it — turning CS1591 (missing XML comment) back into a build error across those
+       assemblies with no diagnostic naming the cause. The pattern is already live one directory
+       down: tests/Directory.Build.props exists and has to re-import the root explicitly via
+       GetPathOfFileAbove for exactly this reason. A sibling added here must carry the same
+       import. -->
   <PropertyGroup Condition="'$(VouchfxDocumentEveryPublicMember)' != 'true'">
     <NoWarn>$(NoWarn);CS1591;CS1573</NoWarn>
   </PropertyGroup>

@@ -364,7 +364,10 @@ public sealed class GitChangeSetTests
     /// dropped beside the caller is launched in preference to the real git on <c>PATH</c>, which
     /// for a dotnet global tool means one user-writable file in <c>~/.dotnet/tools</c>. A rooted
     /// name is taken literally by both <c>CreateProcess</c> and <c>execve</c>, so there is no
-    /// search to lose. GitChangeSet's header records what was probed and did NOT reproduce.
+    /// search to lose. A SECOND term also beats <c>PATH</c> — the calling process's own current
+    /// directory, which for <c>cd untrusted-repo &amp;&amp; vouchfx run . --changed-since main</c>
+    /// is the repository under test. <c>GitChangeSet</c>'s header carries both measurements, the
+    /// environment variable that made the second one look unreproducible, and what remains open.
     /// </remarks>
     [Fact]
     public void EveryGitCall_IsLaunchedByARootedPath_NotTheBareName()
@@ -631,15 +634,19 @@ public sealed class GitChangeSetTests
     /// <remarks>
     /// <para>
     /// <strong>Why this row exists alongside the one above.</strong> That row plants a real
-    /// <c>.cmd</c>/<c>.bat</c> on disk, so it early-returns off Windows — and every blocking CI
-    /// lane is <c>ubuntu-latest</c> (#366), which makes it a no-op on the gate: a change putting
-    /// <c>.cmd</c> back into the candidate set would go green. This row takes the platform as an
-    /// argument instead of reading it, so the rule survives review on the lane that actually runs.
+    /// <c>.cmd</c>/<c>.bat</c> on disk, so it early-returns off Windows, and every blocking CI lane
+    /// is <c>ubuntu-latest</c> (#366) — leaving the name this seam composes unasserted on the lane
+    /// that actually blocks. This row takes the platform as an argument instead of reading it, so
+    /// it runs everywhere.
     /// </para>
     /// <para>
-    /// Asserted as equality against the WHOLE name, not a suffix check, because the property is
-    /// "one candidate, and it is <c>.exe</c>" — a <c>PATHEXT</c>-style widening would still end in
-    /// <c>.exe</c> for one of its candidates and pass a weaker assertion.
+    /// <strong>It pins the name, and states its own limit rather than implying more.</strong> A
+    /// <c>PATHEXT</c>-style widening would be a loop over several extensions inside
+    /// <see cref="GitChangeSet.LocateOnPath(string, string?)"/>, leaving
+    /// <see cref="GitChangeSet.CandidateFileName(string, bool)"/> returning <c>git.exe</c>
+    /// untouched — so it would pass this row and early-return on the Windows-only one. Nothing in
+    /// this file gates the coupling between the two, and no source census was added for it; the
+    /// residual is recorded on <c>CandidateFileName</c> itself.
     /// </para>
     /// </remarks>
     [Fact]
@@ -697,6 +704,51 @@ public sealed class GitChangeSetTests
         Assert.Null(GitChangeSet.LocateOnPath("git", entries));
     }
 
+    /// <summary>
+    /// An entry is taken VERBATIM: neither unquoted nor trimmed of surrounding whitespace.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Both normalisations are <c>cmd.exe</c> behaviours rather than <c>CreateProcess</c> ones, so
+    /// either resolves an entry the OS search this replaces does not. Measured on Windows 11 build
+    /// 26200.9168 / net8.0, with a bare-name <c>Process.Start</c> (<c>UseShellExecute = false</c>)
+    /// against a directory holding one real executable: spelt plainly it LAUNCHED; spelt with a
+    /// leading space, a trailing space, a leading tab, or wrapped in literal quotes it was NOT
+    /// FOUND in all four cases. The five assertions below are those five answers.
+    /// </para>
+    /// <para>
+    /// <strong>The shadowing assertion is the one with teeth.</strong> A <c>.Trim()</c> here used
+    /// to resolve all three whitespace spellings, so a leading-space entry written FIRST — the
+    /// shape a <c>PATH=%PATH%; C:\tools</c> hand-edit leaves behind — beat a real git in a later
+    /// entry, promoting a directory Windows ignores to the highest-priority one in this search.
+    /// Cross-platform on purpose, and by two different mechanisms: the quoted and leading-whitespace
+    /// spellings are not fully qualified on either platform, while the trailing-whitespace one is,
+    /// and is refused one step later because it composes to <c>&lt;dir&gt; /git</c>, which no
+    /// platform holds. So the row runs on the blocking ubuntu lane rather than skipping there.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void LocateOnPath_TakesEntriesVerbatim_NeitherUnquotingNorTrimming()
+    {
+        using var fixture = new LocatorFixture();
+        using var real = new LocatorFixture();
+
+        // Control: the same directory, spelt plainly, DOES resolve.
+        Assert.NotNull(GitChangeSet.LocateOnPath("git", fixture.DirectoryPath));
+
+        Assert.Null(GitChangeSet.LocateOnPath("git", "\"" + fixture.DirectoryPath + "\""));
+        Assert.Null(GitChangeSet.LocateOnPath("git", " " + fixture.DirectoryPath));
+        Assert.Null(GitChangeSet.LocateOnPath("git", fixture.DirectoryPath + " "));
+        Assert.Null(GitChangeSet.LocateOnPath("git", "\t" + fixture.DirectoryPath));
+
+        // ...and a whitespace-decorated entry listed FIRST does not shadow a plain later one.
+        var entries = " " + fixture.DirectoryPath + Path.PathSeparator + real.DirectoryPath;
+        Assert.Equal(
+            real.ExecutablePath,
+            GitChangeSet.LocateOnPath("git", entries),
+            ignoreCase: OperatingSystem.IsWindows());
+    }
+
     [Fact]
     public void LocateOnPath_ReturnsNull_WhenNoEntryHoldsTheExecutable()
     {
@@ -708,23 +760,82 @@ public sealed class GitChangeSetTests
     }
 
     /// <summary>
-    /// The production locator either finds a real, fully qualified git or reports nothing.
+    /// The production locator yields a real, fully qualified git wherever the operating system's
+    /// own bare-name launch finds one — and never yields something unrooted.
     /// </summary>
     /// <remarks>
-    /// Deliberately tolerant of a host without git — the point it pins is that the search NEVER
-    /// yields something unrooted, which is the property the whole fix rests on.
+    /// <para>
+    /// <strong>The second assertion is the functional-regression gate, and until it was added
+    /// nothing was one.</strong> This row used to early-return when the locator reported nothing,
+    /// and the only other row that runs a real git —
+    /// <see cref="RealGit_AgainstThisRepo_DoesNotThrow"/> — catches
+    /// <see cref="ChangeSetException"/> and moves on. That catch predates #499 but its scope
+    /// widened with it: it used to swallow "<c>Process.Start</c> could not find git" and now also
+    /// swallows "OUR search could not find git". So a narrowing that refused a genuinely installed
+    /// git went green on every lane, on a change whose whole premise is replacing the operating
+    /// system's search with this one. <c>git</c> is present on <c>ubuntu-latest</c> — <c>actions/checkout</c>
+    /// requires it — so the assertion reddens the blocking lane rather than skipping there.
+    /// </para>
+    /// <para>
+    /// <strong>The reference is deliberately the operating system's own answer, and it is a
+    /// slightly wider one.</strong> The bare-name launch also searches terms this resolution drops
+    /// (the application load directory, the calling process's current directory), so the only way
+    /// this assertion can fail without a real defect is a <c>git</c> reachable ONLY through one of
+    /// those — i.e. planted beside the test host or in its working directory. That is worth a red
+    /// build in its own right, so no attempt is made to subtract those terms; doing so would mean
+    /// mutating this process's <c>PATH</c>, which races every other row in the assembly.
+    /// </para>
     /// </remarks>
     [Fact]
-    public void LocateGitOnPath_YieldsAFullyQualifiedPath_OrNothing()
+    public void LocateGitOnPath_FindsAnyGitTheOperatingSystemWouldLaunch()
     {
         var located = GitChangeSet.LocateGitOnPath();
-        if (located is null)
+
+        if (located is not null)
         {
-            return; // No git on this host; the refusal is covered by its own row.
+            Assert.True(Path.IsPathFullyQualified(located), located);
+            Assert.True(File.Exists(located), located);
         }
 
-        Assert.True(Path.IsPathFullyQualified(located), located);
-        Assert.True(File.Exists(located), located);
+        if (BareNameGitLaunches())
+        {
+            Assert.NotNull(located);
+        }
+    }
+
+    /// <summary>
+    /// Whether this host launches <c>git --version</c> from the bare name, by the operating
+    /// system's own search — the reference the row above compares against.
+    /// </summary>
+    private static bool BareNameGitLaunches()
+    {
+        var psi = new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = "git", // BARE, so the OS performs the search this file replaces.
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        psi.ArgumentList.Add("--version");
+
+        try
+        {
+            using var process = System.Diagnostics.Process.Start(psi);
+            if (process is null)
+            {
+                return false;
+            }
+
+            // Drained before the wait: a child that fills a redirected pipe blocks otherwise.
+            process.StandardOutput.ReadToEnd();
+            process.StandardError.ReadToEnd();
+            process.WaitForExit();
+            return process.ExitCode == 0;
+        }
+        catch (System.ComponentModel.Win32Exception)
+        {
+            return false; // No git this host can launch from the bare name.
+        }
     }
 
     // ---- Optional real-git smoke test -------------------------------------------------
