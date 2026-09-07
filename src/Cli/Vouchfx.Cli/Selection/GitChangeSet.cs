@@ -39,7 +39,9 @@
 // preference to the real git on `PATH` (marker, exit 0); with the impostor removed, the identical
 // call printed `git version 2.54.0.windows.1`. That is not hypothetical for a tool installed as a
 // dotnet global tool: everything in `~/.dotnet/tools` is writable by the user, and one file
-// dropped there takes over every git call this file makes.
+// dropped there takes over every git call this file makes. That same directory is also ON `PATH`
+// for a global tool, which is why the NOT CLOSED paragraph below narrows this term rather than
+// closing it.
 //
 // (2) THE CALLING PROCESS'S CURRENT DIRECTORY, which also beats `PATH`, on a host where
 // `NoDefaultCurrentDirectoryInExePath` is absent — see the next paragraph, because that condition
@@ -62,13 +64,16 @@
 // the variable in `psi.Environment` while the caller's block lacked it did not re-suppress the
 // term, so a fix or a probe applied there changes nothing.
 //
-// RE-PROBE FROM A CONSOLE APP, NOT THROUGH A SHELL. Measured alongside the rows above: the same
-// probe run through `pwsh.exe` rather than from a console app reported NOT FOUND even with the
-// variable verified absent inside the measuring process, so the launching process matters
-// independently of the variable — by a mechanism nobody has established, and nothing here should
-// be read as explaining it. It is recorded because a shell-hosted re-probe therefore reproduces
-// the PRE-CORRECTION answer, and the reader who gets it is one step from deleting the paragraph
-// above for a second time.
+// BEFORE CONCLUDING ANYTHING ABOUT (2), ASSERT THAT `[Environment]::CurrentDirectory` IS THE PLANT
+// DIRECTORY. Measured: after `Set-Location 'C:\Windows\System32'`, `$PWD` read
+// `C:\Windows\System32` while `[Environment]::CurrentDirectory` still read the shell's start
+// directory. PowerShell's `Set-Location` moves `$PWD` but NOT the Win32 process current directory,
+// and the latter is the one `CreateProcess` searches. A probe that changes directory that way
+// therefore plants its impostor somewhere that was never the calling process's current directory,
+// and reports NOT FOUND correctly without ever exercising this term — which is to say it
+// reproduces the PRE-CORRECTION answer and puts the reader one step from deleting the paragraph
+// above for a second time. The instruction is the assertion, not the harness: a console app gets
+// this wrong just as easily.
 //
 // ONE HALF OF THE OLD CORRECTION STANDS, restated because it is easy to re-break: the original
 // filing named the wrong MECHANISM. `ProcessStartInfo.WorkingDirectory` sets `lpCurrentDirectory`
@@ -82,11 +87,14 @@
 // calling process's current directory, and the system and Windows directories — and puts `PATH`,
 // in order, in their place.
 //
-// NOT CLOSED, and saying so is the point of the paragraph. An attacker-writable directory sitting
-// EARLIER IN `PATH` than git's own still wins, because the search below takes the first `PATH`
-// match and launches that. Nothing here re-orders or vets `PATH`; the change moves the resolution
-// from "whatever Windows searches" to "`PATH`, in order, and nothing else", which is strictly
-// smaller but is not empty.
+// NOT CLOSED, AND `~/.dotnet/tools` IS ONE OF THE DIRECTORIES IT IS NOT CLOSED AGAINST. An
+// attacker-writable directory sitting EARLIER IN `PATH` than git's own still wins, because the
+// search below takes the first `PATH` match and launches that. For a global tool the install
+// directory from (1) is such a directory BY CONSTRUCTION — it has to be on `PATH` for the shell to
+// find `vouchfx` at all — so the drop in (1) is NARROWED here, from an unconditional win to a
+// `PATH`-ORDER-DEPENDENT one, and not refused. Nothing here re-orders or vets `PATH`; the change
+// moves the resolution from "whatever Windows searches" to "`PATH`, in order, and nothing else",
+// which is strictly smaller but is not empty.
 //
 // THE ONLY WINDOWS CANDIDATE IS `git.exe`, AND WIDENING THAT IS A SHELL-INJECTION SINK. The
 // resolution replaces the OS search, so its candidate set must not be larger than the one it
@@ -470,8 +478,9 @@ internal sealed class GitChangeSet : IChangeSet
     /// because it returns the first match, the launch then fails on permission (<c>EACCES</c>, by
     /// the <c>execve</c> contract rather than by a measurement of this path), and <c>RunGit</c>
     /// maps that to a <c>ChangeSetException</c> — exit 2 on a host where a later entry holds a
-    /// runnable git. That is the same harm shape as the whitespace trim deleted in the round before this
-    /// one: an entry the operating system would have passed over shadows a legitimate later one.
+    /// runnable git. That is the same harm shape as the whitespace trim the AN ENTRY IS USED
+    /// VERBATIM paragraph above records deleting: an entry the operating system would have passed
+    /// over shadows a legitimate later one.
     /// A match with NO execute bit set at all is skipped and the search continues, so the shadowing
     /// needs a bit set for somebody else. Which direction this diverges in against .NET's own Unix
     /// resolution is UNMEASURED — the measurements in this file were all taken on Windows, and the

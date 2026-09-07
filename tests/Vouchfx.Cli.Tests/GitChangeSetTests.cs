@@ -790,13 +790,16 @@ public sealed class GitChangeSetTests
     /// <strong>The reference is deliberately the operating system's own answer, and it is a wider
     /// one, so a red here has three shapes and only the first is a defect in the resolver.</strong>
     /// (1) A genuine narrowing — the regression this row exists to catch. (2) A <c>git</c> reachable
-    /// ONLY through a term this resolution drops (the application load directory, the calling
-    /// process's current directory) — i.e. planted beside the test host or in its working directory,
-    /// which is worth a red build in its own right. (3) A <c>PATH</c> ENTRY THIS RESOLVER
+    /// ONLY through one of the terms the header of <see cref="GitChangeSet"/> enumerates as dropped,
+    /// deliberately not re-listed here: a second copy of that list is exactly what drifts out of step
+    /// with it. Whichever term it is, a git reachable only that way is worth a red build in its own
+    /// right. (3) A <c>PATH</c> ENTRY THIS RESOLVER
     /// DELIBERATELY SKIPS WHILE THE OS HONOURS IT, holding the host's only git: a RELATIVE entry,
     /// refused on both platforms by <c>LocateOnPath</c>'s <c>Path.IsPathFullyQualified</c> guard,
-    /// and on POSIX an EMPTY element, which that same guard skips and the OS reads as the current
-    /// directory. Shape (3) is a design decision rather than a defect, and it is listed so that a
+    /// and an EMPTY element, which that same guard skips and which the OS reads as the current
+    /// directory on some platforms — see <c>LocateOnPath</c>'s own remarks, which are where that
+    /// scope is stated. Shape (3) is a design
+    /// decision rather than a defect, and it is listed so that a
     /// red does not send a reader hunting for a planted git. No attempt is made to subtract the
     /// dropped terms; doing so would mean mutating this process's <c>PATH</c>, which races every
     /// other row in the assembly.
