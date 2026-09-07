@@ -54,7 +54,12 @@ internal interface IProcessRunner
     /// Runs <paramref name="fileName"/> with <paramref name="arguments"/> in
     /// <paramref name="workingDirectory"/> and captures its result, within a bounded budget.
     /// </summary>
-    /// <param name="fileName">The executable to launch (e.g. <c>git</c>).</param>
+    /// <param name="fileName">
+    /// The executable to launch, as a ROOTED path. This seam resolves nothing, and an unrooted name
+    /// is resolved by the operating system's own search — which on Windows reaches the calling
+    /// executable's directory and the calling process's current directory ahead of <c>PATH</c>, so
+    /// a bare <c>git</c> here is the hole #499 closed. Every caller resolves first.
+    /// </param>
     /// <param name="arguments">The argument vector (each element passed verbatim — no shell quoting).</param>
     /// <param name="workingDirectory">The working directory to launch the process in.</param>
     /// <param name="cancellationToken">

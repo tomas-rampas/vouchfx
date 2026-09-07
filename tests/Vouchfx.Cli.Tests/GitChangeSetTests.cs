@@ -1,9 +1,12 @@
-// Vouchfx.Cli.Tests — GitChangeSet unit tests (S07-C-02). No Docker, no real git.
+// Vouchfx.Cli.Tests — GitChangeSet unit tests (S07-C-02). No Docker.
 //
 // GitChangeSet shells out to git behind IProcessRunner. These tests inject a fake runner
 // that returns canned `git rev-parse` / `git diff` / `git status` output (and the error
 // cases) so the parsing, path-resolution and error-mapping are exercised WITHOUT a real
-// repository. One OPTIONAL smoke test runs against the actual repo when git is available.
+// repository. TWO rows do launch a real git, and only one of them is optional: the smoke
+// test against this repo no-ops when git is unavailable, while the locator-equivalence row
+// launches `git --version` unconditionally as its reference — bounded, and answering "does
+// not launch" if that probe times out.
 //
 // Since #499 a second collaborator is injected alongside the runner: the locator that resolves
 // `git` to a rooted path. Every row below supplies a fake one, because the resolution happens
@@ -15,6 +18,8 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using Vouchfx.Cli.Selection;
 using Vouchfx.TestSupport;
 using Xunit;
@@ -24,6 +29,11 @@ namespace Vouchfx.Cli.Tests;
 public sealed class GitChangeSetTests
 {
     private const string RepoRoot = "/repo";
+
+    // The ceiling on the bare-name reference probe below. A ceiling, not a latency target:
+    // `git --version` returns in milliseconds, and the only decision this makes is how long a
+    // wedged one may hold the run before the probe gives up and answers "does not launch".
+    private const int BareNameProbeBudgetMilliseconds = 30_000;
 
     // A scripted IProcessRunner: maps the git subcommand (first argument) to a canned result.
     private sealed class FakeProcessRunner : IProcessRunner
@@ -777,13 +787,19 @@ public sealed class GitChangeSetTests
     /// requires it — so the assertion reddens the blocking lane rather than skipping there.
     /// </para>
     /// <para>
-    /// <strong>The reference is deliberately the operating system's own answer, and it is a
-    /// slightly wider one.</strong> The bare-name launch also searches terms this resolution drops
-    /// (the application load directory, the calling process's current directory), so the only way
-    /// this assertion can fail without a real defect is a <c>git</c> reachable ONLY through one of
-    /// those — i.e. planted beside the test host or in its working directory. That is worth a red
-    /// build in its own right, so no attempt is made to subtract those terms; doing so would mean
-    /// mutating this process's <c>PATH</c>, which races every other row in the assembly.
+    /// <strong>The reference is deliberately the operating system's own answer, and it is a wider
+    /// one, so a red here has three shapes and only the first is a defect in the resolver.</strong>
+    /// (1) A genuine narrowing — the regression this row exists to catch. (2) A <c>git</c> reachable
+    /// ONLY through a term this resolution drops (the application load directory, the calling
+    /// process's current directory) — i.e. planted beside the test host or in its working directory,
+    /// which is worth a red build in its own right. (3) A <c>PATH</c> ENTRY THIS RESOLVER
+    /// DELIBERATELY SKIPS WHILE THE OS HONOURS IT, holding the host's only git: a RELATIVE entry,
+    /// refused on both platforms by <c>LocateOnPath</c>'s <c>Path.IsPathFullyQualified</c> guard,
+    /// and on POSIX an EMPTY element, which that same guard skips and the OS reads as the current
+    /// directory. Shape (3) is a design decision rather than a defect, and it is listed so that a
+    /// red does not send a reader hunting for a planted git. No attempt is made to subtract the
+    /// dropped terms; doing so would mean mutating this process's <c>PATH</c>, which races every
+    /// other row in the assembly.
     /// </para>
     /// </remarks>
     [Fact]
@@ -807,6 +823,18 @@ public sealed class GitChangeSetTests
     /// Whether this host launches <c>git --version</c> from the bare name, by the operating
     /// system's own search — the reference the row above compares against.
     /// </summary>
+    /// <remarks>
+    /// <strong>BOUNDED, AND A TIMEOUT COUNTS AS "DOES NOT LAUNCH".</strong> <c>git --version</c> is
+    /// not the #392 shape — it spawns nothing that could hold the inherited pipes — but this is a
+    /// child wait in the same assembly as the rows that exist to prove unbounded child waits wedge
+    /// the CLI, and an unbounded one here would hang the blocking lane with no diagnostic: no
+    /// assertion message, no failing row, just a job that never returns. The reads are started
+    /// before the wait, because a child that fills a redirected pipe blocks otherwise, and they are
+    /// ABANDONED rather than awaited on the timeout path — the same contract
+    /// <see cref="IProcessRunner"/> documents, for the same reason. Returning <see langword="false"/>
+    /// on a timeout costs only the strength of the row above (it stops asserting on a host that
+    /// cannot answer the reference question), never a false green on a real narrowing.
+    /// </remarks>
     private static bool BareNameGitLaunches()
     {
         var psi = new System.Diagnostics.ProcessStartInfo
@@ -826,10 +854,19 @@ public sealed class GitChangeSetTests
                 return false;
             }
 
-            // Drained before the wait: a child that fills a redirected pipe blocks otherwise.
-            process.StandardOutput.ReadToEnd();
-            process.StandardError.ReadToEnd();
-            process.WaitForExit();
+            // Started before the wait: a child that fills a redirected pipe blocks otherwise.
+            var drain = Task.WhenAll(
+                process.StandardOutput.ReadToEndAsync(),
+                process.StandardError.ReadToEndAsync());
+
+            if (!process.WaitForExit(BareNameProbeBudgetMilliseconds))
+            {
+                ChildProcess.KillTreeQuietly(process);
+                ObserveQuietly(drain);
+                return false;
+            }
+
+            ObserveQuietly(drain);
             return process.ExitCode == 0;
         }
         catch (System.ComponentModel.Win32Exception)
@@ -837,6 +874,17 @@ public sealed class GitChangeSetTests
             return false; // No git this host can launch from the bare name.
         }
     }
+
+    /// <summary>
+    /// Swallows a faulted read so an abandoned capture cannot surface later as an unobserved task
+    /// exception attributed to whichever row happens to be running.
+    /// </summary>
+    private static void ObserveQuietly(Task task) =>
+        _ = task.ContinueWith(
+            static faulted => _ = faulted.Exception,
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
 
     // ---- Optional real-git smoke test -------------------------------------------------
 

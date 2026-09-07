@@ -27,10 +27,13 @@
 // from here, and BOTH were measured to beat `PATH` on a default host.
 //
 // Every measurement below was taken on Windows 11 build 26200.9168, net8.0, from a console app
-// calling `Process.Start` with `UseShellExecute = false` and a bare `FileName`, against a planted
+// calling `Process.Start` with `UseShellExecute = false` — never through a shell, for the reason
+// the re-probe warning below records. The impostor rows use a bare `FileName` against a planted
 // `git.exe` that prints a marker. Two positive controls run in the same harness, so that a "not
 // found" is never mistaken for a harness that cannot see an impostor: placing the plant directory
-// ON `PATH` runs the marker, and removing the impostor again runs the real git.
+// ON `PATH` runs the marker, and removing the impostor again runs the real git. The `.cmd` pair
+// further down uses a rooted `FileName` for its second half and was RE-TAKEN in that same
+// console-app harness, rather than carried over from the earlier one.
 //
 // (1) THE APPLICATION LOAD DIRECTORY — beside the calling executable. An impostor there ran in
 // preference to the real git on `PATH` (marker, exit 0); with the impostor removed, the identical
@@ -58,6 +61,14 @@
 // process flips the row. The child's environment block is not consulted at all: measured, SETTING
 // the variable in `psi.Environment` while the caller's block lacked it did not re-suppress the
 // term, so a fix or a probe applied there changes nothing.
+//
+// RE-PROBE FROM A CONSOLE APP, NOT THROUGH A SHELL. Measured alongside the rows above: the same
+// probe run through `pwsh.exe` rather than from a console app reported NOT FOUND even with the
+// variable verified absent inside the measuring process, so the launching process matters
+// independently of the variable — by a mechanism nobody has established, and nothing here should
+// be read as explaining it. It is recorded because a shell-hosted re-probe therefore reproduces
+// the PRE-CORRECTION answer, and the reader who gets it is one step from deleting the paragraph
+// above for a second time.
 //
 // ONE HALF OF THE OLD CORRECTION STANDS, restated because it is easy to re-break: the original
 // filing named the wrong MECHANISM. `ProcessStartInfo.WorkingDirectory` sets `lpCurrentDirectory`
@@ -447,19 +458,26 @@ internal sealed class GitChangeSet : IChangeSet
     /// <c>cmd.exe</c>, whose parser re-reads arguments that <c>ArgumentList</c> quoted for
     /// <c>CreateProcess</c> — turning the caller's ref into command execution. A host whose only
     /// git is a shim therefore reports "not found", exactly as it did before #499 introduced this
-    /// search at all. POSIX takes the bare name plus an execute-bit
-    /// check, accepting any of the three bits rather than computing what the effective user may
-    /// actually run; that is the same approximation <c>which</c> makes, and erring towards "found"
-    /// costs at worst a launch failure that is already mapped.
+    /// search at all. POSIX takes the bare name plus an execute-bit check — see the next paragraph
+    /// for what that check does and does not establish.
     /// </para>
     /// <para>
-    /// <strong>A POSIX MATCH WITHOUT AN EXECUTE BIT IS SKIPPED AND THE SEARCH CONTINUES — the one
-    /// place the "resolve nothing the OS would not" rule is knowingly relaxed.</strong> Where an
-    /// earlier entry holds a non-executable <c>git</c> and a later one holds a real one, this
-    /// search returns the later, whereas a resolution that stopped at the first existing file
-    /// would refuse. It is admitted rather than overlooked: the file skipped is one no caller
-    /// could have launched, so the divergence is between a refusal and a genuinely executable
-    /// later entry, never between two runnable binaries.
+    /// <strong>THE POSIX EXECUTE TEST IS A MODE-BIT APPROXIMATION, AND WHAT IT RISKS IS A
+    /// REFUSAL.</strong> <see cref="IsExecutableFile"/> accepts a file when ANY of the user, group
+    /// or other execute bits is set, whoever is running — not the test the kernel makes, which is
+    /// against the effective user. So a file this caller could not in fact execute can be accepted:
+    /// a root-owned <c>0700</c> <c>git</c> in an earlier entry is taken, the search STOPS THERE
+    /// because it returns the first match, the launch then fails on permission (<c>EACCES</c>, by
+    /// the <c>execve</c> contract rather than by a measurement of this path), and <c>RunGit</c>
+    /// maps that to a <c>ChangeSetException</c> — exit 2 on a host where a later entry holds a
+    /// runnable git. That is the same harm shape as the whitespace trim deleted in the round before this
+    /// one: an entry the operating system would have passed over shadows a legitimate later one.
+    /// A match with NO execute bit set at all is skipped and the search continues, so the shadowing
+    /// needs a bit set for somebody else. Which direction this diverges in against .NET's own Unix
+    /// resolution is UNMEASURED — the measurements in this file were all taken on Windows, and the
+    /// one probe that would settle it is whether that path selects on existence or on an
+    /// <c>access(X_OK)</c>-style check. Narrowing this test to <c>access(X_OK)</c> needs a P/Invoke
+    /// and is tracked as #509; it is deliberately not attempted here.
     /// </para>
     /// <para>
     /// Takes <c>PATH</c> as an argument rather than reading the environment so that the search can
