@@ -658,7 +658,7 @@ public sealed class ProviderReflectiveFaultTaxonomyTests
     /// <para>
     /// The written-artefact half of this property (event stream, JUnit, HTML) is asserted in
     /// <c>SecurityDiagnosticPathDisclosureTests</c>, which owns the sibling-site property test
-    /// <see cref="SecurityPathDisclosureLedger"/>'s own remarks point at. This row is the fast,
+    /// <see cref="Vouchfx.Engine.Orchestration.SecurityPathDisclosureLedger"/>'s own remarks point at. This row is the fast,
     /// direct pin on the substitution itself.
     /// </para>
     /// </remarks>

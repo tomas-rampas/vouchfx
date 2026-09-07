@@ -32,6 +32,10 @@
     <IncludeSymbols>true</IncludeSymbols>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!-- Opts OUT of the repo-wide CS1591/CS1573 suppression (Directory.Build.targets):
+         this project enforced both as build errors before that default existed, and its
+         public surface is a published contract. See Directory.Build.props. -->
+    <VouchfxDocumentEveryPublicMember>true</VouchfxDocumentEveryPublicMember>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.SourceLink.GitHub" PrivateAssets="all" />

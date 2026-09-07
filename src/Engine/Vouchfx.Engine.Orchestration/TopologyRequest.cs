@@ -204,7 +204,8 @@ public sealed record TopologyRequest(
     /// cannot distinguish two values a lossy encoder has already collapsed onto the same
     /// characters. <c>Encoding.UTF8.GetBytes</c> does exactly that to an unpaired surrogate — it
     /// substitutes U+FFFD — and a target name is unconstrained author text that can carry one. So
-    /// <see cref="ScenarioRunner.ComputeTopologyFingerprint"/> hashes
+    /// <c>Vouchfx.Engine.Runtime.ScenarioRunner.ComputeTopologyFingerprint</c> — named in plain
+    /// text because that assembly is downstream of this one, so no cref can reach it — hashes
     /// <c>MemoryMarshal.AsBytes(material.AsSpan())</c>, never a transcode, and this method's claim
     /// is stated as holding of the STRING it returns rather than of whatever a caller does to it.
     /// </para>

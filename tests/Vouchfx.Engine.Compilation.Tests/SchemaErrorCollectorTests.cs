@@ -73,7 +73,7 @@ public sealed class SchemaErrorCollectorTests
     /// Parses the same schema text <see cref="Evaluate"/> compiled, as the
     /// <c>JsonElement</c> form <see cref="SchemaErrorCollector.CollectErrors"/>'s
     /// <c>schema</c> parameter expects — required by any test that exercises
-    /// <see cref="SchemaErrorCollector.FormatTooManyOneOfMatchesError"/>'s
+    /// <c>SchemaErrorCollector.FormatTooManyOneOfMatchesError</c>'s
     /// name resolution (<c>TryReadRequiredFieldNames</c> reads a matching
     /// branch's own <c>required</c> member from THIS tree, via the failing
     /// node's <c>SchemaLocation</c> pointer) since that resolution is a no-op
@@ -1072,7 +1072,7 @@ public sealed class SchemaErrorCollectorTests
         /// <inheritdoc />
         /// <remarks>
         /// The nested <c>allOf</c> mirrors exactly the shape
-        /// <see cref="SchemaComposer.BuildIfThenClauses"/> generates one level
+        /// <c>SchemaComposer.BuildIfThenClauses</c> generates one level
         /// up — two unconditional if/then pairs keyed on a discriminator field
         /// (<c>mode</c>) — so evaluating a step against this fragment exercises
         /// the identical "one clause's if matches, the other's doesn't" shape
@@ -1369,7 +1369,7 @@ public sealed class SchemaErrorCollectorTests
     /// m8 fix — the surviving <c>const</c> case (a VALID enum member, <c>type: http</c>,
     /// still failing the narrower ports-only-service conditional, so it has no enum sibling
     /// to be suppressed against): the message now names the service, the field, and the
-    /// reason, matching the standard <see cref="SchemaErrorCollector.FormatForbiddenPropertyError"/>
+    /// reason, matching the standard <c>SchemaErrorCollector.FormatForbiddenPropertyError</c>
     /// already set for context-aware messages elsewhere in this class. Before this fix the
     /// message was the bare library-shaped
     /// <c>[const] 'http' does not match the value required here: 'tcp'.</c>
@@ -1395,7 +1395,7 @@ public sealed class SchemaErrorCollectorTests
     }
 
     /// <summary>
-    /// H-B (peer review, held item — fix round 2). <see cref="SchemaErrorCollector.FormatConstError"/>'s
+    /// H-B (peer review, held item — fix round 2). <c>SchemaErrorCollector.FormatConstError</c>'s
     /// remarks assert that every <c>const</c> reaching it is one of TWO named shapes
     /// (<c>metadata.schemaVersion</c>, and <c>$defs/service</c>'s ports-only
     /// <c>healthCheck.type</c> pin), because every OTHER <c>const</c> in the composed schema sits
@@ -1436,7 +1436,7 @@ public sealed class SchemaErrorCollectorTests
     /// <summary>
     /// Walks <paramref name="element"/> recursively, recording the JSON path of every
     /// <c>const</c> keyword found at or below a <c>then</c> subschema, EXCLUDING the two shapes
-    /// <see cref="SchemaErrorCollector.FormatConstError"/> names explicitly. Descending into an
+    /// <c>SchemaErrorCollector.FormatConstError</c> names explicitly. Descending into an
     /// <c>if</c> resets the flag: a <c>const</c> nested inside a <c>then</c>'s own <c>if</c> is
     /// discriminator noise like any other.
     /// </summary>
@@ -1480,7 +1480,7 @@ public sealed class SchemaErrorCollectorTests
     }
 
     /// <summary>
-    /// The two <c>const</c> shapes <see cref="SchemaErrorCollector.FormatConstError"/> handles by
+    /// The two <c>const</c> shapes <c>SchemaErrorCollector.FormatConstError</c> handles by
     /// name. <c>metadata.schemaVersion</c>'s is unconditional (never inside a <c>then</c> at all,
     /// so it never reaches this filter); <c>$defs/service</c>'s <c>healthCheck.type</c> pin is
     /// the one genuine <c>then</c>-clause exception, and is exempted here explicitly rather than
@@ -1493,7 +1493,7 @@ public sealed class SchemaErrorCollectorTests
 
     /// <summary>
     /// SEC-3 (security review, fix round 3): the depth FLOOR
-    /// <see cref="SchemaErrorCollector.SuppressErrorsInsideForbiddenContainer"/> silently relies
+    /// <c>SchemaErrorCollector.SuppressErrorsInsideForbiddenContainer</c> silently relies
     /// on. That rule drops every error at or below any location a boolean-<c>false</c> property
     /// subschema rejected, and it has no floor on how shallow such a location may be. Today none
     /// exists shallower than a dependency/service/step SUB-property, so it cannot collapse a
@@ -1524,7 +1524,7 @@ public sealed class SchemaErrorCollectorTests
     /// </para>
     /// <para>
     /// Only <c>properties/&lt;name&gt;: false</c> counts — the exact shape
-    /// <see cref="SchemaErrorCollector.IsForbiddenPropertyShape"/> recognises and this rule keys
+    /// <c>SchemaErrorCollector.IsForbiddenPropertyShape</c> recognises and this rule keys
     /// on. An <c>additionalProperties: false</c> / <c>unevaluatedProperties: false</c> closure is
     /// a DIFFERENT shape that never seeds a forbidden container, so it is walked through but
     /// never recorded.

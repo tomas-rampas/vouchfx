@@ -74,7 +74,7 @@ internal static class SeedFixtures
     /// </param>
     /// <param name="relativePath">
     /// The fixture file path, relative to <paramref name="baseDirectory"/> (an
-    /// absolute path is also accepted and used as-is by <see cref="Path.Combine"/>).
+    /// absolute path is also accepted and used as-is by <see cref="Path.Combine(string, string)"/>).
     /// </param>
     /// <returns>
     /// The 64-character lower-case hex SHA-256 digest of the file's raw bytes.

@@ -559,7 +559,7 @@ public sealed class SchemaStepSurfaceClosureTests
     /// perfectly valid fields, must report ONLY the missing-field violation —
     /// not that violation plus one spurious "unknown property" per valid
     /// field. Regression coverage for the cascade fixed in
-    /// <see cref="SchemaErrorCollector.SuppressUnevaluatedPropertiesCascade"/>:
+    /// <c>SchemaErrorCollector.SuppressUnevaluatedPropertiesCascade</c>:
     /// unevaluatedProperties only collects a subschema's annotations when
     /// that subschema's application succeeds AS A WHOLE, so once http.rest's
     /// own <c>then</c> branch fails outright (missing <c>path</c>), its

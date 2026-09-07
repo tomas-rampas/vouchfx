@@ -298,10 +298,9 @@ public sealed class SuiteTopology : IAsyncDisposable, IKeptTopology
     /// <strong>DERIVE IT FROM THE SAME SCENARIOS AS <paramref name="kafkaSpeakingTargets"/>, at the
     /// same call site.</strong> The two are computed from one input by every production caller;
     /// deriving them from different scenario sets would let them disagree about what the suite
-    /// addresses. There is no compiler help here — this project sets no
-    /// <c>GenerateDocumentationFile</c>, and both parameters are optional — so a call site that
-    /// passes one and forgets the other compiles silently and simply never refuses. The pairing is
-    /// pinned instead by
+    /// addresses. There is no compiler help here — both parameters are OPTIONAL — so a call site
+    /// that passes one and forgets the other compiles silently and simply never refuses. The
+    /// pairing is pinned instead by
     /// <c>SuiteProtocolTargetsTests.EverySuiteTopologyStartCallSite_PassesBothTargetSets</c>.
     /// </para>
     /// <see langword="null"/> is the PERMISSIVE default — no refusal — matching

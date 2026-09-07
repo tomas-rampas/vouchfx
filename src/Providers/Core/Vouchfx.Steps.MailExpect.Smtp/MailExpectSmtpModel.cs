@@ -62,7 +62,7 @@ public sealed record MailExpectation(
 /// <param name="Target">
 /// Logical name of the <c>mailpit</c> dependency declared under
 /// <c>environment.dependencies</c>.  The engine stages its HTTP API URL at
-/// <c>conn::&lt;Target&gt;</c> via <see cref="VarKeys.Connection"/>.
+/// <c>conn::&lt;Target&gt;</c> via <see cref="Vouchfx.Engine.Abstractions.VarKeys.Connection(string)"/>.
 /// </param>
 /// <param name="Expect">
 /// The expectation block (match criteria + optional count).

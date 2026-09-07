@@ -82,7 +82,7 @@ namespace Example.Steps.Echo;
 ///   <item>Step ids are sanitised via <see cref="CsxFragment.SanitiseId"/> before being
 ///         spliced into emitted identifiers.</item>
 ///   <item>Author <c>text</c> and <c>expect</c> values are escaped at EMIT time via
-///         <see cref="JsonSerializer.Serialize"/> (this runs in the provider, which
+///         <see cref="JsonSerializer.Serialize{TValue}(TValue, JsonSerializerOptions)"/> (this runs in the provider, which
 ///         references <c>System.Text.Json</c>) so quotes / braces / backslashes become
 ///         safe C# literals. The runtime observation string is built by the dependency-free
 ///         <c>EchoText_Helpers.JsonEscape</c> helper — not <c>JsonSerializer.Serialize</c>
@@ -221,7 +221,7 @@ public sealed class EchoTextProvider
     ///         reads back after the isolated run.</item>
     /// </list>
     /// The <c>text</c> template and <c>expect</c> constant are escaped at EMIT time via
-    /// <see cref="JsonSerializer.Serialize"/> (this runs in the provider) so author text
+    /// <see cref="JsonSerializer.Serialize{TValue}(TValue, JsonSerializerOptions)"/> (this runs in the provider) so author text
     /// containing quotes, braces or backslashes becomes a SAFE C# string literal — never
     /// breaking out of the emitted code.  Unlike <c>hello.console</c> (which builds its
     /// observation entirely at emit time), the observation here MUST be built at runtime

@@ -234,7 +234,7 @@ internal sealed record PipelineResult(
 /// Walks each step in the <see cref="ScenarioAst"/>, dispatches the four reflection
 /// operations (Bind → Validate → Resources → Emit) via closed generic interfaces,
 /// collects the resource plan and compile-reference paths, then calls
-/// <see cref="CsxAssembler.Assemble"/> to produce the final script.
+/// <see cref="CsxAssembler.Assemble(IReadOnlyList{StepCompilePlan})"/> to produce the final script.
 /// </para>
 /// <para>
 /// <see cref="Compile"/> is the single entry point.  All other members are private
@@ -1375,7 +1375,7 @@ internal static class ProviderPipeline
 
     /// <summary>
     /// The suite-level counterpart of <see cref="DescribeProviderFault"/>, for a failure of
-    /// <see cref="CsxAssembler.Assemble"/> over the fragments the providers emitted
+    /// <see cref="CsxAssembler.Assemble(IReadOnlyList{StepCompilePlan})"/> over the fragments the providers emitted
     /// (GATE-MAJOR-1, issue #466).
     /// </summary>
     /// <param name="ex">The exception <c>Assemble</c> threw.</param>

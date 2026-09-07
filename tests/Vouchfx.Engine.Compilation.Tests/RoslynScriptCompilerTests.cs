@@ -568,7 +568,7 @@ public sealed class RoslynScriptCompilerTests
     /// <summary>
     /// Passing <see langword="null"/> to the <see cref="ScriptCompilationException"/>
     /// constructor must throw <see cref="ArgumentNullException"/> with
-    /// <see cref="ArgumentNullException.ParamName"/> equal to <c>"diagnostics"</c>.
+    /// <see cref="ArgumentException.ParamName"/> equal to <c>"diagnostics"</c>.
     /// </summary>
     /// <remarks>
     /// Regression test for the ordering defect where the null-check fired inside

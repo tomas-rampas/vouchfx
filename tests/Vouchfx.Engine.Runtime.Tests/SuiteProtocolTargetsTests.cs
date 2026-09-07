@@ -492,8 +492,7 @@ public sealed class SuiteProtocolTargetsTests
     /// <remarks>
     /// <para>
     /// A drift guard, not a style check, and it exists because nothing else can catch this. Both
-    /// parameters are OPTIONAL and this project sets no <c>GenerateDocumentationFile</c>, so a
-    /// call site that passes <c>kafkaSpeakingTargets</c> and forgets
+    /// parameters are OPTIONAL, so a call site that passes <c>kafkaSpeakingTargets</c> and forgets
     /// <c>endpointConsumingTargets</c> compiles clean, runs clean, and silently never refuses an
     /// endpoint-less targeted project-form service — the #348 defect back, on the path that forgot.
     /// </para>

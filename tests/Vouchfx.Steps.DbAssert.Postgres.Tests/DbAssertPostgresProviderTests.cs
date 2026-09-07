@@ -377,7 +377,7 @@ public sealed class DbAssertPostgresProviderTests
     // ── 8. Registry: provider discoverable ───────────────────────────────────
 
     /// <summary>
-    /// Scanning the provider assembly via <see cref="StepKindRegistry.BuildAndFreeze"/>
+    /// Scanning the provider assembly via <see cref="StepKindRegistry.BuildAndFreeze(System.Collections.Generic.IEnumerable{System.Reflection.Assembly})"/>
     /// discovers <see cref="DbAssertPostgresProvider"/> at key
     /// <c>"db-assert.postgres"</c>.
     /// </summary>

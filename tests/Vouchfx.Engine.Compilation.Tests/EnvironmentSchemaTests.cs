@@ -1196,12 +1196,12 @@ public sealed class EnvironmentSchemaTests
     /// <summary>
     /// Binds <see cref="Dependency_EachRegisteredKind_IsAccepted"/>'s 13
     /// hardcoded <c>[InlineData]</c> cases to
-    /// <see cref="KnownDependencyKinds"/> — the canonical kind list — via
+    /// <see cref="Vouchfx.Engine.Compilation.Scaffold.KnownDependencyKinds"/> — the canonical kind list — via
     /// reflection over the Theory's own attributes, rather than duplicating
     /// the 13 literals a second time (which would itself be a THIRD place to
     /// keep in sync, alongside the schema's own enum and
     /// EnvironmentMapper's s_dependencyRegistry). A kind added to
-    /// <see cref="KnownDependencyKinds"/> without a matching new
+    /// <see cref="Vouchfx.Engine.Compilation.Scaffold.KnownDependencyKinds"/> without a matching new
     /// <c>[InlineData]</c> case (or vice versa) fails here with a precise
     /// diff, instead of the Theory silently under/over-covering the real
     /// vocabulary (feat/close-remaining-surfaces, Part D).

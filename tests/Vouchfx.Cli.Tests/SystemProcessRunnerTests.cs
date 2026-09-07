@@ -48,14 +48,27 @@
 // SystemProcessRunner.Instance, which carries the production ceiling (minutes). Coupling a test's
 // wall-clock to the production ceiling would make this file slow in order to prove nothing extra,
 // and it would force RunGraceWindow to track a constant chosen for a cold `git status` on a huge
-// repository. Row 3 and row 4 keep using Instance: they exercise the happy and the launch-failure
-// paths, where the budget is never approached and the shared instance is the thing shipped. Row 5
+// repository. Rows 3, 4 and 6 keep using Instance: they exercise the happy path, the
+// launch-failure path and the argument guard, where the budget is never approached and the shared
+// instance is the thing shipped. Row 5
 // injects a budget for the OPPOSITE reason — one so long it cannot be reached, so that a call
 // which ends is one the cancellation token ended.
 //
+// ROW 6 IS NOT ABOUT #481 AT ALL
+// ──────────────────────────────
+// It pins the seam's OTHER contract, the one #499 added and left as prose: fileName must be FULLY
+// QUALIFIED, because an unqualified name is resolved by the operating system's own search, which on
+// Windows reaches the calling executable's directory and the calling process's current directory
+// ahead of PATH. #499's defect was a caller passing the bare name `git`, so the requirement is now
+// enforced in SystemProcessRunner.Run and asserted here. Rooting the Windows child shapes below
+// (powershell.exe, cmd.exe) is a consequence of that guard rather than bookkeeping: until it landed,
+// these rows were reaching their own children through the very search the change forbids.
+//
 // PORTABILITY
 // ───────────
-// Every row runs on both operating systems; none is skipped anywhere. CI is Linux-only today
+// Every row runs on both operating systems; none is skipped anywhere. Row 6 asserts one extra
+// spelling on Windows — the drive-relative `C:git`, which POSIX would refuse for an unrelated
+// reason — but the row itself runs everywhere. CI is Linux-only today
 // (#366) but the maintainer develops on Windows, so an OS-conditional skip would silently retire
 // half the coverage on whichever host mattered. The OS branch follows the established pattern in
 // Vouchfx.Engine.Orchestration.Tests/ChildProcessKillTreeTests.cs: OperatingSystem.IsWindows()
@@ -408,13 +421,83 @@ public sealed class SystemProcessRunnerTests
         var directory = CreateScratchDirectory();
         try
         {
-            var missing = "vouchfx-no-such-executable-"
-                + Guid.NewGuid().ToString("N", CultureInfo.InvariantCulture);
+            // Fully qualified and absent, not a bare name: a bare name is now refused by the
+            // argument guard (row 6) and would never reach the launch this row is about.
+            var missing = Path.Combine(
+                directory,
+                "vouchfx-no-such-executable-"
+                    + Guid.NewGuid().ToString("N", CultureInfo.InvariantCulture));
 
             var exception = Assert.Throws<ProcessLaunchException>(
                 () => SystemProcessRunner.Instance.Run(missing, Array.Empty<string>(), directory));
 
             Assert.Contains(missing, exception.Message, StringComparison.Ordinal);
+        }
+        finally
+        {
+            TryDeleteDirectory(directory);
+        }
+    }
+
+    /// <summary>
+    /// Row 6 — an unqualified <c>fileName</c> is refused before anything is launched, which is the
+    /// gate <see cref="IProcessRunner"/>'s contract lacked.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>This row exists because the requirement it pins shipped as prose.</strong> #499's fix
+    /// resolves git to an absolute path in <c>GitChangeSet</c> and documents on this seam that every
+    /// caller must do the same; nothing enforced it. The defect #499 closed was exactly a caller
+    /// handing over the bare name <c>git</c>, so a doc-comment is demonstrably not cover: on Windows
+    /// an unqualified name is resolved by the operating system's own search, which reaches the
+    /// calling executable's directory and the calling process's current directory ahead of
+    /// <c>PATH</c>. A future caller reintroducing that shape now fails here rather than silently
+    /// reopening the hole.
+    /// </para>
+    /// <para>
+    /// The three spellings are chosen for what each would do if it got through, not for variety.
+    /// <c>git</c> is the original defect verbatim, and the M1 mutation drill confirmed it: with the
+    /// guard removed, that call LAUNCHED — the operating system's search found a real git, which is
+    /// the hole rather than a hypothetical one. <c>./git</c> is relative, and a relative name is
+    /// resolved against the calling process's current directory — the term <c>GitChangeSet</c>'s
+    /// header records as reachable, since <c>cd untrusted-repo &amp;&amp; vouchfx run .
+    /// --changed-since main</c> hands the CLI that directory. <c>C:git</c> is the Windows
+    /// drive-relative form, admitted by
+    /// <see cref="Path.IsPathRooted(string)"/> and refused by
+    /// <see cref="Path.IsPathFullyQualified(string)"/>; it is why the guard uses the latter, and it
+    /// is asserted only on Windows because POSIX reads it as an ordinary relative file name with a
+    /// colon in it — refused there too, but for a different reason, which would make the row assert
+    /// a coincidence.
+    /// </para>
+    /// <para>
+    /// <see cref="ArgumentException"/> rather than <see cref="ProcessLaunchException"/> is itself
+    /// part of the contract and so is asserted by type: <c>GitChangeSet.RunGit</c> catches the
+    /// runner's three failure types narrowly and maps them to a usage error (exit 2). A broken
+    /// caller inside this assembly must escape that mapping rather than be reported to the user as
+    /// their own mistake.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void Run_WhenTheExecutableIsNotFullyQualified_ThrowsArgumentExceptionAndLaunchesNothing()
+    {
+        var directory = CreateScratchDirectory();
+        try
+        {
+            var unqualified = new List<string> { "git", "./git" };
+            if (OperatingSystem.IsWindows())
+            {
+                unqualified.Add("C:git");
+            }
+
+            foreach (var fileName in unqualified)
+            {
+                var exception = Assert.Throws<ArgumentException>(
+                    () => SystemProcessRunner.Instance.Run(
+                        fileName, Array.Empty<string>(), directory));
+
+                Assert.Equal("fileName", exception.ParamName);
+                Assert.Contains(fileName, exception.Message, StringComparison.Ordinal);
+            }
         }
         finally
         {
@@ -438,7 +521,7 @@ public sealed class SystemProcessRunnerTests
             // and an embedded double quote would have to survive both that escaping and
             // powershell.exe's own command-line parsing. Nothing here needs one.
             return new ChildShape(
-                "powershell.exe",
+                WindowsPowerShell,
                 new[]
                 {
                     "-NoProfile",
@@ -467,7 +550,7 @@ public sealed class SystemProcessRunnerTests
         if (OperatingSystem.IsWindows())
         {
             return new ChildShape(
-                "powershell.exe",
+                WindowsPowerShell,
                 new[]
                 {
                     "-NoProfile",
@@ -487,11 +570,27 @@ public sealed class SystemProcessRunnerTests
     {
         if (OperatingSystem.IsWindows())
         {
-            return new ChildShape("cmd.exe", new[] { "/c", "echo OUT& echo ERR>&2& exit 7" });
+            return new ChildShape(
+                Path.Combine(Environment.SystemDirectory, "cmd.exe"),
+                new[] { "/c", "echo OUT& echo ERR>&2& exit 7" });
         }
 
         return new ChildShape("/bin/sh", new[] { "-c", "echo OUT; echo ERR 1>&2; exit 7" });
     }
+
+    /// <summary>
+    /// Windows PowerShell's fully qualified path, because the runner refuses an unqualified one.
+    /// </summary>
+    /// <remarks>
+    /// These shapes named <c>powershell.exe</c> and <c>cmd.exe</c> bare until
+    /// <see cref="SystemProcessRunner.Run"/> began enforcing the fully-qualified contract
+    /// <see cref="IProcessRunner"/> documents. Rooting them is not test bookkeeping: a bare name
+    /// here would have been resolved by the very operating-system search #499 exists to remove, so
+    /// these rows were measuring the runner through the mechanism the change forbids. The POSIX
+    /// branches already named <c>/bin/sh</c>, which is fully qualified, and are unchanged.
+    /// </remarks>
+    private static string WindowsPowerShell =>
+        Path.Combine(Environment.SystemDirectory, "WindowsPowerShell", "v1.0", "powershell.exe");
 
     // ── teardown machinery ───────────────────────────────────────────────────────────────────
 

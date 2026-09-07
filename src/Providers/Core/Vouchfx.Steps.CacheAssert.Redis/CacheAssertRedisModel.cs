@@ -75,7 +75,7 @@ public sealed record RedisExpectation(
 /// <param name="Target">
 /// Logical name of the <c>redis</c> dependency declared under
 /// <c>environment.dependencies</c>.  The orchestration layer stages its connection
-/// string at <c>conn::&lt;Target&gt;</c> via <see cref="VarKeys.Connection"/>.
+/// string at <c>conn::&lt;Target&gt;</c> via <see cref="Vouchfx.Engine.Abstractions.VarKeys.Connection(string)"/>.
 /// </param>
 /// <param name="Key">
 /// The Redis key to inspect.  May contain <c>{placeholder}</c> tokens resolved at

@@ -54,7 +54,18 @@ internal interface IProcessRunner
     /// Runs <paramref name="fileName"/> with <paramref name="arguments"/> in
     /// <paramref name="workingDirectory"/> and captures its result, within a bounded budget.
     /// </summary>
-    /// <param name="fileName">The executable to launch (e.g. <c>git</c>).</param>
+    /// <param name="fileName">
+    /// The executable to launch, as a FULLY QUALIFIED path. This seam resolves nothing, and an
+    /// unqualified name is resolved by the operating system's own search — which on Windows reaches
+    /// the calling executable's directory and the calling process's current directory ahead of
+    /// <c>PATH</c>, so a bare <c>git</c> here is the hole #499 closed. Every caller resolves first,
+    /// and <see cref="SystemProcessRunner"/> ENFORCES it with an <see cref="ArgumentException"/>
+    /// rather than trusting the sentence above: this requirement arrived with #499 as a
+    /// doc-comment, and the defect #499 closed was a caller handing over the bare name <c>git</c>
+    /// — precisely what a doc-comment cannot catch. The test is
+    /// <see cref="Path.IsPathFullyQualified(string)"/>, matching <c>GitChangeSet.LocateOnPath</c>,
+    /// so the resolver cannot produce a value this seam refuses.
+    /// </param>
     /// <param name="arguments">The argument vector (each element passed verbatim — no shell quoting).</param>
     /// <param name="workingDirectory">The working directory to launch the process in.</param>
     /// <param name="cancellationToken">
@@ -93,6 +104,12 @@ internal interface IProcessRunner
     /// termination it cannot perform.
     /// </para>
     /// </remarks>
+    /// <exception cref="ArgumentException">
+    /// Thrown when <paramref name="fileName"/> is not fully qualified. A caller error, not a child
+    /// failure, so it is deliberately outside the three exception types above and outside
+    /// <c>GitChangeSet.RunGit</c>'s catches: an unqualified name reaching here is a broken caller,
+    /// and mapping it to exit 2 would present it as the user's problem.
+    /// </exception>
     /// <exception cref="ProcessLaunchException">
     /// Thrown when the process cannot be started (executable not found, etc.).
     /// </exception>

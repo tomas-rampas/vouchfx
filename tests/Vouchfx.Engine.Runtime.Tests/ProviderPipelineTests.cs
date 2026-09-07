@@ -1030,7 +1030,7 @@ public sealed class ProviderPipelineTests
     /// <summary>
     /// Issue #413 — supersedes the version of this test that asserted
     /// <see cref="ProviderPipeline.BindAllSteps"/> PROPAGATED a
-    /// <see cref="TargetInvocationException"/>. It no longer does: a throwing <c>Bind</c> is
+    /// <see cref="System.Reflection.TargetInvocationException"/>. It no longer does: a throwing <c>Bind</c> is
     /// returned as the pass's <c>RegistryFailure</c>-shaped <see cref="ValidationFailure"/>,
     /// which <see cref="ProviderPipeline.Compile"/> hands back as
     /// <c>PipelineResult.Failure</c> and both run paths map to <c>Verdict.Inconclusive</c>.
@@ -1044,7 +1044,7 @@ public sealed class ProviderPipelineTests
     /// <para>
     /// The message must name the STEP and the PROVIDER and unwrap the reflection wrapper:
     /// <c>MethodInfo.Invoke</c> wraps the provider's own exception in
-    /// <see cref="TargetInvocationException"/>, whose own message ("Exception has been thrown
+    /// <see cref="System.Reflection.TargetInvocationException"/>, whose own message ("Exception has been thrown
     /// by the target of an invocation") tells the reader nothing about which provider is
     /// defective.
     /// </para>

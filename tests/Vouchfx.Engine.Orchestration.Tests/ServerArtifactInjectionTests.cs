@@ -180,7 +180,7 @@ public sealed class ServerArtifactInjectionTests : IDisposable
     /// <summary>
     /// REQ-016's core acceptance, at the mechanism level: a declared artefact becomes a
     /// <see cref="ContainerFile"/> carrying the resolved HOST path in
-    /// <see cref="ContainerFile.SourcePath"/>, under a
+    /// <see cref="ContainerFileBase.SourcePath"/>, under a
     /// <see cref="ContainerFileSystemCallbackAnnotation"/> whose
     /// <see cref="ContainerFileSystemCallbackAnnotation.DestinationPath"/> is the declared
     /// target's directory — and the file's <see cref="ContainerFileSystemItem.Name"/> is the

@@ -1,14 +1,27 @@
-// Vouchfx.Cli.Tests — GitChangeSet unit tests (S07-C-02). No Docker, no real git.
+// Vouchfx.Cli.Tests — GitChangeSet unit tests (S07-C-02). No Docker.
 //
 // GitChangeSet shells out to git behind IProcessRunner. These tests inject a fake runner
 // that returns canned `git rev-parse` / `git diff` / `git status` output (and the error
 // cases) so the parsing, path-resolution and error-mapping are exercised WITHOUT a real
-// repository. One OPTIONAL smoke test runs against the actual repo when git is available.
+// repository. TWO rows do launch a real git, and only one of them is optional: the smoke
+// test against this repo no-ops when git is unavailable, while the locator-equivalence row
+// launches `git --version` unconditionally as its reference — bounded, and answering "does
+// not launch" if that probe times out.
+//
+// Since #499 a second collaborator is injected alongside the runner: the locator that resolves
+// `git` to a rooted path. Every row below supplies a fake one, because the resolution happens
+// before any call reaches the runner and REFUSES the change-set when it finds nothing — without
+// the injection each parsing row would silently acquire a dependency on the host having git
+// installed. The PATH search itself is exercised directly, against a temporary directory, by the
+// LocateOnPath rows at the bottom of the file.
 
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using Vouchfx.Cli.Selection;
+using Vouchfx.TestSupport;
 using Xunit;
 
 namespace Vouchfx.Cli.Tests;
@@ -16,6 +29,11 @@ namespace Vouchfx.Cli.Tests;
 public sealed class GitChangeSetTests
 {
     private const string RepoRoot = "/repo";
+
+    // The ceiling on the bare-name reference probe below. A ceiling, not a latency target:
+    // `git --version` returns in milliseconds, and the only decision this makes is how long a
+    // wedged one may hold the run before the probe gives up and answers "does not launch".
+    private const int BareNameProbeBudgetMilliseconds = 30_000;
 
     // A scripted IProcessRunner: maps the git subcommand (first argument) to a canned result.
     private sealed class FakeProcessRunner : IProcessRunner
@@ -108,13 +126,26 @@ public sealed class GitChangeSetTests
     private static string Abs(string repoRelative) =>
         Path.GetFullPath(Path.Combine(RepoRoot, repoRelative)).Replace('\\', '/');
 
+    // A rooted path no host has. It stands in for whatever the real PATH search would have found,
+    // so a row can assert what GitChangeSet DOES with the resolved path without depending on the
+    // host having git — and, because it is a recognisable literal, a row can also assert that it
+    // does not leak into a user-facing message.
+    private static readonly string FakeGitDirectory =
+        OperatingSystem.IsWindows() ? @"C:\vouchfx-fake-bin" : "/vouchfx-fake-bin";
+
+    private static readonly string FakeGitPath =
+        Path.Combine(FakeGitDirectory, OperatingSystem.IsWindows() ? "git.exe" : "git");
+
+    private static GitChangeSet NewChangeSet(string changedSinceRef, IProcessRunner runner) =>
+        new(changedSinceRef, RepoRoot, runner, () => FakeGitPath);
+
     // ---- Diff parsing -----------------------------------------------------------------
 
     [Fact]
     public void Diff_ResolvesRepoRelativePaths_ToAbsolute()
     {
         var runner = Runner(diffOutput: "orders/place.e2e.yaml\nbilling/charge.e2e.yaml\n");
-        var changeSet = new GitChangeSet("main", workingDirectory: RepoRoot, runner);
+        var changeSet = NewChangeSet("main", runner);
 
         Assert.True(changeSet.IsChanged(Abs("orders/place.e2e.yaml")));
         Assert.True(changeSet.IsChanged(Abs("billing/charge.e2e.yaml")));
@@ -125,7 +156,7 @@ public sealed class GitChangeSetTests
     public void Diff_UsesThreeDotRangeAgainstHead()
     {
         var runner = Runner(diffOutput: "a.e2e.yaml\n");
-        _ = new GitChangeSet("release/1.2", workingDirectory: RepoRoot, runner);
+        _ = NewChangeSet("release/1.2", runner);
 
         var diffCall = Assert.Single(runner.Calls, c => c.Args.Count > 0 && c.Args[0] == "diff");
         Assert.Equal(
@@ -139,7 +170,7 @@ public sealed class GitChangeSetTests
     public void Status_PrefixesQuotePathFalse_SoNonAsciiPathsAreVerbatim()
     {
         var runner = Runner();
-        _ = new GitChangeSet("main", workingDirectory: RepoRoot, runner);
+        _ = NewChangeSet("main", runner);
 
         var statusCall = Assert.Single(
             runner.Calls, c => c.Args.Count > 0 && c.Args.Contains("status"));
@@ -158,7 +189,7 @@ public sealed class GitChangeSetTests
             "?? new/untracked.e2e.yaml\n";
 
         var runner = Runner(diffOutput: "committed/x.e2e.yaml\n", statusOutput: statusOutput);
-        var changeSet = new GitChangeSet("main", workingDirectory: RepoRoot, runner);
+        var changeSet = NewChangeSet("main", runner);
 
         Assert.True(changeSet.IsChanged(Abs("committed/x.e2e.yaml")));
         Assert.True(changeSet.IsChanged(Abs("orders/modified.e2e.yaml")));
@@ -170,7 +201,7 @@ public sealed class GitChangeSetTests
     public void Status_Rename_TakesDestinationPath()
     {
         var runner = Runner(statusOutput: "R  old/name.e2e.yaml -> new/name.e2e.yaml\n");
-        var changeSet = new GitChangeSet("main", workingDirectory: RepoRoot, runner);
+        var changeSet = NewChangeSet("main", runner);
 
         Assert.True(changeSet.IsChanged(Abs("new/name.e2e.yaml")));
     }
@@ -179,7 +210,7 @@ public sealed class GitChangeSetTests
     public void IsChanged_NormalisesBackslashPath()
     {
         var runner = Runner(diffOutput: "orders/place.e2e.yaml\n");
-        var changeSet = new GitChangeSet("main", workingDirectory: RepoRoot, runner);
+        var changeSet = NewChangeSet("main", runner);
 
         // A Windows-style absolute path with backslashes must still resolve to the same key.
         var backslashPath = Abs("orders/place.e2e.yaml").Replace('/', '\\');
@@ -191,7 +222,7 @@ public sealed class GitChangeSetTests
     {
         // git can report a directory-level change (e.g. a submodule); files under it count.
         var runner = Runner(diffOutput: "orders\n");
-        var changeSet = new GitChangeSet("main", workingDirectory: RepoRoot, runner);
+        var changeSet = NewChangeSet("main", runner);
 
         Assert.True(changeSet.IsChanged(Abs("orders/nested/x.e2e.yaml")));
         Assert.False(changeSet.IsChanged(Abs("ordersX/x.e2e.yaml"))); // prefix, not a dir
@@ -205,7 +236,7 @@ public sealed class GitChangeSetTests
         var runner = FakeProcessRunner.Refusing(new ProcessLaunchException("git not found on PATH"));
 
         var ex = Assert.Throws<ChangeSetException>(
-            () => new GitChangeSet("main", workingDirectory: RepoRoot, runner));
+            () => NewChangeSet("main", runner));
         Assert.Contains("git", ex.Message, System.StringComparison.OrdinalIgnoreCase);
     }
 
@@ -234,7 +265,7 @@ public sealed class GitChangeSetTests
             new ProcessTimeoutException("'git' exceeded its budget.", System.TimeSpan.FromSeconds(90)));
 
         var ex = Assert.Throws<ChangeSetException>(
-            () => new GitChangeSet("main", workingDirectory: RepoRoot, runner));
+            () => NewChangeSet("main", runner));
 
         // The budget and the operation, both named: an operator reading this line needs to know
         // that a ceiling was hit (not that git is missing) and which call hit it.
@@ -271,7 +302,7 @@ public sealed class GitChangeSetTests
                 new IOException("The pipe has been ended.")));
 
         var ex = Assert.Throws<ChangeSetException>(
-            () => new GitChangeSet("main", workingDirectory: RepoRoot, runner));
+            () => NewChangeSet("main", runner));
 
         Assert.Contains("read the output", ex.Message, System.StringComparison.OrdinalIgnoreCase);
         Assert.Contains("repository-root lookup", ex.Message, System.StringComparison.Ordinal);
@@ -287,7 +318,7 @@ public sealed class GitChangeSetTests
             .With("rev-parse", exit: 128, stderr: "fatal: not a git repository");
 
         var ex = Assert.Throws<ChangeSetException>(
-            () => new GitChangeSet("main", workingDirectory: RepoRoot, runner));
+            () => NewChangeSet("main", runner));
         Assert.Contains("not a git repository", ex.Message, System.StringComparison.OrdinalIgnoreCase);
     }
 
@@ -299,7 +330,7 @@ public sealed class GitChangeSetTests
             .With("diff", exit: 128, stderr: "fatal: bad revision 'nope'");
 
         var ex = Assert.Throws<ChangeSetException>(
-            () => new GitChangeSet("nope", workingDirectory: RepoRoot, runner));
+            () => NewChangeSet("nope", runner));
         Assert.Contains("bad revision", ex.Message, System.StringComparison.OrdinalIgnoreCase);
     }
 
@@ -314,7 +345,7 @@ public sealed class GitChangeSetTests
         var runner = Runner(diffOutput: "should-not-be-used.e2e.yaml\n");
 
         var ex = Assert.Throws<ChangeSetException>(
-            () => new GitChangeSet(maliciousRef, workingDirectory: RepoRoot, runner));
+            () => NewChangeSet(maliciousRef, runner));
 
         Assert.Contains("must not start with '-'", ex.Message, System.StringComparison.Ordinal);
 
@@ -330,6 +361,533 @@ public sealed class GitChangeSetTests
     {
         Assert.True(NullChangeSet.Instance.IsChanged("/anything"));
     }
+
+    // ---- Which binary is launched (#499) ----------------------------------------------
+
+    /// <summary>
+    /// Every git call is launched by a ROOTED file name, never the bare name <c>git</c>.
+    /// </summary>
+    /// <remarks>
+    /// This is the whole of #499 expressed as an assertion. A bare, unqualified name is not a
+    /// <c>PATH</c> lookup on Windows; the OS applies its own search order, whose FIRST entry is the
+    /// calling executable's own directory — measured on this host: an impostor <c>git.exe</c>
+    /// dropped beside the caller is launched in preference to the real git on <c>PATH</c>, which
+    /// for a dotnet global tool means one user-writable file in <c>~/.dotnet/tools</c>. A rooted
+    /// name is taken literally by both <c>CreateProcess</c> and <c>execve</c>, so there is no
+    /// search to lose. A SECOND term also beats <c>PATH</c> — the calling process's own current
+    /// directory, which for <c>cd untrusted-repo &amp;&amp; vouchfx run . --changed-since main</c>
+    /// is the repository under test. <c>GitChangeSet</c>'s header carries both measurements, the
+    /// environment variable that made the second one look unreproducible, and what remains open.
+    /// </remarks>
+    [Fact]
+    public void EveryGitCall_IsLaunchedByARootedPath_NotTheBareName()
+    {
+        var runner = Runner();
+        _ = NewChangeSet("main", runner);
+
+        Assert.Equal(3, runner.Calls.Count); // rev-parse, diff, status
+        Assert.All(runner.Calls, call =>
+        {
+            Assert.True(
+                Path.IsPathRooted(call.FileName),
+                $"git was launched as '{call.FileName}', which is not rooted.");
+            Assert.Equal(FakeGitPath, call.FileName);
+        });
+    }
+
+    /// <summary>
+    /// The executable is resolved ONCE per change-set, not once per git invocation.
+    /// </summary>
+    /// <remarks>
+    /// Three calls follow one resolution. Beyond the wasted filesystem probes, a per-call search
+    /// would let the answer change underneath a single change-set — the diff and the status could
+    /// be computed by two different binaries.
+    /// </remarks>
+    [Fact]
+    public void GitExecutable_IsResolvedOncePerChangeSet()
+    {
+        var runner = Runner();
+        var resolutions = 0;
+
+        _ = new GitChangeSet(
+            "main",
+            RepoRoot,
+            runner,
+            () =>
+            {
+                resolutions++;
+                return FakeGitPath;
+            });
+
+        Assert.Equal(1, resolutions);
+        Assert.Equal(3, runner.Calls.Count);
+    }
+
+    /// <summary>
+    /// A git that is not on <c>PATH</c> is refused before anything is launched, as a
+    /// <see cref="ChangeSetException"/> — the same outcome, and therefore the same exit code 2, as
+    /// the launch failure it replaces.
+    /// </summary>
+    /// <remarks>
+    /// There is deliberately no fallback to the bare name: falling back is precisely the
+    /// search-order hole the resolution closes, so "not found" has to be a refusal. The exit code
+    /// is unchanged on purpose — whether selection-infrastructure failure deserves one of its own
+    /// belongs to issues #480 and #466-B.
+    /// </remarks>
+    [Fact]
+    public void GitNotOnPath_IsRefused_BeforeAnythingIsLaunched()
+    {
+        var runner = Runner();
+
+        var ex = Assert.Throws<ChangeSetException>(
+            () => new GitChangeSet("main", RepoRoot, runner, () => null));
+
+        Assert.Contains(
+            "Is git installed and on PATH?", ex.Message, System.StringComparison.Ordinal);
+        Assert.Empty(runner.Calls);
+    }
+
+    /// <summary>
+    /// A launch failure does not disclose the resolved git path, driven by a REAL
+    /// <see cref="System.Diagnostics.Process"/> launch failure rather than a hand-built exception.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The first two assertions are the point of the row.</strong> An earlier version of
+    /// this test constructed the <see cref="ProcessLaunchException"/> itself, with a path-free
+    /// <see cref="IOException"/> inside it, and then asserted that the mapping added no path — so
+    /// it pinned a property of its own fixture and would have passed against a mapping that
+    /// disclosed everything the BCL actually hands it. This row instead makes
+    /// <see cref="SystemProcessRunner"/> fail for real against a rooted, unlaunchable path and
+    /// asserts the raw failure DOES name that path, in both the runner's message and its inner
+    /// one, before asserting the mapped message does not. The pattern is #488's, recorded in
+    /// CHANGELOG.md: assert the raw BCL failure names the path first, so the assertion that
+    /// matters cannot degrade into a vacuous pass.
+    /// </para>
+    /// <para>
+    /// Measured, and it is why the mapping now carries no reason clause at all: .NET composes BOTH
+    /// the executable path AND the working directory into the <c>Win32Exception</c> message, so
+    /// <c>InnerException.Message</c> is the SOURCE of the leak rather than a path-free half of it.
+    /// Measured on Windows; the assertion is safe to run everywhere because
+    /// <c>Process.Unix.cs</c>'s <c>ForkAndExecProcess</c> reaches the SAME
+    /// <c>CreateExceptionForErrorStartingProcess(message, errno, resolvedFilename, cwd)</c> helper
+    /// on its failure paths (read from the dotnet/runtime release/8.0 source, not measured here).
+    /// THE ONE LOAD-BEARING ASSUMPTION, named so the next reader knows what to re-check: that
+    /// <c>Process.Unix.cs</c>'s <c>ResolvePath</c> short-circuits on a ROOTED filename and hands
+    /// it back unchanged. If it ever normalised or re-searched instead, <c>resolvedFilename</c>
+    /// would no longer be the string this row passed in, and assertion (2) would fail on Linux
+    /// while proving nothing about disclosure. This row passes a rooted path, so that branch is
+    /// the only one it can take.
+    /// </para>
+    /// <para>
+    /// Nothing is launched: the candidate is a rooted path under the temp directory that is
+    /// deliberately never created, so the failure happens inside <c>CreateProcess</c>/<c>execve</c>
+    /// and the row leaves no child, no file and no directory behind. The working directory is the
+    /// temp directory itself, which exists on every host — a non-existent one would fail for a
+    /// second reason and blur what is being measured.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void LaunchFailure_DoesNotDiscloseTheResolvedPath()
+    {
+        var hostDirectory = Path.Combine(
+            Path.GetTempPath(), "vouchfx-absent-git-" + Guid.NewGuid().ToString("N"));
+        var absentGit = Path.Combine(
+            hostDirectory, OperatingSystem.IsWindows() ? "git.exe" : "git");
+        Assert.False(Directory.Exists(hostDirectory)); // nothing is created, so nothing is left.
+
+        // A short budget: the launch fails inside CreateProcess/execve, so no wait is ever
+        // entered and the ceiling only bounds a pathological host.
+        var runner = new SystemProcessRunner(System.TimeSpan.FromSeconds(10));
+
+        // (1) The raw BCL failure DOES name the resolved path — otherwise (3) proves nothing.
+        var raw = Assert.Throws<ProcessLaunchException>(
+            () => runner.Run(absentGit, new[] { "rev-parse" }, Path.GetTempPath()));
+
+        Assert.Contains(absentGit, raw.Message, System.StringComparison.Ordinal);
+
+        // (2) ...and so does the INNER exception, which is the composed Win32Exception. This is
+        // the assertion that retires the claim that taking the inner message "structurally cannot
+        // carry the path": it carries the executable path AND the working directory.
+        var inner = Assert.IsAssignableFrom<System.ComponentModel.Win32Exception>(raw.InnerException);
+        Assert.Contains(absentGit, inner.Message, System.StringComparison.Ordinal);
+        Assert.Contains(
+            Path.GetTempPath().TrimEnd(Path.DirectorySeparatorChar),
+            inner.Message,
+            System.StringComparison.Ordinal);
+
+        // (3) The mapped, user-facing message names neither.
+        var mapped = Assert.Throws<ChangeSetException>(
+            () => new GitChangeSet("main", Path.GetTempPath(), runner, () => absentGit));
+
+        Assert.Contains(
+            "Is git installed and on PATH?", mapped.Message, System.StringComparison.Ordinal);
+
+        // The repo's shared property assertion (#357/#375/#473) rather than a DoesNotContain on
+        // this one literal: it also refuses any OTHER rooted token the mapping might later grow.
+        HostPathDisclosure.AssertNoAbsoluteHostPath(
+            "the change-set launch-failure message", mapped.Message, hostDirectory);
+    }
+
+    // ---- The PATH search itself (#499) ------------------------------------------------
+
+    /// <summary>
+    /// A throwaway directory holding one file named the way this platform names an executable.
+    /// </summary>
+    /// <remarks>
+    /// Real files rather than a mocked filesystem, because what is under test IS the filesystem
+    /// probe: on Windows the candidate must exist under exactly the name the search composes, on
+    /// POSIX it must carry an execute bit. The <c>extension</c> argument (including its dot;
+    /// defaulting to this platform's own) exists so a row can plant a name the search must NOT
+    /// compose — a <c>.cmd</c> shim.
+    /// The directory is removed on every path so a run leaves nothing behind.
+    /// </remarks>
+    private sealed class LocatorFixture : IDisposable
+    {
+        public LocatorFixture(
+            string name = "git",
+            bool executable = true,
+            string? parentDirectory = null,
+            string? extension = null)
+        {
+            DirectoryPath = Path.Combine(
+                parentDirectory ?? Path.GetTempPath(),
+                "vouchfx-locate-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(DirectoryPath);
+
+            ExecutablePath = Path.Combine(
+                DirectoryPath,
+                name + (extension ?? (OperatingSystem.IsWindows() ? ".exe" : string.Empty)));
+            File.WriteAllText(ExecutablePath, string.Empty);
+
+            if (!OperatingSystem.IsWindows())
+            {
+                File.SetUnixFileMode(
+                    ExecutablePath,
+                    executable
+                        ? UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute
+                        : UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            }
+        }
+
+        public string DirectoryPath { get; }
+
+        public string ExecutablePath { get; }
+
+        public void Dispose() => Directory.Delete(DirectoryPath, recursive: true);
+    }
+
+    [Fact]
+    public void LocateOnPath_FindsTheExecutable_InAFullyQualifiedEntry()
+    {
+        using var fixture = new LocatorFixture();
+
+        var located = GitChangeSet.LocateOnPath("git", fixture.DirectoryPath);
+
+        Assert.Equal(fixture.ExecutablePath, located, ignoreCase: OperatingSystem.IsWindows());
+    }
+
+    /// <summary>
+    /// A <c>git.cmd</c> or <c>git.bat</c> is NOT a candidate, and that is a security property.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Why this row exists.</strong> A batch shim launched with
+    /// <c>UseShellExecute = false</c> still runs through <c>cmd.exe</c>, and cmd's parser re-reads
+    /// the arguments that <c>ArgumentList</c> quoted for <c>CreateProcess</c>. Measured on this
+    /// host, net8.0: <c>Process.Start</c> against a rooted <c>git.cmd</c> with
+    /// <c>ArgumentList = ["diff", "\"&amp;echo INJECTED&amp;\""]</c> made the child print
+    /// <c>INJECTED</c>. Since <c>--changed-since</c> reaches <c>ArgumentList</c> verbatim, a shim
+    /// candidate would make this class a command-execution sink. The OS search it replaces never
+    /// had that reach either — measured in the same probe, a bare-name launch with a <c>PATH</c>
+    /// directory holding only <c>git.cmd</c> threw <c>Win32Exception … The system cannot find the
+    /// file specified</c>, so the OS appends <c>.exe</c> and nothing else.
+    /// </para>
+    /// <para>
+    /// The control assertions are what make the two negatives mean something: the same search
+    /// against a real <c>git.exe</c> DOES resolve, and a shim in an EARLIER entry does not shadow
+    /// a real git in a later one.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void LocateOnPath_Windows_DoesNotSelectABatchShim()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return; // A .cmd is not an executable off Windows; there is nothing to refuse.
+        }
+
+        using var shim = new LocatorFixture(extension: ".cmd");
+        using var batch = new LocatorFixture(extension: ".bat");
+        using var real = new LocatorFixture();
+
+        Assert.Null(GitChangeSet.LocateOnPath("git", shim.DirectoryPath));
+        Assert.Null(GitChangeSet.LocateOnPath("git", batch.DirectoryPath));
+
+        // Control: the same search finds a real git.exe...
+        Assert.Equal(
+            real.ExecutablePath,
+            GitChangeSet.LocateOnPath("git", real.DirectoryPath),
+            ignoreCase: true);
+
+        // ...and the shim, listed FIRST, does not shadow it.
+        var entries = shim.DirectoryPath + Path.PathSeparator + real.DirectoryPath;
+        Assert.Equal(
+            real.ExecutablePath,
+            GitChangeSet.LocateOnPath("git", entries),
+            ignoreCase: true);
+    }
+
+    /// <summary>
+    /// The Windows candidate is exactly <c>git.exe</c> — asserted on EVERY platform.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Why this row exists alongside the one above.</strong> That row plants a real
+    /// <c>.cmd</c>/<c>.bat</c> on disk, so it early-returns off Windows, and every blocking CI lane
+    /// is <c>ubuntu-latest</c> (#366) — leaving the name this seam composes unasserted on the lane
+    /// that actually blocks. This row takes the platform as an argument instead of reading it, so
+    /// it runs everywhere.
+    /// </para>
+    /// <para>
+    /// <strong>It pins the name, and states its own limit rather than implying more.</strong> A
+    /// <c>PATHEXT</c>-style widening would be a loop over several extensions inside
+    /// <see cref="GitChangeSet.LocateOnPath(string, string?)"/>, leaving
+    /// <see cref="GitChangeSet.CandidateFileName(string, bool)"/> returning <c>git.exe</c>
+    /// untouched — so it would pass this row and early-return on the Windows-only one. Nothing in
+    /// this file gates the coupling between the two, and no source census was added for it; the
+    /// residual is recorded on <c>CandidateFileName</c> itself.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void CandidateFileName_UnderTheWindowsRule_IsExactlyTheExeName()
+    {
+        Assert.Equal("git.exe", GitChangeSet.CandidateFileName("git", windows: true));
+        Assert.Equal("git", GitChangeSet.CandidateFileName("git", windows: false));
+    }
+
+    /// <summary>
+    /// On POSIX a file without an execute bit is not a candidate.
+    /// </summary>
+    [Fact]
+    public void LocateOnPath_Posix_RequiresAnExecuteBit()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return; // Windows has no execute bit; the `.exe` name is the test there.
+        }
+
+        using var executable = new LocatorFixture();
+        using var notExecutable = new LocatorFixture(executable: false);
+
+        Assert.NotNull(GitChangeSet.LocateOnPath("git", executable.DirectoryPath));
+        Assert.Null(GitChangeSet.LocateOnPath("git", notExecutable.DirectoryPath));
+    }
+
+    /// <summary>
+    /// An entry that is not fully qualified — empty, or relative — is SKIPPED, not resolved.
+    /// </summary>
+    /// <remarks>
+    /// An empty PATH element means "the current directory" on some platforms and a relative one
+    /// resolves against it, so honouring either would reopen the very hole #499 closed, one
+    /// indirection further along. The control assertion is what makes the negative meaningful:
+    /// the same directory, spelt absolutely, does resolve.
+    /// </remarks>
+    [Fact]
+    public void LocateOnPath_SkipsEntriesThatAreNotFullyQualified()
+    {
+        // Under the CURRENT directory, not the temp root, and that is not incidental: a relative
+        // spelling of a directory only exists when it shares a volume with the current one, and on
+        // this maintainer's machine temp is on C: while the working tree is on D:. Rooting the
+        // fixture here makes the negative assertion below run on every host rather than skip on
+        // Windows. The directory is the test's own output directory and is removed in Dispose.
+        using var fixture = new LocatorFixture(parentDirectory: Directory.GetCurrentDirectory());
+
+        Assert.NotNull(GitChangeSet.LocateOnPath("git", fixture.DirectoryPath));
+
+        var relative = Path.GetRelativePath(Directory.GetCurrentDirectory(), fixture.DirectoryPath);
+        Assert.False(Path.IsPathFullyQualified(relative), relative);
+
+        // The empty entry means "the current directory" and the relative one resolves against it;
+        // the same directory that resolved above must NOT resolve when spelt either way.
+        var entries = string.Empty + Path.PathSeparator + relative;
+        Assert.Null(GitChangeSet.LocateOnPath("git", entries));
+    }
+
+    /// <summary>
+    /// An entry is taken VERBATIM: neither unquoted nor trimmed of surrounding whitespace.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Both normalisations are <c>cmd.exe</c> behaviours rather than <c>CreateProcess</c> ones, so
+    /// either resolves an entry the OS search this replaces does not. Measured on Windows 11 build
+    /// 26200.9168 / net8.0, with a bare-name <c>Process.Start</c> (<c>UseShellExecute = false</c>)
+    /// against a directory holding one real executable: spelt plainly it LAUNCHED; spelt with a
+    /// leading space, a trailing space, a leading tab, or wrapped in literal quotes it was NOT
+    /// FOUND in all four cases. The five assertions below are those five answers.
+    /// </para>
+    /// <para>
+    /// <strong>The shadowing assertion is the one with teeth.</strong> A <c>.Trim()</c> here used
+    /// to resolve all three whitespace spellings, so a leading-space entry written FIRST — the
+    /// shape a <c>PATH=%PATH%; C:\tools</c> hand-edit leaves behind — beat a real git in a later
+    /// entry, promoting a directory Windows ignores to the highest-priority one in this search.
+    /// Cross-platform on purpose, and by two different mechanisms: the quoted and leading-whitespace
+    /// spellings are not fully qualified on either platform, while the trailing-whitespace one is,
+    /// and is refused one step later because it composes to <c>&lt;dir&gt; /git</c>, which no
+    /// platform holds. So the row runs on the blocking ubuntu lane rather than skipping there.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void LocateOnPath_TakesEntriesVerbatim_NeitherUnquotingNorTrimming()
+    {
+        using var fixture = new LocatorFixture();
+        using var real = new LocatorFixture();
+
+        // Control: the same directory, spelt plainly, DOES resolve.
+        Assert.NotNull(GitChangeSet.LocateOnPath("git", fixture.DirectoryPath));
+
+        Assert.Null(GitChangeSet.LocateOnPath("git", "\"" + fixture.DirectoryPath + "\""));
+        Assert.Null(GitChangeSet.LocateOnPath("git", " " + fixture.DirectoryPath));
+        Assert.Null(GitChangeSet.LocateOnPath("git", fixture.DirectoryPath + " "));
+        Assert.Null(GitChangeSet.LocateOnPath("git", "\t" + fixture.DirectoryPath));
+
+        // ...and a whitespace-decorated entry listed FIRST does not shadow a plain later one.
+        var entries = " " + fixture.DirectoryPath + Path.PathSeparator + real.DirectoryPath;
+        Assert.Equal(
+            real.ExecutablePath,
+            GitChangeSet.LocateOnPath("git", entries),
+            ignoreCase: OperatingSystem.IsWindows());
+    }
+
+    [Fact]
+    public void LocateOnPath_ReturnsNull_WhenNoEntryHoldsTheExecutable()
+    {
+        using var fixture = new LocatorFixture();
+
+        Assert.Null(GitChangeSet.LocateOnPath("no-such-tool", fixture.DirectoryPath));
+        Assert.Null(GitChangeSet.LocateOnPath("git", pathVariable: null));
+        Assert.Null(GitChangeSet.LocateOnPath("git", string.Empty));
+    }
+
+    /// <summary>
+    /// The production locator yields a real, fully qualified git wherever the operating system's
+    /// own bare-name launch finds one — and never yields something unrooted.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The second assertion is the functional-regression gate, and until it was added
+    /// nothing was one.</strong> This row used to early-return when the locator reported nothing,
+    /// and the only other row that runs a real git —
+    /// <see cref="RealGit_AgainstThisRepo_DoesNotThrow"/> — catches
+    /// <see cref="ChangeSetException"/> and moves on. That catch predates #499 but its scope
+    /// widened with it: it used to swallow "<c>Process.Start</c> could not find git" and now also
+    /// swallows "OUR search could not find git". So a narrowing that refused a genuinely installed
+    /// git went green on every lane, on a change whose whole premise is replacing the operating
+    /// system's search with this one. <c>git</c> is present on <c>ubuntu-latest</c> — <c>actions/checkout</c>
+    /// requires it — so the assertion reddens the blocking lane rather than skipping there.
+    /// </para>
+    /// <para>
+    /// <strong>The reference is deliberately the operating system's own answer, and it is a wider
+    /// one, so a red here has three shapes and only the first is a defect in the resolver.</strong>
+    /// (1) A genuine narrowing — the regression this row exists to catch. (2) A <c>git</c> reachable
+    /// ONLY through one of the terms the header of <see cref="GitChangeSet"/> enumerates as dropped,
+    /// deliberately not re-listed here: a second copy of that list is exactly what drifts out of step
+    /// with it. Whichever term it is, a git reachable only that way is worth a red build in its own
+    /// right. (3) A <c>PATH</c> ENTRY THIS RESOLVER
+    /// DELIBERATELY SKIPS WHILE THE OS HONOURS IT, holding the host's only git: a RELATIVE entry,
+    /// refused on both platforms by <c>LocateOnPath</c>'s <c>Path.IsPathFullyQualified</c> guard,
+    /// and an EMPTY element, which that same guard skips and which the OS reads as the current
+    /// directory on some platforms — see <c>LocateOnPath</c>'s own remarks, which are where that
+    /// scope is stated. Shape (3) is a design
+    /// decision rather than a defect, and it is listed so that a
+    /// red does not send a reader hunting for a planted git. No attempt is made to subtract the
+    /// dropped terms; doing so would mean mutating this process's <c>PATH</c>, which races every
+    /// other row in the assembly.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void LocateGitOnPath_FindsAnyGitTheOperatingSystemWouldLaunch()
+    {
+        var located = GitChangeSet.LocateGitOnPath();
+
+        if (located is not null)
+        {
+            Assert.True(Path.IsPathFullyQualified(located), located);
+            Assert.True(File.Exists(located), located);
+        }
+
+        if (BareNameGitLaunches())
+        {
+            Assert.NotNull(located);
+        }
+    }
+
+    /// <summary>
+    /// Whether this host launches <c>git --version</c> from the bare name, by the operating
+    /// system's own search — the reference the row above compares against.
+    /// </summary>
+    /// <remarks>
+    /// <strong>BOUNDED, AND A TIMEOUT COUNTS AS "DOES NOT LAUNCH".</strong> <c>git --version</c> is
+    /// not the #392 shape — it spawns nothing that could hold the inherited pipes — but this is a
+    /// child wait in the same assembly as the rows that exist to prove unbounded child waits wedge
+    /// the CLI, and an unbounded one here would hang the blocking lane with no diagnostic: no
+    /// assertion message, no failing row, just a job that never returns. The reads are started
+    /// before the wait, because a child that fills a redirected pipe blocks otherwise, and they are
+    /// ABANDONED rather than awaited on the timeout path — the same contract
+    /// <see cref="IProcessRunner"/> documents, for the same reason. Returning <see langword="false"/>
+    /// on a timeout costs only the strength of the row above (it stops asserting on a host that
+    /// cannot answer the reference question), never a false green on a real narrowing.
+    /// </remarks>
+    private static bool BareNameGitLaunches()
+    {
+        var psi = new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = "git", // BARE, so the OS performs the search this file replaces.
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        psi.ArgumentList.Add("--version");
+
+        try
+        {
+            using var process = System.Diagnostics.Process.Start(psi);
+            if (process is null)
+            {
+                return false;
+            }
+
+            // Started before the wait: a child that fills a redirected pipe blocks otherwise.
+            var drain = Task.WhenAll(
+                process.StandardOutput.ReadToEndAsync(),
+                process.StandardError.ReadToEndAsync());
+
+            if (!process.WaitForExit(BareNameProbeBudgetMilliseconds))
+            {
+                ChildProcess.KillTreeQuietly(process);
+                ObserveQuietly(drain);
+                return false;
+            }
+
+            ObserveQuietly(drain);
+            return process.ExitCode == 0;
+        }
+        catch (System.ComponentModel.Win32Exception)
+        {
+            return false; // No git this host can launch from the bare name.
+        }
+    }
+
+    /// <summary>
+    /// Swallows a faulted read so an abandoned capture cannot surface later as an unobserved task
+    /// exception attributed to whichever row happens to be running.
+    /// </summary>
+    private static void ObserveQuietly(Task task) =>
+        _ = task.ContinueWith(
+            static faulted => _ = faulted.Exception,
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
 
     // ---- Optional real-git smoke test -------------------------------------------------
 

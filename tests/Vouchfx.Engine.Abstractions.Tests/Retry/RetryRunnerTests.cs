@@ -33,7 +33,7 @@ internal sealed class RecordingStepEventSink : IStepEventSink
 }
 
 /// <summary>
-/// Verifies the behaviour contract of <see cref="RetryRunner.PollAsync"/>: the
+/// Verifies the behaviour contract of <see cref="RetryRunner.PollAsync(IDictionary{string, object}, string, string, long?, long?, Func{CancellationToken, Task{StepOutcome}}, IStepEventSink, string, CancellationToken)"/>: the
 /// per-attempt record, the terminal verdicts (Pass, EnvironmentError, throw), the
 /// timeout-to-Inconclusive resolution (never Fail), and the two written Vars keys.
 /// </summary>

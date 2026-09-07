@@ -157,6 +157,29 @@ internal sealed class SystemProcessRunner : IProcessRunner
         ArgumentNullException.ThrowIfNull(arguments);
         ArgumentNullException.ThrowIfNull(workingDirectory);
 
+        // THE SEAM'S "FULLY QUALIFIED" REQUIREMENT, ENFORCED RATHER THAN DOCUMENTED (#499). An
+        // unqualified name here is handed to the operating system's own search, which on Windows
+        // reaches the calling executable's directory and the calling process's current directory
+        // AHEAD of PATH — the hole #499 closed by resolving in GitChangeSet. That resolution is the
+        // only thing standing between this launch and that search, and until this line the
+        // requirement lived in a doc-comment: the original defect was a caller passing the bare name
+        // `git`, which is precisely what a doc-comment cannot catch.
+        //
+        // ArgumentException, not ProcessLaunchException: this is a broken caller inside this
+        // assembly, not a failure of the child, and GitChangeSet.RunGit's catches are narrow by type
+        // so it escapes rather than being dressed up as a usage error (exit 2) the user caused.
+        //
+        // IsPathFullyQualified, matching GitChangeSet.LocateOnPath, so the resolver cannot produce a
+        // value this refuses. IsPathRooted would admit the Windows drive-relative form `C:dir`,
+        // which resolves against that drive's current directory — an ambient-directory term, which
+        // is the whole class being excluded.
+        if (!Path.IsPathFullyQualified(fileName))
+        {
+            throw new ArgumentException(
+                $"The executable must be a fully qualified path; '{fileName}' is not. Resolving an unqualified name is the operating system's search, which reaches directories ahead of PATH (#499), so callers resolve first.",
+                nameof(fileName));
+        }
+
         // The seam is synchronous (see IProcessRunner's header) but the bounding is naturally
         // expressed as a race between tasks, so the core is async and this blocks on it.
         //

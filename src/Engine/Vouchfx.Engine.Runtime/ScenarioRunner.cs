@@ -335,7 +335,7 @@ public static class ScenarioRunner
     /// makes that true rather than approximately true.
     /// </para>
     /// <para>
-    /// Exposed as a <see cref="ReadOnlyCollection{T}"/> over the array rather than as the array
+    /// Exposed as a <see cref="System.Collections.ObjectModel.ReadOnlyCollection{T}"/> over the array rather than as the array
     /// typed to an interface. <see cref="IReadOnlyList{T}"/> on a <c>string[]</c> is a promise the
     /// runtime does not keep — any in-assembly consumer can cast it back and rewrite the entries,
     /// and this particular array is a SECURITY ALLOWLIST, so a mutation would silently widen what

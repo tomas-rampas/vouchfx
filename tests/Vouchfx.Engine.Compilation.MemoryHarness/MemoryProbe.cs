@@ -189,7 +189,7 @@ public static class MemoryProbe
     /// accessor lives in Orchestration's Default ALC) holding an immutable pre-seeded
     /// snapshot with no mutable or static state, so reuse is safe.  The closure CSX reads
     /// it through <c>ScriptGlobalVariables.Webhooks</c> to prove that read path does not
-    /// pin the collectible context.  The trivial probe leaves <see cref="Webhooks"/> as
+    /// pin the collectible context.  The trivial probe leaves <see cref="ScriptGlobalVariables.Webhooks"/> as
     /// the <see cref="NullWebhookCaptureAccessor"/> (it passes <see langword="null"/> here).
     /// </remarks>
     private static readonly ProbeWebhookAccessor ClosureWebhookAccessor = new();
@@ -202,7 +202,7 @@ public static class MemoryProbe
     /// every closure iteration, a by-reference Default-ALC instance holding an immutable
     /// pre-seeded snapshot with no mutable or static state. The closure CSX reads it through
     /// <c>ScriptGlobalVariables.Traces</c> to prove that read path does not pin the collectible
-    /// context. The trivial probe leaves <see cref="Traces"/> as the
+    /// context. The trivial probe leaves <see cref="ScriptGlobalVariables.Traces"/> as the
     /// <see cref="NullTraceCaptureAccessor"/> (it passes <see langword="null"/> here).
     /// </remarks>
     private static readonly ProbeTraceAccessor ClosureTraceAccessor = new();

@@ -424,7 +424,7 @@ public sealed class MqExpectKafkaProviderTests
     // ── 10. Registry: provider discoverable ────────────────────────────────────
 
     /// <summary>
-    /// Scanning the provider assembly via <see cref="StepKindRegistry.BuildAndFreeze"/>
+    /// Scanning the provider assembly via <see cref="StepKindRegistry.BuildAndFreeze(System.Collections.Generic.IEnumerable{System.Reflection.Assembly})"/>
     /// discovers <see cref="MqExpectKafkaProvider"/> at key <c>"mq-expect.kafka"</c>.
     /// </summary>
     [Fact]

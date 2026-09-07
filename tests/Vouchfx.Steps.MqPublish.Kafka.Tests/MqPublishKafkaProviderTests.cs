@@ -359,7 +359,7 @@ public sealed class MqPublishKafkaProviderTests
     // ── 10. Registry: provider discoverable ────────────────────────────────────
 
     /// <summary>
-    /// Scanning the provider assembly via <see cref="StepKindRegistry.BuildAndFreeze"/>
+    /// Scanning the provider assembly via <see cref="StepKindRegistry.BuildAndFreeze(System.Collections.Generic.IEnumerable{System.Reflection.Assembly})"/>
     /// discovers <see cref="MqPublishKafkaProvider"/> at key <c>"mq-publish.kafka"</c>.
     /// </summary>
     [Fact]

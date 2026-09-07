@@ -1063,7 +1063,7 @@ public sealed class MqPublishKafkaProvider
     /// </summary>
     /// <remarks>
     /// Example: <c>["a", "b\"c"]</c> → <c>new string[] { "a", "b\"c" }</c> where the
-    /// inner quotes are escaped by <see cref="JsonSerializer.Serialize"/>.
+    /// inner quotes are escaped by <see cref="JsonSerializer.Serialize{TValue}(TValue, JsonSerializerOptions)"/>.
     /// </remarks>
     private static string BuildStringArrayLiteral(string[] values)
     {

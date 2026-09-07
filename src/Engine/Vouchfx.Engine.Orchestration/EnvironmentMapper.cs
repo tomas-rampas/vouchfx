@@ -3021,7 +3021,8 @@ public static class EnvironmentMapper
     /// <para>
     /// <b>BLOCKER fix (peer review, runtime-probed against the pinned Aspire 13.4.2 DLL):</b>
     /// <c>ReferenceExpressionBuilder.AppendLiteral</c> appends the literal text VERBATIM into
-    /// the internal composite-format string that <see cref="ReferenceExpression.Build"/>later
+    /// the internal composite-format string that the <see cref="ReferenceExpression"/> returned by
+    /// <see cref="ReferenceExpressionBuilder.Build"/> later
     /// materialises via <c>string.Format</c> — it does NOT escape braces itself (unlike the
     /// compiler-generated interpolated-handler path used elsewhere in this file, e.g. the
     /// kafka schema-registry sidecar's <c>ReferenceExpression.Create($"...")</c>, which the C#
@@ -3539,10 +3540,11 @@ public static class EnvironmentMapper
     /// <para>
     /// The cref names the method WITHOUT a parameter list on purpose. It carried one —
     /// <c>Map(EnvironmentSpec?, string?)</c> — which stopped matching the moment
-    /// <c>kafkaSpeakingTargets</c> was added as a third parameter, and nothing caught it: this
-    /// project sets no <c>GenerateDocumentationFile</c>, so crefs here are never resolved and
-    /// CS1574 cannot fire. There is exactly one <c>Map</c>, so the bare form is unambiguous and
-    /// cannot rot the same way again.
+    /// <c>kafkaSpeakingTargets</c> was added as a third parameter, and nothing caught it, because
+    /// this project did not then generate a documentation file and unresolvable crefs were
+    /// therefore never diagnosed. It does now (#490), so CS1574 would catch that rot today. The
+    /// bare form is kept regardless: there is exactly one <c>Map</c>, so it is unambiguous, and
+    /// a signature that needs no maintenance is better than one a gate has to police.
     /// </para>
     /// A malformed value fails HERE, once, rather than inside
     /// <see cref="ServerArtifactInjection.Plan"/> once per declared artefact — the fault is in the
@@ -3711,6 +3713,10 @@ public static class EnvironmentMapper
     // Private helpers
     // -----------------------------------------------------------------------
 
+    /// <summary>Cached options for <see cref="GenerateAsbConfigJson"/> serialisation (CA1869).</summary>
+    private static readonly JsonSerializerOptions s_asbConfigJsonOptions =
+        new JsonSerializerOptions { WriteIndented = true };
+
     /// <summary>
     /// Returns <see langword="true"/> when a kafka dependency's <see cref="DependencySpec.Extra"/>
     /// mapping carries a scalar <c>schemaRegistry</c> whose value is <c>true</c>
@@ -3720,10 +3726,6 @@ public static class EnvironmentMapper
     /// The raw YAML mapping node from <see cref="DependencySpec.Extra"/>; may be
     /// <see langword="null"/> (no extra fields → no registry).
     /// </param>
-    /// <summary>Cached options for <see cref="GenerateAsbConfigJson"/> serialisation (CA1869).</summary>
-    private static readonly JsonSerializerOptions s_asbConfigJsonOptions =
-        new JsonSerializerOptions { WriteIndented = true };
-
     private static bool KafkaWantsSchemaRegistry(YamlMappingNode? extra)
     {
         if (extra is null)
@@ -3998,7 +4000,7 @@ public static class EnvironmentMapper
     /// built-in default ("docker.io" for most, "mcr.microsoft.com" for SqlServer) — and
     /// <c>WithImage</c> folds an embedded registry straight into the <c>Image</c> annotation
     /// field, never into the separate <c>Registry</c> field.
-    /// <see cref="Aspire.Hosting.ApplicationModel.ResourceExtensions.TryGetContainerImageName"/>
+    /// <see cref="Aspire.Hosting.ApplicationModel.ResourceExtensions.TryGetContainerImageName(Aspire.Hosting.ApplicationModel.IResource, out string)"/>
     /// (the method that actually assembles the pull reference) unconditionally prepends
     /// <c>Registry + "/"</c> whenever <c>Registry</c> is non-null — so leaving either kind of
     /// pre-existing default in place would silently double-prefix the pull reference, even

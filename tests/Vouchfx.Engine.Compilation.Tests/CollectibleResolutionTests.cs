@@ -219,9 +219,9 @@ public sealed class CollectibleResolutionTests : IDisposable
     /// <summary>
     /// Compiles a CSX body that calls <c>VouchfxSatTest.Widget.Answer()</c> using
     /// <see cref="RoslynScriptCompiler.CompileOnce"/> with
-    /// <paramref name="additionalReferencePaths"/> pointing to the satellite, then
+    /// <c>additionalReferencePaths</c> pointing to the satellite, then
     /// executes it with <see cref="RoslynScriptCompiler.RunIsolatedAsync"/> using
-    /// <paramref name="collectibleProbingPaths"/> pointing to the same satellite.
+    /// <c>collectibleProbingPaths</c> pointing to the same satellite.
     /// Asserts that <c>Vars["sat"]</c> equals 42 — proving compile-time reference
     /// resolution and runtime collectible resolution work end-to-end.
     /// </summary>

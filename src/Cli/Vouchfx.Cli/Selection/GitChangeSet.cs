@@ -17,6 +17,107 @@
 // call is the exception to that rule and propagates as OperationCanceledException: an operator's
 // Ctrl+C is not a usage error, and the token exists so that it reaches the runner's tree-kill
 // instead of the process being force-killed with that cleanup unrun.
+//
+// GIT IS LAUNCHED BY ABSOLUTE PATH, RESOLVED OFF `PATH` ONLY (#499).
+// ──────────────────────────────────────────────────────────────────
+// The bare name "git" used to be handed to the runner, and on Windows that is NOT a PATH lookup.
+// .NET starts a process with `lpApplicationName = null`, putting everything in the command line
+// (`Process.Windows.cs`, "we don't need this since all the info is in commandLine"), so Windows
+// applies ITS OWN search order to the unqualified name. TWO of that order's terms are reachable
+// from here, and BOTH were measured to beat `PATH` on a default host.
+//
+// Every measurement below was taken on Windows 11 build 26200.9168, net8.0, from a console app
+// calling `Process.Start` with `UseShellExecute = false` — never through a shell, for the reason
+// the re-probe warning below records. The impostor rows use a bare `FileName` against a planted
+// `git.exe` that prints a marker. Two positive controls run in the same harness, so that a "not
+// found" is never mistaken for a harness that cannot see an impostor: placing the plant directory
+// ON `PATH` runs the marker, and removing the impostor again runs the real git. The `.cmd` pair
+// further down uses a rooted `FileName` for its second half and was RE-TAKEN in that same
+// console-app harness, rather than carried over from the earlier one.
+//
+// (1) THE APPLICATION LOAD DIRECTORY — beside the calling executable. An impostor there ran in
+// preference to the real git on `PATH` (marker, exit 0); with the impostor removed, the identical
+// call printed `git version 2.54.0.windows.1`. That is not hypothetical for a tool installed as a
+// dotnet global tool: everything in `~/.dotnet/tools` is writable by the user, and one file
+// dropped there takes over every git call this file makes. That same directory is also ON `PATH`
+// for a global tool, which is why the NOT CLOSED paragraph below narrows this term rather than
+// closing it.
+//
+// (2) THE CALLING PROCESS'S CURRENT DIRECTORY, which also beats `PATH`, on a host where
+// `NoDefaultCurrentDirectoryInExePath` is absent — see the next paragraph, because that condition
+// is the whole reason this term was once written off. With the impostor present only in that
+// directory and no git on `PATH` at all, the marker ran (exit 0); with the real git added to
+// `PATH`, the marker STILL ran. `cd untrusted-repo && vouchfx run . --changed-since main` gives
+// the CLI exactly that current directory — the process inherits the shell's, and nothing in this
+// CLI ever calls `Directory.SetCurrentDirectory` — so a `git.exe` committed at the root of the
+// repository under test won, needing no write access to the user's profile, which makes it at
+// least as reachable as (1).
+//
+// AN EARLIER REVISION OF THIS HEADER RECORDED (2) AS "PROBED AND DID NOT REPRODUCE", AND THAT
+// NON-REPRODUCTION WAS AN ARTEFACT OF THE MEASURING ENVIRONMENT. `NoDefaultCurrentDirectoryInExePath`
+// suppresses the current-directory term, and it is NOT a Windows default: measured on this host,
+// `Machine=''` and `User=''`, while `Process='1'` in the environment this repository's tooling runs
+// under. So every probe that inherited that environment was measuring a host with the term already
+// switched off. (Which link in the chain sets it was not established; Git Bash was ruled out —
+// launched from a parent without the variable, it does not add it.) Clearing it in the CALLING
+// process flips the row. The child's environment block is not consulted at all: measured, SETTING
+// the variable in `psi.Environment` while the caller's block lacked it did not re-suppress the
+// term, so a fix or a probe applied there changes nothing.
+//
+// BEFORE CONCLUDING ANYTHING ABOUT (2), ASSERT THAT `[Environment]::CurrentDirectory` IS THE PLANT
+// DIRECTORY. Measured: after `Set-Location 'C:\Windows\System32'`, `$PWD` read
+// `C:\Windows\System32` while `[Environment]::CurrentDirectory` still read the shell's start
+// directory. PowerShell's `Set-Location` moves `$PWD` but NOT the Win32 process current directory,
+// and the latter is the one `CreateProcess` searches. A probe that changes directory that way
+// therefore plants its impostor somewhere that was never the calling process's current directory,
+// and reports NOT FOUND correctly without ever exercising this term — which is to say it
+// reproduces the PRE-CORRECTION answer and puts the reader one step from deleting the paragraph
+// above for a second time. The instruction is the assertion, not the harness: a console app gets
+// this wrong just as easily.
+//
+// ONE HALF OF THE OLD CORRECTION STANDS, restated because it is easy to re-break: the original
+// filing named the wrong MECHANISM. `ProcessStartInfo.WorkingDirectory` sets `lpCurrentDirectory`
+// FOR THE CHILD and takes no part in resolving the command line's module name. The term that wins
+// is the calling process's own current directory, which this CLI inherits from the shell rather
+// than sets. The mechanism was wrong; the substance was right.
+//
+// A ROOTED `ProcessStartInfo.FileName` removes the whole question rather than answering it: both
+// `CreateProcess` and `execve` take a rooted path literally and search nothing. So this change
+// removes the search entirely — every term of it, including the application load directory, the
+// calling process's current directory, and the system and Windows directories — and puts `PATH`,
+// in order, in their place.
+//
+// NOT CLOSED, AND `~/.dotnet/tools` IS ONE OF THE DIRECTORIES IT IS NOT CLOSED AGAINST. An
+// attacker-writable directory sitting EARLIER IN `PATH` than git's own still wins, because the
+// search below takes the first `PATH` match and launches that. For a global tool the install
+// directory from (1) is such a directory BY CONSTRUCTION — it has to be on `PATH` for the shell to
+// find `vouchfx` at all — so the drop in (1) is NARROWED here, from an unconditional win to a
+// `PATH`-ORDER-DEPENDENT one, and not refused. Nothing here re-orders or vets `PATH`; the change
+// moves the resolution from "whatever Windows searches" to "`PATH`, in order, and nothing else",
+// which is strictly smaller but is not empty.
+//
+// THE ONLY WINDOWS CANDIDATE IS `git.exe`, AND WIDENING THAT IS A SHELL-INJECTION SINK. The
+// resolution replaces the OS search, so its candidate set must not be larger than the one it
+// replaces. Measured on this host, net8.0: with a `PATH` directory holding only `git.cmd`, the
+// bare-name launch threw `Win32Exception … The system cannot find the file specified` — the OS
+// appends `.exe` and nothing else. Measured in the same probe: `Process.Start` on a rooted
+// `git.cmd` with `UseShellExecute = false` DOES launch, through `cmd.exe`, and cmd's parser then
+// re-reads the arguments — `ArgumentList = ["diff", "\"&echo INJECTED&\""]` made the child print
+// `INJECTED`. `ArgumentList` quotes for `CreateProcess`, not for cmd, so a candidate set including
+// `.CMD`/`.BAT` would turn `--changed-since` into command execution wherever git is installed as a
+// shim. A wider set also changes WHICH git wins in two more ways: `.COM` precedes `.EXE` in the
+// default `PATHEXT`, so it would shadow a sibling `git.exe` in the SAME directory, and a `git.cmd`
+// in an earlier `PATH` directory would beat a real `git.exe` in a later one. So: `.exe` on
+// Windows, the bare name plus an execute-bit check on POSIX, and no `PATHEXT` at all.
+//
+// This is a DIFFERENT hazard from the two guards already here, and neither addressed it. The
+// leading-dash refusal plus `--end-of-options` defends git's own OPTION PARSING; `ArgumentList`
+// defends against SHELL quoting. Which BINARY is resolved was covered by neither.
+//
+// The search lives in this file rather than in SystemProcessRunner because it is git-specific (the
+// candidate name, the "is git installed" diagnostic) and that runner deliberately carries no git
+// knowledge — the same reason it has no environment seam, which is #500. It runs ONCE per
+// change-set: three git calls, one resolution.
 
 using System.Globalization;
 
@@ -49,6 +150,10 @@ internal sealed class GitChangeSet : IChangeSet
     /// </param>
     /// <param name="workingDirectory">A directory inside the working tree to run git in.</param>
     /// <param name="processRunner">The seam used to invoke git.</param>
+    /// <param name="gitExecutableLocator">
+    /// Overrides the <c>PATH</c> search that finds the git executable, returning a rooted path or
+    /// <see langword="null"/> for "not found". Defaults to <see cref="LocateGitOnPath"/>.
+    /// </param>
     /// <param name="cancellationToken">
     /// Cancels the git calls. Threaded through so a Ctrl+C during a wedged <c>--changed-since</c>
     /// reaches the runner's cleanup rather than waiting out the per-call budget; it surfaces as
@@ -61,10 +166,20 @@ internal sealed class GitChangeSet : IChangeSet
     /// <exception cref="OperationCanceledException">
     /// Thrown when <paramref name="cancellationToken"/> is signalled during a git call.
     /// </exception>
+    /// <remarks>
+    /// <strong><paramref name="gitExecutableLocator"/> exists for the tests, and this says so
+    /// rather than dressing it up.</strong> Production passes nothing. Without it every unit test
+    /// in this class — including the dozen that only exercise PARSING against a canned runner that
+    /// launches nothing — would depend on the host having a real git installed, because the
+    /// resolution below happens before any call reaches the injected <see cref="IProcessRunner"/>
+    /// and refuses the whole change-set when it fails. The alternative seam, mutating the process's
+    /// <c>PATH</c> from a test, races every other test in the assembly.
+    /// </remarks>
     public GitChangeSet(
         string changedSinceRef,
         string workingDirectory,
         IProcessRunner processRunner,
+        Func<string?>? gitExecutableLocator = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(workingDirectory);
@@ -74,13 +189,28 @@ internal sealed class GitChangeSet : IChangeSet
         // by git as an OPTION, not a revision, even when passed via ArgumentList (which only
         // prevents *shell* injection, not git's own option parsing). Reject such refs — and
         // null/empty/whitespace — BEFORE any git call that splices the ref into its argv.
+        //
+        // FIRST, ahead of the executable resolution below, because it is the cheaper refusal and
+        // the one that depends on nothing outside this process: a malformed ref must be reported
+        // as a malformed ref even on a host with no git at all.
         if (string.IsNullOrWhiteSpace(changedSinceRef) || changedSinceRef.StartsWith('-'))
         {
             throw new ChangeSetException(
                 $"Invalid git ref '{changedSinceRef}': must not start with '-'.");
         }
 
-        var repoRoot = ResolveRepoRoot(workingDirectory, processRunner, cancellationToken);
+        // ONCE per change-set, not once per git call (#499): three invocations follow and they all
+        // launch this same rooted path. A miss is refused here rather than degraded to the bare
+        // name — falling back to "git" is precisely the search-order hole this resolution closes.
+        //
+        // The refusal deliberately reuses the launch-failure wording and therefore the launch
+        // failure's OUTCOME: a ChangeSetException, which the CLI maps to exit 2. Whether
+        // selection-infrastructure failure deserves a code of its own is issues #480 and #466-B;
+        // a fix for a binary-resolution defect does not get to answer it in passing.
+        var gitExecutable = (gitExecutableLocator ?? LocateGitOnPath)()
+            ?? throw new ChangeSetException(GitUnavailable("the change-set computation"));
+
+        var repoRoot = ResolveRepoRoot(gitExecutable, workingDirectory, processRunner, cancellationToken);
 
         var changed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -89,6 +219,7 @@ internal sealed class GitChangeSet : IChangeSet
         // option — defence-in-depth so even a dash-leading value that slipped past the guard
         // above cannot be (mis)parsed by git as a flag. (git 2.24+, 2019.)
         var diff = RunGit(
+            gitExecutable,
             processRunner,
             workingDirectory,
             $"diff for ref '{changedSinceRef}'",
@@ -102,6 +233,7 @@ internal sealed class GitChangeSet : IChangeSet
         // Unquote step below still handles the remaining `\"`/`\\` escapes for paths whose
         // names contain a quote or backslash.)
         var status = RunGit(
+            gitExecutable,
             processRunner,
             workingDirectory,
             "working-tree status",
@@ -151,11 +283,13 @@ internal sealed class GitChangeSet : IChangeSet
     /// absolute.  A non-repository directory surfaces as a <see cref="ChangeSetException"/>.
     /// </summary>
     private static string ResolveRepoRoot(
+        string gitExecutable,
         string workingDirectory,
         IProcessRunner processRunner,
         CancellationToken cancellationToken)
     {
         var result = RunGit(
+            gitExecutable,
             processRunner,
             workingDirectory,
             "repository-root lookup",
@@ -208,6 +342,7 @@ internal sealed class GitChangeSet : IChangeSet
     /// </para>
     /// </remarks>
     private static ProcessResult RunGit(
+        string gitExecutable,
         IProcessRunner processRunner,
         string workingDirectory,
         string operation,
@@ -217,13 +352,30 @@ internal sealed class GitChangeSet : IChangeSet
         ProcessResult result;
         try
         {
-            result = processRunner.Run("git", arguments, workingDirectory, cancellationToken);
+            result = processRunner.Run(gitExecutable, arguments, workingDirectory, cancellationToken);
         }
         catch (ProcessLaunchException ex)
         {
-            throw new ChangeSetException(
-                $"Could not run git for {operation}. Is git installed and on PATH? ({ex.Message})",
-                ex);
+            // NO REASON CLAUSE AT ALL, and the deletion is the fix rather than a simplification.
+            // Both candidate sources for one carry the host path. MEASURED on this host (net8.0,
+            // Windows) by starting a rooted, non-existent git: Process.Start throws
+            // System.ComponentModel.Win32Exception whose own message is
+            //
+            //     An error occurred trying to start process '<resolved git path>' with working
+            //     directory '<discovery root>'. The system cannot find the file specified.
+            //
+            // SystemProcessRunner wraps THAT as the inner exception of the ProcessLaunchException
+            // and quotes the file name again in the outer one, so `ex.Message` and
+            // `ex.InnerException?.Message` both name a path — the inner one names two, and since
+            // #499 the first of them is where git lives on this host. Host paths do not go into
+            // user-facing diagnostics (#375/#473/#488).
+            //
+            // Scrubbing or sentence-splitting would keep the operating system's reason, at the
+            // cost of a rule that has to stay correct against a message .NET composes and
+            // localises. GitUnavailable already tells the author the one thing they can act on,
+            // so the clause is dropped instead. The exception is still chained, so the full
+            // detail remains available to a debugger and to anything that walks InnerException.
+            throw new ChangeSetException(GitUnavailable(operation), ex);
         }
         catch (ProcessTimeoutException ex)
         {
@@ -256,6 +408,165 @@ internal sealed class GitChangeSet : IChangeSet
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// The one wording for "git could not be run", shared by the <c>PATH</c>-resolution refusal
+    /// and by the runner's launch failure so that the two cannot drift apart.
+    /// </summary>
+    /// <param name="operation">What was being attempted, in the caller's own vocabulary.</param>
+    /// <returns>The message, deliberately naming no path — see <see cref="RunGit"/>.</returns>
+    private static string GitUnavailable(string operation) =>
+        $"Could not run git for {operation}. Is git installed and on PATH?";
+
+    /// <summary>
+    /// Locates the git executable on this process's <c>PATH</c>, returning a fully qualified path
+    /// or <see langword="null"/> when no entry holds one.
+    /// </summary>
+    /// <returns>A fully qualified path to git, or <see langword="null"/>.</returns>
+    internal static string? LocateGitOnPath() =>
+        LocateOnPath("git", Environment.GetEnvironmentVariable("PATH"));
+
+    /// <summary>
+    /// Searches <paramref name="pathVariable"/> — and nothing else — for an executable called
+    /// <paramref name="name"/>, returning the first fully qualified match.
+    /// </summary>
+    /// <param name="name">The extension-less executable name, e.g. <c>git</c>.</param>
+    /// <param name="pathVariable">The raw <c>PATH</c> value to search.</param>
+    /// <returns>A fully qualified path, or <see langword="null"/> when nothing matched.</returns>
+    /// <remarks>
+    /// <para>
+    /// <strong>A NON-ROOTED ENTRY IS SKIPPED, NOT RESOLVED, AND THAT IS THE POINT OF THE METHOD.</strong>
+    /// <c>PATH</c> is itself an ordered list that may contain a relative entry, and an EMPTY element
+    /// means "the current directory" on some platforms. Resolving either against the process's
+    /// current directory would put back — one indirection further along — the ambient-directory
+    /// term this whole resolution exists to remove from the answer. Skipping is cheap and the
+    /// entries it skips are not ones a correctly installed git occupies. The test is
+    /// <see cref="Path.IsPathFullyQualified(string)"/> rather than <see cref="Path.IsPathRooted(string)"/>
+    /// because the latter accepts the Windows drive-relative form <c>C:dir</c>, which resolves
+    /// against that drive's current directory and is therefore not rooted in any useful sense.
+    /// </para>
+    /// <para>
+    /// <strong>AN ENTRY IS USED VERBATIM — NEITHER UNQUOTED NOR TRIMMED.</strong> Both are
+    /// <c>cmd.exe</c> behaviours rather than <c>CreateProcess</c> ones, so either would resolve an
+    /// entry the OS search this replaces does not. Measured on this host (Windows 11 build
+    /// 26200.9168, net8.0), by a bare-name <c>Process.Start</c> with <c>UseShellExecute = false</c>
+    /// from a console app, against a directory holding one real executable: the entry spelt plainly
+    /// LAUNCHED; spelt with a leading space, a trailing space, a leading tab, or wrapped in literal
+    /// quotes it was NOT FOUND in all four cases. This search returns exactly those five answers.
+    /// Trimming was the live defect rather than a hypothetical one: it made a leading-space entry
+    /// resolve, and a leading-space entry written FIRST — the shape <c>PATH=%PATH%; C:\tools</c>
+    /// leaves behind — then shadowed a real git in a later entry, promoting a directory Windows
+    /// ignores into the highest-priority one here.
+    /// </para>
+    /// <para>
+    /// <strong>ONE CANDIDATE PER ENTRY, AND ON WINDOWS IT IS <c>.exe</c> — NOT <c>PATHEXT</c>.</strong>
+    /// The header records the two measurements behind that: the OS search this replaces appends
+    /// only <c>.exe</c>, and a <c>.cmd</c>/<c>.bat</c> candidate would be launched through
+    /// <c>cmd.exe</c>, whose parser re-reads arguments that <c>ArgumentList</c> quoted for
+    /// <c>CreateProcess</c> — turning the caller's ref into command execution. A host whose only
+    /// git is a shim therefore reports "not found", exactly as it did before #499 introduced this
+    /// search at all. POSIX takes the bare name plus an execute-bit check — see the next paragraph
+    /// for what that check does and does not establish.
+    /// </para>
+    /// <para>
+    /// <strong>THE POSIX EXECUTE TEST IS A MODE-BIT APPROXIMATION, AND WHAT IT RISKS IS A
+    /// REFUSAL.</strong> <see cref="IsExecutableFile"/> accepts a file when ANY of the user, group
+    /// or other execute bits is set, whoever is running — not the test the kernel makes, which is
+    /// against the effective user. So a file this caller could not in fact execute can be accepted:
+    /// a root-owned <c>0700</c> <c>git</c> in an earlier entry is taken, the search STOPS THERE
+    /// because it returns the first match, the launch then fails on permission (<c>EACCES</c>, by
+    /// the <c>execve</c> contract rather than by a measurement of this path), and <c>RunGit</c>
+    /// maps that to a <c>ChangeSetException</c> — exit 2 on a host where a later entry holds a
+    /// runnable git. That is the same harm shape as the whitespace trim the AN ENTRY IS USED
+    /// VERBATIM paragraph above records deleting: an entry the operating system would have passed
+    /// over shadows a legitimate later one.
+    /// A match with NO execute bit set at all is skipped and the search continues, so the shadowing
+    /// needs a bit set for somebody else. Which direction this diverges in against .NET's own Unix
+    /// resolution is UNMEASURED — the measurements in this file were all taken on Windows, and the
+    /// one probe that would settle it is whether that path selects on existence or on an
+    /// <c>access(X_OK)</c>-style check. Narrowing this test to <c>access(X_OK)</c> needs a P/Invoke
+    /// and is tracked as #509; it is deliberately not attempted here.
+    /// </para>
+    /// <para>
+    /// Takes <c>PATH</c> as an argument rather than reading the environment so that the search can
+    /// be exercised against a temporary directory: mutating this process's <c>PATH</c> from a test
+    /// would race every other test in the assembly.
+    /// </para>
+    /// </remarks>
+    internal static string? LocateOnPath(string name, string? pathVariable)
+    {
+        if (string.IsNullOrEmpty(pathVariable))
+        {
+            return null;
+        }
+
+        var fileName = CandidateFileName(name, OperatingSystem.IsWindows());
+
+        foreach (var entry in pathVariable.Split(Path.PathSeparator))
+        {
+            if (entry.Length == 0 || !Path.IsPathFullyQualified(entry))
+            {
+                continue;
+            }
+
+            var candidate = Path.Combine(entry, fileName);
+            if (IsExecutableFile(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// The one file name looked for in each <c>PATH</c> entry.
+    /// </summary>
+    /// <param name="name">The extension-less executable name, e.g. <c>git</c>.</param>
+    /// <param name="windows">Whether the Windows rule applies.</param>
+    /// <returns><c>name.exe</c> under the Windows rule; <paramref name="name"/> unchanged otherwise.</returns>
+    /// <remarks>
+    /// Split out of <see cref="LocateOnPath(string, string?)"/>, which takes the platform from
+    /// <see cref="OperatingSystem.IsWindows"/>, so that the Windows rule is assertable OFF Windows.
+    /// The filesystem half of the search is not: a <c>.cmd</c> carries no execute bit on Linux, so
+    /// the row that plants a shim and watches it be refused can only run on Windows — and no
+    /// blocking CI lane is Windows (#366), which would leave a security property pinned by a row
+    /// that cannot redden the gate. This seam is what a cross-platform row asserts against; the
+    /// coupling between it and the search itself is covered only by the Windows-only row.
+    /// </remarks>
+    internal static string CandidateFileName(string name, bool windows) =>
+        windows ? name + ".exe" : name;
+
+    /// <summary>
+    /// Reports whether <paramref name="candidate"/> is an existing file this platform would run.
+    /// </summary>
+    /// <param name="candidate">The fully qualified candidate path.</param>
+    /// <returns><see langword="true"/> when the file exists and is executable.</returns>
+    private static bool IsExecutableFile(string candidate)
+    {
+        // File.Exists is false for a directory and for a malformed path, so it also stands in for
+        // the argument validation this method would otherwise need.
+        if (!File.Exists(candidate))
+        {
+            return false;
+        }
+
+        if (OperatingSystem.IsWindows())
+        {
+            return true;
+        }
+
+        try
+        {
+            var mode = File.GetUnixFileMode(candidate);
+            return (mode & (UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute)) != 0;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // A file whose mode cannot be read is not a file we are willing to launch.
+            return false;
+        }
     }
 
     /// <summary>

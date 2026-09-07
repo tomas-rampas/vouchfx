@@ -184,7 +184,7 @@ public sealed class MqExpectRabbitmqConnAwareRedactionTests
     // ── (4) Regex-fallback isolation: '@'-in-password, empty URI, step (c) only ──
 
     /// <summary>
-    /// Isolates step (c) of <c>RedactAmqpUri</c> by passing an empty <paramref name="amqpUri"/>
+    /// Isolates step (c) of <c>RedactAmqpUri</c> by passing an empty <c>amqpUri</c>
     /// so that step (a) is skipped (the <c>IsNullOrEmpty</c> guard) and <c>new Uri("")</c>
     /// throws in step (b), leaving only the greedy step-(c) regex to act on the message.
     /// <para>

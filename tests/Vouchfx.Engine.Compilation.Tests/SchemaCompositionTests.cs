@@ -103,7 +103,7 @@ public sealed class SchemaCompositionTests
     /// contributed that enum constraint), but because <c>target</c>/<c>method</c>/
     /// <c>path</c> are not even recognised as step properties AT ALL. With no
     /// provider fragment, the composer injects no <c>allOf</c> clause at all
-    /// (<see cref="SchemaComposer.BuildIfThenClauses"/> returns empty), so
+    /// (<c>SchemaComposer.BuildIfThenClauses</c> returns empty), so
     /// $defs/step's own <c>unevaluatedProperties: false</c> (the typo-closing
     /// change) has nothing marking those three properties as evaluated. This
     /// proves the SAME underlying fact the original (additionalProperties-era)

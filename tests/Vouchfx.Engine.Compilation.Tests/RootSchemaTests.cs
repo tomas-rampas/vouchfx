@@ -369,7 +369,7 @@ public sealed class RootSchemaTests
 
     /// <summary>
     /// A step with <c>continueOnFailure: true</c> (an unquoted YAML boolean)
-    /// must be accepted.  Before the fix, the <see cref="YamlScalarTypeResolver"/>
+    /// must be accepted.  Before the fix, the <c>YamlScalarTypeResolver</c>
     /// left booleans as strings, causing the JSON Schema <c>type: boolean</c>
     /// constraint to reject the document with "[type] Value is 'string' but
     /// should be 'boolean'".
