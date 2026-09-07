@@ -587,10 +587,10 @@ public sealed class HttpRestBodyTests
     /// billion-laughs row above uses a one-character payload, so it structurally cannot
     /// observe size at all; scale the payload instead of the branching factor and the budget
     /// sees nothing. <c>ScalarToJsonNode</c> wraps the scalar's existing string instance, so
-    /// each alias site costs exactly one node however long that string is. This fixture is NOT a
-    /// reachable suite: ScenarioDiscovery refuses any document larger than
-    /// MaxDocumentSizeBytes (1 MiB) before reading it, and this one is larger, so it
-    /// illustrates the ratio and claims nothing about a document the engine would accept.
+    /// each alias site costs exactly one node however long that string is. The document built
+    /// below is one the engine would accept — a 4 KiB scalar and 500 short alias lines, orders
+    /// of magnitude inside ScenarioDiscovery's MaxDocumentSizeBytes (1 MiB) — and that is what
+    /// makes the row worth having: the megabytes are in the BOUND BODY, not in the file.
     /// Asserted as a PROPERTY — bytes per node — rather than an exact length, so it cannot
     /// break on a formatting change.
     /// </remarks>
@@ -617,7 +617,6 @@ public sealed class HttpRestBodyTests
         // The whole body is 1 mapping + 1 anchored scalar + 500 alias sites = 502 nodes,
         // about one per cent of the 50,000-node budget...
         const int nodesProduced = 1 + 1 + aliasSites;
-        Assert.True(nodesProduced < 50_000 / 50, $"expected a small node count, got {nodesProduced}");
 
         // ...and yet the bound body is over two megabytes, i.e. thousands of bytes per node.
         Assert.True(

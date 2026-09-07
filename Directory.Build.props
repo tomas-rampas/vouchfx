@@ -58,17 +58,17 @@
          true. Nothing regresses today (measured: none of the six emits either warning
          at the time of writing) — this keeps it that way.
 
-         ONE PUBLISHED PACKAGE GREW, and it is not one of the six. Vouchfx.Cli is
-         IsPackable + PackAsTool, and every assembly reachable from it now generates a
-         documentation file, so the tool package carries XML for the engine and all 25
-         Core providers where it previously carried it for five assemblies. Measured
-         inside the packed nupkg: tools/net8.0/any now holds 37 .xml entries totalling
-         2.9 MB, including the tool's own — which is named vouchfx.xml, after the
-         AssemblyName rather than the project. Measured against a build of the parent
-         commit in a scratch worktree, the same output previously held five Vouchfx*.xml
-         totalling 1.1 MB. Harmless — XML docs for assemblies nobody references as a
-         library — but it is a change to what a published artefact contains, so it is
-         written down rather than discovered. -->
+         ONE PUBLISHED PACKAGE WOULD HAVE GROWN, and it is not one of the six.
+         Vouchfx.Cli is IsPackable + PackAsTool, and PackAsTool packs the PUBLISH output,
+         so a documentation file for every reachable assembly — the engine and all 25 Core
+         providers — would have been shipped inside tools/net8.0/any. That is megabytes of
+         internal engineering prose in a package nothing compiles against, and it carries
+         the sprint/task identifiers CLAUDE.md's publication boundary keeps off every
+         published surface. It does NOT ship: Vouchfx.Cli.csproj sets
+         PublishDocumentationFiles=false, which drops the XML from publish while leaving
+         THIS property — and therefore the gate — untouched. The library packages
+         (Vouchfx.Sdk, Vouchfx.Sdk.Testing) keep theirs, because for a library the XML is
+         part of the package contract. Do not "tidy" that opt-out away. -->
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
   </PropertyGroup>
 </Project>

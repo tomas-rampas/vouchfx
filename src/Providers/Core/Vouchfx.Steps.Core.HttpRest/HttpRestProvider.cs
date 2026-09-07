@@ -106,8 +106,12 @@ public sealed class HttpRestProvider
     // builder: 49 nesting levels convert cleanly, 50 throw
     // MaximumRecursionLevelReachedException. Validate wraps the call in `catch (Exception)`
     // and returns SchemaValidationResult.Invalid("Failed to parse YAML: ..."), so a body
-    // deeper than 49 levels ALREADY produced a clean, reported diagnostic before #346, and
-    // no engine path that BINDS a step can reach MaxBodyDepth at 64 — ScenarioRunner runs
+    // deep enough to breach that ceiling ALREADY produced a clean, reported diagnostic
+    // before #346. That ceiling is on the WHOLE DOCUMENT graph, of which `body` is only a
+    // subtree, so the depth a body may reach is smaller still — by however many levels sit
+    // above it. The direction is conservative, which is the only property the argument needs,
+    // and that is why no figure for it is written here.
+    // No engine path that BINDS a step can reach MaxBodyDepth at 64 — ScenarioRunner runs
     // DocumentValidator.Validate at its step 2, ahead of ProviderPipeline.Compile, and the
     // pre-topology parse paths that deliberately skip validation (EnvironmentMapper,
     // SecuredEndpointProbe) do not compile steps at all. That last sentence is read from
@@ -121,10 +125,9 @@ public sealed class HttpRestProvider
     //
     // MaxBodyNodes is the bound that a real suite can still reach, but it is downstream of
     // an UNBOUNDED expansion of the same document: the validation-time conversion above
-    // expands every alias with no node or byte ceiling of its own. Measured through both
-    // steps of ConvertYamlToJsonDocument, ten aliases per level: chain=4 -> 251 KB of JSON
-    // in 47 ms; chain=5 -> 2.5 MB in 472 ms; chain=6 -> 25 MB in 1.1 s and a 150 MB working
-    // set. So the honest claim for the budget is NOT that it prevents an out-of-memory
+    // expands every alias with no node or byte ceiling of its own, and an alias chain
+    // multiplies that expansion per level.
+    // So the honest claim for the budget is NOT that it prevents an out-of-memory
     // condition — memory is spent upstream regardless, and that gap is issue #505. What it
     // buys is the band in between: for a document the upstream conversion survives, the
     // budget stops this provider from paying the cost a second time as a much heavier

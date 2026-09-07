@@ -3540,10 +3540,11 @@ public static class EnvironmentMapper
     /// <para>
     /// The cref names the method WITHOUT a parameter list on purpose. It carried one —
     /// <c>Map(EnvironmentSpec?, string?)</c> — which stopped matching the moment
-    /// <c>kafkaSpeakingTargets</c> was added as a third parameter, and nothing caught it: this
-    /// project sets no <c>GenerateDocumentationFile</c>, so crefs here are never resolved and
-    /// CS1574 cannot fire. There is exactly one <c>Map</c>, so the bare form is unambiguous and
-    /// cannot rot the same way again.
+    /// <c>kafkaSpeakingTargets</c> was added as a third parameter, and nothing caught it, because
+    /// this project did not then generate a documentation file and unresolvable crefs were
+    /// therefore never diagnosed. It does now (#490), so CS1574 would catch that rot today. The
+    /// bare form is kept regardless: there is exactly one <c>Map</c>, so it is unambiguous, and
+    /// a signature that needs no maintenance is better than one a gate has to police.
     /// </para>
     /// A malformed value fails HERE, once, rather than inside
     /// <see cref="ServerArtifactInjection.Plan"/> once per declared artefact — the fault is in the

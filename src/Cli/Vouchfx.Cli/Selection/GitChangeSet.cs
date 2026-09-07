@@ -57,13 +57,27 @@
 // `CreateProcess` and `execve` take a rooted path literally and search nothing. That is worth
 // doing for the measured hazard alone, and it makes the unmeasured one moot as a side effect.
 //
+// THE ONLY WINDOWS CANDIDATE IS `git.exe`, AND WIDENING THAT IS A SHELL-INJECTION SINK. The
+// resolution replaces the OS search, so its candidate set must not be larger than the one it
+// replaces. Measured on this host, net8.0: with a `PATH` directory holding only `git.cmd`, the
+// bare-name launch threw `Win32Exception … The system cannot find the file specified` — the OS
+// appends `.exe` and nothing else. Measured in the same probe: `Process.Start` on a rooted
+// `git.cmd` with `UseShellExecute = false` DOES launch, through `cmd.exe`, and cmd's parser then
+// re-reads the arguments — `ArgumentList = ["diff", "\"&echo INJECTED&\""]` made the child print
+// `INJECTED`. `ArgumentList` quotes for `CreateProcess`, not for cmd, so a candidate set including
+// `.CMD`/`.BAT` would turn `--changed-since` into command execution wherever git is installed as a
+// shim. A wider set also changes WHICH git wins in two more ways: `.COM` precedes `.EXE` in the
+// default `PATHEXT`, so it would shadow a sibling `git.exe` in the SAME directory, and a `git.cmd`
+// in an earlier `PATH` directory would beat a real `git.exe` in a later one. So: `.exe` on
+// Windows, the bare name plus an execute-bit check on POSIX, and no `PATHEXT` at all.
+//
 // This is a DIFFERENT hazard from the two guards already here, and neither addressed it. The
 // leading-dash refusal plus `--end-of-options` defends git's own OPTION PARSING; `ArgumentList`
 // defends against SHELL quoting. Which BINARY is resolved was covered by neither.
 //
-// The search lives in this file rather than in SystemProcessRunner because it is git-specific
-// (PATHEXT candidates, the "is git installed" diagnostic) and that runner deliberately carries no
-// git knowledge — the same reason it has no environment seam, which is #500. It runs ONCE per
+// The search lives in this file rather than in SystemProcessRunner because it is git-specific (the
+// candidate name, the "is git installed" diagnostic) and that runner deliberately carries no git
+// knowledge — the same reason it has no environment seam, which is #500. It runs ONCE per
 // change-set: three git calls, one resolution.
 
 using System.Globalization;
@@ -87,12 +101,6 @@ namespace Vouchfx.Cli.Selection;
 /// </remarks>
 internal sealed class GitChangeSet : IChangeSet
 {
-    /// <summary>The only candidate suffix off Windows: the bare name.</summary>
-    private static readonly string[] PosixSuffixes = { string.Empty };
-
-    /// <summary>The candidate suffixes used when <c>PATHEXT</c> is unset or unusable.</summary>
-    private static readonly string[] DefaultWindowsSuffixes = { ".EXE", ".COM", ".BAT", ".CMD" };
-
     private readonly HashSet<string> _changed;
 
     /// <summary>
@@ -378,10 +386,7 @@ internal sealed class GitChangeSet : IChangeSet
     /// </summary>
     /// <returns>A fully qualified path to git, or <see langword="null"/>.</returns>
     internal static string? LocateGitOnPath() =>
-        LocateOnPath(
-            "git",
-            Environment.GetEnvironmentVariable("PATH"),
-            Environment.GetEnvironmentVariable("PATHEXT"));
+        LocateOnPath("git", Environment.GetEnvironmentVariable("PATH"));
 
     /// <summary>
     /// Searches <paramref name="pathVariable"/> — and nothing else — for an executable called
@@ -389,7 +394,6 @@ internal sealed class GitChangeSet : IChangeSet
     /// </summary>
     /// <param name="name">The extension-less executable name, e.g. <c>git</c>.</param>
     /// <param name="pathVariable">The raw <c>PATH</c> value to search.</param>
-    /// <param name="pathExtVariable">The raw <c>PATHEXT</c> value; ignored off Windows.</param>
     /// <returns>A fully qualified path, or <see langword="null"/> when nothing matched.</returns>
     /// <remarks>
     /// <para>
@@ -404,27 +408,31 @@ internal sealed class GitChangeSet : IChangeSet
     /// against that drive's current directory and is therefore not rooted in any useful sense.
     /// </para>
     /// <para>
-    /// <strong>Windows candidates come from <c>PATHEXT</c>; POSIX ones are the bare name plus an
-    /// execute-bit check.</strong> Windows has no execute bit — membership of <c>PATHEXT</c> IS
-    /// the executability test there, which is why the extension-less name is not a candidate on
-    /// that platform. The POSIX check accepts any of the three execute bits rather than computing
-    /// what the effective user may actually run; that is the same approximation <c>which</c> makes,
-    /// and erring towards "found" here costs at worst a launch failure that is already mapped.
+    /// <strong>ONE CANDIDATE PER ENTRY, AND ON WINDOWS IT IS <c>.exe</c> — NOT <c>PATHEXT</c>.</strong>
+    /// The header records the two measurements behind that: the OS search this replaces appends
+    /// only <c>.exe</c>, and a <c>.cmd</c>/<c>.bat</c> candidate would be launched through
+    /// <c>cmd.exe</c>, whose parser re-reads arguments that <c>ArgumentList</c> quoted for
+    /// <c>CreateProcess</c> — turning the caller's ref into command execution. A host whose only
+    /// git is a shim therefore reports "not found", exactly as it did before #499 introduced this
+    /// search at all. POSIX takes the bare name plus an execute-bit
+    /// check, accepting any of the three bits rather than computing what the effective user may
+    /// actually run; that is the same approximation <c>which</c> makes, and erring towards "found"
+    /// costs at worst a launch failure that is already mapped.
     /// </para>
     /// <para>
-    /// Takes the two variables as arguments rather than reading the environment so that the search
-    /// can be exercised against a temporary directory: mutating this process's <c>PATH</c> from a
-    /// test would race every other test in the assembly.
+    /// Takes <c>PATH</c> as an argument rather than reading the environment so that the search can
+    /// be exercised against a temporary directory: mutating this process's <c>PATH</c> from a test
+    /// would race every other test in the assembly.
     /// </para>
     /// </remarks>
-    internal static string? LocateOnPath(string name, string? pathVariable, string? pathExtVariable)
+    internal static string? LocateOnPath(string name, string? pathVariable)
     {
         if (string.IsNullOrEmpty(pathVariable))
         {
             return null;
         }
 
-        var suffixes = ExecutableSuffixes(pathExtVariable);
+        var fileName = OperatingSystem.IsWindows() ? name + ".exe" : name;
 
         foreach (var rawEntry in pathVariable.Split(Path.PathSeparator))
         {
@@ -444,41 +452,14 @@ internal sealed class GitChangeSet : IChangeSet
                 continue;
             }
 
-            foreach (var suffix in suffixes)
+            var candidate = Path.Combine(entry, fileName);
+            if (IsExecutableFile(candidate))
             {
-                var candidate = Path.Combine(entry, name + suffix);
-                if (IsExecutableFile(candidate))
-                {
-                    return candidate;
-                }
+                return candidate;
             }
         }
 
         return null;
-    }
-
-    /// <summary>The candidate name suffixes to try, in order, for the current platform.</summary>
-    /// <param name="pathExtVariable">The raw <c>PATHEXT</c> value; ignored off Windows.</param>
-    /// <returns>One suffix per candidate; the empty string means "the bare name".</returns>
-    /// <remarks>
-    /// The Windows fallback list is used only when <c>PATHEXT</c> is unset or holds nothing usable,
-    /// so that a stripped environment reports git as present rather than as missing. Entries that
-    /// do not begin with <c>.</c> are dropped: they would compose into names such as
-    /// <c>gitEXE</c>, which is not what the caller meant by them.
-    /// </remarks>
-    private static string[] ExecutableSuffixes(string? pathExtVariable)
-    {
-        if (!OperatingSystem.IsWindows())
-        {
-            return PosixSuffixes;
-        }
-
-        var configured = (pathExtVariable ?? string.Empty)
-            .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Where(static extension => extension.StartsWith('.'))
-            .ToArray();
-
-        return configured.Length > 0 ? configured : DefaultWindowsSuffixes;
     }
 
     /// <summary>

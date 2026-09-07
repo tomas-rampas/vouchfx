@@ -459,6 +459,12 @@ public sealed class GitChangeSetTests
     /// <c>Process.Unix.cs</c>'s <c>ForkAndExecProcess</c> reaches the SAME
     /// <c>CreateExceptionForErrorStartingProcess(message, errno, resolvedFilename, cwd)</c> helper
     /// on its failure paths (read from the dotnet/runtime release/8.0 source, not measured here).
+    /// THE ONE LOAD-BEARING ASSUMPTION, named so the next reader knows what to re-check: that
+    /// <c>Process.Unix.cs</c>'s <c>ResolvePath</c> short-circuits on a ROOTED filename and hands
+    /// it back unchanged. If it ever normalised or re-searched instead, <c>resolvedFilename</c>
+    /// would no longer be the string this row passed in, and assertion (2) would fail on Linux
+    /// while proving nothing about disclosure. This row passes a rooted path, so that branch is
+    /// the only one it can take.
     /// </para>
     /// <para>
     /// Nothing is launched: the candidate is a rooted path under the temp directory that is
@@ -517,12 +523,19 @@ public sealed class GitChangeSetTests
     /// </summary>
     /// <remarks>
     /// Real files rather than a mocked filesystem, because what is under test IS the filesystem
-    /// probe: on Windows the PATHEXT candidate must exist, on POSIX it must carry an execute bit.
+    /// probe: on Windows the candidate must exist under exactly the name the search composes, on
+    /// POSIX it must carry an execute bit. The <c>extension</c> argument (including its dot;
+    /// defaulting to this platform's own) exists so a row can plant a name the search must NOT
+    /// compose — a <c>.cmd</c> shim.
     /// The directory is removed on every path so a run leaves nothing behind.
     /// </remarks>
     private sealed class LocatorFixture : IDisposable
     {
-        public LocatorFixture(string name = "git", bool executable = true, string? parentDirectory = null)
+        public LocatorFixture(
+            string name = "git",
+            bool executable = true,
+            string? parentDirectory = null,
+            string? extension = null)
         {
             DirectoryPath = Path.Combine(
                 parentDirectory ?? Path.GetTempPath(),
@@ -530,7 +543,8 @@ public sealed class GitChangeSetTests
             Directory.CreateDirectory(DirectoryPath);
 
             ExecutablePath = Path.Combine(
-                DirectoryPath, OperatingSystem.IsWindows() ? name + ".exe" : name);
+                DirectoryPath,
+                name + (extension ?? (OperatingSystem.IsWindows() ? ".exe" : string.Empty)));
             File.WriteAllText(ExecutablePath, string.Empty);
 
             if (!OperatingSystem.IsWindows())
@@ -555,30 +569,60 @@ public sealed class GitChangeSetTests
     {
         using var fixture = new LocatorFixture();
 
-        var located = GitChangeSet.LocateOnPath("git", fixture.DirectoryPath, ".EXE");
+        var located = GitChangeSet.LocateOnPath("git", fixture.DirectoryPath);
 
         Assert.Equal(fixture.ExecutablePath, located, ignoreCase: OperatingSystem.IsWindows());
     }
 
     /// <summary>
-    /// Windows candidates come from <c>PATHEXT</c>, and the fallback covers a stripped environment.
+    /// A <c>git.cmd</c> or <c>git.bat</c> is NOT a candidate, and that is a security property.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Why this row exists.</strong> A batch shim launched with
+    /// <c>UseShellExecute = false</c> still runs through <c>cmd.exe</c>, and cmd's parser re-reads
+    /// the arguments that <c>ArgumentList</c> quoted for <c>CreateProcess</c>. Measured on this
+    /// host, net8.0: <c>Process.Start</c> against a rooted <c>git.cmd</c> with
+    /// <c>ArgumentList = ["diff", "\"&amp;echo INJECTED&amp;\""]</c> made the child print
+    /// <c>INJECTED</c>. Since <c>--changed-since</c> reaches <c>ArgumentList</c> verbatim, a shim
+    /// candidate would make this class a command-execution sink. The OS search it replaces never
+    /// had that reach either — measured in the same probe, a bare-name launch with a <c>PATH</c>
+    /// directory holding only <c>git.cmd</c> threw <c>Win32Exception … The system cannot find the
+    /// file specified</c>, so the OS appends <c>.exe</c> and nothing else.
+    /// </para>
+    /// <para>
+    /// The control assertions are what make the two negatives mean something: the same search
+    /// against a real <c>git.exe</c> DOES resolve, and a shim in an EARLIER entry does not shadow
+    /// a real git in a later one.
+    /// </para>
+    /// </remarks>
     [Fact]
-    public void LocateOnPath_Windows_TriesPathExtCandidates()
+    public void LocateOnPath_Windows_DoesNotSelectABatchShim()
     {
         if (!OperatingSystem.IsWindows())
         {
-            return; // PATHEXT has no meaning here; the POSIX rows cover this platform.
+            return; // A .cmd is not an executable off Windows; there is nothing to refuse.
         }
 
-        using var fixture = new LocatorFixture();
+        using var shim = new LocatorFixture(extension: ".cmd");
+        using var batch = new LocatorFixture(extension: ".bat");
+        using var real = new LocatorFixture();
 
-        // The file is `git.exe`, so a PATHEXT without .EXE must not find it...
-        Assert.Null(GitChangeSet.LocateOnPath("git", fixture.DirectoryPath, ".COM;.BAT"));
+        Assert.Null(GitChangeSet.LocateOnPath("git", shim.DirectoryPath));
+        Assert.Null(GitChangeSet.LocateOnPath("git", batch.DirectoryPath));
 
-        // ...one that lists .EXE must, whether it is configured or comes from the fallback.
-        Assert.NotNull(GitChangeSet.LocateOnPath("git", fixture.DirectoryPath, ".COM;.EXE;.BAT"));
-        Assert.NotNull(GitChangeSet.LocateOnPath("git", fixture.DirectoryPath, pathExtVariable: null));
+        // Control: the same search finds a real git.exe...
+        Assert.Equal(
+            real.ExecutablePath,
+            GitChangeSet.LocateOnPath("git", real.DirectoryPath),
+            ignoreCase: true);
+
+        // ...and the shim, listed FIRST, does not shadow it.
+        var entries = shim.DirectoryPath + Path.PathSeparator + real.DirectoryPath;
+        Assert.Equal(
+            real.ExecutablePath,
+            GitChangeSet.LocateOnPath("git", entries),
+            ignoreCase: true);
     }
 
     /// <summary>
@@ -589,14 +633,14 @@ public sealed class GitChangeSetTests
     {
         if (OperatingSystem.IsWindows())
         {
-            return; // Windows has no execute bit; PATHEXT membership is the test there.
+            return; // Windows has no execute bit; the `.exe` name is the test there.
         }
 
         using var executable = new LocatorFixture();
         using var notExecutable = new LocatorFixture(executable: false);
 
-        Assert.NotNull(GitChangeSet.LocateOnPath("git", executable.DirectoryPath, null));
-        Assert.Null(GitChangeSet.LocateOnPath("git", notExecutable.DirectoryPath, null));
+        Assert.NotNull(GitChangeSet.LocateOnPath("git", executable.DirectoryPath));
+        Assert.Null(GitChangeSet.LocateOnPath("git", notExecutable.DirectoryPath));
     }
 
     /// <summary>
@@ -618,7 +662,7 @@ public sealed class GitChangeSetTests
         // Windows. The directory is the test's own output directory and is removed in Dispose.
         using var fixture = new LocatorFixture(parentDirectory: Directory.GetCurrentDirectory());
 
-        Assert.NotNull(GitChangeSet.LocateOnPath("git", fixture.DirectoryPath, ".EXE"));
+        Assert.NotNull(GitChangeSet.LocateOnPath("git", fixture.DirectoryPath));
 
         var relative = Path.GetRelativePath(Directory.GetCurrentDirectory(), fixture.DirectoryPath);
         Assert.False(Path.IsPathFullyQualified(relative), relative);
@@ -626,7 +670,7 @@ public sealed class GitChangeSetTests
         // The empty entry means "the current directory" and the relative one resolves against it;
         // the same directory that resolved above must NOT resolve when spelt either way.
         var entries = string.Empty + Path.PathSeparator + relative;
-        Assert.Null(GitChangeSet.LocateOnPath("git", entries, ".EXE"));
+        Assert.Null(GitChangeSet.LocateOnPath("git", entries));
     }
 
     [Fact]
@@ -634,9 +678,9 @@ public sealed class GitChangeSetTests
     {
         using var fixture = new LocatorFixture();
 
-        Assert.Null(GitChangeSet.LocateOnPath("no-such-tool", fixture.DirectoryPath, ".EXE"));
-        Assert.Null(GitChangeSet.LocateOnPath("git", pathVariable: null, ".EXE"));
-        Assert.Null(GitChangeSet.LocateOnPath("git", string.Empty, ".EXE"));
+        Assert.Null(GitChangeSet.LocateOnPath("no-such-tool", fixture.DirectoryPath));
+        Assert.Null(GitChangeSet.LocateOnPath("git", pathVariable: null));
+        Assert.Null(GitChangeSet.LocateOnPath("git", string.Empty));
     }
 
     /// <summary>
