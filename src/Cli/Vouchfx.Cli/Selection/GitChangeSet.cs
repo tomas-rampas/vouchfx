@@ -432,20 +432,21 @@ internal sealed class GitChangeSet : IChangeSet
             return null;
         }
 
-        var fileName = OperatingSystem.IsWindows() ? name + ".exe" : name;
+        var fileName = CandidateFileName(name, OperatingSystem.IsWindows());
 
         foreach (var rawEntry in pathVariable.Split(Path.PathSeparator))
         {
+            // Surrounding WHITESPACE only. A quoted Windows entry ("C:\Program Files\Git\cmd") is
+            // deliberately NOT unquoted: quote-stripping is a cmd.exe behaviour, not a
+            // CreateProcess one, so stripping here would resolve an entry the OS search this
+            // replaces does not — the widening this method exists to refuse. Measured on this
+            // host, net8.0, against a directory holding one real executable: with the entry spelt
+            // with literal quotes, a bare-name Process.Start (UseShellExecute = false) threw
+            // Win32Exception "The system cannot find the file specified"; with the same entry
+            // unquoted it launched (exit 2); and `cmd.exe /c` against the QUOTED entry launched it
+            // too (exit 2, not 9009). So a quoted entry is "not found" here, which is the answer
+            // the bare-name launch gave before #499 introduced this search at all.
             var entry = rawEntry.Trim();
-
-            // A Windows PATH entry may be quoted ("C:\Program Files\Git\cmd"); the OS strips those
-            // quotes before searching, so a resolver that did not would report a perfectly usable
-            // git as absent. On POSIX a double quote is a legal filename character, so it is left
-            // alone there.
-            if (OperatingSystem.IsWindows())
-            {
-                entry = entry.Trim('"');
-            }
 
             if (entry.Length == 0 || !Path.IsPathFullyQualified(entry))
             {
@@ -461,6 +462,24 @@ internal sealed class GitChangeSet : IChangeSet
 
         return null;
     }
+
+    /// <summary>
+    /// The one file name looked for in each <c>PATH</c> entry.
+    /// </summary>
+    /// <param name="name">The extension-less executable name, e.g. <c>git</c>.</param>
+    /// <param name="windows">Whether the Windows rule applies.</param>
+    /// <returns><c>name.exe</c> under the Windows rule; <paramref name="name"/> unchanged otherwise.</returns>
+    /// <remarks>
+    /// Split out of <see cref="LocateOnPath(string, string?)"/>, which takes the platform from
+    /// <see cref="OperatingSystem.IsWindows"/>, so that the Windows rule is assertable OFF Windows.
+    /// The filesystem half of the search is not: a <c>.cmd</c> carries no execute bit on Linux, so
+    /// the row that plants a shim and watches it be refused can only run on Windows — and no
+    /// blocking CI lane is Windows (#366), which would leave a security property pinned by a row
+    /// that cannot redden the gate. This seam is what a cross-platform row asserts against; the
+    /// coupling between it and the search itself is covered only by the Windows-only row.
+    /// </remarks>
+    internal static string CandidateFileName(string name, bool windows) =>
+        windows ? name + ".exe" : name;
 
     /// <summary>
     /// Reports whether <paramref name="candidate"/> is an existing file this platform would run.

@@ -587,10 +587,12 @@ public sealed class HttpRestBodyTests
     /// billion-laughs row above uses a one-character payload, so it structurally cannot
     /// observe size at all; scale the payload instead of the branching factor and the budget
     /// sees nothing. <c>ScalarToJsonNode</c> wraps the scalar's existing string instance, so
-    /// each alias site costs exactly one node however long that string is. The document built
-    /// below is one the engine would accept — a 4 KiB scalar and 500 short alias lines, orders
-    /// of magnitude inside ScenarioDiscovery's MaxDocumentSizeBytes (1 MiB) — and that is what
-    /// makes the row worth having: the megabytes are in the BOUND BODY, not in the file.
+    /// each alias site costs exactly one node however long that string is. What is built below
+    /// is a STEP mapping, not a document, and it is one the engine would accept — a 4 KiB scalar
+    /// and 500 short alias lines, 9,560 bytes, orders of magnitude inside the 1 MiB cap
+    /// ScenarioDiscovery's MaxDocumentSizeBytes puts on the FILE a step like this would live in —
+    /// and that is what makes the row worth having: the megabytes are in the BOUND BODY, not in
+    /// the text.
     /// Asserted as a PROPERTY — bytes per node — rather than an exact length, so it cannot
     /// break on a formatting change.
     /// </remarks>

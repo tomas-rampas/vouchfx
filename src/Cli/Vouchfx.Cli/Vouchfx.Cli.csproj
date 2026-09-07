@@ -63,14 +63,18 @@
          GenerateDocumentationFile=true for every project, and PackAsTool packs the PUBLISH
          output, so every reachable assembly's .xml was being shipped inside tools/net8.0/any —
          three megabytes of internal engineering prose, including doc comments on PRIVATE
-         members and the sprint/task identifiers CLAUDE.md's publication boundary keeps off
-         every published surface. Nothing consumes it: this package is an executable, not a
-         library, and no one compiles against the DLLs inside a dotnet tool.
+         members. Nothing consumes it: this package is an executable, not a library, and no one
+         compiles against the DLLs inside a dotnet tool.
          PublishDocumentationFiles=false drops them from publish (and therefore from the
          package) WITHOUT touching GenerateDocumentationFile, so the gate still parses every
          doc comment in this project and still fails the build on a malformed or unresolvable
          one. Deliberately scoped to this project: Vouchfx.Sdk and Vouchfx.Sdk.Testing are
-         LIBRARY packages whose XML docs are part of the package contract and must keep them. -->
+         LIBRARY packages whose XML docs are part of the package contract and must keep them.
+         NOT justified as a publication-boundary fix, and the scoping above is exactly why: those
+         SDK library packages ship their own XML, carrying the same class of prose — measured on
+         the generated Vouchfx.Sdk.xml in this tree, "sprint" 6x, "fix round" 5x, "peer review" 4x
+         — so a boundary argument would condemn a package this change deliberately keeps. Cleaning
+         the published doc prose is separate work; the two reasons above stand without it. -->
     <PublishDocumentationFiles>false</PublishDocumentationFiles>
     <PackageId>vouchfx</PackageId>
     <!-- A bare `dotnet pack` (no -p:Version) yields 1.0.0-0.local: the numeric-leading prerelease identifier sorts below every published pre-release (alpha, beta, rc), so a local pack can never outrank anything on NuGet.org. -->

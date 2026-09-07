@@ -626,6 +626,30 @@ public sealed class GitChangeSetTests
     }
 
     /// <summary>
+    /// The Windows candidate is exactly <c>git.exe</c> — asserted on EVERY platform.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Why this row exists alongside the one above.</strong> That row plants a real
+    /// <c>.cmd</c>/<c>.bat</c> on disk, so it early-returns off Windows — and every blocking CI
+    /// lane is <c>ubuntu-latest</c> (#366), which makes it a no-op on the gate: a change putting
+    /// <c>.cmd</c> back into the candidate set would go green. This row takes the platform as an
+    /// argument instead of reading it, so the rule survives review on the lane that actually runs.
+    /// </para>
+    /// <para>
+    /// Asserted as equality against the WHOLE name, not a suffix check, because the property is
+    /// "one candidate, and it is <c>.exe</c>" — a <c>PATHEXT</c>-style widening would still end in
+    /// <c>.exe</c> for one of its candidates and pass a weaker assertion.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void CandidateFileName_UnderTheWindowsRule_IsExactlyTheExeName()
+    {
+        Assert.Equal("git.exe", GitChangeSet.CandidateFileName("git", windows: true));
+        Assert.Equal("git", GitChangeSet.CandidateFileName("git", windows: false));
+    }
+
+    /// <summary>
     /// On POSIX a file without an execute bit is not a candidate.
     /// </summary>
     [Fact]
