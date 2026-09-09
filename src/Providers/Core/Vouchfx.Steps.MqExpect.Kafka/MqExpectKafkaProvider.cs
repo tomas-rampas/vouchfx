@@ -116,7 +116,7 @@ public sealed class MqExpectKafkaProvider
     public JsonSchemaFragment SchemaFragment { get; } = new JsonSchemaFragment(
         """
         {
-          "description": "Consumes a message from a Kafka topic and asserts it matches the declared criteria (key, headers, payload substring, and/or JSONPath-evaluated fields), optionally Avro-decoding the value first.",
+          "description": "Consumes a message from a Kafka topic and asserts it matches the declared criteria (key, headers, payload substring, and/or JSONPath-evaluated fields), optionally Avro-decoding the value first.  Each attempt is a SINGLE drain of the retained log as it already stands — a fresh consumer group reading from the earliest offset, stopping at partition EOF — bounded at about one second.  Under the default verifyMode: IMMEDIATE a declared timeout does NOT widen that window: it is an upper bound, not a wait. Use verifyMode: RETRY to poll until the message arrives.",
           "type": "object",
           "required": ["target", "topic", "match"],
           "properties": {
@@ -530,18 +530,14 @@ public sealed class MqExpectKafkaProvider
     /// <c>SafeHandle</c> finalizer remains the backstop for the native handle.
     /// </para>
     /// <para>
-    /// <c>budgetGoverned</c> is discarded on BOTH paths, and the reason is narrower than
-    /// "RETRY owns the timeout".  <c>CsxAssembler</c> sets the flag <c>true</c> in exactly
-    /// one mode — IMMEDIATE with a declared <c>timeout</c> — and <c>false</c> for RETRY
-    /// and for IMMEDIATE without one.  So whenever it is <c>true</c> there is no RETRY
-    /// runner and no re-invocation at all.  What the flag lifts elsewhere is a CLIENT-level
-    /// transport timeout; this consumer config sets none, so there is nothing to lift.  The
-    /// poll's real bound is the hard 1s <c>deadline</c> local, a #232 "convention"
-    /// implemented as a loop guard rather than a config key.  <strong>The consequence is
-    /// deliberate but worth stating plainly:</strong> a step declaring
-    /// <c>timeout: 30s</c> under default IMMEDIATE still stops polling at ~1s and writes
-    /// <c>Fail</c>; the longer budget does not widen the window, because waiting for a
-    /// message to arrive is <c>verifyMode: RETRY</c>'s job, not a longer single poll.
+    /// <c>budgetGoverned</c> is discarded on BOTH paths.  <c>CsxAssembler</c> sets the flag
+    /// <c>true</c> in exactly one mode — IMMEDIATE with a declared <c>timeout</c> — and what
+    /// it lifts elsewhere is a CLIENT-level transport timeout, which this consumer config
+    /// never sets.  The poll's only bound is the <c>DrainWindowMs</c> loop guard, and a
+    /// declared timeout does not widen it.  That is the contract stated to authors by this
+    /// provider's schema <c>description</c> and by the common <c>timeout</c> field: one
+    /// bounded drain per attempt, with waiting delegated to <c>verifyMode: RETRY</c>.  The
+    /// window is reported to the author as <c>drainWindowMs</c> in the observation.
     /// </para>
     /// <para>
     /// IDEMPOTENT single poll (§7): the helper consumes whatever is available within a
@@ -558,6 +554,12 @@ public sealed class MqExpectKafkaProvider
     {
         "static class MqExpectKafka_Helpers\n" +
         "{\n" +
+        "    // The ONE per-attempt drain window, in milliseconds.  Both the poll deadline\n" +
+        "    // and the drainWindowMs key written into the observation read this constant,\n" +
+        "    // so the number an author sees in the report can never drift from the bound\n" +
+        "    // actually enforced.  A declared step timeout does NOT widen it (#493).\n" +
+        "    private const int DrainWindowMs = 1000;\n" +
+        "\n" +
         "    /// <summary>\n" +
         "    /// Performs ONE idempotent poll over a Kafka topic via a Confluent.Kafka\n" +
         "    /// consumer and writes a typed StepOutcome into Vars.\n" +
@@ -610,12 +612,10 @@ public sealed class MqExpectKafkaProvider
         "                .ConfigureAwait(false);\n" +
         "            return;\n" +
         "        }\n" +
-        "        // budgetGoverned is DISCARDED, not overlooked (#232).  It is true only for\n" +
-        "        // IMMEDIATE-with-a-declared-timeout, and what it lifts elsewhere is a CLIENT\n" +
-        "        // transport timeout — this config sets none.  The poll's bound is the hard 1s\n" +
-        "        // 'deadline' below, which a longer declared timeout does NOT widen: waiting for\n" +
-        "        // a message is verifyMode: RETRY's job, not a longer single poll.  See the\n" +
-        "        // provider's s_helpers remarks for the full reasoning.\n" +
+        "        // budgetGoverned is DISCARDED, not overlooked (#232/#493).  It is true only\n" +
+        "        // for IMMEDIATE-with-a-declared-timeout, and what it lifts elsewhere is a\n" +
+        "        // CLIENT transport timeout this config never sets.  The poll's bound is the\n" +
+        "        // DrainWindowMs loop guard below; the step schema documents that to authors.\n" +
         "        _ = budgetGoverned;\n" +
         "        var sw = System.Diagnostics.Stopwatch.StartNew();\n" +
         "        // Read the bootstrap-servers string staged by the orchestrator under the key\n" +
@@ -686,7 +686,7 @@ public sealed class MqExpectKafkaProvider
         "            bool matched = false;\n" +
         "            // Bounded per-attempt poll budget.  The RETRY runner owns the overall\n" +
         "            // timeout/backoff; this is just one attempt's drain window.\n" +
-        "            var deadline = System.DateTime.UtcNow.AddSeconds(1);\n" +
+        "            var deadline = System.DateTime.UtcNow.AddMilliseconds(DrainWindowMs);\n" +
         "            // Step-timeout convention (#232): consumer.Consume(TimeSpan) is a blocking,\n" +
         "            // synchronous call with no cancellation-token overload usable here without\n" +
         "            // restructuring this loop's try/catch — so cooperative early-exit is added\n" +
@@ -707,7 +707,9 @@ public sealed class MqExpectKafkaProvider
         "            {\n" +
         "                verdict = Vouchfx.Engine.Abstractions.Verdict.Pass;\n" +
         "                observation = \"{\\\"matched\\\":true,\\\"scanned\\\":\" +\n" +
-        "                    scanned.ToString(System.Globalization.CultureInfo.InvariantCulture) + \"}\";\n" +
+        "                    scanned.ToString(System.Globalization.CultureInfo.InvariantCulture) +\n" +
+        "                    \",\\\"drainWindowMs\\\":\" +\n" +
+        "                    DrainWindowMs.ToString(System.Globalization.CultureInfo.InvariantCulture) + \"}\";\n" +
         "            }\n" +
         "            else\n" +
         "            {\n" +
@@ -715,7 +717,9 @@ public sealed class MqExpectKafkaProvider
         "                // and converts a sustained Fail to Inconclusive on timeout — never here.\n" +
         "                verdict = Vouchfx.Engine.Abstractions.Verdict.Fail;\n" +
         "                observation = \"{\\\"matched\\\":false,\\\"scanned\\\":\" +\n" +
-        "                    scanned.ToString(System.Globalization.CultureInfo.InvariantCulture) + \"}\";\n" +
+        "                    scanned.ToString(System.Globalization.CultureInfo.InvariantCulture) +\n" +
+        "                    \",\\\"drainWindowMs\\\":\" +\n" +
+        "                    DrainWindowMs.ToString(System.Globalization.CultureInfo.InvariantCulture) + \"}\";\n" +
         "            }\n" +
         "        }\n" +
         "        catch (Vouchfx.Engine.Abstractions.Secrets.SecretResolutionException sre)\n" +
@@ -911,7 +915,7 @@ public sealed class MqExpectKafkaProvider
         "        bool budgetGoverned)\n" +
         "    {\n" +
         "        // budgetGoverned is DISCARDED here for the identical reason — see ExpectAsync\n" +
-        "        // and the provider's s_helpers remarks (#232, #468).\n" +
+        "        // (#232, #468, #493).\n" +
         "        _ = budgetGoverned;\n" +
         "        var sw = System.Diagnostics.Stopwatch.StartNew();\n" +
         "        var bootstrap = vars.TryGetValue(bootstrapKey, out var c) && c is string s ? s : null;\n" +
@@ -982,7 +986,7 @@ public sealed class MqExpectKafkaProvider
         "            consumer.Subscribe(topic);\n" +
         "            int scanned = 0;\n" +
         "            bool matched = false;\n" +
-        "            var deadline = System.DateTime.UtcNow.AddSeconds(1);\n" +
+        "            var deadline = System.DateTime.UtcNow.AddMilliseconds(DrainWindowMs);\n" +
         "            // Step-timeout convention (#232): see ExpectAsync's poll loop for the\n" +
         "            // rationale — Consume(TimeSpan) stays a blocking call; cooperative\n" +
         "            // early-exit is added to the loop GUARD only.\n" +
@@ -1003,13 +1007,17 @@ public sealed class MqExpectKafkaProvider
         "            {\n" +
         "                verdict = Vouchfx.Engine.Abstractions.Verdict.Pass;\n" +
         "                observation = \"{\\\"matched\\\":true,\\\"scanned\\\":\" +\n" +
-        "                    scanned.ToString(System.Globalization.CultureInfo.InvariantCulture) + \"}\";\n" +
+        "                    scanned.ToString(System.Globalization.CultureInfo.InvariantCulture) +\n" +
+        "                    \",\\\"drainWindowMs\\\":\" +\n" +
+        "                    DrainWindowMs.ToString(System.Globalization.CultureInfo.InvariantCulture) + \"}\";\n" +
         "            }\n" +
         "            else\n" +
         "            {\n" +
         "                verdict = Vouchfx.Engine.Abstractions.Verdict.Fail;\n" +
         "                observation = \"{\\\"matched\\\":false,\\\"scanned\\\":\" +\n" +
-        "                    scanned.ToString(System.Globalization.CultureInfo.InvariantCulture) + \"}\";\n" +
+        "                    scanned.ToString(System.Globalization.CultureInfo.InvariantCulture) +\n" +
+        "                    \",\\\"drainWindowMs\\\":\" +\n" +
+        "                    DrainWindowMs.ToString(System.Globalization.CultureInfo.InvariantCulture) + \"}\";\n" +
         "            }\n" +
         "        }\n" +
         "        catch (Vouchfx.Engine.Abstractions.Secrets.SecretResolutionException sre)\n" +

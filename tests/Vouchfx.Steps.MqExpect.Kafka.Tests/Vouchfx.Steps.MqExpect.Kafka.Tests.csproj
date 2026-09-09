@@ -28,6 +28,11 @@
     <ProjectReference Include="..\..\src\Engine\Vouchfx.Engine.Compilation\Vouchfx.Engine.Compilation.csproj" />
     <ProjectReference Include="..\..\src\Providers\Core\Vouchfx.Steps.MqExpect.Kafka\Vouchfx.Steps.MqExpect.Kafka.csproj" />
     <ProjectReference Include="..\..\src\Sdk\Vouchfx.Sdk\Vouchfx.Sdk.csproj" />
+    <!-- The published provider-test harness, for its ICompileContext double
+         (Vouchfx.Sdk.Testing.Contexts.TestCompileContext).  Referenced rather than
+         hand-rolling a fourth local stub in this assembly; see
+         MqExpectKafkaDrainWindowPinTests. -->
+    <ProjectReference Include="..\..\src\Sdk\Vouchfx.Sdk.Testing\Vouchfx.Sdk.Testing.csproj" />
   </ItemGroup>
 
 </Project>

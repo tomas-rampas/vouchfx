@@ -21,7 +21,7 @@ These fields may appear on **any** step, regardless of its `type`. `id` and `typ
 | `description` | no | `string` | A short human-readable explanation shown in test output. |
 | `capture` | no | `object` | A map of variable names to extractor expressions that write values from this step's result into the shared context (DSL §6.1). Each value is either a bare scalar JSONPath expression (e.g. '"$.id"', back-compat default) or a single-key mapping selecting the format explicitly ('{ jsonpath: "$.id" }' or '{ xpath: "//id" }'); use the XPath form for XML response bodies. A variable name may not begin with an engine-reserved bookkeeping prefix: svc::, conn::, __outcome::, __capture_status::, __attempts::. |
 | `verifyMode` | no | `string` | Either IMMEDIATE (default) or RETRY. RETRY instructs the engine to poll with bounded exponential backoff. |
-| `timeout` | no | `string` \| `number` | An upper bound on how long the step may take, expressed as a duration string (e.g. 30s) or a number of seconds — enforced for every verify mode. An IMMEDIATE step that exceeds it resolves as Inconclusive (step-timeout, never Fail); where the provider's emitted body sets a built-in transport timeout (the HTTP, AWS and SQL command-timeout conventions), the declared value replaces it as the governing bound. For a RETRY step it bounds the polling window. |
+| `timeout` | no | `string` \| `number` | An upper bound on how long the step may take, expressed as a duration string (e.g. 30s) or a number of seconds — enforced for every verify mode. An IMMEDIATE step that exceeds it resolves as Inconclusive (step-timeout, never Fail); where the provider's emitted body sets a built-in transport timeout (the HTTP, AWS and SQL command-timeout conventions), the declared value replaces it as the governing bound. For a RETRY step it bounds the polling window. It is an upper bound and never a lower one: it does not extend a provider's per-attempt drain window, so on a single-shot expect step (the mq-expect family) a longer timeout does not make the step wait longer for a message to arrive — waiting is verifyMode: RETRY's job. |
 | `continueOnFailure` | no | `boolean` | When true, a failed assertion is recorded but does not abort the remaining steps. Defaults to false. |
 
 ## Step types
@@ -291,7 +291,7 @@ Set `type: mq-expect.azureservicebus` to use this step.
 
 ### `mq-expect.kafka`
 
-Consumes a message from a Kafka topic and asserts it matches the declared criteria (key, headers, payload substring, and/or JSONPath-evaluated fields), optionally Avro-decoding the value first.
+Consumes a message from a Kafka topic and asserts it matches the declared criteria (key, headers, payload substring, and/or JSONPath-evaluated fields), optionally Avro-decoding the value first. Each attempt is a SINGLE drain of the retained log as it already stands — a fresh consumer group reading from the earliest offset, stopping at partition EOF — bounded at about one second. Under the default verifyMode: IMMEDIATE a declared timeout does NOT widen that window: it is an upper bound, not a wait. Use verifyMode: RETRY to poll until the message arrives.
 
 Set `type: mq-expect.kafka` to use this step.
 
@@ -331,7 +331,7 @@ Set `type: mq-expect.nats` to use this step.
 
 ### `mq-expect.rabbitmq`
 
-Consumes a message from an AMQP queue and asserts it matches the declared criteria (payload substring, headers, and/or JSONPath-evaluated fields).
+Consumes a message from an AMQP queue and asserts it matches the declared criteria (payload substring, headers, and/or JSONPath-evaluated fields). Each attempt is a SINGLE non-blocking drain of the messages already ready on the queue — at most 200 BasicGet fetches, stopping the moment none is ready — so it never waits for a message to arrive. Under the default verifyMode: IMMEDIATE a declared timeout does NOT change that: it is an upper bound, not a wait. Use verifyMode: RETRY to poll until the message arrives.
 
 Set `type: mq-expect.rabbitmq` to use this step.
 

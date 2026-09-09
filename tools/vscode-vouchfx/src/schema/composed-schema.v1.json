@@ -911,7 +911,7 @@
           ]
         },
         "timeout": {
-          "description": "An upper bound on how long the step may take, expressed as a duration string (e.g. 30s) or a number of seconds — enforced for every verify mode. An IMMEDIATE step that exceeds it resolves as Inconclusive (step-timeout, never Fail); where the provider's emitted body sets a built-in transport timeout (the HTTP, AWS and SQL command-timeout conventions), the declared value replaces it as the governing bound. For a RETRY step it bounds the polling window.",
+          "description": "An upper bound on how long the step may take, expressed as a duration string (e.g. 30s) or a number of seconds — enforced for every verify mode. An IMMEDIATE step that exceeds it resolves as Inconclusive (step-timeout, never Fail); where the provider's emitted body sets a built-in transport timeout (the HTTP, AWS and SQL command-timeout conventions), the declared value replaces it as the governing bound. For a RETRY step it bounds the polling window. It is an upper bound and never a lower one: it does not extend a provider's per-attempt drain window, so on a single-shot expect step (the mq-expect family) a longer timeout does not make the step wait longer for a message to arrive — waiting is verifyMode: RETRY's job.",
           "$comment": "A single 'type' union, not a two-branch 'oneOf', on purpose: the two shapes never overlap (a JSON value is never simultaneously a string and a number), so a union accepts exactly the same values a oneOf did, with no second branch left to leak a spurious '[type]' entry when the document is invalid elsewhere.",
           "type": [
             "string",
@@ -2104,7 +2104,7 @@
             ]
           },
           "then": {
-            "description": "Consumes a message from a Kafka topic and asserts it matches the declared criteria (key, headers, payload substring, and/or JSONPath-evaluated fields), optionally Avro-decoding the value first.",
+            "description": "Consumes a message from a Kafka topic and asserts it matches the declared criteria (key, headers, payload substring, and/or JSONPath-evaluated fields), optionally Avro-decoding the value first.  Each attempt is a SINGLE drain of the retained log as it already stands — a fresh consumer group reading from the earliest offset, stopping at partition EOF — bounded at about one second.  Under the default verifyMode: IMMEDIATE a declared timeout does NOT widen that window: it is an upper bound, not a wait. Use verifyMode: RETRY to poll until the message arrives.",
             "type": "object",
             "required": [
               "target",
@@ -2276,7 +2276,7 @@
             ]
           },
           "then": {
-            "description": "Consumes a message from an AMQP queue and asserts it matches the declared criteria (payload substring, headers, and/or JSONPath-evaluated fields).",
+            "description": "Consumes a message from an AMQP queue and asserts it matches the declared criteria (payload substring, headers, and/or JSONPath-evaluated fields).  Each attempt is a SINGLE non-blocking drain of the messages already ready on the queue — at most 200 BasicGet fetches, stopping the moment none is ready — so it never waits for a message to arrive.  Under the default verifyMode: IMMEDIATE a declared timeout does NOT change that: it is an upper bound, not a wait. Use verifyMode: RETRY to poll until the message arrives.",
             "type": "object",
             "required": [
               "target",
