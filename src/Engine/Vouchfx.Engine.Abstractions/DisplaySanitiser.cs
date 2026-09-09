@@ -46,7 +46,10 @@
 //     OrchestrationException environment-error catch, and the run-loop catch-all.
 //   • Vouchfx.Engine.Runtime.ScenarioRunner           — every schema/parse/pipeline/
 //     secret-reference/environment-configuration/isolation-failure/secret-resolution/
-//     compile-error WriteLine site, in both the single-scenario and RunSuiteAsync paths.
+//     compile-error WriteLine site, in both the single-scenario and RunSuiteAsync paths,
+//     PLUS the render-time provider-fault line (ReportDiffRendererFault, issue #485): a
+//     throwing IStepDiffRenderer's provider-authored exception message, written straight to
+//     the human-facing writer and so bypassing TerminalRenderer's GetStr choke.
 //   • Vouchfx.Engine.Runtime.ParallelSuiteRunner      — the per-slot raw-writer diagnostic
 //     that bypasses TerminalRenderer entirely (flushed verbatim to the terminal).
 //   • Vouchfx.Engine.Reporting.TerminalRenderer       — GetStr / GetStrFromObject (the
