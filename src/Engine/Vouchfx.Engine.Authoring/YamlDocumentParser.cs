@@ -52,7 +52,7 @@ public static class YamlDocumentParser
         // NO EXPANSION BUDGET HERE, AND THE REASON IS NOT "validation already ran" (#505).
         //
         // Validation is NOT unconditionally upstream of this method, so the first half of
-        // that argument is simply false: ScenarioDiscovery.LoadOne calls Parse directly on
+        // that argument is simply false: ScenarioDiscovery.ParseFile calls Parse directly on
         // the file's text before any schema validation happens, and it is the first thing
         // both `vouchfx run` and `vouchfx validate` do; WatchRunner.Compile,
         // SuiteSetLoader and ProviderTestHarness reach it the same way. If the

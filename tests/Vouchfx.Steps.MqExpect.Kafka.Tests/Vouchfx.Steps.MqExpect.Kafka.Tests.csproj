@@ -30,7 +30,7 @@
     <ProjectReference Include="..\..\src\Sdk\Vouchfx.Sdk\Vouchfx.Sdk.csproj" />
     <!-- The published provider-test harness, for its ICompileContext double
          (Vouchfx.Sdk.Testing.Contexts.TestCompileContext).  Referenced rather than
-         hand-rolling a fourth local stub in this assembly; see
+         hand-rolling a fifth local stub in this assembly; see
          MqExpectKafkaDrainWindowPinTests. -->
     <ProjectReference Include="..\..\src\Sdk\Vouchfx.Sdk.Testing\Vouchfx.Sdk.Testing.csproj" />
   </ItemGroup>

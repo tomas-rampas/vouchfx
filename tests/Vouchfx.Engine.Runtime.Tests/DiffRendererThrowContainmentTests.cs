@@ -22,7 +22,7 @@
 // run paths build (the sequential path calls the same private `BuildDiffLookup` behind it), so a
 // guard that existed on only one path could not pass these tests.
 //
-// THE STUBS ARE DECLARED HERE and are file-scoped: three provider kinds that exist only to make
+// THE STUBS ARE DECLARED HERE and are file-scoped: six provider kinds that exist only to make
 // a diff renderer throw (or not). They are discovered by the SAME assembly scan the registry
 // does for real providers.
 

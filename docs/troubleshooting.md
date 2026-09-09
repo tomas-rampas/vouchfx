@@ -444,7 +444,7 @@ Use one of these approaches:
 
 ---
 
-## Script body and document size limits
+## Script body, document, and YAML expansion limits
 
 **Symptom:**
 
@@ -458,9 +458,15 @@ or
 File size 1200000 bytes exceeds the 1048576-byte (1 MiB) limit for a single *.e2e.yaml document (a guard against pathological input); split the suite into smaller files.
 ```
 
+or
+
+```
+Failed to parse YAML: The YAML document expands to more than 16,777,216 characters (16 Mi) of JSON during schema conversion…
+```
+
 **What it means:**
 
-The engine enforces two resource-limit bounds before compilation: a maximum of 64 KiB per `script.csharp` step body (inline `code` or referenced `file:`), and 1 MiB per `.e2e.yaml` document. These are sanity bounds to prevent accidentally passing pathologically large files to the compiler, not a defence against deliberate crash or hang attempts — which can occur well under these sizes (e.g. a ~100-character nested string interpolation can hang the parse).
+The engine enforces three resource-limit bounds before compilation: a maximum of 64 KiB per `script.csharp` step body (inline `code` or referenced `file:`), 1 MiB per `.e2e.yaml` document, and 16 Mi characters (16,777,216) of JSON output when the YAML is converted during validation. These are sanity bounds to prevent accidentally passing pathologically large files to the compiler, not a defence against deliberate crash or hang attempts — which can occur well under these sizes (e.g. a ~100-character nested string interpolation can hang the parse). The third bound is triggered by YAML anchors and aliases that expand to many copies of repeated content.
 
 When a limit is exceeded, the scenario is marked **Inconclusive** on `run` and **invalid** on `validate`, exiting 4 on both — with or without `--fail-on-inconclusive`. The document cap is a parse failure (#425) and the script-body cap refuses before any topology is built (#369), so neither can report the run as clean. Validation completes normally and names the specific limit — it is not a crash.
 
@@ -487,6 +493,8 @@ When a limit is exceeded, the scenario is marked **Inconclusive** on `run` and *
    fulfillment-tests.e2e.yaml  # Fulfillment tests (~300 KiB)
    audit-tests.e2e.yaml        # Audit trail tests (~250 KiB)
    ```
+
+3. **YAML expands too large during validation?** Reduce YAML aliases and anchors, or split the suite. Anchors and aliases (the `&` and `*` syntax) expand to repeat their target content, and deeply nested or frequently reused anchors can make the expanded JSON exceed 16 Mi characters during validation.
 
 ---
 
@@ -787,7 +795,7 @@ An `mq-expect.kafka` step fails to find a message that was published earlier, ev
 **What it means:**
 Common causes:
 
-1. **Message was published before the consumer started listening.** Kafka does not replay historical messages by default (unless `earliest` is configured).
+1. **Message was published before the consumer started listening.** vouchfx's Kafka consumer uses a fresh consumer group with `AutoOffsetReset.Earliest`, so it reads from the earliest retained offset on each attempt. If a message was published before the step started, a RETRY attempt **will** see it — precisely because the offset is earliest, not in spite of it. Ensure the step runs after the message is published and that messages are not expiring between publishing and the expect step.
 2. **Topic does not exist.** The message was published to a different topic.
 3. **Key or match criteria are too strict.** The message exists but does not match the filter.
 4. **Timing issue.** The publish step and expect step are running concurrently; the expect starts before the publish completes.
@@ -850,7 +858,7 @@ Common causes:
    docker logs <kafka-container-id>
    ```
 
-6. **Understand Kafka's offset management.** By default, vouchfx's Kafka consumer seeks to the latest offset. If a publish step and an expect step both run in the same scenario, the consumer might miss the message if it subscribes *before* the message is published. Ensure publish runs first.
+6. **Understand Kafka's offset management.** Each attempt uses a fresh consumer group and reads from the earliest offset, so a message present before the step starts will be visible. Ensure the publish step runs *before* the expect step so the message has been written to the broker by the time the consumer starts.
 
 ---
 

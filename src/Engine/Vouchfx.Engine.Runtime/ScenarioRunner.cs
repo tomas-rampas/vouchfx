@@ -5102,8 +5102,9 @@ public static class ScenarioRunner
         // the price of keeping the message OUT of the key, which a per-step-varying message would
         // otherwise turn straight back into the flood.  The kind is not a step id either, so two
         // steps of the same kind do not separate.  The set is
-        // captured by the closure, so its lifetime is the closure's — which is the run, both
-        // paths building exactly one.  ConcurrentDictionary rather than HashSet + lock because
+        // captured by the closure, so its lifetime is the closure's — one per run on the
+        // sequential and parallel paths, and one per iteration on the watch paths, which build a
+        // fresh closure each time round.  ConcurrentDictionary rather than HashSet + lock because
         // TryAdd is the whole operation: today every invocation is on the single render thread,
         // but nothing in the delegate's TYPE says so, and a future renderer that parallelises
         // per-scenario emission would otherwise turn this into a torn-state bug in reporting.
@@ -5204,8 +5205,13 @@ public static class ScenarioRunner
         string member,
         Exception ex)
     {
+        // The KEY uses FullName while the MESSAGE renders the simple name: two same-named
+        // exception types from different namespaces are different defects, and keying on the
+        // simple name would suppress the second one silently — the one failure mode a dedup
+        // must not have. The displayed name stays short because the provider type is named
+        // beside it, which is what disambiguates a reader's grep.
         var faultType = ex.GetType().Name;
-        if (!reported.TryAdd((kind, member, faultType), 0))
+        if (!reported.TryAdd((kind, member, ex.GetType().FullName ?? faultType), 0))
         {
             return;
         }
@@ -5233,7 +5239,8 @@ public static class ScenarioRunner
                 $"step kind '{kind}': the provider's diff renderer {member} threw "
                 + $"{faultType}: {ex.Message}  {attribution} - the expected-vs-observed diff is "
                 + "omitted wherever this recurs. The verdict, the exit code and every "
-                + "report artefact are unaffected; this line is reported once per run."));
+                + "report artefact are unaffected; this line is reported once per step kind, "
+                + "member and exception type."));
     }
 
     /// <summary>

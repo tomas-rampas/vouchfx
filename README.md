@@ -415,9 +415,9 @@ string in single-file mode.
 > **A note on `validate`.** It compiles your test in-process using the same Roslyn compiler as `run`,
 > with no sandboxing. That is safe for suites you author and trust, but not for actively hostile input:
 > a determined hostile author can still crash or hang the in-process compiler (a stack overflow is
-> uncatchable by design). The engine bounds `script.csharp` bodies at 64 KiB and documents at 1 MiB as
-> resource limits, not as a defence. For untrusted input, isolate validation in a separate worker
-> process — which is exactly what the vouchfx MCP server does.
+> uncatchable by design). The engine bounds `script.csharp` bodies at 64 KiB, documents at 1 MiB, and
+> YAML-to-JSON conversion output at 16 Mi characters as resource limits, not as a defence. For untrusted input,
+> isolate validation in a separate worker process — which is exactly what the vouchfx MCP server does.
 
 ## AI assistance
 
