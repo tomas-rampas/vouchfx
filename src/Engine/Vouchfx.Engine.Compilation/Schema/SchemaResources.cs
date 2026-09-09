@@ -97,8 +97,17 @@ internal static class SchemaResources
     /// string and <c>JsonDocument.Parse</c>'s UTF-8 buffer exist together.  Peak is a small
     /// multiple of the figure, briefly, not the figure.
     /// </para>
+    /// <para>
+    /// <see langword="internal"/> rather than <see langword="private"/> so that
+    /// <c>SchemaConversionBudgetTests</c> derives its allocation ceiling from THIS value
+    /// instead of a copy of it — one number stored twice would let the budget and the test's
+    /// bound drift apart silently, with every gate still green.  This widens nothing outside
+    /// the assembly and moves no public API: <see cref="SchemaResources"/> is itself
+    /// <see langword="internal"/>, and the reachable set is exactly this project's
+    /// <c>InternalsVisibleTo</c> grants.
+    /// </para>
     /// </remarks>
-    private const int MaxJsonChars = 16 * 1024 * 1024;
+    internal const int MaxJsonChars = 16 * 1024 * 1024;
 
     /// <summary>
     /// Reads the embedded <c>root-language-schema.json</c> resource from the

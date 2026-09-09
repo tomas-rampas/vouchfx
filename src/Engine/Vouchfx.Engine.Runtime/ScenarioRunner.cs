@@ -5234,10 +5234,19 @@ public static class ScenarioRunner
                 + "test can produce) - this seam cannot tell the two apart"
             : $"This is a defect in the provider ({rendererTypeName}), not in the suite";
 
+        // ONE LINE MEANS ONE LINE, so the provider's message is flattened first.
+        // DisplaySanitiser deliberately PRESERVES \n — its remarks call it "common and benign in
+        // multi-line diagnostic text", which is true of the sites it was built for and false of
+        // this one. A provider exception message carrying newlines would otherwise split this
+        // diagnostic across several lines mid-render, which both breaks the once-per-fault
+        // property this method advertises and interleaves with the report the renderer is
+        // streaming. \r is dropped by the sanitiser already; \n is the one that survives.
+        var flatMessage = ex.Message.Replace('\n', ' ').Replace('\r', ' ');
+
         diagnostics.WriteLine(
             DisplaySanitiser.SanitiseForDisplay(
                 $"step kind '{kind}': the provider's diff renderer {member} threw "
-                + $"{faultType}: {ex.Message}  {attribution} - the expected-vs-observed diff is "
+                + $"{faultType}: {flatMessage}  {attribution} - the expected-vs-observed diff is "
                 + "omitted wherever this recurs. The verdict, the exit code and every "
                 + "report artefact are unaffected; this line is reported once per step kind, "
                 + "member and exception type."));
