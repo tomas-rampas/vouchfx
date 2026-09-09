@@ -5238,10 +5238,23 @@ public static class ScenarioRunner
         // DisplaySanitiser deliberately PRESERVES \n — its remarks call it "common and benign in
         // multi-line diagnostic text", which is true of the sites it was built for and false of
         // this one. A provider exception message carrying newlines would otherwise split this
-        // diagnostic across several lines mid-render, which both breaks the once-per-fault
-        // property this method advertises and interleaves with the report the renderer is
-        // streaming. \r is dropped by the sanitiser already; \n is the one that survives.
-        var flatMessage = ex.Message.Replace('\n', ' ').Replace('\r', ' ');
+        // diagnostic across several lines mid-render, which interleaves with the report the
+        // renderer is streaming and breaks the ONE-LINE-PER-FAULT RENDERING the CHANGELOG
+        // publishes ("one line per (kind, member, exception type) per run"). It would NOT break
+        // the once-per-fault property itself — `reported.TryAdd` above runs before this message
+        // is composed, so exactly one WriteLine happens either way; what a multi-line message
+        // costs is the shape of that one line, not its uniqueness.
+        //
+        // ReplaceLineEndings rather than a pair of Replace calls, and the difference is measured
+        // on this runtime (net8.0) rather than read off the documentation: it collapses a CRLF
+        // PAIR to a single space where two Replace calls leave two, and it recognises LF, CR,
+        // CRLF, FF (U+000C), NEL (U+0085), LS (U+2028) and PS (U+2029) in one pass. The last two
+        // are the reason this is not merely tidier: every other separator in that list is a
+        // C0/C1 control the sanitiser below strips anyway (it drops 0x00-0x1F except \t/\n, and
+        // 0x7F-0x9F), while U+2028/U+2029 sit outside both ranges and would otherwise reach the
+        // terminal intact. VT (U+000B) is NOT in the set ReplaceLineEndings recognises — also
+        // measured — and needs nothing here: it is a C0 control the sanitiser drops.
+        var flatMessage = ex.Message.ReplaceLineEndings(" ");
 
         diagnostics.WriteLine(
             DisplaySanitiser.SanitiseForDisplay(

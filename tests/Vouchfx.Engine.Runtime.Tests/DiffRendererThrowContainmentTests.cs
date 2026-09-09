@@ -22,7 +22,7 @@
 // run paths build (the sequential path calls the same private `BuildDiffLookup` behind it), so a
 // guard that existed on only one path could not pass these tests.
 //
-// THE STUBS ARE DECLARED HERE and are file-scoped: six provider kinds that exist only to make
+// THE STUBS ARE DECLARED HERE and are file-scoped: seven provider kinds that exist only to make
 // a diff renderer throw (or not). They are discovered by the SAME assembly scan the registry
 // does for real providers.
 
@@ -152,6 +152,48 @@ file sealed class StubEscapeInMessageProvider : DiffStubProviderBase, IStepDiffR
     internal static readonly string Message = "boom " + Esc + "[2J" + Bel + " cleared";
 
     public override StepKindId Kind => new("stub", "escaping-renderdiff");
+
+    public bool CanRender(JsonElement observation) => true;
+
+    public string? RenderDiff(JsonElement observation) => throw new System.InvalidTimeZoneException(Message);
+}
+
+/// <summary>
+/// A renderer whose exception message carries LINE SEPARATORS rather than control bytes — a
+/// SEPARATE claim from <see cref="StubEscapeInMessageProvider"/>'s and given its own stub so that
+/// a failure names which of the two broke.  That one is about scrubbing control characters out of
+/// provider-authored text; this one is about the fault diagnostic staying on ONE line, which is
+/// the shape the CHANGELOG publishes for it ("one line per (kind, member, exception type) per
+/// run") and which <c>DisplaySanitiser</c> cannot deliver on its own: it PRESERVES <c>\n</c> by
+/// design, and U+2028 / U+2029 are outside both control ranges it strips.
+/// </summary>
+[StepProvider]
+file sealed class StubMultiLineMessageProvider : DiffStubProviderBase, IStepDiffRenderer
+{
+    /// <summary>
+    /// U+2028 LINE SEPARATOR, built from its code point for the same reason
+    /// <see cref="StubEscapeInMessageProvider.Esc"/> is — and additionally because this file's
+    /// own source must stay ASCII-clean for the census gate.
+    /// </summary>
+    internal static readonly string LineSeparator = new((char)0x2028, 1);
+
+    /// <summary>U+2029 PARAGRAPH SEPARATOR, for the same reasons.</summary>
+    internal static readonly string ParagraphSeparator = new((char)0x2029, 1);
+
+    /// <summary>U+0085 NEXT LINE — a C1 control, so the sanitiser strips it independently.</summary>
+    internal static readonly string NextLine = new((char)0x85, 1);
+
+    /// <summary>
+    /// Every separator that could split the composed line, in one message: CRLF (which must
+    /// collapse as ONE unit, not two), a bare LF, a bare CR, NEL, LS and PS.  The words between
+    /// them are DISTINCT and are asserted on individually, so the row proves the message survives
+    /// flattening rather than merely that it was truncated at the first separator.
+    /// </summary>
+    internal static readonly string Message =
+        "boom\r\nalpha\nbravo\rcharlie" + NextLine + "delta" + LineSeparator + "echo"
+        + ParagraphSeparator + "foxtrot";
+
+    public override StepKindId Kind => new("stub", "multiline-message");
 
     public bool CanRender(JsonElement observation) => true;
 
@@ -603,6 +645,63 @@ public sealed class DiffRendererThrowContainmentTests
         // …with no raw ESC and no raw BEL byte anywhere in it.
         Assert.DoesNotContain(StubEscapeInMessageProvider.Esc, diagnostics, System.StringComparison.Ordinal);
         Assert.DoesNotContain(StubEscapeInMessageProvider.Bel, diagnostics, System.StringComparison.Ordinal);
+    }
+
+    // ── The fault line is ONE line, whatever the provider's message contains ──
+
+    /// <summary>
+    /// The published shape of this diagnostic is one line per <c>(kind, member, exception type)</c>
+    /// per run, and <c>ex.Message</c> is provider-authored text that can carry line separators.  So
+    /// the message is flattened at the write site before the composed line is sanitised.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A SIBLING OF <see cref="ProviderExceptionMessage_IsDisplaySanitisedAtTheWriteSite"/> rather
+    /// than an extra assertion inside it, because the two pin different claims and a reader must be
+    /// able to tell from the failure alone which one broke: that row is control-character
+    /// SCRUBBING, this row is line FLATTENING.  Nothing else in the file covers this one —
+    /// <c>DisplaySanitiser</c> preserves <c>\n</c> on purpose, so the dedup rows' single fault line
+    /// would still be single if the message split it across five.
+    /// </para>
+    /// <para>
+    /// TWO ASSERTIONS, because one separator family is invisible to the other.  The line count
+    /// catches LF and CRLF, which is what a reader, a terminal and every <c>Split('\n')</c>
+    /// downstream mean by "one line".  U+2028 / U+2029 cannot move that count, and the sanitiser
+    /// cannot reach them either (they are outside <c>0x00-0x1F</c> and <c>0x7F-0x9F</c>), so their
+    /// absence is asserted directly — it is the only evidence that the flatten covered them.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void ProviderExceptionMessageWithLineSeparators_IsFlattenedToOneLine()
+    {
+        var (_, diagnostics, _, _, _) = RenderEverything(FailedStep("stub.multiline-message"));
+
+        var lines = diagnostics.Split('\n', System.StringSplitOptions.RemoveEmptyEntries);
+
+        Assert.True(
+            lines.Length == 1,
+            $"The fault diagnostic came out as {lines.Length} lines, not one. A provider's "
+            + "exception message carried line separators and reached the writer unflattened, so "
+            + "the once-per-fault line this method publishes is no longer one line: it interleaves "
+            + "with the report the renderer is streaming, and anything downstream that reads the "
+            + "diagnostics sink a line at a time now sees fragments. DisplaySanitiser cannot fix "
+            + "this - it PRESERVES \\n deliberately - so the flatten at "
+            + "ScenarioRunner.ReportDiffRendererFault is the only thing that does. The lines "
+            + "produced were: "
+            + string.Join(" | ", lines));
+
+        // The message still says what it said - flattening is not truncation.
+        foreach (var fragment in
+            new[] { "boom", "alpha", "bravo", "charlie", "delta", "echo", "foxtrot" })
+        {
+            Assert.Contains(fragment, diagnostics, System.StringComparison.Ordinal);
+        }
+
+        // The two separators no line count can see and no sanitiser strips.
+        Assert.DoesNotContain(
+            StubMultiLineMessageProvider.LineSeparator, diagnostics, System.StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            StubMultiLineMessageProvider.ParagraphSeparator, diagnostics, System.StringComparison.Ordinal);
     }
 
     private static int CountOccurrences(string haystack, string needle)
