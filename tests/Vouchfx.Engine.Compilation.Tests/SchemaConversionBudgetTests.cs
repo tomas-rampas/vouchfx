@@ -43,27 +43,41 @@ public sealed class SchemaConversionBudgetTests
 {
     // ── The amplifying document ──────────────────────────────────────────────
     //
-    // Four levels of ten aliases each over a 32,000-character leaf scalar:
-    // 10^4 x 32,000 = 320,000,000 characters of JSON (355,599,043 as actually emitted, once
-    // quoting and punctuation are counted — the figure is pinned by ExpectedExpansionChars
-    // below rather than left in prose, because an assertion rests on it).  That is 21.2x the
+    // Four levels of ten aliases each over a 32,000-character leaf scalar. The leaf is emitted
+    // once for the anchor and once per alias site at every level, so the occurrences are the
+    // geometric sum 10^0 + … + 10^4 = 11,111 and the expansion is at least
+    // 11,111 x 32,000 = 355,552,000 characters of JSON — the floor MinExpansionChars derives
+    // below, and the figure the discrimination assertion rests on. Actually emitted, once
+    // quoting and punctuation are counted: 355,599,043, recorded in ExpectedExpansionChars
+    // because the byte-level accounting further down needs the exact number. That is 21.2x the
     // 16 Mi-character budget, and that ratio is what the allocation ceiling below rests on.
     //
-    // The LEAF IS A LONG SCALAR RATHER THAN MORE LEVELS, and the choice wins on both of the
-    // two axes that matter. A guarded run of EITHER shape emits about one budget before it
-    // trips — that is what the guard bounds — but the shapes differ in what an emitted
-    // character costs and in how far the UNGUARDED expansion overshoots the budget.
+    // The LEAF IS A LONG SCALAR RATHER THAN MORE LEVELS, and the choice is weighed on the two
+    // axes that matter. A guarded run of EITHER shape emits about one budget before it trips —
+    // that is what the guard bounds — but the shapes differ in what an emitted character costs
+    // and in how far the UNGUARDED expansion overshoots the budget.
     //   • Cost. Measured here against the pinned YamlDotNet 16.3.0, timing the conversion's
     //     two steps alone (no registry build, no schema composition): this document's guarded
     //     refusal takes 591 / 481 / 528 ms over three runs, a seven-level all-sequence chain
     //     1,325 / 1,399 / 1,207 ms. One budget of tiny scalars visits far more nodes than one
     //     budget of a repeated 32 KB leaf.
     //   • Margin, which is the axis that decides whether this row can SEE a regression at all.
-    //     This document overshoots the budget 21.2x. SchemaResources' own measurement table
+    //     This document overshoots the budget 21.2x, against the 8x the discrimination
+    //     assertion in AssertBoundedRefusal requires. SchemaResources' own measurement table
     //     puts a seven-level all-sequence chain at 80,246,964 characters — 4.8x the budget,
-    //     4.4x less margin — and that is why its ratio is the smaller one, the totals being
-    //     nowhere near comparable.
-    // Worse on both axes, so the long leaf is taken.
+    //     4.4x less margin, and BELOW that 8x: the comparator shape would not merely have less
+    //     margin here, it would have too little to discriminate at all. That is the TABLE's
+    //     variant of the same shape, at a different leaf length from the one the Cost bullet
+    //     timed, so the two bullets are not measurements of one document; the totals are
+    //     nowhere near comparable either way.
+    // SEVEN LEVELS IS THE COMPARATOR, NOT THE SHAPE CLASS, and saying otherwise would overclaim.
+    // Seven is the deepest instance SchemaResources measured and the only one within an order of
+    // magnitude of this document. The chain multiplies by ten per level, so an EIGHTH level
+    // reaches about 802,000,000 characters and takes the margin axis outright. What an added
+    // level does NOT move is cost: a guarded run of either shape stops at the budget, as the
+    // paragraph above says, so the emitting work is the same at any depth. Cost is therefore the
+    // axis that decides, the long leaf wins it at every depth, and its margin — 21.2x against a
+    // ceiling that admits 8x — is already sufficient rather than merely larger.
 
     private const int AliasLevels = 4;
     private const int AliasFanout = 10;
@@ -81,7 +95,7 @@ public sealed class SchemaConversionBudgetTests
     /// small multiple of the conversion's OWN budget rather than a multiple of the document's
     /// full expansion — and it stays true at whatever the budget is set to. The FAIL side is
     /// not scale-free, which is why <see cref="AssertBoundedRefusal"/> asserts the relation
-    /// between this figure and <see cref="ExpectedExpansionChars"/> instead of describing it;
+    /// between this figure and <see cref="MinExpansionChars"/> instead of describing it;
     /// see <see cref="RefusalAllocationCeilingBytes"/>'s remarks. The ABSOLUTE figure is
     /// pinned separately, by <see cref="AssertBudgetRefusal"/>'s assertion on the grouped
     /// <c>16,777,216 characters</c> the engine's own diagnostic prints.
@@ -93,16 +107,63 @@ public sealed class SchemaConversionBudgetTests
     /// ceiling below has to stay under to keep discriminating.
     /// </summary>
     /// <remarks>
-    /// Measured against the pinned YamlDotNet 16.3.0 by deserialising this exact document
-    /// (32,346 characters of YAML, byte-for-byte what <see cref="AliasAmplifiedYaml"/> builds)
-    /// and serialising the graph through a counting <c>TextWriter</c> with no budget — the
-    /// serialise-then-measure shape these rows exist to catch. It is a property of the
-    /// DOCUMENT and of nothing else: <c>AliasLevels</c>, <c>AliasFanout</c> and
-    /// <c>LeafScalarChars</c> fix it, and the budget does not enter it. That independence is
-    /// precisely why it and the ceiling can drift apart, and why the relation between them is
-    /// asserted.
+    /// Measured against the pinned YamlDotNet 16.3.0 by deserialising this exact document —
+    /// 32,346 characters of YAML on a CRLF host and 32,335 on an LF one, since the eleven
+    /// <c>AppendLine</c> calls in <see cref="AliasAmplifiedYaml"/> emit
+    /// <c>Environment.NewLine</c>; otherwise byte-for-byte what that method builds — and
+    /// serialising the graph through a counting <c>TextWriter</c> with no budget, which is the
+    /// serialise-then-measure shape these rows exist to catch. The EMITTED figure is a property
+    /// of the DOCUMENT and of nothing else: <c>AliasLevels</c>, <c>AliasFanout</c> and
+    /// <c>LeafScalarChars</c> fix it, the budget does not enter it, and neither does the host's
+    /// newline, which the deserialiser consumes and the emitter never reproduces. That
+    /// independence is precisely why it and the ceiling can drift apart, and why the relation
+    /// between them is asserted.
     /// </remarks>
+    /// <seealso cref="MinExpansionChars"/>
     private const long ExpectedExpansionChars = 355_599_043;
+
+    /// <summary>
+    /// How many times the leaf scalar is emitted when nothing bounds the expansion, DERIVED
+    /// from the three constants that build the document rather than measured.
+    /// </summary>
+    /// <remarks>
+    /// The alias graph is a complete <see cref="AliasFanout"/>-ary tree of depth
+    /// <see cref="AliasLevels"/> whose every node is the same leaf: level 0 is the anchor
+    /// itself, emitted once, and level <c>k</c> contributes <c>AliasFanout^k</c> sites. So the
+    /// occurrences are the geometric sum over <c>k = 0 … AliasLevels</c> — 11,111 at the shipped
+    /// fanout 10 and levels 4. Computed rather than written down so that changing either
+    /// constant carries through.
+    /// </remarks>
+    private static readonly long LeafOccurrences = ComputeLeafOccurrences();
+
+    /// <summary>
+    /// A LOWER BOUND on <see cref="ExpectedExpansionChars"/>, derived structurally — 355,552,000
+    /// characters as shipped, 47,043 below the measured figure, the difference being the quoting,
+    /// punctuation and keys the derivation deliberately does not model.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>This, not <see cref="ExpectedExpansionChars"/>, is what
+    /// <see cref="AssertBoundedRefusal"/>'s discrimination assertion compares against the
+    /// ceiling</strong>, and the reason is that the measured constant has no mechanical tie to
+    /// the document. It was hand-taken, so it moves only when someone re-measures it: raising
+    /// the ceiling makes the inequality fail (the direction that has actually occurred), but
+    /// SHRINKING the document does not. Drop <see cref="LeafScalarChars"/> to 3,200 and the real
+    /// expansion falls to about 35.6 M characters — comfortably under a ceiling that admits
+    /// 134 M — while a stale 355,599,043 still satisfies the comparison and both refusal rows go
+    /// green with a serialise-then-measure regression present. That is the exact silent pass the
+    /// assertion exists to prevent, so the assertion may not depend on a figure a human has to
+    /// remember to update.
+    /// </para>
+    /// <para>
+    /// Being a floor rather than the exact count is harmless here and load-bearing in the right
+    /// direction: the assertion needs the document to out-expand the ceiling, and proving that a
+    /// guaranteed MINIMUM does so is strictly stronger than proving it of a measurement.
+    /// <see cref="ExpectedExpansionChars"/> stays for the byte-level accounting in
+    /// <see cref="RefusalAllocationCeilingBytes"/>'s remarks, which needs the exact figure.
+    /// </para>
+    /// </remarks>
+    private static readonly long MinExpansionChars = LeafOccurrences * LeafScalarChars;
 
     /// <summary>
     /// Ceiling on the bytes a refusal may allocate on the calling thread.
@@ -137,8 +198,8 @@ public sealed class SchemaConversionBudgetTests
     /// string, then check its length": 1,429,159,144 / 1,429,164,552 / 1,429,166,144 bytes
     /// — 42.59x <see cref="BudgetBytes"/>, a spread of 0.0005%. A 42x separation between
     /// two figures that each wander by under a fifth of one percent. Re-measured when the
-    /// ceiling moved from 4x to 8x, to show that raising it moved nothing it measures:
-    /// 34,176,192 and 34,145,776 bytes, inside the same band.
+    /// multiplier was raised from an earlier draft's 4x to 8x, to show that raising it moved
+    /// nothing it measures: 34,176,192 and 34,145,776 bytes, inside the same band.
     /// </para>
     /// <para>
     /// <strong>Both figures are accounted for arithmetically</strong>, which is also the
@@ -151,14 +212,15 @@ public sealed class SchemaConversionBudgetTests
     /// where the counter could not see it.
     /// </para>
     /// <para>
-    /// <strong>8x is headroom, not a fitted threshold.</strong> Upwards it absorbs seven
-    /// whole extra copies of the budget plus every fixed cost, leaving the shipped 1.02x
-    /// about 7x of slack. That is deliberately more than the 4x this row first shipped with,
-    /// and the reason is that 4x left only 3.9x — inside the reach of a BENIGN change: a
-    /// <c>StringBuilder</c> reimplemented as a doubling array costs about one extra copy of
-    /// the budget, a YamlDotNet upgrade that copies each emitted scalar about one more, and
-    /// the two together (~3x) cleared 4x only marginally. Downwards, ANY implementation that
-    /// materialises this document's full expansion pays at least 2 bytes x
+    /// <strong>8x is headroom, not a fitted threshold.</strong> Slack is counted here the one
+    /// way throughout — ADDITIVELY, as copies of the budget left over above the shipped 1.02x,
+    /// which is the unit the benign changes below are themselves counted in. On that unit 8x
+    /// leaves just under 7x of slack, where the 4x an earlier draft of this row used left just
+    /// under 3x, and 3x is inside the reach of a BENIGN change: a <c>StringBuilder</c>
+    /// reimplemented as a doubling array costs about one extra copy of the budget, a YamlDotNet
+    /// upgrade that copies each emitted scalar about one more, and the two together — 1.02x plus
+    /// two, so about 3.02x in total — cleared 4x only marginally. Downwards, ANY implementation
+    /// that materialises this document's full expansion pays at least 2 bytes x
     /// <see cref="ExpectedExpansionChars"/> = 21.2x <see cref="BudgetBytes"/> even holding
     /// zero copies, so the cheapest conceivable serialise-then-measure regression still lands
     /// 2.65x above this ceiling; the actual one, at 42.59x, lands 5.3x above it.
@@ -168,12 +230,14 @@ public sealed class SchemaConversionBudgetTests
     /// <see cref="AssertBoundedRefusal"/> asserts the relation rather than trusting this
     /// paragraph.</strong> A correct refusal costs about one budget at any budget, so the PASS
     /// side is scale-free; the FAIL side is not, because this ceiling tracks
-    /// <see cref="SchemaResources.MaxJsonChars"/> while
-    /// <see cref="ExpectedExpansionChars"/> is fixed by the document. Raise the budget to
-    /// <see cref="ExpectedExpansionChars"/> / 8 = 44,449,881 characters or beyond (about
-    /// 42.4 Mi, 2.65x today's), or raise the multiplier above 21, and a serialise-then-measure
-    /// regression fits under this ceiling with BOTH rows green — SILENTLY, where the
-    /// wall-clock ceiling this replaced would at least have failed loudly.
+    /// <see cref="SchemaResources.MaxJsonChars"/> while the document's expansion does not.
+    /// Raise the budget to <see cref="MinExpansionChars"/> / 8 = 44,444,000 characters or
+    /// beyond (about 42.4 Mi, 2.65x today's), or raise the multiplier above 21, and the
+    /// CHEAPEST CONCEIVABLE serialise-then-measure regression fits under this ceiling with BOTH
+    /// rows green — SILENTLY, where the wall-clock ceiling this replaced would at least have
+    /// failed loudly. The regression actually measured holds two copies and so needs the
+    /// multiplier above 42; the assertion fires at the cheaper of the two ON PURPOSE, because
+    /// how many copies a future regression happens to hold is not something this row may assume.
     /// </para>
     /// <para>
     /// The bound is one-sided ON PURPOSE. An implementation that refused earlier and more
@@ -188,7 +252,7 @@ public sealed class SchemaConversionBudgetTests
     /// <summary>
     /// An alias-amplified document is refused through <see cref="YamlSchemaValidator"/> with
     /// a diagnostic that names the budget and names anchors/aliases as the cause — and the
-    /// refusal is bounded, not the result of building the whole 355 Mi-character string.
+    /// refusal is bounded, not the result of building the whole 355-million-character string.
     /// </summary>
     [Fact]
     public void Validate_AliasAmplifiedDocument_IsRefusedInBoundedMemoryByTheRootSchemaValidator()
@@ -307,6 +371,30 @@ public sealed class SchemaConversionBudgetTests
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     /// <summary>
+    /// The geometric sum behind <see cref="LeafOccurrences"/>:
+    /// <c>AliasFanout^0 + … + AliasFanout^AliasLevels</c>.
+    /// </summary>
+    /// <remarks>
+    /// Summed in a loop rather than written as a closed form because the closed form needs
+    /// <c>Math.Pow</c> — a <see langword="double"/> round trip on a figure the assertions then
+    /// compare exactly. The loop is exact in <see langword="long"/> and cheap: it runs
+    /// <see cref="AliasLevels"/> + 1 times, once, at type initialisation.
+    /// </remarks>
+    private static long ComputeLeafOccurrences()
+    {
+        var occurrences = 0L;
+        var sitesAtThisLevel = 1L;
+
+        for (var level = 0; level <= AliasLevels; level++)
+        {
+            occurrences += sitesAtThisLevel;
+            sitesAtThisLevel *= AliasFanout;
+        }
+
+        return occurrences;
+    }
+
+    /// <summary>
     /// Runs <paramref name="validate"/> and reports what it allocated on the calling thread.
     /// </summary>
     /// <remarks>
@@ -346,20 +434,50 @@ public sealed class SchemaConversionBudgetTests
         // copy of the whole expansion, so the comparison is in CHARACTERS — the ceiling halved.
         // Asserted rather than described because both rows would otherwise go GREEN with the
         // regression present; see RefusalAllocationCeilingBytes' remarks for the arithmetic.
+        //
+        // The left-hand side is the DERIVED floor, never the hand-measured
+        // ExpectedExpansionChars. The two are within 0.02% of each other today, but the measured
+        // constant has no mechanical tie to AliasLevels / AliasFanout / LeafScalarChars, so it
+        // catches a raised ceiling and misses a SHRUNK document — the one direction in which a
+        // stale figure would keep this comparison satisfied while the real expansion had already
+        // fallen under the ceiling. MinExpansionChars moves with the document by construction.
         Assert.True(
-            ExpectedExpansionChars > RefusalAllocationCeilingBytes / 2,
+            MinExpansionChars > RefusalAllocationCeilingBytes / 2,
             "The amplifying document no longer out-expands the ceiling by enough for this row to "
-            + "discriminate: a serialise-then-measure regression would now fit under it, and both "
-            + "refusal rows would pass with the regression present. The document expands to "
-            + ExpectedExpansionChars.ToString("N0", CultureInfo.InvariantCulture)
-            + " characters, while the ceiling of " + ceiling + " bytes admits "
+            + "discriminate: the CHEAPEST CONCEIVABLE serialise-then-measure regression - one "
+            + "holding no copy beyond the emitted string itself - would now fit under it, and "
+            + "both refusal rows would pass with that regression present. (The regression "
+            + "actually measured holds two copies and would still be caught; this assertion "
+            + "fires at the cheaper of the two deliberately, because how many copies a future "
+            + "regression holds is not something this row may assume.) The document emits at "
+            + "least " + MinExpansionChars.ToString("N0", CultureInfo.InvariantCulture)
+            + " characters - " + LeafOccurrences.ToString("N0", CultureInfo.InvariantCulture)
+            + " leaf occurrences of " + LeafScalarChars.ToString("N0", CultureInfo.InvariantCulture)
+            + " characters, derived from AliasLevels and AliasFanout - against a ceiling of "
+            + ceiling + " bytes, which admits "
             + (RefusalAllocationCeilingBytes / 2).ToString("N0", CultureInfo.InvariantCulture)
-            + " characters of UTF-16. Either the budget ("
-            + budgetChars + " characters) or the ceiling's multiple of it has been raised past "
-            + "what the document can out-run. Raise AliasLevels, AliasFanout or LeafScalarChars "
-            + "and re-measure ExpectedExpansionChars, or lower the multiple - do not simply "
+            + " characters of UTF-16. Either the budget (" + budgetChars
+            + " characters) or the ceiling's multiple of it has been raised past what the "
+            + "document can out-run, or the document itself has been shrunk. Raise AliasLevels, "
+            + "AliasFanout or LeafScalarChars - MinExpansionChars follows them automatically, "
+            + "though ExpectedExpansionChars must still be re-measured for the byte accounting "
+            + "in RefusalAllocationCeilingBytes' remarks - or lower the multiple. Do not simply "
             + "delete this assertion, because nothing else in this file can tell the two cases "
             + "apart.");
+
+        // SECOND, the one check that can be made on the hand-measured figure. Nothing mechanical
+        // keeps ExpectedExpansionChars in step with the document, but it can never legitimately
+        // sit BELOW what the constants guarantee — a value that does is a mis-measurement or a
+        // stale edit, and every byte-accounting figure quoting it is then wrong too.
+        Assert.True(
+            ExpectedExpansionChars >= MinExpansionChars,
+            "ExpectedExpansionChars ("
+            + ExpectedExpansionChars.ToString("N0", CultureInfo.InvariantCulture)
+            + " characters) is below the expansion this document's own constants guarantee ("
+            + MinExpansionChars.ToString("N0", CultureInfo.InvariantCulture)
+            + " characters), so it cannot be a measurement of this document. Re-measure it "
+            + "against the current AliasLevels / AliasFanout / LeafScalarChars before trusting "
+            + "the byte accounting in RefusalAllocationCeilingBytes' remarks, which quotes it.");
 
         Assert.True(
             allocatedBytes < RefusalAllocationCeilingBytes,

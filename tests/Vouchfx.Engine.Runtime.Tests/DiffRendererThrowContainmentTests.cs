@@ -41,7 +41,10 @@ namespace Vouchfx.Engine.Runtime.Tests;
 
 file sealed record DiffStubModel(string Tag) : IStepModel;
 
-/// <summary>Common plumbing for the three diff-renderer stubs — none of them is ever compiled.</summary>
+/// <summary>
+/// Common plumbing for the seven stubs declared below — six diff renderers and one control that
+/// implements no renderer at all.  None of them is ever compiled.
+/// </summary>
 file abstract class DiffStubProviderBase
     : IStepProvider,
       IStepBinder<DiffStubModel>,
@@ -172,8 +175,7 @@ file sealed class StubMultiLineMessageProvider : DiffStubProviderBase, IStepDiff
 {
     /// <summary>
     /// U+2028 LINE SEPARATOR, built from its code point for the same reason
-    /// <see cref="StubEscapeInMessageProvider.Esc"/> is — and additionally because this file's
-    /// own source must stay ASCII-clean for the census gate.
+    /// <see cref="StubEscapeInMessageProvider.Esc"/> is.
     /// </summary>
     internal static readonly string LineSeparator = new((char)0x2028, 1);
 
@@ -184,14 +186,28 @@ file sealed class StubMultiLineMessageProvider : DiffStubProviderBase, IStepDiff
     internal static readonly string NextLine = new((char)0x85, 1);
 
     /// <summary>
-    /// Every separator that could split the composed line, in one message: CRLF (which must
-    /// collapse as ONE unit, not two), a bare LF, a bare CR, NEL, LS and PS.  The words between
-    /// them are DISTINCT and are asserted on individually, so the row proves the message survives
-    /// flattening rather than merely that it was truncated at the first separator.
+    /// The DISTINCT words the message is composed from, in order.  The flatten row asserts on
+    /// each of them individually, so it proves the message SURVIVES flattening rather than merely
+    /// that it was truncated at the first separator — and it reads this array rather than
+    /// re-listing the words, so a word added here cannot leave a stale expectation behind.
     /// </summary>
-    internal static readonly string Message =
-        "boom\r\nalpha\nbravo\rcharlie" + NextLine + "delta" + LineSeparator + "echo"
-        + ParagraphSeparator + "foxtrot";
+    internal static readonly string[] Words =
+        { "boom", "alpha", "bravo", "charlie", "delta", "echo", "foxtrot" };
+
+    /// <summary>
+    /// One separator between each consecutive pair of <see cref="Words"/> — every family that
+    /// could split the composed line: CRLF (which must collapse as ONE unit, not two), a bare LF,
+    /// a bare CR, NEL, LS and PS.
+    /// </summary>
+    private static readonly string[] s_separators =
+        { "\r\n", "\n", "\r", NextLine, LineSeparator, ParagraphSeparator };
+
+    /// <summary>
+    /// <see cref="Words"/> joined by <see cref="s_separators"/>, in order — one message carrying
+    /// every separator family at once.
+    /// </summary>
+    internal static readonly string Message = string.Concat(
+        Words.Select((word, index) => index == 0 ? word : s_separators[index - 1] + word));
 
     public override StepKindId Kind => new("stub", "multiline-message");
 
@@ -690,14 +706,21 @@ public sealed class DiffRendererThrowContainmentTests
             + "produced were: "
             + string.Join(" | ", lines));
 
-        // The message still says what it said - flattening is not truncation.
-        foreach (var fragment in
-            new[] { "boom", "alpha", "bravo", "charlie", "delta", "echo", "foxtrot" })
+        // The message still says what it said - flattening is not truncation. The expectation is
+        // READ FROM the stub's own word array rather than re-listed here, so adding a separator
+        // and a word to the stub cannot weaken this row silently. It is not circular: the words
+        // are compared against the RENDERED diagnostics, which the production flatten and
+        // sanitise produced, not against the stub's own composed message.
+        foreach (var fragment in StubMultiLineMessageProvider.Words)
         {
             Assert.Contains(fragment, diagnostics, System.StringComparison.Ordinal);
         }
 
-        // The two separators no line count can see and no sanitiser strips.
+        // The two separators no line count can see and no sanitiser strips. These two are named
+        // rather than swept from the stub's separator array, because the array's CR / LF / CRLF
+        // entries CANNOT be asserted absent: `diagnostics` ends with the WriteLine's own line
+        // terminator, so a blanket absence assertion over that array would be false on a correct
+        // implementation.
         Assert.DoesNotContain(
             StubMultiLineMessageProvider.LineSeparator, diagnostics, System.StringComparison.Ordinal);
         Assert.DoesNotContain(
