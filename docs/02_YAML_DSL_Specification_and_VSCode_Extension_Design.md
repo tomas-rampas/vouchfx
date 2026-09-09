@@ -480,7 +480,7 @@ Every step, regardless of type, may carry the fields below. Defining them once h
 | **description** | No | A short human-readable explanation shown in test output. |
 | **capture** | No | A map of variable names to extractor expressions; writes values from this step's result into the shared context (see section 6). |
 | **verifyMode** | No | Either IMMEDIATE (the default) or RETRY. RETRY instructs the engine to poll until the step's assertions hold or a timeout expires (see section 7). |
-| **timeout** | No | An upper bound on how long the step may take, expressed as a duration such as 30s — enforced for every verify mode. An IMMEDIATE step that exceeds it resolves as **Inconclusive** (`step-timeout`, never Fail — §12.1): providers observe the step's cancellation cooperatively, and a body that completes past the bound has its outcome superseded. Where the provider's emitted body sets a built-in transport timeout (the HTTP, AWS and SQL command-timeout conventions), a declared value replaces it as the governing bound, so a budget longer than that convention is honoured; when omitted, those conventions (typically 30 seconds) remain the de facto bound. For a RETRY step it bounds the polling window. |
+| **timeout** | No | An upper bound on how long the step may take, expressed as a duration such as 30s — enforced for every verify mode. An IMMEDIATE step that exceeds it resolves as **Inconclusive** (`step-timeout`, never Fail — §12.1): providers observe the step's cancellation cooperatively, and a body that completes past the bound has its outcome superseded. Where the provider's emitted body sets a built-in transport timeout (the HTTP, AWS and SQL command-timeout conventions), a declared value replaces it as the governing bound, so a budget longer than that convention is honoured; when omitted, those conventions (typically 30 seconds) remain the de facto bound. For a RETRY step it bounds the polling window. It is an upper bound and never a lower one: it does not extend a provider's per-attempt drain window, so on a single-shot expect step (the `mq-expect` family) a longer `timeout` does not make the step wait longer for a message to arrive — waiting is `verifyMode: RETRY`'s job. |
 | **continueOnFailure** | No | When true, a failed assertion in this step is recorded but does not abort the remaining steps. Defaults to false. |
 
 *Table 4.1 — Fields available on every step type.*
@@ -687,6 +687,16 @@ Example:
 ### 5.3 The mq-expect family
 
 An `mq-expect` step consumes from a broker and asserts that a matching message arrives. Because the message may not be present the instant the step runs, this step is almost always paired with `verifyMode: RETRY`: the engine polls the source, with backoff, until a message satisfying the `match` block appears or the timeout expires. The mq-expect family has five Core providers: `mq-expect.kafka`, `mq-expect.rabbitmq`, `mq-expect.nats`, `mq-expect.azureservicebus`, and `mq-expect.redis` (Redis Streams). The dotted form is always required; a bare `type: mq-expect` is not a valid step type. `mq-expect.kafka` takes its transport from the target the same way `mq-publish.kafka` does (§3.2.6b): a target declaring a `security` block is consumed from over TLS, presenting the declared client certificate under `profile: mtls`. The other four providers in this family address dependency kinds that accept no `security` block in this release.
+
+When run with `verifyMode: IMMEDIATE` (the default if RETRY is omitted), each provider performs a single bounded drain:
+
+- **`mq-expect.kafka`** drains for approximately 1 second (`drainWindowMs = 1000`, reported in the observation).
+- **`mq-expect.rabbitmq`** makes at most 200 `BasicGet` fetches and stops the moment none is ready, with no time bound.
+- **`mq-expect.nats`** fetches at most 10,000 messages with a 1 second expiry.
+- **`mq-expect.azureservicebus`** peeks at most 100 messages.
+- **`mq-expect.redis`** scans `XRANGE … COUNT 10000`.
+
+A declared `timeout` value does not extend these per-attempt windows; it bounds the RETRY polling loop's total duration when `verifyMode: RETRY` is used.
 
 #### 5.3.1 mq-expect.kafka: plain payload
 
@@ -1684,7 +1694,7 @@ Both the language and the extension carry design risks worth stating plainly, so
 | The language currently models a single linear sequence of steps. | Sufficient for the MVP; conditional and parallel step groups are deferred and should be designed before they are added piecemeal. |
 | Inconsistent provider naming or field conventions across the catalogue confuses authors. | Reserved registry of family names governed by the platform team; a style guide in CONTRIBUTING.md that defines casing, common field names, and the use of target and expect; review by core maintainers at Vouched badge award. |
 | Schema-fragment quality varies between Community providers, weakening the editor experience. | A schema-fragment validation fixture in the official integration matrix that every Vouched provider must pass; the Vouched status is surfaced in the editor and in diagnostics so authors know what they have installed. |
-| A provider supplies a poor failure-diff renderer, producing reports authors cannot read. | An engine-provided default diff renderer covers any provider that omits its own; the Vouched badge review includes inspecting the diff against a corpus of representative failures. |
+| A provider supplies a poor failure-diff renderer, producing reports authors cannot read. | Provider-supplied renderers are reviewed at Vouched badge award against a corpus of representative failures; a provider omitting `IStepDiffRenderer` will have its diff line omitted from the report but the verdict and all other output are unaffected (issue #485). |
 | Authors mistake an inconclusive verdict for a failure (or vice versa) and chase the wrong defect. | Distinct colour, distinct counter, and distinct documentation; the inconclusive verdict's reason line is mandatory in the report and tells the author which earlier step's capture was unmet. |
 | Authors inline a literal credential into a field rather than using a secret reference. | The ${secret:…} syntax is documented as the only sanctioned way to supply credentials; a future lint rule flags secret-shaped literals in test files; report redaction limits the blast radius if one slips through. |
 | A seed fixture drifts out of step with the schema of the dependency it loads. | Seeds are applied inside the health-gated lifecycle and a failed seed is an environment error with a clear message; fixtures live in source control beside the test so they are reviewed and versioned together with it. |

@@ -123,16 +123,14 @@ public sealed class HttpRestProvider
     // a function of stack size, so the ordering between the two cannot invert on a smaller
     // stack.
     //
-    // MaxBodyNodes is the bound that a real suite can still reach, but it is downstream of
-    // an UNBOUNDED expansion of the same document: the validation-time conversion above
-    // expands every alias with no node or byte ceiling of its own, and an alias chain
-    // multiplies that expansion per level.
-    // So the honest claim for the budget is NOT that it prevents an out-of-memory
-    // condition — memory is spent upstream regardless, and that gap is issue #505. What it
-    // buys is the band in between: for a document the upstream conversion survives, the
-    // budget stops this provider from paying the cost a second time as a much heavier
-    // JsonNode tree, and the author gets a refusal that names the step and the limit
-    // instead of a generic upstream one.
+    // MaxBodyNodes is the bound that a real suite can still reach. The validation-time
+    // conversion above carries a ceiling of its own — SchemaResources.MaxJsonChars, 16 Mi
+    // characters of emitted JSON — so on the engine path a document that reaches this
+    // provider is one that conversion already survived. What the budget buys is that this
+    // provider does not then pay the same document a second time as a much heavier JsonNode
+    // tree, and that the author gets a refusal naming the step and the limit rather than a
+    // generic upstream one. It does NOT make an out-of-memory condition impossible; it bounds
+    // this provider's own walk, and nothing more.
     //
     // WHY A NODE BUDGET AND NOT A VISITED-NODE SET. An alias is a SHARED node, not
     // necessarily a cycle. `*defaults` under two keys is legitimate YAML that MUST expand
@@ -189,10 +187,11 @@ public sealed class HttpRestProvider
     /// A body that aliases one large scalar many times therefore stays well inside this
     /// budget while serialising to far more than its node count suggests. How much more is
     /// bounded by the 1 MiB document cap ScenarioDiscovery applies before reading a file,
-    /// not by this constant. This constant therefore does not cap the materialised tree at any
-    /// particular size, and no claim here says it does. Widening it to a byte budget is a
-    /// separate change with its own message and its own rows; issue #505 tracks the larger
-    /// version of the same gap upstream of this provider.
+    /// not by this constant — and that cap is the CLI's, not every caller's:
+    /// <c>ProviderTestHarness.RunSingleStepAsync</c> reaches <c>Bind</c> with an in-memory
+    /// string no cap applies to. This constant therefore does not cap the materialised tree at any
+    /// particular size, and no claim here says it does. Widening it to a byte budget would be a
+    /// separate change with its own message and its own rows.
     /// </para>
     /// </remarks>
     private const int MaxBodyNodes = 50_000;

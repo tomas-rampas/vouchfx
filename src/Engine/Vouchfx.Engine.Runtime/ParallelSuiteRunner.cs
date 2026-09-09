@@ -263,7 +263,7 @@ public static class ParallelSuiteRunner
         // Build the provider registry once (shared, read-only, across all scenarios) and the
         // render-time diff-lookup closure once — exactly as RunSuiteAsync does.
         var registry = StepKindRegistry.BuildAndFreeze(providerAssemblies);
-        var diffLookup = ScenarioRunner.BuildParallelDiffLookup(registry);
+        var diffLookup = ScenarioRunner.BuildParallelDiffLookup(registry, output);
 
         return await RunParallelCoreAsync(
             registry,
@@ -656,6 +656,21 @@ public static class ParallelSuiteRunner
             // one — the compile-time provider surface is closed — and what still arrives here is
             // an engine fault in a frame no guard covers, or a genuine infrastructure fault, which
             // is what this classification is FOR.
+            //
+            // RENDER-TIME PROVIDER CODE IS A THIRD, SEPARATELY-HANDLED SURFACE (issue #485), and
+            // it is named here because a reader who stops at "the compile-time provider surface is
+            // closed" over-reads it into "provider code cannot break a run". `IStepDiffRenderer`
+            // is provider code that runs at REPORTING time — after this gather has joined and
+            // after every verdict is fixed — from `ScenarioRunner.BuildDiffLookup`'s closure, on
+            // the render thread rather than in any slot. It could not reach THIS frame even
+            // before it was guarded: it threw past `TerminalRenderer.Render` in `RenderAndAggregate`
+            // below, which is outside every per-slot catch and ahead of the HTML / JUnit /
+            // `--events` writes, so the cost was every report artefact for the whole run rather
+            // than a mis-classified slot. That is now contained AT the closure — one guard per
+            // member, one named diagnostic per (kind, member, exception type) onto `output` — so
+            // it neither reaches here nor reaches the renderers. Read BuildDiffLookup's remarks
+            // before adding a fourth surface to this list.
+            //
             // Leave a minimal, redaction-safe trace (exception TYPE only, never the message — §17)
             // on this slot's raw writer so a genuine engine fault is at least diagnosable; the raw
             // writers flush in declaration order, so this stays deterministic.

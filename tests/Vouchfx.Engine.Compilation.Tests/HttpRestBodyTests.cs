@@ -544,11 +544,11 @@ public sealed class HttpRestBodyTests
     /// bound; its expansion is over 120,000 nodes because YamlDotNet shares one node instance
     /// per anchor while the walk re-materialises a copy at every alias site. The budget stops
     /// the walk at 50,000 nodes, which is thousandths of a second of work. Note what the row
-    /// does and does not prove: the same document has ALREADY been expanded once, unbounded,
-    /// by schema validation on the engine path,
-    /// so what the budget buys is a named refusal instead of this provider materialising a far
-    /// heavier <c>JsonNode</c> tree — not the prevention of an out-of-memory condition. That
-    /// larger gap is issue #505.
+    /// does and does not prove: on the engine path the same document has ALREADY been expanded
+    /// once by schema validation, under that step's own 16 Mi-character ceiling
+    /// (<c>SchemaResources.MaxJsonChars</c>), so what this budget buys is a named refusal
+    /// instead of this provider materialising a far heavier <c>JsonNode</c> tree — not the
+    /// prevention of an out-of-memory condition.
     /// </remarks>
     [Fact]
     public void Bind_AliasAmplifiedBody_ThrowsNamingStepAndLimit()

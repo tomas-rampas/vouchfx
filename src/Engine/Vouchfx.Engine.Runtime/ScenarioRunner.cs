@@ -24,6 +24,7 @@
 //     ScenarioIsolationFactory.Create's result (RespawnRelationalIsolation /
 //     CompositeScenarioIsolation / NullScenarioIsolation) between each.
 //   • SuiteResult — aggregate record for RunSuiteAsync callers.
+using System.Collections.Concurrent;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
@@ -449,7 +450,7 @@ public static class ScenarioRunner
         // draw an expected-vs-observed diff under a failed step.  Built once over the
         // frozen registry and threaded into the single TerminalRenderer.Render call.
         var registry = StepKindRegistry.BuildAndFreeze(providerAssemblies);
-        var diffLookup = BuildDiffLookup(registry);
+        var diffLookup = BuildDiffLookup(registry, output);
 
         // Delegate to the no-render core, which builds its own topology, runs the
         // single scenario, and returns the fully-populated event buffer + verdict for
@@ -1490,7 +1491,7 @@ public static class ScenarioRunner
 
         // Render-time diff-lookup closure (S07-G-01), built once over the frozen
         // registry and threaded into the suite-level TerminalRenderer.Render call.
-        var diffLookup = BuildDiffLookup(registry);
+        var diffLookup = BuildDiffLookup(registry, output);
 
         // ── The suite's ONE security assurance (security-assurance-derivation, REQ-002) ───────
         //
@@ -3924,7 +3925,7 @@ public static class ScenarioRunner
                 + "never reach a topology; running one would defeat the pre-topology gate stack.");
         }
 
-        var diffLookup = BuildDiffLookup(registry);
+        var diffLookup = BuildDiffLookup(registry, output);
         var runId = plan.RunId;
         var ast = plan.Ast;
         var scenarioName = plan.ScenarioName;
@@ -4212,7 +4213,7 @@ public static class ScenarioRunner
         // this: WatchSession's compile seam is a `Func<string, WatchCompileResult>`, and making it
         // async to accommodate one WriteLineAsync would push a Task through the reuse decision for
         // no gain. The run path's own early-exit sink is async only because the method around it is.
-        TerminalRenderer.Render(plan.EventLines, output, BuildDiffLookup(registry));
+        TerminalRenderer.Render(plan.EventLines, output, BuildDiffLookup(registry, output));
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────
@@ -5010,6 +5011,13 @@ public static class ScenarioRunner
     /// <see cref="TerminalRenderer.Render(IEnumerable{string}, TextWriter, Func{string, JsonElement, string?}?)"/>.
     /// </summary>
     /// <param name="registry">The frozen provider registry to resolve the kind against.</param>
+    /// <param name="diagnostics">
+    /// The non-verdict-affecting diagnostics sink a render-time provider fault is named on.
+    /// Every call site already holds the run's human-facing <c>output</c> writer and passes it —
+    /// the same writer <c>FileReportWriter.WriteFileReports</c> is handed for exactly this
+    /// purpose.  Pass <see cref="TextWriter.Null"/> to discard; there is deliberately no default,
+    /// so a future call site has to decide rather than silently inherit a black hole.
+    /// </param>
     /// <returns>
     /// A delegate that, given a step <c>kind</c> and structured observation, resolves
     /// the provider for that kind and — when it implements
@@ -5017,27 +5025,259 @@ public static class ScenarioRunner
     /// rendered expected-vs-observed diff, or <see langword="null"/> otherwise.
     /// </returns>
     /// <remarks>
+    /// <para>
     /// The diff renderer runs in the Default <c>AssemblyLoadContext</c> (the provider
     /// instance is held by the frozen registry), so this raises no §5 memory-model
     /// concern.  The closure is the sole bridge between the decoupled
     /// <c>Vouchfx.Engine.Reporting</c> layer (which knows only <see cref="Func{T1, T2, TResult}"/>)
     /// and the <c>IStepDiffRenderer</c> SDK type.
+    /// </para>
+    /// <para>
+    /// <strong>THE GUARD LIVES HERE BECAUSE THE BRIDGE DOES (issue #485).</strong>  Both members
+    /// were called unguarded, and a throw from either destroyed EVERY report artefact for the
+    /// whole run, after the verdict was already known.  TWO CALL SITES, AND ON AN IN-ORDER BUFFER
+    /// ONLY ONE OF THEM THROWS FIRST — the distinction matters to anyone re-deriving this, and the
+    /// next paragraph says what "in-order" is doing in that sentence.  Both sites filter the SAME
+    /// two types — <c>TerminalRenderer.Render</c>'s per-envelope catch takes
+    /// <c>JsonException or InvalidOperationException</c> and <c>HtmlRenderer</c>'s diff-site catch
+    /// takes <c>InvalidOperationException or JsonException</c> — and the terminal render always
+    /// runs FIRST, on the same buffer with the same closure, at every one of the three
+    /// <c>WriteFileReports</c> call sites.  So anything the HTML site would miss had already
+    /// escaped the terminal one: a <see cref="NullReferenceException"/>,
+    /// <see cref="FormatException"/> or <see cref="KeyNotFoundException"/> escaped the terminal
+    /// render, which runs BEFORE the HTML / JUnit / <c>--events</c> writes, and took all three
+    /// artefacts with it.  The HTML artefact was COLLATERAL of that one throw rather than a second
+    /// route to it.  Guarding the ONE bridge closes every consumer at once — terminal, HTML, and
+    /// any renderer added later — where guards scattered into the renderers would have to be
+    /// re-added per consumer and could drift.
+    /// </para>
+    /// <para>
+    /// <strong>That equivalence is a property of an IN-ORDER buffer, not of the renderers</strong>,
+    /// which resolve a step's kind by different means.  <c>TerminalRenderer.Render</c> is
+    /// SINGLE-PASS: it fills its <c>stepKinds</c> map inline as it streams, so a
+    /// <c>step-completed</c> line arriving BEFORE its own <c>step-started</c> resolves no kind and
+    /// never reaches this closure at all.  <c>HtmlRenderer.Render</c> is TWO-PASS —
+    /// <c>BuildModel</c> completes, filling the same map, before <c>WriteDocument</c> renders
+    /// anything — so for that ordering the HTML site genuinely would be a first invocation.  Both
+    /// in-tree producers emit the two lines in order (<c>CsxAssembler</c> emits the
+    /// <c>OnStepStarted</c> call at the top of each step block and the <c>OnStepCompleted</c> call
+    /// at the bottom; this runner's reconstruction loop appends <c>StepStartedLine</c> then
+    /// <c>StepCompletedLine</c> per step), which is the ordering the equivalence needs.  None of
+    /// this changes where the guard belongs: the closure is upstream of both sites either way.
+    /// </para>
+    /// <para>
+    /// <strong>Both members are guarded SEPARATELY because they are different signals.</strong>
+    /// <see cref="IStepDiffRenderer.CanRender"/> throwing means the renderer could not even decide
+    /// whether it recognises the shape; <see cref="IStepDiffRenderer.RenderDiff"/> throwing means
+    /// it accepted the payload and then broke on it.  WHICH STAGE FAILED is the distinction, not
+    /// how broadly: either can be payload-specific, and
+    /// <see cref="ReportDiffRendererFault"/>'s attribution note records a Core provider whose
+    /// <c>CanRender</c> throws on ONE observation.  An author reading the diagnostic acts
+    /// differently on each, and a single try around both would erase the distinction.  Both degrade
+    /// identically in the OUTPUT — no diff for that step — and neither can change a verdict, an
+    /// exit code, or any artefact's presence: the verdict is already computed and the buffer
+    /// already written when this closure first runs.
+    /// </para>
+    /// <para>
+    /// <strong>The catches are unfiltered</strong>, for the reason <c>ProviderPipeline</c>'s six
+    /// <c>DescribeProviderFault</c> sites give for theirs: what an over-broad catch costs here is
+    /// a diff line, while what too narrow a catch costs is the artefact loss this issue exists to
+    /// prevent.  No cancellation token reaches either member — the v1 contract passes a
+    /// <see cref="JsonElement"/> and nothing else — so a cancellation surfacing here is not a stop
+    /// anybody requested and there is nothing for a filter to preserve.
+    /// </para>
     /// </remarks>
-    private static Func<string, JsonElement, string?> BuildDiffLookup(StepKindRegistry registry)
-        => (kind, observation) =>
-            registry.TryGet(kind, out var rp)
-            && rp?.Instance is IStepDiffRenderer renderer
-            && renderer.CanRender(observation)
-                ? renderer.RenderDiff(observation)
-                : null;
+    private static Func<string, JsonElement, string?> BuildDiffLookup(
+        StepKindRegistry registry, TextWriter diagnostics)
+    {
+        ArgumentNullException.ThrowIfNull(registry);
+        ArgumentNullException.ThrowIfNull(diagnostics);
+
+        // ONE fault line per (kind, member, exception type) per run.  A renderer that throws on
+        // every failed step must not flood the terminal or the CI log with N copies of the same
+        // defect; the first occurrence names the surface — step kind, member, exception type —
+        // and one concrete failure's message.  THE KEY IS COARSER THAN THE FAULT, deliberately: a
+        // later, genuinely different fault of the same type in the same member is suppressed, and
+        // its ex.Message goes with it — the field this method's remarks call essential.  That is
+        // the price of keeping the message OUT of the key, which a per-step-varying message would
+        // otherwise turn straight back into the flood.  The kind is not a step id either, so two
+        // steps of the same kind do not separate.  The set is
+        // captured by the closure, so its lifetime is the closure's — one per run on the
+        // sequential and parallel paths, and one per iteration on the watch paths, which build a
+        // fresh closure each time round.  ConcurrentDictionary rather than HashSet + lock because
+        // TryAdd is the whole operation: today every invocation is on the single render thread,
+        // but nothing in the delegate's TYPE says so, and a future renderer that parallelises
+        // per-scenario emission would otherwise turn this into a torn-state bug in reporting.
+        var reported = new ConcurrentDictionary<(string Kind, string Member, string Fault), byte>();
+
+        return (kind, observation) =>
+        {
+            if (!registry.TryGet(kind, out var rp) || rp?.Instance is not IStepDiffRenderer renderer)
+            {
+                return null;
+            }
+
+            bool canRender;
+            try
+            {
+                canRender = renderer.CanRender(observation);
+            }
+            catch (Exception ex)
+            {
+                ReportDiffRendererFault(
+                    diagnostics, reported, kind, renderer, nameof(IStepDiffRenderer.CanRender), ex);
+                return null;
+            }
+
+            if (!canRender)
+            {
+                return null;
+            }
+
+            try
+            {
+                return renderer.RenderDiff(observation);
+            }
+            catch (Exception ex)
+            {
+                ReportDiffRendererFault(
+                    diagnostics, reported, kind, renderer, nameof(IStepDiffRenderer.RenderDiff), ex);
+                return null;
+            }
+        };
+    }
+
+    /// <summary>
+    /// Names a render-time <see cref="IStepDiffRenderer"/> fault on the diagnostics sink, at most
+    /// once per <c>(kind, member, exception type)</c> per run (issue #485).
+    /// </summary>
+    /// <param name="diagnostics">The non-verdict-affecting sink to write the one line to.</param>
+    /// <param name="reported">The closure-scoped dedup set; a losing <c>TryAdd</c> writes nothing.</param>
+    /// <param name="kind">The dotted step kind whose provider was resolved.</param>
+    /// <param name="renderer">The offending provider instance, named by <c>Type.FullName</c>.</param>
+    /// <param name="member">
+    /// <c>CanRender</c> or <c>RenderDiff</c> — which member threw, passed as <c>nameof</c> so a
+    /// rename on the frozen v1 interface cannot leave this text behind.
+    /// </param>
+    /// <param name="ex">The exception the member threw.</param>
+    /// <remarks>
+    /// <para>
+    /// <strong>A SIBLING OF <c>ProviderPipeline.DescribeProviderFault</c>, NOT A NEW INVENTION
+    /// (same defect class as issue #466).</strong>  It follows that method's shape — name the
+    /// step surface, name the member, name the exception TYPE and its message, then attribute —
+    /// and its house decision to INCLUDE the message: an exception type alone routinely fails to
+    /// identify which of a provider's several diff paths broke.
+    /// </para>
+    /// <para>
+    /// <strong>Three things it deliberately does NOT copy, each because the seam differs.</strong>
+    /// (1) It names a step KIND, not a step id: this closure is handed <c>(kind, observation)</c>
+    /// and nothing else, and guessing a step id from the renderer's call order would be exactly
+    /// the confident wrong answer <c>DescribeAssemblyFault</c> refuses to give.  The kind is the
+    /// grep key that finds the provider, which is what the reader needs.  (2) It renders ONE
+    /// exception link rather than <c>DescribeCauseChain</c>'s bounded four: that walk exists for
+    /// the provider-wrapper-over-client-library-over-transport shape of a BIND or CONNECT
+    /// failure, and a diff renderer is pure formatting over an in-memory <see cref="JsonElement"/>
+    /// with no transport beneath it.  Duplicating the bounded walk for a shape that does not
+    /// arise here would be a second copy of one argument — the drift class this repository treats
+    /// as a defect.  (3) There is no host-condition / filesystem-condition attribution split:
+    /// <c>DescribeProviderFault</c> needs it because a mis-attribution there sends an author to
+    /// audit code that is not at fault over a step that never ran, whereas the whole consequence
+    /// here is one absent diff line, which the wording says plainly.
+    /// </para>
+    /// <para>
+    /// <strong>Redaction (§17, issue #266 Item 4).</strong>  The line is written straight to the
+    /// human-facing writer — it bypasses <c>TerminalRenderer</c>'s <c>GetStr</c> choke exactly as
+    /// <c>ParallelSuiteRunner</c>'s per-slot raw diagnostic does — and <c>ex.Message</c> is
+    /// provider-authored text that can carry raw ANSI/VT100 bytes.  So the whole composed line
+    /// passes through <see cref="DisplaySanitiser.SanitiseForDisplay"/> at THIS site, which is the
+    /// same treatment <c>TerminalRenderer</c> already gives the provider-authored DIFF text.  A
+    /// secret-VALUE scrub is neither available nor needed here: <see cref="ScrubDiagnostic"/>
+    /// needs a per-scenario secret accessor this run-scoped closure does not hold, and the
+    /// observation the renderer was handed was already scrubbed before it entered the event
+    /// stream this render replays.
+    /// </para>
+    /// </remarks>
+    private static void ReportDiffRendererFault(
+        TextWriter diagnostics,
+        ConcurrentDictionary<(string Kind, string Member, string Fault), byte> reported,
+        string kind,
+        IStepDiffRenderer renderer,
+        string member,
+        Exception ex)
+    {
+        // The KEY uses FullName while the MESSAGE renders the simple name: two same-named
+        // exception types from different namespaces are different defects, and keying on the
+        // simple name would suppress the second one silently — the one failure mode a dedup
+        // must not have. The displayed name stays short because the provider type is named
+        // beside it, which is what disambiguates a reader's grep.
+        var faultType = ex.GetType().Name;
+        if (!reported.TryAdd((kind, member, ex.GetType().FullName ?? faultType), 0))
+        {
+            return;
+        }
+
+        var rendererTypeName = renderer.GetType().FullName ?? renderer.GetType().Name;
+
+        // TWO-ARMED ATTRIBUTION, because one arm would be a confident wrong answer for a fault
+        // mode this codebase has already documented. `JsonElement.GetString()` throws
+        // InvalidOperationException on a string carrying a lone / unpaired UTF-16 surrogate, and a
+        // SYSTEM UNDER TEST can produce one — HtmlRenderer's own remarks record exactly this. It
+        // is not hypothetical in Core: DbAssertPostgresProvider.CanRender reaches GetString()
+        // through TryReadColumnDiff, so an unreadable observation value makes a CORRECT provider
+        // throw. Blaming it unconditionally would send an author to audit provider code that is
+        // behaving properly over data it did not create — the mis-attribution class
+        // DescribeProviderFault carries IsHostCondition / IsEnvironmentalCondition to avoid. This
+        // seam genuinely cannot tell the two apart, so it says so rather than guessing.
+        var attribution = ex is InvalidOperationException
+            ? $"This is either a defect in the provider ({rendererTypeName}) or an observation "
+                + "carrying an unreadable UTF-16 value (a lone surrogate, which a system under "
+                + "test can produce) - this seam cannot tell the two apart"
+            : $"This is a defect in the provider ({rendererTypeName}), not in the suite";
+
+        // ONE LINE MEANS ONE LINE, so the provider's message is flattened first.
+        // DisplaySanitiser deliberately PRESERVES \n — its remarks call it "common and benign in
+        // multi-line diagnostic text", which is true of the sites it was built for and false of
+        // this one. A provider exception message carrying newlines would otherwise split this
+        // diagnostic across several lines mid-render, which interleaves with the report the
+        // renderer is streaming and breaks the ONE-LINE-PER-FAULT RENDERING the CHANGELOG
+        // publishes ("one line per (kind, member, exception type) per run"). It would NOT break
+        // the once-per-fault property itself — `reported.TryAdd` above runs before this message
+        // is composed, so exactly one WriteLine happens either way; what a multi-line message
+        // costs is the shape of that one line, not its uniqueness.
+        //
+        // ReplaceLineEndings rather than a pair of Replace calls, and the difference is measured
+        // on this runtime (net8.0) rather than read off the documentation: it collapses a CRLF
+        // PAIR to a single space where two Replace calls leave two, and it recognises LF, CR,
+        // CRLF, FF (U+000C), NEL (U+0085), LS (U+2028) and PS (U+2029) in one pass. The last two
+        // are the reason this is not merely tidier: every other separator in that list is a
+        // C0/C1 control the sanitiser below strips anyway (it drops 0x00-0x1F except \t/\n, and
+        // 0x7F-0x9F), while U+2028/U+2029 sit outside both ranges and would otherwise reach the
+        // terminal intact. VT (U+000B) is NOT in the set ReplaceLineEndings recognises — also
+        // measured — and needs nothing here: it is a C0 control the sanitiser drops.
+        var flatMessage = ex.Message.ReplaceLineEndings(" ");
+
+        diagnostics.WriteLine(
+            DisplaySanitiser.SanitiseForDisplay(
+                $"step kind '{kind}': the provider's diff renderer {member} threw "
+                + $"{faultType}: {flatMessage}  {attribution} - the expected-vs-observed diff is "
+                + "omitted wherever this recurs. The verdict, the exit code and every "
+                + "report artefact are unaffected; this line is reported once per step kind, "
+                + "member and exception type."));
+    }
 
     /// <summary>
     /// Exposes <see cref="BuildDiffLookup"/> to <see cref="ParallelSuiteRunner"/> (same assembly)
     /// so the parallel runner builds the identical render-time diff-lookup closure this runner
-    /// uses — the two cannot drift in how a failed step's expected-vs-observed diff is resolved.
+    /// uses — the two cannot drift in how a failed step's expected-vs-observed diff is resolved,
+    /// nor in how a throwing <see cref="IStepDiffRenderer"/> is contained and named (issue #485).
     /// </summary>
+    /// <param name="registry">The frozen provider registry to resolve the kind against.</param>
+    /// <param name="diagnostics">
+    /// The parallel runner's <c>output</c> — the same sink it already hands
+    /// <c>FileReportWriter.WriteFileReports</c> for non-verdict-affecting diagnostics.
+    /// </param>
     internal static Func<string, JsonElement, string?> BuildParallelDiffLookup(
-        StepKindRegistry registry) => BuildDiffLookup(registry);
+        StepKindRegistry registry, TextWriter diagnostics) => BuildDiffLookup(registry, diagnostics);
 
     // ── Verdict aggregation ────────────────────────────────────────────────────
 

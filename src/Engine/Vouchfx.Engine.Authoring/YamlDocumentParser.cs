@@ -49,6 +49,39 @@ public static class YamlDocumentParser
             throw new YamlParseException("The YAML input is empty or contains only whitespace.");
         }
 
+        // NO EXPANSION BUDGET HERE, AND THE REASON IS NOT "validation already ran" (#505).
+        //
+        // Validation is NOT unconditionally upstream of this method, so the first half of
+        // that argument is simply false: ScenarioDiscovery.ParseFile calls Parse directly on
+        // the file's text before any schema validation happens, and it is the first thing
+        // both `vouchfx run` and `vouchfx validate` do; WatchRunner.Compile,
+        // SuiteSetLoader and ProviderTestHarness reach it the same way. If the
+        // representation model amplified aliases, every one of those paths would be
+        // unbounded.
+        //
+        // It does not, and that is the actual reason. SchemaResources.ConvertYamlToJsonDocument
+        // blows up because it RE-MATERIALISES a shared object graph into JSON text, paying the
+        // full expansion at every alias site. YamlStream.Load builds the representation model
+        // instead: one YamlNode instance per anchor, referenced from every alias site, so an
+        // alias chain loads as a DAG whose size tracks the document.
+        //
+        // "IT ONLY READS FIXED PATHS" IS NOT THE ARGUMENT — this method walks the WHOLE graph.
+        // RequireUniqueMappingKeys below is called on the root before any section parser runs and
+        // reaches every node the document can reach. What makes that cheap is HOW it walks: an
+        // iterative Stack<YamlNode> pruned by a HashSet<object>(ReferenceEqualityComparer.Instance),
+        // and an alias is the SAME YamlNode instance as its anchor, so the second and every later
+        // site referencing it is already in the visited set and is dropped. The walk costs
+        // O(distinct nodes), not O(expansion). The section parsers that follow add nothing to
+        // that: they read fixed paths (root keys; one level into services/dependencies/seed/
+        // capture; the steps sequence) and RETAIN each step mapping BY REFERENCE as
+        // StepSpec.RawNode rather than copying it.
+        //
+        // MEASURED on the pinned YamlDotNet 16.3.0, with the amplifying shape from #505 —
+        // anchored sequences, ten aliases per level: at ELEVEN levels (a nominal expansion of
+        // 10^11 nodes, versus the seven levels that already cost the JSON bridge 13.8 s and
+        // 367 MB) YamlStream.Load plus this method complete in under 1 ms at a 25 MB working
+        // set. Providers that DO re-materialise a subtree carry their own bound —
+        // see HttpRestProvider's MaxBodyNodes (#346).
         YamlStream stream;
         try
         {

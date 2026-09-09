@@ -44,7 +44,7 @@ Three optional interfaces exist for providers that manage infrastructure:
 |-----------|---------|
 | `IResourceContributor<TModel>` | Declare Aspire resources (databases, message brokers, services) your step requires. |
 | `IHostResourceContributor<TModel>` | Declare host-level resources (e.g. a listening port) your step provides to other steps. |
-| `IStepDiffRenderer` | Optional: contribute to the rendered output when a step's `capture` has changed. |
+| `IStepDiffRenderer` | Optional: contribute to the rendered output by implementing `CanRender(JsonElement observation)` and `RenderDiff(JsonElement observation)` to render the step's structured observation as a human-readable diff. Throws from either member are contained at the render seam and do not affect the verdict or exit code (issue #485). |
 
 **Your model is a strongly-typed record**, never a `Dictionary<string,object>`. This is what gives the binder, validator, and compiler a compile-time-checked surface to work against. See [`examples/Example.Steps.Hello/HelloConsoleModel.cs`](examples/Example.Steps.Hello/HelloConsoleModel.cs) for the pattern.
 
