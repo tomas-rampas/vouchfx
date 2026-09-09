@@ -692,7 +692,7 @@ When run with `verifyMode: IMMEDIATE` (the default if RETRY is omitted), each pr
 
 - **`mq-expect.kafka`** drains for approximately 1 second (`drainWindowMs = 1000`, reported in the observation).
 - **`mq-expect.rabbitmq`** makes at most 200 `BasicGet` fetches and stops the moment none is ready, with no time bound.
-- **`mq-expect.nats`** fetches with a 1 second expiry.
+- **`mq-expect.nats`** fetches at most 10,000 messages with a 1 second expiry.
 - **`mq-expect.azureservicebus`** peeks at most 100 messages.
 - **`mq-expect.redis`** scans `XRANGE … COUNT 10000`.
 

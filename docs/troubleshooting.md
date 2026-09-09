@@ -795,7 +795,7 @@ An `mq-expect.kafka` step fails to find a message that was published earlier, ev
 **What it means:**
 Common causes:
 
-1. **Message was published before the consumer started listening.** vouchfx's Kafka consumer uses a fresh consumer group with `AutoOffsetReset.Earliest`, so it reads from the earliest retained offset on each attempt. If a message was published before the step started, a RETRY attempt **will** see it — precisely because the offset is earliest, not in spite of it. Ensure the step runs after the message is published and that messages are not expiring between publishing and the expect step.
+1. **Message expired or was evicted before the step ran.** Publishing before the consumer starts is NOT a cause: vouchfx's Kafka consumer uses a fresh consumer group with `AutoOffsetReset.Earliest`, so every attempt reads from the earliest retained offset and an attempt will see a message published before the step started — precisely because the offset is earliest, not in spite of it. What does break it is the message no longer being retained: check the topic's retention against the gap between the publish and the expect step.
 2. **Topic does not exist.** The message was published to a different topic.
 3. **Key or match criteria are too strict.** The message exists but does not match the filter.
 4. **Timing issue.** The publish step and expect step are running concurrently; the expect starts before the publish completes.
