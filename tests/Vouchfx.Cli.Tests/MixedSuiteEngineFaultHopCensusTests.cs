@@ -28,11 +28,10 @@
 // number rotted immediately: two `GitChangeSetTests` remarks mention #480 as well. They used to
 // attribute an unrelated question to it — whether selection-infrastructure failure deserves an exit
 // code of its own — and now name it only to retract that attribution; the string is there either
-// way, so the count was wrong while the substantive claim was not.
-// Counting rows is not how this guard is checked; the
-// property is that no other row in this project can see either mutation, and the whole-project
-// failure counts above state it directly. Under BOTH mutations every row of
-// `MixedSuiteEngineFaultExitCodeTests` stays green, because those rows hand the argument to
+// way, so the count was wrong while the substantive claim was not. Counting rows is not how this
+// guard is checked at all; the property is that no other row in this project can see either
+// mutation, and the whole-project failure counts above state it directly. Under BOTH mutations
+// every row of `MixedSuiteEngineFaultExitCodeTests` stays green, because those rows hand it to
 // `ComputeExitCode` themselves; and the engine-side rows in `Vouchfx.Engine.Runtime.Tests` cannot
 // see either mutation at all, since that project has no reference to `Vouchfx.Cli`. So without
 // this file, both hops could be deleted with the whole tree green — and #480 would be fully back:
