@@ -425,6 +425,21 @@ public static class ParallelSuiteRunner
         // its own. That is also why the fold below keeps whole assurances rather than unioning
         // their fields — see SecurityAssurance.Worse.
         var slotAssurances = new SecurityAssurance[count];
+
+        // Issue #480's per-scenario provenance, one slot each for the same determinism reason: did
+        // THIS scenario's compile die inside provider code (or inside the engine's own dispatch
+        // into it), as opposed to being refused for an ordinary authoring fault. Folded by OR in
+        // RenderAndAggregate — one defective scenario is enough to make the run non-zero, whatever
+        // its siblings did, which is the whole of #480.
+        //
+        // A SLOT ARRAY RATHER THAN A DERIVATION FROM THE BUFFERS, unlike ExecutedAnyScenario just
+        // below it. That flag can be derived because a `step-started` line exists if and only if a
+        // step ran; there is no comparable needle for "a provider threw at compile time" — the
+        // refusal reaches the buffer as a scenario-completed MESSAGE, free-form text composed by
+        // DescribeProviderFault, and pattern-matching an author-facing diagnostic to decide an
+        // exit code is precisely the kind of coupling this codebase refuses elsewhere.
+        var slotProviderOrEngineFaults = new bool[count];
+
         // Each scenario writes its raw early-exit diagnostics to its OWN StringWriter; we flush
         // them to the real output in declaration order AFTER the gather (determinism point 2/3).
         var slotRawWriters = new StringWriter[count];
@@ -483,6 +498,7 @@ public static class ParallelSuiteRunner
                     slotVerdicts,
                     slotBuffers,
                     slotAssurances,
+                    slotProviderOrEngineFaults,
                     SecuredTargets.Enumerate(scenarios[index].Environment).ToArray(),
                     livePump,
                     ct);
@@ -502,7 +518,8 @@ public static class ParallelSuiteRunner
         // Determinism tail: flush each slot's raw early-exit text to the real output in declaration
         // order, then render the concatenated slot buffers ONCE and fold the verdicts in order.
         return RenderAndAggregate(
-            scenarioNames, slotVerdicts, slotBuffers, slotAssurances, slotRawWriters, output,
+            scenarioNames, slotVerdicts, slotBuffers, slotAssurances, slotProviderOrEngineFaults,
+            slotRawWriters, output,
             diffLookup, UnbuiltDocument.AssureAll(unbuiltDocuments, registry),
             htmlReportPath, junitReportPath, eventsReportPath, decorate);
     }
@@ -538,6 +555,7 @@ public static class ParallelSuiteRunner
         Verdict[] slotVerdicts,
         List<string>[] slotBuffers,
         SecurityAssurance[] slotAssurances,
+        bool[] slotProviderOrEngineFaults,
         IReadOnlyList<SecuredTarget> declared,
         LiveEventPump? livePump,
         CancellationToken ct)
@@ -603,6 +621,13 @@ public static class ParallelSuiteRunner
             // so nothing silently changed meaning; a future one that needs a declaration has to say
             // so, which is the right way round.
             slotAssurances[index] = result.Assurance;
+
+            // Issue #480: the core already decided this — it read the marker off the failure
+            // record its own pre-topology door returned — so this slot only carries the answer
+            // across the fan-out. Assigned rather than OR-ed: each slot is written by exactly one
+            // task and read only after the gather has joined.
+            slotProviderOrEngineFaults[index] = result.ProviderOrEngineFaultObserved;
+
             // Issue #262: NO livePump?.PostRange(buffer) here. The real core
             // (ScenarioRunner.RunScenarioOwningTopologyAsync) already streamed every one of this
             // slot's lines live — as they happened — via the per-scenario LiveStepEventSink plus
@@ -621,6 +646,15 @@ public static class ParallelSuiteRunner
             slotBuffers[index] = BuildCancelledBuffer(
                 scenarioName, "Cancelled while this scenario was running.");
             slotAssurances[index] = SecurityAssurance.None.Declaring(declared);
+
+            // Issue #480: written explicitly even though the array default is already `false`,
+            // for symmetry with the general catch below, which assigns the same value under its
+            // own long note. A scenario cut off mid-flight by the external token was not refused
+            // at a provider guard — nothing here entered provider code and then came back with a
+            // marked failure — so `false` is the honest answer rather than an unset slot. Stating
+            // it means neither arm can be read as one that forgot the marker, which is the only
+            // difference between the two spellings.
+            slotProviderOrEngineFaults[index] = false;
             livePump?.PostRange(slotBuffers[index]);
         }
         catch (Exception ex)
@@ -689,6 +723,18 @@ public static class ParallelSuiteRunner
             slotAssurances[index] = SecurityAssurance.None
                 .Declaring(declared)
                 .Refusing(SecurityAbortKind.TopologyUnavailable);
+
+            // ISSUE #480'S MARKER IS DELIBERATELY LEFT `false` HERE, AND THAT IS ISSUE #486's
+            // PROBLEM RATHER THAN AN OVERSIGHT. This arm is the one place in the run that cannot
+            // say whether what escaped was an engine defect or a genuine infrastructure fault —
+            // it sees an exception type and nothing else, which is the same limitation the
+            // paragraph above records for the EnvironmentError classification itself. Setting the
+            // marker here would redden every suite whose unrelated container fell over mid-run;
+            // leaving it false leaves this one route uncovered by #480, which is exactly what
+            // #486 tracks and what a phase marker on the escape — not a guess at this frame —
+            // would close. The routes #480 DOES close are the ones where the engine knows it was
+            // inside provider code, because a guard was there to say so.
+            slotProviderOrEngineFaults[index] = false;
             livePump?.PostRange(slotBuffers[index]);
         }
         finally
@@ -711,6 +757,7 @@ public static class ParallelSuiteRunner
         Verdict[] slotVerdicts,
         List<string>[] slotBuffers,
         SecurityAssurance[] slotAssurances,
+        bool[] slotProviderOrEngineFaults,
         StringWriter[] slotRawWriters,
         TextWriter output,
         Func<string, JsonElement, string?> diffLookup,
@@ -723,6 +770,12 @@ public static class ParallelSuiteRunner
         var allBuffers = new List<string>();
         var perScenario = new List<(string ScenarioName, Verdict Verdict)>(scenarioNames.Count);
         var aggregate = Verdict.Pass;
+
+        // Issue #480, folded beside the verdict and the assurance in the SAME single-threaded pass,
+        // for the same reason: this is the first point at which every slot has certainly been
+        // written. OR rather than a precedence fold — a defect in one scenario is not outranked by
+        // a sibling that passed, which is the entire property #480 restores.
+        var providerOrEngineFault = false;
 
         // The fold SEEDS from the unbuilt documents' assurance rather than from
         // SecurityAssurance.None (issue #411). `Worse` is what folds each slot in below, and it is
@@ -762,6 +815,9 @@ public static class ParallelSuiteRunner
             //     (where scenarios need not share an environment) would redden a suite that no
             //     single scenario reddens. See SecurityAssurance.Worse.
             assurance = SecurityAssurance.Worse(assurance, slotAssurances[i]);
+
+            // (5) #480: fold this slot's provenance, in the same joined-and-single-threaded pass.
+            providerOrEngineFault |= slotProviderOrEngineFaults[i];
         }
 
         // ONE render over the declaration-order concatenation — never per-scenario.  When
@@ -799,6 +855,14 @@ public static class ParallelSuiteRunner
             // This codebase has measured that exact shape before and treats it as its own defect
             // class, not as a nuance.
             ExecutedAnyScenario = allBuffers.Exists(ContainsStepEvent),
+
+            // #480, and the pairing with the line above is the point. A mixed suite makes
+            // ExecutedAnyScenario true — one slot's `step-started` line is enough — so #369's rule
+            // stops firing at the exact moment a defective scenario acquires a healthy sibling.
+            // This carries the defect's own provenance past that, so the two run paths answer
+            // identically: the sequential runner accumulates the same fact across its Pass-B
+            // compile loop.
+            ProviderOrEngineFaultObserved = providerOrEngineFault,
         };
     }
 
