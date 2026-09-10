@@ -13,8 +13,9 @@
 // defect.
 //
 // THE MECHANISM, RE-DERIVED AGAINST `main` (fb16c83) RATHER THAN QUOTED FROM THE ISSUE.
-// `SuiteResult.ExecutedAnyScenario` (ScenarioRunner.cs:108) DEFAULTS TO `true` and is set to
-// `false` in exactly one place — `CompleteWithoutTopologyAsync`. A mixed suite deliberately never
+// `SuiteResult.ExecutedAnyScenario` (named, not cited by line — that number has already moved
+// once on this branch) DEFAULTS TO `true`, and on the SHARED-TOPOLOGY path exactly one method sets
+// it `false`: `CompleteWithoutTopologyAsync`. A mixed suite deliberately never
 // reaches that method: the all-early guard above it requires EVERY scenario to carry an early
 // verdict, and this suite's sibling carries none. So the shared-topology path builds its topology,
 // runs the sibling, and returns through the normal completion tail carrying the DEFAULT `true`.

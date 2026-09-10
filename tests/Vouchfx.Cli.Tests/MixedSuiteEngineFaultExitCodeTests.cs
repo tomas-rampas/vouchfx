@@ -10,10 +10,11 @@
 // BESIDE A PASSING SIBLING, and that absence is why the gap survived both issues' reviews.
 //
 // THE EXIT CODE FLIPS ON THE SIBLING, NOT ON THE DEFECT. `SuiteResult.ExecutedAnyScenario`
-// defaults to `true` (ScenarioRunner.cs:108) and is set false only by
-// `CompleteWithoutTopologyAsync`, which a mixed suite deliberately never reaches — the all-early
-// guard requires EVERY scenario to carry an early verdict. The parallel path reaches the same
-// `true` by DERIVING it from the sibling's own `step-started` line
+// defaults to `true` (named rather than cited by line — that number has already moved once on this
+// branch). On the shared-topology path it is set false by `CompleteWithoutTopologyAsync`, which a
+// mixed suite deliberately never reaches — the all-early guard requires EVERY scenario to carry an
+// early verdict. The parallel path does not default the flag at all — it DERIVES it, and the
+// sibling's own `step-started` line is what makes it `true`
 // (ParallelSuiteRunner.cs:857). `ComputeExitCode`'s #369 rule is conditioned on
 // `!executedAnyScenario`, so with a sibling present it does not fire, and
 // `ExitCodes.FromVerdict(Inconclusive, failOnInconclusive: false, …)` returns Success. Add one

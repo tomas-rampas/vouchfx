@@ -85,12 +85,13 @@ public sealed record SuiteResult(
     IReadOnlyList<(string ScenarioName, Verdict Verdict)> ScenarioVerdicts)
 {
     /// <summary>
-    /// <see langword="false"/> when the suite returned through the without-topology completion
-    /// path, so no STEP ran (#369). <see langword="true"/> by default, which every construction
-    /// outside that path keeps.
+    /// <see langword="false"/> when no STEP ran (#369) — on the shared-topology path, because the
+    /// suite returned through the without-topology completion path; on the parallel path, because
+    /// no slot's buffer carries a <c>step-started</c> line. <see langword="true"/> by default,
+    /// which every construction that derives neither answer keeps.
     /// <para>
-    /// Deliberately NOT "no container started", which this summary claimed until #480 corrected
-    /// the two copies of the sentence that had been derived from it in <c>RunCommand</c>. The
+    /// Deliberately NOT "no container started", which this summary claimed until #480 corrected it
+    /// here and at the <c>RunCommand</c> site derived from it. The
     /// <see cref="Verdict.EnvironmentError"/> routes into that completion path include a topology
     /// that came UP and then failed its health gate (#407): the <c>OrchestrationException</c>
     /// catch around <c>suite.StartAsync</c> returns through the same method, so containers can
@@ -101,10 +102,22 @@ public sealed record SuiteResult(
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Set by <c>CompleteWithoutTopologyAsync</c> and nowhere else, deliberately: that method IS
-    /// the set of paths that never reached a topology, so this is a property of the route rather
-    /// than a hand-maintained list of doors — the shape <c>Assurance</c>'s own remarks describe
-    /// going stale three times before it was derived instead of enumerated.
+    /// TWO producers, one per run path, and each derives the answer rather than enumerating the
+    /// doors that reach it — the shape <c>Assurance</c>'s own remarks describe going stale three
+    /// times before it was derived instead. On the shared-topology path
+    /// <c>CompleteWithoutTopologyAsync</c> sets it, and that method IS the set of routes which
+    /// never ran a step, so it is a property of the route. On the parallel path
+    /// <c>ParallelSuiteRunner</c> derives it from the concatenated slot buffers
+    /// (<c>allBuffers.Exists(ContainsStepEvent)</c>), because every slot owns its own topology and
+    /// a suite-level answer can only be a fold of what the slots did.
+    /// <para>
+    /// This paragraph read "set by <c>CompleteWithoutTopologyAsync</c> and nowhere else,
+    /// deliberately" until #480. That was false on the parallel path from the moment that
+    /// derivation existed, and the reading it invites is the harmful one: that under
+    /// <c>--parallel</c> the flag is never <see langword="false"/>, so #369's rule cannot fire
+    /// there. A sequential/parallel divergence over an exit code is the defect class #369 was
+    /// itself filed for.
+    /// </para>
     /// </para>
     /// <para>
     /// <strong>It is not "the topology failed".</strong> A topology that fails to START also

@@ -25,7 +25,9 @@
 // THE SCOPE OF THAT MEASUREMENT IS THE PROJECT, NOT "THE ROWS THAT MENTION #480", and the change is
 // deliberate. This paragraph used to count the rows mentioning the issue and assert that exactly
 // two of them went red. That is a weaker claim measured against a hard number in prose, and the
-// number rotted immediately: two `GitChangeSetTests` remarks mention #480 — they used to attribute an unrelated question to it and now name it only to retract that attribution, but the string is there either way, which is the point
+// number rotted immediately: two `GitChangeSetTests` remarks mention #480 as well. They used to
+// attribute an unrelated question to it and now name it only to retract that attribution — but the
+// string is there either way, which is exactly why a count of mentions was the wrong thing to write
 // (whether selection-infrastructure failure deserves an exit code of its own), so the count was
 // wrong while the substantive claim was not. Counting rows is not how this guard is checked; the
 // property is that no other row in this project can see either mutation, and the whole-project

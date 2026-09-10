@@ -1371,10 +1371,12 @@ internal static class RunCommand
         return ComputeExitCode(
             parsed.Count, failures.Count, suiteVerdict, failOnEnvironmentError, failOnInconclusive,
             securityAssurance,
-            // #369: false only when the runner returned through its without-topology completion
-            // path, so no STEP ran. Deliberately not "no container started": a topology that came
-            // up and then failed its health gate returns through that same path (#407), so
-            // containers can have started and been torn down again on a route this is false for.
+            // #369: false when no STEP ran — the shared-topology path returns through its
+            // without-topology completion path, and the parallel path derives the same fact from
+            // its slot buffers, so BOTH runners can produce it. Deliberately not "no container
+            // started": a topology that came up and then failed its health gate returns through
+            // that same completion path (#407), so containers can have started and been torn down
+            // again on a route this is false for.
             executedAnyScenario: executedAnyScenario,
             // #480: true when any scenario was refused at a provider- or engine-surface guard,
             // whatever its siblings did.
@@ -1475,9 +1477,11 @@ internal static class RunCommand
     /// (REQ-018).
     /// </param>
     /// <param name="executedAnyScenario">
-    /// <see langword="false"/> when the runner returned through its without-topology completion
-    /// path — no step ran (#369). Not the same as "no container started": a topology that comes up
-    /// and then fails its health gate reaches that same path since #407, having started containers.
+    /// <see langword="false"/> when no step ran (#369) — the shared-topology runner returns
+    /// through its without-topology completion path, and the parallel runner derives the same fact
+    /// from its slot buffers, so either can produce it. Not the same as "no container started": a
+    /// topology that comes up and then fails its health gate reaches that completion path since
+    /// #407, having started containers.
     /// </param>
     /// <param name="providerOrEngineFaultObserved">
     /// <see langword="true"/> when any scenario in the run was refused at one of
