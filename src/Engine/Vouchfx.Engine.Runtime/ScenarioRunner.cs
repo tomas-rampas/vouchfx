@@ -3336,9 +3336,18 @@ public static class ScenarioRunner
         {
             Assurance = assurance,
 
-            // #369: this method IS the without-topology path — no container started and no step
-            // ran on any route that reaches here. Set once, at the one place that is true, rather
-            // than enumerated door by door.
+            // #369: this method IS the without-topology path — no step ran on any route that
+            // reaches here. Set here rather than enumerated door by door, because the method is
+            // the property.
+            //
+            // TWO CLAIMS WERE RETRACTED FROM THIS COMMENT BY #480, and both are the kind a reader
+            // reconstructs, so they are named. It said "no CONTAINER started" as well: false since
+            // #407, because a topology that came up and then failed its health gate reaches here
+            // through the OrchestrationException catch, having started containers and torn them
+            // down. And it said "set once, at the one place that is true": true of THIS run path,
+            // but ParallelSuiteRunner derives the same flag from its slot buffers, so the suite
+            // has two producers. See SuiteResult.ExecutedAnyScenario's own remarks, which state
+            // both.
             ExecutedAnyScenario = false,
 
             // #480, carried rather than derived — see the parameter's own remarks for why it is

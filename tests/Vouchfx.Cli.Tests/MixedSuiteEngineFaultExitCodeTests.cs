@@ -10,12 +10,12 @@
 // BESIDE A PASSING SIBLING, and that absence is why the gap survived both issues' reviews.
 //
 // THE EXIT CODE FLIPS ON THE SIBLING, NOT ON THE DEFECT. `SuiteResult.ExecutedAnyScenario`
-// defaults to `true` (named rather than cited by line — that number has already moved once on this
-// branch). On the shared-topology path it is set false by `CompleteWithoutTopologyAsync`, which a
-// mixed suite deliberately never reaches — the all-early guard requires EVERY scenario to carry an
-// early verdict. The parallel path does not default the flag at all — it DERIVES it, and the
-// sibling's own `step-started` line is what makes it `true`
-// (ParallelSuiteRunner.cs:857). `ComputeExitCode`'s #369 rule is conditioned on
+// (the member is named rather than cited by line; that number has already rotted on this branch)
+// defaults to `true`. On the shared-topology path it is set false by
+// `CompleteWithoutTopologyAsync`, which a mixed suite deliberately never reaches by the all-early
+// guard — that guard requires EVERY scenario to carry an early verdict. The parallel path does not
+// default the flag at all: it DERIVES it, and the sibling's own `step-started` line is what makes
+// it `true` (ParallelSuiteRunner.cs:857). `ComputeExitCode`'s #369 rule is conditioned on
 // `!executedAnyScenario`, so with a sibling present it does not fire, and
 // `ExitCodes.FromVerdict(Inconclusive, failOnInconclusive: false, …)` returns Success. Add one
 // unrelated passing scenario to a directory and the same provider defect goes from exit 4 to
