@@ -74,14 +74,26 @@
 // ownership of. The blocking CI lane must not be able to go red for that, so these rows are
 // traited out of it.
 //
-// WHAT THE TRAIT COSTS, NAMED SO THE ANSWER IS NOT "COVERAGE". Only the ENGINE-SIDE derivation of
-// `ProviderOrEngineFaultObserved` leaves the blocking lane. The exit RULE it feeds stays pinned
-// there by `Vouchfx.Cli.Tests.MixedSuiteEngineFaultExitCodeTests`, and the two hops carrying the
-// value from `SuiteResult` into `ComputeExitCode` by
-// `Vouchfx.Cli.Tests.MixedSuiteEngineFaultHopCensusTests` — neither of which starts anything. The
-// fourth row below, the topology that fails to START, is deliberately NOT traited: it is refused
-// inside `SuiteTopology.StartAsync` BEFORE `HeadlessTopology.StartAsync` is reached, so it never
-// touches DCP and keeps one end-to-end engine-side row in the blocking lane.
+// WHAT THE TRAIT COSTS, NAMED SO THE ANSWER IS NOT "COVERAGE" — AND IT IS SMALLER THAN IT WAS.
+// Three links leave the blocking lane, and each is named rather than summarised as "the engine
+// side":
+//   • the sequential path's NORMAL-completion tail carrying the marker (the first row below) — the
+//     without-topology tail is the untraited fourth row's, and that one is in the lane;
+//   • the REAL parallel core attaching the marker at its own pre-topology door (the second row); and
+//   • an executed-and-inconclusive run leaving the marker FALSE (the third row, the control).
+// Everything else is pinned in the blocking lane. The exit RULE stays pinned there by
+// `Vouchfx.Cli.Tests.MixedSuiteEngineFaultExitCodeTests`, and the two hops carrying the value from
+// `SuiteResult` into `ComputeExitCode` by `Vouchfx.Cli.Tests.MixedSuiteEngineFaultHopCensusTests` —
+// neither of which starts anything. The PARALLEL path's own two hops — the per-slot assignment and
+// the fold that ORs the slots — are pinned by
+// `RunParallelAsyncTests.RunParallelCoreAsync_OneSlotReportsAProviderFault_FoldsToTheSuite` and its
+// all-false mirror, which drive the internal core seam with a fake and start no topology. Those two
+// rows exist because BOTH of those lines could be deleted with the blocking lane green; that file's
+// own remarks say why a fake core is the right instrument there and the wrong one here. The fourth
+// row below, the topology that fails to START, is deliberately NOT traited: it is refused inside
+// `SuiteTopology.StartAsync` BEFORE `HeadlessTopology.StartAsync` is reached, so it never touches
+// DCP and keeps one end-to-end engine-side row — and with it the Pass-B accumulator and the
+// without-topology carry — in the blocking lane.
 //
 // THE SCENARIOS OF EACH ROW DECLARE A BYTE-IDENTICAL ENVIRONMENT — for three rows, namely none —
 // so the shared-`environment` divergence guard cannot fire. That guard compares

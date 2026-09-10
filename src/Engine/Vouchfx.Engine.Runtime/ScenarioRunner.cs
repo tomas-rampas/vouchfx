@@ -532,8 +532,12 @@ public static class ScenarioRunner
             // THE DESTRUCTURE ABOVE NOW DROPS TWO MEMBERS OF `ScenarioCoreResult`, NOT ONE, and
             // the argument covers both. `ProviderOrEngineFaultObserved` (#480) is dropped here for
             // the same reason `Assurance` is — this wrapper's return type is a bare Verdict — and
-            // it is populated by the core on every path, so what is being dropped is a correct
-            // answer rather than a default. That is precisely what makes it the same trap: a
+            // its VALUE is correct on every path the core returns from, which is not the same
+            // claim as its being assigned on every one. Exactly one door assigns it, the
+            // pre-topology authoring door, because that is where the only guard able to set it
+            // sits; every other return keeps the init-only `false`, which is the honest answer for
+            // a path that entered no provider code at all. So what is being dropped is a correct
+            // answer rather than a default that happens to be there. That is precisely the trap: a
             // caller that later widens this wrapper's return type must take BOTH members off the
             // core's own result, because a value reconstructed at this frame would say "no
             // provider defect" for a run that had one and would carry no sign that it was

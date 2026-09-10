@@ -220,8 +220,10 @@ internal sealed record ValidationFailure(string Message)
     /// </para>
     /// <para>
     /// <strong>PROVENANCE, NOT ATTRIBUTION.</strong> It records WHERE the failure was raised, not
-    /// whose fault <see cref="ProviderPipeline.DescribeProviderFault"/> decided the exception was:
-    /// all three of that method's attribution arms set it. See
+    /// whose fault <see cref="ProviderPipeline.DescribeProviderFault"/> decided the exception was.
+    /// EVERY arm of that method carries it, and not because a list is kept in step: the marker is
+    /// applied at the CALL SITES, which wrap whatever that method returns, so no arm can set,
+    /// clear or miss it and a new arm inherits it without an edit here. See
     /// <see cref="ProviderPipeline.ProviderOrEngineFault"/>, which is the single site that sets it
     /// and carries that argument in full.
     /// </para>
@@ -1067,16 +1069,22 @@ internal static class ProviderPipeline
     /// would redden every mixed suite containing one mistyped field.
     /// </para>
     /// <para>
-    /// <strong>ALL THREE OF <see cref="DescribeProviderFault"/>'s ATTRIBUTION ARMS ARE MARKED,
-    /// including the two that decline to blame the provider.</strong> Those arms differ in the
+    /// <strong>EVERY ONE OF <see cref="DescribeProviderFault"/>'s ATTRIBUTION ARMS IS MARKED,
+    /// INCLUDING THOSE THAT DECLINE TO BLAME THE PROVIDER — and that is a property of WHERE the
+    /// marking happens rather than an enumeration to keep in step.</strong> Every caller wraps that
+    /// method's return in this one, so the marker is applied at the CALL SITES and no arm of the
+    /// method can set, clear or miss it; counting its arms is therefore not a way to check this
+    /// claim, and an arm added later inherits the marking without an edit. The arms differ in the
     /// blame TEXT they write — a defect in the provider; a filesystem condition that may be the
     /// host's (the accepted <c>script.csharp</c> TOCTOU race is the in-tree example); an
-    /// OOM-or-cancellation that can surface through any frame — and not in the taxonomy answer:
-    /// nothing was compiled and nothing ran in every one of them. #369 already exits 4 for all
-    /// three when the defective document is ALONE in a directory, so restoring sibling-independence
-    /// must not invent an asymmetry between them that the solo case does not have. This marker
-    /// therefore records the PROVENANCE of the failure and leaves the attribution to the sentence
-    /// the author reads.
+    /// OOM-or-cancellation that can surface through any frame; a reflective-dispatch failure before
+    /// the provider's body ran, which names the provider, its packaging and the engine's own
+    /// dispatch and leaves the cause text to tell which — and not in the taxonomy answer: nothing
+    /// was compiled and nothing ran in any of them. #369 already exits 4 for every one of them when
+    /// the defective document is ALONE in a directory, so restoring sibling-independence must not
+    /// invent an asymmetry between them that the solo case does not have. This marker therefore
+    /// records the PROVENANCE of the failure and leaves the attribution to the sentence the author
+    /// reads.
     /// </para>
     /// </remarks>
     private static ValidationFailure ProviderOrEngineFault(string message) =>
@@ -1355,15 +1363,16 @@ internal static class ProviderPipeline
     /// OOM.
     /// </para>
     /// <para>
-    /// <strong>THE ARMS CHANGE THE SENTENCE AND NOT THE TAXONOMY, which is why all three are
+    /// <strong>THE ARMS CHANGE THE SENTENCE AND NOT THE TAXONOMY, which is why every one of them is
     /// marked alike (issue #480).</strong> Every caller wraps this method's return in
     /// <see cref="ProviderOrEngineFault"/>, so the failure carries
-    /// <see cref="ValidationFailure.IsProviderOrEngineFault"/> whichever arm composed it. That
-    /// marker is provenance — the engine entered provider code and did not come back — and the
-    /// arms above are attribution, which is a different question. Nothing was compiled and nothing
-    /// ran in all three cases, and #369 already exits 4 for all three when the document is alone in
-    /// its directory; a marker that split them would make the exit code depend on the exception
-    /// type as well as on the sibling.
+    /// <see cref="ValidationFailure.IsProviderOrEngineFault"/> whichever arm composed it — the
+    /// marking is at the call sites and not inside this method, so no arm can miss it and an arm
+    /// added later inherits it. That marker is provenance — the engine entered provider code and
+    /// did not come back — and the arms above are attribution, which is a different question.
+    /// Nothing was compiled and nothing ran in any of them, and #369 already exits 4 for every one
+    /// when the document is alone in its directory; a marker that split them would make the exit
+    /// code depend on the exception type as well as on the sibling.
     /// </para>
     /// <para>
     /// <strong>Why the catches stay broad here while

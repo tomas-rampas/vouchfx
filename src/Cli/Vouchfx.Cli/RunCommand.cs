@@ -1372,7 +1372,9 @@ internal static class RunCommand
             parsed.Count, failures.Count, suiteVerdict, failOnEnvironmentError, failOnInconclusive,
             securityAssurance,
             // #369: false only when the runner returned through its without-topology completion
-            // path, so no container started and no step ran.
+            // path, so no STEP ran. Deliberately not "no container started": a topology that came
+            // up and then failed its health gate returns through that same path (#407), so
+            // containers can have started and been torn down again on a route this is false for.
             executedAnyScenario: executedAnyScenario,
             // #480: true when any scenario was refused at a provider- or engine-surface guard,
             // whatever its siblings did.
@@ -1474,7 +1476,8 @@ internal static class RunCommand
     /// </param>
     /// <param name="executedAnyScenario">
     /// <see langword="false"/> when the runner returned through its without-topology completion
-    /// path — no container started and no step ran (#369).
+    /// path — no step ran (#369). Not the same as "no container started": a topology that comes up
+    /// and then fails its health gate reaches that same path since #407, having started containers.
     /// </param>
     /// <param name="providerOrEngineFaultObserved">
     /// <see langword="true"/> when any scenario in the run was refused at one of
@@ -1633,6 +1636,26 @@ internal static class RunCommand
         // escapes the core entirely reaches ParallelSuiteRunner's per-slot catch-all, which sees a
         // type and cannot tell an engine defect from a container that fell over. That slot leaves
         // this marker false. Closing it needs a phase marker on the escape, which is issue #486.
+        //
+        // A SECOND PROVIDER SURFACE SITS OUTSIDE THIS RULE AND IS *NOT* A ROUTE TO EXIT 0. It is
+        // named because the headline above invites the opposite reading. A provider's
+        // IStepDiffRenderer is provider code that runs at REPORTING time, from
+        // ScenarioRunner.BuildDiffLookup's closure, after every verdict is fixed; a throw from
+        // either member is caught there, named once per (kind, member, exception type) on `output`,
+        // and degrades to "no diff for this step" (issue #485, contained in `fb16c83`). Nothing
+        // marks the run, so this rule never fires for it — and that is not a hole this rule could
+        // close. MEASURED: the closure has exactly two invocation sites in `src/`
+        // (TerminalRenderer.RenderStepDiff, HtmlRenderer.WriteStepDiff) and BOTH gate on the step's
+        // verdict being FAIL, while ExitCodes.FromVerdict maps Verdict.Fail to TestFailure
+        // unconditionally — and this rule is conditioned on the code so far being Success, so it
+        // could not override that anyway. A broken diff renderer is therefore invisible to the exit
+        // code in both directions: it cannot redden a green run and cannot green a red one. What it
+        // cost was every report artefact for the run, which is what #485 was about.
+        //
+        // ParallelSuiteRunner's slot catch-all names the same surface, immediately after its own
+        // "the compile-time provider surface is closed" sentence and expressly to stop a reader
+        // over-reading that into "provider code cannot break a run". Read both before adding a
+        // surface to either list.
         //
         // Conditioned on `code == ExitCodes.Success`, exactly as the two rules above are, so it
         // states "never 0" and never "exits 4": a Failing sibling still takes the run to 1 by

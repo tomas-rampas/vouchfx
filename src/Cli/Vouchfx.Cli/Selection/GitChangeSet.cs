@@ -205,8 +205,9 @@ internal sealed class GitChangeSet : IChangeSet
         //
         // The refusal deliberately reuses the launch-failure wording and therefore the launch
         // failure's OUTCOME: a ChangeSetException, which the CLI maps to exit 2. Whether
-        // selection-infrastructure failure deserves a code of its own is issues #480 and #466-B;
-        // a fix for a binary-resolution defect does not get to answer it in passing.
+        // selection-infrastructure failure deserves a code of its own is an open, unfiled question
+        // — see RunGit's remarks — and a fix for a binary-resolution defect does not get to answer
+        // it in passing.
         var gitExecutable = (gitExecutableLocator ?? LocateGitOnPath)()
             ?? throw new ChangeSetException(GitUnavailable("the change-set computation"));
 
@@ -328,9 +329,19 @@ internal sealed class GitChangeSet : IChangeSet
     /// <para>
     /// <strong>All three map to the SAME exception, so the CLI still exits 2 (usage error).</strong>
     /// That is deliberate and is NOT an assertion that a wedged git is a usage mistake: whether
-    /// selection-infrastructure failure deserves an exit code of its own belongs to issues #480
-    /// and #466-B, and answering it here — quietly, in a bug fix — would change the CLI's
-    /// documented exit-code contract as a side effect of stopping a hang.
+    /// selection-infrastructure failure deserves an exit code of its own is an open question, and
+    /// answering it here — quietly, in a bug fix — would change the CLI's documented exit-code
+    /// contract as a side effect of stopping a hang.
+    /// </para>
+    /// <para>
+    /// <strong>THAT QUESTION IS OPEN AND UNFILED, WHICH IS A CHANGE FROM WHAT THIS COMMENT USED TO
+    /// SAY.</strong> It attributed the question to issues #480 and #466-B, and neither reaches it.
+    /// #466 closed on a different axis — how <c>ParallelSuiteRunner</c>'s slot catch-all CLASSIFIES
+    /// an unexpected engine throw — and #480's answer is narrower still: a provider or engine
+    /// defect never exits 0, which says nothing about a git that could not be run. So there is no
+    /// issue to read for the reasoning, and the exit code stays 2 by inertia rather than by a
+    /// decision anybody recorded. This is the canonical statement of it; the other two sites that
+    /// used to carry the same citation point here.
     /// </para>
     /// <para>
     /// <strong><see cref="OperationCanceledException"/> is the one documented outcome that must

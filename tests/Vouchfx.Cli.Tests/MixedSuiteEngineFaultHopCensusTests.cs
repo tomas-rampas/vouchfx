@@ -15,9 +15,21 @@
 //
 // MEASURED, one mutation at a time, on the tree this file was written against. Delete hop 4 (the
 // named argument): `dotnet build vouchfx.sln -warnaserror` still reports 0 errors and 0 WARNINGS,
-// because the parameter is optional — and of the eight rows in this project that mention #480,
-// exactly the two below go red. Delete hop 3 (the read off `SuiteResult`): builds equally clean,
-// and exactly one of the two below goes red. Under BOTH mutations every row of
+// because the parameter is optional — and of the WHOLE non-Docker run of this project, exactly the
+// two rows below go red: 2 failed / 618 passed / 620 total, and both names are in this file.
+// Delete hop 3 (the read off `SuiteResult`): builds equally clean, and exactly one of the two below
+// goes red — 1 failed / 619 passed / 620 total, the second row. (Both measured with
+// `dotnet test … --no-build -m:1 --logger trx --filter "requires!=docker"`, counters read from the
+// TRX.)
+//
+// THE SCOPE OF THAT MEASUREMENT IS THE PROJECT, NOT "THE ROWS THAT MENTION #480", and the change is
+// deliberate. This paragraph used to count the rows mentioning the issue and assert that exactly
+// two of them went red. That is a weaker claim measured against a hard number in prose, and the
+// number rotted immediately: two `GitChangeSetTests` remarks mention #480 for an unrelated question
+// (whether selection-infrastructure failure deserves an exit code of its own), so the count was
+// wrong while the substantive claim was not. Counting rows is not how this guard is checked; the
+// property is that no other row in this project can see either mutation, and the whole-project
+// failure counts above state it directly. Under BOTH mutations every row of
 // `MixedSuiteEngineFaultExitCodeTests` stays green, because those rows hand the argument to
 // `ComputeExitCode` themselves; and the engine-side rows in `Vouchfx.Engine.Runtime.Tests` cannot
 // see either mutation at all, since that project has no reference to `Vouchfx.Cli`. So without
