@@ -34,8 +34,9 @@ The distinction lets CI systems handle each outcome independently: fail the buil
 page on-call for `EnvironmentError`, and escalate `Inconclusive` to reliability engineering.
 
 **Unconditional exceptions.** Four rules break CI whatever the opt-in flags say: a parse failure, an
-Inconclusive suite refused before anything ran, a security declaration the engine could not
-confirm, and a scenario refused at a provider- or engine-surface guard. Each is stated below as
+Inconclusive suite refused before anything ran, a scenario refused at a provider- or engine-surface
+guard, and a security declaration the engine could not confirm. Each is stated below, in that
+order, as
 "never exits 0" rather than "exits 4", because none overrides a code another rule already chose — a
 failing scenario still takes the run to 1, and a gated environment error to 3.
 

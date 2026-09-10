@@ -85,9 +85,19 @@ public sealed record SuiteResult(
     IReadOnlyList<(string ScenarioName, Verdict Verdict)> ScenarioVerdicts)
 {
     /// <summary>
-    /// <see langword="false"/> when the suite was refused before any topology was built, so no
-    /// container started and no step ran (#369). <see langword="true"/> by default, which every
-    /// construction outside the without-topology completion path keeps.
+    /// <see langword="false"/> when the suite returned through the without-topology completion
+    /// path, so no STEP ran (#369). <see langword="true"/> by default, which every construction
+    /// outside that path keeps.
+    /// <para>
+    /// Deliberately NOT "no container started", which this summary claimed until #480 corrected
+    /// the two copies of the sentence that had been derived from it in <c>RunCommand</c>. The
+    /// <see cref="Verdict.EnvironmentError"/> routes into that completion path include a topology
+    /// that came UP and then failed its health gate (#407): the <c>OrchestrationException</c>
+    /// catch around <c>suite.StartAsync</c> returns through the same method, so containers can
+    /// have started — and been torn down again — on a route this property is
+    /// <see langword="false"/> for. The remarks below name only "a topology that fails to start",
+    /// which is the narrower half of that set.
+    /// </para>
     /// </summary>
     /// <remarks>
     /// <para>

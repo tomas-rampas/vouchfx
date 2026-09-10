@@ -1637,20 +1637,29 @@ internal static class RunCommand
         // type and cannot tell an engine defect from a container that fell over. That slot leaves
         // this marker false. Closing it needs a phase marker on the escape, which is issue #486.
         //
-        // A SECOND PROVIDER SURFACE SITS OUTSIDE THIS RULE AND IS *NOT* A ROUTE TO EXIT 0. It is
-        // named because the headline above invites the opposite reading. A provider's
-        // IStepDiffRenderer is provider code that runs at REPORTING time, from
-        // ScenarioRunner.BuildDiffLookup's closure, after every verdict is fixed; a throw from
-        // either member is caught there, named once per (kind, member, exception type) on `output`,
-        // and degrades to "no diff for this step" (issue #485, contained in `fb16c83`). Nothing
-        // marks the run, so this rule never fires for it — and that is not a hole this rule could
-        // close. MEASURED: the closure has exactly two invocation sites in `src/`
-        // (TerminalRenderer.RenderStepDiff, HtmlRenderer.WriteStepDiff) and BOTH gate on the step's
-        // verdict being FAIL, while ExitCodes.FromVerdict maps Verdict.Fail to TestFailure
-        // unconditionally — and this rule is conditioned on the code so far being Success, so it
-        // could not override that anyway. A broken diff renderer is therefore invisible to the exit
-        // code in both directions: it cannot redden a green run and cannot green a red one. What it
-        // cost was every report artefact for the run, which is what #485 was about.
+        // A SECOND PROVIDER SURFACE SITS OUTSIDE THIS RULE, AND IT IS INVISIBLE TO THE EXIT CODE
+        // RATHER THAN COVERED BY IT. It is named because the headline above invites the reading
+        // that provider code can no longer leave a run green. A provider's IStepDiffRenderer is
+        // provider code that runs at REPORTING time, from ScenarioRunner.BuildDiffLookup's closure,
+        // after every verdict is fixed; a throw from either member is caught there, named once per
+        // (kind, member, exception type) on `output`, and degrades to "no diff for this step"
+        // (issue #485, contained in `fb16c83` — what it cost was every report artefact for the run).
+        // Nothing marks the run, so this rule never fires for it, and that is not a hole this rule
+        // could close: the throw happens after the verdicts this method is handed.
+        //
+        // STATED AS CONTAINMENT, NOT AS AN EXIT CODE, BECAUSE THE EXIT-CODE FORM IS FALSE. An
+        // earlier revision of this paragraph claimed the surface "is NOT a route to exit 0",
+        // reasoning that both invocation sites (TerminalRenderer.RenderStepDiff,
+        // HtmlRenderer.WriteStepDiff) gate on the step's verdict being FAIL while
+        // ExitCodes.FromVerdict maps Verdict.Fail to TestFailure unconditionally. Both clauses are
+        // true; the inference between them — a FAIL step means the run exits 1 — is not, on two
+        // measured routes. `--watch` renders diffs and returns only ExitCodes.UsageError or
+        // ExitCodes.Success, never calling FromVerdict at all (WatchRunner's own remarks say so).
+        // And VerdictPrecedence ranks EnvironmentError (3) above Fail (2), so a FAIL step beside an
+        // EnvironmentError aggregates to EnvironmentError, which is ungated Success — the very
+        // premise the #480 rule relies on elsewhere in this method. So a run in which a diff
+        // renderer threw CAN exit 0; it simply never exits 0 BECAUSE it threw. The renderer moves
+        // the exit code in neither direction.
         //
         // ParallelSuiteRunner's slot catch-all names the same surface, immediately after its own
         // "the compile-time provider surface is closed" sentence and expressly to stop a reader
