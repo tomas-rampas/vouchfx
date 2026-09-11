@@ -272,8 +272,10 @@ a secured topology where vouchfx is the server rather than the client.
 
 Before the first step runs, the engine connects to every declared secured endpoint with the same
 material a step will use, and reports one of two named confirmation levels. A declaration it cannot
-confirm fails the suite as an environment error with no gating flags set — the one deliberate
-exception to "only `Fail` breaks CI by default".
+confirm fails the suite as an environment error with no gating flags set — one of four deliberate
+exceptions to "only `Fail` breaks CI by default", and the only one about security; the others are a
+parse failure, a suite refused before anything ran, and a scenario refused at a provider- or
+engine-surface guard. See [CI integration](ci-integration.md).
 
 **A green secured suite proves nothing about a secured file the run never executed, and it no longer
 pretends to.** A `.e2e.yaml` that parsed and was then refused for its contents never becomes a

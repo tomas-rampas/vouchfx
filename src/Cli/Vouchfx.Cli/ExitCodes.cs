@@ -38,8 +38,13 @@ namespace Vouchfx.Cli;
 /// reserved for System.CommandLine parse errors) so there is no collision: 0 = ok, 1 = a
 /// product Fail, 2 = a usage error, 3 = infra broke, 4 = the engine could not decide.
 /// <para>
-/// <strong>The one exception to "only <see cref="Verdict.Fail"/> breaks CI by default"
-/// (authenticated-infrastructure-mtls, REQ-018).</strong> A suite that declares a
+/// <strong>The exception to "only <see cref="Verdict.Fail"/> breaks CI by default" that THIS
+/// class implements (authenticated-infrastructure-mtls, REQ-018).</strong> It was "the one
+/// exception" when written and has not been since #425. The others are decided ABOVE this class,
+/// in <c>RunCommand.ComputeExitCode</c>, which is why they are absent here: a parse failure
+/// (#425), a suite refused before any scenario executed (#369), and a scenario refused at a
+/// provider- or engine-surface guard (#480) each turn a <see cref="Success"/> this class returned
+/// into a non-zero code, without <see cref="FromVerdict"/> knowing. A suite that declares a
 /// <c>security</c> block the engine cannot confirm — REQ-005's post-health-gate probe fails,
 /// or a security preflight rejects the declaration before any container starts — exits non-zero
 /// WITHOUT <c>--fail-on-env-error</c>. Every OTHER cause of
