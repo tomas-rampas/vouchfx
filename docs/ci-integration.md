@@ -58,8 +58,8 @@ takes it to 4: the rules are conditioned on the code so far being Success, not o
 verdict, so an ungated `EnvironmentError` aggregate does not shield it. Set `--fail-on-env-error`
 and that same run exits **3** — the gate takes the code off Success first, and the provider-guard
 rule then cannot change it. Either way it is non-zero; which non-zero code you get is the gate's
-decision, not the provider-guard rule's. The
-distinction is deliberate: an authoring fault the engine refused is not the same event as an
+decision, not the provider-guard rule's. The distinction is deliberate: an authoring fault the
+engine refused is not the same event as an
 environment that never came up, and widening this rule to every no-execution run would silently
 close [issue #390](https://github.com/tomas-rampas/vouchfx/issues/390). (A **secured** suite refused
 by the divergence guard is different again — it exits 3 through the security rule below, whatever
@@ -74,11 +74,13 @@ the CSX fragments a provider emitted. This is a fault in the **testing machinery
 system under test; a defect the suite observed in the system under test is a `Fail` and exits 1.
 
 **The rule identifies the fault by where it arose, not by whose it is.** Most of what it catches is
-a provider defect, and the diagnostic says so. But the same guards also catch a reflective-dispatch
-failure *before* the provider's own body ran, an assembler refusal of emitted fragments, and a
-filesystem or out-of-memory condition that may well be the host's — and for those the engine
-deliberately declines to blame the provider. Read the diagnostic for attribution; the exit code only
-tells you the run cannot be trusted.
+a provider defect, and the diagnostic says so — including the assembler guard, which states plainly
+that a refused `CsxFragment` is a defect in a provider, while declining to name *which* step, because
+the exception it catches does not identify the fragment. But the same guards also catch a
+reflective-dispatch failure *before* the provider's own body ran, and a filesystem or out-of-memory
+condition that may well be the host's — and for those the engine deliberately declines to blame the
+provider. Read the diagnostic for attribution; the exit code only tells you the run cannot be
+trusted.
 
 The rule above already covered such a scenario when it was alone in a directory: nothing executed,
 so the run exited 4. What it did not cover was the same scenario beside one that runs. Measured, on

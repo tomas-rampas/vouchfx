@@ -201,8 +201,12 @@ public sealed class MixedSuiteEngineFaultExitCodeTests
     /// provider whose <c>Bind</c> throws is neither infrastructure nor the author's fault. So on
     /// this verdict <see cref="ExitCodes.FromVerdict"/> never reaches the arm the flag reads, and
     /// this row pins that an implementation which reddened the run by CLASSIFYING the defect as an
-    /// environment error would be caught: it would pass the row above (4 is 4) and fail here, where
-    /// the assertion is an equality against the un-flagged answer rather than a bare "non-zero".
+    /// environment error would be caught — but ONLY if it also made the answer depend on the flag.
+    /// That qualifier is load-bearing and was dropped once already: the verdict is an INPUT here
+    /// (the helper hardcodes <see cref="Verdict.Inconclusive"/>), so a classification change
+    /// upstream cannot reach this row at all. What it catches is an exit-code rule that started
+    /// reading <c>failOnEnvironmentError</c> on this shape, which is why the assertion is an
+    /// equality against the un-flagged answer rather than a bare "non-zero".
     /// </para>
     /// <para>
     /// <strong>WHAT THIS ROW IS NOT, stated because an earlier version of these remarks claimed it

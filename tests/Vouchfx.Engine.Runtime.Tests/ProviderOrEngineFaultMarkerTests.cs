@@ -7,10 +7,12 @@
 // `DescribeProviderFault` sites — `Bind` in `BindAllSteps`, then `Validate`, `HostResources`,
 // `Resources`, `CompileReferenceAssemblies` and `Emit` in `Compile`'s Pass 2 — and the suite-level
 // `CsxAssembler.Assemble` guard, whose diagnostic `DescribeAssemblyFault` composes. MEASURED before
-// this file existed: the only step type any test in the solution drove while asserting the marker
+// this file existed: the only step type that REACHED A GUARD while any test asserted the marker
 // (on `ValidationFailure` or on `SuiteResult.ProviderOrEngineFaultObserved`) was
 // `stub.throwing-bind`, in `MixedSuiteEngineFaultTaxonomyTests`; `RunParallelAsyncTests` sets the
-// marker on a fake `ScenarioCoreResult` and never reaches a guard at all. So the wrapper could be
+// marker on a fake `ScenarioCoreResult` and never reaches a guard at all. ("Reached a guard" is the
+// load-bearing half: that same file also drives `script.csharp` while asserting the marker is
+// FALSE, which is a control and reaches no guard by construction.) So the wrapper could be
 // deleted from any of the OTHER SIX and the whole suite stayed green, while a provider defect
 // beside a passing sibling silently returned to exit 0.
 //
@@ -21,9 +23,19 @@
 //
 // WHY THE ROWS DRIVE `ProviderPipeline.Compile` DIRECTLY rather than a runner. The marker is a
 // property of the pipeline's own failure, and `Compile` is `internal` and visible to this project.
-// Driving a runner would add a topology-shaped dependency to seven rows whose subject is one
-// boolean on a record, and would make each row's redness depend on the two hops another file
-// already pins.
+// Driving a runner would make each row's redness depend on the two hops another file already pins,
+// which would blur what a failure here means.
+//
+// AN EARLIER REVISION ALSO CLAIMED A RUNNER "would add a topology-shaped dependency", AND THAT WAS
+// FALSE — recorded because the false reason is what kept the NEXT hop uncovered for a round.
+// `RunScenarioOwningTopologyAsync` returns at the pre-topology authoring door, before Aspire is
+// started, so a runner-driven row needs no container and carries no trait: two rows in this very
+// assembly already prove it (`ProviderReflectiveFaultTaxonomyTests`' parallel theory and
+// `ProviderBindThrowTaxonomyTests`' parallel row, both untraited). Believing otherwise is why the
+// hop from the pipeline's failure onto `ScenarioCoreResult.ProviderOrEngineFaultObserved` — the
+// single line the parallel path's whole fold is fed by — went unasserted in the blocking lane
+// until peer review found it. Those two rows now assert the marker, covering all six provider
+// surfaces on that hop; the direct-`Compile` rows below stay the per-guard census.
 //
 // THE STUBS ARE REUSED, NOT REDECLARED. All seven step types below are already declared as
 // `file`-scoped `[StepProvider]` classes in this assembly — `stub.throwing-bind` and
@@ -113,7 +125,9 @@ public sealed class ProviderOrEngineFaultMarkerTests
     [InlineData("stub.throwing-bind", "Bind")]
     [InlineData("stub.throwing-validate", "Validate")]
     [InlineData("stub.throwing-hostresource", "HostResources")]
-    [InlineData("stub.throwing-resources", "Resources")]
+    // Leading space, deliberately: bare "Resources" is a substring of "HostResources", so a
+    // regression routing this stub into the HostResources guard would still have satisfied it.
+    [InlineData("stub.throwing-resources", " Resources threw")]
     [InlineData("stub.throwing-compilerefs", "CompileReferenceAssemblies")]
     [InlineData("stub.throwing-emit", "Emit")]
     [InlineData("stub.bad-fragment", "suite CSX assembly failed")]
@@ -184,11 +198,17 @@ public sealed class ProviderOrEngineFaultMarkerTests
     /// <para>
     /// The second control row, and the one that covers the branch <c>BindAllSteps</c> comments as
     /// DELIBERATELY unmarked. It is reached by building the AST against the full registry and then
-    /// compiling against an EMPTY one — the only way in, since <c>AstBuilder.Build</c> verifies
+    /// compiling against an EMPTY one — one way in rather than the only one (a hand-built
+    /// <c>ScenarioAst</c> carrying an unregistered <c>StepNode</c> is another, the shape
+    /// <c>ProviderPipelineTests.Compile_EmptyAst_</c>… uses), and the one chosen because it keeps
+    /// the document realistic. <c>AstBuilder.Build</c> verifies
     /// every step type against the registry it is handed, so a single registry can never produce an
-    /// AST whose type it lacks. The two-registry split is the same technique
+    /// AST whose type it lacks. The two-registry split has no precedent in this assembly; an
+    /// earlier revision cited
     /// <c>ProviderPipelineTests.Compile_StepValidationFails_ReturnsFailureNonNull_AssembledNull</c>
-    /// uses to reach a door <c>DocumentValidator</c> would otherwise have closed.
+    /// for it, and that test builds ONE registry and hands it to both <c>AstBuilder.Build</c> and
+    /// <c>Compile</c>. What it shares with the rows here is building the AST directly, which is how
+    /// every row in this file bypasses <c>DocumentValidator</c>; the split is this row's own.
     /// </para>
     /// <para>
     /// This row is the sharpest of the three: the failure names a PROVIDER and reads like a
@@ -225,9 +245,13 @@ public sealed class ProviderOrEngineFaultMarkerTests
     /// <remarks>
     /// The third control row, and the one that is NOT a per-step failure at all: it is raised from
     /// <c>Compile</c>'s own body against <c>BuildProjectContext</c>'s <c>out</c> parameter, between
-    /// Pass 1 and Pass 2, through the <c>Refuse(ValidationFailure)</c> overload rather than the
-    /// message overload — so it is reached by a regression the other two controls would miss if
-    /// only the string overload were widened. MEASURED BY MUTATION: setting the marker inside
+    /// Pass 1 and Pass 2 — a door that belongs to neither, and the property worth pinning, since a
+    /// refusal there is reachable before any per-step guard has run. An earlier revision justified
+    /// this row by the <c>Refuse</c> OVERLOAD it takes, claiming the other two controls would miss
+    /// a widening of the message overload; that was false and is recorded rather than deleted.
+    /// Control 1 goes through the message overload and control 2 through this same
+    /// <c>ValidationFailure</c> one, so the overload buys no coverage this row alone has — as the
+    /// measured sentence below has always said. MEASURED BY MUTATION: setting the marker inside
     /// <c>Refuse(ValidationFailure)</c> — the one edit that satisfies all seven rows above with a
     /// single line, since every failure in the file funnels through it — reddens this row and the
     /// other two controls, and nothing else.

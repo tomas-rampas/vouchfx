@@ -5,13 +5,19 @@
 // hand-maintained passes of one value inside `RunCommand.ExecuteAsync`, and each is a separate
 // chance to drop it:
 //
-//   1. ProviderPipeline guard      -> ValidationFailure.IsProviderOrEngineFault   set at the fault
+//   0. all seven guards            -> ValidationFailure.IsProviderOrEngineFault   ProviderOrEngine-
+//                                                                                FaultMarkerTests
+//   1. pipeline failure            -> ScenarioCoreResult (parallel core's door)   ProviderReflective-
+//                                                                                FaultTaxonomyTests
 //   2. Pass B / slot fold          -> SuiteResult.ProviderOrEngineFaultObserved   MixedSuiteEngine-
 //                                                                                FaultTaxonomyTests
 //   3. SuiteResult                 -> RunCommand's local                          *** THIS FILE ***
 //   4. RunCommand's local          -> ComputeExitCode's named argument            *** THIS FILE ***
 //   5. ComputeExitCode's argument  -> the integer                                 MixedSuiteEngine-
 //                                                                                FaultExitCodeTests
+//
+// The row counts below are from the tree this file was written against and have since moved as
+// rows were added to this project; the two names are what the claim rests on, not the totals.
 //
 // MEASURED, one mutation at a time, on the tree this file was written against. Delete hop 4 (the
 // named argument): `dotnet build vouchfx.sln -warnaserror` still reports 0 errors and 0 WARNINGS,
