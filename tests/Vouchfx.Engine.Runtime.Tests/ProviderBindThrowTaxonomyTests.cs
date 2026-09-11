@@ -164,6 +164,15 @@ public sealed class ProviderBindThrowTaxonomyTests
                 result.ExecutedAnyScenario,
                 "the parallel path derives the same nothing-executed answer from its event buffers.");
 
+            // #480: one of two blocking-lane covers for this hop - the other is
+            // ProviderReflectiveFaultTaxonomyTests' parallel theory, which drives the other five
+            // reflective surfaces. The line is step-type-agnostic, so either row alone covers it;
+            // every row OUTSIDE the two is traited or drives a fake core. See the longer note
+            // there.
+            Assert.True(
+                result.ProviderOrEngineFaultObserved,
+                "the core must carry a throwing Bind's provenance marker onto its ScenarioCoreResult.");
+
             Assert.True(File.Exists(junitPath), "the refusal must still write the requested JUnit report.");
             Assert.True(File.Exists(htmlPath), "…and the requested HTML report.");
             Assert.True(File.Exists(eventsPath), "…and the requested events stream.");

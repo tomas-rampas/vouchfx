@@ -85,16 +85,39 @@ public sealed record SuiteResult(
     IReadOnlyList<(string ScenarioName, Verdict Verdict)> ScenarioVerdicts)
 {
     /// <summary>
-    /// <see langword="false"/> when the suite was refused before any topology was built, so no
-    /// container started and no step ran (#369). <see langword="true"/> by default, which every
-    /// construction outside the without-topology completion path keeps.
+    /// <see langword="false"/> when no STEP ran (#369) — on the shared-topology path, because the
+    /// suite returned through the without-topology completion path; on the parallel path, because
+    /// no slot's buffer carries a <c>step-started</c> line. <see langword="true"/> by default,
+    /// which every construction that derives neither answer keeps.
+    /// <para>
+    /// Deliberately NOT "no container started", which this summary claimed until #480 corrected it
+    /// here and at the <c>RunCommand</c> site derived from it. The
+    /// <see cref="Verdict.EnvironmentError"/> routes into that completion path include a topology
+    /// that came UP and then failed its health gate (#407): the <c>OrchestrationException</c>
+    /// catch around <c>suite.StartAsync</c> returns through the same method, so containers can
+    /// have started — and been torn down again — on a route this property is
+    /// <see langword="false"/> for. The remarks below name only "a topology that fails to start",
+    /// which is the narrower half of that set.
+    /// </para>
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Set by <c>CompleteWithoutTopologyAsync</c> and nowhere else, deliberately: that method IS
-    /// the set of paths that never reached a topology, so this is a property of the route rather
-    /// than a hand-maintained list of doors — the shape <c>Assurance</c>'s own remarks describe
-    /// going stale three times before it was derived instead of enumerated.
+    /// TWO producers, one per run path, and each derives the answer rather than enumerating the
+    /// doors that reach it — the shape <c>Assurance</c>'s own remarks describe going stale three
+    /// times before it was derived instead. On the shared-topology path
+    /// <c>CompleteWithoutTopologyAsync</c> sets it, and that method IS the set of routes which
+    /// never ran a step, so it is a property of the route. On the parallel path
+    /// <c>ParallelSuiteRunner</c> derives it from the concatenated slot buffers
+    /// (<c>allBuffers.Exists(ContainsStepEvent)</c>), because every slot owns its own topology and
+    /// a suite-level answer can only be a fold of what the slots did.
+    /// <para>
+    /// This paragraph read "set by <c>CompleteWithoutTopologyAsync</c> and nowhere else,
+    /// deliberately" until #480. That was false on the parallel path from the moment that
+    /// derivation existed, and the reading it invites is the harmful one: that under
+    /// <c>--parallel</c> the flag is never <see langword="false"/>, so #369's rule cannot fire
+    /// there. A sequential/parallel divergence over an exit code is the defect class #369 was
+    /// itself filed for.
+    /// </para>
     /// </para>
     /// <para>
     /// <strong>It is not "the topology failed".</strong> A topology that fails to START also
@@ -106,6 +129,45 @@ public sealed record SuiteResult(
     /// </para>
     /// </remarks>
     public bool ExecutedAnyScenario { get; init; } = true;
+
+    /// <summary>
+    /// <see langword="true"/> when at least one of this suite's scenarios was refused at a
+    /// PROVIDER- or ENGINE-SURFACE guard in <c>ProviderPipeline</c> — a provider's <c>Bind</c>,
+    /// <c>Validate</c>, <c>Resources</c>, <c>HostResources</c>, <c>Emit</c> or
+    /// <c>CompileReferenceAssemblies</c> threw, or the assembler refused the fragments a provider
+    /// emitted (issue #480). <see langword="false"/> by default, which every suite containing no
+    /// such fault keeps.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>It exists because the exit code must not depend on the SIBLINGS of a defect.</strong>
+    /// Alone in a directory, such a scenario exits 4 through #369's rule: nothing executed. Beside
+    /// one scenario that genuinely runs, <see cref="ExecutedAnyScenario"/> is <see langword="true"/>
+    /// on both run paths, #369's rule does not fire, and the identical defect exited 0. The
+    /// provenance travels with the failure instead, from
+    /// <c>ValidationFailure.IsProviderOrEngineFault</c> (which is where the boundary is defined and
+    /// argued) through the per-scenario door to here, and <c>RunCommand.ComputeExitCode</c> turns
+    /// it into the rule: a provider or engine defect never exits 0.
+    /// </para>
+    /// <para>
+    /// <strong>It is NOT "the suite was refused".</strong> An ordinary authoring refusal — a schema
+    /// error, an unresolvable secret, a protocol conflict — leaves this <see langword="false"/>
+    /// even though it too reaches a pre-topology door and records
+    /// <c>SecurityAbortKind.AuthoringFault</c>. Whether that shape should also be
+    /// sibling-independent is issue #514, deliberately open; reading the refusal instead of this
+    /// marker would close it silently and redden every mixed suite containing one mistyped
+    /// document.
+    /// </para>
+    /// <para>
+    /// Set on BOTH run paths, by different mechanisms and deliberately so: <c>RunSuiteAsync</c>
+    /// accumulates it across its own Pass-B compile loop, while <c>ParallelSuiteRunner</c> folds
+    /// the per-scenario <see cref="ScenarioCoreResult.ProviderOrEngineFaultObserved"/> values its
+    /// slots return. A sequential/parallel disagreement about an exit code is a defect class this
+    /// codebase has measured before.
+    /// </para>
+    /// </remarks>
+    public bool ProviderOrEngineFaultObserved { get; init; }
+
     /// <summary>
     /// What this suite established about the <c>security</c> blocks it declared: what was declared,
     /// what REQ-005's probe confirmed, and which door (if any) refused
@@ -225,6 +287,28 @@ public sealed record ScenarioCoreResult(Verdict Verdict, List<string> Buffer)
     /// </para>
     /// </remarks>
     public SecurityAssurance Assurance { get; init; } = SecurityAssurance.None;
+
+    /// <summary>
+    /// <see langword="true"/> when this scenario was refused at one of <c>ProviderPipeline</c>'s
+    /// provider- or engine-surface guards — read straight off
+    /// <c>ValidationFailure.IsProviderOrEngineFault</c> at the pre-topology authoring door, never
+    /// re-derived from the verdict or from the refusal kind (issue #480).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The parallel runner's reason for needing it is the same one slice E gave for
+    /// <see cref="Assurance"/>: under <c>--parallel</c> every slot owns its own topology, so a
+    /// suite-level answer can only be a fold of what the slots return. Without this member #480's
+    /// rule would hold under a bare <c>run</c> and not under <c>--parallel</c>, which is the
+    /// sequential/parallel divergence #369 was itself filed for.
+    /// </para>
+    /// <para>
+    /// Init-only, defaulting to <see langword="false"/>, so the implicit tuple conversion below and
+    /// every existing test double keep compiling and keep saying "no provider defect was seen" —
+    /// which is the honest answer for a fake core that never ran a pipeline.
+    /// </para>
+    /// </remarks>
+    public bool ProviderOrEngineFaultObserved { get; init; }
 
     /// <summary>
     /// Converts the pre-slice-E <c>(Verdict, Buffer)</c> tuple shape, defaulting
@@ -467,6 +551,20 @@ public static class ScenarioRunner
             // alternative is passing an empty list that is a lie about the document: the next
             // caller to start reading `Assurance` here would inherit exactly the silent
             // false-negative #409 was filed for, and would have no reason to look for it.
+            //
+            // THE DESTRUCTURE ABOVE NOW DROPS TWO MEMBERS OF `ScenarioCoreResult`, NOT ONE, and
+            // the argument covers both. `ProviderOrEngineFaultObserved` (#480) is dropped here for
+            // the same reason `Assurance` is — this wrapper's return type is a bare Verdict — and
+            // its VALUE is correct on every path the core returns from, which is not the same
+            // claim as its being assigned on every one. Exactly one door assigns it, the
+            // pre-topology authoring door, because that is where the only guard able to set it
+            // sits; every other return keeps the init-only `false`, which is the honest answer for
+            // a path that entered no provider code at all. So what is being dropped is a correct
+            // answer rather than a default that happens to be there. That is precisely the trap: a
+            // caller that later widens this wrapper's return type must take BOTH members off the
+            // core's own result, because a value reconstructed at this frame would say "no
+            // provider defect" for a run that had one and would carry no sign that it was
+            // guessing.
             DeclaredTargetsOf(yamlText, registry),
             appHostAssemblyName,
             output,
@@ -920,11 +1018,23 @@ public static class ScenarioRunner
             // about, and a document declaring no security raises nothing whatever it was about. The
             // narrower questions these two doors used to ask are what let an unresolvable
             // `script.csharp file:`, and a step-level secret fault, in a secured suite exit 0.
+            //
+            // ONE CLASSIFICATION *IS* CARRIED, AND IT DOES NOT CONTRADICT THE PARAGRAPH ABOVE
+            // (issue #480). That paragraph is about the SECURITY answer, which is derived from the
+            // refusal and must not ask what the fault was about. This is a different question with
+            // a different consumer: whether the engine got this far by entering PROVIDER code and
+            // failing to come back out of it. It is READ OFF the failure record the door already
+            // returned rather than inferred here — RunPreTopologyAuthoringDoor hands back the whole
+            // PipelineResult beside the joined text, so this read needs no signature change and
+            // cannot disagree with the diagnostic the author sees. A step-secret-only fault leaves
+            // `Failure` null and this false, which is correct: nothing entered a provider.
             return new ScenarioCoreResult(Verdict.Inconclusive, buffer)
             {
                 Assurance = SecurityAssurance.None
                     .Declaring(declaredTargets)
                     .Refusing(SecurityAbortKind.AuthoringFault),
+                ProviderOrEngineFaultObserved =
+                    pipelineResult.Failure?.IsProviderOrEngineFault == true,
             };
         }
 
@@ -1884,6 +1994,13 @@ public static class ScenarioRunner
         // built) and exists so the index is total rather than conditional.
         var topologyIndex = baselineIndex >= 0 ? baselineIndex : 0;
 
+        // Issue #480's provenance accumulator, declared HERE rather than with the suite's other
+        // locals at the top of the method: every guard above this line runs before a single step
+        // has been bound, so no provider code has been entered on any route that returns above it
+        // and `false` is the only honest value there. Keeping it out of scope for those returns is
+        // what makes that a property of the code rather than a promise in a comment.
+        var providerOrEngineFaultObserved = false;
+
         // ── Pass B: per-scenario compilation (pre-topology) ────────────────────
         for (int i = 0; i < scenarios.Count; i++)
         {
@@ -1928,6 +2045,16 @@ public static class ScenarioRunner
             {
                 assurance = assurance.Refusing(SecurityAbortKind.AuthoringFault);
 
+                // ACCUMULATED, NEVER RESET (issue #480). One scenario whose provider threw is
+                // enough to make the whole run non-zero, and a later scenario that merely fails
+                // schema validation must not be able to clear the earlier one's provenance — which
+                // is what an assignment rather than an `|=` would do on a suite whose faults are
+                // mixed. Read off the failure record the door returned, not re-derived from
+                // `authoringFault`'s text or from the refusal kind: the kind is `AuthoringFault`
+                // for every refusal here (#514), so it cannot tell the two apart.
+                providerOrEngineFaultObserved |=
+                    pipelineResult.Failure?.IsProviderOrEngineFault == true;
+
                 compilations[i] = (name, ast, null, Verdict.Inconclusive, authoringFault,
                     scenarioBaseDirectory);
                 continue;
@@ -1964,7 +2091,8 @@ public static class ScenarioRunner
                     eventsReportPath,
                     eventsStreamPath,
                     runSecretLedger: null,
-                    runPathLedger: null)
+                    runPathLedger: null,
+                    providerOrEngineFaultObserved: providerOrEngineFaultObserved)
                 .ConfigureAwait(false);
         }
 
@@ -2051,7 +2179,8 @@ public static class ScenarioRunner
                     eventsStreamPath,
                     runSecretLedger: null,
                     runPathLedger: null,
-                    alreadyPrintedMessage: seedRootSplit)
+                    alreadyPrintedMessage: seedRootSplit,
+                    providerOrEngineFaultObserved: providerOrEngineFaultObserved)
                 .ConfigureAwait(false);
         }
 
@@ -2136,7 +2265,8 @@ public static class ScenarioRunner
                     eventsStreamPath,
                     runSecretLedger: null,
                     runPathLedger: null,
-                    alreadyPrintedMessage: divergence)
+                    alreadyPrintedMessage: divergence,
+                    providerOrEngineFaultObserved: providerOrEngineFaultObserved)
                 .ConfigureAwait(false);
         }
 
@@ -2250,7 +2380,8 @@ public static class ScenarioRunner
                     eventsStreamPath,
                     runSecretLedger: null,
                     runPathLedger: null,
-                    alreadyPrintedMessage: protocolConflict)
+                    alreadyPrintedMessage: protocolConflict,
+                    providerOrEngineFaultObserved: providerOrEngineFaultObserved)
                 .ConfigureAwait(false);
         }
 
@@ -2390,7 +2521,8 @@ public static class ScenarioRunner
                     eventsStreamPath,
                     runSecretLedger,
                     runPathLedger,
-                    alreadyPrintedMessage: environmentFault)
+                    alreadyPrintedMessage: environmentFault,
+                    providerOrEngineFaultObserved: providerOrEngineFaultObserved)
                 .ConfigureAwait(false);
         }
         catch (OrchestrationException oex)
@@ -2425,8 +2557,15 @@ public static class ScenarioRunner
             // REQ-018: AT THIS CATCH, the classified kind on the exception is the whole
             // discriminator — not the message text and not the verdict — and IT IS UNTOUCHED by
             // the derivation. An unhealthy container, an unpullable image and an unrelated seed
-            // failure all reach this same catch, record TopologyUnavailable, and still exit 0 by
-            // default. That is #390, deliberately still open.
+            // failure all reach this same catch and record TopologyUnavailable.
+            //
+            // AND WHEN THE TOPOLOGY FAILURE IS THE RUN'S ONLY FAULT, THAT STILL EXITS 0 BY
+            // DEFAULT — that is #390, deliberately still open. It is no longer true of every run
+            // reaching this catch, and the exception is the marker threaded onto the return below:
+            // a Pass-B provider defect followed by a topology that would not start aggregates to
+            // EnvironmentError, FromVerdict returns Success ungated, and #480's rule then takes it
+            // to 4. Under --fail-on-env-error the answer is 3 rather than 4, because that rule is
+            // conditioned on the code so far being Success and the gate has already chosen one.
             //
             // Scoped to this catch deliberately. An earlier wording said "exactly ONE cause of an
             // Environment error exits non-zero without --fail-on-env-error", which was true when
@@ -2458,8 +2597,12 @@ public static class ScenarioRunner
             //
             // The classified kind on the exception still decides the refusal, untouched: an
             // unhealthy container, an unpullable image and an unrelated seed failure all record
-            // TopologyUnavailable and still exit 0 by default. That is #390, deliberately open —
-            // this change is about what a run REPORTS, not about what it exits.
+            // TopologyUnavailable, and where the topology failure is the run's ONLY fault they
+            // still exit 0 by default. That is #390, deliberately open — #407's change was about
+            // what a run REPORTS, not about what it exits. The qualifier is load-bearing on THIS
+            // call: `providerOrEngineFaultObserved` is passed below, and when it is true the run
+            // exits 4 (or 3 under --fail-on-env-error, which chooses a code first) by #480's rule.
+            // See the REQ-018 paragraph above for the full statement.
             return await CompleteWithoutTopologyAsync(
                     StampWhereUnjudged(compilations, Verdict.EnvironmentError, topologyFailure),
                     WithUnbuiltDocuments(assurance.Refusing(
@@ -2475,7 +2618,8 @@ public static class ScenarioRunner
                     eventsStreamPath,
                     runSecretLedger,
                     runPathLedger,
-                    alreadyPrintedMessage: topologyFailure)
+                    alreadyPrintedMessage: topologyFailure,
+                    providerOrEngineFaultObserved: providerOrEngineFaultObserved)
                 .ConfigureAwait(false);
         }
         finally
@@ -2843,6 +2987,13 @@ public static class ScenarioRunner
                 // something other than the terminal text.
                 Assurance = WithUnbuiltDocuments(
                     assurance.Confirming(suite.SecurityConfirmations)),
+
+                // Issue #480 — and THIS is the return the issue is about. A suite reaching here
+                // built a topology and ran at least one scenario, so `ExecutedAnyScenario` keeps
+                // its `true` default and #369's rule cannot fire; if a SIBLING was refused at a
+                // provider guard in Pass B, this is the only thing left carrying that fact to the
+                // exit code.
+                ProviderOrEngineFaultObserved = providerOrEngineFaultObserved,
             };
         }
     }
@@ -3067,6 +3218,38 @@ public static class ScenarioRunner
     /// all-early-verdict caller passes <see langword="null"/> and is therefore byte-identically
     /// unchanged: per-scenario messages that merely happen to coincide are still each printed.
     /// </param>
+    /// <param name="providerOrEngineFaultObserved">
+    /// Issue #480's provenance, accumulated by <see cref="RunSuiteAsync"/>'s Pass-B compile loop
+    /// and carried onto <see cref="SuiteResult.ProviderOrEngineFaultObserved"/> unchanged.
+    /// <para>
+    /// <strong>LOAD-BEARING ON ONE OF THE ROUTES THROUGH HERE: on it, this flag is the only thing
+    /// that takes the run off exit 0.</strong> The shape is a Pass-B provider defect followed by a
+    /// topology that fails to start. Traced end to end: Pass B marks the defective scenario, its
+    /// runnable sibling leaves the all-early guard unfired so the topology build is attempted, the
+    /// build throws, and the <see cref="OrchestrationException"/> catch reaches this method having
+    /// stamped <see cref="Verdict.EnvironmentError"/> onto every scenario that had no verdict of
+    /// its own. The aggregate elevates to EnvironmentError (<c>VerdictPrecedence</c> 3 over
+    /// Inconclusive's 1), <c>ExitCodes.FromVerdict(EnvironmentError, failOnEnvironmentError:
+    /// false, …)</c> over an unsecured suite returns <c>Success</c>, and #369's rule — scoped to
+    /// <see cref="Verdict.Inconclusive"/>, deliberately, so that #390 stays open — never fires. So
+    /// the two rules do NOT agree here, and dropping this argument would return a green run over a
+    /// provider defect. Pinned by <c>MixedSuiteEngineFaultTaxonomyTests</c> on the engine side and
+    /// by <c>MixedSuiteEngineFaultExitCodeTests</c> for the integer.
+    /// </para>
+    /// <para>
+    /// On the routes where the two rules DO agree — every caller of this method returns
+    /// <c>ExecutedAnyScenario = false</c>, and an Inconclusive suite that executed nothing already
+    /// exits 4 — it is threaded anyway, so the record is HONEST rather than merely sufficient: a
+    /// <see cref="SuiteResult"/> is a public value other callers read, and a member that silently
+    /// said "no provider defect" on the very routes a provider defect takes would be a trap for
+    /// the next reader, and for the next rule keyed on it.
+    /// </para>
+    /// <para>
+    /// Optional, defaulting to <see langword="false"/>, because the callers that run ABOVE Pass B —
+    /// the shared-<c>environment</c> divergence guard is the live one — have entered no provider
+    /// code and have no such value to pass.
+    /// </para>
+    /// </param>
     private static async Task<SuiteResult> CompleteWithoutTopologyAsync(
         // Concrete List, not IReadOnlyList (CA1859): every call site already holds the
         // concrete list — either `compilations` itself or StampWhereUnjudged's List return
@@ -3088,7 +3271,8 @@ public static class ScenarioRunner
         string? eventsStreamPath,
         ResolvedSecretLedger? runSecretLedger,
         SecurityPathDisclosureLedger? runPathLedger,
-        string? alreadyPrintedMessage = null)
+        string? alreadyPrintedMessage = null,
+        bool providerOrEngineFaultObserved = false)
     {
         var results = new List<(string ScenarioName, Verdict Verdict)>(compilations.Count);
         var suiteAggregate = Verdict.Pass;
@@ -3163,10 +3347,23 @@ public static class ScenarioRunner
         {
             Assurance = assurance,
 
-            // #369: this method IS the without-topology path — no container started and no step
-            // ran on any route that reaches here. Set once, at the one place that is true, rather
-            // than enumerated door by door.
+            // #369: this method IS the without-topology path — no step ran on any route that
+            // reaches here. Set here rather than enumerated door by door, because the method is
+            // the property.
+            //
+            // TWO CLAIMS WERE RETRACTED FROM THIS COMMENT BY #480, and both are the kind a reader
+            // reconstructs, so they are named. It said "no CONTAINER started" as well: false since
+            // #407, because a topology that came up and then failed its health gate reaches here
+            // through the OrchestrationException catch, having started containers and torn them
+            // down. And it said "set once, at the one place that is true": true of THIS run path,
+            // but ParallelSuiteRunner derives the same flag from its slot buffers, so the suite
+            // has two producers. See SuiteResult.ExecutedAnyScenario's own documentation, which
+            // states both — the container point in its summary, the two producers in its remarks.
             ExecutedAnyScenario = false,
+
+            // #480, carried rather than derived — see the parameter's own remarks for why it is
+            // threaded onto a route where #369's rule already reaches the same integer.
+            ProviderOrEngineFaultObserved = providerOrEngineFaultObserved,
         };
     }
 

@@ -570,6 +570,154 @@ public sealed class RunParallelAsyncTests
             path: /health
         """;
 
+    // ── (c3) #480's provenance folds across slots ─────────────────────────────
+    //
+    // WHY THESE EXIST, AND IT IS A LANE ARGUMENT RATHER THAN A COVERAGE ONE. Two hand-written lines
+    // carry `ProviderOrEngineFaultObserved` across the fan-out — the per-slot assignment in
+    // `RunOneSlotAsync` and the `|=` in `RenderAndAggregate` — and each could be deleted with the
+    // BLOCKING CI lane green. That lane is `.github/workflows/build.yml`'s
+    // `--filter "requires!=docker"`, and the only rows asserting the parallel fold were the
+    // `[Trait("requires", "docker")]` rows of `MixedSuiteEngineFaultTaxonomyTests`, which run in the
+    // separately-gated integration job; the untraited row there exercises `RunSuiteAsync`'s
+    // sequential accumulator instead, and the CLI-side rows hand the value to `ComputeExitCode`
+    // themselves. `MixedSuiteEngineFaultHopCensusTests` makes exactly this argument for the CLI's
+    // own two hops. These rows answer it for the parallel ones.
+    //
+    // A FAKE CORE IS RIGHT HERE AND WRONG THERE, WHICH IS NOT A CONTRADICTION — stated because the
+    // two files make opposite choices thirty seconds apart in a reader's day.
+    // `MixedSuiteEngineFaultTaxonomyTests` declines a fake for its END-TO-END row because the
+    // property it characterises is that a REAL provider defect was seen beside a scenario that
+    // REALLY executed; a hand-set marker would prove nothing about where the marker comes from. The
+    // property here is narrower and purely mechanical: whatever the slots report, the fold ORs it
+    // and a passing sibling cannot clear it. Supplying the slots' answers by hand is precisely what
+    // isolates the two lines under test from the derivation that feeds them, and it keeps both rows
+    // in the blocking lane, which is the whole point.
+    //
+    // MEASURED BY MUTATION, one line at a time: deleting either line leaves
+    // `dotnet build vouchfx.sln -warnaserror` at 0 errors and 0 warnings, and turns all three rows
+    // of the theory below red. The all-false mirror stays green under both, deliberately — it is
+    // the guard against a fold hard-wired to `true`, not against a fold that lost its input.
+
+    /// <summary>
+    /// One slot reporting a provider- or engine-surface fault is enough to set the suite-level
+    /// marker, whichever slot it lands in and whatever order the slots complete in.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The delays reverse completion order against declaration order, so a fold that read whichever
+    /// slot finished first — or last — instead of ORing all of them cannot pass.
+    /// </para>
+    /// <para>
+    /// <strong>Every other slot Passes, and that is the half that pins #480 itself.</strong> The
+    /// defect's marker has to survive a healthy sibling, because the sibling is exactly what stops
+    /// #369's nothing-executed rule from firing; a row in which every slot was refused would pin
+    /// the solo shape that already exits 4.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [InlineData(0)]
+    [InlineData(2)]
+    [InlineData(4)]
+    public async Task RunParallelCoreAsync_OneSlotReportsAProviderFault_FoldsToTheSuite(int faultingSlot)
+    {
+        const int n = 5;
+        var (asts, names, yamls) = MakeInputs(n);
+
+        ParallelSuiteRunner.ScenarioCoreFunc fake =
+            async (registry, yamlText, scenarioName, declared, appHost, output, seedBaseDir, livePump, ct) =>
+            {
+                var idx = int.Parse(scenarioName.Split('-')[^1], System.Globalization.CultureInfo.InvariantCulture);
+
+                // Reverse completion order against declaration order.
+                await Task.Delay((n - idx) * 5, ct).ConfigureAwait(false);
+
+                return idx == faultingSlot
+                    ? new ScenarioCoreResult(
+                        Verdict.Inconclusive, MakeBuffer(scenarioName, Verdict.Inconclusive))
+                    {
+                        // The shape the real core returns from its pre-topology authoring door when
+                        // ProviderPipeline marked the failure: an early Inconclusive carrying the
+                        // provenance. The verdict and the marker are set independently here for the
+                        // same reason the production rule reads only the marker — one is not
+                        // derivable from the other.
+                        ProviderOrEngineFaultObserved = true,
+                    }
+                    : (Verdict.Pass, MakeBuffer(scenarioName, Verdict.Pass));
+            };
+
+        var sw = new StringWriter();
+        var result = await ParallelSuiteRunner.RunParallelCoreAsync(
+            Registry, asts, names, yamls,
+            appHostAssemblyName: null,
+            output: sw,
+            diffLookup: NoDiff,
+            maxConcurrency: 4,
+            runScenario: fake,
+            seedBaseDirectory: null,
+            ct: default);
+
+        Assert.True(
+            result.ProviderOrEngineFaultObserved,
+            $"slot {faultingSlot} reported a provider fault and the fold dropped it; a suite "
+            + "containing a provider or engine defect would exit 0 again.");
+
+        // NOT VACUOUS: the siblings really did pass, so the marker survived a healthy neighbour
+        // rather than being the only thing any slot reported.
+        for (var i = 0; i < n; i++)
+        {
+            if (i != faultingSlot)
+            {
+                Assert.Equal(Verdict.Pass, result.ScenarioVerdicts[i].Verdict);
+            }
+        }
+
+        Assert.Equal(Verdict.Inconclusive, result.Verdict);
+    }
+
+    /// <summary>
+    /// The all-false mirror: with no slot reporting a provider fault the suite-level marker stays
+    /// off, even for a run whose aggregate is <see cref="Verdict.Inconclusive"/>.
+    /// </summary>
+    /// <remarks>
+    /// Without this, a fold hard-wired to <see langword="true"/> would pass the theory above, and
+    /// #480's rule would stop being narrow: every ordinary execution-time Inconclusive — a step
+    /// that ran and timed out, a partition that outlasted its grace — would break CI by default,
+    /// which is exactly what §12.1 gates behind <c>--fail-on-inconclusive</c>. The Inconclusive
+    /// aggregate is deliberate rather than incidental: it pins that the fold reads the MARKER and
+    /// never the verdict.
+    /// </remarks>
+    [Fact]
+    public async Task RunParallelCoreAsync_NoSlotReportsAProviderFault_LeavesTheMarkerFalse()
+    {
+        const int n = 4;
+        var (asts, names, yamls) = MakeInputs(n);
+
+        ParallelSuiteRunner.ScenarioCoreFunc fake =
+            (registry, yamlText, scenarioName, declared, appHost, output, seedBaseDir, livePump, ct) =>
+            {
+                var idx = int.Parse(scenarioName.Split('-')[^1], System.Globalization.CultureInfo.InvariantCulture);
+                var verdict = idx == 1 ? Verdict.Inconclusive : Verdict.Pass;
+                return Task.FromResult<ScenarioCoreResult>((verdict, MakeBuffer(scenarioName, verdict)));
+            };
+
+        var sw = new StringWriter();
+        var result = await ParallelSuiteRunner.RunParallelCoreAsync(
+            Registry, asts, names, yamls,
+            appHostAssemblyName: null,
+            output: sw,
+            diffLookup: NoDiff,
+            maxConcurrency: 4,
+            runScenario: fake,
+            seedBaseDirectory: null,
+            ct: default);
+
+        Assert.False(
+            result.ProviderOrEngineFaultObserved,
+            "no slot entered a provider guard, so the suite must not report a provider defect.");
+
+        Assert.Equal(Verdict.Inconclusive, result.Verdict);
+    }
+
     // ── (d) Complete-all (no fail-fast) ───────────────────────────────────────
 
     /// <summary>

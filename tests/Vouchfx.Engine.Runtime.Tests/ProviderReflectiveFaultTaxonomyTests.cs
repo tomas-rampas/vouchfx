@@ -581,6 +581,24 @@ public sealed class ProviderReflectiveFaultTaxonomyTests
                 result.ExecutedAnyScenario,
                 "nothing ran, so #369's rule must take the exit code off Success.");
 
+            // #480, AND THIS ROW IS ONE OF TWO BLOCKING-LANE COVERS FOR THE HOP IT CROSSES - the
+            // other is ProviderBindThrowTaxonomyTests
+            // .RunParallelAsync_ProviderBindThrows_IsInconclusiveAndWritesEveryRequestedReport.
+            // The parallel core reads the marker off its own pre-topology door into
+            // ScenarioCoreResult.ProviderOrEngineFaultObserved at exactly one line in
+            // ScenarioRunner, and ParallelSuiteRunner's slot array is its only consumer. Every row
+            // OUTSIDE those two carries [Trait("requires","docker")] or drives a FAKE
+            // ScenarioCoreFunc with the marker hand-set, so without BOTH assertions that line could
+            // be changed to `false` and #480 would be fully back under --parallel with the blocking
+            // lane green. The line is step-type-agnostic, so either row alone covers it; neither is
+            // redundant on the coverage it adds elsewhere. This row needs no container:
+            // RunScenarioOwningTopologyAsync returns at the authoring door, before Aspire is
+            // started at all.
+            Assert.True(
+                result.ProviderOrEngineFaultObserved,
+                "the core must carry the guard's provenance marker onto its ScenarioCoreResult, "
+                + "or the suite-level fold has nothing to fold.");
+
             var rendered = sw.ToString();
             Assert.Contains("will-throw", rendered, StringComparison.Ordinal);
             Assert.Contains(stepType, rendered, StringComparison.Ordinal);

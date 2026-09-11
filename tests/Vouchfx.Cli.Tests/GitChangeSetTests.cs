@@ -254,8 +254,16 @@ public sealed class GitChangeSetTests
     /// </para>
     /// <para>
     /// The exit code is deliberately unchanged at 2 (usage error): whether selection-infrastructure
-    /// failure deserves a code of its own belongs to issues #480 and #466-B, and this fix must not
-    /// answer it quietly.
+    /// failure deserves a code of its own is an open question, and this fix must not answer it
+    /// quietly.
+    /// </para>
+    /// <para>
+    /// <strong>That question is open and UNFILED, which is a change from what this comment used to
+    /// say.</strong> It cited issues #480 and #466-B, and neither reaches it. #466 closed on a
+    /// different axis — how <c>ParallelSuiteRunner</c>'s slot catch-all CLASSIFIES an unexpected
+    /// engine throw — and #480's answer is narrower still: a provider or engine defect never exits
+    /// 0. A git that could not be run is neither. Until somebody files it, a <c>--changed-since</c>
+    /// git failure is a usage error and exits 2, and there is no issue to read for the reasoning.
     /// </para>
     /// </remarks>
     [Fact]
@@ -432,7 +440,9 @@ public sealed class GitChangeSetTests
     /// There is deliberately no fallback to the bare name: falling back is precisely the
     /// search-order hole the resolution closes, so "not found" has to be a refusal. The exit code
     /// is unchanged on purpose — whether selection-infrastructure failure deserves one of its own
-    /// belongs to issues #480 and #466-B.
+    /// is an open and UNFILED question. This comment used to cite issues #480 and #466-B; neither
+    /// answers it (see <see cref="GitTimesOut_SurfacesChangeSetException_NamingTheBudget"/>'s
+    /// remarks for why).
     /// </remarks>
     [Fact]
     public void GitNotOnPath_IsRefused_BeforeAnythingIsLaunched()

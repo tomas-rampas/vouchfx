@@ -1196,6 +1196,12 @@ internal static class RunCommand
         // scoped to the block below, while the exit-code decision is made after it. True until
         // a run says otherwise, so a path producing no SuiteResult is unaffected.
         var executedAnyScenario = true;
+
+        // #480. Captured beside the two above and for the same scoping reason. Its default is the
+        // OPPOSITE of `executedAnyScenario`'s and both defaults say the same thing: a path that
+        // produces no SuiteResult ran nothing and saw no provider defect, so neither rule fires and
+        // the exit code is whatever the rest of this method derives.
+        var providerOrEngineFaultObserved = false;
         if (parsed.Count > 0)
         {
             var asts = parsed.Select(p => p.Ast!).ToList();
@@ -1316,6 +1322,12 @@ internal static class RunCommand
             // verdict is UNCHANGED and cannot distinguish this case.
             securityAssurance = result.Assurance;
             executedAnyScenario = result.ExecutedAnyScenario;
+
+            // #480: read off the runner's own result, exactly as the two above are, and for the
+            // same reason each of them gives — the fact is established where it happened, in the
+            // pipeline that entered the provider, and re-deriving it here from the verdict or from
+            // the event stream would be re-deciding it with less evidence.
+            providerOrEngineFaultObserved = result.ProviderOrEngineFaultObserved;
         }
 
         // Emit telemetry from the SAME buffered event stream the renderers consumed (S10-G-04).
@@ -1359,9 +1371,16 @@ internal static class RunCommand
         return ComputeExitCode(
             parsed.Count, failures.Count, suiteVerdict, failOnEnvironmentError, failOnInconclusive,
             securityAssurance,
-            // #369: false only when the runner returned through its without-topology completion
-            // path, so no container started and no step ran.
-            executedAnyScenario: executedAnyScenario);
+            // #369: false when no STEP ran — the shared-topology path returns through its
+            // without-topology completion path, and the parallel path derives the same fact from
+            // its slot buffers, so BOTH runners can produce it. Deliberately not "no container
+            // started": a topology that came up and then failed its health gate returns through
+            // that same completion path (#407), so containers can have started and been torn down
+            // again on a route this is false for.
+            executedAnyScenario: executedAnyScenario,
+            // #480: true when any scenario was refused at a provider- or engine-surface guard,
+            // whatever its siblings did.
+            providerOrEngineFaultObserved: providerOrEngineFaultObserved);
     }
 
     /// <summary>
@@ -1452,6 +1471,24 @@ internal static class RunCommand
     /// <param name="failOnInconclusive">
     /// Passed through to <see cref="ExitCodes.FromVerdict"/> for a mixed or fully-parsed set.
     /// </param>
+    /// <param name="securityAssurance">
+    /// What the run established about the <c>security</c> blocks it declared, passed through to
+    /// <see cref="ExitCodes.FromVerdict"/>, which reads only its <c>Unconfirmed</c> projection
+    /// (REQ-018).
+    /// </param>
+    /// <param name="executedAnyScenario">
+    /// <see langword="false"/> when no step ran (#369) — the shared-topology runner returns
+    /// through its without-topology completion path, and the parallel runner derives the same fact
+    /// from its slot buffers, so either can produce it. Not the same as "no container started": a
+    /// topology that comes up and then fails its health gate reaches that completion path since
+    /// #407, having started containers.
+    /// </param>
+    /// <param name="providerOrEngineFaultObserved">
+    /// <see langword="true"/> when any scenario in the run was refused at one of
+    /// <c>ProviderPipeline</c>'s provider- or engine-surface guards (#480). Independent of
+    /// <paramref name="executedAnyScenario"/> by design: the two rules overlap on a solo defect and
+    /// come apart the moment it acquires a sibling that runs.
+    /// </param>
     /// <returns>The process exit code (see <see cref="ExitCodes"/>).</returns>
     /// <remarks>
     /// <para>
@@ -1491,7 +1528,8 @@ internal static class RunCommand
         bool failOnEnvironmentError,
         bool failOnInconclusive,
         SecurityAssurance? securityAssurance = null,
-        bool executedAnyScenario = true)
+        bool executedAnyScenario = true,
+        bool providerOrEngineFaultObserved = false)
     {
         var aggregate = AggregateVerdict(suiteVerdict, parseFailureCount);
         var code = ExitCodes.FromVerdict(
@@ -1564,6 +1602,82 @@ internal static class RunCommand
         if (!executedAnyScenario
             && aggregate == Verdict.Inconclusive
             && code == ExitCodes.Success)
+        {
+            return ExitCodes.Inconclusive;
+        }
+
+        // A PROVIDER OR ENGINE DEFECT NEVER EXITS 0 (#480).
+        //
+        // The rule above closed "did anything execute", and that is where this one comes from: a
+        // scenario refused because a provider's Bind/Validate/Resources/HostResources/Emit/
+        // CompileReferenceAssemblies threw — or because the assembler refused the fragments a
+        // provider emitted — executes nothing, so ALONE in a directory it already exits 4 through
+        // that rule. Put one scenario that genuinely runs beside it and the suite's
+        // `executedAnyScenario` becomes true on both run paths (the sequential path keeps its
+        // `true` default; the parallel path derives it from the sibling's own `step-started`
+        // line), the rule above stops firing, and the identical defect exited 0. The exit code was
+        // deciding on the SIBLING rather than on the defect.
+        //
+        // WHY THE SIGNAL IS PROVENANCE AND NOT THE VERDICT. Both shapes are Inconclusive, and both
+        // executed something, so nothing in the verdict can tell them apart — and keying on the
+        // verdict is exactly what must not be done: §12.1 gates a genuine execution-time
+        // Inconclusive (a step that ran and could not conclude — timeout, partition outlasting its
+        // grace, an unmet upstream capture) behind --fail-on-inconclusive on purpose, and gates a
+        // genuine infrastructure flake behind --fail-on-env-error. Reddening either by default is
+        // the behaviour that destroys trust in the taxonomy. So the answer travels from the place
+        // that KNOWS — ProviderPipeline's guards, which set
+        // ValidationFailure.IsProviderOrEngineFault only at the surfaces where the engine dispatches
+        // INTO provider code, or assembles what it emitted — through
+        // SuiteResult.ProviderOrEngineFaultObserved to here. "Dispatches into", not "entered": the
+        // reflective-dispatch arm fires when the call never reached the provider's body at all, and
+        // it is marked like the rest, because the marker is provenance and not blame.
+        //
+        // NOT KEYED ON SecurityAssurance.Refusal, WHICH WAS THE OTHER CANDIDATE. Its
+        // AuthoringFault kind is recorded for ANY document refused at a pre-topology door — a
+        // schema error, an unresolvable secret, a malformed dependency `env:`, an unresolvable
+        // `script.csharp file:` — so keying on it would redden every mixed suite containing any
+        // refused document. That may well be the right generalisation, and it is issue #514's
+        // question; it is deliberately not answered here.
+        //
+        // ONE ROUTE REMAINS UNCOVERED, and it is named rather than papered over: an exception that
+        // escapes the core entirely reaches ParallelSuiteRunner's per-slot catch-all, which sees a
+        // type and cannot tell an engine defect from a container that fell over. That slot leaves
+        // this marker false. Closing it needs a phase marker on the escape, which is issue #486.
+        //
+        // A SECOND PROVIDER SURFACE SITS OUTSIDE THIS RULE, AND IT IS INVISIBLE TO THE EXIT CODE
+        // RATHER THAN COVERED BY IT. It is named because the headline above invites the reading
+        // that provider code can no longer leave a run green. A provider's IStepDiffRenderer is
+        // provider code that runs at REPORTING time, from ScenarioRunner.BuildDiffLookup's closure,
+        // after every verdict is fixed; a throw from either member is caught there, named once per
+        // (kind, member, exception type) on `output`, and degrades to "no diff for this step"
+        // (issue #485, contained in `fb16c83` — what it cost was every report artefact for the run).
+        // Nothing marks the run, so this rule never fires for it, and that is not a hole this rule
+        // could close: the throw happens after the verdicts this method is handed.
+        //
+        // STATED AS CONTAINMENT, NOT AS AN EXIT CODE, BECAUSE THE EXIT-CODE FORM IS FALSE. An
+        // earlier revision of this paragraph claimed the surface "is NOT a route to exit 0",
+        // reasoning that both invocation sites (TerminalRenderer.RenderStepDiff,
+        // HtmlRenderer.WriteStepDiff) gate on the step's verdict being FAIL while
+        // ExitCodes.FromVerdict maps Verdict.Fail to TestFailure unconditionally. Both clauses are
+        // true; the inference between them — a FAIL step means the run exits 1 — is not, on two
+        // measured routes. `--watch` renders diffs and returns only ExitCodes.UsageError or
+        // ExitCodes.Success, never calling FromVerdict at all (WatchRunner's own remarks say so).
+        // And VerdictPrecedence ranks EnvironmentError (3) above Fail (2), so a FAIL step beside an
+        // EnvironmentError aggregates to EnvironmentError, which is ungated Success — the very
+        // premise the #480 rule relies on elsewhere in this method. So a run in which a diff
+        // renderer threw CAN exit 0; it simply never exits 0 BECAUSE it threw. The renderer moves
+        // the exit code in neither direction.
+        //
+        // ParallelSuiteRunner's slot catch-all names the same surface, immediately after its own
+        // "the compile-time provider surface is closed" sentence and expressly to stop a reader
+        // over-reading that into "provider code cannot break a run". Read both before adding a
+        // surface to either list.
+        //
+        // Conditioned on `code == ExitCodes.Success`, exactly as the two rules above are, so it
+        // states "never 0" and never "exits 4": a Failing sibling still takes the run to 1 by
+        // precedence, and a gated environment error still takes it to 3. It cannot override a code
+        // another rule already chose.
+        if (providerOrEngineFaultObserved && code == ExitCodes.Success)
         {
             return ExitCodes.Inconclusive;
         }

@@ -183,6 +183,52 @@ internal sealed record ValidationFailure(string Message)
     /// </para>
     /// </remarks>
     public bool IsSecurityPreflight { get; init; }
+
+    /// <summary>
+    /// <see langword="true"/> for a failure raised at one of this pipeline's PROVIDER- or
+    /// ENGINE-SURFACE guards — the six <see cref="ProviderPipeline.DescribeProviderFault"/> sites
+    /// (<c>Bind</c>, <c>Validate</c>, <c>Resources</c>, <c>HostResources</c>, <c>Emit</c>,
+    /// <c>CompileReferenceAssemblies</c>) and the suite-level
+    /// <see cref="ProviderPipeline.DescribeAssemblyFault"/> site; <see langword="false"/> for every
+    /// authoring failure, which is every other <see cref="ValidationFailure"/> this pipeline
+    /// produces. Init-only rather than a constructor parameter, exactly as
+    /// <see cref="IsSecurityPreflight"/> is and for the same reason: every existing
+    /// <c>new ValidationFailure(message)</c> call site keeps compiling unchanged and keeps its
+    /// current <see langword="false"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>It follows <see cref="IsSecurityPreflight"/>'s precedent deliberately</strong> — a
+    /// narrow, init-only provenance marker that survives untouched through
+    /// <see cref="PipelineResult.Failure"/> (this record IS that field's value) to a decision made
+    /// much later. Unlike that marker, this one HAS a production consumer: <c>ScenarioRunner</c>
+    /// carries it onto <see cref="SuiteResult"/>, and <c>RunCommand.ComputeExitCode</c> turns it
+    /// into issue #480's rule — a provider or engine defect never exits 0, whatever its siblings
+    /// did.
+    /// </para>
+    /// <para>
+    /// <strong>WHY A NEW MARKER RATHER THAN THE SIGNAL THAT WAS ALREADY THERE.</strong> The only
+    /// member reaching the exit-code seam that distinguished #480's shape from a genuine
+    /// execution-time Inconclusive was <c>SecurityAssurance.Refusal</c>, whose
+    /// <c>SecurityAbortKind.AuthoringFault</c> is recorded by <c>ScenarioRunner</c>'s pre-topology
+    /// door for ANY refused document — a schema-rejected sibling, an unresolvable
+    /// <c>script.csharp file:</c>, a malformed dependency <c>env:</c>. Keying the exit rule on it
+    /// would redden every mixed suite containing any refused document. That widening is a real
+    /// question and is tracked as issue #514; it is deliberately NOT what this marker decides. The
+    /// marker is set only where the engine entered PROVIDER CODE, or its own dispatch/assembly
+    /// plumbing, and something came back out of it that no author can fix by editing the suite.
+    /// </para>
+    /// <para>
+    /// <strong>PROVENANCE, NOT ATTRIBUTION.</strong> It records WHERE the failure was raised, not
+    /// whose fault <see cref="ProviderPipeline.DescribeProviderFault"/> decided the exception was.
+    /// EVERY arm of that method carries it, and not because a list is kept in step: the marker is
+    /// applied at the CALL SITES, which wrap whatever that method returns, so no arm can set,
+    /// clear or miss it and a new arm inherits it without an edit here. See
+    /// <see cref="ProviderPipeline.ProviderOrEngineFault"/>, which is the single site that sets it
+    /// and carries that argument in full.
+    /// </para>
+    /// </remarks>
+    public bool IsProviderOrEngineFault { get; init; }
 }
 
 /// <summary>
@@ -460,14 +506,14 @@ internal static class ProviderPipeline
             }
             catch (Exception ex)
             {
-                return Refuse(
+                return Refuse(ProviderOrEngineFault(
                     DescribeProviderFault(
                         node,
                         instance,
                         "Validate",
                         ex,
                         unwrappedIsProviderFault: false,
-                        resolvedSuiteDirectory));
+                        resolvedSuiteDirectory)));
             }
 
             if (!validResult.IsValid)
@@ -522,14 +568,14 @@ internal static class ProviderPipeline
             // would be wrong.
             if (bound.HostResourcesFailure is { } hostResourcesFailure)
             {
-                return Refuse(
+                return Refuse(ProviderOrEngineFault(
                     DescribeProviderFault(
                         node,
                         instance,
                         "HostResources",
                         hostResourcesFailure,
                         unwrappedIsProviderFault: true,
-                        resolvedSuiteDirectory));
+                        resolvedSuiteDirectory)));
             }
 
             // ── Resources (tolerant, GUARDED — issue #466) ────────────────────
@@ -552,14 +598,14 @@ internal static class ProviderPipeline
             }
             catch (Exception ex)
             {
-                return Refuse(
+                return Refuse(ProviderOrEngineFault(
                     DescribeProviderFault(
                         node,
                         instance,
                         "Resources",
                         ex,
                         unwrappedIsProviderFault: true,
-                        resolvedSuiteDirectory));
+                        resolvedSuiteDirectory)));
             }
 
             // ── Host resources (tolerant, S07-F-01a) ──────────────────────────
@@ -606,14 +652,14 @@ internal static class ProviderPipeline
             }
             catch (Exception ex)
             {
-                return Refuse(
+                return Refuse(ProviderOrEngineFault(
                     DescribeProviderFault(
                         node,
                         instance,
                         "CompileReferenceAssemblies",
                         ex,
                         unwrappedIsProviderFault: true,
-                        resolvedSuiteDirectory));
+                        resolvedSuiteDirectory)));
             }
 
             // ── Emit (GUARDED — issue #466) ───────────────────────────────────
@@ -632,14 +678,14 @@ internal static class ProviderPipeline
             }
             catch (Exception ex)
             {
-                return Refuse(
+                return Refuse(ProviderOrEngineFault(
                     DescribeProviderFault(
                         node,
                         instance,
                         "Emit",
                         ex,
                         unwrappedIsProviderFault: false,
-                        resolvedSuiteDirectory));
+                        resolvedSuiteDirectory)));
             }
 
             fragments.Add(new StepCompilePlan(
@@ -750,7 +796,8 @@ internal static class ProviderPipeline
         }
         catch (Exception ex)
         {
-            return Refuse(DescribeAssemblyFault(ex, resolvedSuiteDirectory));
+            return Refuse(
+                ProviderOrEngineFault(DescribeAssemblyFault(ex, resolvedSuiteDirectory)));
         }
 
         return new PipelineResult(
@@ -957,25 +1004,91 @@ internal static class ProviderPipeline
     /// call sites have to remember.
     /// </para>
     /// <para>
-    /// <strong>WHY, STATED IN THE RIGHT TENSE.</strong> The only field a rebuild would lose is
-    /// <see cref="ValidationFailure.IsSecurityPreflight"/>, and that flag has <em>no production
-    /// consumer today</em> — MEASURED: <c>grep -rn "IsSecurityPreflight" src/</c> finds writers,
-    /// this declaration, and comments, and nothing that reads it.
-    /// <c>ExitCodes.FromVerdict</c> keys REQ-018 on <c>securityAssurance?.Unconfirmed</c>, never
-    /// on this flag, and <c>ScenarioRunner.RunPreTopologyAuthoringDoor</c> discards the record
-    /// and returns a plain string. The flag's own remarks name PR D as the intended consumer;
-    /// that wiring does not exist. An earlier revision of THIS remark asserted the overload
-    /// "protects the marker REQ-018's exit-code decision keys on" — present tense, and false.
+    /// <strong>WHY, STATED IN THE RIGHT TENSE.</strong> A rebuild would lose TWO fields now, and
+    /// they are in opposite states. <see cref="ValidationFailure.IsSecurityPreflight"/> still has
+    /// <em>no production consumer</em> — MEASURED: <c>grep -rn "IsSecurityPreflight" src/</c> finds
+    /// writers, its declaration, and comments, and nothing that reads it;
+    /// <c>ExitCodes.FromVerdict</c> keys REQ-018 on <c>securityAssurance?.Unconfirmed</c>, never on
+    /// that flag. <see cref="ValidationFailure.IsProviderOrEngineFault"/> DOES have one (issue
+    /// #480): <c>ScenarioRunner</c> reads it off <c>PipelineResult.Failure</c>, carries it to
+    /// <see cref="SuiteResult"/>, and <c>RunCommand.ComputeExitCode</c> refuses to exit 0 on it.
+    /// So for that marker this overload is load-bearing rather than merely tidy. (An earlier
+    /// revision of THIS remark asserted the overload "protects the marker REQ-018's exit-code
+    /// decision keys on" — present tense, and false of the flag it named.)
     /// </para>
     /// <para>
-    /// The shape still stands on its own terms: preserving the identity of a record you were
-    /// handed is the correct default, and rebuilding it from one field would be the wrong one
-    /// on the day a consumer does land — which is exactly when nobody would be looking. That is
-    /// a smaller claim than the one it replaces, and it is the true one.
+    /// The shape stands on its own terms for the other field too: preserving the identity of a
+    /// record you were handed is the correct default, and rebuilding it from one field would be
+    /// the wrong one on the day a consumer does land — which is exactly when nobody would be
+    /// looking. That is a smaller claim than the one it replaces, and it is the true one.
+    /// </para>
+    /// <para>
+    /// <strong>What this overload does NOT do is set a marker.</strong> A caller that needs
+    /// <see cref="ValidationFailure.IsProviderOrEngineFault"/> goes through
+    /// <see cref="ProviderOrEngineFault"/>, which is the one site that sets it; passing a bare
+    /// message here is, and must stay, the ordinary authoring-failure spelling.
     /// </para>
     /// </remarks>
     private static PipelineResult Refuse(string message) =>
         Refuse(new ValidationFailure(message));
+
+    /// <summary>
+    /// The ONE spelling of "this failure came out of provider code, or out of the engine's own
+    /// dispatch into it" (issue #480): the diagnostic
+    /// <see cref="DescribeProviderFault"/> or <see cref="DescribeAssemblyFault"/> composed, carried
+    /// on a <see cref="ValidationFailure"/> whose
+    /// <see cref="ValidationFailure.IsProviderOrEngineFault"/> marker is set.
+    /// </summary>
+    /// <param name="message">The already-composed, already-scrubbed diagnostic.</param>
+    /// <remarks>
+    /// <para>
+    /// <strong>SEVEN CALL SITES, ONE FACTORY.</strong> Six are the guards around the provider
+    /// surface — <c>Bind</c> in <see cref="BindAllSteps"/>, and <c>Validate</c>,
+    /// <c>HostResources</c>, <c>Resources</c>, <c>CompileReferenceAssemblies</c> and <c>Emit</c> in
+    /// <see cref="Compile"/>'s Pass 2 — and the seventh is the suite-level
+    /// <c>CsxAssembler.Assemble</c> guard, which refuses provider-EMITTED content. That set is
+    /// exactly the set of <see cref="DescribeProviderFault"/> and
+    /// <see cref="DescribeAssemblyFault"/> call sites, so the marker cannot drift from the
+    /// diagnostics: a new guard around provider code composes its message through one of those two
+    /// methods, and it reaches this factory to do so.
+    /// </para>
+    /// <para>
+    /// <strong>NOTHING ELSE IN THIS FILE IS MARKED, and the boundary is the point.</strong> An
+    /// unknown step type, the registry-lookup internal error, the host-resource/service collision,
+    /// the two security preflights, the <c>${conn:}</c>/protocol guards, the malformed-suite-
+    /// directory refusal and the secret-reference walk are all AUTHORING failures — the suite is
+    /// wrong and editing it fixes the run. Whether THOSE should also make a run non-zero
+    /// irrespective of a passing sibling is issue #514's open question, and marking them here would
+    /// answer it silently.
+    /// </para>
+    /// <para>
+    /// <strong>A MODEL-VALIDATION failure is not marked either, and that one is a judgement rather
+    /// than an obvious exclusion.</strong> <c>ValidationResult.Errors</c> is provider-authored text
+    /// and reaches an author through the same channel, but it is a provider REPORTING that the
+    /// author's model is invalid — the working case of the contract, not a defect in it. Marking it
+    /// would redden every mixed suite containing one mistyped field.
+    /// </para>
+    /// <para>
+    /// <strong>EVERY ONE OF <see cref="DescribeProviderFault"/>'s ATTRIBUTION ARMS IS MARKED,
+    /// INCLUDING THOSE THAT DECLINE TO BLAME THE PROVIDER — and that is a property of WHERE the
+    /// marking happens rather than an enumeration to keep in step.</strong> Every caller wraps that
+    /// method's return in this one, so the marker is applied at the CALL SITES and no arm of the
+    /// method can set, clear or miss it; counting its arms is therefore not a way to check this
+    /// claim, and an arm added later inherits the marking without an edit. The arms differ in the
+    /// blame TEXT they write — a defect in the provider; a filesystem condition that may be the
+    /// host's (the accepted <c>script.csharp</c> TOCTOU race is the in-tree example); an
+    /// OOM-or-cancellation that can surface through any frame; a reflective-dispatch failure before
+    /// the provider's body ran, which names the provider, its packaging and the engine's own
+    /// dispatch and leaves the cause text to tell which — and not in the taxonomy answer: nothing
+    /// was compiled and nothing ran in any of them. #369 already exits 4 for every one of them when
+    /// the defective document is ALONE in a directory, so restoring sibling-independence must not
+    /// invent an asymmetry between them that the solo case does not have. This marker therefore
+    /// records the PROVENANCE of the failure and leaves the attribution to the sentence the author
+    /// reads.
+    /// </para>
+    /// </remarks>
+    private static ValidationFailure ProviderOrEngineFault(string message) =>
+        new(message) { IsProviderOrEngineFault = true };
 
     /// <summary>
     /// Replaces every occurrence of the resolved suite directory in free-form diagnostic text
@@ -1248,6 +1361,18 @@ internal static class ProviderPipeline
     /// The two conditional arms are SIBLINGS rather than one widened predicate: they say
     /// different things, and a filesystem fault is a materially different investigation from an
     /// OOM.
+    /// </para>
+    /// <para>
+    /// <strong>THE ARMS CHANGE THE SENTENCE AND NOT THE TAXONOMY, which is why every one of them is
+    /// marked alike (issue #480).</strong> Every caller wraps this method's return in
+    /// <see cref="ProviderOrEngineFault"/>, so the failure carries
+    /// <see cref="ValidationFailure.IsProviderOrEngineFault"/> whichever arm composed it — the
+    /// marking is at the call sites and not inside this method, so no arm can miss it and an arm
+    /// added later inherits it. That marker is provenance — the engine entered provider code and
+    /// did not come back — and the arms above are attribution, which is a different question.
+    /// Nothing was compiled and nothing ran in any of them, and #369 already exits 4 for every one
+    /// when the document is alone in its directory; a marker that split them would make the exit
+    /// code depend on the exception type as well as on the sibling.
     /// </para>
     /// <para>
     /// <strong>Why the catches stay broad here while
@@ -1552,6 +1677,13 @@ internal static class ProviderPipeline
             if (!registry.TryGet(node.CanonicalType, out var rp) || rp is null)
             {
                 // This should not happen: AstBuilder already verified the type.
+                //
+                // DELIBERATELY NOT MARKED AS A PROVIDER/ENGINE FAULT (issue #480). No provider code
+                // has been entered on this line — the registry is a frozen lookup and this branch
+                // says only that a type the AST accepted is not in it. It is reported through the
+                // ordinary authoring channel, exactly as it always was; see ProviderOrEngineFault
+                // for the full boundary and for why widening it is #514's question rather than
+                // this one's.
                 return (boundSteps, new ValidationFailure(
                     $"Internal error: provider '{node.CanonicalType}' missing from registry after AST build."));
             }
@@ -1633,7 +1765,7 @@ internal static class ProviderPipeline
                 // `unwrappedIsProviderFault: false` is the Bind/Validate/Emit reading of an
                 // UNWRAPPED exception — those three go through FindGenericInterface first, so an
                 // unwrapped throw is engine plumbing.
-                return (boundSteps, new ValidationFailure(
+                return (boundSteps, ProviderOrEngineFault(
                     DescribeProviderFault(
                         node,
                         instance,
