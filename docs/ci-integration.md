@@ -70,9 +70,15 @@ unmet upstream capture — is not this case either, and stays gated behind `--fa
 
 **A scenario refused at a provider- or engine-surface guard** — a provider's `Bind`, `Validate`,
 `Resources`, `HostResources`, `Emit` or `CompileReferenceAssemblies` threw, or the assembler refused
-the CSX fragments a provider emitted. This is a defect in the **provider** — the test tooling
-itself — and not in the system under test; a defect the suite observed in the system under test is a
-`Fail` and exits 1.
+the CSX fragments a provider emitted. This is a fault in the **testing machinery** and not in your
+system under test; a defect the suite observed in the system under test is a `Fail` and exits 1.
+
+**The rule identifies the fault by where it arose, not by whose it is.** Most of what it catches is
+a provider defect, and the diagnostic says so. But the same guards also catch a reflective-dispatch
+failure *before* the provider's own body ran, an assembler refusal of emitted fragments, and a
+filesystem or out-of-memory condition that may well be the host's — and for those the engine
+deliberately declines to blame the provider. Read the diagnostic for attribution; the exit code only
+tells you the run cannot be trusted.
 
 The rule above already covered such a scenario when it was alone in a directory: nothing executed,
 so the run exited 4. What it did not cover was the same scenario beside one that runs. Measured, on

@@ -99,8 +99,11 @@ backoff (Polly v8) — authors never write `Thread.Sleep`.
   pipeline on a security suite that verified nothing. Any parse failure, and an Inconclusive suite
   refused before any scenario ran, do the same, for the same reason: a document the engine could not
   read, or a suite it refused outright, verified nothing either. So does a scenario refused because a
-  provider threw at one of the engine's SDK surfaces — a defect in the test tooling, which verified
-  nothing whatever its siblings managed. A run that executed nothing because its topology never came
+  provider threw at one of the engine's SDK surfaces — a fault in the testing machinery rather than
+  in the system under test, which verified nothing whatever its siblings managed. The rule is keyed
+  on *where* the fault arose, not on whose it is: usually a provider defect, sometimes a dispatch
+  failure before the provider's own body ran, or a filesystem or memory condition that may be the
+  host's. The diagnostic says which. A run that executed nothing because its topology never came
   up is an environment error, keeps that verdict's own gate, and still exits 0 by default — the
   distinction the taxonomy exists to protect. That holds while the topology is the run's only fault:
   these rules are conditioned on the code so far rather than on the aggregate verdict, so a run that
@@ -185,7 +188,8 @@ enough, whether or not a sibling parsed. **An Inconclusive suite refused before 
 a schema error, an unresolvable secret reference, a malformed dependency `env:`. **A scenario refused
 at a provider- or engine-surface guard** — a provider's `Bind`, `Validate`, `Resources`,
 `HostResources`, `Emit` or `CompileReferenceAssemblies` threw, or the assembler refused the fragments
-a provider emitted; that is a defect in the test tooling, and unlike the rule above it applies even
+a provider emitted. That is a fault in the testing machinery rather than in your system under test,
+identified by where it arose rather than by whose it is, and unlike the rule above it applies even
 when a sibling scenario ran and passed. And **a suite declaring a `security:` block the engine cannot
 confirm**, at whichever code the run's own verdict names — 3 for an EnvironmentError, 4 for an
 Inconclusive.

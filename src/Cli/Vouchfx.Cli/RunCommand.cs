@@ -1626,8 +1626,11 @@ internal static class RunCommand
         // genuine infrastructure flake behind --fail-on-env-error. Reddening either by default is
         // the behaviour that destroys trust in the taxonomy. So the answer travels from the place
         // that KNOWS — ProviderPipeline's guards, which set
-        // ValidationFailure.IsProviderOrEngineFault only where the engine entered provider code —
-        // through SuiteResult.ProviderOrEngineFaultObserved to here.
+        // ValidationFailure.IsProviderOrEngineFault only at the surfaces where the engine dispatches
+        // INTO provider code, or assembles what it emitted — through
+        // SuiteResult.ProviderOrEngineFaultObserved to here. "Dispatches into", not "entered": the
+        // reflective-dispatch arm fires when the call never reached the provider's body at all, and
+        // it is marked like the rest, because the marker is provenance and not blame.
         //
         // NOT KEYED ON SecurityAssurance.Refusal, WHICH WAS THE OTHER CANDIDATE. Its
         // AuthoringFault kind is recorded for ANY document refused at a pre-topology door — a
