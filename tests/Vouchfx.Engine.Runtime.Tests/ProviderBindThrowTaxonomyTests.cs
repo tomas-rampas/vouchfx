@@ -164,9 +164,11 @@ public sealed class ProviderBindThrowTaxonomyTests
                 result.ExecutedAnyScenario,
                 "the parallel path derives the same nothing-executed answer from its event buffers.");
 
-            // #480: the sixth guard's half of the same blocking-lane cover that
-            // ProviderReflectiveFaultTaxonomyTests' parallel theory provides for the other five —
-            // see the longer note there for why this hop has no other untraited assertion.
+            // #480: one of two blocking-lane covers for this hop - the other is
+            // ProviderReflectiveFaultTaxonomyTests' parallel theory, which drives the other five
+            // reflective surfaces. The line is step-type-agnostic, so either row alone covers it;
+            // every row OUTSIDE the two is traited or drives a fake core. See the longer note
+            // there.
             Assert.True(
                 result.ProviderOrEngineFaultObserved,
                 "the core must carry a throwing Bind's provenance marker onto its ScenarioCoreResult.");

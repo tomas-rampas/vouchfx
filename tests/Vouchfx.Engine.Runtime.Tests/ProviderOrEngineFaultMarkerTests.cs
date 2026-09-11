@@ -199,8 +199,9 @@ public sealed class ProviderOrEngineFaultMarkerTests
     /// The second control row, and the one that covers the branch <c>BindAllSteps</c> comments as
     /// DELIBERATELY unmarked. It is reached by building the AST against the full registry and then
     /// compiling against an EMPTY one — one way in rather than the only one (a hand-built
-    /// <c>ScenarioAst</c> carrying an unregistered <c>StepNode</c> is another, the shape
-    /// <c>ProviderPipelineTests.Compile_EmptyAst_</c>… uses), and the one chosen because it keeps
+    /// <c>ScenarioAst</c> carrying an unregistered <c>StepNode</c> is another: the hand-built-AST
+    /// shape <c>ProviderPipelineTests.Compile_EmptyAst_</c>… uses, extended to carry a step, since
+    /// that test's own <c>Steps</c> list is empty), and the one chosen because it keeps
     /// the document realistic. <c>AstBuilder.Build</c> verifies
     /// every step type against the registry it is handed, so a single registry can never produce an
     /// AST whose type it lacks. The two-registry split has no precedent in this assembly; an
@@ -246,7 +247,10 @@ public sealed class ProviderOrEngineFaultMarkerTests
     /// The third control row, and the one that is NOT a per-step failure at all: it is raised from
     /// <c>Compile</c>'s own body against <c>BuildProjectContext</c>'s <c>out</c> parameter, between
     /// Pass 1 and Pass 2 — a door that belongs to neither, and the property worth pinning, since a
-    /// refusal there is reachable before any per-step guard has run. An earlier revision justified
+    /// refusal there is reachable before any PASS 2 per-step guard has run. Not before ALL of
+    /// them: it sits below <c>BindAllSteps</c>, so Bind's own per-step guard has already run for
+    /// every step. Control 2 is the one that fires ahead of every per-step guard.
+    /// An earlier revision justified
     /// this row by the <c>Refuse</c> OVERLOAD it takes, claiming the other two controls would miss
     /// a widening of the message overload; that was false and is recorded rather than deleted.
     /// Control 1 goes through the message overload and control 2 through this same

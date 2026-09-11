@@ -1,5 +1,5 @@
 // Vouchfx.Engine.Runtime.Tests — issue #480: a provider defect BESIDE A PASSING SIBLING.
-// No container runtime is used by any row here; three of the four nevertheless carry
+// No container runtime is used by any row here; three of the five nevertheless carry
 // `[Trait("requires", "docker")]` because they start a real (zero-resource) DCP application — see
 // the trait paragraph below, which is the whole of that argument.
 //
@@ -58,7 +58,9 @@
 // DCP application.
 //
 // MEASURED (Windows 11, .NET 8, VSTest 17.11.1, `dotnet test --no-build -m:1 --logger trx --filter
-// FullyQualifiedName~MixedSuiteEngineFaultTaxonomyTests`): exit 0, 4 passed / 0 failed, twice.
+// FullyQualifiedName~MixedSuiteEngineFaultTaxonomyTests`): exit 0, 4 passed / 0 failed, twice —
+// taken over the four rows that existed then. The fifth, added later, is untraited and starts no
+// DCP; it costs 34 ms.
 // Per-test durations read off the TRX rather than the console summary, worst of the two runs:
 // 2.18 s and 1.71 s for the two docker-traited defect rows, 6.99 s for the docker-traited control
 // row, and 0.15 s for the untraited topology-failure row, which starts no DCP at all. Two of the
@@ -80,7 +82,10 @@
 // Three links leave the blocking lane, and each is named rather than summarised as "the engine
 // side":
 //   • the sequential path's NORMAL-completion tail carrying the marker (the first row below) — the
-//     without-topology tail is the untraited fourth row's, and that one is in the lane;
+//     without-topology tail is the untraited fourth and fifth rows', and those are in the lane.
+//     The NORMAL-completion INITIALISER is additionally pinned syntactically, in the lane, by
+//     `SuiteResultFaultMarkerCensusTests` — a source census, because that return needs a topology
+//     that starts;
 //   • the REAL parallel core attaching the marker at its own pre-topology door (the second row); and
 //   • an executed-and-inconclusive run leaving the marker FALSE (the third row, the control).
 // Everything else is pinned in the blocking lane. The exit RULE stays pinned there by
@@ -94,10 +99,12 @@
 // own remarks say why a fake core is the right instrument there and the wrong one here. The fourth
 // row below, the topology that fails to START, is deliberately NOT traited: it is refused inside
 // `SuiteTopology.StartAsync` BEFORE `HeadlessTopology.StartAsync` is reached, so it never touches
-// DCP and keeps one end-to-end engine-side row — and with it the Pass-B accumulator and the
-// without-topology carry — in the blocking lane.
+// DCP and keeps one end-to-end engine-side row — and with it the without-topology carry — in the
+// blocking lane. The FIFTH row is the accumulator's own: it drives the Pass-B line twice in one
+// run, which is what distinguishes its `|=` from an assignment — and MEASURED, it is the only row
+// in this project that can see the difference (see its own remarks).
 //
-// THE SCENARIOS OF EACH ROW DECLARE A BYTE-IDENTICAL ENVIRONMENT — for three rows, namely none —
+// THE SCENARIOS OF EACH ROW DECLARE A BYTE-IDENTICAL ENVIRONMENT — for four rows, namely none —
 // so the shared-`environment` divergence guard cannot fire. That guard compares
 // `SerialiseEnvironment(scenarios[i].Environment)` against the first schema-valid scenario's, and
 // two absent blocks serialise identically, so the suite is held to one topology exactly as a
@@ -196,9 +203,23 @@ public sealed class MixedSuiteEngineFaultTaxonomyTests
               await Task.Delay(TimeSpan.FromSeconds(2));
         """;
 
+    /// <summary>
+    /// An ORDINARY authoring fault: <c>script.csharp</c> naming a file that is not there. It is
+    /// refused by the provider's own <c>Validate</c>, which <c>ProviderPipeline</c> deliberately
+    /// does NOT mark as a provider fault, so it drives the accumulator's false arm.
+    /// </summary>
+    private const string OrdinaryAuthoringFaultYaml = """
+        steps:
+          - id: no-such-script
+            type: script.csharp
+            file: definitely-not-here.csx
+        """;
+
     private static readonly string[] s_mixedScenarioNames = { "defect-scenario", "passing-sibling" };
 
     private static readonly string[] s_timeoutScenarioNames = { "timeout-scenario", "passing-sibling" };
+
+    private static readonly string[] s_twoFaultNames = { "defect-scenario", "authoring-fault" };
 
     // ── The defect suite, on both run paths ───────────────────────────────────
 
@@ -540,6 +561,70 @@ public sealed class MixedSuiteEngineFaultTaxonomyTests
         {
             squatter.Stop();
         }
+    }
+
+    // ── The accumulator: ACCUMULATED, never reset ────────────────────────────
+
+    /// <summary>
+    /// A provider defect followed by an ordinary authoring fault: the marker survives the second
+    /// scenario, which is the difference between Pass B's <c>|=</c> and an assignment.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>ORDER IS LOAD-BEARING.</strong> The defect is first and the unmarked fault second,
+    /// so an assignment at that line would CLEAR the earlier scenario's provenance; reversed, the
+    /// row would pass either way.
+    /// </para>
+    /// <para>
+    /// NO CONTAINER STARTS, which is why this row is untraited: both documents take an early
+    /// verdict at the pre-topology door, so the all-early guard fires and
+    /// <c>CompleteWithoutTopologyAsync</c> returns before the topology is built. The
+    /// <c>ExecutedAnyScenario</c> assertion below is the evidence for that, not decoration.
+    /// </para>
+    /// <para>
+    /// The second document must be an authoring fault that reaches the accumulator. A
+    /// schema-invalid one does not: Pass B <c>continue</c>s on <c>!schemaValid[i]</c> above the
+    /// accumulator, and an unknown step type is refused earlier still - <c>AstBuilder.Build</c>
+    /// throws on one, so it cannot even be constructed here.
+    /// </para>
+    /// <para>
+    /// MEASURED: with <c>|=</c> changed to <c>=</c> at that line, the build stays clean
+    /// (<c>-warnaserror</c>, 0 warnings, 0 errors) and this is the ONLY red row in the whole
+    /// <c>requires!=docker</c> run of this project - 1 failed / 644 passed / 645 total, counters
+    /// from the TRX. Nothing else in the project can see the difference.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task RunSuiteAsync_ProviderDefectThenAnOrdinaryAuthoringFault_KeepsTheMarker()
+    {
+        var output = new StringWriter();
+
+        var result = await ScenarioRunner.RunSuiteAsync(
+            scenarios: BuildAsts(DefectScenarioYaml, OrdinaryAuthoringFaultYaml),
+            scenarioNames: s_twoFaultNames,
+            yamlTexts: new[] { DefectScenarioYaml, OrdinaryAuthoringFaultYaml },
+            providerAssemblies: ProviderAssemblies,
+            appHostAssemblyName: AppHostAssemblyName,
+            output: output);
+
+        Assert.Equal(Verdict.Inconclusive, VerdictFor(result, "defect-scenario"));
+        Assert.Equal(Verdict.Inconclusive, VerdictFor(result, "authoring-fault"));
+
+        Assert.False(
+            result.ExecutedAnyScenario,
+            "both scenarios take an early verdict, so the all-early guard returns before the "
+            + "topology is built.");
+
+        Assert.True(
+            result.ProviderOrEngineFaultObserved,
+            "Pass B ORs into the accumulator; an assignment would let the second scenario's "
+            + "unmarked fault clear the first scenario's provenance.");
+
+        // NOT VACUOUS: the second scenario really is the unmarked shape. Were it marked too, an
+        // assignment would keep the marker true and this row would pass over the defect it exists
+        // to catch.
+        Assert.Contains("no-such-script", output.ToString(), StringComparison.Ordinal);
+        AssertDiagnosticNamesTheDefectiveStep(output.ToString());
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────

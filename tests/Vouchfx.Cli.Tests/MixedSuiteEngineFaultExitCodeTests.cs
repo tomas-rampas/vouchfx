@@ -203,7 +203,8 @@ public sealed class MixedSuiteEngineFaultExitCodeTests
     /// this row pins that an implementation which reddened the run by CLASSIFYING the defect as an
     /// environment error would be caught — but ONLY if it also made the answer depend on the flag.
     /// That qualifier is load-bearing and was dropped once already: the verdict is an INPUT here
-    /// (the helper hardcodes <see cref="Verdict.Inconclusive"/>), so a classification change
+    /// (the helper defaults to <see cref="Verdict.Inconclusive"/>, and this row does not override
+    /// it - the Failing-sibling row does), so a classification change
     /// upstream cannot reach this row at all. What it catches is an exit-code rule that started
     /// reading <c>failOnEnvironmentError</c> on this shape, which is why the assertion is an
     /// equality against the un-flagged answer rather than a bare "non-zero".
