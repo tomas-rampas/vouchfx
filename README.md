@@ -183,6 +183,10 @@ in `Vouchfx.Engine.Compilation` and `Vouchfx.Engine.Planning` instead of shellin
 | `4` | Inconclusive | Only with `--fail-on-inconclusive` — except a parse failure, an Inconclusive suite refused before anything ran, a scenario refused at a provider- or engine-surface guard, or an unconfirmable `security:` declaration |
 | `5` | Gaps found | Only with `vouchfx plan --fail-on-gap` |
 
+These are `run` and `run --parallel` codes. **`--watch` applies no verdict-based exit gating** — it
+returns a usage error for a selection that is not exactly one parseable file, and 0 otherwise,
+whatever the verdicts.
+
 Four exceptions ignore the gating flags. **Any parse failure** — one unreadable or malformed file is
 enough, whether or not a sibling parsed. **An Inconclusive suite refused before any scenario ran** —
 a schema error, an unresolvable secret reference, a malformed dependency `env:`. **A scenario refused
