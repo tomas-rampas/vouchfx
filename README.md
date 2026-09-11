@@ -193,7 +193,10 @@ Inconclusive.
 Each is stated as "never exits 0" rather than "exits 4": none overrides a code another rule already
 chose, so a failing scenario still takes the run to 1. A run that executed nothing but carries an
 `EnvironmentError` — a topology that never came up — is outside all four and still exits 0 by
-default, as does every other environment error. See
+default, as does every other environment error, *provided that is the run's only fault*: a topology
+failure in a suite where a sibling's provider had already thrown is caught by the third exception and
+exits 4 (or 3 with `--fail-on-env-error`, which takes the code off Success before that exception is
+consulted). See
 [CI integration](https://vouchfx.io/ci-integration/) for the full breakdown.
 
 Full CLI coverage — every flag, the report formats, graceful shutdown for programmatic hosts — is in

@@ -53,9 +53,12 @@ and one shape does: a refusal carrying an `EnvironmentError` verdict rather than
 — a topology that failed to start, or a suite whose scenarios declared divergent `environment`
 blocks. Those keep `EnvironmentError`'s own `--fail-on-env-error` gate and exit 0 without it —
 provided that is the run's *only* fault. A run whose topology failed to start in a suite where a
-sibling's provider had already thrown carries both, and the provider-guard rule below takes it to 4:
-the rules are conditioned on the code so far being Success, not on the aggregate verdict, so the
-`EnvironmentError` aggregate does not shield it. The
+sibling's provider had already thrown carries both, and by default the provider-guard rule below
+takes it to 4: the rules are conditioned on the code so far being Success, not on the aggregate
+verdict, so an ungated `EnvironmentError` aggregate does not shield it. Set `--fail-on-env-error`
+and that same run exits **3** — the gate takes the code off Success first, and the provider-guard
+rule then cannot change it. Either way it is non-zero; which non-zero code you get is the gate's
+decision, not the provider-guard rule's. The
 distinction is deliberate: an authoring fault the engine refused is not the same event as an
 environment that never came up, and widening this rule to every no-execution run would silently
 close [issue #390](https://github.com/tomas-rampas/vouchfx/issues/390). (A **secured** suite refused

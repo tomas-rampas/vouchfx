@@ -462,8 +462,10 @@ public sealed class MixedSuiteEngineFaultTaxonomyTests
     /// <para>
     /// The squatter binds <see cref="IPAddress.Any"/>, which is the first address the pre-flight
     /// probes on every platform, so the refusal does not depend on the OS-conditional address set
-    /// <c>TryHold</c> documents. The port is allocated by the OS rather than hard-coded: a fixed
-    /// port makes a test red by boot order on a host with a reserved range.
+    /// <c>TryHold</c> documents. The port is allocated by the OS rather than hard-coded — a fixed
+    /// port makes a test red by boot order on a host with a reserved range — and the socket that
+    /// was given it IS the squatter, never released and rebound, so there is no window for another
+    /// process to take the port between the two.
     /// </para>
     /// <para>
     /// <strong>NOT VACUOUS, and each assertion below rules out a different way of being green for
@@ -478,9 +480,15 @@ public sealed class MixedSuiteEngineFaultTaxonomyTests
     [Fact]
     public async Task RunSuiteAsync_ProviderDefectThenAFailedTopology_IsEnvironmentErrorAndNothingExecuted()
     {
-        var port = FindAFreePort();
-        var squatter = new TcpListener(IPAddress.Any, port);
+        // ONE listener, bound on port 0 and then HELD for the whole row. It must not be the
+        // find-a-port-then-rebind-it shape: releasing the probe and binding a second listener to
+        // the port it reported leaves a window in which anything on the host — on a parallel CI
+        // agent, something — can claim it, and the pre-flight would then observe a state this row
+        // did not create. Asking the OS for a port and keeping the socket that got it removes the
+        // window rather than narrowing it.
+        var squatter = new TcpListener(IPAddress.Any, 0);
         squatter.Start();
+        var port = ((IPEndPoint)squatter.LocalEndpoint).Port;
         try
         {
             var defectYaml = PinnedPortEnvironment(port) + DefectScenarioYaml;
@@ -555,20 +563,6 @@ public sealed class MixedSuiteEngineFaultTaxonomyTests
                 - "{hostPort}:9093"
 
         """;
-
-    /// <summary>
-    /// Finds a port nothing currently holds, by binding the any-address on port 0 and releasing
-    /// it — the same shape (and the same reasoning) as
-    /// <c>PinnedHostPortPreflightTests.FindAFreePort</c>.
-    /// </summary>
-    private static int FindAFreePort()
-    {
-        var probe = new TcpListener(IPAddress.Any, 0);
-        probe.Start();
-        var port = ((IPEndPoint)probe.LocalEndpoint).Port;
-        probe.Stop();
-        return port;
-    }
 
     /// <summary>
     /// The diagnostic must name BOTH the offending step id and the provider's dotted step type.

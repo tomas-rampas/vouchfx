@@ -191,18 +191,27 @@ public sealed class MixedSuiteEngineFaultExitCodeTests
     }
 
     /// <summary>
-    /// <c>--fail-on-env-error</c> changes nothing about this shape: it exits 4 either way.
+    /// <c>--fail-on-env-error</c> changes nothing on the INCONCLUSIVE shape: it exits 4 either way.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The gate is scoped to <see cref="Verdict.EnvironmentError"/>, and a provider defect is
-    /// deliberately NOT one — §12.1 reserves EnvironmentError for infrastructure an author cannot
-    /// fix by editing the suite, and a provider whose <c>Bind</c> throws is neither infrastructure
-    /// nor the author's fault. So the flag cannot reach this shape, and this row pins that it does
-    /// not: an implementation that reddened the run by classifying the defect as an environment
-    /// error would pass the row above (4 is 4) and fail here only if it ALSO made the answer
-    /// depend on the flag — which is why the assertion is an equality against the un-flagged
-    /// answer rather than a bare "non-zero".
+    /// The gate is scoped to <see cref="Verdict.EnvironmentError"/>, and a provider defect beside a
+    /// passing sibling aggregates to <see cref="Verdict.Inconclusive"/> — §12.1 reserves
+    /// EnvironmentError for infrastructure an author cannot fix by editing the suite, and a
+    /// provider whose <c>Bind</c> throws is neither infrastructure nor the author's fault. So on
+    /// this verdict <see cref="ExitCodes.FromVerdict"/> never reaches the arm the flag reads, and
+    /// this row pins that an implementation which reddened the run by CLASSIFYING the defect as an
+    /// environment error would be caught: it would pass the row above (4 is 4) and fail here, where
+    /// the assertion is an equality against the un-flagged answer rather than a bare "non-zero".
+    /// </para>
+    /// <para>
+    /// <strong>WHAT THIS ROW IS NOT, stated because an earlier version of these remarks claimed it
+    /// and the claim was false.</strong> It does not exercise the <c>--fail-on-env-error</c> gate,
+    /// and it cannot: on an Inconclusive aggregate <c>failOnEnvironmentError</c> is inert in BOTH
+    /// calls, so the equality is trivially true and would hold with the parameter deleted. What it
+    /// pins is one property — the flag cannot move the answer for a provider defect on the shape
+    /// #480 is about. The gate's own boundary is the row below, which is a different verdict and a
+    /// different rule.
     /// </para>
     /// </remarks>
     [Fact]
@@ -218,6 +227,50 @@ public sealed class MixedSuiteEngineFaultExitCodeTests
 
         Assert.Equal(withoutGate, withGate);
         Assert.Equal(ExitCodes.Inconclusive, withGate);
+    }
+
+    /// <summary>
+    /// A provider defect whose topology ALSO failed exits 3 under <c>--fail-on-env-error</c>, not
+    /// 4: the #480 rule cannot override a code another rule already chose.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>THIS IS THE BOUNDARY OF THE WHOLE RULE, and it is the one row that exercises the
+    /// <c>--fail-on-env-error</c> gate rather than merely passing the flag.</strong> The arguments
+    /// are the topology-failure row's, measured by
+    /// <c>MixedSuiteEngineFaultTaxonomyTests.RunSuiteAsync_ProviderDefectThenAFailedTopology_IsEnvironmentErrorAndNothingExecuted</c>,
+    /// with the gate turned on. <see cref="ExitCodes.FromVerdict"/> now REACHES its
+    /// <see cref="Verdict.EnvironmentError"/> arm with the flag true and returns
+    /// <see cref="ExitCodes.EnvironmentError"/>, so <c>code</c> is already non-Success by the time
+    /// the #480 guard is tested and the guard does not fire. The run exits 3 — the code the
+    /// author asked for, describing the infrastructure that did not come up — and NOT 4.
+    /// </para>
+    /// <para>
+    /// The #480 guard's own comment promises exactly this ("a gated environment error still takes
+    /// it to 3"), and a promise in a comment is not a pin. It is also the shape a "provider defects
+    /// always exit 4" implementation would get wrong while passing every other row in this file:
+    /// it would report a suite whose containers never started as merely undetermined, discarding
+    /// the one classification the operator explicitly opted in to.
+    /// </para>
+    /// <para>
+    /// <c>executedAnyScenario: false</c> is the measured value for this shape, not a convenience.
+    /// #369's rule is scoped to <see cref="Verdict.Inconclusive"/> so it is inert here either way,
+    /// but handing the seam a value the runner does not produce would make the row about a
+    /// combination that cannot occur.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void ComputeExitCode_ProviderDefectThenAFailedTopology_UnderFailOnEnvErrorExitsThree()
+    {
+        var exitCode = ExitCodeFor(
+            PreTopologyRefusalAssurance,
+            providerOrEngineFaultObserved: true,
+            suiteVerdict: Verdict.EnvironmentError,
+            failOnEnvironmentError: true,
+            executedAnyScenario: false);
+
+        Assert.Equal(ExitCodes.EnvironmentError, exitCode);
+        Assert.NotEqual(ExitCodes.Inconclusive, exitCode);
     }
 
     /// <summary>
@@ -384,8 +437,9 @@ public sealed class MixedSuiteEngineFaultExitCodeTests
     /// Failing-sibling row overrides it to prove the guard cannot override a code already chosen.
     /// </param>
     /// <param name="failOnEnvironmentError">
-    /// False for an unqualified <c>vouchfx run</c>; one row sets it to prove the answer does not
-    /// move.
+    /// False for an unqualified <c>vouchfx run</c>. Two rows set it, and they are opposites: on the
+    /// Inconclusive shape it is inert and the answer must not move, while on the EnvironmentError
+    /// shape it is the gate that takes the run to 3 instead of 4.
     /// </param>
     /// <param name="executedAnyScenario">
     /// <see langword="true"/> for the mixed suite this file was written for — the sibling ran, which

@@ -2557,8 +2557,15 @@ public static class ScenarioRunner
             // REQ-018: AT THIS CATCH, the classified kind on the exception is the whole
             // discriminator — not the message text and not the verdict — and IT IS UNTOUCHED by
             // the derivation. An unhealthy container, an unpullable image and an unrelated seed
-            // failure all reach this same catch, record TopologyUnavailable, and still exit 0 by
-            // default. That is #390, deliberately still open.
+            // failure all reach this same catch and record TopologyUnavailable.
+            //
+            // AND WHEN THE TOPOLOGY FAILURE IS THE RUN'S ONLY FAULT, THAT STILL EXITS 0 BY
+            // DEFAULT — that is #390, deliberately still open. It is no longer true of every run
+            // reaching this catch, and the exception is the marker threaded onto the return below:
+            // a Pass-B provider defect followed by a topology that would not start aggregates to
+            // EnvironmentError, FromVerdict returns Success ungated, and #480's rule then takes it
+            // to 4. Under --fail-on-env-error the answer is 3 rather than 4, because that rule is
+            // conditioned on the code so far being Success and the gate has already chosen one.
             //
             // Scoped to this catch deliberately. An earlier wording said "exactly ONE cause of an
             // Environment error exits non-zero without --fail-on-env-error", which was true when
@@ -2590,8 +2597,12 @@ public static class ScenarioRunner
             //
             // The classified kind on the exception still decides the refusal, untouched: an
             // unhealthy container, an unpullable image and an unrelated seed failure all record
-            // TopologyUnavailable and still exit 0 by default. That is #390, deliberately open —
-            // this change is about what a run REPORTS, not about what it exits.
+            // TopologyUnavailable, and where the topology failure is the run's ONLY fault they
+            // still exit 0 by default. That is #390, deliberately open — #407's change was about
+            // what a run REPORTS, not about what it exits. The qualifier is load-bearing on THIS
+            // call: `providerOrEngineFaultObserved` is passed below, and when it is true the run
+            // exits 4 (or 3 under --fail-on-env-error, which chooses a code first) by #480's rule.
+            // See the REQ-018 paragraph above for the full statement.
             return await CompleteWithoutTopologyAsync(
                     StampWhereUnjudged(compilations, Verdict.EnvironmentError, topologyFailure),
                     WithUnbuiltDocuments(assurance.Refusing(
