@@ -572,6 +572,13 @@ public sealed class GitChangeSetTests
     /// is behind it.
     /// </para>
     /// <para>
+    /// <strong>THE <c>KEY=</c> ROWS ARE A LEAK THAT BYPASSED THE RULE ENTIRELY, not a residue of
+    /// one.</strong> With <c>=</c> outside the separator set <c>cwd=/home/runner/work/x</c> was ONE
+    /// token beginning <c>c</c>, so the rooted test was <see langword="false"/> and the whole path
+    /// was relayed. The companion row pins what <c>=</c> does NOT close — a colon alone still glues
+    /// a path to its prefix — so that closing it later shows up as a moved expectation.
+    /// </para>
+    /// <para>
     /// <strong>ONLY THE DRIVE-LETTER SHAPES ARE GATED, AND THAT IS A FIX NOT A TIDY-UP.</strong>
     /// Every lane in <c>build.yml</c> is <c>ubuntu-latest</c>, so while the gate sat above the
     /// first quote-aware row this method asserted three things in CI and ALL THREE passed with the
@@ -667,6 +674,21 @@ public sealed class GitChangeSetTests
             "warning: <path>(<path>)",
             GitChangeSet.SubstituteAbsolutePaths("warning: /etc/x(/tmp/y)"));
 
+        // A rooted path behind a `KEY=` prefix. Before `=` joined the separator set the whole
+        // thing was ONE token beginning `c`, which is not rooted, so the path was relayed
+        // verbatim — the entire path rather than a residue of one. POSIX-shaped, so this row is
+        // asserted on every lane.
+        Assert.Equal(
+            "cwd=<path>",
+            GitChangeSet.SubstituteAbsolutePaths("cwd=/home/runner/work/x"));
+
+        // The residue `=` does NOT close, pinned rather than described: a colon alone still glues
+        // a rooted path to its prefix, because `:` cannot join the separator set without
+        // splitting `C:\Users\x` at the drive colon. See GitChangeSet.TokenSeparators.
+        Assert.Equal(
+            "error:/home/john/x",
+            GitChangeSet.SubstituteAbsolutePaths("error:/home/john/x"));
+
         if (!OperatingSystem.IsWindows())
         {
             return;
@@ -698,6 +720,12 @@ public sealed class GitChangeSetTests
         Assert.Equal(
             @"<path> Files\Git\x",
             GitChangeSet.SubstituteAbsolutePaths(@"C:\Program Files\Git\x"));
+
+        // The `KEY=` shape in its drive-letter spelling, which is behind the gate because only
+        // Windows reads `C:` as a root. The prefix survives and the path does not.
+        Assert.Equal(
+            @"GIT_DIR=<path>",
+            GitChangeSet.SubstituteAbsolutePaths(@"GIT_DIR=C:\Users\John\src\repo\.git"));
     }
 
     /// <summary>
@@ -1002,15 +1030,23 @@ public sealed class GitChangeSetTests
     /// <summary>
     /// A git that is not on <c>PATH</c> is refused before anything is launched, as a
     /// <see cref="ChangeSetException"/> — the same outcome, and therefore the same exit code 2, as
-    /// the launch failure it replaces.
+    /// the launch failure, but no longer the same sentence.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// There is deliberately no fallback to the bare name: falling back is precisely the
     /// search-order hole the resolution closes, so "not found" has to be a refusal. The exit code
     /// is unchanged on purpose — whether selection-infrastructure failure deserves one of its own
     /// is an open and UNFILED question. This comment used to cite issues #480 and #466-B; neither
     /// answers it (see <see cref="GitTimesOut_SurfacesChangeSetException_NamingTheBudget"/>'s
     /// remarks for why).
+    /// </para>
+    /// <para>
+    /// The second assertion is this row's half of the wording split: no candidate exists here, so
+    /// the PATH question is the actionable one and the launch sentence would be a lie.
+    /// <see cref="LaunchFailure_DoesNotDiscloseTheResolvedPath"/> asserts the mirror image, so a
+    /// later re-merge of the two wordings reddens on whichever side it lands.
+    /// </para>
     /// </remarks>
     [Fact]
     public void GitNotOnPath_IsRefused_BeforeAnythingIsLaunched()
@@ -1022,6 +1058,10 @@ public sealed class GitChangeSetTests
 
         Assert.Contains(
             "Is git installed and on PATH?", ex.Message, System.StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "the operating system refused to start it",
+            ex.Message,
+            System.StringComparison.Ordinal);
         Assert.Empty(runner.Calls);
     }
 
@@ -1098,7 +1138,15 @@ public sealed class GitChangeSetTests
         var mapped = Assert.Throws<ChangeSetException>(
             () => new GitChangeSet("main", Path.GetTempPath(), runner, () => absentGit));
 
+        // ...and it is the LAUNCH wording, not the not-found-on-PATH one. The locator has already
+        // handed this arm a candidate, so "is git installed and on PATH?" would ask a question
+        // answered yes one frame earlier and send the reader to the one place that is not the
+        // problem. Both halves are asserted: the launch sentence present, the PATH question gone.
         Assert.Contains(
+            "the operating system refused to start it",
+            mapped.Message,
+            System.StringComparison.Ordinal);
+        Assert.DoesNotContain(
             "Is git installed and on PATH?", mapped.Message, System.StringComparison.Ordinal);
 
         // The repo's shared property assertion (#357/#375/#473) rather than a DoesNotContain on

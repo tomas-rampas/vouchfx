@@ -11,7 +11,8 @@
 //
 // git prints repo-relative, forward-slash paths; we resolve them against the repo root to
 // absolute, normalise separators to '/', and store them in a case-tolerant set. A non-zero
-// git exit (bad ref, not a repo), a launch failure (git not installed) or a timeout (a wedged
+// git exit (bad ref, not a repo), a launch failure (a git that was found and would not start,
+// which since #499 is a DIFFERENT refusal from "no git on PATH") or a timeout (a wedged
 // git, or one whose grandchild holds the capture pipes open — #481/#392) is wrapped in a
 // ChangeSetException, which the CLI maps to a usage error (exit 2) — NEVER a crash. A CANCELLED
 // call is the exception to that rule and propagates as OperationCanceledException: an operator's
@@ -210,8 +211,10 @@ internal sealed class GitChangeSet : IChangeSet
         // launch this same rooted path. A miss is refused here rather than degraded to the bare
         // name — falling back to "git" is precisely the search-order hole this resolution closes.
         //
-        // The refusal deliberately reuses the launch-failure wording and therefore the launch
-        // failure's OUTCOME: a ChangeSetException, which the CLI maps to exit 2. Whether
+        // The refusal reuses the launch failure's OUTCOME — a ChangeSetException, which the CLI
+        // maps to exit 2 — but no longer its WORDING: this site has no candidate and the launch
+        // site has one, so "is git installed and on PATH?" is the actionable question here and a
+        // misdirection there. See GitNotStartable. Whether
         // selection-infrastructure failure deserves a code of its own is an open, unfiled question
         // — see RunGit's remarks — and a fix for a binary-resolution defect does not get to answer
         // it in passing.
@@ -449,10 +452,17 @@ internal sealed class GitChangeSet : IChangeSet
             //
             // Scrubbing or sentence-splitting would keep the operating system's reason, at the
             // cost of a rule that has to stay correct against a message .NET composes and
-            // localises. GitUnavailable already tells the author the one thing they can act on,
+            // localises. GitNotStartable already tells the author the one thing they can act on,
             // so the clause is dropped instead. The exception is still chained, so the full
             // detail remains available to a debugger and to anything that walks InnerException.
-            throw new ChangeSetException(GitUnavailable(operation), ex);
+            //
+            // ITS OWN WORDING, NOT GitUnavailable's, AND THE DISTINCTION IS THE USEFUL PART. This
+            // arm is reached only AFTER the locator has returned a candidate, so "is git installed
+            // and on PATH?" asks a question already answered yes — and sends the reader looking in
+            // the one place that is not the problem. What failed is the START of a candidate that
+            // was found: it may be a directory, a broken symlink, a file with no execute bit, or
+            // one the current user may not run.
+            throw new ChangeSetException(GitNotStartable(operation), ex);
         }
         catch (ProcessTimeoutException ex)
         {
@@ -493,13 +503,39 @@ internal sealed class GitChangeSet : IChangeSet
     }
 
     /// <summary>
-    /// The one wording for "git could not be run", shared by the <c>PATH</c>-resolution refusal
-    /// and by the runner's launch failure so that the two cannot drift apart.
+    /// The wording for "no git was found at all" — the <c>PATH</c>-resolution refusal, and only
+    /// that.
     /// </summary>
     /// <param name="operation">What was being attempted, in the caller's own vocabulary.</param>
     /// <returns>The message, deliberately naming no path — see <see cref="RunGit"/>.</returns>
+    /// <remarks>
+    /// It used to be shared with the launch failure, on the reasoning that two wordings for "git
+    /// could not be run" would drift apart. They are not the same failure: this one is raised
+    /// BEFORE anything is launched, because the search over <c>PATH</c> produced no candidate, so
+    /// its question is the actionable one. <see cref="GitNotStartable"/> is raised only AFTER a
+    /// candidate has been produced, where the same question misdirects.
+    /// </remarks>
     private static string GitUnavailable(string operation) =>
         $"Could not run git for {operation}. Is git installed and on PATH?";
+
+    /// <summary>
+    /// The wording for "a git was found and the operating system would not start it".
+    /// </summary>
+    /// <param name="operation">What was being attempted, in the caller's own vocabulary.</param>
+    /// <returns>The message, deliberately naming no path — see <see cref="RunGit"/>.</returns>
+    /// <remarks>
+    /// PATH-FREE, exactly as <see cref="GitUnavailable"/> is (#498): the candidate is the one thing
+    /// a reader would want named and is precisely the host path that may not be disclosed, so the
+    /// message describes WHICH candidate it means rather than spelling it. That is #357's rule in
+    /// its usual shape: name the declared thing and the concept it resolves against, never the
+    /// resolution. "The first git on <c>PATH</c>" is the concept because
+    /// <see cref="LocateGitOnPath"/> returns the first fully qualified match and nothing else; a
+    /// test may inject another locator, and nothing user-facing goes through one.
+    /// </remarks>
+    private static string GitNotStartable(string operation) =>
+        $"Could not start git for {operation}. A git executable was found on PATH, but the "
+        + "operating system refused to start it. Is the first git on PATH a valid executable this "
+        + "user may run?";
 
     /// <summary>
     /// What replaces an absolute host path in relayed text.
@@ -513,8 +549,31 @@ internal sealed class GitChangeSet : IChangeSet
     /// <summary>
     /// The separators that bound a token, matching the shared disclosure assertion's set exactly.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong><c>=</c> IS A SEPARATOR, AND WITHOUT IT A ROOTED PATH BEHIND A PREFIX ESCAPED
+    /// WHOLE.</strong> <c>cwd=/home/runner/work/x</c> is ONE token beginning <c>c</c>, so
+    /// <see cref="Path.IsPathRooted(string)"/> is <see langword="false"/> for it and the path was
+    /// relayed verbatim — the whole path, not a residue of one. The shape is not hypothetical: the
+    /// stderr relayed here carries whatever a repository-chosen helper wrote to it
+    /// (<c>core.fsmonitor</c>, a <c>filter.*.clean</c> command, a <c>.git/hooks/*</c> script), and
+    /// a helper that echoes its own environment prints exactly this <c>KEY=/path</c> form.
+    /// </para>
+    /// <para>
+    /// <strong><c>:</c> IS DELIBERATELY NOT ONE.</strong> It would split <c>C:\Users\x</c> at the
+    /// drive colon into <c>C</c> and <c>\Users\x</c>; the tail is rooted and would be substituted,
+    /// but the head survives and every Windows expectation here becomes <c>C:&lt;path&gt;</c>.
+    /// The residue that leaves is stated rather than implied: a rooted path glued to a prefix by a
+    /// colon ALONE — <c>error:/home/x</c> — is still one token and still escapes. Closing it needs
+    /// a rule that is not a separator character at all (a colon followed by a single path
+    /// separator, with a prefix longer than a drive letter), which cannot live in the shared
+    /// char-array parity this set is held to and would have to be hand-written into both sides.
+    /// Not taken: git writes a space after its own <c>error:</c>/<c>fatal:</c> prefixes, so the
+    /// shape conceded is narrower than the one <c>=</c> closes.
+    /// </para>
+    /// </remarks>
     private static readonly char[] TokenSeparators =
-        { ' ', '\t', '\r', '\n', '"', '\'', '<', '>', '&', ';', ',', '(', ')', '[', ']' };
+        { ' ', '\t', '\r', '\n', '"', '\'', '<', '>', '&', ';', ',', '(', ')', '[', ']', '=' };
 
     /// <summary>
     /// The separators <see cref="IsOnePathWholly"/> alone splits on — the whitespace members of

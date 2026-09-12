@@ -453,7 +453,9 @@ internal static class RunCommand
     /// </para>
     /// <para>
     /// When set, <see cref="ExecuteAsync"/> starts a background <see cref="StdinShutdownWatcher"/>
-    /// over <see cref="Console.OpenStandardInput()"/>. On end-of-file it cancels a LINKED
+    /// over <see cref="Console.OpenStandardInput()"/>. On end-of-file — or on any other read
+    /// failure, which that watcher deliberately treats alike, since an input that can no longer be
+    /// read is as final as one that ended — it cancels a LINKED
     /// <see cref="CancellationTokenSource"/> that every downstream runner then uses instead of the
     /// raw System.CommandLine <see cref="CancellationToken"/> — the SAME cancellation-PROPAGATION
     /// path a Ctrl-C / SIGTERM takes (the engine's teardown discipline, §4.5). This is
@@ -871,14 +873,26 @@ internal static class RunCommand
     /// them to file it with the suite that triggered it — a bug report for the feature working.
     /// </para>
     /// <para>
+    /// <strong>IT DOES NOT CLAIM EOF, BECAUSE THE WATCHER CANNOT TELL EOF FROM A BROKEN
+    /// PIPE.</strong> <c>StdinShutdownWatcher.ReadLoopAsync</c> invokes the SAME callback for a
+    /// zero-byte read and for any non-cancellation read failure — a deliberate design, since an
+    /// input that can no longer be read is as final as one that ended — so nothing downstream of
+    /// it, this line included, holds the information needed to say which happened. The line it
+    /// replaced asserted EOF flatly, which told an operator that a real I/O fault was the
+    /// graceful stop they had asked for. Inventing the distinction here would mean inventing it;
+    /// carrying the reason down from the watcher would mean widening its callback for a sentence.
+    /// So the sentence covers both, and the exit code is unchanged either way.
+    /// </para>
+    /// <para>
     /// ASCII only, and deliberately so: <c>AsciiRuntimeOutputCensusTests</c> refuses a non-ASCII
     /// character in any runtime-output literal on this boundary (#379).
     /// </para>
     /// </remarks>
     internal const string StdinEofShutdownNotice =
-        "vouchfx run: the run was shut down on stdin EOF, as --shutdown-on-stdin-eof asks for, "
-        + "before it reached a verdict.  This is the requested graceful stop, not an engine or "
-        + "provider defect - there is nothing to report.  Reported as Inconclusive (section 12.1).";
+        "vouchfx run: the run was shut down because stdin reached EOF or could not be read, which "
+        + "--shutdown-on-stdin-eof treats alike, before it reached a verdict.  This is the "
+        + "requested graceful stop, not an engine or provider defect - there is nothing to "
+        + "report.  Reported as Inconclusive (section 12.1).";
 
     /// <summary>
     /// Whether an escaped cancellation is the <c>--shutdown-on-stdin-eof</c> graceful stop rather

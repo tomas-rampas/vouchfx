@@ -59,13 +59,22 @@ public static class HostPathDisclosure
     /// <c>&amp;</c> and <c>;</c> are separators so an HTML-escaped quote (<c>&amp;#39;</c>) splits
     /// off the path it wraps instead of gluing itself to the front of it.
     /// <para>
+    /// <c>=</c> is one so a rooted path behind a prefix — <c>cwd=/home/runner/work/x</c>, the
+    /// shape a helper that echoes its environment prints — is a token of its own rather than one
+    /// token beginning <c>c</c>, which <see cref="Path.IsPathRooted(string)"/> reads as relative
+    /// and this gate then waved through whole. <c>:</c> is deliberately NOT one: it would split
+    /// <c>C:\Users\x</c> at the drive colon. The residue that leaves — a path glued on by a colon
+    /// alone, <c>error:/home/x</c> — is stated at <c>GitChangeSet.TokenSeparators</c>, which
+    /// carries the reasoning for both sides.
+    /// </para>
+    /// <para>
     /// These three arrays are ALSO <c>GitChangeSet</c>'s, and the equality is asserted rather than
     /// requested: <c>GitChangeSetTests.SubstitutionTokenRules_AreTheSharedDisclosureGates</c>
     /// compares them by reflection, so an edit here that is not made there reddens.
     /// </para>
     /// </remarks>
     private static readonly char[] s_tokenSeparators =
-        { ' ', '\t', '\r', '\n', '"', '\'', '<', '>', '&', ';', ',', '(', ')', '[', ']' };
+        { ' ', '\t', '\r', '\n', '"', '\'', '<', '>', '&', ';', ',', '(', ')', '[', ']', '=' };
 
     private static readonly char[] s_pathSeparators = { '\\', '/' };
 

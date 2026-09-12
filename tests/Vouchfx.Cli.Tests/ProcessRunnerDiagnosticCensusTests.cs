@@ -23,6 +23,11 @@
 //       simply omits the argument compiles, runs, and re-opens the hole silently. There is no
 //       behavioural test for a call site that does not exist yet.
 //
+//       AND `null` IS NOT ABSENCE. `environment: null`, or a positional `null`/`default`, is the
+//       SAME request to inherit, written out loud. A census that checked the parameter's mere
+//       presence was therefore satisfiable by the exact shape it exists to forbid — which is the
+//       failure mode a guard has to be read for, not the one it announces.
+//
 // VACUITY FIRST in both rows: the match count is asserted before anything is concluded from it. A
 // census whose needle stops matching reports no offenders and passes for free, which is the one way
 // a file like this stops guarding anything without saying so.
@@ -149,14 +154,35 @@ public sealed class ProcessRunnerDiagnosticCensusTests
     /// nothing at all. The compiler cannot object; nothing else in this tree can either.
     /// </para>
     /// <para>
-    /// <strong>The needle is the receiver's spelling, which is what bounds this census's
-    /// claim.</strong>
-    /// It matches a receiver naming a process runner (<c>processRunner</c>,
-    /// <c>SystemProcessRunner.Instance</c>, a field). A call through a receiver named something else
-    /// entirely — <c>runner.Run(...)</c> — is invisible to it. Stated rather than implied: this
-    /// gates the shape the one production caller has and the shape a copy of it would have, not
-    /// every conceivable spelling. A semantic model would close that, and would mean compiling the
-    /// CLI inside the test.
+    /// <strong>THE RECEIVER IS RESOLVED AGAINST ITS DECLARED TYPE, NOT ITS SPELLING.</strong> This
+    /// used to match a receiver whose text contained <c>rocessRunner</c> and to STATE, as a
+    /// limitation, that <c>runner.Run(...)</c> was invisible to it. Stating a limit does not close
+    /// it: a renamed local is a two-character edit, and the count assertion stays green at 1 while
+    /// the census silently stops seeing the call it exists to police. So the first pass collects
+    /// every name DECLARED with a process-runner type anywhere under <c>src/</c> — locals, fields,
+    /// parameters, properties — and the second matches a <c>Run</c> whose receiver is one of them,
+    /// or is a <c>new</c> of such a type, or still carries the old spelling.
+    /// </para>
+    /// <para>
+    /// <strong>The residue, and it is the opposite direction from the old one.</strong> A type name
+    /// is still matched by TEXT (<c>ProcessRunner</c>), so a runner interface renamed wholesale
+    /// goes unseen — which the vacuity assertion below catches, because the production site would
+    /// stop matching too. The name set is global rather than per-file, so a <c>runner</c> declared
+    /// as a runner in one file makes every <c>runner.Run(...)</c> in <c>src/</c> a candidate. That
+    /// over-matches, and over-matching is the safe direction: the worst case is this row demanding
+    /// an <c>environment</c> argument of a call that did not need one, which reddens and is read,
+    /// rather than a leak nobody is told about. A receiver declared in no source file at all — an
+    /// inherited member from a referenced assembly — remains outside it; closing that needs a
+    /// semantic model, and a semantic model needs the CLI compiled inside the test.
+    /// </para>
+    /// <para>
+    /// <strong>A DEFINITELY-NULL ARGUMENT IS NOT AN ARGUMENT.</strong> The check used to be the
+    /// mere PRESENCE of the parameter, which <c>environment: null</c> — and a positional
+    /// <c>null</c> or <c>default</c> — satisfies while asking for exactly the inheriting behaviour
+    /// this row forbids: the census was satisfiable by the shape it exists to refuse.
+    /// <see cref="IsDefinitelyNull"/> is syntactic and therefore bounded — a <c>null</c> arriving
+    /// through a variable or a method call is still invisible — but the spellings it does see are
+    /// the ones a caller actually writes.
     /// </para>
     /// </remarks>
     [Fact]
@@ -178,20 +204,30 @@ public sealed class ProcessRunnerDiagnosticCensusTests
             $"This census found no .cs files under '{Path.Combine(repoRoot, "src")}'. Most likely "
             + "the tree moved; a census that reads no files reports no offenders.");
 
-        var callSites = new List<(string File, InvocationExpressionSyntax Call)>();
-        foreach (var file in sources)
-        {
-            var root = CSharpSyntaxTree.ParseText(File.ReadAllText(file), path: file)
-                .GetCompilationUnitRoot();
+        var roots = sources
+            .Select(file => (File: file, Root: CSharpSyntaxTree
+                .ParseText(File.ReadAllText(file), path: file)
+                .GetCompilationUnitRoot()))
+            .ToList();
 
+        var runnerNames = RunnerTypedNames(roots.Select(r => r.Root));
+
+        Assert.True(
+            runnerNames.Count > 0,
+            "This census found no declaration of a process-runner type under src/. The receiver "
+            + "resolution is built from those declarations, so with none it degrades to the "
+            + "spelling match it replaced and guards less than it claims.");
+
+        var callSites = new List<(string File, InvocationExpressionSyntax Call)>();
+        foreach (var (file, root) in roots)
+        {
             callSites.AddRange(root.DescendantNodes()
                 .OfType<InvocationExpressionSyntax>()
                 .Where(i => i.Expression is MemberAccessExpressionSyntax
                 {
                     Name.Identifier.ValueText: "Run",
                 } access
-                    && access.Expression.ToString().Contains(
-                        "rocessRunner", System.StringComparison.Ordinal))
+                    && IsProcessRunnerReceiver(access.Expression, runnerNames))
                 .Select(i => (Path.GetRelativePath(repoRoot, file), i)));
         }
 
@@ -211,34 +247,185 @@ public sealed class ProcessRunnerDiagnosticCensusTests
 
         Assert.True(
             offenders.Count == 0,
-            $"{offenders.Count} IProcessRunner.Run call site(s) supply no environment block. The "
-            + "parameter is optional and null means INHERIT — so the child git receives every "
-            + "variable this process holds, including whatever `${secret:env/NAME}` loaded "
-            + "(#500).\n"
+            $"{offenders.Count} IProcessRunner.Run call site(s) supply no environment block, or "
+            + "supply one that is definitely null. The parameter is optional and null means "
+            + "INHERIT — so the child git receives every variable this process holds, including "
+            + "whatever `${secret:env/NAME}` loaded (#500).\n"
             + string.Join("\n", offenders));
     }
 
     /// <summary>
-    /// Whether <paramref name="call"/> passes the <c>environment</c> parameter at all.
+    /// A type whose name marks its holder as a process runner, matched as a substring.
+    /// </summary>
+    /// <remarks>
+    /// Covers <c>IProcessRunner</c> and <c>SystemProcessRunner</c> alike, and any nullable or
+    /// qualified spelling of either, without this file having to enumerate them.
+    /// </remarks>
+    private const string RunnerTypeMarker = "ProcessRunner";
+
+    /// <summary>
+    /// Every identifier DECLARED with a process-runner type anywhere in the parsed sources.
+    /// </summary>
+    /// <param name="roots">The parsed compilation units.</param>
+    /// <returns>The declared names, which become the receivers this census recognises.</returns>
+    /// <remarks>
+    /// Four declaration shapes, which between them are how a receiver comes to exist: a local or
+    /// field (both <see cref="VariableDeclarationSyntax"/>), a parameter, and a property. A
+    /// <c>var</c> local initialised from a runner is caught by the <c>new</c> clause in
+    /// <see cref="IsProcessRunnerReceiver"/> only when the call is on the <c>new</c> itself; a
+    /// <c>var</c> local holding a runner from a factory is the residue named in the row's remarks.
+    /// </remarks>
+    private static HashSet<string> RunnerTypedNames(IEnumerable<CompilationUnitSyntax> roots)
+    {
+        var names = new HashSet<string>(System.StringComparer.Ordinal);
+
+        foreach (var root in roots)
+        {
+            foreach (var node in root.DescendantNodes())
+            {
+                switch (node)
+                {
+                    case VariableDeclarationSyntax declaration
+                        when NamesRunnerType(declaration.Type):
+                        foreach (var variable in declaration.Variables)
+                        {
+                            names.Add(variable.Identifier.ValueText);
+                        }
+
+                        break;
+
+                    case ParameterSyntax parameter when NamesRunnerType(parameter.Type):
+                        names.Add(parameter.Identifier.ValueText);
+                        break;
+
+                    case PropertyDeclarationSyntax property when NamesRunnerType(property.Type):
+                        names.Add(property.Identifier.ValueText);
+                        break;
+
+                    default:
+                        break;
+                }
+            }
+        }
+
+        return names;
+    }
+
+    /// <summary>Whether a declared type is a process-runner type.</summary>
+    private static bool NamesRunnerType(TypeSyntax? type) =>
+        type is not null
+        && type.ToString().Contains(RunnerTypeMarker, System.StringComparison.Ordinal);
+
+    /// <summary>
+    /// Whether the receiver of a <c>Run</c> invocation is a process runner.
+    /// </summary>
+    /// <param name="receiver">The expression the <c>Run</c> was invoked on.</param>
+    /// <param name="runnerNames">Names declared with a runner type, from
+    /// <see cref="RunnerTypedNames"/>.</param>
+    /// <returns><see langword="true"/> when the call is one this census must police.</returns>
+    /// <remarks>
+    /// The trailing identifier is what is resolved, so <c>_runner</c>, <c>this._runner</c> and
+    /// <c>Selection.Runner</c> all reduce to the same question. The spelling match is kept as a
+    /// third clause rather than replaced: it covers a static entry point such as
+    /// <c>SystemProcessRunner.Instance</c>, whose trailing identifier is <c>Instance</c> and whose
+    /// declaring type may not be under <c>src/</c> at all.
+    /// </remarks>
+    private static bool IsProcessRunnerReceiver(
+        ExpressionSyntax receiver, HashSet<string> runnerNames)
+    {
+        if (receiver.ToString().Contains(RunnerTypeMarker, System.StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        if (receiver is ObjectCreationExpressionSyntax creation)
+        {
+            return NamesRunnerType(creation.Type);
+        }
+
+        var name = receiver switch
+        {
+            IdentifierNameSyntax identifier => identifier.Identifier.ValueText,
+            MemberAccessExpressionSyntax access => access.Name.Identifier.ValueText,
+            _ => null,
+        };
+
+        return name is not null && runnerNames.Contains(name);
+    }
+
+    /// <summary>
+    /// Whether an expression is <see langword="null"/> by inspection alone.
+    /// </summary>
+    /// <param name="expression">The argument expression.</param>
+    /// <returns><see langword="true"/> for a spelling that can only ever be null.</returns>
+    /// <remarks>
+    /// <c>null</c>, <c>default</c>, <c>default(T)</c>, and either behind casts and parentheses —
+    /// <c>(IReadOnlyDictionary&lt;string, string&gt;)null</c> is what a caller writes when the
+    /// compiler asks which overload they meant. A null that arrives through a variable or a method
+    /// call is invisible here; closing that needs a semantic model and a data-flow analysis, and
+    /// the shapes above are the ones a caller writes at the site.
+    /// </remarks>
+    private static bool IsDefinitelyNull(ExpressionSyntax expression) => expression switch
+    {
+        ParenthesizedExpressionSyntax parenthesised => IsDefinitelyNull(parenthesised.Expression),
+        CastExpressionSyntax cast => IsDefinitelyNull(cast.Expression),
+        DefaultExpressionSyntax => true,
+        LiteralExpressionSyntax literal =>
+            literal.IsKind(SyntaxKind.NullLiteralExpression)
+            || literal.IsKind(SyntaxKind.DefaultLiteralExpression),
+        _ => false,
+    };
+
+    /// <summary>
+    /// Whether <paramref name="call"/> passes an <c>environment</c> that is not null.
     /// </summary>
     /// <param name="call">The <c>Run</c> invocation.</param>
-    /// <returns><see langword="true"/> when it is passed by name or in the fourth position.</returns>
+    /// <returns><see langword="true"/> when a non-null block is passed by name or fourth.</returns>
     /// <remarks>
+    /// <para>
     /// Either spelling counts: the production call passes it positionally, and a named argument is
-    /// what a caller who skips <c>workingDirectory</c>'s neighbours would write. What is refused is
-    /// the argument being ABSENT, which is the only spelling that means "inherit".
+    /// what a caller who skips <c>workingDirectory</c>'s neighbours would write.
+    /// </para>
     /// <para>
     /// The positional count is over POSITIONAL arguments only. A plain <c>Count &gt;= 4</c> is
     /// satisfied by three positional arguments plus <c>cancellationToken:</c> by name — which is
     /// exactly the inheriting shape this row exists to refuse, passing it for free.
     /// </para>
+    /// <para>
+    /// <strong>PRESENCE IS NOT ENOUGH, and that was a real hole rather than a theoretical
+    /// one.</strong> <c>null</c> is not "no environment", it is the request to INHERIT the whole
+    /// process block — so <c>environment: null</c>, and a positional <c>null</c> or
+    /// <c>default</c>, satisfied the old presence test while asking for precisely the exposure
+    /// #500 closed. <see cref="IsDefinitelyNull"/> refuses those spellings.
+    /// </para>
     /// </remarks>
     private static bool SuppliesEnvironment(InvocationExpressionSyntax call)
     {
+        var argument = EnvironmentArgument(call);
+
+        return argument is not null && !IsDefinitelyNull(argument.Expression);
+    }
+
+    /// <summary>
+    /// The argument bound to the <c>environment</c> parameter, or <see langword="null"/> when the
+    /// call passes none.
+    /// </summary>
+    /// <param name="call">The <c>Run</c> invocation.</param>
+    /// <returns>The argument node, or <see langword="null"/>.</returns>
+    private static ArgumentSyntax? EnvironmentArgument(InvocationExpressionSyntax call)
+    {
         var arguments = call.ArgumentList.Arguments;
 
-        return arguments.Any(a => a.NameColon?.Name.Identifier.ValueText == "environment")
-            || arguments.TakeWhile(a => a.NameColon is null).Count() >= 4;
+        var named = arguments.FirstOrDefault(
+            a => a.NameColon?.Name.Identifier.ValueText == "environment");
+        if (named is not null)
+        {
+            return named;
+        }
+
+        var positional = arguments.TakeWhile(a => a.NameColon is null).ToList();
+
+        return positional.Count >= 4 ? positional[3] : null;
     }
 
     /// <summary>

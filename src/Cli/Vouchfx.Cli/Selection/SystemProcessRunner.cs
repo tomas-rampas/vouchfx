@@ -1,7 +1,8 @@
 // Vouchfx.Cli — SystemProcessRunner (S07-C-02; lifetime and bounding, #481).
 //
 // The production IProcessRunner: launches a real process via System.Diagnostics.Process,
-// captures stdout/stderr fully, and surfaces a launch failure (e.g. git not on PATH) as a
+// captures stdout/stderr fully, and surfaces a launch failure (an executable that is absent,
+// inaccessible or not runnable — its caller resolves PATH before it gets here, #499) as a
 // ProcessLaunchException so GitChangeSet can map it to a clear usage error rather than a
 // crash. Arguments are passed through Process.StartInfo.ArgumentList (no shell, no manual
 // quoting — each element is escaped by the runtime).

@@ -122,6 +122,40 @@ public sealed class StdinEofShutdownDiagnosticTests : IDisposable
     }
 
     /// <summary>
+    /// The notice covers an UNREADABLE stdin as well as end-of-file, because the watcher that
+    /// raises it cannot tell the two apart.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>StdinShutdownWatcher.ReadLoopAsync</c> invokes the same callback for a zero-byte read
+    /// and for any non-cancellation read failure — its <c>catch</c> arm breaks the loop exactly as
+    /// EOF does — so a broken pipe and a closed one arrive here indistinguishable. The notice used
+    /// to assert EOF flatly, which told an operator that a real I/O fault was the graceful stop
+    /// they had asked for, and that "there is nothing to report".
+    /// </para>
+    /// <para>
+    /// A LITERAL row over the constant, deliberately: the row above asserts the notice was
+    /// PRINTED, which is satisfied by any wording at all. Nothing else in this suite can see the
+    /// sentence, and the fault it misdescribes needs a real broken pipe that no in-process row
+    /// produces — the same reason this file's census rows exist.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void StdinEofShutdownNotice_CoversAnUnreadableStdin_NotEofAlone()
+    {
+        Assert.Contains(
+            "could not be read", RunCommand.StdinEofShutdownNotice, StringComparison.Ordinal);
+
+        // ...and it still names the flag and refuses the defect framing, which is #502's half.
+        Assert.Contains(
+            "--shutdown-on-stdin-eof", RunCommand.StdinEofShutdownNotice, StringComparison.Ordinal);
+        Assert.Contains(
+            "not an engine or provider defect",
+            RunCommand.StdinEofShutdownNotice,
+            StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// <strong>The timeout arm did not move.</strong> A <see cref="TaskCanceledException"/> nobody
     /// asked for still maps to <see cref="ExitCodes.Inconclusive"/> AND still carries the
     /// engine-defect wording.
@@ -150,7 +184,13 @@ public sealed class StdinEofShutdownDiagnosticTests : IDisposable
         var written = sink.Captured;
 
         Assert.Contains("failed unexpectedly", written, StringComparison.Ordinal);
-        Assert.DoesNotContain("stdin EOF", written, StringComparison.Ordinal);
+
+        // The WHOLE notice, not a phrase of it. This used to be DoesNotContain("stdin EOF"),
+        // which the notice no longer contains at all — so a widened filter that re-labelled every
+        // timeout as the graceful stop would have printed the new notice and passed this row.
+        Assert.DoesNotContain(
+            RunCommand.StdinEofShutdownNotice, written, StringComparison.Ordinal);
+        Assert.DoesNotContain("graceful stop", written, StringComparison.Ordinal);
 
         Assert.Equal(ExitCodes.Inconclusive, exitCode);
     }
