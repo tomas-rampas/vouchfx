@@ -16,6 +16,7 @@
 // LocateOnPath rows at the bottom of the file.
 
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Runtime.Versioning;
@@ -1225,6 +1226,165 @@ public sealed class GitChangeSetTests
     }
 
     /// <summary>
+    /// An opener whose closer search FAILED on one line still opens a span on the next one.
+    /// </summary>
+    /// <param name="open">The opening character.</param>
+    /// <param name="close">The closing character of that couple.</param>
+    /// <remarks>
+    /// <para>
+    /// <strong>THIS IS THE CORRECTNESS HALF OF THE FAILED-OPENER MEMO, AND IT REDDENS FOR NOTHING
+    /// ELSE.</strong> <c>GitChangeSet.MatchingCloserOnThisLine</c> remembers a failed search so the
+    /// same opener is not re-scanned later on the same line, which is what keeps the scan linear
+    /// (the row below pins the bound). The memo is only sound WITHIN a line: a search that stopped
+    /// at a line terminator proves nothing about the next line. Clearing it one line too late is
+    /// invisible to every other row here: the shapes they use are single-line, and a span that
+    /// fails to open degrades to the per-token scan, which substitutes the rooted HEAD and leaves a
+    /// residue several rows already accept as a documented outcome. So the failure mode is a
+    /// quieter output, not an exception, and this is the row that sees it.
+    /// </para>
+    /// <para>
+    /// Line 1 opens a span that never closes; line 2 quotes a path CONTAINING A SPACE with the same
+    /// opener, which is exactly the shape whole-span treatment exists for
+    /// (<c>C:\Users\John Smith</c>). Without the reset line 2 comes back
+    /// <c>&lt;path&gt; smith/x</c> \u2014 measured, by reverting the reset against this row.
+    /// </para>
+    /// <para>
+    /// All six couples are asserted, not just the four directed ones: the reset is shared, and a
+    /// self-matching quote reaches it by the same path. Both line terminators are exercised, since
+    /// the reset keys on <c>'\r'</c> and <c>'\n'</c> individually and a CRLF host is the one this
+    /// file's relayed text most often comes from.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [InlineData('\'', '\'')]
+    [InlineData('"', '"')]
+    [InlineData('\u2018', '\u2019')]
+    [InlineData('\u201C', '\u201D')]
+    [InlineData('\u201E', '\u201C')]
+    [InlineData('\u00AB', '\u00BB')]
+    public void SubstituteAbsolutePaths_AnOpenerThatFailedOnAnEarlierLine_StillOpensOnThisOne(
+        char open, char close)
+    {
+        foreach (var terminator in new[] { "\n", "\r\n" })
+        {
+            var relayed =
+                $"cannot open {open} unterminated{terminator}at {open}/home/john smith/x{close}";
+
+            Assert.Equal(
+                $"cannot open {open} unterminated{terminator}at {open}<path>{close}",
+                GitChangeSet.SubstituteAbsolutePaths(relayed));
+        }
+    }
+
+    /// <summary>
+    /// A line of repeated directed openers costs LINEARLY more as it grows, which is the bound
+    /// <c>GitChangeSet.SubstituteAbsolutePaths</c>'s remarks assert.
+    /// </summary>
+    /// <param name="opener">The directed opener the line repeats.</param>
+    /// <remarks>
+    /// <para>
+    /// <strong>THE COMMENT CLAIMS A COMPLEXITY BOUND, SO THE BOUND IS PINNED.</strong> When the
+    /// span rules generalised from self-matching quotes to directed pairs, the linearity argument
+    /// silently stopped holding: a failed search for U+2019 proves there is no U+2019 left on the
+    /// line, and says NOTHING about further U+2018s, so every later opener re-scanned to the line
+    /// end. MEASURED on this host before the memo, on this row's input: 93.7 ms at 8,033
+    /// characters, 354.8 ms at 16,033 and 1,511.1 ms at 32,033 for U+2018, four times the cost per
+    /// doubling, where the self-matching <c>'</c> took 0.4 / 0.6 / 1.7 ms. After: 0.4 / 0.9 /
+    /// 1.4 ms. The input is git's stderr, which carries repository-chosen helper output and is
+    /// captured whole (<c>ReadToEndAsync</c>, no cap), so the quadratic was reachable by a hostile
+    /// repository.
+    /// </para>
+    /// <para>
+    /// <strong>HOW THE THRESHOLD WAS CHOSEN.</strong> Quadrupling the length costs 4x when the scan
+    /// is linear and 16x when it is quadratic, so the ceiling is the smaller measurement times
+    /// EIGHT: twice the linear expectation, half the quadratic signal. That ratio alone is not safe
+    /// on a fast host, where the smaller measurement is around a millisecond and eight times noise
+    /// is still noise, so the ceiling is floored at 100 ms: about twenty-five times the larger
+    /// measurement as it stands (3.4 to 4.3 ms at 64,033 characters, measured across the four
+    /// openers), and fifty times below the 5,010 to 5,078 ms the quadratic scan takes at that
+    /// length (measured, by reverting the memo against this row). The two clauses cover opposite
+    /// hosts: the floor carries a fast one, the ratio carries a loaded one where both measurements
+    /// inflate together, and a quadratic scan breaches both. The revert produced 16.0x to 17.3x
+    /// against the 8x the ratio allows. Each measurement is the FASTEST of three attempts, because
+    /// a scheduling hiccup can only inflate a timing, so the minimum is the least noisy estimator
+    /// available.
+    /// </para>
+    /// <para>
+    /// The equality assertion comes first and is not incidental: it warms the JIT before anything
+    /// is timed, and it is what stops a scan that got fast by substituting less from passing here.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [InlineData('\u2018')]
+    [InlineData('\u201C')]
+    [InlineData('\u201E')]
+    [InlineData('\u00AB')]
+    public void SubstituteAbsolutePaths_ADirectedOpenerRepeated_ScansLinearly(char opener)
+    {
+        const int SmallOpeners = 8_000;
+        const int LargeMultiple = 4;
+        const double LinearHeadroom = 8.0;
+        const double NoiseFloorMilliseconds = 100.0;
+        const int Attempts = 3;
+
+        var small = UnterminatedOpeners(opener, SmallOpeners);
+        var large = UnterminatedOpeners(opener, SmallOpeners * LargeMultiple);
+
+        Assert.Equal(
+            string.Concat(Enumerable.Repeat($"{opener} ", SmallOpeners))
+                + "<path> smith/x is unreadable.",
+            GitChangeSet.SubstituteAbsolutePaths(small));
+
+        var smallMilliseconds = FastestSubstitution(small, Attempts);
+        var largeMilliseconds = FastestSubstitution(large, Attempts);
+
+        var ceiling = Math.Max(NoiseFloorMilliseconds, LinearHeadroom * smallMilliseconds);
+        Assert.True(
+            largeMilliseconds <= ceiling,
+            $"U+{(int)opener:X4}: {large.Length} characters took {largeMilliseconds:0.0} ms "
+            + $"against a ceiling of {ceiling:0.0} ms, from {small.Length} characters at "
+            + $"{smallMilliseconds:0.0} ms. A {LargeMultiple}x length may cost {LinearHeadroom}x, "
+            + $"not {largeMilliseconds / Math.Max(smallMilliseconds, 0.001):0.0}x.");
+    }
+
+    /// <summary>
+    /// A line of <paramref name="openers"/> openers that never close, then a real path.
+    /// </summary>
+    /// <param name="opener">The opener to repeat.</param>
+    /// <param name="openers">How many times to repeat it.</param>
+    /// <returns>The relayed line.</returns>
+    /// <remarks>
+    /// Each opener is followed by a space so the NEXT one still satisfies the scan's "not mid-word"
+    /// guard and is judged as an opener in its own right; without it only the first would be, and
+    /// the shape would exercise nothing. The tail is a path with a space in it so the line ends in
+    /// real work rather than in separators alone.
+    /// </remarks>
+    private static string UnterminatedOpeners(char opener, int openers) =>
+        string.Concat(Enumerable.Repeat($"{opener} ", openers))
+        + "/home/john smith/x is unreadable.";
+
+    /// <summary>
+    /// The fastest of <paramref name="attempts"/> substitutions of <paramref name="text"/>.
+    /// </summary>
+    /// <param name="text">The text to scan.</param>
+    /// <param name="attempts">How many times to scan it.</param>
+    /// <returns>The shortest elapsed time, in milliseconds.</returns>
+    private static double FastestSubstitution(string text, int attempts)
+    {
+        var fastest = double.MaxValue;
+        for (var attempt = 0; attempt < attempts; attempt++)
+        {
+            var elapsed = Stopwatch.StartNew();
+            GitChangeSet.SubstituteAbsolutePaths(text);
+            elapsed.Stop();
+
+            fastest = Math.Min(fastest, elapsed.Elapsed.TotalMilliseconds);
+        }
+
+        return fastest;
+    }
+
+    /// <summary>
     /// The pair map is exactly the six couples it claims, every character of it is a token
     /// separator, and no character opens twice.
     /// </summary>
@@ -1243,7 +1403,7 @@ public sealed class GitChangeSetTests
     /// argument reddens here.
     /// </para>
     /// <para>
-    /// Openers must be DISTINCT because <c>CloserFor</c> takes the first match, so a duplicate key
+    /// Openers must be DISTINCT because <c>OpenerIndex</c> takes the first match, so a duplicate
     /// would make the second couple dead code that reads as live. Closers deliberately are not:
     /// U+201C closes the German pair and opens the English one, and the row asserts that dual role
     /// rather than tolerating it.

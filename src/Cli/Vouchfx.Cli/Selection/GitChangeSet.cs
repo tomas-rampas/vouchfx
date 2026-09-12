@@ -858,7 +858,11 @@ internal sealed class GitChangeSet : IChangeSet
     /// <c>at '/home/john smith/x is gone'</c> becomes <c>at '&lt;path&gt;'</c> and the words
     /// <c>is gone</c> go with it. The second rooted token is the only signal here, and that span
     /// holds none. It is the narrow case — git puts its prose outside the quotes it wraps a path in
-    /// — but it is a case, and a relayed message this file does not own may quote differently.
+    /// — but it is a case, and a relayed message this file does not own may quote differently. It
+    /// is also written in the ASCII spelling it was first measured in, and it now reaches through
+    /// all six <see cref="QuoteSpanPairs"/> openers rather than two: MEASURED, <c>«/etc/gitconfig
+    /// is unreadable»</c> comes back <c>«&lt;path&gt;»</c>, prose included, and the four non-ASCII
+    /// openers answer exactly as <c>'</c> and <c>"</c> do.
     /// </para>
     /// <para>
     /// <strong>WHY THE QUOTED SPAN IS ONE TOKEN — the default Windows shape, not an edge
@@ -883,12 +887,21 @@ internal sealed class GitChangeSet : IChangeSet
     /// never widens what is substituted.
     /// </para>
     /// <para>
-    /// It stays LINEAR. Each closer search scans forward only and stops at the line end, and a
-    /// search that finds nothing proves the rest of that line holds no closer for THAT opener — so
-    /// at most one failed scan per opener per line, six in all, each bounded by that line. The
-    /// re-scan of a span that is not one path adds a bounded constant rather than a recursion to
-    /// reason about: a span holds no closer for its own opener, so each of the six can open at most
-    /// once down a chain (<see cref="AppendQuotedSpan"/>).
+    /// It stays LINEAR, AND A MEMO IS WHAT MAKES THAT TRUE — the bound is not a property of the
+    /// search. Each closer search scans forward only and stops at the line end, and a search that
+    /// finds nothing proves the rest of that line holds no closer for THAT opener. The step from
+    /// there to "at most one failed scan per opener per line, six in all" is the part that does NOT
+    /// follow on its own, and reading it as though it did is what made this scan quadratic for one
+    /// release: for a self-matching quote a failed search also proves there is no second opener to
+    /// re-scan, and for a DIRECTED pair it proves nothing of the kind. The six failures are
+    /// remembered instead, in a bitmask cleared at each line terminator, so a second U+2018 on a
+    /// line whose U+2019 search already failed costs nothing — see
+    /// <see cref="MatchingCloserOnThisLine"/>, which carries the argument and the measurements, and
+    /// <c>GitChangeSetTests.SubstituteAbsolutePaths_ADirectedOpenerRepeated_ScansLinearly</c>,
+    /// which pins the bound this paragraph asserts. The re-scan of a span that is not one path adds
+    /// a bounded constant rather than a recursion to reason about: a span holds no closer for its
+    /// own opener, so each of the six can open at most once down a chain
+    /// (<see cref="AppendQuotedSpan"/>).
     /// </para>
     /// <para>
     /// One over-reach is accepted knowingly: on Windows a ref spelt <c>/weird</c> is rooted, so a
@@ -920,17 +933,35 @@ internal sealed class GitChangeSet : IChangeSet
     private static void AppendSubstituted(StringBuilder builder, string text)
     {
         var index = 0;
+
+        // The failed-opener memo, one bit per QuoteSpanPairs couple. It is what MAKES the bound
+        // the remarks claim — see MatchingCloserOnThisLine, which owns both halves of it.
+        var failedOpeners = 0;
+
         while (index < text.Length)
         {
             if (Array.IndexOf(TokenSeparators, text[index]) >= 0)
             {
+                // THE MEMO'S RESET, AND ITS PLACE IS A CORRECTNESS QUESTION, NOT A TUNING ONE. A
+                // failed scan proves nothing beyond the line it stopped at, so the memo must be
+                // cleared BEFORE the first opener of the next line is judged — carrying it over
+                // would refuse a genuine span. Clearing here, at the line terminator itself, is
+                // that moment: the terminator is no opener, so nothing on this iteration reads
+                // the memo, and no line terminator can be SKIPPED — the only jump in this loop is
+                // over a closed span, and a span never crosses one (the closer search stops at
+                // '\r'/'\n'), so every one of them is visited by this branch.
+                if (text[index] is '\r' or '\n')
+                {
+                    failedOpeners = 0;
+                }
+
                 // A quote is a separator that can also OPEN a span — see the remarks for why a
                 // quoted path with spaces has to be one token. `index` is the opener's own
                 // position, so `index == 0 || previous is a separator` is the "not mid-word" test.
                 // WHETHER this character opens at all is the pair map's question, asked inside
                 // MatchingCloserOnThisLine: a character with no closer is an ordinary separator.
                 var close = index == 0 || Array.IndexOf(TokenSeparators, text[index - 1]) >= 0
-                    ? MatchingCloserOnThisLine(text, index)
+                    ? MatchingCloserOnThisLine(text, index, ref failedOpeners)
                     : -1;
 
                 builder.Append(text[index]);
@@ -1151,39 +1182,49 @@ internal sealed class GitChangeSet : IChangeSet
     };
 
     /// <summary>
-    /// The closer for <paramref name="opener"/>, or <see cref="NotAnOpener"/> when the character
-    /// opens no span.
+    /// The <see cref="QuoteSpanPairs"/> couple <paramref name="opener"/> opens, or <c>-1</c> when
+    /// the character opens no span.
     /// </summary>
     /// <param name="opener">The candidate opening character.</param>
-    /// <returns>The closing character, or <see cref="NotAnOpener"/>.</returns>
-    private static char CloserFor(char opener)
+    /// <returns>The couple's index, or <c>-1</c>.</returns>
+    /// <remarks>
+    /// <para>
+    /// It returns the COUPLE rather than the closing character, and that is what lets the memo in
+    /// <see cref="MatchingCloserOnThisLine"/> be a bitmask: the couple index is the memo's key, and
+    /// deriving one from a returned character would be this same search run twice.
+    /// </para>
+    /// <para>
+    /// The miss is <c>-1</c> rather than a sentinel character. A <c>char</c> answer has no value
+    /// outside the type to spare, so the previous spelling reserved NUL and had to say that a NUL
+    /// in relayed text is consequently an ordinary separator-or-token character. An index has
+    /// <c>-1</c>, so the question does not arise and neither does the reservation.
+    /// </para>
+    /// </remarks>
+    private static int OpenerIndex(char opener)
     {
         for (var i = 0; i < QuoteSpanPairs.Length; i += 2)
         {
             if (QuoteSpanPairs[i] == opener)
             {
-                return QuoteSpanPairs[i + 1];
+                return i / 2;
             }
         }
 
-        return NotAnOpener;
+        return -1;
     }
 
     /// <summary>
-    /// The <see cref="CloserFor"/> answer for a character that opens nothing.
-    /// </summary>
-    /// <remarks>
-    /// A NUL in relayed text is therefore treated as an ordinary separator-or-token character,
-    /// which is what it was before this map existed.
-    /// </remarks>
-    private const char NotAnOpener = '\0';
-
-    /// <summary>
     /// Finds the closer that matches the opener at <paramref name="opening"/>, searching no
-    /// further than the end of that line.
+    /// further than the end of that line, and records a failure so the same opener is not
+    /// re-scanned later on the same line.
     /// </summary>
     /// <param name="text">The text being scanned.</param>
     /// <param name="opening">The index of the candidate opening character.</param>
+    /// <param name="failedOpeners">
+    /// The caller's failed-opener memo: bit <c>n</c> set means the <c>n</c>th
+    /// <see cref="QuoteSpanPairs"/> couple has already failed on the line being scanned. Read and
+    /// written here; the caller owns only its lifetime, and clears it at each line terminator.
+    /// </param>
     /// <returns>
     /// The index of the close, or <c>-1</c> when the character opens no span or the line holds no
     /// closer for it.
@@ -1191,9 +1232,9 @@ internal sealed class GitChangeSet : IChangeSet
     /// <remarks>
     /// <para>
     /// ONE method rather than an ASCII one and a non-ASCII sibling. Everything a sibling would
-    /// duplicate is shared — the first-match rule the recursion bound rests on, and the
-    /// line-bounding below — and the ONLY difference between the two cases is which character
-    /// closes, which is exactly what <see cref="CloserFor"/> returns. A sibling would be two
+    /// duplicate is shared — the first-match rule the recursion bound rests on, the line-bounding
+    /// below, and the memo — and the ONLY difference between the two cases is which character
+    /// closes, which is exactly what <see cref="OpenerIndex"/> selects. A sibling would be two
     /// copies of the loop held equal by prose, which is the arrangement this file has already
     /// watched diverge once.
     /// </para>
@@ -1201,15 +1242,56 @@ internal sealed class GitChangeSet : IChangeSet
     /// Bounded to the line so an apostrophe on one line of a multi-line stderr cannot pair with the
     /// quote that opens a path on the next one and hide it from the substitution.
     /// </para>
+    /// <para>
+    /// <strong>THE MEMO IS WHAT KEEPS THE SCAN LINEAR, AND A SELF-MATCHING QUOTE DID NOT NEED
+    /// IT.</strong> While <c>'</c> and <c>"</c> were the only pairs, a failed search proved there
+    /// was no FURTHER occurrence of the opener on the line at all — so there could be no second
+    /// opener of that character to re-scan, and "one failed scan per opener per line" followed from
+    /// the search itself. Directed pairs break that inference and nothing replaces it: a failed
+    /// search for U+2019 says nothing about further U+2018s, so every subsequent opener on the line
+    /// re-scanned to the line end. MEASURED on this host before the memo, on a line of repeated
+    /// <c>&lt;opener&gt;&lt;space&gt;</c> followed by a path: 93.7 ms at 8,033 characters, 354.8 ms
+    /// at 16,033 and 1,511.1 ms at 32,033 for U+2018 — four times the cost per doubling, where the
+    /// self-matching <c>'</c> took 0.4 / 0.6 / 1.7 ms over the same three. After the memo: 0.4 /
+    /// 0.9 / 1.4 ms. (A 262,144-character line took 271,065 ms in the review that found this; that
+    /// one is quoted, not re-measured.) The text scanned here is git's stderr, which carries the
+    /// output of repository-chosen helpers (<c>core.fsmonitor</c>, <c>.git/hooks/*</c>), and
+    /// <see cref="IProcessRunner"/> captures it whole — no cap, <c>ReadToEndAsync</c> — so that was
+    /// a hostile repository spending this process's CPU without a bound.
+    /// </para>
+    /// <para>
+    /// <strong>WHY ONE BIT PER OPENER IS ENOUGH, and why the key is the opener and not the
+    /// (opener, position) pair.</strong> A failed search for couple <c>n</c> from <c>i</c> proves
+    /// there is no closer for <c>n</c> anywhere in <c>text[i+1..lineEnd]</c>. A later opener of
+    /// <c>n</c> at <c>j &gt; i</c> searches <c>text[j+1..lineEnd]</c>, a strict subrange of a range
+    /// already known to hold none, so it must fail too — the position carries no information the
+    /// bit does not. What the bit cannot outlive is the LINE, since the next line was never
+    /// searched; that is the (opener, line) key, and the line half of it is held by the caller's
+    /// reset rather than stored here.
+    /// </para>
+    /// <para>
+    /// The memo is per <see cref="AppendSubstituted"/> call, so the re-scan of a span that is not
+    /// one path starts with an empty one. That is the conservative direction — a forgotten failure
+    /// costs a scan and decides nothing — and it keeps the bound: the nesting is at most one level
+    /// per opener (<see cref="AppendQuotedSpan"/>), each level is linear in its own span under its
+    /// own memo, and the spans at one level are disjoint.
+    /// </para>
     /// </remarks>
-    private static int MatchingCloserOnThisLine(string text, int opening)
+    private static int MatchingCloserOnThisLine(string text, int opening, ref int failedOpeners)
     {
-        var closer = CloserFor(text[opening]);
-        if (closer == NotAnOpener)
+        var couple = OpenerIndex(text[opening]);
+        if (couple < 0)
         {
             return -1;
         }
 
+        var coupleBit = 1 << couple;
+        if ((failedOpeners & coupleBit) != 0)
+        {
+            return -1;
+        }
+
+        var closer = QuoteSpanPairs[(couple * 2) + 1];
         for (var i = opening + 1; i < text.Length; i++)
         {
             if (text[i] == closer)
@@ -1219,10 +1301,11 @@ internal sealed class GitChangeSet : IChangeSet
 
             if (text[i] is '\r' or '\n')
             {
-                return -1;
+                break;
             }
         }
 
+        failedOpeners |= coupleBit;
         return -1;
     }
 
