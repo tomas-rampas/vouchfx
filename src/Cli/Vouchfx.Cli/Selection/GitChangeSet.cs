@@ -215,9 +215,9 @@ internal sealed class GitChangeSet : IChangeSet
         // maps to exit 2 — but no longer its WORDING: this site has no candidate and the launch
         // site has one, so "is git installed and on PATH?" is the actionable question here and a
         // misdirection there. See GitNotStartable. Whether
-        // selection-infrastructure failure deserves a code of its own is an open, unfiled question
-        // — see RunGit's remarks — and a fix for a binary-resolution defect does not get to answer
-        // it in passing.
+        // selection-infrastructure failure deserves a code of its own is an open question, filed as
+        // #521 — see RunGit's remarks — and a fix for a binary-resolution defect does not get to
+        // answer it in passing.
         var gitExecutable = (gitExecutableLocator ?? LocateGitOnPath)()
             ?? throw new ChangeSetException(GitUnavailable("the change-set computation"));
 
@@ -401,13 +401,12 @@ internal sealed class GitChangeSet : IChangeSet
     /// contract as a side effect of stopping a hang.
     /// </para>
     /// <para>
-    /// <strong>THAT QUESTION IS OPEN AND UNFILED, WHICH IS A CHANGE FROM WHAT THIS COMMENT USED TO
-    /// SAY.</strong> It attributed the question to issues #480 and #466-B, and neither reaches it.
-    /// #466 closed on a different axis — how <c>ParallelSuiteRunner</c>'s slot catch-all CLASSIFIES
-    /// an unexpected engine throw — and #480's answer is narrower still: a provider or engine
-    /// defect never exits 0, which says nothing about a git that could not be run. So there is no
-    /// issue to read for the reasoning, and the exit code stays 2 by inertia rather than by a
-    /// decision anybody recorded. This is the canonical statement of it; the other two sites that
+    /// <strong>THAT QUESTION IS OPEN, AND IT IS FILED AS #521.</strong> It used to be attributed
+    /// to issues #480 and #466-B, and neither reaches it. #466 closed on a different axis — how
+    /// <c>ParallelSuiteRunner</c>'s slot catch-all CLASSIFIES an unexpected engine throw — and
+    /// #480's answer is narrower still: a provider or engine defect never exits 0, which says
+    /// nothing about a git that could not be run. #521 asks what those two do not, so until it is
+    /// decided the exit code stays 2. This is the canonical statement of it; the other sites that
     /// used to carry the same citation point here.
     /// </para>
     /// <para>
@@ -590,16 +589,21 @@ internal sealed class GitChangeSet : IChangeSet
     /// here is POSIX).
     /// </para>
     /// <para>
-    /// <strong>THE RESIDUE IS A CLASS, AND IT IS NOW ENUMERATED RATHER THAN SAMPLED.</strong> Any
+    /// <strong>THE RESIDUE IS A CLASS, ENUMERATED OVER ASCII AND OVER THE QUOTING CHARACTERS REAL
+    /// TOOLING EMITS — NOT OVER UNICODE.</strong> Any
     /// character this set does not contain glues a rooted path to a prefix into ONE token, which
     /// <see cref="Path.IsPathRooted(string)"/> reads as relative. <c>error:/home/x</c> is the
     /// instance that matters, because <c>:</c> is git's own prefix punctuation — but
     /// <c>user@/home/x</c> and <c>ref#/home/x</c> survive identically, and naming one character as
     /// though the list were complete is how this comment read while four review rounds each found
-    /// a different one. The answer for EVERY non-alphanumeric ASCII character is recorded by
+    /// a different one. The heading itself made that mistake one level up: it claimed the CLASS
+    /// while the body below it claimed ASCII, and a fifth round duly arrived with
+    /// <c>‘/etc/gitconfig’</c>. Beyond the corpus the class is open, and no character set
+    /// closes it. The answer for every non-alphanumeric ASCII character, and for the eight
+    /// non-ASCII ones named below, is recorded by
     /// <c>GitChangeSetTests.SubstituteAbsolutePaths_PrefixGlue_IsSubstitutedOrDocumentedResidue</c>
     /// — that row asserts the exact output per character and carries the reason for each of the
-    /// nineteen residues. In short: <c>/</c> and <c>\</c> ARE the path separators; <c>:</c> is the
+    /// twenty residues. In short: <c>/</c> and <c>\</c> ARE the path separators; <c>:</c> is the
     /// paragraph above; <c>- . _ ~ + $ % # @ ^ { } !</c> occur inside real paths, where making one
     /// a separator leaves the tail standing (measured); <c>| ? *</c> are illegal in a Windows
     /// filename but legal in a POSIX one and close no shape anyone has named. Closing the class
@@ -607,9 +611,55 @@ internal sealed class GitChangeSet : IChangeSet
     /// and ask whether the run from there is rooted behind a non-alphanumeric predecessor — which
     /// cannot live in the three shared <c>char[]</c> arrays this set is held to. Not taken.
     /// </para>
+    /// <para>
+    /// <strong>THE SEVEN CURLY QUOTES ARE THE BACKTICK ONE LOCALE LATER.</strong> U+2018/U+2019 is
+    /// what glibc's gettext quotes with in a UTF-8 locale — the direct successor to the
+    /// backtick-apostrophe style the paragraph above added <c>`</c> for, same tool family, same
+    /// message shape. Through gnulib's localised quoting the German pair (<c>„ “</c>) and the
+    /// French and Russian guillemets (<c>« »</c>) carry the same role, which is why all seven join
+    /// together rather than one at a time: adding U+201C while leaving U+201E out would close half
+    /// of one pair. (The quoting styles are INFERRED from gettext and gnulib, as the backtick's
+    /// were; what is MEASURED is what this scan did.) Measured before the addition:
+    /// <c>cannot open ‘/etc/gitconfig’</c> came back verbatim — the whole path — and the
+    /// disclosure gate ACCEPTED it, so neither half of the rule saw it. After: the path is
+    /// <c>&lt;path&gt;</c> and the quotes stand. The cost is the tail of a path whose own name
+    /// carries one, measured: <c>/opt/a‘b/c</c> becomes <c>&lt;path&gt;‘b/c</c> — the same trade
+    /// <c>'</c> already makes for <c>/home/john/don't/x</c>, which is a likelier directory name
+    /// than any of these seven.
+    /// </para>
+    /// <para>
+    /// <strong>U+00A0 IS NOT ONE OF THEM, AND IT IS A SEPARATE ANSWER RATHER THAN AN OVERSIGHT.
+    /// </strong> A no-break space is not a quoting character but a SPACE, legal in a filename on
+    /// both platforms and a routine copy-paste artefact: <c>/home/john/My Documents/x</c> spelled
+    /// with one becomes <c>&lt;path&gt; Documents/x</c>, measured — a real path losing its tail,
+    /// which is the test the nineteen ASCII residues are excluded by. It also reaches further than
+    /// this array: <see cref="WhitespaceSeparators"/> is the whitespace SUBSET of this set, so a
+    /// whitespace character added here and not there makes <see cref="IsOnePathWholly"/> stop
+    /// splitting where the scan does — silently, since the parity row polices the subset direction
+    /// only. Two arrays of consequence for a glue shape with no named emitter. It is a documented
+    /// residue instead.
+    /// </para>
+    /// <para>
+    /// <strong>AND THE LOCALE INTERLOCK SHRINKS ALL OF THIS, WITHOUT CLOSING IT.</strong>
+    /// <see cref="GitEnvironmentAllowList"/> does not forward <c>LANG</c>/<c>LC_*</c> (#500), so
+    /// git and everything it spawns run in the C locale, where gettext falls back to ASCII
+    /// quoting — which is why the backtick shape is the one that actually arrives and the curly
+    /// ones mostly do not. That exclusion is pinned, not assumed:
+    /// <c>GitChangeSetTests.ConfineEnvironment_KeepsTheAllowListAndTheGitPrefix_AndNothingElse</c>
+    /// puts <c>LANG</c> in its input and not in its expected output, on every lane. It does not
+    /// close the shape, which is why the seven are in the set anyway: the stderr relayed here
+    /// carries whatever a repository-chosen helper wrote, and a helper that hard-codes its quoting
+    /// never consults the locale at all.
+    /// </para>
     /// </remarks>
     private static readonly char[] TokenSeparators =
-        { ' ', '\t', '\r', '\n', '"', '\'', '<', '>', '&', ';', ',', '(', ')', '[', ']', '=', '`' };
+    {
+        ' ', '\t', '\r', '\n', '"', '\'', '<', '>', '&', ';', ',', '(', ')', '[', ']', '=', '`',
+
+        // Spelled as escapes, not as the characters: U+2018 and U+0027 are one pixel apart in a
+        // monospace font, and a separator set is the last place a reader should have to guess.
+        '\u2018', '\u2019', '\u201C', '\u201D', '\u201E', '\u00AB', '\u00BB',
+    };
 
     /// <summary>
     /// The separators <see cref="IsOnePathWholly"/> alone splits on — the whitespace members of
@@ -1334,11 +1384,25 @@ internal sealed class GitChangeSet : IChangeSet
     /// <param name="candidate">The fully qualified candidate path.</param>
     /// <returns><see langword="true"/> when the file exists and this caller may run it.</returns>
     /// <remarks>
+    /// <para>
     /// The POSIX arm asks <c>access(2)</c> rather than reading mode bits, for the reason
     /// <see cref="LocateOnPath(string, string?)"/>'s THE POSIX EXECUTE TEST paragraph records:
     /// a file this caller cannot execute, accepted here, ENDS the search and refuses a host that
     /// holds a runnable git further along <c>PATH</c>. The mode-bit read survives only as the
     /// degraded answer for a runtime where the P/Invoke does not resolve.
+    /// </para>
+    /// <para>
+    /// <strong>PERMISSION IS NOT LAUNCHABILITY, so resolution does not promise the candidate will
+    /// load.</strong> <c>access(X_OK)</c> answers "may this caller execute it", not "can
+    /// <c>execve</c> make an image of it": a mode-0755 text file with no shebang, or an ELF whose
+    /// interpreter is missing, passes here and then fails <c>ENOEXEC</c> at the launch.
+    /// <see cref="LocateOnPath(string, string?)"/> returns that first plausible candidate and does
+    /// not continue, so the shadowing shape #509 closed for the permission cause survives for
+    /// every non-permission one. First-launchable resolution was the other fix #509 offered and
+    /// was declined; such a failure therefore surfaces at <see cref="RunGit"/>'s
+    /// <see cref="ProcessLaunchException"/> arm, which lists <c>ENOEXEC</c> among the causes still
+    /// reachable there.
+    /// </para>
     /// </remarks>
     private static bool IsExecutableFile(string candidate)
     {

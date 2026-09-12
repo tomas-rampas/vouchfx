@@ -67,11 +67,20 @@ public static class HostPathDisclosure
     /// <c>:</c> is deliberately NOT one: it would split <c>C:\Users\x</c> at the drive colon.
     /// </para>
     /// <para>
+    /// The seven non-ASCII members are the same argument one locale further on: gettext quotes as
+    /// <c>\u2018/abs/path\u2019</c> in a UTF-8 locale and, through gnulib's localised quoting, as
+    /// the German and French pairs too. Measured before they were added: every one of those shapes
+    /// came back unchanged from the relay AND was accepted by this gate, so the two halves of the
+    /// rule agreed on missing it. <c>GitChangeSet.TokenSeparators</c> carries the decision.
+    /// </para>
+    /// <para>
     /// What that leaves is a CLASS rather than a character — any glue this set omits makes prefix
-    /// and path one token, which <see cref="Path.IsPathRooted(string)"/> reads as relative — and
-    /// it is enumerated per character, with the reason each residue stays out, by
+    /// and path one token, which <see cref="Path.IsPathRooted(string)"/> reads as relative — and it
+    /// is enumerated per character over ASCII plus those named non-ASCII quoting characters, with
+    /// the reason each residue stays out, by
     /// <c>GitChangeSetTests.SubstituteAbsolutePaths_PrefixGlue_IsSubstitutedOrDocumentedResidue</c>
-    /// and <c>GitChangeSet.TokenSeparators</c>, which carry the reasoning for both sides.
+    /// and <c>GitChangeSet.TokenSeparators</c>, which carry the reasoning for both sides. Over the
+    /// rest of Unicode the class is open, and the corpus says so rather than implying otherwise.
     /// </para>
     /// <para>
     /// These three arrays are ALSO <c>GitChangeSet</c>'s, and the equality is asserted rather than
@@ -80,7 +89,13 @@ public static class HostPathDisclosure
     /// </para>
     /// </remarks>
     private static readonly char[] s_tokenSeparators =
-        { ' ', '\t', '\r', '\n', '"', '\'', '<', '>', '&', ';', ',', '(', ')', '[', ']', '=', '`' };
+    {
+        ' ', '\t', '\r', '\n', '"', '\'', '<', '>', '&', ';', ',', '(', ')', '[', ']', '=', '`',
+
+        // Escapes rather than the characters themselves: U+2018 and U+0027 are a pixel apart in a
+        // monospace font, and a separator set is the last place a reader should have to guess.
+        '\u2018', '\u2019', '\u201C', '\u201D', '\u201E', '\u00AB', '\u00BB',
+    };
 
     private static readonly char[] s_pathSeparators = { '\\', '/' };
 

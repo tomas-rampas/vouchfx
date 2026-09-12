@@ -145,7 +145,8 @@ public sealed class ProcessRunnerDiagnosticCensusTests
     }
 
     /// <summary>
-    /// Every <c>IProcessRunner.Run</c> call site in <c>src/</c> supplies an environment block.
+    /// Every <c>IProcessRunner.Run</c> call site under <c>src/</c> that a syntax walk can resolve
+    /// supplies an environment block.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -159,9 +160,19 @@ public sealed class ProcessRunnerDiagnosticCensusTests
     /// limitation, that <c>runner.Run(...)</c> was invisible to it. Stating a limit does not close
     /// it: a renamed local is a two-character edit, and the count assertion stays green at 1 while
     /// the census silently stops seeing the call it exists to police. So the first pass collects
-    /// every name DECLARED with a process-runner type anywhere under <c>src/</c> — locals, fields,
-    /// parameters, properties — and the second matches a <c>Run</c> whose receiver is one of them,
-    /// or is a <c>new</c> of such a type, or still carries the old spelling.
+    /// every name DECLARED with a process-runner type anywhere under <c>src/</c>
+    /// (<see cref="RunnerTypedNames"/> enumerates the shapes) and the second matches a <c>Run</c>
+    /// whose receiver is one of them, or is a <c>new</c> of such a type, or still carries the old
+    /// spelling — reached through <c>.</c> or through <c>?.</c> alike.
+    /// </para>
+    /// <para>
+    /// <strong>THE DECLARATION SHAPES WERE THE THIRD ITERATION OF THE SAME HOLE.</strong> After
+    /// the spelling match and after <c>null!</c>, the collector still read only variable
+    /// declarations, parameters and properties, so <c>foreach (IProcessRunner runner in …)</c>, a
+    /// declaration pattern and an <c>out</c> variable each declared a receiver this census could
+    /// not see — and an invisible receiver leaves the count at 1 and the row green while the new
+    /// call inherits the whole block. Each shape it now reads was drilled by declaring the
+    /// production receiver that way, dropping the argument and watching this row name the site.
     /// </para>
     /// <para>
     /// <strong>The residue, and it is the opposite direction from the old one.</strong> A type name
@@ -171,9 +182,11 @@ public sealed class ProcessRunnerDiagnosticCensusTests
     /// as a runner in one file makes every <c>runner.Run(...)</c> in <c>src/</c> a candidate. That
     /// over-matches, and over-matching is the safe direction: the worst case is this row demanding
     /// an <c>environment</c> argument of a call that did not need one, which reddens and is read,
-    /// rather than a leak nobody is told about. A receiver declared in no source file at all — an
-    /// inherited member from a referenced assembly — remains outside it; closing that needs a
-    /// semantic model, and a semantic model needs the CLI compiled inside the test.
+    /// rather than a leak nobody is told about. What stays invisible is every receiver whose TYPE
+    /// is not written at its declaration — a <c>var</c> local or a <c>var</c>/deconstruction
+    /// pattern filled from a factory — and every receiver declared in no source file under
+    /// <c>src/</c> at all, such as an inherited member from a referenced assembly. Both need a
+    /// semantic model to resolve, and a semantic model needs the CLI compiled inside the test.
     /// </para>
     /// <para>
     /// <strong>A NULL ARGUMENT IS NOT AN ARGUMENT.</strong> The check used to be the mere
@@ -225,11 +238,8 @@ public sealed class ProcessRunnerDiagnosticCensusTests
         {
             callSites.AddRange(root.DescendantNodes()
                 .OfType<InvocationExpressionSyntax>()
-                .Where(i => i.Expression is MemberAccessExpressionSyntax
-                {
-                    Name.Identifier.ValueText: "Run",
-                } access
-                    && IsProcessRunnerReceiver(access.Expression, runnerNames))
+                .Where(i => RunReceiver(i) is { } receiver
+                    && IsProcessRunnerReceiver(receiver, runnerNames))
                 .Select(i => (Path.GetRelativePath(repoRoot, file), i)));
         }
 
@@ -324,11 +334,23 @@ public sealed class ProcessRunnerDiagnosticCensusTests
     /// <param name="roots">The parsed compilation units.</param>
     /// <returns>The declared names, which become the receivers this census recognises.</returns>
     /// <remarks>
-    /// Four declaration shapes, which between them are how a receiver comes to exist: a local or
-    /// field (both <see cref="VariableDeclarationSyntax"/>), a parameter, and a property. A
-    /// <c>var</c> local initialised from a runner is caught by the <c>new</c> clause in
-    /// <see cref="IsProcessRunnerReceiver"/> only when the call is on the <c>new</c> itself; a
-    /// <c>var</c> local holding a runner from a factory is the residue named in the row's remarks.
+    /// <para>
+    /// Every shape that WRITES the type at the declaration: a local or field (both
+    /// <see cref="VariableDeclarationSyntax"/>), a parameter, a property, a <c>foreach</c>
+    /// variable, a named tuple element, a declaration or recursive PATTERN
+    /// (<c>x is IProcessRunner runner</c>, <c>x is IProcessRunner { } runner</c>) and a
+    /// declaration EXPRESSION, which is the <c>out</c> variable and the typed half of a
+    /// deconstruction.
+    /// </para>
+    /// <para>
+    /// The first three were all this read, and the rest are the hole that left: a receiver
+    /// declared by any of them was invisible, which does not redden the count — it leaves it at
+    /// the one production call and passes. What is still outside is the shape that writes NO type:
+    /// a <c>var</c> local, a <c>var</c> pattern, an untyped deconstruction. Such a local is caught
+    /// by the <c>new</c> clause in <see cref="IsProcessRunnerReceiver"/> only when the call is on
+    /// the <c>new</c> itself; filled from a factory it is the residue named in the row's remarks,
+    /// and it is a semantic-model question rather than a syntactic one.
+    /// </para>
     /// </remarks>
     private static HashSet<string> RunnerTypedNames(IEnumerable<CompilationUnitSyntax> roots)
     {
@@ -357,6 +379,27 @@ public sealed class ProcessRunnerDiagnosticCensusTests
                         names.Add(property.Identifier.ValueText);
                         break;
 
+                    case ForEachStatementSyntax loop when NamesRunnerType(loop.Type):
+                        names.Add(loop.Identifier.ValueText);
+                        break;
+
+                    case TupleElementSyntax element when NamesRunnerType(element.Type)
+                        && element.Identifier.ValueText.Length > 0:
+                        names.Add(element.Identifier.ValueText);
+                        break;
+
+                    case DeclarationPatternSyntax pattern when NamesRunnerType(pattern.Type):
+                        AddDesignated(names, pattern.Designation);
+                        break;
+
+                    case RecursivePatternSyntax recursive when NamesRunnerType(recursive.Type):
+                        AddDesignated(names, recursive.Designation);
+                        break;
+
+                    case DeclarationExpressionSyntax declared when NamesRunnerType(declared.Type):
+                        AddDesignated(names, declared.Designation);
+                        break;
+
                     default:
                         break;
                 }
@@ -365,6 +408,60 @@ public sealed class ProcessRunnerDiagnosticCensusTests
 
         return names;
     }
+
+    /// <summary>
+    /// Adds every name a variable designation introduces.
+    /// </summary>
+    /// <param name="names">The set being built.</param>
+    /// <param name="designation">The designation, which may be absent.</param>
+    /// <remarks>
+    /// A parenthesised designation is a deconstruction, whose written type covers the whole tuple,
+    /// so every nested name is added. That over-matches in the safe direction — see the row's
+    /// residue paragraph.
+    /// </remarks>
+    private static void AddDesignated(HashSet<string> names, VariableDesignationSyntax? designation)
+    {
+        switch (designation)
+        {
+            case SingleVariableDesignationSyntax single:
+                names.Add(single.Identifier.ValueText);
+                break;
+
+            case ParenthesizedVariableDesignationSyntax parenthesised:
+                foreach (var nested in parenthesised.Variables)
+                {
+                    AddDesignated(names, nested);
+                }
+
+                break;
+
+            default:
+                break;
+        }
+    }
+
+    /// <summary>
+    /// The expression a <c>Run</c> was invoked on, or <see langword="null"/> when the invocation
+    /// is not a <c>Run</c> on a receiver.
+    /// </summary>
+    /// <param name="call">A candidate invocation.</param>
+    /// <returns>The receiver expression, or <see langword="null"/>.</returns>
+    /// <remarks>
+    /// Both member-access forms, because <c>_runner?.Run(…)</c> parses to a
+    /// <see cref="MemberBindingExpressionSyntax"/> whose receiver sits on the enclosing
+    /// <see cref="ConditionalAccessExpressionSyntax"/> — matching only <c>.</c> left the
+    /// null-conditional spelling of the very same call unseen, which is the declaration-shape hole
+    /// reached from the call side rather than the declaration side.
+    /// </remarks>
+    private static ExpressionSyntax? RunReceiver(InvocationExpressionSyntax call) =>
+        call.Expression switch
+        {
+            MemberAccessExpressionSyntax { Name.Identifier.ValueText: "Run" } access =>
+                access.Expression,
+            MemberBindingExpressionSyntax { Name.Identifier.ValueText: "Run" } =>
+                call.FirstAncestorOrSelf<ConditionalAccessExpressionSyntax>()?.Expression,
+            _ => null,
+        };
 
     /// <summary>Whether a declared type is a process-runner type.</summary>
     private static bool NamesRunnerType(TypeSyntax? type) =>

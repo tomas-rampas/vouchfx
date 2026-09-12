@@ -297,12 +297,12 @@ public sealed class GitChangeSetTests
     /// quietly.
     /// </para>
     /// <para>
-    /// <strong>That question is open and UNFILED, which is a change from what this comment used to
-    /// say.</strong> It cited issues #480 and #466-B, and neither reaches it. #466 closed on a
-    /// different axis — how <c>ParallelSuiteRunner</c>'s slot catch-all CLASSIFIES an unexpected
-    /// engine throw — and #480's answer is narrower still: a provider or engine defect never exits
-    /// 0. A git that could not be run is neither. Until somebody files it, a <c>--changed-since</c>
-    /// git failure is a usage error and exits 2, and there is no issue to read for the reasoning.
+    /// <strong>That question is open and is filed as #521.</strong> It used to cite issues #480
+    /// and #466-B, and neither reaches it. #466 closed on a different axis — how
+    /// <c>ParallelSuiteRunner</c>'s slot catch-all CLASSIFIES an unexpected engine throw — and
+    /// #480's answer is narrower still: a provider or engine defect never exits 0. A git that
+    /// could not be run is neither. Until #521 is decided, a <c>--changed-since</c> git failure is
+    /// a usage error and exits 2.
     /// </para>
     /// </remarks>
     [Fact]
@@ -706,6 +706,26 @@ public sealed class GitChangeSetTests
             "<path>`b/c",
             GitChangeSet.SubstituteAbsolutePaths("/opt/a`b/c"));
 
+        // The same shape one locale later: gettext quotes with U+2018/U+2019 in a UTF-8 locale,
+        // and this leaked the WHOLE path — with HostPathDisclosure accepting it — until the seven
+        // curly quotes joined the set. Spelled as escapes because U+2018 and the ASCII apostrophe
+        // are a pixel apart. POSIX-shaped, so this row is asserted on every lane.
+        Assert.Equal(
+            "cannot open \u2018<path>\u2019",
+            GitChangeSet.SubstituteAbsolutePaths("cannot open \u2018/etc/gitconfig\u2019"));
+
+        // And its cost, the same kind the backtick pays: the head goes, the tail stands.
+        Assert.Equal(
+            "<path>\u2018b/c",
+            GitChangeSet.SubstituteAbsolutePaths("/opt/a\u2018b/c"));
+
+        // U+00A0 is in the corpus and NOT in the separator set: a no-break space is a legal
+        // filename character rather than a quoting one, so the whole path is relayed. This pins
+        // the refusal to add it, which is otherwise indistinguishable from having missed it.
+        Assert.Equal(
+            "cannot open \u00A0/etc/gitconfig",
+            GitChangeSet.SubstituteAbsolutePaths("cannot open \u00A0/etc/gitconfig"));
+
         if (!OperatingSystem.IsWindows())
         {
             return;
@@ -746,19 +766,36 @@ public sealed class GitChangeSetTests
     }
 
     /// <summary>
-    /// The characters that glue a prefix to a rooted path and survive it — the residue class,
-    /// enumerated. Every OTHER non-alphanumeric ASCII character is substituted.
+    /// The characters that glue a prefix to a rooted path and survive it — the residue class over
+    /// the corpus. Every OTHER character the corpus enumerates is substituted.
     /// </summary>
     /// <remarks>
-    /// Nineteen, and each is out of <c>GitChangeSet.TokenSeparators</c> for a stated reason; see
+    /// Twenty: the nineteen ASCII ones, and U+00A0. Each is out of
+    /// <c>GitChangeSet.TokenSeparators</c> for a stated reason; see
     /// <see cref="SubstituteAbsolutePaths_PrefixGlue_IsSubstitutedOrDocumentedResidue"/>.
     /// </remarks>
-    private const string PrefixGlueResidue = "!#$%*+-./:?@\\^_{|}~";
+    private const string PrefixGlueResidue = "!#$%*+-./:?@\\^_{|}~\u00A0";
 
     /// <summary>
-    /// Every non-alphanumeric ASCII character, as the glue in <c>key&lt;glue&gt;/home/john/x</c>.
+    /// Every non-alphanumeric ASCII character, plus the non-ASCII quoting and spacing characters
+    /// real tooling wraps a path in, as the glue in <c>key&lt;glue&gt;/home/john/x</c>.
     /// </summary>
     /// <returns>One row per character, the three control separators included.</returns>
+    /// <remarks>
+    /// <para>
+    /// <strong>THE ASCII SWEEP IS EXHAUSTIVE; THE NON-ASCII TAIL IS A NAMED LIST, and the
+    /// difference is the honest part.</strong> A sweep of every non-alphanumeric code point would
+    /// be a hundred thousand rows deciding nothing, so beyond ASCII the corpus enumerates the
+    /// characters a tool actually wraps a path in: gettext's UTF-8 pair, gnulib's localised German
+    /// and French pairs, and the no-break space. Anything else non-ASCII is outside the corpus and
+    /// therefore outside the claim — <c>GitChangeSet.TokenSeparators</c> says so in the same words.
+    /// </para>
+    /// <para>
+    /// U+00A0 earns a row while remaining a RESIDUE: recording the answer and choosing to leave a
+    /// character out of the separator set are separate acts, and the row is what stops the second
+    /// from being mistaken for the first.
+    /// </para>
+    /// </remarks>
     public static TheoryData<char> PrefixGlueCorpus()
     {
         var corpus = new TheoryData<char> { '\t', '\r', '\n' };
@@ -769,6 +806,14 @@ public sealed class GitChangeSetTests
             {
                 corpus.Add(c);
             }
+        }
+
+        // Named, not swept: see the remarks. Left single/right single (gettext, UTF-8 locale),
+        // left double/right double and the German low-9 opener, the two guillemets, and the
+        // no-break space — the one of the eight that stays a residue.
+        foreach (var glue in "\u2018\u2019\u201C\u201D\u201E\u00AB\u00BB\u00A0")
+        {
+            corpus.Add(glue);
         }
 
         return corpus;
@@ -796,7 +841,8 @@ public sealed class GitChangeSetTests
     /// is a word, and nothing in the shape distinguishes it from a prefix glued to a path.
     /// </para>
     /// <para>
-    /// <strong>WHY EACH OF THE NINETEEN STAYS OUT.</strong> <c>/</c> and <c>\</c> ARE the path
+    /// <strong>WHY EACH OF THE NINETEEN ASCII RESIDUES STAYS OUT.</strong> <c>/</c> and <c>\</c>
+    /// ARE the path
     /// separators, so a separator there splits every path into fragments. <c>:</c> is the drive
     /// colon, measured at <c>GitChangeSet.TokenSeparators</c>. The rest were MEASURED by adding
     /// them and re-running this corpus, and each leaves the TAIL of a real path standing:
@@ -816,10 +862,35 @@ public sealed class GitChangeSetTests
     /// and no relayed shape glues a path with one.
     /// </para>
     /// <para>
-    /// <c>`</c> is the one character this round ADDED, against exactly that test: the
+    /// <c>`</c> is the one character an earlier round ADDED, against exactly that test: the
     /// backtick-apostrophe quoting older GNU tooling uses relayed a whole path, and it is a shape
     /// a hook that shells out to such a tool produces. The rows above pin both the gain and the
     /// cost, and <c>GitChangeSet.TokenSeparators</c> carries what is measured and what is not.
+    /// </para>
+    /// <para>
+    /// <strong>THE SEVEN CURLY QUOTES ARE THAT SAME ADDITION ONE LOCALE LATER, and the corpus is
+    /// what caught them.</strong> It swept ASCII exhaustively and stopped there, so
+    /// <c>cannot open ‘/etc/gitconfig’</c> — gettext's UTF-8 spelling of the shape the backtick
+    /// was added for — relayed the whole path with every row green. MEASURED before the addition:
+    /// unchanged output, and <c>HostPathDisclosure</c> ACCEPTED it, so neither the relay nor the
+    /// gate that polices it saw the leak. All seven go in together because they are three PAIRS
+    /// plus one: closing <c>“</c> and leaving <c>„</c> out would half-close the German pair.
+    /// </para>
+    /// <para>
+    /// <strong>U+00A0 IS A ROW AND A RESIDUE, which is the corpus doing its job rather than an
+    /// inconsistency.</strong> It is not a quoting character but a space — legal in a filename on
+    /// both platforms, and a routine copy-paste artefact. MEASURED with it added:
+    /// <c>/home/john/My Documents/x</c> spelled with one becomes <c>&lt;path&gt; Documents/x</c>,
+    /// a real path losing its tail, which is the test the nineteen ASCII residues fail.
+    /// <c>GitChangeSet.TokenSeparators</c> adds the second reason — being whitespace, it would
+    /// also have to join <c>WhitespaceSeparators</c>, and the parity row polices that direction
+    /// only, so getting it wrong is silent.
+    /// </para>
+    /// <para>
+    /// Beyond the corpus the class stays open: a sweep of every non-alphanumeric code point would
+    /// be a hundred thousand rows deciding nothing, so the non-ASCII tail is a named list of what
+    /// tooling emits. <see cref="PrefixGlueCorpus"/> states that bound, and neither it nor this
+    /// row claims more.
     /// </para>
     /// <para>
     /// The drive-letter spelling is asserted on Windows only, for the reason the row above gives —
@@ -1171,9 +1242,9 @@ public sealed class GitChangeSetTests
     /// There is deliberately no fallback to the bare name: falling back is precisely the
     /// search-order hole the resolution closes, so "not found" has to be a refusal. The exit code
     /// is unchanged on purpose — whether selection-infrastructure failure deserves one of its own
-    /// is an open and UNFILED question. This comment used to cite issues #480 and #466-B; neither
-    /// answers it (see <see cref="GitTimesOut_SurfacesChangeSetException_NamingTheBudget"/>'s
-    /// remarks for why).
+    /// is an open question, filed as #521. This comment used to cite issues #480 and #466-B;
+    /// neither answers it (see
+    /// <see cref="GitTimesOut_SurfacesChangeSetException_NamingTheBudget"/>'s remarks for why).
     /// </para>
     /// <para>
     /// The second assertion is this row's half of the wording split: no candidate exists here, so
