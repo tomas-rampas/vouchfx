@@ -255,14 +255,16 @@ internal sealed class GitChangeSet : IChangeSet
         // WHAT AN EARLIER DRAFT CLAIMED, AND WHY IT IS RETRACTED. It said `git status` takes
         // `.git/index.lock` to persist its opportunistic index refresh, so a concurrent git in the
         // same working tree made THIS call exit 128 and refused the whole change-set. git has no
-        // such failure mode: `cmd_status` takes the index lock through `repo_hold_locked_index`
-        // WITHOUT `LOCK_DIE_ON_ERROR`, so a lock it cannot get is silently skipped along with the
-        // refresh. MEASURED by review on this host (git 2.54.0.windows.1) with an `index.lock`
-        // planted in a temp repository: plain `status --porcelain` still answered `?? b.txt` at
-        // exit 0, with and without a stat-dirty tracked file, and identically with the flag. The
-        // retraction is recorded rather than quietly deleted, the same way this branch handles the
-        // `0311`->`0611` correction: a rationale that names a failure mode the tool does not have
-        // is how a later reader deletes the flag as useless.
+        // such failure mode: INFERRED from git's own source, `cmd_status` takes the index lock
+        // through `repo_hold_locked_index` WITHOUT `LOCK_DIE_ON_ERROR`, so a lock it cannot get is
+        // silently skipped along with the refresh. That mechanism is read rather than observed;
+        // what was MEASURED is the black-box behaviour it predicts, by review on this host (git
+        // 2.54.0.windows.1) with an `index.lock` planted in a temp repository: plain `status
+        // --porcelain` still answered `?? b.txt` at exit 0, with and without a stat-dirty tracked
+        // file, and identically with the flag. The measurement stands on its own; the inference
+        // only explains it. The retraction is recorded rather than quietly deleted, the same way
+        // this branch handles the `0311`->`0611` correction: a rationale that names a failure mode
+        // the tool does not have is how a later reader deletes the flag as useless.
         //
         // THE REAL REASON IS THE DIRECTION GIT'S OWN DOCUMENTATION GIVES. `GIT_OPTIONAL_LOCKS` is
         // documented for a caller that "does not want to cause lock contention with other
@@ -514,6 +516,17 @@ internal sealed class GitChangeSet : IChangeSet
     private static readonly char[] TokenSeparators =
         { ' ', '\t', '\r', '\n', '"', '\'', '<', '>', '&', ';', ',', '(', ')', '[', ']' };
 
+    /// <summary>
+    /// The separators <see cref="IsOnePathWholly"/> alone splits on — the whitespace members of
+    /// <see cref="TokenSeparators"/>, and deliberately nothing else.
+    /// </summary>
+    /// <remarks>
+    /// Not a second copy of the shared rule set and not gated against it: the parity row polices
+    /// the three arrays the scan and the disclosure gate share, and this one belongs to neither.
+    /// <see cref="IsOnePathWholly"/> carries the measurement that says why it is narrower.
+    /// </remarks>
+    private static readonly char[] WhitespaceSeparators = { ' ', '\t', '\r', '\n' };
+
     private static readonly char[] PathSeparators = { '\\', '/' };
 
     /// <summary>
@@ -591,11 +604,20 @@ internal sealed class GitChangeSet : IChangeSet
     /// text being scrubbed was produced by a child of THIS process on THIS host.
     /// </para>
     /// <para>
-    /// <strong>WHAT IT NO LONGER OVER-REACHES ON, for the same reason.</strong> A span that BEGINS
-    /// rooted and continues in prose is rooted as a whole, so the first quote-aware draft replaced
-    /// <c>'/etc/gitconfig is unreadable, and /tmp/x too'</c> with a bare <c>&lt;path&gt;</c> —
-    /// wider than any residue, since it deleted a sentence the operator needed. The second rooted
-    /// token is what refuses the whole-span treatment there; see <see cref="IsOnePathWholly"/>.
+    /// <strong>WHERE IT OVER-REACHES LESS THAN IT DID — narrowed, not removed.</strong> A span that
+    /// BEGINS rooted and continues in prose is rooted as a whole, so the first quote-aware draft
+    /// replaced <c>'/etc/gitconfig is unreadable, and /tmp/x too'</c> with a bare
+    /// <c>&lt;path&gt;</c> — wider than any residue, since it deleted a sentence the operator
+    /// needed. The second rooted token is what refuses the whole-span treatment there; see
+    /// <see cref="IsOnePathWholly"/>.
+    /// </para>
+    /// <para>
+    /// The residue that treatment leaves, stated rather than implied: a span that begins rooted and
+    /// carries prose but NO second path is still collapsed whole, so
+    /// <c>at '/home/john smith/x is gone'</c> becomes <c>at '&lt;path&gt;'</c> and the words
+    /// <c>is gone</c> go with it. The second rooted token is the only signal here, and that span
+    /// holds none. It is the narrow case — git puts its prose outside the quotes it wraps a path in
+    /// — but it is a case, and a relayed message this file does not own may quote differently.
     /// </para>
     /// <para>
     /// <strong>WHY THE QUOTED SPAN IS ONE TOKEN — the default Windows shape, not an edge
@@ -710,9 +732,12 @@ internal sealed class GitChangeSet : IChangeSet
     /// BEGINS with a path and continues in prose — <c>'/etc/gitconfig is unreadable, and /tmp/x
     /// too'</c> — IS <see cref="Path.IsPathRooted(string)"/>, so taking it whole replaced the
     /// sentence with <c>&lt;path&gt;</c> and swallowed the second path's existence along with the
-    /// words. A SECOND rooted token inside the span is the signal that the span is a sentence
-    /// naming paths rather than one path containing spaces: no genuine path holds a rooted token
-    /// after its first.
+    /// words. A SECOND rooted WHITESPACE-separated token inside the span is the signal that the
+    /// span is a sentence naming paths rather than one path containing spaces: a sentence naming
+    /// two paths puts whitespace between them, while a path that continues after a space almost
+    /// never resumes with a path separator. "Almost" is the honest word — a directory whose name
+    /// ends in a space would produce one — and <see cref="IsOnePathWholly"/> states why the
+    /// separator set for that test is whitespace ALONE rather than the scan's own.
     /// </para>
     /// <para>
     /// THE RECURSION IS BOUNDED AT TWO, and by the tokenisation rather than by a counter.
@@ -739,12 +764,42 @@ internal sealed class GitChangeSet : IChangeSet
     /// <param name="span">The span, quotes excluded.</param>
     /// <returns><see langword="true"/> when the span may be substituted whole.</returns>
     /// <remarks>
+    /// <para>
     /// Two conditions, and the second is what keeps the whole-span treatment off a sentence: the
-    /// span is itself an absolute host path, AND no token after its first is one. The first
+    /// span is itself an absolute host path, AND no WHITESPACE-separated token after its first is
+    /// one — the separator set is this method's own, and the paragraph below is why. The first
     /// condition alone accepts <c>/etc/gitconfig is unreadable, and /tmp/x too</c>; the second
     /// rejects it. <c>C:\Users\John Smith\src\repo</c> — the shape the quote-awareness exists for
     /// — splits into <c>C:\Users\John</c> and <c>Smith\src\repo</c>, only the first of which is
     /// rooted, so it is unaffected.
+    /// </para>
+    /// <para>
+    /// <strong>WHITESPACE ALONE, and the scan's own set was MEASURED wrong here.</strong> Splitting
+    /// on <see cref="TokenSeparators"/> made every path carrying a non-whitespace separator look
+    /// like a sentence, because the fragment after that separator still begins with a path
+    /// separator and is therefore rooted. Measured on this host:
+    /// <c>'C:\Program Files (x86)\Git\bin\sh.exe'</c> split into <c>C:\Program</c>, <c>Files</c>,
+    /// <c>x86</c> and <c>\Git\bin\sh.exe</c> — the last one rooted — so the span was refused and
+    /// re-scanned into <c>'&lt;path&gt; Files (x86)&lt;path&gt;'</c>, and
+    /// <c>'/opt/git (stable)/bin/sh'</c> into <c>'&lt;path&gt; (stable)&lt;path&gt;'</c>. No path
+    /// text escapes either way, but <c>C:\Program Files (x86)\Git</c> is where 32-bit
+    /// Git-for-Windows installs, so the shape is a default rather than an oddity. On whitespace
+    /// the first splits into <c>C:\Program</c>, <c>Files</c> and <c>(x86)\Git\bin\sh.exe</c>, none
+    /// of the later ones rooted, and the span is taken whole again.
+    /// </para>
+    /// <para>
+    /// Nothing the second condition exists for is given up: a sentence naming two paths separates
+    /// them with whitespace, so <c>/etc/gitconfig is unreadable, and /tmp/x too</c> still splits
+    /// <c>/tmp/x</c> out and is still refused. What the narrower set concedes is a span whose two
+    /// paths are separated by punctuation ALONE — <c>/etc/x(/tmp/y)</c> — which is now taken
+    /// whole; both halves are paths there, so the one placeholder deletes no prose.
+    /// </para>
+    /// <para>
+    /// This is the INNER tokenisation only. <see cref="AppendSubstituted"/> keeps the shared
+    /// <see cref="TokenSeparators"/> set, which is what
+    /// <c>GitChangeSetTests.SubstitutionTokenRules_AreTheSharedDisclosureGates</c> holds against
+    /// the disclosure gate's.
+    /// </para>
     /// </remarks>
     private static bool IsOnePathWholly(string span)
     {
@@ -754,7 +809,8 @@ internal sealed class GitChangeSet : IChangeSet
         }
 
         var first = true;
-        foreach (var token in span.Split(TokenSeparators, StringSplitOptions.RemoveEmptyEntries))
+        foreach (var token in span.Split(
+            WhitespaceSeparators, StringSplitOptions.RemoveEmptyEntries))
         {
             if (!first && IsAbsoluteHostPath(token.TrimEnd(TrailingPunctuation)))
             {

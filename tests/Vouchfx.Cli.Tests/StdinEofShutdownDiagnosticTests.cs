@@ -283,6 +283,14 @@ public sealed class StdinEofShutdownDiagnosticTests : IDisposable
 
         Assert.Equal(2, arguments.Count);
 
+        // The EOF source, by name. `IsStdinEofShutdown(null, ...)` compiles, satisfies every other
+        // assertion here, and answers false forever — the marker would never be raised and the
+        // engine-defect wording would return silently, which is #502 again. One assertion closes
+        // it, and "nobody would write that" is the reasoning that left the other holes.
+        Assert.Equal(
+            "linkedShutdownSource",
+            (arguments[0].Expression as IdentifierNameSyntax)?.Identifier.ValueText);
+
         // The USER's token, by name. `runCancellationToken` is in scope at that frame and
         // compiles here — and on an EOF stop it IS the linked source, so the method's
         // `!userCancellationToken.IsCancellationRequested` clause would be false forever, the

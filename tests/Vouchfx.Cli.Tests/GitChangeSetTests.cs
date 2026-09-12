@@ -562,6 +562,16 @@ public sealed class GitChangeSetTests
     /// character and the path's own quotes still pair with each other.
     /// </para>
     /// <para>
+    /// <strong>The PARENTHESISED rows pin the one-path test's own tokenisation, which is narrower
+    /// than the scan's.</strong> While it split on the shared separator set, any path holding a
+    /// non-whitespace separator failed it — the fragment after the separator still begins with a
+    /// path separator and so is rooted — and the span was re-scanned into a placeholder pair with
+    /// the directory name between them. Both spellings are real defaults:
+    /// <c>C:\Program Files (x86)\Git</c> is where 32-bit Git-for-Windows installs. The POSIX row
+    /// is rooted on either platform and therefore sits above the gate; only the drive-letter one
+    /// is behind it.
+    /// </para>
+    /// <para>
     /// <strong>ONLY THE DRIVE-LETTER SHAPES ARE GATED, AND THAT IS A FIX NOT A TIDY-UP.</strong>
     /// Every lane in <c>build.yml</c> is <c>ubuntu-latest</c>, so while the gate sat above the
     /// first quote-aware row this method asserted three things in CI and ALL THREE passed with the
@@ -630,6 +640,33 @@ public sealed class GitChangeSetTests
             "<path> smith/x",
             GitChangeSet.SubstituteAbsolutePaths("/home/john smith/x"));
 
+        // The over-reach the whole-span treatment still has, pinned rather than described: a span
+        // that begins rooted and carries prose but NO second path is collapsed whole, so the words
+        // after the path go with it. The second rooted token is the only signal, and this holds
+        // none.
+        Assert.Equal(
+            "at '<path>'",
+            GitChangeSet.SubstituteAbsolutePaths("at '/home/john smith/x is gone'"));
+
+        // A PARENTHESISED component does not make a path into a sentence. The one-path test splits
+        // on whitespace alone; on the outer scan's separator set the fragment after the `)` was
+        // rooted again, the span was refused as prose, and the re-scan emitted
+        // `'<path> (stable)<path>'` — which names the directory between the placeholders.
+        Assert.Equal(
+            "fatal: cannot exec '<path>'",
+            GitChangeSet.SubstituteAbsolutePaths("fatal: cannot exec '/opt/git (stable)/bin/sh'"));
+
+        // What the narrower set concedes, pinned so a later widening is a moved expectation: two
+        // paths inside ONE quoted span, separated by punctuation ALONE, are now taken whole. Both
+        // halves are paths, so the single placeholder deletes no prose — it was `'<path>(<path>)'`.
+        // Unquoted, the scan's own separator set still splits them, which the row below shows.
+        Assert.Equal(
+            "warning: '<path>'",
+            GitChangeSet.SubstituteAbsolutePaths("warning: '/etc/x(/tmp/y)'"));
+        Assert.Equal(
+            "warning: <path>(<path>)",
+            GitChangeSet.SubstituteAbsolutePaths("warning: /etc/x(/tmp/y)"));
+
         if (!OperatingSystem.IsWindows())
         {
             return;
@@ -649,6 +686,13 @@ public sealed class GitChangeSetTests
         Assert.Equal(
             @"in repository at '<path>'",
             GitChangeSet.SubstituteAbsolutePaths(@"in repository at 'C:\Program Files\Git\repo'"));
+
+        // The parenthesised shape in its Windows spelling, which is the 32-bit Git-for-Windows
+        // default install location rather than an exotic one.
+        Assert.Equal(
+            @"in repository at '<path>'",
+            GitChangeSet.SubstituteAbsolutePaths(
+                @"in repository at 'C:\Program Files (x86)\Git\bin\sh.exe'"));
 
         // The documented residue: an UNQUOTED path with a space loses only its rooted head.
         Assert.Equal(
