@@ -181,10 +181,20 @@ internal sealed class ShutdownBackstop : IAsyncDisposable
 
     /// <summary>
     /// Cancels the timer (if armed) before it can fire, and releases its
-    /// <see cref="CancellationTokenSource"/>. Idempotent; never throws. Once this has returned,
-    /// the force-exit delegate is never invoked — including by a timer whose budget elapsed
-    /// concurrently, which loses the transition described in this type's remarks.
+    /// <see cref="CancellationTokenSource"/>. Idempotent; never throws.
     /// </summary>
+    /// <remarks>
+    /// <strong>THE GUARANTEE IS ABOUT THE TRANSITION, NOT ABOUT THE RETURN.</strong> A timer that
+    /// had NOT claimed the transition by the time this took the gate never invokes the force-exit
+    /// delegate: it reads <c>_disposed</c> at the gate and returns. A timer that HAD claimed it
+    /// does invoke the delegate, and may do so AFTER this method has returned — the claim is
+    /// released before the call, precisely because that call does not return in production.
+    /// Disposal neither waits for it nor revokes it, and revoking would be the wrong behaviour:
+    /// the budget really did elapse before teardown reached the gate, so it is a genuine
+    /// force-exit rather than one racing a run that had finished. An earlier version of this
+    /// summary promised the delegate was never invoked once this returned, which was false for
+    /// exactly that branch and contradicted the claim comment in <c>RunAsync</c>.
+    /// </remarks>
     public async ValueTask DisposeAsync()
     {
         Task? timerTask;
