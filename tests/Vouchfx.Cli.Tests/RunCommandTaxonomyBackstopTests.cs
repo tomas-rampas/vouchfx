@@ -121,6 +121,39 @@ public sealed class RunCommandTaxonomyBackstopTests : IDisposable
         Assert.Equal(ExitCodes.Inconclusive, exitCode);
     }
 
+    /// <summary>
+    /// <strong>An escaped exception whose <see cref="Exception.Message"/> ITSELF throws still
+    /// returns the taxonomy code.</strong>
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The catch-all's diagnostic interpolates <c>ex.Message</c>. While that interpolation was
+    /// evaluated as a CALL-SITE ARGUMENT it sat outside the best-effort guard, so a <c>Message</c>
+    /// override that throws escaped <c>ExecuteAsync</c> entirely and handed the run to
+    /// System.CommandLine's exit <strong>1</strong> — with the taxonomy code already decided and one
+    /// <c>return</c> away. That is the same defect this whole file exists to pin, reached through
+    /// the reporting of the fault rather than the fault itself, and it is open issue #518's class.
+    /// </para>
+    /// <para>
+    /// <strong>Not a hypothetical exception type.</strong> A provider, or a <c>script.csharp</c>
+    /// author, can define one; <c>Message</c> is virtual and nothing constrains an override. The row
+    /// asserts the INTEGER because that is what the defect changed — the diagnostic is
+    /// unproducible here by construction, and saying so is the point of the best-effort contract.
+    /// </para>
+    /// <para>
+    /// MEASURED RED by reverting the composition to a call-site argument: this row then fails with
+    /// the injected <see cref="InvalidOperationException"/> propagating out of <c>ExecuteAsync</c>,
+    /// and it is the only row in the project that moves.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task ExecuteAsync_ExceptionWhoseMessageThrows_StillReturnsTheTaxonomyCode()
+    {
+        var exitCode = await ExecuteAsync(new ThrowingWriter(_ => new HostileMessageException()));
+
+        Assert.Equal(ExitCodes.Inconclusive, exitCode);
+    }
+
     private Task<int> ExecuteAsync(TextWriter output, CancellationToken cancellationToken = default)
         => RunCommand.ExecuteAsync(
             path: _root,
@@ -137,6 +170,20 @@ public sealed class RunCommandTaxonomyBackstopTests : IDisposable
             output: output,
             telemetryHook: null,
             cancellationToken: cancellationToken);
+
+    /// <summary>
+    /// An exception whose <see cref="Exception.Message"/> throws rather than returning text.
+    /// </summary>
+    /// <remarks>
+    /// <c>Message</c> is virtual, so this is a shape any provider-defined or author-defined
+    /// exception type can have — deliberately or by accident, since a lazily-composed message can
+    /// dereference state the failure already invalidated.
+    /// </remarks>
+    private sealed class HostileMessageException : Exception
+    {
+        public override string Message =>
+            throw new InvalidOperationException("this exception's Message throws");
+    }
 
     /// <summary>A sink that raises a caller-chosen exception on every write.</summary>
     private sealed class ThrowingWriter : TextWriter
