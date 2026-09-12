@@ -14,9 +14,9 @@
 // wall-clock timer — deliberately bound to ITS OWN CancellationTokenSource, never the run's own,
 // possibly-ignored, cancellation token — that force-exits the process if it is still alive once
 // the budget elapses. If graceful teardown completes first, RunCommand.ExecuteAsync disposes this
-// instance, cancelling the timer before it can ever fire. Budget and force-exit action are both
-// injectable so this is fully unit-testable without a real Environment.Exit or a real 30-second
-// wait.
+// instance, cancelling the timer before it can ever fire. Budget, force-exit action and the delay
+// itself are all injectable, so this is fully unit-testable without a real Environment.Exit, a
+// real 30-second wait, or a row that can only assert the deadline/teardown race by out-sleeping it.
 
 namespace Vouchfx.Cli;
 
@@ -45,18 +45,33 @@ namespace Vouchfx.Cli;
 /// Unlike <see cref="StdinShutdownWatcher"/>'s real Console-stream read (which a
 /// <see cref="CancellationToken"/> cannot always interrupt), <see cref="Task.Delay(TimeSpan, CancellationToken)"/>
 /// is a BCL timer whose cancellation support is fully reliable — so <see cref="DisposeAsync"/> can
-/// safely <see langword="await"/> the timer task to completion without risking an indefinite
-/// block.
+/// safely <see langword="await"/> a timer task that is still IN that delay, without risking an
+/// indefinite block.
+/// </para>
+/// <para>
+/// The DEADLINE and the DISPOSAL are one atomic transition on that same lock, and whichever
+/// reaches it first decides. When its delay completes on its own, the timer re-reads
+/// <c>_disposed</c> UNDER the lock before firing: if teardown won, the run already finished
+/// normally and the timer returns — which is what makes "after <see cref="DisposeAsync"/> returns,
+/// the force-exit delegate is never invoked" a property of this type rather than of how the two
+/// threads happened to interleave. If the deadline won it CLAIMS the transition instead, because
+/// the budget genuinely elapsed before teardown finished and that is a real force-exit, not a
+/// spurious one; a later <see cref="DisposeAsync"/> reads that claim and knows the exit is already
+/// committed rather than believing it prevented one, so it does NOT await a timer task that is by
+/// then sitting inside <see cref="Environment.Exit(int)"/> — which does not return. The delegate is
+/// always invoked OUTSIDE the lock, for that same reason.
 /// </para>
 /// </remarks>
 internal sealed class ShutdownBackstop : IAsyncDisposable
 {
     private readonly TimeSpan _budget;
     private readonly Action _forceExit;
+    private readonly Func<TimeSpan, CancellationToken, Task> _delay;
     private readonly object _gate = new();
     private CancellationTokenSource? _cancelSource = new();
     private Task? _timerTask;
     private bool _disposed;
+    private bool _deadlineClaimed;
 
     /// <summary>Creates a backstop that has not yet started counting down — see <see cref="Arm"/>.</summary>
     /// <param name="budget">
@@ -75,10 +90,23 @@ internal sealed class ShutdownBackstop : IAsyncDisposable
     /// side-effect-only delegate (recording that it fired) — NEVER the real
     /// <see cref="Environment.Exit(int)"/>, which would tear down the test process itself.
     /// </param>
-    public ShutdownBackstop(TimeSpan budget, Action forceExit)
+    /// <param name="delay">
+    /// How the wall-clock wait itself is performed; defaults to
+    /// <see cref="Task.Delay(TimeSpan, CancellationToken)"/>, which is what production always uses.
+    /// A test overrides it to complete the deadline ON DEMAND — in particular AFTER
+    /// <see cref="DisposeAsync"/> has already claimed the lock — which is the only way to assert
+    /// the deadline/teardown transition deterministically instead of by out-sleeping a race. A
+    /// substitute is not obliged to observe the token: the timer treats any faulted or cancelled
+    /// delay as "never force-exit".
+    /// </param>
+    public ShutdownBackstop(
+        TimeSpan budget,
+        Action forceExit,
+        Func<TimeSpan, CancellationToken, Task>? delay = null)
     {
         _budget = budget;
         _forceExit = forceExit;
+        _delay = delay ?? Task.Delay;
     }
 
     /// <summary>
@@ -109,7 +137,7 @@ internal sealed class ShutdownBackstop : IAsyncDisposable
     {
         try
         {
-            await Task.Delay(_budget, cancelToken).ConfigureAwait(false);
+            await _delay(_budget, cancelToken).ConfigureAwait(false);
         }
         catch
         {
@@ -119,8 +147,29 @@ internal sealed class ShutdownBackstop : IAsyncDisposable
             return;
         }
 
+        lock (_gate)
+        {
+            // THE DEADLINE AND THE DISPOSAL ARE ONE ATOMIC TRANSITION, AND CANCELLATION ALONE DOES
+            // NOT DECIDE IT. A delay that completes on its own the instant before DisposeAsync
+            // takes this lock leaves this continuation parked here while teardown cancels, marks
+            // the instance disposed and returns — so without this re-read the delegate fires over
+            // a run that FINISHED, and in production that delegate exits the process Inconclusive.
+            if (_disposed)
+            {
+                return;
+            }
+
+            // The deadline reached the transition first: the budget really did elapse before
+            // teardown completed, so this is a genuine force-exit. Claim it under the same lock so
+            // a later DisposeAsync knows the exit is committed rather than believing it prevented
+            // one — see DisposeAsync, which must then not wait on this task.
+            _deadlineClaimed = true;
+        }
+
         try
         {
+            // OUTSIDE the lock, always: in production this is Environment.Exit, which does not
+            // return, and holding _gate across it would wedge every concurrent Arm/DisposeAsync.
             _forceExit();
         }
         catch
@@ -132,7 +181,9 @@ internal sealed class ShutdownBackstop : IAsyncDisposable
 
     /// <summary>
     /// Cancels the timer (if armed) before it can fire, and releases its
-    /// <see cref="CancellationTokenSource"/>. Idempotent; never throws.
+    /// <see cref="CancellationTokenSource"/>. Idempotent; never throws. Once this has returned,
+    /// the force-exit delegate is never invoked — including by a timer whose budget elapsed
+    /// concurrently, which loses the transition described in this type's remarks.
     /// </summary>
     public async ValueTask DisposeAsync()
     {
@@ -146,14 +197,22 @@ internal sealed class ShutdownBackstop : IAsyncDisposable
 
             _disposed = true;
             _cancelSource!.Cancel();
-            timerTask = _timerTask;
+
+            // Setting _disposed above is what makes the guarantee: any timer whose delay has
+            // already completed but has not yet reached the lock will read it there and return
+            // without firing. A timer that DID reach the lock first claimed the transition, and
+            // that claim is the one case this must not wait on — see below.
+            timerTask = _deadlineClaimed ? null : _timerTask;
         }
 
         if (timerTask is not null)
         {
-            // Safe to await unconditionally: Task.Delay always honours cancellation promptly (see
-            // the class remarks) — unlike StdinShutdownWatcher's real Console read, this can
-            // never block DisposeAsync indefinitely.
+            // Safe to await: an unclaimed timer is by definition still inside its delay, and
+            // Task.Delay always honours cancellation promptly (see the class remarks) — unlike
+            // StdinShutdownWatcher's real Console read, this can never block DisposeAsync
+            // indefinitely. A CLAIMED timer is a different animal — it is already inside the
+            // force-exit delegate, i.e. Environment.Exit in production, which never returns — so
+            // it is deliberately not awaited at all.
             try
             {
                 await timerTask.ConfigureAwait(false);

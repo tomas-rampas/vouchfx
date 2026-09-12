@@ -6,11 +6,16 @@
 // propagates cancellation DOWNSTREAM, so on its own it can never engage System.CommandLine's
 // ProcessTerminationTimeout watchdog (armed only by a real OS Ctrl-C/SIGTERM) — a run wedged
 // somewhere that ignores cancellation would otherwise hang forever once stdin closes. These tests
-// drive it entirely via its injectable seam (a small TimeSpan budget + a plain Action instead of
-// the real Environment.Exit), covering exactly the three scenarios the design must get right:
+// drive it entirely via its injectable seams (a small TimeSpan budget, a plain Action instead of
+// the real Environment.Exit and — for the two rows that pin the deadline/teardown transition — the
+// delay itself, so the budget elapses on demand rather than by the clock), covering exactly the
+// four scenarios the design must get right:
 //   - EOF + a run that never completes → the force-exit action fires after the budget.
 //   - EOF + a run that completes quickly → the force-exit action never fires (Dispose cancels it).
 //   - Never armed (flag on, no EOF) → the force-exit action never fires.
+//   - EOF + a budget elapsing in the same instant as teardown → the two race for one lock and the
+//     winner decides: teardown first means the action never fires, the deadline first means the
+//     exit is committed and disposal must not wait on it.
 //
 // The LAST test in the file is none of those three: it is a source census over RunCommand.cs
 // asserting that the EOF callback arms this backstop before it cancels. That ordering is the
@@ -134,6 +139,97 @@ public sealed class ShutdownBackstopTests
 
         // Disposing AFTER the timer has already fired must still be silent and safe.
         await backstop.DisposeAsync();
+    }
+
+    /// <summary>
+    /// A budget that elapses AFTER <see cref="ShutdownBackstop.DisposeAsync"/> has taken the lock
+    /// still never force-exits.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The row <c>Arm_ThenDisposedBeforeBudgetElapses…</c> cannot see this.</strong> That
+    /// one pins the easy half — the delay is still PENDING when disposal cancels it, so
+    /// cancellation alone decides. The half that was broken is the other one: a delay that
+    /// completes on its own the instant before teardown, leaving the timer's continuation parked
+    /// between "the budget elapsed" and "fire" while <c>DisposeAsync</c> cancels, marks the
+    /// instance disposed and returns. The force-exit delegate then fired over a run that FINISHED
+    /// NORMALLY — <c>Environment.Exit(ExitCodes.Inconclusive)</c> in production, so a completed
+    /// run reported Inconclusive.
+    /// </para>
+    /// <para>
+    /// <strong>Deterministic, not timed.</strong> The delay is injected rather than clocked, so
+    /// this row does not out-sleep a race and hope: <c>DisposeAsync</c> is an async method and
+    /// therefore runs synchronously until its first await — the await OF the timer task — which
+    /// means that by the time the call below hands back its <see cref="ValueTask"/>, disposal has
+    /// already taken the lock and set its flag. Completing the deadline only afterwards pins
+    /// exactly the losing interleaving, every run. The injected delay deliberately IGNORES the
+    /// token: were it to observe cancellation, the timer would exit through its cancelled-delay
+    /// path and this row would pass against the unfixed code, proving nothing.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task Deadline_ElapsingAfterDisposalTookTheLock_ForceExitNeverFires()
+    {
+        var deadline = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var invokeCount = 0;
+        var backstop = new ShutdownBackstop(
+            SmallBudget,
+            () => Interlocked.Increment(ref invokeCount),
+            (_, _) => deadline.Task);
+
+        backstop.Arm();
+
+        var disposal = backstop.DisposeAsync();
+        deadline.SetResult(true);
+        await disposal.AsTask().WaitAsync(WaitBound);
+
+        Assert.Equal(0, Volatile.Read(ref invokeCount));
+    }
+
+    /// <summary>
+    /// A deadline that wins the transition COMMITS the exit, and disposal does not wait on it.
+    /// </summary>
+    /// <remarks>
+    /// The other side of the same lock. Here the budget elapses first, so the force-exit is
+    /// genuine and goes ahead; the timer task is then parked INSIDE that delegate —
+    /// <see cref="Environment.Exit(int)"/> in production, which does not return. A
+    /// <c>DisposeAsync</c> that awaited the timer task unconditionally would block there for as
+    /// long as the process took to die, so it must read the claim instead and return. The blocking
+    /// force-exit delegate below stands in for that never-returning exit; a regression shows up as
+    /// this row timing out on <c>WaitAsync</c>, not as a hung suite.
+    /// </remarks>
+    [Fact]
+    public async Task Deadline_ClaimedBeforeDisposal_DisposeDoesNotWaitOnTheCommittedExit()
+    {
+        var deadline = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var exitEntered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseExit = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var backstop = new ShutdownBackstop(
+            SmallBudget,
+            () =>
+            {
+                exitEntered.TrySetResult(true);
+                releaseExit.Task.GetAwaiter().GetResult();
+            },
+            (_, _) => deadline.Task);
+
+        try
+        {
+            backstop.Arm();
+
+            // Completed only AFTER Arm has returned, so the timer resumes on the thread pool and
+            // never runs the blocking delegate inline under Arm's own lock.
+            deadline.SetResult(true);
+
+            var entered = await Task.WhenAny(exitEntered.Task, Task.Delay(WaitBound));
+            Assert.Same(exitEntered.Task, entered);
+
+            await backstop.DisposeAsync().AsTask().WaitAsync(WaitBound);
+        }
+        finally
+        {
+            releaseExit.TrySetResult(true);
+        }
     }
 
     /// <summary>
