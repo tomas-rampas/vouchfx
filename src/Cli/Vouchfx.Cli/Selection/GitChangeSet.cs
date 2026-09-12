@@ -116,10 +116,17 @@
 //
 // The search lives in this file rather than in SystemProcessRunner because it is git-specific (the
 // candidate name, the "is git installed" diagnostic) and that runner deliberately carries no git
-// knowledge — the same reason it has no environment seam, which is #500. It runs ONCE per
-// change-set: three git calls, one resolution.
+// knowledge. It runs ONCE per change-set: three git calls, one resolution.
+//
+// THE GIT CHILD'S ENVIRONMENT IS CONFINED HERE, FOR THE SAME REASON (#500).
+// ────────────────────────────────────────────────────────────────────────
+// SystemProcessRunner grew an environment parameter; WHICH variables git needs is knowledge that
+// belongs to this file, so ConfineEnvironment below is what builds the block and the runner stays
+// git-agnostic. It too is computed ONCE per change-set and handed to all three calls.
 
 using System.Globalization;
+using System.Runtime.InteropServices;
+using System.Text;
 
 namespace Vouchfx.Cli.Selection;
 
@@ -211,7 +218,12 @@ internal sealed class GitChangeSet : IChangeSet
         var gitExecutable = (gitExecutableLocator ?? LocateGitOnPath)()
             ?? throw new ChangeSetException(GitUnavailable("the change-set computation"));
 
-        var repoRoot = ResolveRepoRoot(gitExecutable, workingDirectory, processRunner, cancellationToken);
+        // ONCE per change-set, like the resolution above and for the same reason: the three calls
+        // below are one logical operation and must not disagree about what git can see (#500).
+        var gitEnvironment = ConfinedGitEnvironment();
+
+        var repoRoot = ResolveRepoRoot(
+            gitExecutable, workingDirectory, gitEnvironment, processRunner, cancellationToken);
 
         var changed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -223,6 +235,7 @@ internal sealed class GitChangeSet : IChangeSet
             gitExecutable,
             processRunner,
             workingDirectory,
+            gitEnvironment,
             $"diff for ref '{changedSinceRef}'",
             cancellationToken,
             "diff", "--name-only", "--end-of-options", $"{changedSinceRef}...HEAD");
@@ -233,13 +246,28 @@ internal sealed class GitChangeSet : IChangeSet
         // "tëst.e2e.yaml" is emitted verbatim (UTF-8) and matches the on-disk file. (The
         // Unquote step below still handles the remaining `\"`/`\\` escapes for paths whose
         // names contain a quote or backslash.)
+        //
+        // `--no-optional-locks` IS HERE BECAUSE STATUS WRITES, AND ONLY THIS CALL DOES. `git status`
+        // opportunistically refreshes the index and persists the result to `.git/index` under
+        // `index.lock`, so a concurrent git in the same working tree — an editor's background fetch,
+        // a second test process — makes this call exit 128. That refuses the whole change-set for a
+        // reason unrelated to the suite, and the diagnostic then blames the confined environment
+        // this file built. The flag tells git to take no lock it does not strictly need; what it
+        // costs is not persisting the refreshed stat cache, which nothing here reads.
+        //
+        // IT IS A GIT-LEVEL OPTION AND MUST PRECEDE THE SUBCOMMAND. Spelt after `status` it is
+        // parsed as a status option and refused. `rev-parse --show-toplevel` and the `<ref>...HEAD`
+        // diff compare two commits and take no index lock, so neither carries it. (That scoping is
+        // INFERRED from git's documented behaviour; what is MEASURED is that the flag leaves this
+        // call's output unchanged — see GitChangeSetTests' parity row.)
         var status = RunGit(
             gitExecutable,
             processRunner,
             workingDirectory,
+            gitEnvironment,
             "working-tree status",
             cancellationToken,
-            "-c", "core.quotepath=false", "status", "--porcelain");
+            "--no-optional-locks", "-c", "core.quotepath=false", "status", "--porcelain");
         AddPaths(changed, repoRoot, status.StandardOutput, status: true);
 
         _changed = changed;
@@ -286,6 +314,7 @@ internal sealed class GitChangeSet : IChangeSet
     private static string ResolveRepoRoot(
         string gitExecutable,
         string workingDirectory,
+        IReadOnlyDictionary<string, string> environment,
         IProcessRunner processRunner,
         CancellationToken cancellationToken)
     {
@@ -293,6 +322,7 @@ internal sealed class GitChangeSet : IChangeSet
             gitExecutable,
             processRunner,
             workingDirectory,
+            environment,
             "repository-root lookup",
             cancellationToken,
             "rev-parse", "--show-toplevel");
@@ -300,8 +330,16 @@ internal sealed class GitChangeSet : IChangeSet
         var root = result.StandardOutput.Trim();
         if (root.Length == 0)
         {
+            // NAMES THE CONCEPT, NOT THE RESOLVED DIRECTORY (#498). This used to interpolate
+            // `workingDirectory`, which the CLI resolves from the discovery path — an absolute host
+            // path in an author-facing diagnostic, which #357's rule (widened by #375/#473/#488)
+            // forbids. Replacing it with nothing would have been a redaction the author cannot act
+            // on, so the sentence names the CONDITION that was not met instead: the caller knows
+            // which path they passed to `vouchfx run`, and what they do not know is that git
+            // answered without a root.
             throw new ChangeSetException(
-                $"git did not report a repository root for '{workingDirectory}'.");
+                "git did not report a repository root, so the discovery path is not inside a git "
+                + "working tree. --changed-since needs one.");
         }
 
         // ToOsSeparators is defensive: git's rev-parse output is already OS-native, but
@@ -356,6 +394,7 @@ internal sealed class GitChangeSet : IChangeSet
         string gitExecutable,
         IProcessRunner processRunner,
         string workingDirectory,
+        IReadOnlyDictionary<string, string> environment,
         string operation,
         CancellationToken cancellationToken,
         params string[] arguments)
@@ -363,7 +402,8 @@ internal sealed class GitChangeSet : IChangeSet
         ProcessResult result;
         try
         {
-            result = processRunner.Run(gitExecutable, arguments, workingDirectory, cancellationToken);
+            result = processRunner.Run(
+                gitExecutable, arguments, workingDirectory, environment, cancellationToken);
         }
         catch (ProcessLaunchException ex)
         {
@@ -400,17 +440,22 @@ internal sealed class GitChangeSet : IChangeSet
         {
             // The inner exception rather than ex.Message: the runner's own message already names
             // the executable, and repeating it here would read as two nested failures.
+            //
+            // SUBSTITUTED, because that inner message is the BCL's and this one IS printed — the
+            // same #498 class as the launch-failure splice, reached on a different path. A pipe
+            // read faults with an IOException whose text the engine did not write and cannot
+            // constrain, so it goes through the same scrub as git's own output below.
             throw new ChangeSetException(
-                $"Could not read the output of git {operation}: {ex.InnerException?.Message ?? ex.Message}. A change-set cannot be computed from a partial capture, so selection is refused rather than narrowed.",
+                $"Could not read the output of git {operation}: {SubstituteAbsolutePaths(ex.InnerException?.Message ?? ex.Message)}. A change-set cannot be computed from a partial capture, so selection is refused rather than narrowed.",
                 ex);
         }
 
         if (result.ExitCode != 0)
         {
-            var detail = result.StandardError.Trim();
+            var detail = SubstituteAbsolutePaths(result.StandardError.Trim());
             if (detail.Length == 0)
             {
-                detail = result.StandardOutput.Trim();
+                detail = SubstituteAbsolutePaths(result.StandardOutput.Trim());
             }
 
             throw new ChangeSetException(
@@ -429,6 +474,421 @@ internal sealed class GitChangeSet : IChangeSet
     /// <returns>The message, deliberately naming no path — see <see cref="RunGit"/>.</returns>
     private static string GitUnavailable(string operation) =>
         $"Could not run git for {operation}. Is git installed and on PATH?";
+
+    /// <summary>
+    /// What replaces an absolute host path in relayed text.
+    /// </summary>
+    /// <remarks>
+    /// Its own characters are token separators in the assertion that polices this rule
+    /// (<c>HostPathDisclosure</c>), so the placeholder cannot itself be read as a path reference.
+    /// </remarks>
+    private const string PathPlaceholder = "<path>";
+
+    /// <summary>
+    /// The separators that bound a token, matching the shared disclosure assertion's set exactly.
+    /// </summary>
+    private static readonly char[] TokenSeparators =
+        { ' ', '\t', '\r', '\n', '"', '\'', '<', '>', '&', ';', ',', '(', ')', '[', ']' };
+
+    private static readonly char[] PathSeparators = { '\\', '/' };
+
+    /// <summary>
+    /// Trimmed from the END only — trimming <c>.</c> from the front would turn a relative
+    /// <c>./x</c> into the rooted-looking <c>/x</c> and substitute a path that is not one.
+    /// </summary>
+    private static readonly char[] TrailingPunctuation = { '.', ':' };
+
+    /// <summary>
+    /// Replaces every absolute host path in <paramref name="text"/> with
+    /// <see cref="PathPlaceholder"/>, leaving everything else verbatim.
+    /// </summary>
+    /// <param name="text">Text the engine did not write: git's stderr, or a BCL message.</param>
+    /// <returns>The same text with its rooted path tokens substituted.</returns>
+    /// <remarks>
+    /// <para>
+    /// <strong>SUBSTITUTION, and choosing it over the alternatives is the point (#498).</strong>
+    /// git's stderr is the only account of WHY a subcommand failed — the engine knows the exit code
+    /// and nothing else — and it routinely names host paths: <c>fatal: detected dubious ownership
+    /// in repository at '...'</c> is entirely a path, while <c>fatal: ambiguous argument 'nope':
+    /// unknown revision</c> contains none and is the most useful message this file can print.
+    /// DROPPING the relay takes the second with the first. TRUNCATING it addresses length, which is
+    /// not the defect: the dubious-ownership line is short and wholly a disclosure. DESCRIBING it —
+    /// replacing git's words with the engine's — means classifying git's output by substring, which
+    /// is a rule that has to stay correct against text this file does not own. Substituting the
+    /// paths and keeping the sentence is the only one of the four that removes the disclosure
+    /// WITHOUT removing the diagnosis, and it is the treatment #375 chose for the same problem
+    /// (<c>SecurityPathDisclosureLedger</c>, which is not used here because it is seeded from the
+    /// security material a topology produced, and selection runs before any topology exists — so at
+    /// this point there is nothing to seed it with).
+    /// </para>
+    /// <para>
+    /// <strong>The per-token PREDICATE is the shared assertion's, deliberately.</strong> A token,
+    /// trailing <c>.</c>/<c>:</c> trimmed, is substituted when it is at least two characters,
+    /// contains a path separator, and is <see cref="Path.IsPathRooted(string)"/>. Those are exactly
+    /// the conditions <c>Vouchfx.TestSupport.HostPathDisclosure</c>'s rooted-token scan refuses on,
+    /// in the same order — it spells them as a negated early exit rather than a conjunction, so the
+    /// two read differently and decide identically. If either predicate is edited, edit both.
+    /// </para>
+    /// <para>
+    /// <strong>THE GATE IS STRICTER OVERALL, AND THAT ASYMMETRY IS DELIBERATE.</strong> This used to
+    /// claim the two "cannot drift into disagreeing about what a disclosure is", which is not what
+    /// is true. <c>AssertNoAbsoluteHostPath</c> refuses on THREE checks: (a) the host directory as a
+    /// raw substring, deliberately catching it even where no token boundary exists, (b) its
+    /// JSON-escaped form, and (c) the rooted-token scan. Only (c) is implemented here, because (a)
+    /// and (b) need a host directory known in advance — which a gate has and a relay does not. The
+    /// gate therefore refuses strings this method would pass, which fails SAFE; what the old
+    /// sentence would have justified is deleting (a) and (b) from a future gate as redundant, and
+    /// they are not.
+    /// </para>
+    /// <para>
+    /// <strong>The TOKENISATION is this method's own, and is stricter than the gate's in one
+    /// case.</strong> A span opened by <c>'</c> or <c>"</c> is taken whole, up to the matching close
+    /// on the same line, so a quoted path CONTAINING SPACES is one token here and several in the
+    /// gate. That is the common Windows shape rather than an exotic one (below), and the gate
+    /// catching the pieces anyway — through (a), or through whichever piece is still rooted — is why
+    /// the divergence costs nothing.
+    /// </para>
+    /// <para>
+    /// <strong>WHAT IT STILL DOES NOT CATCH, stated rather than implied.</strong> An UNQUOTED path
+    /// containing a space is split: <c>C:\Program Files\Git\x</c> loses <c>C:\Program</c> to the
+    /// placeholder and leaves <c>Files\Git\x</c> standing, because the remainder is not rooted. git
+    /// quotes the paths it names, so this is the narrower residue it looks like — but it is a
+    /// residue, and a relayed message this file does not own may not quote. It is also
+    /// platform-relative: <see cref="Path.IsPathRooted(string)"/> reads a drive letter only on
+    /// Windows, so a Windows-shaped path would survive on a POSIX host. That costs nothing in
+    /// practice, since the text being scrubbed was produced by a child of THIS process on THIS host.
+    /// </para>
+    /// <para>
+    /// <strong>WHY THE QUOTED SPAN IS ONE TOKEN — the default Windows shape, not an edge
+    /// case.</strong>
+    /// git quotes with <c>'</c>, which is itself a <see cref="TokenSeparators"/> member, so under a
+    /// plain token scan <c>fatal: detected dubious ownership in repository at
+    /// 'C:/Users/John Smith/src/repo'</c> substituted <c>C:/Users/John</c> and left
+    /// <c>Smith/src/repo</c> standing. A user profile carrying a space is the Windows default for
+    /// anyone whose account name is two words, and <c>C:\Program Files\Git\…</c> is git's own
+    /// install location; the residue was the common case rather than the rare one.
+    /// </para>
+    /// <para>
+    /// A quote opens a span only at the start of the text or after a
+    /// <see cref="TokenSeparators"/> member, which is what keeps an apostrophe inside a word
+    /// (<c>couldn't</c>) from pairing with the quote that opens the path later on the same line. An
+    /// unmatched quote, and one mid-word, are emitted as ordinary separators — never allowed to
+    /// swallow the remainder — and the search for a close is bounded to the line, so an apostrophe
+    /// cannot reach across a multi-line stderr. Mispairing degrades to the pre-quote behaviour
+    /// (the head substituted, the tail standing); it never widens what is substituted.
+    /// </para>
+    /// <para>
+    /// It stays LINEAR. Each close-quote search scans forward only and stops at the line end, and a
+    /// search that finds nothing proves the rest of that line holds no further quote of the same
+    /// character — so at most two failed scans per line, each bounded by that line.
+    /// </para>
+    /// <para>
+    /// One over-reach is accepted knowingly: on Windows a ref spelt <c>/weird</c> is rooted, so a
+    /// message quoting it back is substituted. Refs of that shape are pathological, and the
+    /// alternative — a second rule distinguishing refs from paths — is the classifying-by-substring
+    /// this method rejects above.
+    /// </para>
+    /// </remarks>
+    internal static string SubstituteAbsolutePaths(string text)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+
+        var builder = new StringBuilder(text.Length);
+        var index = 0;
+        while (index < text.Length)
+        {
+            if (Array.IndexOf(TokenSeparators, text[index]) >= 0)
+            {
+                // A quote is a separator that can also OPEN a span — see the remarks for why a
+                // quoted path with spaces has to be one token. `index` is the opener's own
+                // position, so `index == 0 || previous is a separator` is the "not mid-word" test.
+                var close = text[index] is '\'' or '"'
+                    && (index == 0 || Array.IndexOf(TokenSeparators, text[index - 1]) >= 0)
+                    ? MatchingQuoteOnThisLine(text, index)
+                    : -1;
+
+                builder.Append(text[index]);
+                index++;
+
+                if (close < 0)
+                {
+                    continue;
+                }
+
+                // The span between the quotes, taken whole however many separators it contains.
+                AppendToken(builder, text[index..close]);
+                builder.Append(text[close]);
+                index = close + 1;
+                continue;
+            }
+
+            var end = index;
+            while (end < text.Length && Array.IndexOf(TokenSeparators, text[end]) < 0)
+            {
+                end++;
+            }
+
+            AppendToken(builder, text[index..end]);
+            index = end;
+        }
+
+        return builder.ToString();
+    }
+
+    /// <summary>
+    /// Appends one token, substituted when it is an absolute host path.
+    /// </summary>
+    /// <param name="builder">The output under construction.</param>
+    /// <param name="token">The token, separators already stripped by the caller.</param>
+    /// <remarks>
+    /// The trimmed tail is put back so a substituted token does not swallow the sentence's
+    /// punctuation along with the path.
+    /// </remarks>
+    private static void AppendToken(StringBuilder builder, string token)
+    {
+        var candidate = token.TrimEnd(TrailingPunctuation);
+
+        builder.Append(IsAbsoluteHostPath(candidate)
+            ? PathPlaceholder + token[candidate.Length..]
+            : token);
+    }
+
+    /// <summary>
+    /// Finds the closing quote that matches the one at <paramref name="opening"/>, searching no
+    /// further than the end of that line.
+    /// </summary>
+    /// <param name="text">The text being scanned.</param>
+    /// <param name="opening">The index of the opening quote character.</param>
+    /// <returns>The index of the close, or <c>-1</c> when the line holds none.</returns>
+    /// <remarks>
+    /// Bounded to the line so an apostrophe on one line of a multi-line stderr cannot pair with the
+    /// quote that opens a path on the next one and hide it from the substitution.
+    /// </remarks>
+    private static int MatchingQuoteOnThisLine(string text, int opening)
+    {
+        var quote = text[opening];
+        for (var i = opening + 1; i < text.Length; i++)
+        {
+            if (text[i] == quote)
+            {
+                return i;
+            }
+
+            if (text[i] is '\r' or '\n')
+            {
+                return -1;
+            }
+        }
+
+        return -1;
+    }
+
+    /// <summary>
+    /// The predicate behind <see cref="SubstituteAbsolutePaths"/>, kept as one named test.
+    /// </summary>
+    private static bool IsAbsoluteHostPath(string candidate) =>
+        candidate.Length >= 2
+        && candidate.IndexOfAny(PathSeparators) >= 0
+        && Path.IsPathRooted(candidate);
+
+    /// <summary>
+    /// The environment variable names a local git invocation is given, beyond the <c>GIT_</c>
+    /// pass-through.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>WHAT WAS MEASURED, AND IT IS LESS THAN THE LIST.</strong> Three mutation drills were
+    /// run on this host (Windows 11 build 26200.9168, net8.0, git 2.54.0.windows.1) against
+    /// <c>RealGit_ThreeSubcommands_SucceedUnderTheConfinedEnvironment</c>, which executes the three
+    /// real subcommands. Deleting <c>SystemRoot</c>: still exit 0. Deleting <c>SystemRoot</c> AND
+    /// <c>windir</c>: still exit 0. Deleting <c>PATH</c>: still exit 0. So NONE of the three is
+    /// required by <c>rev-parse --show-toplevel</c>, <c>diff --name-only</c> or
+    /// <c>status --porcelain</c> on this host — <c>git.exe</c> serves all three internally and
+    /// looks nothing up. They are kept as DEFENCE, not as measured necessity, and this paragraph
+    /// says so rather than asserting a need the drill contradicts.
+    /// </para>
+    /// <para>
+    /// The defensive case for each: <c>PATH</c> because git dispatches non-builtin subcommands and
+    /// its Windows shell helpers through it, and because a future call here need not be one of
+    /// today's three. <c>HOME</c> (POSIX) and <c>USERPROFILE</c>/<c>HOMEDRIVE</c>/<c>HOMEPATH</c>
+    /// (Windows) because that is where git looks for the user's configuration, and a git that
+    /// cannot find it behaves DIFFERENTLY rather than failing loudly — which is the failure mode a
+    /// drill cannot see. <c>SystemRoot</c>/<c>windir</c> because Win32 APIs outside the paths these
+    /// three subcommands take are documented to need them.
+    /// <c>TMP</c>/<c>TEMP</c>/<c>TMPDIR</c> because git writes temporary objects.
+    /// </para>
+    /// <para>
+    /// <strong><c>XDG_CONFIG_HOME</c> AND <c>ProgramData</c> ARE THE REST OF "WHICH CONFIG GIT
+    /// READS", and the <c>HOME</c> rationale above stops one step short of them.</strong> git reads
+    /// <c>$XDG_CONFIG_HOME/git/config</c> ahead of <c>~/.gitconfig</c>, and on Windows the system
+    /// config lives under <c>%ProgramData%\Git\config</c>. Dropping either changes
+    /// <c>status.showUntrackedFiles</c>, <c>core.excludesFile</c> and their neighbours — and since
+    /// <c>--changed-since</c> decides WHICH SCENARIOS RUN, that is a silently different test
+    /// selection rather than a visible failure. It is the same failure mode <c>HOME</c> is forwarded
+    /// for, reached through the two config paths <c>HOME</c> does not cover.
+    /// </para>
+    /// <para>
+    /// <strong><c>LD_LIBRARY_PATH</c> fails LOUDLY instead, and is forwarded anyway.</strong> A git
+    /// installed under a custom prefix — Nix, conda, a hand-built one — does not load without it, so
+    /// dropping it turns a working host into exit 2. Loud is better than silent, but it is still a
+    /// regression this confinement would have introduced and nothing else here would have caught.
+    /// </para>
+    /// <para>
+    /// None of the three is a plausible secret carrier, and all are operator-controlled in exactly
+    /// the way <c>PATH</c> — already forwarded, and already a code-selection variable — is.
+    /// </para>
+    /// <para>
+    /// <c>TMPDIR</c> is the POSIX spelling of the same thing as <c>TMP</c>/<c>TEMP</c> and is here
+    /// for symmetry rather than by a separate decision: without it the POSIX lane would get no
+    /// temporary directory at all while the Windows lane got one, which is an inconsistency rather
+    /// than a policy. It is the one entry NOT in the set the fix was specified with, and it is
+    /// called out so the addition is visible rather than smuggled.
+    /// </para>
+    /// <para>
+    /// <strong>NOT forwarded, and each absence is deliberate:</strong> the proxy variables and
+    /// <c>SSH_AUTH_SOCK</c>, because <c>--changed-since</c> makes no network call — it runs
+    /// <c>rev-parse --show-toplevel</c>, <c>diff --name-only</c> and <c>status --porcelain</c>, all
+    /// local. <c>LANG</c>/<c>LC_*</c>, so git answers in the C locale — which makes the stderr
+    /// relayed by <see cref="SubstituteAbsolutePaths"/> deterministic rather than host-dependent.
+    /// (Inferred from git's documented gettext behaviour; not measured here.)
+    /// </para>
+    /// <para>
+    /// Everything not named above is dropped, which is the default this exists to impose. That is a
+    /// statement about the RULE, not a claim that the exceptions have all been thought of: this
+    /// paragraph used to read "and everything else, which is the whole point", which asserted
+    /// completeness over a set nobody had enumerated — and the three entries added above were each
+    /// found after it. Adding a variable here is a decision to be argued at the site, not a gap in
+    /// a closed list.
+    /// </para>
+    /// </remarks>
+    private static readonly string[] GitEnvironmentAllowList =
+    {
+        "PATH",
+        "LD_LIBRARY_PATH",
+        "HOME",
+        "XDG_CONFIG_HOME",
+        "USERPROFILE",
+        "HOMEDRIVE",
+        "HOMEPATH",
+        "ProgramData",
+        "SystemRoot",
+        "windir",
+        "TMP",
+        "TEMP",
+        "TMPDIR",
+    };
+
+    /// <summary>The prefix whose variables are forwarded wholesale.</summary>
+    private const string GitVariablePrefix = "GIT_";
+
+    /// <summary>
+    /// Builds the environment block this process's git children are given.
+    /// </summary>
+    /// <returns>The allow-listed variables plus every <c>GIT_</c>-prefixed one set.</returns>
+    /// <remarks>
+    /// <para>
+    /// <strong>THE EXPOSURE THIS CLOSES (#500).</strong> Until this existed, every git child
+    /// inherited vouchfx's environment in full — including whatever <c>${secret:env/NAME}</c>
+    /// reads, since <c>env</c> is one of the two MVP secret sources (blueprint §17). git executes
+    /// repository-influenced code through <c>core.fsmonitor</c>, <c>.git/hooks/*</c> and
+    /// <c>credential.helper</c> in its <c>!shell</c> form, all of which live in local <c>.git</c>
+    /// config rather than in cloned content. So a secret loaded for the SUITE was readable by a
+    /// helper the REPOSITORY UNDER TEST chose.
+    /// </para>
+    /// <para>
+    /// <strong>What this removes is INHERITANCE, not ACCESS.</strong> Repository-chosen code runs
+    /// at the same uid as vouchfx, so it can read the parent's environment directly —
+    /// <c>/proc/&lt;ppid&gt;/environ</c> on Linux,
+    /// <c>OpenProcess(PROCESS_VM_READ)</c> and the PEB on Windows. Against code that is
+    /// already executing this is a speed bump rather than a boundary; what it buys is that the
+    /// secret is no longer handed over by default, to every helper, without anyone choosing to.
+    /// </para>
+    /// <para>
+    /// <strong>THE RESIDUAL IS REAL AND IS NOT CLOSED BY THIS.</strong> The <c>GIT_</c>
+    /// pass-through is a hole with a shape: a secret stored in a <c>GIT_</c>-named variable still
+    /// reaches the child, and <c>GIT_SSH_COMMAND</c> and <c>GIT_EXTERNAL_DIFF</c> remain
+    /// code-execution vectors — git runs their values. What makes the trade narrow enough to take
+    /// is WHO can set them: the repository under test cannot, only the operator of the process
+    /// running vouchfx can, so the pass-through cannot be reached by the attacker the paragraph
+    /// above describes. It is a deliberate, approved trade, and stating it as closed would be
+    /// false. Forwarding the prefix at all is what keeps an operator's own <c>GIT_DIR</c>,
+    /// <c>GIT_CONFIG_GLOBAL</c> or <c>GIT_SSH_COMMAND</c> working, which is behaviour that existed
+    /// before this confinement and that removing would be a silent regression rather than a
+    /// hardening.
+    /// </para>
+    /// </remarks>
+    internal static IReadOnlyDictionary<string, string> ConfinedGitEnvironment() =>
+        ConfineEnvironment(CurrentEnvironment(), OperatingSystem.IsWindows());
+
+    /// <summary>
+    /// Filters <paramref name="source"/> down to the confined set.
+    /// </summary>
+    /// <param name="source">The environment to filter, as name/value pairs.</param>
+    /// <param name="windows">Whether variable names compare case-insensitively.</param>
+    /// <returns>The confined block.</returns>
+    /// <remarks>
+    /// <para>
+    /// Split out of <see cref="ConfinedGitEnvironment"/>, and takes the platform as an argument for
+    /// the same reason <see cref="CandidateFileName(string, bool)"/> does: the Windows rule is then
+    /// assertable off Windows, and no blocking CI lane is Windows (#366).
+    /// </para>
+    /// <para>
+    /// <strong>The case rule is not cosmetic.</strong> Windows resolves variable names
+    /// case-insensitively, so an operator's <c>git_ssh_command</c> is the same variable to git as
+    /// <c>GIT_SSH_COMMAND</c>; a case-sensitive filter there would drop it and change behaviour
+    /// this confinement is not meant to change. POSIX resolves them case-sensitively, where
+    /// <c>path</c> and <c>PATH</c> are two variables and conflating them would ADD one the caller
+    /// never asked for.
+    /// </para>
+    /// <para>
+    /// The indexer rather than <c>Add</c>: under the case-insensitive comparer a source holding
+    /// both <c>Path</c> and <c>PATH</c> — which a hand-built map in a test can — must resolve to
+    /// one entry rather than throw.
+    /// </para>
+    /// </remarks>
+    internal static IReadOnlyDictionary<string, string> ConfineEnvironment(
+        IEnumerable<KeyValuePair<string, string>> source,
+        bool windows)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+
+        var comparison = windows ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        var comparer = StringComparer.FromComparison(comparison);
+        var allowed = new HashSet<string>(GitEnvironmentAllowList, comparer);
+        var confined = new Dictionary<string, string>(comparer);
+
+        foreach (var variable in source)
+        {
+            if (allowed.Contains(variable.Key)
+                || variable.Key.StartsWith(GitVariablePrefix, comparison))
+            {
+                confined[variable.Key] = variable.Value;
+            }
+        }
+
+        return confined;
+    }
+
+    /// <summary>
+    /// This process's environment as name/value pairs.
+    /// </summary>
+    /// <remarks>
+    /// Entries whose name or value is not a string are skipped. The non-generic
+    /// <see cref="System.Collections.IDictionary"/> that
+    /// <see cref="Environment.GetEnvironmentVariables()"/> returns types both as
+    /// <see cref="object"/>, and a block the runtime cannot express as strings is not one this
+    /// file can forward meaningfully.
+    /// </remarks>
+    private static IEnumerable<KeyValuePair<string, string>> CurrentEnvironment()
+    {
+        foreach (System.Collections.DictionaryEntry entry in Environment.GetEnvironmentVariables())
+        {
+            if (entry.Key is string name && entry.Value is string value)
+            {
+                yield return new KeyValuePair<string, string>(name, value);
+            }
+        }
+    }
 
     /// <summary>
     /// Locates the git executable on this process's <c>PATH</c>, returning a fully qualified path
@@ -477,27 +937,60 @@ internal sealed class GitChangeSet : IChangeSet
     /// <c>cmd.exe</c>, whose parser re-reads arguments that <c>ArgumentList</c> quoted for
     /// <c>CreateProcess</c> — turning the caller's ref into command execution. A host whose only
     /// git is a shim therefore reports "not found", exactly as it did before #499 introduced this
-    /// search at all. POSIX takes the bare name plus an execute-bit check — see the next paragraph
-    /// for what that check does and does not establish.
+    /// search at all. POSIX takes the bare name plus an execute-permission check — see the next
+    /// paragraph for what that check does and does not establish.
     /// </para>
     /// <para>
-    /// <strong>THE POSIX EXECUTE TEST IS A MODE-BIT APPROXIMATION, AND WHAT IT RISKS IS A
-    /// REFUSAL.</strong> <see cref="IsExecutableFile"/> accepts a file when ANY of the user, group
-    /// or other execute bits is set, whoever is running — not the test the kernel makes, which is
-    /// against the effective user. So a file this caller could not in fact execute can be accepted:
-    /// a root-owned <c>0700</c> <c>git</c> in an earlier entry is taken, the search STOPS THERE
-    /// because it returns the first match, the launch then fails on permission (<c>EACCES</c>, by
-    /// the <c>execve</c> contract rather than by a measurement of this path), and <c>RunGit</c>
-    /// maps that to a <c>ChangeSetException</c> — exit 2 on a host where a later entry holds a
-    /// runnable git. That is the same harm shape as the whitespace trim the AN ENTRY IS USED
-    /// VERBATIM paragraph above records deleting: an entry the operating system would have passed
-    /// over shadows a legitimate later one.
-    /// A match with NO execute bit set at all is skipped and the search continues, so the shadowing
-    /// needs a bit set for somebody else. Which direction this diverges in against .NET's own Unix
-    /// resolution is UNMEASURED — the measurements in this file were all taken on Windows, and the
-    /// one probe that would settle it is whether that path selects on existence or on an
-    /// <c>access(X_OK)</c>-style check. Narrowing this test to <c>access(X_OK)</c> needs a P/Invoke
-    /// and is tracked as #509; it is deliberately not attempted here.
+    /// <strong>THE POSIX EXECUTE TEST ASKS THE C LIBRARY, NOT THE MODE BITS.</strong>
+    /// <see cref="IsExecutableFile"/> calls <c>access(2)</c> with <c>X_OK</c> — the same question
+    /// <c>which</c>, <c>test -x</c> and <c>command -v</c> ask, and the one whose answer
+    /// <c>execve</c> then acts on. It used to accept a file when ANY of the user, group or other
+    /// execute bits was set, whoever was running, and that is a strictly wider test than the
+    /// kernel's: a root-owned <c>0700</c> <c>git</c> in an earlier entry was taken, the search
+    /// STOPPED THERE because it returns the first match, the launch failed on permission
+    /// (<c>EACCES</c>), and <c>RunGit</c> mapped that to a <c>ChangeSetException</c> — exit 2 on a
+    /// host where a later entry held a runnable git. That is the same harm shape as the whitespace
+    /// trim the AN ENTRY IS USED VERBATIM paragraph above records deleting: an entry the operating
+    /// system would have passed over shadowed a legitimate later one. MEASURED, in
+    /// <c>mcr.microsoft.com/dotnet/sdk:8.0</c> (glibc, net8.0) as uid 1000 against a file this
+    /// caller owns with mode <c>0611</c> — the mode the row plants, <c>UserRead | UserWrite |
+    /// GroupExecute | OtherExecute</c>: the mode-bit test said executable, <c>access(X_OK)</c> said
+    /// not, and <c>Process.Start</c> refused it with <c>Win32Exception</c> "Permission denied" — so
+    /// the narrower answer is the one that matches the launch. The owner triad has to be the one
+    /// WITHOUT an execute bit for that divergence to exist at all: POSIX selects the permission
+    /// class by ownership and stops, so an owner-executable mode would make <c>access(X_OK)</c>
+    /// return 0 and there would be nothing to measure. As root, in the same image,
+    /// <c>access(X_OK)</c> succeeds for that file and so does the launch; root's wider reach is the
+    /// kernel's, not this search's.
+    /// </para>
+    /// <para>
+    /// <strong>Two limits, stated rather than implied.</strong> <c>access(2)</c> resolves against
+    /// the REAL uid/gid, not the effective pair; the two differ only for a set-uid or set-gid
+    /// image, which this CLI is not, so for every caller that reaches here they are the same
+    /// answer. <c>faccessat(…, AT_EACCESS)</c> is the effective-uid form and is deliberately not
+    /// used: its flag constant differs between platforms (and between libcs), which trades a
+    /// distinction that cannot arise here for a portability hazard that can. Second, the interop
+    /// is a fallback away from the old behaviour rather than a replacement of it — a runtime
+    /// where <c>libc</c> or the symbol cannot be found degrades to the mode-bit test, whose
+    /// residual (accepting a file somebody ELSE may execute) is the defect above, narrowed to
+    /// hosts where the P/Invoke does not resolve at all.
+    /// </para>
+    /// <para>
+    /// <strong>"A runtime where it does not resolve" MEANS ALPINE, and naming it is the
+    /// point.</strong>
+    /// musl ships no <c>libc.so</c> for the loader to bind <c>[DllImport("libc")]</c> against, so an
+    /// Alpine container is the concrete host on which <c>EffectiveExecutePermission</c> returns
+    /// <see langword="null"/> and #509 quietly reverts to the wider mode-bit test. (INFERRED from
+    /// musl's library naming; not measured — no lane here runs Alpine.) Calling that "an exotic
+    /// runtime", as this used to, made a mainstream container image sound like a curiosity.
+    /// </para>
+    /// <para>
+    /// <strong>And the row that would notice SELF-SKIPS AS ROOT.</strong>
+    /// <c>LocateOnPath_Posix_RefusesAFileThisCallerMayNotExecute</c> returns early when the caller
+    /// has root's reach, because root diverges from nothing. A Linux container running as root —
+    /// still the default for many images — therefore verifies the P/Invoke path not at all, and does
+    /// so without anything going red. Both limits are properties of where this is RUN, so neither is
+    /// closable from inside this file.
     /// </para>
     /// <para>
     /// Takes <c>PATH</c> as an argument rather than reading the environment so that the search can
@@ -550,10 +1043,17 @@ internal sealed class GitChangeSet : IChangeSet
         windows ? name + ".exe" : name;
 
     /// <summary>
-    /// Reports whether <paramref name="candidate"/> is an existing file this platform would run.
+    /// Reports whether <paramref name="candidate"/> is an existing file this caller can run.
     /// </summary>
     /// <param name="candidate">The fully qualified candidate path.</param>
-    /// <returns><see langword="true"/> when the file exists and is executable.</returns>
+    /// <returns><see langword="true"/> when the file exists and this caller may run it.</returns>
+    /// <remarks>
+    /// The POSIX arm asks <c>access(2)</c> rather than reading mode bits, for the reason
+    /// <see cref="LocateOnPath(string, string?)"/>'s THE POSIX EXECUTE TEST paragraph records:
+    /// a file this caller cannot execute, accepted here, ENDS the search and refuses a host that
+    /// holds a runnable git further along <c>PATH</c>. The mode-bit read survives only as the
+    /// degraded answer for a runtime where the P/Invoke does not resolve.
+    /// </remarks>
     private static bool IsExecutableFile(string candidate)
     {
         // File.Exists is false for a directory and for a malformed path, so it also stands in for
@@ -568,8 +1068,17 @@ internal sealed class GitChangeSet : IChangeSet
             return true;
         }
 
+        var permitted = EffectiveExecutePermission(candidate);
+        if (permitted is not null)
+        {
+            return permitted.Value;
+        }
+
         try
         {
+            // The wider, pre-#509 test, reached only when the C library could not be asked. It
+            // accepts a file somebody ELSE may execute; that residual is the price of degrading
+            // rather than refusing every candidate on an exotic runtime.
             var mode = File.GetUnixFileMode(candidate);
             return (mode & (UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute)) != 0;
         }
@@ -578,6 +1087,66 @@ internal sealed class GitChangeSet : IChangeSet
             // A file whose mode cannot be read is not a file we are willing to launch.
             return false;
         }
+    }
+
+    /// <summary>
+    /// Asks the C library whether this caller may execute <paramref name="candidate"/>.
+    /// </summary>
+    /// <param name="candidate">The fully qualified candidate path, known to exist.</param>
+    /// <returns>
+    /// The <c>access(2)</c> answer, or <see langword="null"/> when the P/Invoke could not be
+    /// resolved on this runtime — which is the caller's signal to fall back, NOT a refusal.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// A non-zero return is treated as "not permitted" without reading <c>errno</c>. The caller
+    /// has already established the file exists, so the reachable failure is <c>EACCES</c>; the
+    /// remaining ones (<c>ENOENT</c> from a race, <c>ELOOP</c>, <c>ENOTDIR</c>) all describe a
+    /// candidate that would not launch either, so classifying them would change no answer.
+    /// </para>
+    /// <para>
+    /// The path is marshalled as an explicit NUL-terminated UTF-8 <c>byte[]</c> rather than as a
+    /// <see cref="string"/>. UTF-8 is what a Unix <c>CharSet.Ansi</c> marshals to anyway, so the
+    /// encoding is unchanged; doing it here keeps the signature free of string marshalling, which
+    /// on this code base is what would otherwise pull in either a <c>CharSet</c> the security
+    /// analysers argue about or the <c>AllowUnsafeBlocks</c> that source-generated string
+    /// marshalling requires.
+    /// </para>
+    /// </remarks>
+    private static bool? EffectiveExecutePermission(string candidate)
+    {
+        var pathname = new byte[Encoding.UTF8.GetByteCount(candidate) + 1];
+        Encoding.UTF8.GetBytes(candidate, pathname);
+
+        try
+        {
+            return NativeMethods.Access(pathname, NativeMethods.ExecuteOk) == 0;
+        }
+        catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// The one P/Invoke in this code base, kept in the shape the interop analysers expect.
+    /// </summary>
+    private static class NativeMethods
+    {
+        /// <summary>
+        /// <c>X_OK</c> — the execute-permission bit of <c>access(2)</c>'s mode argument. Fixed at
+        /// 1 by POSIX and identical on every libc this CLI can run against.
+        /// </summary>
+        internal const int ExecuteOk = 1;
+
+        /// <summary>
+        /// <c>int access(const char *pathname, int mode)</c>.
+        /// </summary>
+        /// <param name="pathname">A NUL-terminated UTF-8 path.</param>
+        /// <param name="mode">The permission mask, here <see cref="ExecuteOk"/>.</param>
+        /// <returns>0 when permitted; -1 otherwise, with <c>errno</c> set.</returns>
+        [DllImport("libc", EntryPoint = "access")]
+        internal static extern int Access(byte[] pathname, int mode);
     }
 
     /// <summary>
