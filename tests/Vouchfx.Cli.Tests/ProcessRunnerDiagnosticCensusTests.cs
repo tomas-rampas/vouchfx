@@ -176,13 +176,15 @@ public sealed class ProcessRunnerDiagnosticCensusTests
     /// semantic model, and a semantic model needs the CLI compiled inside the test.
     /// </para>
     /// <para>
-    /// <strong>A DEFINITELY-NULL ARGUMENT IS NOT AN ARGUMENT.</strong> The check used to be the
-    /// mere PRESENCE of the parameter, which <c>environment: null</c> — and a positional
-    /// <c>null</c> or <c>default</c> — satisfies while asking for exactly the inheriting behaviour
-    /// this row forbids: the census was satisfiable by the shape it exists to refuse.
-    /// <see cref="IsDefinitelyNull"/> is syntactic and therefore bounded — a <c>null</c> arriving
-    /// through a variable or a method call is still invisible — but the spellings it does see are
-    /// the ones a caller actually writes.
+    /// <strong>A NULL ARGUMENT IS NOT AN ARGUMENT.</strong> The check used to be the mere
+    /// PRESENCE of the parameter, which <c>environment: null</c> — and a positional <c>null</c> or
+    /// <c>default</c> — satisfies while asking for exactly the inheriting behaviour this row
+    /// forbids: the census was satisfiable by the shape it exists to refuse. The first fix for
+    /// that left the same hole one character wide: <c>environment: null!</c> is a
+    /// <c>SuppressNullableWarningExpression</c> wrapping the same literal, and it read as
+    /// compliant. <see cref="IsNullOnSomePath"/> is syntactic and therefore bounded — a
+    /// <c>null</c> arriving through a variable or a method call is still invisible, and its own
+    /// remarks enumerate the rest — but the spellings it does see are the ones a caller writes.
     /// </para>
     /// </remarks>
     [Fact]
@@ -248,10 +250,63 @@ public sealed class ProcessRunnerDiagnosticCensusTests
         Assert.True(
             offenders.Count == 0,
             $"{offenders.Count} IProcessRunner.Run call site(s) supply no environment block, or "
-            + "supply one that is definitely null. The parameter is optional and null means "
-            + "INHERIT — so the child git receives every variable this process holds, including "
-            + "whatever `${secret:env/NAME}` loaded (#500).\n"
+            + "supply one that is null on at least one path. The parameter is optional and null "
+            + "means INHERIT — so the child git receives every variable this process holds, "
+            + "including whatever `${secret:env/NAME}` loaded (#500).\n"
             + string.Join("\n", offenders));
+    }
+
+    /// <summary>
+    /// <see cref="IsNullOnSomePath"/> sees every spelling of a null a caller writes at the site,
+    /// and nothing else.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Rows rather than a second census, because the predicate is where the census's whole
+    /// strength lives and it is reachable directly. The census above can only ever exercise the
+    /// ONE spelling the production call site happens to use today; every other spelling is
+    /// guarded by this table or by nothing.
+    /// </para>
+    /// <para>
+    /// The null-forgiving rows are the reason this table exists: <c>null!</c> and <c>default!</c>
+    /// parse to a <c>PostfixUnaryExpressionSyntax</c> the first version of the predicate did not
+    /// recurse through, so both read as compliant while handing the runner a null. The negative
+    /// rows are equally load-bearing — a predicate that answered <see langword="true"/> for
+    /// everything would satisfy every positive row and turn the census into a refusal of all
+    /// call sites.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    // Spelled null, and the same null behind every wrapper a caller writes at the site.
+    [InlineData("null", true)]
+    [InlineData("null!", true)]
+    [InlineData("default", true)]
+    [InlineData("default!", true)]
+    [InlineData("default(IReadOnlyDictionary<string, string>)", true)]
+    [InlineData("(IReadOnlyDictionary<string, string>)null", true)]
+    [InlineData("(IReadOnlyDictionary<string, string>)null!", true)]
+    [InlineData("((null))", true)]
+    [InlineData("null as IReadOnlyDictionary<string, string>", true)]
+    // Null on ONE path is still a run of git with this process's whole block.
+    [InlineData("flag ? BuildBlock() : null", true)]
+    [InlineData("flag ? null! : BuildBlock()", true)]
+    [InlineData("cached ?? null", true)]
+    // A real block, however it is obtained, is not an offender; nor is an EMPTY one.
+    [InlineData("environment", false)]
+    [InlineData("BuildBlock()", false)]
+    [InlineData("new Dictionary<string, string>()", false)]
+    [InlineData("EmptyBlock", false)]
+    [InlineData("flag ? BuildBlock() : EmptyBlock", false)]
+    [InlineData("cached ?? EmptyBlock", false)]
+    public void IsNullOnSomePath_SeesEverySpellingOfNull(string expression, bool expected)
+    {
+        var parsed = SyntaxFactory.ParseExpression(expression);
+
+        Assert.False(
+            parsed.GetDiagnostics().Any(d => d.Severity == DiagnosticSeverity.Error),
+            $"'{expression}' did not parse, so this row proves nothing about the predicate.");
+
+        Assert.Equal(expected, IsNullOnSomePath(parsed));
     }
 
     /// <summary>
@@ -354,21 +409,50 @@ public sealed class ProcessRunnerDiagnosticCensusTests
     }
 
     /// <summary>
-    /// Whether an expression is <see langword="null"/> by inspection alone.
+    /// Whether an expression is <see langword="null"/> on at least one path, by inspection alone.
     /// </summary>
     /// <param name="expression">The argument expression.</param>
-    /// <returns><see langword="true"/> for a spelling that can only ever be null.</returns>
+    /// <returns><see langword="true"/> for a spelling that can hand the runner a null.</returns>
     /// <remarks>
-    /// <c>null</c>, <c>default</c>, <c>default(T)</c>, and either behind casts and parentheses —
-    /// <c>(IReadOnlyDictionary&lt;string, string&gt;)null</c> is what a caller writes when the
-    /// compiler asks which overload they meant. A null that arrives through a variable or a method
-    /// call is invisible here; closing that needs a semantic model and a data-flow analysis, and
-    /// the shapes above are the ones a caller writes at the site.
+    /// <para>
+    /// <strong>SOME path, not EVERY path, and the weaker question is the right one.</strong> The
+    /// exposure is a child git that inherits this process's block, and
+    /// <c>flag ? BuildBlock() : null</c> delivers exactly that on the branch it takes. A predicate
+    /// that answered only for an unconditional null would report such a site as compliant, which
+    /// is the same "satisfiable by the shape it forbids" failure the presence check had.
+    /// </para>
+    /// <para>
+    /// The spellings: <c>null</c>, <c>default</c>, <c>default(T)</c>, any of them behind
+    /// parentheses, a cast, or the null-forgiving <c>!</c> — <c>environment: null!</c> is a
+    /// ONE-CHARACTER edit that used to walk past this guard, which is what
+    /// <c>IsNullOnSomePath_SeesEverySpellingOfNull</c> pins — plus <c>null as T</c>, either arm of
+    /// a conditional, and the right operand of <c>??</c>.
+    /// </para>
+    /// <para>
+    /// <strong>What remains uncovered, stated because the class summary above claims this guard
+    /// forbids the inheriting shape.</strong> Every null that is not spelled AT THE CALL SITE is
+    /// invisible: a local, field, property or method call that evaluates to null
+    /// (<c>environment: _cachedBlock</c>, <c>environment: BuildBlock()</c>), a <c>const</c> or
+    /// <c>static readonly</c> field initialised to null, and a null arriving through any other
+    /// indirection. Closing those needs a semantic model and a data-flow analysis, which needs the
+    /// CLI compiled inside the test — the same boundary the receiver resolution above stops at.
+    /// An EMPTY but non-null block is deliberately NOT an offender: it grants the child nothing,
+    /// which is the opposite of the exposure.
+    /// </para>
     /// </remarks>
-    private static bool IsDefinitelyNull(ExpressionSyntax expression) => expression switch
+    private static bool IsNullOnSomePath(ExpressionSyntax expression) => expression switch
     {
-        ParenthesizedExpressionSyntax parenthesised => IsDefinitelyNull(parenthesised.Expression),
-        CastExpressionSyntax cast => IsDefinitelyNull(cast.Expression),
+        ParenthesizedExpressionSyntax parenthesised => IsNullOnSomePath(parenthesised.Expression),
+        CastExpressionSyntax cast => IsNullOnSomePath(cast.Expression),
+        PostfixUnaryExpressionSyntax suppression
+            when suppression.IsKind(SyntaxKind.SuppressNullableWarningExpression) =>
+            IsNullOnSomePath(suppression.Operand),
+        ConditionalExpressionSyntax conditional =>
+            IsNullOnSomePath(conditional.WhenTrue) || IsNullOnSomePath(conditional.WhenFalse),
+        BinaryExpressionSyntax coalesce when coalesce.IsKind(SyntaxKind.CoalesceExpression) =>
+            IsNullOnSomePath(coalesce.Right),
+        BinaryExpressionSyntax cast when cast.IsKind(SyntaxKind.AsExpression) =>
+            IsNullOnSomePath(cast.Left),
         DefaultExpressionSyntax => true,
         LiteralExpressionSyntax literal =>
             literal.IsKind(SyntaxKind.NullLiteralExpression)
@@ -396,14 +480,15 @@ public sealed class ProcessRunnerDiagnosticCensusTests
     /// one.</strong> <c>null</c> is not "no environment", it is the request to INHERIT the whole
     /// process block — so <c>environment: null</c>, and a positional <c>null</c> or
     /// <c>default</c>, satisfied the old presence test while asking for precisely the exposure
-    /// #500 closed. <see cref="IsDefinitelyNull"/> refuses those spellings.
+    /// #500 closed. <see cref="IsNullOnSomePath"/> refuses those spellings, and the ones that
+    /// reach the same null through <c>!</c>, a conditional arm or <c>??</c>.
     /// </para>
     /// </remarks>
     private static bool SuppliesEnvironment(InvocationExpressionSyntax call)
     {
         var argument = EnvironmentArgument(call);
 
-        return argument is not null && !IsDefinitelyNull(argument.Expression);
+        return argument is not null && !IsNullOnSomePath(argument.Expression);
     }
 
     /// <summary>

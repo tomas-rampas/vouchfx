@@ -794,8 +794,8 @@ internal static class RunCommand
     }
 
     /// <summary>
-    /// Writes one already-composed diagnostic line to <paramref name="output"/>, swallowing a
-    /// failure of the write itself so the caller can still return its taxonomy exit code.
+    /// Composes one diagnostic line and writes it to <paramref name="output"/>, swallowing a
+    /// failure of EITHER so the caller can still return its taxonomy exit code.
     /// </summary>
     /// <param name="output">The caller-supplied sink.</param>
     /// <param name="compose">
@@ -829,12 +829,30 @@ internal static class RunCommand
     /// so a future call site cannot reintroduce the shape.
     /// </para>
     /// <para>
-    /// <paramref name="compose"/> is invoked inside the <c>try</c> and is deliberately not
+    /// <strong>TWO GUARDS, NOT ONE, BECAUSE THEY GUARD DIFFERENT THINGS.</strong> Composition is
+    /// wrapped in its own unconditional <c>catch</c>; only the write carries the
+    /// cancellation-rethrow filter below. The first version of this method put
+    /// <paramref name="compose"/> inside the write's <c>try</c> — which closed #518's escape but
+    /// put composition under a filter written for a different purpose. That filter deliberately
+    /// lets an <see cref="OperationCanceledException"/> through while the token is cancelled, so
+    /// a hostile <c>Message</c> getter that threw one DURING a cancelled run escaped
+    /// <see cref="ExecuteAsync"/> and bypassed the taxonomy — the exact outcome the guard exists
+    /// to prevent, reachable by choosing a different exception type. Composition has no
+    /// cancellation semantics of its own: it is string work over an already-caught fault, so
+    /// nothing it raises is a cancellation anybody asked for, and swallowing all of it is right.
+    /// </para>
+    /// <para>
+    /// <paramref name="compose"/> is invoked inside its <c>try</c> and is deliberately not
     /// null-checked first: a null would be a defect in this file, and throwing for it OUTSIDE the
     /// guard would trade a wrong message for the wrong exit code.
     /// </para>
     /// <para>
-    /// THE FILTER IS THE SAME ONE THE OUTER CATCH USES, AND FOR THE SAME REASON — it was
+    /// A composition that throws costs the operator the LINE, never the exit code — there is no
+    /// fallback sentence, because the only text this frame could compose without the caller's
+    /// lambda would say less than nothing about the fault.
+    /// </para>
+    /// <para>
+    /// THE WRITE'S FILTER IS THE SAME ONE THE OUTER CATCH USES, AND FOR THE SAME REASON — it was
     /// written here as the narrower <c>is not OperationCanceledException</c>, which had the
     /// defect one level down: a sink whose write TIMES OUT raises
     /// <see cref="TaskCanceledException"/>, an <see cref="OperationCanceledException"/>, so the
@@ -842,7 +860,8 @@ internal static class RunCommand
     /// exit 1 — with the taxonomy code already computed and one <c>return</c> away. Caught by
     /// <c>RunCommandTaxonomyBackstopTests</c>' timeout row, which drives a sink that throws on
     /// EVERY write including this one. Only a cancellation the USER actually requested is left to
-    /// propagate, matching the outer catch.
+    /// propagate, matching the outer catch — and that property is unchanged by the split above:
+    /// a genuine Ctrl-C landing on the WRITE still propagates.
     /// </para>
     /// </remarks>
     private static async Task WriteDiagnosticBestEffortAsync(
@@ -850,9 +869,23 @@ internal static class RunCommand
         Func<string?> compose,
         CancellationToken cancellationToken)
     {
+        string? line;
         try
         {
-            await output.WriteLineAsync(compose()).ConfigureAwait(false);
+            line = compose();
+        }
+        catch
+        {
+            // UNCONDITIONAL, INCLUDING CANCELLATION. Composing a string is not cancellable work,
+            // so an OperationCanceledException from here is a hostile or defective `Message`
+            // getter, not the user's Ctrl-C — and letting it out would hand back the framework's
+            // exit 1 with the taxonomy code one `return` away. See this method's remarks.
+            return;
+        }
+
+        try
+        {
+            await output.WriteLineAsync(line).ConfigureAwait(false);
         }
         catch (Exception writeFailure) when (
             writeFailure is not OperationCanceledException
@@ -1109,19 +1142,21 @@ internal static class RunCommand
         // `cancellationToken` — byte-for-byte identical to today.
         //
         // When set, closing stdin fires the watcher's EOF (or read-error) callback, which does
-        // TWO things:
-        //   1. Cancels `linkedShutdownSource` — every downstream runner below observes this via
-        //      `runCancellationToken` and unwinds the SAME way a Ctrl-C / SIGTERM would
-        //      (HeadlessTopology.DisposeAsync's bounded StopAsync teardown, §4.5). This is
-        //      cancellation-PROPAGATION parity only.
-        //   2. Arms `shutdownBackstop` — a WALL-CLOCK, budget-bound force-exit timer.
-        // Security-review finding (MAJOR-1): step 1 alone is NOT signal-path parity for
+        // TWO things — named rather than numbered, because their ORDER is load-bearing and an
+        // ordinal that drifts from the code says nothing:
+        //   • THE ARM. `shutdownBackstop.Arm()` starts a WALL-CLOCK, budget-bound force-exit
+        //     timer. It goes FIRST; see the callback below for why that is the guarantee.
+        //   • THE CANCEL. `linkedShutdownSource.Cancel()` — every downstream runner below
+        //     observes this via `runCancellationToken` and unwinds the SAME way a Ctrl-C /
+        //     SIGTERM would (HeadlessTopology.DisposeAsync's bounded StopAsync teardown, §4.5).
+        //     This is cancellation-PROPAGATION parity only.
+        // Security-review finding (MAJOR-1): the cancel alone is NOT signal-path parity for
         // TERMINATION ENFORCEMENT. CancellationTokenSource.CreateLinkedTokenSource only
         // propagates cancellation DOWNSTREAM — cancelling `linkedShutdownSource` never touches
         // the ORIGINAL `cancellationToken`, so System.CommandLine's own
         // InvocationConfiguration.ProcessTerminationTimeout watchdog (Program.cs — armed only by
         // a REAL OS Ctrl-C/SIGTERM acting on THAT original token) is NEVER engaged by a
-        // stdin-EOF-triggered stop. Without step 2, a run wedged somewhere that does not observe
+        // stdin-EOF-triggered stop. Without the arm, a run wedged somewhere that does not observe
         // cancellation promptly (a step/provider await, not just teardown) would hang forever
         // once stdin closes. `shutdownBackstop` closes that gap: if the process is still alive
         // TeardownBudgetSeconds after EOF, it force-exits via Environment.Exit — see the
@@ -1158,8 +1193,25 @@ internal static class RunCommand
         await using var stdinShutdownWatcher = shutdownOnStdinEof
             ? StdinShutdownWatcher.Start(Console.OpenStandardInput(), () =>
               {
-                  linkedShutdownSource!.Cancel();
+                  // THE ARM PRECEDES THE CANCEL, AND THAT ORDER IS THE GUARANTEE, NOT A STYLE.
+                  // `Cancel()` runs its registrations SYNCHRONOUSLY on this thread and can resume
+                  // the awaited pipeline — here or on another thread — before the next statement
+                  // is reached. With the arm second, `ExecuteCoreAsync` could therefore unwind
+                  // and dispose this backstop first, after which `Arm()` is a documented no-op
+                  // (see ShutdownBackstop.Arm) and the force-exit budget the flag PROMISES is
+                  // silently never armed — leaving a provider or a teardown that ignores
+                  // cancellation to outlive it, which is the one thing the backstop exists for.
+                  //
+                  // Arming first costs nothing and cannot mis-fire: a run that then completes
+                  // gracefully disposes the backstop, cancelling the timer before it can elapse
+                  // (that disposal is what the declaration-order note above guarantees). It also
+                  // starts the budget at the instant EOF was OBSERVED, which is where the flag's
+                  // documented teardown budget is measured from. And it survives a `Cancel()`
+                  // that throws: the watcher swallows a callback fault by design
+                  // (StdinShutdownWatcher.InvokeCallbackSafely), so with the arm second an
+                  // already-disposed source would take the backstop down with it, unseen.
                   shutdownBackstop!.Arm();
+                  linkedShutdownSource!.Cancel();
               })
             : null;
 
