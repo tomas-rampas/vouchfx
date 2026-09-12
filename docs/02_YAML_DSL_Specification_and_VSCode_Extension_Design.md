@@ -1622,14 +1622,14 @@ Variables that **no longer reach git** include:
 - **Proxy variables:** `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY` — the selection does not make network calls, so these are intentionally confined
 - **SSL configuration:** `SSL_CERT_FILE`, `SSL_CERT_DIR` — likewise inaccessible to git
 - **SSH agent:** `SSH_AUTH_SOCK` — selection runs no SSH operations
-- **Locale:** `LANG`, `LC_*` — confined so git answers in the C locale, making stderr deterministic across hosts
+- **Locale:** `LANG`, `LC_*` — confined to remove environment-driven variation in git's messages. This is not a promise of C-locale output: Git for Windows can take its language from the OS user default even with these variables absent, so the effect is that the *environment* no longer steers the locale, not that every host answers identically
 
 Operators who need a variable outside this list can forward it as a `GIT_`-prefixed variable (e.g. a custom `GIT_CONFIG_GLOBAL`), which always passes through. This is the supported escape hatch for cases where repository-level configuration depends on environment variables.
 
 **Git binary resolution.** The git executable is located by searching `PATH` **in order** and taking the first fully-qualified match. This differs from the default OS search:
 
 - On **Windows:** the search looks **only** for `git.exe`. Git shims installed as `.cmd` or `.bat` files are skipped — they are not considered as candidates — because shims would otherwise enable command injection through argument parsing. If no `git.exe` is found on `PATH`, the selection fails with the error `Could not run git for <operation>. Is git installed and on PATH?`
-- On **POSIX:** the search looks for the bare name `git` with an executable bit set; symlinks are resolved.
+- On **POSIX:** the search looks for the bare name `git` and asks `access(2)` with `X_OK` whether this caller may execute it, rather than reading the mode bits — an execute bit set for *somebody* is not enough, so a candidate the caller cannot run is skipped instead of ending the search. Note that `access(2)` resolves against the **real** user and group, not the effective pair, so the two can disagree under set-uid. Reading the mode bits survives only as the fallback where the C library call cannot be resolved. Symlinks are resolved.
 
 This resolution happens **once per change-set** and is cached across all three git invocations. The binary must exist and be executable by the current user at the moment of the selection; a file system race (the binary is replaced between resolution and execution) is treated as a launch failure.
 

@@ -1459,7 +1459,10 @@ Could not start git for <operation>. A git executable was found on PATH, but the
 **What it means:**
 A file named `git.exe` (or `git` on POSIX) was found on `PATH`, but the operating system would not execute it. Common causes:
 
-- **Broken symlink on POSIX:** The git executable is a symlink whose target is missing.
+- **Broken symlink on Windows:** The git executable is a symlink whose target is missing.
+  This reaches *this* symptom only on Windows, where `File.Exists` returns true for a
+  dangling symlink and the candidate is therefore retained. On POSIX the same file is
+  skipped during the search, so a broken symlink there produces Symptom 1 above instead.
 - **Wrong architecture:** The executable was compiled for a different CPU architecture (32-bit vs 64-bit).
 - **Permissions:** The file lacks read and execute permissions for the current user.
 - **File system race:** The file existed during the search but was deleted or replaced before execution.
