@@ -923,9 +923,9 @@ internal static class RunCommand
     /// </remarks>
     internal const string StdinEofShutdownNotice =
         "vouchfx run: the run was shut down because stdin reached EOF or could not be read, which "
-        + "--shutdown-on-stdin-eof treats alike, before it reached a verdict.  This is the "
-        + "requested graceful stop, not an engine or provider defect - there is nothing to "
-        + "report.  Reported as Inconclusive (section 12.1).";
+        + "--shutdown-on-stdin-eof treats alike, before it reached a verdict.  Stopping on either "
+        + "is what that flag arranges; it is not an engine or provider defect - there is "
+        + "nothing to report.  Reported as Inconclusive (section 12.1).";
 
     /// <summary>
     /// Whether an escaped cancellation is the <c>--shutdown-on-stdin-eof</c> graceful stop rather

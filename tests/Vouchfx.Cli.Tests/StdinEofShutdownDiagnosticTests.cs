@@ -190,7 +190,14 @@ public sealed class StdinEofShutdownDiagnosticTests : IDisposable
         // timeout as the graceful stop would have printed the new notice and passed this row.
         Assert.DoesNotContain(
             RunCommand.StdinEofShutdownNotice, written, StringComparison.Ordinal);
-        Assert.DoesNotContain("graceful stop", written, StringComparison.Ordinal);
+
+        // THE SECOND PHRASE MUST BE ONE THE NOTICE ACTUALLY CONTAINS, or this line can never
+        // fail. It was "graceful stop" until the notice dropped the word "requested" and was
+        // reworded; that phrase then existed nowhere, leaving an assertion that looked like
+        // defence and was vacuous. Asserted below, so the pairing cannot rot silently again.
+        Assert.DoesNotContain("nothing to report", written, StringComparison.Ordinal);
+        Assert.Contains(
+            "nothing to report", RunCommand.StdinEofShutdownNotice, StringComparison.Ordinal);
 
         Assert.Equal(ExitCodes.Inconclusive, exitCode);
     }
