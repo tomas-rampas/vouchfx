@@ -1,7 +1,8 @@
 // Vouchfx.Cli — SystemProcessRunner (S07-C-02; lifetime and bounding, #481).
 //
 // The production IProcessRunner: launches a real process via System.Diagnostics.Process,
-// captures stdout/stderr fully, and surfaces a launch failure (e.g. git not on PATH) as a
+// captures stdout/stderr fully, and surfaces a launch failure (an executable that is absent,
+// inaccessible or not runnable — its caller resolves PATH before it gets here, #499) as a
 // ProcessLaunchException so GitChangeSet can map it to a clear usage error rather than a
 // crash. Arguments are passed through Process.StartInfo.ArgumentList (no shell, no manual
 // quoting — each element is escaped by the runtime).
@@ -50,14 +51,18 @@
 // CLI's own stdin. The bound on a genuinely interactive prompt is the time budget below, not the
 // redirection.
 //
-// DELIBERATELY NOT ACCOMPANIED BY GIT_TERMINAL_PROMPT=0, and that is now a tracked question rather
-// than a closed one: `Run` has no environment seam, and issue #500 tracks the environment seam and
-// subsumes this. Two things worth carrying into it rather than re-deriving. First, the objection is
-// not merely that a git-specific variable is out of place in a generic runner — it is that the
-// runner has nowhere to put ANY variable. Second, one variable would not buy what it looks like it
-// buys: failing closed needs the SET — `-c credential.helper=`, GIT_TERMINAL_PROMPT=0, and
-// GIT_ASKPASS / core.askPass — because a credential helper that prompts through its own UI answers
-// to none of them. (Inferred from git's documented behaviour; nobody probed it.)
+// THE ENVIRONMENT SEAM EXISTS NOW (#500), AND THIS RUNNER STILL KNOWS NOTHING ABOUT GIT. `Run`
+// takes an optional environment block and, when given one, REPLACES the inherited block with it —
+// clear, then populate, never overlay. What belongs in that block is the caller's knowledge, and
+// `GitChangeSet.ConfineEnvironment` holds git's; nothing here names a git variable.
+//
+// STILL DELIBERATELY NOT ACCOMPANIED BY GIT_TERMINAL_PROMPT=0, for a reason the seam did not
+// change: that is a git-specific variable and this is a generic runner. The caller may now set it,
+// and the note worth carrying rather than re-deriving is that one variable would not buy what it
+// looks like it buys. Failing closed needs the whole SET — `-c credential.helper=`,
+// GIT_TERMINAL_PROMPT=0, and GIT_ASKPASS / core.askPass — because a credential helper that prompts
+// through its own UI answers to none of them. (Inferred from git's documented behaviour; nobody
+// probed it.)
 
 using System.Diagnostics;
 using System.Globalization;
@@ -151,6 +156,7 @@ internal sealed class SystemProcessRunner : IProcessRunner
         string fileName,
         IReadOnlyList<string> arguments,
         string workingDirectory,
+        IReadOnlyDictionary<string, string>? environment = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(fileName);
@@ -195,7 +201,7 @@ internal sealed class SystemProcessRunner : IProcessRunner
         // has no SynchronizationContext" is FALSE for the test host, where xunit v2 installs an
         // AsyncTestSyncContext around every test method and rows 3 and 4 call Run directly on the
         // xunit test thread. Drop one ConfigureAwait(false) below and this paragraph stops holding.
-        return RunCoreAsync(fileName, arguments, workingDirectory, cancellationToken)
+        return RunCoreAsync(fileName, arguments, workingDirectory, environment, cancellationToken)
             .GetAwaiter().GetResult();
     }
 
@@ -208,6 +214,7 @@ internal sealed class SystemProcessRunner : IProcessRunner
         string fileName,
         IReadOnlyList<string> arguments,
         string workingDirectory,
+        IReadOnlyDictionary<string, string>? environment,
         CancellationToken cancellationToken)
     {
         // Before the launch, not after: a token already signalled when the call arrives should
@@ -227,6 +234,24 @@ internal sealed class SystemProcessRunner : IProcessRunner
         foreach (var argument in arguments)
         {
             startInfo.ArgumentList.Add(argument);
+        }
+
+        // CLEAR, THEN POPULATE — the confinement is the CLEAR (#500). ProcessStartInfo.Environment
+        // is pre-seeded from THIS process on first access, so assigning into it without clearing
+        // would be an overlay: every variable the caller did not name would still reach the child,
+        // which is the entire exposure. Honoured only because UseShellExecute is false; with it
+        // true the runtime documents this dictionary as unusable.
+        //
+        // The indexer rather than Add: the dictionary's comparer is the platform's own (ordinal on
+        // POSIX, case-insensitive on Windows), so a caller's set that is unique under ITS comparer
+        // but not under this one must overwrite rather than throw inside a process launch.
+        if (environment is not null)
+        {
+            startInfo.Environment.Clear();
+            foreach (var variable in environment)
+            {
+                startInfo.Environment[variable.Key] = variable.Value;
+            }
         }
 
         // One source for both delays so the loser of a race can be cancelled rather than left
@@ -251,15 +276,44 @@ internal sealed class SystemProcessRunner : IProcessRunner
         Process process;
         try
         {
+            // The LEAF only, like the capture and timeout messages below, and UNLIKE the catch
+            // arm just after this one. That arm keeps the absolute path deliberately — a test
+            // depends on it as the control for the mapped message not naming it — and this one
+            // is not that control, so it takes the treatment the rest of the file takes. The
+            // distinction was unrecorded until #498's sweep; it is written down here so the next
+            // reader does not "align" the two by widening this one back.
             process = Process.Start(startInfo)
                 ?? throw new ProcessLaunchException(
-                    $"Could not start '{fileName}': the process handle was null.");
+                    $"Could not start '{Path.GetFileName(fileName)}': the process handle was null.");
         }
         catch (Exception ex) when (ex is not ProcessLaunchException)
         {
             // Win32Exception (executable not found), InvalidOperationException, etc.
+            //
+            // THE ENGINE'S OWN SENTENCE, NOT THE BCL'S QUOTED BACK (#498). `ex.Message` used to be
+            // spliced in here, and .NET composes a failed start from SR.ErrorStartingProcess — "An
+            // error occurred trying to start process '{0}' with working directory '{1}'. {2}" — so
+            // the splice carried the absolute WORKING DIRECTORY into an engine-authored diagnostic.
+            // MEASURED on this host (net8.0, Windows) by starting a rooted, absent executable: the
+            // composed message names the executable AND the working directory. That is the #357
+            // rule's class of defect (widened by #375/#473/#488): a diagnostic names the declared
+            // text, never a resolved host path, and text the engine did not write cannot be relied
+            // on to obey a rule the engine has.
+            //
+            // The chain is kept, so the full BCL detail — including the reason this dropped — is
+            // still there for a debugger and for anything that walks InnerException. It is simply
+            // not part of the message.
+            //
+            // `fileName` REMAINS, and that is a decision rather than an oversight. This exception
+            // is the seam's internal diagnostic: GitChangeSet.RunGit discards its message outright
+            // rather than printing it (see that method's ProcessLaunchException catch), so nothing
+            // on the production path prints this string at all. Naming the executable is what makes
+            // the exception mean anything in a debugger, and
+            // GitChangeSetTests.LaunchFailure_DoesNotDiscloseTheResolvedPath uses this message
+            // naming the resolved path as the CONTROL for the mapped one not naming it.
             throw new ProcessLaunchException(
-                $"Could not start '{fileName}': {ex.Message}", ex);
+                $"Could not start '{fileName}'. See the inner exception for the operating system's reason.",
+                ex);
         }
 
         // `using` emits its Dispose in a finally that ENCLOSES the explicit one below, so the kill
@@ -460,8 +514,17 @@ internal sealed class SystemProcessRunner : IProcessRunner
                 Observe(standardOutput);
                 Observe(standardError);
 
+                // THE LEAF NAME, NOT THE RESOLVED PATH (#498). `fileName` is absolute since #499
+                // put a PATH search in front of this runner, so interpolating it whole put a host
+                // path into an engine-authored message. Unreachable to printed output TODAY —
+                // GitChangeSet.RunGit prints `ex.InnerException?.Message ?? ex.Message`, and this
+                // throw is guarded by `captureFault is not null` and passes it as the inner, so
+                // the fallback arm cannot be taken — but unreachable-today is not a property to
+                // build on: one later caller that prints this message turns it into a live leak.
+                // The leaf name keeps everything the sentence was carrying (WHICH executable's
+                // output could not be read) and discloses nothing about where it lives.
                 throw new ProcessCaptureException(
-                    $"Reading the output of '{fileName}' failed: {captureFault.Message}",
+                    $"Reading the output of '{Path.GetFileName(fileName)}' failed: {captureFault.Message}",
                     captureFault);
             }
 
@@ -481,10 +544,15 @@ internal sealed class SystemProcessRunner : IProcessRunner
                 // branch is reached with both streams read IN FULL, and discards them — see
                 // IProcessRunner's "carries no partial output". Capture is the branch's business;
                 // what this exception carries is the property common to both.
+                //
+                // THE LEAF NAME, NOT THE RESOLVED PATH (#498) — same reasoning as the capture
+                // throw above, on a path that is further from print still: RunGit's timeout catch
+                // composes its own sentence and never reads this one. Unreachable-today is not a
+                // property to build on, and the leaf name costs the message nothing.
                 throw new ProcessTimeoutException(
                     string.Create(
                         CultureInfo.InvariantCulture,
-                        $"'{fileName}' exceeded the {_budget.TotalSeconds:0.###}s process budget: {exceeded}. No output is reported. A tree-kill was issued for the direct child; if that child had already exited (the shape in which a surviving grandchild holds the pipes) the kill reached an empty tree, and that grandchild is still running beyond this runner's reach."),
+                        $"'{Path.GetFileName(fileName)}' exceeded the {_budget.TotalSeconds:0.###}s process budget: {exceeded}. No output is reported. A tree-kill was issued for the direct child; if that child had already exited (the shape in which a surviving grandchild holds the pipes) the kill reached an empty tree, and that grandchild is still running beyond this runner's reach."),
                     _budget);
             }
 

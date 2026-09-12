@@ -11,7 +11,8 @@
 //
 // git prints repo-relative, forward-slash paths; we resolve them against the repo root to
 // absolute, normalise separators to '/', and store them in a case-tolerant set. A non-zero
-// git exit (bad ref, not a repo), a launch failure (git not installed) or a timeout (a wedged
+// git exit (bad ref, not a repo), a launch failure (a git that was found and would not start,
+// which since #499 is a DIFFERENT refusal from "no git on PATH") or a timeout (a wedged
 // git, or one whose grandchild holds the capture pipes open — #481/#392) is wrapped in a
 // ChangeSetException, which the CLI maps to a usage error (exit 2) — NEVER a crash. A CANCELLED
 // call is the exception to that rule and propagates as OperationCanceledException: an operator's
@@ -116,10 +117,17 @@
 //
 // The search lives in this file rather than in SystemProcessRunner because it is git-specific (the
 // candidate name, the "is git installed" diagnostic) and that runner deliberately carries no git
-// knowledge — the same reason it has no environment seam, which is #500. It runs ONCE per
-// change-set: three git calls, one resolution.
+// knowledge. It runs ONCE per change-set: three git calls, one resolution.
+//
+// THE GIT CHILD'S ENVIRONMENT IS CONFINED HERE, FOR THE SAME REASON (#500).
+// ────────────────────────────────────────────────────────────────────────
+// SystemProcessRunner grew an environment parameter; WHICH variables git needs is knowledge that
+// belongs to this file, so ConfineEnvironment below is what builds the block and the runner stays
+// git-agnostic. It too is computed ONCE per change-set and handed to all three calls.
 
 using System.Globalization;
+using System.Runtime.InteropServices;
+using System.Text;
 
 namespace Vouchfx.Cli.Selection;
 
@@ -203,15 +211,22 @@ internal sealed class GitChangeSet : IChangeSet
         // launch this same rooted path. A miss is refused here rather than degraded to the bare
         // name — falling back to "git" is precisely the search-order hole this resolution closes.
         //
-        // The refusal deliberately reuses the launch-failure wording and therefore the launch
-        // failure's OUTCOME: a ChangeSetException, which the CLI maps to exit 2. Whether
-        // selection-infrastructure failure deserves a code of its own is an open, unfiled question
-        // — see RunGit's remarks — and a fix for a binary-resolution defect does not get to answer
-        // it in passing.
+        // The refusal reuses the launch failure's OUTCOME — a ChangeSetException, which the CLI
+        // maps to exit 2 — but no longer its WORDING: this site has no candidate and the launch
+        // site has one, so "is git installed and on PATH?" is the actionable question here and a
+        // misdirection there. See GitNotStartable. Whether
+        // selection-infrastructure failure deserves a code of its own is an open question, filed as
+        // #521 — see RunGit's remarks — and a fix for a binary-resolution defect does not get to
+        // answer it in passing.
         var gitExecutable = (gitExecutableLocator ?? LocateGitOnPath)()
             ?? throw new ChangeSetException(GitUnavailable("the change-set computation"));
 
-        var repoRoot = ResolveRepoRoot(gitExecutable, workingDirectory, processRunner, cancellationToken);
+        // ONCE per change-set, like the resolution above and for the same reason: the three calls
+        // below are one logical operation and must not disagree about what git can see (#500).
+        var gitEnvironment = ConfinedGitEnvironment();
+
+        var repoRoot = ResolveRepoRoot(
+            gitExecutable, workingDirectory, gitEnvironment, processRunner, cancellationToken);
 
         var changed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -223,8 +238,11 @@ internal sealed class GitChangeSet : IChangeSet
             gitExecutable,
             processRunner,
             workingDirectory,
+            gitEnvironment,
             $"diff for ref '{changedSinceRef}'",
             cancellationToken,
+            // See the status call below for why every call carries this.
+            "--no-optional-locks",
             "diff", "--name-only", "--end-of-options", $"{changedSinceRef}...HEAD");
         AddPaths(changed, repoRoot, diff.StandardOutput, status: false);
 
@@ -233,13 +251,50 @@ internal sealed class GitChangeSet : IChangeSet
         // "tëst.e2e.yaml" is emitted verbatim (UTF-8) and matches the on-disk file. (The
         // Unquote step below still handles the remaining `\"`/`\\` escapes for paths whose
         // names contain a quote or backslash.)
+        //
+        // `--no-optional-locks` IS ABOUT WHAT VOUCHFX TAKES, NOT ABOUT WHAT IT SURVIVES, and this
+        // is the canonical statement of it — the other two call sites point here.
+        //
+        // WHAT AN EARLIER DRAFT CLAIMED, AND WHY IT IS RETRACTED. It said `git status` takes
+        // `.git/index.lock` to persist its opportunistic index refresh, so a concurrent git in the
+        // same working tree made THIS call exit 128 and refused the whole change-set. git has no
+        // such failure mode: INFERRED from git's own source, `cmd_status` takes the index lock
+        // through `repo_hold_locked_index` WITHOUT `LOCK_DIE_ON_ERROR`, so a lock it cannot get is
+        // silently skipped along with the refresh. That mechanism is read rather than observed;
+        // what was MEASURED is the black-box behaviour it predicts, by review on this host (git
+        // 2.54.0.windows.1) with an `index.lock` planted in a temp repository: plain `status
+        // --porcelain` still answered `?? b.txt` at exit 0, with and without a stat-dirty tracked
+        // file, and identically with the flag. The measurement stands on its own; the inference
+        // only explains it. The retraction is recorded rather than quietly deleted, the same way
+        // this branch handles the `0311`->`0611` correction: a rationale that names a failure mode
+        // the tool does not have is how a later reader deletes the flag as useless.
+        //
+        // THE REAL REASON IS THE DIRECTION GIT'S OWN DOCUMENTATION GIVES. `GIT_OPTIONAL_LOCKS` is
+        // documented for a caller that "does not want to cause lock contention with other
+        // operations on the repository" — the aggressor is US. A `--changed-since` run is a
+        // read-only query about which scenarios to execute; it has no business taking a lock in an
+        // operator's working tree, however briefly, and the refreshed stat cache it declines to
+        // persist is something nothing here reads. Same conclusion, opposite direction, and only
+        // this one survives contact with git.
+        //
+        // SO IT GOES ON ALL THREE CALLS. Under "take no lock we do not need" the flag costs nothing
+        // anywhere, and the previous scoping rested on an INFERENCE that `rev-parse
+        // --show-toplevel` and a two-commit diff take no index lock — unmeasured, and load-bearing
+        // only while the rationale was about surviving a lock rather than declining one. Applying
+        // it uniformly deletes the inference instead of labelling it.
+        //
+        // IT IS A GIT-LEVEL OPTION AND MUST PRECEDE THE SUBCOMMAND. Spelt after `status` it is
+        // parsed as a status option and refused. What is MEASURED here is that a real git accepts
+        // it in that position and answers the SAME porcelain status with it as without it — see
+        // GitChangeSetTests' parity row.
         var status = RunGit(
             gitExecutable,
             processRunner,
             workingDirectory,
+            gitEnvironment,
             "working-tree status",
             cancellationToken,
-            "-c", "core.quotepath=false", "status", "--porcelain");
+            "--no-optional-locks", "-c", "core.quotepath=false", "status", "--porcelain");
         AddPaths(changed, repoRoot, status.StandardOutput, status: true);
 
         _changed = changed;
@@ -286,6 +341,7 @@ internal sealed class GitChangeSet : IChangeSet
     private static string ResolveRepoRoot(
         string gitExecutable,
         string workingDirectory,
+        IReadOnlyDictionary<string, string> environment,
         IProcessRunner processRunner,
         CancellationToken cancellationToken)
     {
@@ -293,15 +349,26 @@ internal sealed class GitChangeSet : IChangeSet
             gitExecutable,
             processRunner,
             workingDirectory,
+            environment,
             "repository-root lookup",
             cancellationToken,
+            // See the constructor's status call for why every call carries this.
+            "--no-optional-locks",
             "rev-parse", "--show-toplevel");
 
         var root = result.StandardOutput.Trim();
         if (root.Length == 0)
         {
+            // NAMES THE CONCEPT, NOT THE RESOLVED DIRECTORY (#498). This used to interpolate
+            // `workingDirectory`, which the CLI resolves from the discovery path — an absolute host
+            // path in an author-facing diagnostic, which #357's rule (widened by #375/#473/#488)
+            // forbids. Replacing it with nothing would have been a redaction the author cannot act
+            // on, so the sentence names the CONDITION that was not met instead: the caller knows
+            // which path they passed to `vouchfx run`, and what they do not know is that git
+            // answered without a root.
             throw new ChangeSetException(
-                $"git did not report a repository root for '{workingDirectory}'.");
+                "git did not report a repository root, so the discovery path is not inside a git "
+                + "working tree. --changed-since needs one.");
         }
 
         // ToOsSeparators is defensive: git's rev-parse output is already OS-native, but
@@ -334,13 +401,12 @@ internal sealed class GitChangeSet : IChangeSet
     /// contract as a side effect of stopping a hang.
     /// </para>
     /// <para>
-    /// <strong>THAT QUESTION IS OPEN AND UNFILED, WHICH IS A CHANGE FROM WHAT THIS COMMENT USED TO
-    /// SAY.</strong> It attributed the question to issues #480 and #466-B, and neither reaches it.
-    /// #466 closed on a different axis — how <c>ParallelSuiteRunner</c>'s slot catch-all CLASSIFIES
-    /// an unexpected engine throw — and #480's answer is narrower still: a provider or engine
-    /// defect never exits 0, which says nothing about a git that could not be run. So there is no
-    /// issue to read for the reasoning, and the exit code stays 2 by inertia rather than by a
-    /// decision anybody recorded. This is the canonical statement of it; the other two sites that
+    /// <strong>THAT QUESTION IS OPEN, AND IT IS FILED AS #521.</strong> It used to be attributed
+    /// to issues #480 and #466-B, and neither reaches it. #466 closed on a different axis — how
+    /// <c>ParallelSuiteRunner</c>'s slot catch-all CLASSIFIES an unexpected engine throw — and
+    /// #480's answer is narrower still: a provider or engine defect never exits 0, which says
+    /// nothing about a git that could not be run. #521 asks what those two do not, so until it is
+    /// decided the exit code stays 2. This is the canonical statement of it; the other sites that
     /// used to carry the same citation point here.
     /// </para>
     /// <para>
@@ -356,6 +422,7 @@ internal sealed class GitChangeSet : IChangeSet
         string gitExecutable,
         IProcessRunner processRunner,
         string workingDirectory,
+        IReadOnlyDictionary<string, string> environment,
         string operation,
         CancellationToken cancellationToken,
         params string[] arguments)
@@ -363,7 +430,8 @@ internal sealed class GitChangeSet : IChangeSet
         ProcessResult result;
         try
         {
-            result = processRunner.Run(gitExecutable, arguments, workingDirectory, cancellationToken);
+            result = processRunner.Run(
+                gitExecutable, arguments, workingDirectory, environment, cancellationToken);
         }
         catch (ProcessLaunchException ex)
         {
@@ -383,10 +451,26 @@ internal sealed class GitChangeSet : IChangeSet
             //
             // Scrubbing or sentence-splitting would keep the operating system's reason, at the
             // cost of a rule that has to stay correct against a message .NET composes and
-            // localises. GitUnavailable already tells the author the one thing they can act on,
+            // localises. GitNotStartable already tells the author the one thing they can act on,
             // so the clause is dropped instead. The exception is still chained, so the full
             // detail remains available to a debugger and to anything that walks InnerException.
-            throw new ChangeSetException(GitUnavailable(operation), ex);
+            //
+            // ITS OWN WORDING, NOT GitUnavailable's, AND THE DISTINCTION IS THE USEFUL PART. This
+            // arm is reached only AFTER the locator has returned a candidate, so "is git installed
+            // and on PATH?" asks a question already answered yes — and sends the reader looking in
+            // the one place that is not the problem. What failed is the START of a candidate that
+            // was found, and IsExecutableFile has already excluded some of what a reader would
+            // guess: File.Exists is false for a directory on either platform, and on POSIX it
+            // resolves the symlink, so a broken one never reaches here — after which access(X_OK)
+            // has answered "this caller may run it" as well. On WINDOWS neither of those last two
+            // holds: File.Exists is TRUE for a symlink whose target is missing (measured, net8.0
+            // on this host), and the Windows arm asks no permission question at all. So the
+            // reachable causes are a file that is no loadable image for this machine (ENOEXEC, the
+            // wrong architecture, something merely NAMED git.exe), a broken symlink or an
+            // execute-denying ACL on Windows, the mode-bit fallback on a runtime with no libc.so
+            // accepting a file somebody ELSE may execute, and a candidate replaced between the
+            // resolution and the launch.
+            throw new ChangeSetException(GitNotStartable(operation), ex);
         }
         catch (ProcessTimeoutException ex)
         {
@@ -400,17 +484,22 @@ internal sealed class GitChangeSet : IChangeSet
         {
             // The inner exception rather than ex.Message: the runner's own message already names
             // the executable, and repeating it here would read as two nested failures.
+            //
+            // SUBSTITUTED, because that inner message is the BCL's and this one IS printed — the
+            // same #498 class as the launch-failure splice, reached on a different path. A pipe
+            // read faults with an IOException whose text the engine did not write and cannot
+            // constrain, so it goes through the same scrub as git's own output below.
             throw new ChangeSetException(
-                $"Could not read the output of git {operation}: {ex.InnerException?.Message ?? ex.Message}. A change-set cannot be computed from a partial capture, so selection is refused rather than narrowed.",
+                $"Could not read the output of git {operation}: {SubstituteAbsolutePaths(ex.InnerException?.Message ?? ex.Message)}. A change-set cannot be computed from a partial capture, so selection is refused rather than narrowed.",
                 ex);
         }
 
         if (result.ExitCode != 0)
         {
-            var detail = result.StandardError.Trim();
+            var detail = SubstituteAbsolutePaths(result.StandardError.Trim());
             if (detail.Length == 0)
             {
-                detail = result.StandardOutput.Trim();
+                detail = SubstituteAbsolutePaths(result.StandardOutput.Trim());
             }
 
             throw new ChangeSetException(
@@ -422,13 +511,1016 @@ internal sealed class GitChangeSet : IChangeSet
     }
 
     /// <summary>
-    /// The one wording for "git could not be run", shared by the <c>PATH</c>-resolution refusal
-    /// and by the runner's launch failure so that the two cannot drift apart.
+    /// The wording for "no git was found at all" — the <c>PATH</c>-resolution refusal, and only
+    /// that.
     /// </summary>
     /// <param name="operation">What was being attempted, in the caller's own vocabulary.</param>
     /// <returns>The message, deliberately naming no path — see <see cref="RunGit"/>.</returns>
+    /// <remarks>
+    /// It used to be shared with the launch failure, on the reasoning that two wordings for "git
+    /// could not be run" would drift apart. They are not the same failure: this one is raised
+    /// BEFORE anything is launched, because the search over <c>PATH</c> produced no candidate, so
+    /// its question is the actionable one. <see cref="GitNotStartable"/> is raised only AFTER a
+    /// candidate has been produced, where the same question misdirects.
+    /// </remarks>
     private static string GitUnavailable(string operation) =>
         $"Could not run git for {operation}. Is git installed and on PATH?";
+
+    /// <summary>
+    /// The wording for "a git was found and the operating system would not start it".
+    /// </summary>
+    /// <param name="operation">What was being attempted, in the caller's own vocabulary.</param>
+    /// <returns>The message, deliberately naming no path — see <see cref="RunGit"/>.</returns>
+    /// <remarks>
+    /// PATH-FREE, exactly as <see cref="GitUnavailable"/> is (#498): the candidate is the one thing
+    /// a reader would want named and is precisely the host path that may not be disclosed, so the
+    /// message describes WHICH candidate it means rather than spelling it. That is #357's rule in
+    /// its usual shape: name the declared thing and the concept it resolves against, never the
+    /// resolution. "The first git on <c>PATH</c>" is the concept because
+    /// <see cref="LocateGitOnPath"/> returns the first fully qualified match and nothing else; a
+    /// test may inject another locator, and nothing user-facing goes through one.
+    /// </remarks>
+    private static string GitNotStartable(string operation) =>
+        $"Could not start git for {operation}. A git executable was found on PATH, but the "
+        + "operating system refused to start it. Is the first git on PATH a valid executable this "
+        + "user may run?";
+
+    /// <summary>
+    /// What replaces an absolute host path in relayed text.
+    /// </summary>
+    /// <remarks>
+    /// Its own characters are token separators in the assertion that polices this rule
+    /// (<c>HostPathDisclosure</c>), so the placeholder cannot itself be read as a path reference.
+    /// </remarks>
+    private const string PathPlaceholder = "<path>";
+
+    /// <summary>
+    /// The separators that bound a token, matching the shared disclosure assertion's set exactly.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong><c>=</c> IS A SEPARATOR, AND WITHOUT IT A ROOTED PATH BEHIND A PREFIX ESCAPED
+    /// WHOLE.</strong> <c>cwd=/home/runner/work/x</c> is ONE token beginning <c>c</c>, so
+    /// <see cref="Path.IsPathRooted(string)"/> is <see langword="false"/> for it and the path was
+    /// relayed verbatim — the whole path, not a residue of one. The shape is not hypothetical: the
+    /// stderr relayed here carries whatever a repository-chosen helper wrote to it
+    /// (<c>core.fsmonitor</c>, a <c>filter.*.clean</c> command, a <c>.git/hooks/*</c> script), and
+    /// a helper that echoes its own environment prints exactly this <c>KEY=/path</c> form.
+    /// </para>
+    /// <para>
+    /// <strong><c>`</c> IS ONE, AND IT CLOSES A MEASURED WHOLE-PATH LEAK.</strong> GNU tooling of
+    /// the backtick-apostrophe quoting era — older <c>make</c>, an autoconf-generated
+    /// <c>configure</c>, older coreutils — writes <c>`/abs/path'</c>, and a <c>.git/hooks/*</c>
+    /// script that shells out to one puts that on the stderr relayed here. That quoting style is
+    /// inferred from those tools rather than measured on this host; what IS measured is what this
+    /// scan did with it. MEASURED before the addition: <c>cannot open `/etc/gitconfig'</c> came
+    /// back verbatim — the whole path — because the token began <c>`</c> and was therefore not
+    /// rooted. It costs the tail of a path whose own name carries a backtick: <c>/opt/a`b/c</c> is
+    /// <c>&lt;path&gt;`b/c</c>, measured — which is the same trade <c>=</c> makes, paid here for a
+    /// shape that occurs in real output.
+    /// </para>
+    /// <para>
+    /// <strong><c>:</c> IS DELIBERATELY NOT ONE.</strong> It would split <c>C:\Users\x</c> at the
+    /// drive colon into <c>C</c> — one character, below the two-character floor, so skipped — and
+    /// <c>\Users\x</c>. MEASURED on Windows: every expectation here becomes <c>C:&lt;path&gt;</c>.
+    /// On POSIX <c>\Users\x</c> is not rooted at all and the whole path survives, which is worse
+    /// than the residue the exclusion concedes (inferred from
+    /// <see cref="Path.IsPathRooted(string)"/>'s documented Unix behaviour, not measured — no lane
+    /// here is POSIX).
+    /// </para>
+    /// <para>
+    /// <strong>THE RESIDUE IS A CLASS, ENUMERATED OVER ASCII AND OVER THE QUOTING CHARACTERS REAL
+    /// TOOLING EMITS — NOT OVER UNICODE.</strong> Any
+    /// character this set does not contain glues a rooted path to a prefix into ONE token, which
+    /// <see cref="Path.IsPathRooted(string)"/> reads as relative. <c>error:/home/x</c> is the
+    /// instance that matters, because <c>:</c> is git's own prefix punctuation — but
+    /// <c>user@/home/x</c> and <c>ref#/home/x</c> survive identically, and naming one character as
+    /// though the list were complete is how this comment read while four review rounds each found
+    /// a different one. The heading itself made that mistake one level up: it claimed the CLASS
+    /// while the body below it claimed ASCII, and a fifth round duly arrived with
+    /// <c>‘/etc/gitconfig’</c>. Beyond the corpus the class is open, and no character set
+    /// closes it. The answer for every PRINTABLE non-alphanumeric ASCII character, and for the
+    /// twelve non-ASCII ones named below, is recorded by
+    /// <c>GitChangeSetTests.SubstituteAbsolutePaths_PrefixGlue_IsSubstitutedOrDocumentedResidue</c>
+    /// — that row asserts the exact output per character and carries the reason for each of the
+    /// twenty-four residues. In short: <c>/</c> and <c>\</c> ARE the path separators; <c>:</c> is
+    /// the paragraph above; <c>- . _ ~ + $ % # @ ^ { } !</c> occur inside real paths, where making
+    /// one a separator leaves the tail standing (measured); <c>| ? *</c> are illegal in a Windows
+    /// filename but legal in a POSIX one and close no shape anyone has named. Closing the class
+    /// outright needs a rule that is not a separator character at all — scan for a path separator
+    /// and ask whether the run from there is rooted behind a non-alphanumeric predecessor — which
+    /// cannot live in the three shared <c>char[]</c> arrays this set is held to. Not taken.
+    /// </para>
+    /// <para>
+    /// <strong>AND THE CLASS HAS A SECOND HALF, WHICH BELONGS HERE BESIDE <c>error:/home/x</c>:
+    /// A SEPARATOR IMMEDIATELY AFTER THE ROOT.</strong> The paragraph above is about a character
+    /// this set OMITS, gluing prefix to path. This one is about a character it CONTAINS, sitting
+    /// one position INTO a rooted token. <c>/'etc/passwd</c> splits into a head of <c>/</c> — one
+    /// character, below <see cref="IsAbsoluteHostPath"/>'s two-character floor, so skipped — and a
+    /// tail that is no longer rooted, so the shape is relayed verbatim and the gate accepts it.
+    /// <c>C:'Users\x</c> is the Windows spelling: the head <c>C:</c> holds no path separator and so
+    /// is not a path either. MEASURED on this host, input back unchanged with
+    /// <c>HostPathDisclosure</c> ACCEPTING, for all seven non-ASCII members and for fifteen
+    /// incumbents — <c>' " = ` &lt; &gt; &amp; ; , ( ) [ ]</c>, space and tab. It is the same
+    /// open class as the paragraph above, reached from the other side, and it is pinned the same
+    /// way: <c>GitChangeSetTests.SubstituteAbsolutePaths_SeparatorAfterTheRoot_</c>
+    /// <c>IsADocumentedResidue</c> asserts the exact output for all twenty-two, so closing the
+    /// shape later is a moved expectation rather than a silent change.
+    /// </para>
+    /// <para>
+    /// <strong>IT IS PRE-EXISTING, AND A CLAIM THAT IT COULD NOT HAPPEN WAS WRONG.</strong> The
+    /// seven below were justified partly on the ground that widening a separator set can only make
+    /// the scan split MORE, so a previously-unrooted glued token can only become a refusal and
+    /// never the reverse. MEASURED, it goes both ways, and the seven moved it the wrong way for
+    /// this one shape: before they were added <c>/‘etc/passwd</c> was ONE token, rooted, and came
+    /// out <c>&lt;path&gt;</c> with the gate REFUSING; after, it is two tokens, comes out verbatim,
+    /// and the gate ACCEPTS. Seven instances joined a class fifteen incumbents already populated.
+    /// That is not a reason to remove them, and the reason is what bounds the cost: every shape a
+    /// tool actually emits wraps the path on BOTH sides — <c>‘/etc/gitconfig’</c> — where the
+    /// quote BEFORE the root is what makes the path its own token (measured: substituted, gate
+    /// REFUSING) and no separator follows the root at all. The residue needs a path whose first
+    /// component begins with a quotation mark. Every realistic shape improved; the monotonicity
+    /// claim was false and is struck.
+    /// </para>
+    /// <para>
+    /// <strong>THE SEVEN CURLY QUOTES ARE THE BACKTICK ONE LOCALE LATER.</strong> U+2018/U+2019 is
+    /// what glibc's gettext quotes with in a UTF-8 locale — the direct successor to the
+    /// backtick-apostrophe style the paragraph above added <c>`</c> for, same tool family, same
+    /// message shape. Through gnulib's localised quoting the German pair (<c>„ “</c>) and the
+    /// French and Russian guillemets (<c>« »</c>) carry the same role, which is why all seven join
+    /// together rather than one at a time: adding U+201C while leaving U+201E out would close half
+    /// of one pair. (The quoting styles are INFERRED from gettext and gnulib, as the backtick's
+    /// were; what is MEASURED is what this scan did.) Measured before the addition:
+    /// <c>cannot open ‘/etc/gitconfig’</c> came back verbatim — the whole path — and the
+    /// disclosure gate ACCEPTED it, so neither half of the rule saw it. After: the path is
+    /// <c>&lt;path&gt;</c> and the quotes stand.
+    /// </para>
+    /// <para>
+    /// <strong>AND THAT CLOSED THE NO-SPACE SHAPE ONLY.</strong> Membership here ends a TOKEN; it
+    /// does not delimit a SPAN, and those are two different jobs. So the same seven characters left
+    /// <c>cannot open ‘/home/john smith/x’</c> coming back as
+    /// <c>cannot open ‘&lt;path&gt; smith/x’</c> — the harder half, and the likelier one.
+    /// <see cref="QuoteSpanPairs"/> is where that was closed, and the reason it is a SECOND array
+    /// rather than a widening of this one: a span needs an opener's own closer, which a membership
+    /// test cannot express. There are TWO costs, not one. The first is the
+    /// tail of a path whose own name carries a quote, measured: <c>/opt/a‘b/c</c> becomes
+    /// <c>&lt;path&gt;‘b/c</c> — the same trade <c>'</c> already makes for
+    /// <c>/home/john/don't/x</c>, which is a likelier directory name than any of these seven. The
+    /// second is the root-adjacent reversal two paragraphs up, which is the one this comment used
+    /// to deny could exist.
+    /// </para>
+    /// <para>
+    /// <strong>U+201A, U+2039 AND U+203A ARE A DECISION, NOT WHERE THE LIST RAN OUT.</strong> The
+    /// German single pair (<c>‚ ‘</c>) and the single guillemets (<c>‹ ›</c>) look like the same
+    /// pair-completion argument that put U+201E in, and all three leak: MEASURED,
+    /// <c>cannot open ‹/etc/gitconfig›</c> and the <c>key‚/home/john/x</c> glue shape both come
+    /// back verbatim with the gate ACCEPTING. They stay OUT because the bound on this list is a
+    /// NAMED EMITTER, not typographic symmetry. gnulib's <c>locale_quoting_style</c> takes its two
+    /// characters from the catalogue's translations of <c>`</c> and <c>'</c>; the German catalogue
+    /// gives the DOUBLE pair <c>„ “</c> and the French and Russian the double guillemets, which is
+    /// why those six are in. No catalogue in that family emits the single forms, and U+2018 is
+    /// here as gettext's UTF-8 closer rather than as a German single closer, so completing a pair
+    /// around it completes a pair nothing writes. Admitting characters on symmetry alone has no
+    /// stopping point — Unicode has dozens more quotation marks. They are documented residues with
+    /// rows of their own, by the same rule U+00A0 is held to below: recording the answer and
+    /// choosing to leave a character out are separate acts. (The emitter claim is INFERRED from
+    /// gnulib, as the seven's was; the leak is MEASURED.)
+    /// </para>
+    /// <para>
+    /// <strong>U+00A0 IS NOT ONE OF THEM, AND IT IS A SEPARATE ANSWER RATHER THAN AN OVERSIGHT.
+    /// </strong> A no-break space is not a quoting character but a SPACE, legal in a filename on
+    /// both platforms and a routine copy-paste artefact: <c>/home/john/My Documents/x</c> spelled
+    /// with one becomes <c>&lt;path&gt; Documents/x</c>, measured — a real path losing its tail,
+    /// which is the test the nineteen ASCII residues are excluded by. It also reaches further than
+    /// this array: <see cref="WhitespaceSeparators"/> is the whitespace SUBSET of this set, so a
+    /// whitespace character added here and not there makes <see cref="IsOnePathWholly"/> stop
+    /// splitting where the scan does — silently, since the parity row polices the subset direction
+    /// only. Two arrays of consequence for a glue shape with no named emitter. It is a documented
+    /// residue instead.
+    /// </para>
+    /// <para>
+    /// <strong>AND THAT EXCLUSION CANCELS PART OF THE ADDITION MADE IN THE SAME COMMIT — the one
+    /// place in this set where two decisions work against each other, stated as the cost of
+    /// this one.</strong> U+00AB/U+00BB went in because gnulib's French catalogue emits
+    /// guillemets; French typography puts a no-break space INSIDE them, which is exactly the
+    /// character the paragraph above excludes. MEASURED: <c>«/etc/gitconfig»</c> and the
+    /// ordinary-space <c>« /etc/gitconfig »</c> are both substituted and REFUSED, while the same
+    /// pair spelled with U+00A0, or with the narrow no-break space U+202F, comes back verbatim and
+    /// is ACCEPTED. So the guillemets close the shape only in the spelling a French catalogue is
+    /// least likely to produce (that French sets a no-break space inside guillemets is INFERRED
+    /// from typographic convention; the four outcomes are MEASURED). This is NOT an argument to
+    /// add either space — the paragraph above stands for both, and either would cost a real path
+    /// its tail — but leaving it unsaid would let the guillemets read as closing more than they
+    /// do. U+202F is a documented residue with a row of its own for the same reason U+00A0 is.
+    /// </para>
+    /// <para>
+    /// <strong>AND MAKING THE GUILLEMETS A SPAN PAIR MOVED NONE OF THOSE FOUR OUTCOMES.</strong>
+    /// RE-MEASURED after <see cref="QuoteSpanPairs"/>: all four answer exactly as above. The
+    /// mechanism is that <see cref="AppendQuotedSpan"/> re-scans a span that is not one path under
+    /// THIS set, so a span padded with a no-break space is tokenised precisely as it was before —
+    /// which is also why the ORDINARY-space French spelling keeps its with-space residue
+    /// (<c>« /home/john smith/x »</c> still loses only its rooted head, pinned by
+    /// <c>GitChangeSetTests.SubstituteAbsolutePaths_APaddedQuotedSpan_IsADocumentedResidue</c>).
+    /// What the pair DID close is the unpadded spelling <c>«/home/john smith/x»</c>. The
+    /// interlock above is narrowed by that and not removed.
+    /// </para>
+    /// <para>
+    /// <strong>AND THE LOCALE INTERLOCK PROBABLY SHRINKS ALL OF THIS — one link of it is pinned
+    /// and the next is not, so they are labelled separately.</strong> PINNED: the child git's
+    /// environment does not carry <c>LANG</c>/<c>LC_*</c> (#500).
+    /// <c>GitChangeSetTests.ConfineEnvironment_KeepsTheAllowListAndTheGitPrefix_AndNothingElse</c>
+    /// puts <c>LANG</c> in its input and not in its expected output, on every lane, so that much is
+    /// a test failure away rather than an assumption. INFERRED, and NOT pinned by that row: that
+    /// git therefore runs in the C locale and gettext therefore falls back to ASCII quoting, which
+    /// is the step that would make the backtick shape the one that actually arrives and the curly
+    /// ones rare. Dropping the variable is not the same as selecting the locale — Git for Windows'
+    /// libintl can take its language from the OS user-default rather than from the environment
+    /// block at all, so on that platform the conclusion may simply not follow. No lane here
+    /// measures which quoting a real git emits. Either way it does not CLOSE the shape, which is
+    /// why the seven are in the set regardless: the stderr relayed here carries whatever a
+    /// repository-chosen helper wrote, and a helper that hard-codes its quoting never consults the
+    /// locale at all.
+    /// </para>
+    /// </remarks>
+    private static readonly char[] TokenSeparators =
+    {
+        ' ', '\t', '\r', '\n', '"', '\'', '<', '>', '&', ';', ',', '(', ')', '[', ']', '=', '`',
+
+        // Spelled as escapes, not as the characters: U+2018 and U+0027 are one pixel apart in a
+        // monospace font, and a separator set is the last place a reader should have to guess.
+        '\u2018', '\u2019', '\u201C', '\u201D', '\u201E', '\u00AB', '\u00BB',
+    };
+
+    /// <summary>
+    /// The separators <see cref="IsOnePathWholly"/> alone splits on — the whitespace members of
+    /// <see cref="TokenSeparators"/>, and deliberately nothing else.
+    /// </summary>
+    /// <remarks>
+    /// Not a second copy of the shared rule set: the parity row polices by EQUALITY the three
+    /// arrays the scan and the disclosure gate share, and this one belongs to neither. It is held
+    /// to that row as a SUBSET of <see cref="TokenSeparators"/> and nothing more — a whitespace
+    /// character added there and not here would make the one-path test stop splitting where the
+    /// scan does, which leaks nothing and decides wrongly in silence.
+    /// <see cref="IsOnePathWholly"/> carries the measurement that says why it is narrower.
+    /// </remarks>
+    private static readonly char[] WhitespaceSeparators = { ' ', '\t', '\r', '\n' };
+
+    private static readonly char[] PathSeparators = { '\\', '/' };
+
+    /// <summary>
+    /// Trimmed from the END only — trimming <c>.</c> from the front would turn a relative
+    /// <c>./x</c> into the rooted-looking <c>/x</c> and substitute a path that is not one.
+    /// </summary>
+    private static readonly char[] TrailingPunctuation = { '.', ':' };
+
+    /// <summary>
+    /// Replaces every absolute host path in <paramref name="text"/> with
+    /// <see cref="PathPlaceholder"/>, leaving everything else verbatim.
+    /// </summary>
+    /// <param name="text">Text the engine did not write: git's stderr, or a BCL message.</param>
+    /// <returns>The same text with its rooted path tokens substituted.</returns>
+    /// <remarks>
+    /// <para>
+    /// <strong>SUBSTITUTION, and choosing it over the alternatives is the point (#498).</strong>
+    /// git's stderr is the only account of WHY a subcommand failed — the engine knows the exit code
+    /// and nothing else — and it routinely names host paths: <c>fatal: detected dubious ownership
+    /// in repository at '...'</c> is entirely a path, while <c>fatal: ambiguous argument 'nope':
+    /// unknown revision</c> contains none and is the most useful message this file can print.
+    /// DROPPING the relay takes the second with the first. TRUNCATING it addresses length, which is
+    /// not the defect: the dubious-ownership line is short and wholly a disclosure. DESCRIBING it —
+    /// replacing git's words with the engine's — means classifying git's output by substring, which
+    /// is a rule that has to stay correct against text this file does not own. Substituting the
+    /// paths and keeping the sentence is the only one of the four that removes the disclosure
+    /// WITHOUT removing the diagnosis, and it is the treatment #375 chose for the same problem
+    /// (<c>SecurityPathDisclosureLedger</c>, which is not used here because it is seeded from the
+    /// security material a topology produced, and selection runs before any topology exists — so at
+    /// this point there is nothing to seed it with).
+    /// </para>
+    /// <para>
+    /// <strong>The per-token PREDICATE is the shared assertion's, deliberately.</strong> A token,
+    /// trailing <c>.</c>/<c>:</c> trimmed, is substituted when it is at least two characters,
+    /// contains a path separator, and is <see cref="Path.IsPathRooted(string)"/>. Those are exactly
+    /// the conditions <c>Vouchfx.TestSupport.HostPathDisclosure</c>'s rooted-token scan refuses on,
+    /// in the same order — it spells them as a negated early exit rather than a conjunction, so the
+    /// two read differently and decide identically. The three rule arrays behind them are held
+    /// equal STRUCTURALLY rather than by this sentence, by
+    /// <c>GitChangeSetTests.SubstitutionTokenRules_AreTheSharedDisclosureGates</c>; a request to
+    /// "edit both" is the arrangement under which the gate's own two former copies diverged.
+    /// </para>
+    /// <para>
+    /// <strong>THE GATE IS STRICTER OVERALL, AND THAT ASYMMETRY IS DELIBERATE.</strong> This used to
+    /// claim the two "cannot drift into disagreeing about what a disclosure is", which is not what
+    /// is true. <c>AssertNoAbsoluteHostPath</c> refuses on THREE checks: (a) the host directory as a
+    /// raw substring, deliberately catching it even where no token boundary exists, (b) its
+    /// JSON-escaped form, and (c) the rooted-token scan. Only (c) is implemented here, because (a)
+    /// and (b) need a host directory known in advance — which a gate has and a relay does not. The
+    /// gate therefore refuses strings this method would pass, which fails SAFE; what the old
+    /// sentence would have justified is deleting (a) and (b) from a future gate as redundant, and
+    /// they are not.
+    /// </para>
+    /// <para>
+    /// <strong>The TOKENISATION is this method's own, and is stricter than the gate's in one
+    /// case.</strong> A span opened by any <see cref="QuoteSpanPairs"/> opener is taken whole, to
+    /// that opener's closer on the same line, WHEN the span is one path by
+    /// <see cref="IsOnePathWholly"/> — so a quoted
+    /// path CONTAINING SPACES is one token here and several in the gate. That is the common Windows
+    /// shape rather than an exotic one (below), and the gate catching the pieces anyway — through
+    /// (a), or through whichever piece is still rooted — is why the divergence costs nothing. A
+    /// span that is NOT one path is re-scanned token by token rather than emitted, which is the
+    /// only reason this tokenisation is never WEAKER than the plain scan.
+    /// </para>
+    /// <para>
+    /// <strong>WHAT IT STILL DOES NOT CATCH, stated rather than implied.</strong> An UNQUOTED path
+    /// containing a space is split: <c>C:\Program Files\Git\x</c> loses <c>C:\Program</c> to the
+    /// placeholder and leaves <c>Files\Git\x</c> standing, because the remainder is not rooted. git
+    /// quotes the paths it names, so this is the narrower residue it looks like — but it is a
+    /// residue, and a relayed message this file does not own may not quote. A QUOTED path with a
+    /// space leaves the same residue whenever its span is prose rather than one path (<c>'cannot
+    /// run hook pre-commit in /home/john smith/hooks'</c>), since the fallback scan splits on the
+    /// space exactly as the unquoted case does. So does a span merely PADDED with spaces — a
+    /// leading space is no path separator, so <c>« /home/john smith/x »</c> is not one path either,
+    /// measured and pinned as a residue row of its own. It is also platform-relative:
+    /// <see cref="Path.IsPathRooted(string)"/> reads a drive letter only on Windows, so a
+    /// Windows-shaped path would survive on a POSIX host. That costs nothing in practice, since the
+    /// text being scrubbed was produced by a child of THIS process on THIS host.
+    /// </para>
+    /// <para>
+    /// <strong>WHERE IT OVER-REACHES LESS THAN IT DID — narrowed, not removed.</strong> A span that
+    /// BEGINS rooted and continues in prose is rooted as a whole, so the first quote-aware draft
+    /// replaced <c>'/etc/gitconfig is unreadable, and /tmp/x too'</c> with a bare
+    /// <c>&lt;path&gt;</c> — wider than any residue, since it deleted a sentence the operator
+    /// needed. The second rooted token is what refuses the whole-span treatment there; see
+    /// <see cref="IsOnePathWholly"/>.
+    /// </para>
+    /// <para>
+    /// The residue that treatment leaves, stated rather than implied: a span that begins rooted and
+    /// carries prose but NO second path is still collapsed whole, so
+    /// <c>at '/home/john smith/x is gone'</c> becomes <c>at '&lt;path&gt;'</c> and the words
+    /// <c>is gone</c> go with it. The second rooted token is the only signal here, and that span
+    /// holds none. It is the narrow case — git puts its prose outside the quotes it wraps a path in
+    /// — but it is a case, and a relayed message this file does not own may quote differently. It
+    /// is also written in the ASCII spelling it was first measured in, and it now reaches through
+    /// all six <see cref="QuoteSpanPairs"/> openers rather than two: MEASURED, <c>«/etc/gitconfig
+    /// is unreadable»</c> comes back <c>«&lt;path&gt;»</c>, prose included, and the four non-ASCII
+    /// openers answer exactly as <c>'</c> and <c>"</c> do.
+    /// </para>
+    /// <para>
+    /// <strong>WHY THE QUOTED SPAN IS ONE TOKEN — the default Windows shape, not an edge
+    /// case.</strong>
+    /// git quotes with <c>'</c>, which is itself a <see cref="TokenSeparators"/> member, so under a
+    /// plain token scan <c>fatal: detected dubious ownership in repository at
+    /// 'C:/Users/John Smith/src/repo'</c> substituted <c>C:/Users/John</c> and left
+    /// <c>Smith/src/repo</c> standing. A user profile carrying a space is the Windows default for
+    /// anyone whose account name is two words, and <c>C:\Program Files\Git\…</c> is git's own
+    /// install location; the residue was the common case rather than the rare one.
+    /// </para>
+    /// <para>
+    /// A quote opens a span only at the start of the text or after a
+    /// <see cref="TokenSeparators"/> member, which is what keeps an apostrophe inside a word
+    /// (<c>couldn't</c>) from pairing with the quote that opens the path later on the same line.
+    /// The guard is KEPT for the non-ASCII pairs unchanged, and it buys the same thing there: it is
+    /// what leaves <c>/opt/a‘b/c</c> and <c>key‘/home/john/x</c> deciding exactly as they
+    /// did, since neither opener follows a separator. An unmatched quote, and one mid-word, are
+    /// emitted as ordinary separators — never allowed to swallow the remainder — and the search for
+    /// a close is bounded to the line, so an apostrophe cannot reach across a multi-line stderr.
+    /// Mispairing degrades to the pre-quote behaviour (the head substituted, the tail standing); it
+    /// never widens what is substituted.
+    /// </para>
+    /// <para>
+    /// It stays LINEAR, AND A MEMO IS WHAT MAKES THAT TRUE — the bound is not a property of the
+    /// search. Each closer search scans forward only and stops at the line end, and a search that
+    /// finds nothing proves the rest of that line holds no closer for THAT opener. The step from
+    /// there to "at most one failed scan per opener per line, six in all" is the part that does NOT
+    /// follow on its own, and reading it as though it did is what made this scan quadratic for one
+    /// release: for a self-matching quote a failed search also proves there is no second opener to
+    /// re-scan, and for a DIRECTED pair it proves nothing of the kind. The six failures are
+    /// remembered instead, in a bitmask cleared at each line terminator, so a second U+2018 on a
+    /// line whose U+2019 search already failed costs nothing — see
+    /// <see cref="MatchingCloserOnThisLine"/>, which carries the argument and the measurements, and
+    /// <c>GitChangeSetTests.SubstituteAbsolutePaths_ADirectedOpenerRepeated_ScansLinearly</c>,
+    /// which pins the bound this paragraph asserts. The re-scan of a span that is not one path adds
+    /// a bounded constant rather than a recursion to reason about: a span holds no closer for its
+    /// own opener, so each of the six can open at most once down a chain
+    /// (<see cref="AppendQuotedSpan"/>).
+    /// </para>
+    /// <para>
+    /// One over-reach is accepted knowingly: on Windows a ref spelt <c>/weird</c> is rooted, so a
+    /// message quoting it back is substituted. Refs of that shape are pathological, and the
+    /// alternative — a second rule distinguishing refs from paths — is the classifying-by-substring
+    /// this method rejects above.
+    /// </para>
+    /// </remarks>
+    internal static string SubstituteAbsolutePaths(string text)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+
+        var builder = new StringBuilder(text.Length);
+        AppendSubstituted(builder, text);
+        return builder.ToString();
+    }
+
+    /// <summary>
+    /// Scans one stretch of text, appending each token substituted or verbatim.
+    /// </summary>
+    /// <param name="builder">The output under construction.</param>
+    /// <param name="text">The stretch to scan — the whole relay, or one quoted span of it.</param>
+    /// <remarks>
+    /// Separate from <see cref="SubstituteAbsolutePaths"/> because a quoted span that is NOT one
+    /// path is re-scanned by this same method; see <see cref="AppendQuotedSpan"/> for why, and for
+    /// why the nesting that implies is bounded at the number of openers
+    /// <see cref="QuoteSpanPairs"/> declares.
+    /// </remarks>
+    private static void AppendSubstituted(StringBuilder builder, string text)
+    {
+        var index = 0;
+
+        // The failed-opener memo, one bit per QuoteSpanPairs couple. It is what MAKES the bound
+        // the remarks claim — see MatchingCloserOnThisLine, which owns both halves of it.
+        var failedOpeners = 0;
+
+        while (index < text.Length)
+        {
+            if (Array.IndexOf(TokenSeparators, text[index]) >= 0)
+            {
+                // THE MEMO'S RESET, AND ITS PLACE IS A CORRECTNESS QUESTION, NOT A TUNING ONE. A
+                // failed scan proves nothing beyond the line it stopped at, so the memo must be
+                // cleared BEFORE the first opener of the next line is judged — carrying it over
+                // would refuse a genuine span. Clearing here, at the line terminator itself, is
+                // that moment: the terminator is no opener, so nothing on this iteration reads
+                // the memo, and no line terminator can be SKIPPED — the only jump in this loop is
+                // over a closed span, and a span never crosses one (the closer search stops at
+                // '\r'/'\n'), so every one of them is visited by this branch.
+                if (text[index] is '\r' or '\n')
+                {
+                    failedOpeners = 0;
+                }
+
+                // A quote is a separator that can also OPEN a span — see the remarks for why a
+                // quoted path with spaces has to be one token. `index` is the opener's own
+                // position, so `index == 0 || previous is a separator` is the "not mid-word" test.
+                // WHETHER this character opens at all is the pair map's question, asked inside
+                // MatchingCloserOnThisLine: a character with no closer is an ordinary separator.
+                var close = index == 0 || Array.IndexOf(TokenSeparators, text[index - 1]) >= 0
+                    ? MatchingCloserOnThisLine(text, index, ref failedOpeners)
+                    : -1;
+
+                builder.Append(text[index]);
+                index++;
+
+                if (close < 0)
+                {
+                    continue;
+                }
+
+                AppendQuotedSpan(builder, text[index..close]);
+                builder.Append(text[close]);
+                index = close + 1;
+                continue;
+            }
+
+            var end = index;
+            while (end < text.Length && Array.IndexOf(TokenSeparators, text[end]) < 0)
+            {
+                end++;
+            }
+
+            AppendToken(builder, text[index..end]);
+            index = end;
+        }
+    }
+
+    /// <summary>
+    /// Appends the text between a pair of quotes: whole when it is ONE path, re-scanned when it
+    /// is not.
+    /// </summary>
+    /// <param name="builder">The output under construction.</param>
+    /// <param name="span">The span, quotes excluded.</param>
+    /// <remarks>
+    /// <para>
+    /// <strong>THE FALLBACK IS THE POINT.</strong> Taking every span whole made a quoted sentence
+    /// that merely CONTAINS a path — <c>error: cannot run hook 'pre-commit in /home/john
+    /// smith/repo/hooks'</c> — emit the path verbatim, because the span as a whole is not rooted
+    /// and so failed the predicate with no second chance. That is strictly worse than the
+    /// per-token scan the quote-awareness replaced, which at least substituted the rooted head.
+    /// Re-scanning the span is what restores it.
+    /// </para>
+    /// <para>
+    /// <strong>AND THE WHOLE-SPAN CASE IS NARROWER THAN "STARTS ROOTED".</strong> A span that
+    /// BEGINS with a path and continues in prose — <c>'/etc/gitconfig is unreadable, and /tmp/x
+    /// too'</c> — IS <see cref="Path.IsPathRooted(string)"/>, so taking it whole replaced the
+    /// sentence with <c>&lt;path&gt;</c> and swallowed the second path's existence along with the
+    /// words. A SECOND rooted WHITESPACE-separated token inside the span is the signal that the
+    /// span is a sentence naming paths rather than one path containing spaces: a sentence naming
+    /// two paths puts whitespace between them, while a path that continues after a space almost
+    /// never resumes with a path separator. "Almost" is the honest word — a directory whose name
+    /// ends in a space would produce one — and <see cref="IsOnePathWholly"/> states why the
+    /// separator set for that test is whitespace ALONE rather than the scan's own.
+    /// </para>
+    /// <para>
+    /// THE RECURSION IS BOUNDED AT SIX, and by the tokenisation rather than by a counter.
+    /// <see cref="MatchingCloserOnThisLine"/> returns the FIRST closer FOR THAT OPENER, so a span
+    /// opened by <c>X</c> contains no closer for <c>X</c> — and neither does any span nested
+    /// inside it, being a substring. So <c>X</c> opens at most ONCE down any chain, and the depth
+    /// is the number of openers <see cref="QuoteSpanPairs"/> declares. It was two while <c>'</c>
+    /// and <c>"</c> were the only pair; the argument is unchanged and the constant is not.
+    /// Each scan still runs over a strictly shorter string than its caller's.
+    /// </para>
+    /// </remarks>
+    private static void AppendQuotedSpan(StringBuilder builder, string span)
+    {
+        if (IsOnePathWholly(span))
+        {
+            AppendToken(builder, span);
+            return;
+        }
+
+        AppendSubstituted(builder, span);
+    }
+
+    /// <summary>
+    /// Whether a quoted span is ONE absolute host path rather than prose that names one.
+    /// </summary>
+    /// <param name="span">The span, quotes excluded.</param>
+    /// <returns><see langword="true"/> when the span may be substituted whole.</returns>
+    /// <remarks>
+    /// <para>
+    /// Two conditions, and the second is what keeps the whole-span treatment off a sentence: the
+    /// span is itself an absolute host path, AND no WHITESPACE-separated token after its first is
+    /// one — the separator set is this method's own, and the paragraph below is why. The first
+    /// condition alone accepts <c>/etc/gitconfig is unreadable, and /tmp/x too</c>; the second
+    /// rejects it. <c>C:\Users\John Smith\src\repo</c> — the shape the quote-awareness exists for
+    /// — splits into <c>C:\Users\John</c> and <c>Smith\src\repo</c>, only the first of which is
+    /// rooted, so it is unaffected.
+    /// </para>
+    /// <para>
+    /// <strong>WHITESPACE ALONE, and the scan's own set was MEASURED wrong here.</strong> Splitting
+    /// on <see cref="TokenSeparators"/> made every path carrying a non-whitespace separator look
+    /// like a sentence, because the fragment after that separator still begins with a path
+    /// separator and is therefore rooted. Measured on this host:
+    /// <c>'C:\Program Files (x86)\Git\bin\sh.exe'</c> split into <c>C:\Program</c>, <c>Files</c>,
+    /// <c>x86</c> and <c>\Git\bin\sh.exe</c> — the last one rooted — so the span was refused and
+    /// re-scanned into <c>'&lt;path&gt; Files (x86)&lt;path&gt;'</c>, and
+    /// <c>'/opt/git (stable)/bin/sh'</c> into <c>'&lt;path&gt; (stable)&lt;path&gt;'</c>. No path
+    /// text escapes either way, but <c>C:\Program Files (x86)\Git</c> is where 32-bit
+    /// Git-for-Windows installs, so the shape is a default rather than an oddity. On whitespace
+    /// the first splits into <c>C:\Program</c>, <c>Files</c> and <c>(x86)\Git\bin\sh.exe</c>, none
+    /// of the later ones rooted, and the span is taken whole again.
+    /// </para>
+    /// <para>
+    /// Nothing the second condition exists for is given up: a sentence naming two paths separates
+    /// them with whitespace, so <c>/etc/gitconfig is unreadable, and /tmp/x too</c> still splits
+    /// <c>/tmp/x</c> out and is still refused. What the narrower set concedes is a span whose two
+    /// paths are separated by punctuation ALONE — <c>/etc/x(/tmp/y)</c> — which is now taken
+    /// whole; both halves are paths there, so the one placeholder deletes no prose.
+    /// </para>
+    /// <para>
+    /// This is the INNER tokenisation only. <see cref="AppendSubstituted"/> keeps the shared
+    /// <see cref="TokenSeparators"/> set, which is what
+    /// <c>GitChangeSetTests.SubstitutionTokenRules_AreTheSharedDisclosureGates</c> holds against
+    /// the disclosure gate's.
+    /// </para>
+    /// </remarks>
+    private static bool IsOnePathWholly(string span)
+    {
+        if (!IsAbsoluteHostPath(span.TrimEnd(TrailingPunctuation)))
+        {
+            return false;
+        }
+
+        var first = true;
+        foreach (var token in span.Split(
+            WhitespaceSeparators, StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (!first && IsAbsoluteHostPath(token.TrimEnd(TrailingPunctuation)))
+            {
+                return false;
+            }
+
+            first = false;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Appends one token, substituted when it is an absolute host path.
+    /// </summary>
+    /// <param name="builder">The output under construction.</param>
+    /// <param name="token">The token, separators already stripped by the caller.</param>
+    /// <remarks>
+    /// The trimmed tail is put back so a substituted token does not swallow the sentence's
+    /// punctuation along with the path.
+    /// </remarks>
+    private static void AppendToken(StringBuilder builder, string token)
+    {
+        var candidate = token.TrimEnd(TrailingPunctuation);
+
+        builder.Append(IsAbsoluteHostPath(candidate)
+            ? PathPlaceholder + token[candidate.Length..]
+            : token);
+    }
+
+    /// <summary>
+    /// The quotation pairs that OPEN a span, flattened as opener/closer couples.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>OPENING A SPAN AND SEPARATING A TOKEN ARE TWO DIFFERENT JOBS, and the seven
+    /// non-ASCII members of <see cref="TokenSeparators"/> arrived doing only the second.</strong>
+    /// MEASURED before this array existed: <c>cannot open ‘/home/john smith/x’</c> came back as
+    /// <c>cannot open ‘&lt;path&gt; smith/x’</c> — the space ended the token, <c>smith/x</c> is not
+    /// rooted, and <c>HostPathDisclosure</c> ACCEPTED the result. The no-space spelling was already
+    /// closed; the WITH-SPACE one, which is the case the whole quote-awareness exists for
+    /// (<c>C:\Users\John Smith</c>, <c>C:\Program Files\Git</c>), was not. All four pairs leaked
+    /// identically, in both the POSIX and the drive-letter spelling.
+    /// </para>
+    /// <para>
+    /// <strong>DIRECTED PAIRS, THE STRUCTURAL DIFFERENCE FROM <c>'</c> AND <c>"</c>.</strong>
+    /// The ASCII quotes are self-matching, so "the same character again" was the whole rule. U+2018
+    /// closes with U+2019, so the rule is "the closer FOR THIS opener" and the mapping has to be
+    /// written down. It lives in one array rather than in a <c>switch</c> so the invariant every
+    /// member must satisfy — being a <see cref="TokenSeparators"/> member — is assertable by
+    /// reflection rather than by review;
+    /// <c>GitChangeSetTests.QuoteSpanPairs_AreSeparators_AndPairDirectedly</c> is that row.
+    /// </para>
+    /// <para>
+    /// <strong>U+201C IS BOTH AN OPENER AND A CLOSER, DELIBERATELY.</strong> It opens the English
+    /// double pair (closing U+201D) and CLOSES the German one that U+201E opens — gnulib's German
+    /// catalogue quotes <c>„…“</c>. Nothing mis-matches, because a span is taken from its opener to
+    /// the FIRST closer for THAT opener: inside a <c>„</c> span the terminating <c>“</c> is taken
+    /// as the close and never gets to open an English one. Both roles are measured, by the two rows
+    /// <c>GitChangeSetTests.QuotedPathWithASpace_IsOneToken_PerPair</c> carries for U+201C.
+    /// </para>
+    /// <para>
+    /// <strong>THE CLOSERS ARE NOT OPENERS, AND THAT IS WORTH MORE HERE THAN SYMMETRY WOULD
+    /// BE.</strong> U+2019 is also the typographic apostrophe (<c>don’t</c>), so making it open
+    /// would hand the ASCII <c>couldn't</c> problem to a character for which the "not mid-word"
+    /// guard is the only defence. Directedness removes the question instead.
+    /// </para>
+    /// <para>
+    /// <strong>U+00BB DOES NOT OPEN, AND THAT IS A REFUSAL WITH A ROW.</strong> German house styles
+    /// reverse the guillemets (<c>»…«</c>), so the pair looks like it belongs here. It stays out on
+    /// the bound this file already holds the separator set to — a NAMED EMITTER — and no gnulib
+    /// catalogue quotes that way: the German one gives <c>„ “</c> and the French and Russian ones
+    /// give <c>« »</c>. It is the same refusal U+201A, U+2039 and U+203A are held to one level up.
+    /// The cost is MEASURED and pinned as a residue row of
+    /// <c>GitChangeSetTests.QuotedPathWithASpace_IsOneToken_PerPair</c>: <c>»/home/j smith/x«</c>
+    /// keeps its tail, exactly as it did before.
+    /// </para>
+    /// </remarks>
+    private static readonly char[] QuoteSpanPairs =
+    {
+        '\'', '\'',
+        '"', '"',
+
+        // Spelled as escapes for the reason TokenSeparators is: U+2018 and U+0027 are a pixel
+        // apart. Read in couples — opener, then the closer that ends its span.
+        '\u2018', '\u2019',
+        '\u201C', '\u201D',
+        '\u201E', '\u201C',
+        '\u00AB', '\u00BB',
+    };
+
+    /// <summary>
+    /// The <see cref="QuoteSpanPairs"/> couple <paramref name="opener"/> opens, or <c>-1</c> when
+    /// the character opens no span.
+    /// </summary>
+    /// <param name="opener">The candidate opening character.</param>
+    /// <returns>The couple's index, or <c>-1</c>.</returns>
+    /// <remarks>
+    /// <para>
+    /// It returns the COUPLE rather than the closing character, and that is what lets the memo in
+    /// <see cref="MatchingCloserOnThisLine"/> be a bitmask: the couple index is the memo's key, and
+    /// deriving one from a returned character would be this same search run twice.
+    /// </para>
+    /// <para>
+    /// The miss is <c>-1</c> rather than a sentinel character. A <c>char</c> answer has no value
+    /// outside the type to spare, so the previous spelling reserved NUL and had to say that a NUL
+    /// in relayed text is consequently an ordinary separator-or-token character. An index has
+    /// <c>-1</c>, so the question does not arise and neither does the reservation.
+    /// </para>
+    /// </remarks>
+    private static int OpenerIndex(char opener)
+    {
+        for (var i = 0; i < QuoteSpanPairs.Length; i += 2)
+        {
+            if (QuoteSpanPairs[i] == opener)
+            {
+                return i / 2;
+            }
+        }
+
+        return -1;
+    }
+
+    /// <summary>
+    /// Finds the closer that matches the opener at <paramref name="opening"/>, searching no
+    /// further than the end of that line, and records a failure so the same opener is not
+    /// re-scanned later on the same line.
+    /// </summary>
+    /// <param name="text">The text being scanned.</param>
+    /// <param name="opening">The index of the candidate opening character.</param>
+    /// <param name="failedOpeners">
+    /// The caller's failed-opener memo: bit <c>n</c> set means the <c>n</c>th
+    /// <see cref="QuoteSpanPairs"/> couple has already failed on the line being scanned. Read and
+    /// written here; the caller owns only its lifetime, and clears it at each line terminator.
+    /// </param>
+    /// <returns>
+    /// The index of the close, or <c>-1</c> when the character opens no span or the line holds no
+    /// closer for it.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// ONE method rather than an ASCII one and a non-ASCII sibling. Everything a sibling would
+    /// duplicate is shared — the first-match rule the recursion bound rests on, the line-bounding
+    /// below, and the memo — and the ONLY difference between the two cases is which character
+    /// closes, which is exactly what <see cref="OpenerIndex"/> selects. A sibling would be two
+    /// copies of the loop held equal by prose, which is the arrangement this file has already
+    /// watched diverge once.
+    /// </para>
+    /// <para>
+    /// Bounded to the line so an apostrophe on one line of a multi-line stderr cannot pair with the
+    /// quote that opens a path on the next one and hide it from the substitution.
+    /// </para>
+    /// <para>
+    /// <strong>THE MEMO IS WHAT KEEPS THE SCAN LINEAR, AND A SELF-MATCHING QUOTE DID NOT NEED
+    /// IT.</strong> While <c>'</c> and <c>"</c> were the only pairs, a failed search proved there
+    /// was no FURTHER occurrence of the opener on the line at all — so there could be no second
+    /// opener of that character to re-scan, and "one failed scan per opener per line" followed from
+    /// the search itself. Directed pairs break that inference and nothing replaces it: a failed
+    /// search for U+2019 says nothing about further U+2018s, so every subsequent opener on the line
+    /// re-scanned to the line end. MEASURED on this host before the memo, on a line of repeated
+    /// <c>&lt;opener&gt;&lt;space&gt;</c> followed by a path: 93.7 ms at 8,033 characters, 354.8 ms
+    /// at 16,033 and 1,511.1 ms at 32,033 for U+2018 — four times the cost per doubling, where the
+    /// self-matching <c>'</c> took 0.4 / 0.6 / 1.7 ms over the same three. After the memo: 0.4 /
+    /// 0.9 / 1.4 ms. (A 262,144-character line took 271,065 ms in the review that found this; that
+    /// one is quoted, not re-measured.) The text scanned here is git's stderr, which carries the
+    /// output of repository-chosen helpers (<c>core.fsmonitor</c>, <c>.git/hooks/*</c>), and
+    /// <see cref="IProcessRunner"/> captures it whole — no cap, <c>ReadToEndAsync</c> — so that was
+    /// a hostile repository spending this process's CPU without a bound.
+    /// </para>
+    /// <para>
+    /// <strong>WHY ONE BIT PER OPENER IS ENOUGH, and why the key is the opener and not the
+    /// (opener, position) pair.</strong> A failed search for couple <c>n</c> from <c>i</c> proves
+    /// there is no closer for <c>n</c> anywhere in <c>text[i+1..lineEnd]</c>. A later opener of
+    /// <c>n</c> at <c>j &gt; i</c> searches <c>text[j+1..lineEnd]</c>, a strict subrange of a range
+    /// already known to hold none, so it must fail too — the position carries no information the
+    /// bit does not. What the bit cannot outlive is the LINE, since the next line was never
+    /// searched; that is the (opener, line) key, and the line half of it is held by the caller's
+    /// reset rather than stored here.
+    /// </para>
+    /// <para>
+    /// The memo is per <see cref="AppendSubstituted"/> call, so the re-scan of a span that is not
+    /// one path starts with an empty one. That is the conservative direction — a forgotten failure
+    /// costs a scan and decides nothing — and it keeps the bound: the nesting is at most one level
+    /// per opener (<see cref="AppendQuotedSpan"/>), each level is linear in its own span under its
+    /// own memo, and the spans at one level are disjoint.
+    /// </para>
+    /// </remarks>
+    private static int MatchingCloserOnThisLine(string text, int opening, ref int failedOpeners)
+    {
+        var couple = OpenerIndex(text[opening]);
+        if (couple < 0)
+        {
+            return -1;
+        }
+
+        // SAFE BECAUSE THE COUPLE COUNT IS PINNED, AND IT IS PINNED IN ANOTHER FILE.
+        // An int gives 31 usable bits and QuoteSpanPairs declares six couples, so this
+        // shift cannot overflow today. What keeps that true is not the array's length but
+        // GitChangeSetTests.QuoteSpanPairs_AreSeparators_AndPairDirectedly, which asserts
+        // the exact couple list — so a thirty-third couple must edit that row first. This
+        // array has grown twice in two days; the reader deserves the reason here.
+        var coupleBit = 1 << couple;
+        if ((failedOpeners & coupleBit) != 0)
+        {
+            return -1;
+        }
+
+        var closer = QuoteSpanPairs[(couple * 2) + 1];
+        for (var i = opening + 1; i < text.Length; i++)
+        {
+            if (text[i] == closer)
+            {
+                return i;
+            }
+
+            if (text[i] is '\r' or '\n')
+            {
+                break;
+            }
+        }
+
+        failedOpeners |= coupleBit;
+        return -1;
+    }
+
+    /// <summary>
+    /// The predicate behind <see cref="SubstituteAbsolutePaths"/>, kept as one named test.
+    /// </summary>
+    private static bool IsAbsoluteHostPath(string candidate) =>
+        candidate.Length >= 2
+        && candidate.IndexOfAny(PathSeparators) >= 0
+        && Path.IsPathRooted(candidate);
+
+    /// <summary>
+    /// The environment variable names a local git invocation is given, beyond the <c>GIT_</c>
+    /// pass-through.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>WHAT WAS MEASURED, AND IT IS LESS THAN THE LIST.</strong> Three mutation drills were
+    /// run on this host (Windows 11 build 26200.9168, net8.0, git 2.54.0.windows.1) against
+    /// <c>RealGit_ThreeSubcommands_SucceedUnderTheConfinedEnvironment</c>, which executes the three
+    /// real subcommands. Deleting <c>SystemRoot</c>: still exit 0. Deleting <c>SystemRoot</c> AND
+    /// <c>windir</c>: still exit 0. Deleting <c>PATH</c>: still exit 0. So NONE of the three is
+    /// required by <c>rev-parse --show-toplevel</c>, <c>diff --name-only</c> or
+    /// <c>status --porcelain</c> on this host — <c>git.exe</c> serves all three internally and
+    /// looks nothing up. They are kept as DEFENCE, not as measured necessity, and this paragraph
+    /// says so rather than asserting a need the drill contradicts.
+    /// </para>
+    /// <para>
+    /// The defensive case for each: <c>PATH</c> because git dispatches non-builtin subcommands and
+    /// its Windows shell helpers through it, and because a future call here need not be one of
+    /// today's three. <c>HOME</c> (POSIX) and <c>USERPROFILE</c>/<c>HOMEDRIVE</c>/<c>HOMEPATH</c>
+    /// (Windows) because that is where git looks for the user's configuration, and a git that
+    /// cannot find it behaves DIFFERENTLY rather than failing loudly — which is the failure mode a
+    /// drill cannot see. <c>SystemRoot</c>/<c>windir</c> because Win32 APIs outside the paths these
+    /// three subcommands take are documented to need them.
+    /// <c>TMP</c>/<c>TEMP</c>/<c>TMPDIR</c> because git writes temporary objects.
+    /// </para>
+    /// <para>
+    /// <strong><c>XDG_CONFIG_HOME</c> AND <c>ProgramData</c> ARE THE REST OF "WHICH CONFIG GIT
+    /// READS", and the <c>HOME</c> rationale above stops one step short of them.</strong> git reads
+    /// <c>$XDG_CONFIG_HOME/git/config</c> ahead of <c>~/.gitconfig</c>, and on Windows the system
+    /// config lives under <c>%ProgramData%\Git\config</c>. Dropping either changes
+    /// <c>status.showUntrackedFiles</c>, <c>core.excludesFile</c> and their neighbours — and since
+    /// <c>--changed-since</c> decides WHICH SCENARIOS RUN, that is a silently different test
+    /// selection rather than a visible failure. It is the same failure mode <c>HOME</c> is forwarded
+    /// for, reached through the two config paths <c>HOME</c> does not cover.
+    /// </para>
+    /// <para>
+    /// <strong><c>LD_LIBRARY_PATH</c> fails LOUDLY instead, and is forwarded anyway.</strong> A git
+    /// installed under a custom prefix — Nix, conda, a hand-built one — does not load without it, so
+    /// dropping it turns a working host into exit 2. Loud is better than silent, but it is still a
+    /// regression this confinement would have introduced and nothing else here would have caught.
+    /// </para>
+    /// <para>
+    /// None of the three is a plausible secret carrier, and all are operator-controlled in exactly
+    /// the way <c>PATH</c> — already forwarded, and already a code-selection variable — is.
+    /// </para>
+    /// <para>
+    /// <c>TMPDIR</c> is the POSIX spelling of the same thing as <c>TMP</c>/<c>TEMP</c> and is here
+    /// for symmetry rather than by a separate decision: without it the POSIX lane would get no
+    /// temporary directory at all while the Windows lane got one, which is an inconsistency rather
+    /// than a policy. It is the one entry NOT in the set the fix was specified with, and it is
+    /// called out so the addition is visible rather than smuggled.
+    /// </para>
+    /// <para>
+    /// <strong>NOT forwarded, and each absence is deliberate:</strong> the proxy variables and
+    /// <c>SSH_AUTH_SOCK</c>, because <c>--changed-since</c> makes no network call — it runs
+    /// <c>rev-parse --show-toplevel</c>, <c>diff --name-only</c> and <c>status --porcelain</c>, all
+    /// local. <c>LANG</c>/<c>LC_*</c>, so git answers in the C locale — which makes the stderr
+    /// relayed by <see cref="SubstituteAbsolutePaths"/> deterministic rather than host-dependent.
+    /// (Inferred from git's documented gettext behaviour; not measured here.)
+    /// </para>
+    /// <para>
+    /// Everything not named above is dropped, which is the default this exists to impose. That is a
+    /// statement about the RULE, not a claim that the exceptions have all been thought of: this
+    /// paragraph used to read "and everything else, which is the whole point", which asserted
+    /// completeness over a set nobody had enumerated — and the three entries added above were each
+    /// found after it. Adding a variable here is a decision to be argued at the site, not a gap in
+    /// a closed list.
+    /// </para>
+    /// </remarks>
+    private static readonly string[] GitEnvironmentAllowList =
+    {
+        "PATH",
+        "LD_LIBRARY_PATH",
+        "HOME",
+        "XDG_CONFIG_HOME",
+        "USERPROFILE",
+        "HOMEDRIVE",
+        "HOMEPATH",
+        "ProgramData",
+        "SystemRoot",
+        "windir",
+        "TMP",
+        "TEMP",
+        "TMPDIR",
+    };
+
+    /// <summary>The prefix whose variables are forwarded wholesale.</summary>
+    private const string GitVariablePrefix = "GIT_";
+
+    /// <summary>
+    /// Builds the environment block this process's git children are given.
+    /// </summary>
+    /// <returns>The allow-listed variables plus every <c>GIT_</c>-prefixed one set.</returns>
+    /// <remarks>
+    /// <para>
+    /// <strong>THE EXPOSURE THIS CLOSES (#500).</strong> Until this existed, every git child
+    /// inherited vouchfx's environment in full — including whatever <c>${secret:env/NAME}</c>
+    /// reads, since <c>env</c> is one of the two MVP secret sources (blueprint §17). git executes
+    /// repository-influenced code through <c>core.fsmonitor</c>, <c>.git/hooks/*</c> and
+    /// <c>credential.helper</c> in its <c>!shell</c> form, all of which live in local <c>.git</c>
+    /// config rather than in cloned content. So a secret loaded for the SUITE was readable by a
+    /// helper the REPOSITORY UNDER TEST chose.
+    /// </para>
+    /// <para>
+    /// <strong>What this removes is INHERITANCE, not ACCESS.</strong> Repository-chosen code runs
+    /// at the same uid as vouchfx, so it can read the parent's environment directly —
+    /// <c>/proc/&lt;ppid&gt;/environ</c> on Linux,
+    /// <c>OpenProcess(PROCESS_VM_READ)</c> and the PEB on Windows. Against code that is
+    /// already executing this is a speed bump rather than a boundary; what it buys is that the
+    /// secret is no longer handed over by default, to every helper, without anyone choosing to.
+    /// </para>
+    /// <para>
+    /// <strong>THE RESIDUAL IS REAL AND IS NOT CLOSED BY THIS.</strong> The <c>GIT_</c>
+    /// pass-through is a hole with a shape: a secret stored in a <c>GIT_</c>-named variable still
+    /// reaches the child, and <c>GIT_SSH_COMMAND</c> and <c>GIT_EXTERNAL_DIFF</c> remain
+    /// code-execution vectors — git runs their values. What makes the trade narrow enough to take
+    /// is WHO can set them: the repository under test cannot, only the operator of the process
+    /// running vouchfx can, so the pass-through cannot be reached by the attacker the paragraph
+    /// above describes. It is a deliberate, approved trade, and stating it as closed would be
+    /// false. Forwarding the prefix at all is what keeps an operator's own <c>GIT_DIR</c>,
+    /// <c>GIT_CONFIG_GLOBAL</c> or <c>GIT_SSH_COMMAND</c> working, which is behaviour that existed
+    /// before this confinement and that removing would be a silent regression rather than a
+    /// hardening.
+    /// </para>
+    /// </remarks>
+    internal static IReadOnlyDictionary<string, string> ConfinedGitEnvironment() =>
+        ConfineEnvironment(CurrentEnvironment(), OperatingSystem.IsWindows());
+
+    /// <summary>
+    /// Filters <paramref name="source"/> down to the confined set.
+    /// </summary>
+    /// <param name="source">The environment to filter, as name/value pairs.</param>
+    /// <param name="windows">Whether variable names compare case-insensitively.</param>
+    /// <returns>The confined block.</returns>
+    /// <remarks>
+    /// <para>
+    /// Split out of <see cref="ConfinedGitEnvironment"/>, and takes the platform as an argument for
+    /// the same reason <see cref="CandidateFileName(string, bool)"/> does: the Windows rule is then
+    /// assertable off Windows, and no blocking CI lane is Windows (#366).
+    /// </para>
+    /// <para>
+    /// <strong>The case rule is not cosmetic.</strong> Windows resolves variable names
+    /// case-insensitively, so an operator's <c>git_ssh_command</c> is the same variable to git as
+    /// <c>GIT_SSH_COMMAND</c>; a case-sensitive filter there would drop it and change behaviour
+    /// this confinement is not meant to change. POSIX resolves them case-sensitively, where
+    /// <c>path</c> and <c>PATH</c> are two variables and conflating them would ADD one the caller
+    /// never asked for.
+    /// </para>
+    /// <para>
+    /// The indexer rather than <c>Add</c>: under the case-insensitive comparer a source holding
+    /// both <c>Path</c> and <c>PATH</c> — which a hand-built map in a test can — must resolve to
+    /// one entry rather than throw.
+    /// </para>
+    /// </remarks>
+    internal static IReadOnlyDictionary<string, string> ConfineEnvironment(
+        IEnumerable<KeyValuePair<string, string>> source,
+        bool windows)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+
+        var comparison = windows ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        var comparer = StringComparer.FromComparison(comparison);
+        var allowed = new HashSet<string>(GitEnvironmentAllowList, comparer);
+        var confined = new Dictionary<string, string>(comparer);
+
+        foreach (var variable in source)
+        {
+            if (allowed.Contains(variable.Key)
+                || variable.Key.StartsWith(GitVariablePrefix, comparison))
+            {
+                confined[variable.Key] = variable.Value;
+            }
+        }
+
+        return confined;
+    }
+
+    /// <summary>
+    /// This process's environment as name/value pairs.
+    /// </summary>
+    /// <remarks>
+    /// Entries whose name or value is not a string are skipped. The non-generic
+    /// <see cref="System.Collections.IDictionary"/> that
+    /// <see cref="Environment.GetEnvironmentVariables()"/> returns types both as
+    /// <see cref="object"/>, and a block the runtime cannot express as strings is not one this
+    /// file can forward meaningfully.
+    /// </remarks>
+    private static IEnumerable<KeyValuePair<string, string>> CurrentEnvironment()
+    {
+        foreach (System.Collections.DictionaryEntry entry in Environment.GetEnvironmentVariables())
+        {
+            if (entry.Key is string name && entry.Value is string value)
+            {
+                yield return new KeyValuePair<string, string>(name, value);
+            }
+        }
+    }
 
     /// <summary>
     /// Locates the git executable on this process's <c>PATH</c>, returning a fully qualified path
@@ -477,27 +1569,60 @@ internal sealed class GitChangeSet : IChangeSet
     /// <c>cmd.exe</c>, whose parser re-reads arguments that <c>ArgumentList</c> quoted for
     /// <c>CreateProcess</c> — turning the caller's ref into command execution. A host whose only
     /// git is a shim therefore reports "not found", exactly as it did before #499 introduced this
-    /// search at all. POSIX takes the bare name plus an execute-bit check — see the next paragraph
-    /// for what that check does and does not establish.
+    /// search at all. POSIX takes the bare name plus an execute-permission check — see the next
+    /// paragraph for what that check does and does not establish.
     /// </para>
     /// <para>
-    /// <strong>THE POSIX EXECUTE TEST IS A MODE-BIT APPROXIMATION, AND WHAT IT RISKS IS A
-    /// REFUSAL.</strong> <see cref="IsExecutableFile"/> accepts a file when ANY of the user, group
-    /// or other execute bits is set, whoever is running — not the test the kernel makes, which is
-    /// against the effective user. So a file this caller could not in fact execute can be accepted:
-    /// a root-owned <c>0700</c> <c>git</c> in an earlier entry is taken, the search STOPS THERE
-    /// because it returns the first match, the launch then fails on permission (<c>EACCES</c>, by
-    /// the <c>execve</c> contract rather than by a measurement of this path), and <c>RunGit</c>
-    /// maps that to a <c>ChangeSetException</c> — exit 2 on a host where a later entry holds a
-    /// runnable git. That is the same harm shape as the whitespace trim the AN ENTRY IS USED
-    /// VERBATIM paragraph above records deleting: an entry the operating system would have passed
-    /// over shadows a legitimate later one.
-    /// A match with NO execute bit set at all is skipped and the search continues, so the shadowing
-    /// needs a bit set for somebody else. Which direction this diverges in against .NET's own Unix
-    /// resolution is UNMEASURED — the measurements in this file were all taken on Windows, and the
-    /// one probe that would settle it is whether that path selects on existence or on an
-    /// <c>access(X_OK)</c>-style check. Narrowing this test to <c>access(X_OK)</c> needs a P/Invoke
-    /// and is tracked as #509; it is deliberately not attempted here.
+    /// <strong>THE POSIX EXECUTE TEST ASKS THE C LIBRARY, NOT THE MODE BITS.</strong>
+    /// <see cref="IsExecutableFile"/> calls <c>access(2)</c> with <c>X_OK</c> — the same question
+    /// <c>which</c>, <c>test -x</c> and <c>command -v</c> ask, and the one whose answer
+    /// <c>execve</c> then acts on. It used to accept a file when ANY of the user, group or other
+    /// execute bits was set, whoever was running, and that is a strictly wider test than the
+    /// kernel's: a root-owned <c>0700</c> <c>git</c> in an earlier entry was taken, the search
+    /// STOPPED THERE because it returns the first match, the launch failed on permission
+    /// (<c>EACCES</c>), and <c>RunGit</c> mapped that to a <c>ChangeSetException</c> — exit 2 on a
+    /// host where a later entry held a runnable git. That is the same harm shape as the whitespace
+    /// trim the AN ENTRY IS USED VERBATIM paragraph above records deleting: an entry the operating
+    /// system would have passed over shadowed a legitimate later one. MEASURED, in
+    /// <c>mcr.microsoft.com/dotnet/sdk:8.0</c> (glibc, net8.0) as uid 1000 against a file this
+    /// caller owns with mode <c>0611</c> — the mode the row plants, <c>UserRead | UserWrite |
+    /// GroupExecute | OtherExecute</c>: the mode-bit test said executable, <c>access(X_OK)</c> said
+    /// not, and <c>Process.Start</c> refused it with <c>Win32Exception</c> "Permission denied" — so
+    /// the narrower answer is the one that matches the launch. The owner triad has to be the one
+    /// WITHOUT an execute bit for that divergence to exist at all: POSIX selects the permission
+    /// class by ownership and stops, so an owner-executable mode would make <c>access(X_OK)</c>
+    /// return 0 and there would be nothing to measure. As root, in the same image,
+    /// <c>access(X_OK)</c> succeeds for that file and so does the launch; root's wider reach is the
+    /// kernel's, not this search's.
+    /// </para>
+    /// <para>
+    /// <strong>Two limits, stated rather than implied.</strong> <c>access(2)</c> resolves against
+    /// the REAL uid/gid, not the effective pair; the two differ only for a set-uid or set-gid
+    /// image, which this CLI is not, so for every caller that reaches here they are the same
+    /// answer. <c>faccessat(…, AT_EACCESS)</c> is the effective-uid form and is deliberately not
+    /// used: its flag constant differs between platforms (and between libcs), which trades a
+    /// distinction that cannot arise here for a portability hazard that can. Second, the interop
+    /// is a fallback away from the old behaviour rather than a replacement of it — a runtime
+    /// where <c>libc</c> or the symbol cannot be found degrades to the mode-bit test, whose
+    /// residual (accepting a file somebody ELSE may execute) is the defect above, narrowed to
+    /// hosts where the P/Invoke does not resolve at all.
+    /// </para>
+    /// <para>
+    /// <strong>"A runtime where it does not resolve" MEANS ALPINE, and naming it is the
+    /// point.</strong>
+    /// musl ships no <c>libc.so</c> for the loader to bind <c>[DllImport("libc")]</c> against, so an
+    /// Alpine container is the concrete host on which <c>EffectiveExecutePermission</c> returns
+    /// <see langword="null"/> and #509 quietly reverts to the wider mode-bit test. (INFERRED from
+    /// musl's library naming; not measured — no lane here runs Alpine.) Calling that "an exotic
+    /// runtime", as this used to, made a mainstream container image sound like a curiosity.
+    /// </para>
+    /// <para>
+    /// <strong>And the row that would notice SELF-SKIPS AS ROOT.</strong>
+    /// <c>LocateOnPath_Posix_RefusesAFileThisCallerMayNotExecute</c> returns early when the caller
+    /// has root's reach, because root diverges from nothing. A Linux container running as root —
+    /// still the default for many images — therefore verifies the P/Invoke path not at all, and does
+    /// so without anything going red. Both limits are properties of where this is RUN, so neither is
+    /// closable from inside this file.
     /// </para>
     /// <para>
     /// Takes <c>PATH</c> as an argument rather than reading the environment so that the search can
@@ -550,10 +1675,31 @@ internal sealed class GitChangeSet : IChangeSet
         windows ? name + ".exe" : name;
 
     /// <summary>
-    /// Reports whether <paramref name="candidate"/> is an existing file this platform would run.
+    /// Reports whether <paramref name="candidate"/> is an existing file this caller can run.
     /// </summary>
     /// <param name="candidate">The fully qualified candidate path.</param>
-    /// <returns><see langword="true"/> when the file exists and is executable.</returns>
+    /// <returns><see langword="true"/> when the file exists and this caller may run it.</returns>
+    /// <remarks>
+    /// <para>
+    /// The POSIX arm asks <c>access(2)</c> rather than reading mode bits, for the reason
+    /// <see cref="LocateOnPath(string, string?)"/>'s THE POSIX EXECUTE TEST paragraph records:
+    /// a file this caller cannot execute, accepted here, ENDS the search and refuses a host that
+    /// holds a runnable git further along <c>PATH</c>. The mode-bit read survives only as the
+    /// degraded answer for a runtime where the P/Invoke does not resolve.
+    /// </para>
+    /// <para>
+    /// <strong>PERMISSION IS NOT LAUNCHABILITY, so resolution does not promise the candidate will
+    /// load.</strong> <c>access(X_OK)</c> answers "may this caller execute it", not "can
+    /// <c>execve</c> make an image of it": a mode-0755 text file with no shebang, or an ELF whose
+    /// interpreter is missing, passes here and then fails <c>ENOEXEC</c> at the launch.
+    /// <see cref="LocateOnPath(string, string?)"/> returns that first plausible candidate and does
+    /// not continue, so the shadowing shape #509 closed for the permission cause survives for
+    /// every non-permission one. First-launchable resolution was the other fix #509 offered and
+    /// was declined; such a failure therefore surfaces at <see cref="RunGit"/>'s
+    /// <see cref="ProcessLaunchException"/> arm, which lists <c>ENOEXEC</c> among the causes still
+    /// reachable there.
+    /// </para>
+    /// </remarks>
     private static bool IsExecutableFile(string candidate)
     {
         // File.Exists is false for a directory and for a malformed path, so it also stands in for
@@ -568,8 +1714,17 @@ internal sealed class GitChangeSet : IChangeSet
             return true;
         }
 
+        var permitted = EffectiveExecutePermission(candidate);
+        if (permitted is not null)
+        {
+            return permitted.Value;
+        }
+
         try
         {
+            // The wider, pre-#509 test, reached only when the C library could not be asked. It
+            // accepts a file somebody ELSE may execute; that residual is the price of degrading
+            // rather than refusing every candidate on an exotic runtime.
             var mode = File.GetUnixFileMode(candidate);
             return (mode & (UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute)) != 0;
         }
@@ -578,6 +1733,66 @@ internal sealed class GitChangeSet : IChangeSet
             // A file whose mode cannot be read is not a file we are willing to launch.
             return false;
         }
+    }
+
+    /// <summary>
+    /// Asks the C library whether this caller may execute <paramref name="candidate"/>.
+    /// </summary>
+    /// <param name="candidate">The fully qualified candidate path, known to exist.</param>
+    /// <returns>
+    /// The <c>access(2)</c> answer, or <see langword="null"/> when the P/Invoke could not be
+    /// resolved on this runtime — which is the caller's signal to fall back, NOT a refusal.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// A non-zero return is treated as "not permitted" without reading <c>errno</c>. The caller
+    /// has already established the file exists, so the reachable failure is <c>EACCES</c>; the
+    /// remaining ones (<c>ENOENT</c> from a race, <c>ELOOP</c>, <c>ENOTDIR</c>) all describe a
+    /// candidate that would not launch either, so classifying them would change no answer.
+    /// </para>
+    /// <para>
+    /// The path is marshalled as an explicit NUL-terminated UTF-8 <c>byte[]</c> rather than as a
+    /// <see cref="string"/>. UTF-8 is what a Unix <c>CharSet.Ansi</c> marshals to anyway, so the
+    /// encoding is unchanged; doing it here keeps the signature free of string marshalling, which
+    /// on this code base is what would otherwise pull in either a <c>CharSet</c> the security
+    /// analysers argue about or the <c>AllowUnsafeBlocks</c> that source-generated string
+    /// marshalling requires.
+    /// </para>
+    /// </remarks>
+    private static bool? EffectiveExecutePermission(string candidate)
+    {
+        var pathname = new byte[Encoding.UTF8.GetByteCount(candidate) + 1];
+        Encoding.UTF8.GetBytes(candidate, pathname);
+
+        try
+        {
+            return NativeMethods.Access(pathname, NativeMethods.ExecuteOk) == 0;
+        }
+        catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// The one P/Invoke in this code base, kept in the shape the interop analysers expect.
+    /// </summary>
+    private static class NativeMethods
+    {
+        /// <summary>
+        /// <c>X_OK</c> — the execute-permission bit of <c>access(2)</c>'s mode argument. Fixed at
+        /// 1 by POSIX and identical on every libc this CLI can run against.
+        /// </summary>
+        internal const int ExecuteOk = 1;
+
+        /// <summary>
+        /// <c>int access(const char *pathname, int mode)</c>.
+        /// </summary>
+        /// <param name="pathname">A NUL-terminated UTF-8 path.</param>
+        /// <param name="mode">The permission mask, here <see cref="ExecuteOk"/>.</param>
+        /// <returns>0 when permitted; -1 otherwise, with <c>errno</c> set.</returns>
+        [DllImport("libc", EntryPoint = "access")]
+        internal static extern int Access(byte[] pathname, int mode);
     }
 
     /// <summary>

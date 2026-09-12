@@ -26,7 +26,10 @@
 //
 // This interface is `internal` to Vouchfx.Cli with one production implementation and test
 // fakes. It is NOT part of the frozen v1 SDK surface (blueprint §13.8) and no golden pins it,
-// so adding the two exception types below moves no contract.
+// so adding the two exception types below — and, for #500, the `environment` parameter — moves no
+// contract. That parameter is OPTIONAL, and deliberately so: its default reproduces the inheriting
+// behaviour every caller had before it existed, so confinement is something a caller opts into
+// rather than something this seam imposes on one it has never been told about.
 
 namespace Vouchfx.Cli.Selection;
 
@@ -68,6 +71,25 @@ internal interface IProcessRunner
     /// </param>
     /// <param name="arguments">The argument vector (each element passed verbatim — no shell quoting).</param>
     /// <param name="workingDirectory">The working directory to launch the process in.</param>
+    /// <param name="environment">
+    /// The child's WHOLE environment block, or <see langword="null"/> to let it inherit this
+    /// process's environment in full.
+    /// <para>
+    /// <strong>A replacement, never an overlay.</strong> When non-null the child sees these
+    /// variables and no others — a caller that wants a variable it did not name must add it. That
+    /// is the point (#500): a <c>git</c> child executes repository-influenced code through
+    /// <c>core.fsmonitor</c>, <c>.git/hooks/*</c> and <c>credential.helper</c> in its <c>!shell</c>
+    /// form, so inheriting in full hands whatever <c>${secret:env/NAME}</c> reads to a helper the
+    /// repository under test chose. WHICH variables belong in the set is the CALLER's knowledge,
+    /// not this seam's — see <c>GitChangeSet.ConfineEnvironment</c> for git's.
+    /// </para>
+    /// <para>
+    /// <strong><see langword="null"/> is the default so that confinement is opted INTO.</strong>
+    /// An implementation-side default of "confine to nothing" would silently break any caller that
+    /// had not thought about it, and a wrong environment fails in ways that look like the child
+    /// misbehaving rather than like a missing variable.
+    /// </para>
+    /// </param>
     /// <param name="cancellationToken">
     /// Cancels the call; an implementation must still reclaim its child before it throws.
     /// </param>
@@ -130,6 +152,7 @@ internal interface IProcessRunner
         string fileName,
         IReadOnlyList<string> arguments,
         string workingDirectory,
+        IReadOnlyDictionary<string, string>? environment = null,
         CancellationToken cancellationToken = default);
 }
 

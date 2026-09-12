@@ -1607,6 +1607,34 @@ vouchfx run --junit results.xml
 vouchfx run ./tests --fail-on-env-error --html report.html --junit results.xml
 ```
 
+### 13.6 Git selection environment and binary resolution
+
+When using `--changed-since`, the CLI shells out to git three times: once to locate the repository root, once to find committed changes, and once to find changes in the working tree. Two important changes affect operators whose environment differs from the default:
+
+**Environment confinement.** The git child process receives a confined environment block — it sees **only** these variables plus any variable prefixed with `GIT_`:
+
+- `PATH`, `LD_LIBRARY_PATH`
+- `HOME`, `XDG_CONFIG_HOME` (POSIX) or `USERPROFILE`, `HOMEDRIVE`, `HOMEPATH`, `ProgramData` (Windows)
+- `SystemRoot`, `windir`, `TMP`, `TEMP`, `TMPDIR`
+
+Variables that **no longer reach git** include:
+
+- **Proxy variables:** `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY` — the selection does not make network calls, so these are intentionally confined
+- **SSL configuration:** `SSL_CERT_FILE`, `SSL_CERT_DIR` — likewise inaccessible to git
+- **SSH agent:** `SSH_AUTH_SOCK` — selection runs no SSH operations
+- **Locale:** `LANG`, `LC_*` — confined to remove environment-driven variation in git's messages. This is not a promise of C-locale output: Git for Windows can take its language from the OS user default even with these variables absent, so the effect is that the *environment* no longer steers the locale, not that every host answers identically
+
+Operators who need a variable outside this list can forward it as a `GIT_`-prefixed variable (e.g. a custom `GIT_CONFIG_GLOBAL`), which always passes through. This is the supported escape hatch for cases where repository-level configuration depends on environment variables.
+
+**Git binary resolution.** The git executable is located by searching `PATH` **in order** and taking the first fully-qualified match. This differs from the default OS search:
+
+- On **Windows:** the search looks **only** for `git.exe`. Git shims installed as `.cmd` or `.bat` files are skipped — they are not considered as candidates — because shims would otherwise enable command injection through argument parsing. If no `git.exe` is found on `PATH`, the selection fails with the error `Could not run git for <operation>. Is git installed and on PATH?`
+- On **POSIX:** the search looks for the bare name `git` and asks `access(2)` with `X_OK` whether this caller may execute it, rather than reading the mode bits — an execute bit set for *somebody* is not enough, so a candidate the caller cannot run is skipped instead of ending the search. Note that `access(2)` resolves against the **real** user and group, not the effective pair, so the two can disagree under set-uid. Reading the mode bits survives only as the fallback where the C library call cannot be resolved. Symlinks are resolved.
+
+This resolution happens **once per change-set** and is cached across all three git invocations. The binary must exist and be executable by the current user at the moment of the selection; a file system race (the binary is replaced between resolution and execution) is treated as a launch failure.
+
+If git cannot be found, the selection fails with the error `Could not run git for <operation>. Is git installed and on PATH?` (For the full list of selection errors and how to handle them, see `troubleshooting.md` § Git selection diagnostics.)
+
 ## 14. Result Reporting from the Author's Perspective
 
 Authoring a test and running a test are not the end of the loop; reading what the test produced is. This section specifies what an author of YAML tests sees when a suite completes — the renderings, the verdicts, the diagnostic stories — because the value of every previous chapter of this document is realised only at the moment a developer understands why a step turned red. The engineering view of the same reporting layer, including the structured event stream that drives every renderer, is in Section 14 of the companion Technical Architecture & Engineering Blueprint; this section deliberately reads the report back through the eyes of the YAML author.

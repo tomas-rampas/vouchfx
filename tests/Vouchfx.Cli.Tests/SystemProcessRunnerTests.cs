@@ -341,7 +341,11 @@ public sealed class SystemProcessRunnerTests
         using var cancellation = new CancellationTokenSource();
 
         var work = Task.Run(
-            () => runner.Run(shape.FileName, shape.Arguments, directory, cancellation.Token));
+            () => runner.Run(
+                shape.FileName,
+                shape.Arguments,
+                directory,
+                cancellationToken: cancellation.Token));
         int? pid = null;
         try
         {
@@ -435,6 +439,122 @@ public sealed class SystemProcessRunnerTests
         }
         finally
         {
+            TryDeleteDirectory(directory);
+        }
+    }
+
+    /// <summary>
+    /// Row 4b (#498, site 1) — the launch-failure message is the ENGINE's, not the BCL's quoted
+    /// back.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// .NET composes a failed start from <c>SR.ErrorStartingProcess</c> — "An error occurred trying
+    /// to start process '{0}' with working directory '{1}'. {2}" — so splicing
+    /// <c>ex.Message</c> into the engine's own sentence carried the absolute WORKING DIRECTORY into
+    /// it, unasked. That is the #498 defect at this site, and all this row is about.
+    /// </para>
+    /// <para>
+    /// <strong>The executable path deliberately REMAINS in this message, and row 4 above asserts
+    /// that it does.</strong> That is not an oversight in the fix: this exception is the seam's
+    /// internal diagnostic, <c>GitChangeSet.RunGit</c> discards its message entirely rather than
+    /// printing it, and <c>GitChangeSetTests.LaunchFailure_DoesNotDiscloseTheResolvedPath</c> uses
+    /// the raw message naming the resolved path as its CONTROL for the mapped one not naming it.
+    /// Stripping it here would delete that control and leave a launch failure identifying nothing.
+    /// </para>
+    /// <para>
+    /// The working directory is a SECOND scratch directory rather than the one holding the absent
+    /// executable, so "the message does not name the working directory" is not satisfied trivially
+    /// by the executable path being absent from it.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void Run_WhenTheExecutableDoesNotExist_DoesNotQuoteTheFrameworkMessage()
+    {
+        var executableDirectory = CreateScratchDirectory();
+        var workingDirectory = CreateScratchDirectory();
+        try
+        {
+            var missing = Path.Combine(
+                executableDirectory,
+                "vouchfx-no-such-executable-"
+                    + Guid.NewGuid().ToString("N", CultureInfo.InvariantCulture));
+
+            var exception = Assert.Throws<ProcessLaunchException>(
+                () => SystemProcessRunner.Instance.Run(
+                    missing, Array.Empty<string>(), workingDirectory));
+
+            // The premise, asserted rather than assumed: the BCL's own text really does name the
+            // working directory, so the assertions below measure a removal rather than an absence
+            // that was always there.
+            Assert.NotNull(exception.InnerException);
+            Assert.Contains(
+                workingDirectory, exception.InnerException!.Message, StringComparison.Ordinal);
+
+            Assert.DoesNotContain(workingDirectory, exception.Message, StringComparison.Ordinal);
+            Assert.DoesNotContain(
+                "with working directory", exception.Message, StringComparison.Ordinal);
+        }
+        finally
+        {
+            TryDeleteDirectory(workingDirectory);
+            TryDeleteDirectory(executableDirectory);
+        }
+    }
+
+    /// <summary>
+    /// Row 7 (#500) — a caller-supplied environment is the child's WHOLE environment: an
+    /// allow-listed name and a <c>GIT_</c>-prefixed name reach it, and nothing else does.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The child prints its own environment block rather than one variable, so the row asserts the
+    /// absence of the planted secret over everything the child can see rather than over one lookup
+    /// that could be spelt wrong and pass.
+    /// </para>
+    /// <para>
+    /// The planted names are process-wide for the duration of the row, which is safe in this
+    /// assembly's parallel scheduling because nothing else reads them; they are removed with
+    /// <see langword="null"/> rather than <c>""</c>, since an empty value DELETES the variable on
+    /// net8 and would make the cleanup indistinguishable from a set-to-empty.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void Run_WithAConfinedEnvironment_PassesTheAllowListAndTheGitPrefixAndNothingElse()
+    {
+        const string SecretName = "VOUCHFX_TEST_FAKE_SECRET";
+        const string GitPrefixedName = "GIT_VOUCHFX_TEST_PROBE";
+
+        var directory = CreateScratchDirectory();
+        Environment.SetEnvironmentVariable(SecretName, "hunter2-not-for-the-child");
+        Environment.SetEnvironmentVariable(GitPrefixedName, "probe-value");
+        try
+        {
+            var confined = GitChangeSet.ConfinedGitEnvironment();
+            var shape = PrintsItsEnvironmentChild();
+
+            var result = SystemProcessRunner.Instance.Run(
+                shape.FileName, shape.Arguments, directory, confined);
+
+            Assert.Equal(0, result.ExitCode);
+
+            var names = EnvironmentNamesIn(result.StandardOutput);
+
+            // PATH is allow-listed, so it survives. Asserted as a NAME rather than as the substring
+            // "PATH=", which a drill showed is satisfied by the allow-listed HOMEPATH and therefore
+            // stayed green with PATH deleted from the allow-list.
+            Assert.Contains("PATH", names, StringComparer.OrdinalIgnoreCase);
+
+            // The GIT_ prefix passes through.
+            Assert.Contains(GitPrefixedName, names, StringComparer.OrdinalIgnoreCase);
+
+            // Everything else is gone -- this is the property #500 is about.
+            Assert.DoesNotContain(SecretName, names, StringComparer.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(SecretName, null);
+            Environment.SetEnvironmentVariable(GitPrefixedName, null);
             TryDeleteDirectory(directory);
         }
     }
@@ -576,6 +696,56 @@ public sealed class SystemProcessRunnerTests
         }
 
         return new ChildShape("/bin/sh", new[] { "-c", "echo OUT; echo ERR 1>&2; exit 7" });
+    }
+
+    /// <summary>A child that prints its own environment block and exits 0 (#500).</summary>
+    /// <remarks>
+    /// Both spellings are SHELL BUILTINS (<c>set</c> under cmd, <c>export -p</c> under POSIX sh)
+    /// and neither is resolved through <c>PATH</c>. That matters because the row hands the child a
+    /// confined environment: a shape that reached for <c>/usr/bin/env</c> through a <c>PATH</c>
+    /// lookup would be testing the allow-list with the allow-list.
+    /// </remarks>
+    private static ChildShape PrintsItsEnvironmentChild()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return new ChildShape(
+                Path.Combine(Environment.SystemDirectory, "cmd.exe"),
+                new[] { "/c", "set" });
+        }
+
+        return new ChildShape("/bin/sh", new[] { "-c", "export -p" });
+    }
+
+    /// <summary>
+    /// The variable NAMES in a <see cref="PrintsItsEnvironmentChild"/> capture.
+    /// </summary>
+    /// <remarks>
+    /// Parsing to names rather than matching substrings is not tidiness: a drill deleting
+    /// <c>PATH</c> from the allow-list left the row green, because the allow-listed
+    /// <c>HOMEPATH=...</c> contains the substring <c>PATH=</c>. A name set cannot be satisfied by a
+    /// suffix.
+    /// </remarks>
+    private static HashSet<string> EnvironmentNamesIn(string capture)
+    {
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var rawLine in capture.Split('\n'))
+        {
+            // POSIX `export -p` prefixes each line; cmd's `set` does not.
+            var line = rawLine.Trim();
+            if (line.StartsWith("export ", StringComparison.Ordinal))
+            {
+                line = line["export ".Length..];
+            }
+
+            var separator = line.IndexOf('=', StringComparison.Ordinal);
+            if (separator > 0)
+            {
+                names.Add(line[..separator]);
+            }
+        }
+
+        return names;
     }
 
     /// <summary>

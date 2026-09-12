@@ -6,8 +6,8 @@
 // `run` boundary and maps it to a usage error (exit 2) with the message printed. Exit 2 is
 // retained for every one of those causes, and that is deliberate rather than a claim that a
 // wedged git or a broken capture pipe is the user's input mistake: whether a failure of the
-// selection infrastructure deserves an exit code of its own is an open, unfiled question. It used
-// to be attributed here to issues #480 and #466-B, and neither reaches it — see the remarks on
+// selection infrastructure deserves an exit code of its own is an open question, filed as #521. It
+// used to be attributed here to issues #480 and #466-B, and neither reaches it — see the remarks on
 // GitChangeSet.RunGit, which carry that argument in full.
 
 namespace Vouchfx.Cli.Selection;

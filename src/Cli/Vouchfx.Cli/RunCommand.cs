@@ -453,7 +453,9 @@ internal static class RunCommand
     /// </para>
     /// <para>
     /// When set, <see cref="ExecuteAsync"/> starts a background <see cref="StdinShutdownWatcher"/>
-    /// over <see cref="Console.OpenStandardInput()"/>. On end-of-file it cancels a LINKED
+    /// over <see cref="Console.OpenStandardInput()"/>. On end-of-file — or on any other read
+    /// failure, which that watcher deliberately treats alike, since an input that can no longer be
+    /// read is as final as one that ended — it cancels a LINKED
     /// <see cref="CancellationTokenSource"/> that every downstream runner then uses instead of the
     /// raw System.CommandLine <see cref="CancellationToken"/> — the SAME cancellation-PROPAGATION
     /// path a Ctrl-C / SIGTERM takes (the engine's teardown discipline, §4.5). This is
@@ -670,14 +672,22 @@ internal static class RunCommand
     /// asked for, is mapped like every other unexpected fault.
     /// </para>
     /// <para>
-    /// <strong>The stdin-EOF path maps to 4 rather than re-throwing, and reading the LINKED source
-    /// here would break that.</strong> <c>--shutdown-on-stdin-eof</c> cancels a linked source
+    /// <strong>The stdin-EOF path maps to 4, and it arrives here already classified rather than as
+    /// a bare cancellation (#502).</strong> <c>--shutdown-on-stdin-eof</c> cancels a linked source
     /// created inside <see cref="ExecuteCoreAsync"/> and never touches this method's parameter, so
-    /// the filter above is <see langword="false"/> for an EOF-driven stop and the run maps to
-    /// <see cref="ExitCodes.Inconclusive"/> — the SAME code <c>ShutdownBackstop</c> force-exits
-    /// with for the same event. Hoisting the linked source so this frame could consult it would
-    /// make EOF re-throw into the framework's 1 and split them; the parameter is the right token
-    /// precisely BECAUSE it is not the one EOF cancels.
+    /// the filter above is <see langword="false"/> for an EOF-driven stop — correctly, since that
+    /// is not a cancellation System.CommandLine's termination handling should finish. What the
+    /// parameter token CANNOT do is tell the EOF stop apart from a timeout, and both then fell into
+    /// the generic catch below and were reported in its words: a deliberate, requested shutdown
+    /// described to an operator as an engine defect, with an invitation to report it.
+    /// <see cref="ExecuteCoreAsync"/> now converts that one case — where the linked source IS in
+    /// scope, see <see cref="IsStdinEofShutdown"/> — into
+    /// <see cref="StdinEofShutdownException"/>, which this frame answers with
+    /// <see cref="StdinEofShutdownNotice"/> and the SAME
+    /// <see cref="ExitCodes.Inconclusive"/> the generic catch already returned and
+    /// <c>ShutdownBackstop</c> force-exits with. <strong>Only the sentence moved</strong>; a test
+    /// asserting the integer alone cannot see the difference, and one that did would have passed
+    /// against the defect.
     /// <strong>The agreement claimed is for a cancellation that ESCAPES the run</strong>, and only
     /// that. Where the EOF cancellation is instead ABSORBED lower down — a runner that observes the
     /// token, unwinds, and hands back an ordinary <see cref="SuiteResult"/> — no exception reaches
@@ -741,44 +751,243 @@ internal static class RunCommand
         {
             throw;
         }
-        catch (Exception ex)
+        // A REQUESTED GRACEFUL STOP IS NOT AN ENGINE DEFECT (#502), and the only thing that
+        // changed is the sentence. The code was Inconclusive before this arm existed and is
+        // Inconclusive now — the EOF stop simply fell through to the catch below and was
+        // described to an operator as "an engine or provider defect ... please report it", for a
+        // shutdown they had asked for by closing stdin. The type is raised by
+        // ExecuteCoreAsync's own filter, which is the frame where the linked source is in scope;
+        // see IsStdinEofShutdown for the classification and why it cannot catch a timeout.
+        catch (StdinEofShutdownException)
         {
-            // THE DIAGNOSTIC IS BEST-EFFORT; THE EXIT CODE IS NOT. `output` is a caller-supplied
-            // sink and is itself a candidate for the fault that got here (a full disk, a closed
-            // pipe, a redirected stream the host tore down). Letting the report of the failure fail
-            // the process would hand back the framework's exit 1 — the exact answer this catch
-            // exists to replace — so the write is guarded and the code is returned either way.
-            try
-            {
-                // Issue #266, Item 4: an engine exception's message can carry author-supplied YAML
-                // spliced in by whatever composed it, so the whole composed line is sanitised
-                // before it reaches the terminal / CI log — the same treatment every other
-                // author-influenced diagnostic on this path gets.
-                await output.WriteLineAsync(
-                    DisplaySanitiser.SanitiseForDisplay(
-                        $"vouchfx run: the engine failed unexpectedly and could not reach a verdict "
-                        + $"({ex.GetType().FullName}: {ex.Message}).  This is an engine or provider "
-                        + "defect, not a suite failure - please report it with the suite that "
-                        + "triggered it.  Reported as Inconclusive (section 12.1)."))
-                    .ConfigureAwait(false);
-            }
-            catch (Exception writeFailure) when (
-                writeFailure is not OperationCanceledException
-                || !cancellationToken.IsCancellationRequested)
-            {
-                // Nothing left to report it to. Swallowed deliberately.
-                //
-                // THE FILTER IS THE SAME ONE THE OUTER CATCH USES, AND FOR THE SAME REASON — it was
-                // written here as the narrower `is not OperationCanceledException`, which had the
-                // defect one level down: a sink whose write TIMES OUT raises TaskCanceledException,
-                // an OperationCanceledException, so the diagnostic's own failure escaped this frame
-                // and took the run to System.CommandLine's exit 1 — with the taxonomy code already
-                // computed and one `return` away. Caught by this file's own timeout row, which
-                // drives a sink that throws on EVERY write including this one. Only a cancellation
-                // the USER actually requested is left to propagate, matching the outer catch.
-            }
+            await WriteDiagnosticBestEffortAsync(
+                output, static () => StdinEofShutdownNotice, cancellationToken)
+                .ConfigureAwait(false);
 
             return ExitCodes.Inconclusive;
+        }
+        catch (Exception ex)
+        {
+            // Issue #266, Item 4: an engine exception's message can carry author-supplied YAML
+            // spliced in by whatever composed it, so the whole composed line is sanitised
+            // before it reaches the terminal / CI log — the same treatment every other
+            // author-influenced diagnostic on this path gets.
+            //
+            // COMPOSED INSIDE THE GUARD, AS A LAMBDA, AND THAT IS THE POINT OF THE PARAMETER TYPE
+            // (#518's class). `ex` is an arbitrary escaped exception, including one whose type a
+            // provider or a `script.csharp` author defined and whose `Message` override throws.
+            // Evaluating the interpolation at the CALL SITE put that throw outside the best-effort
+            // try, so it escaped ExecuteAsync entirely and handed the run to System.CommandLine's
+            // exit 1 — with the taxonomy code already decided and one `return` away, which is the
+            // exact outcome this frame exists to prevent.
+            await WriteDiagnosticBestEffortAsync(
+                output,
+                () => DisplaySanitiser.SanitiseForDisplay(
+                    $"vouchfx run: the engine failed unexpectedly and could not reach a verdict "
+                    + $"({ex.GetType().FullName}: {ex.Message}).  This is an engine or provider "
+                    + "defect, not a suite failure - please report it with the suite that "
+                    + "triggered it.  Reported as Inconclusive (section 12.1)."),
+                cancellationToken).ConfigureAwait(false);
+
+            return ExitCodes.Inconclusive;
+        }
+    }
+
+    /// <summary>
+    /// Composes one diagnostic line and writes it to <paramref name="output"/>, swallowing a
+    /// failure of EITHER so the caller can still return its taxonomy exit code.
+    /// </summary>
+    /// <param name="output">The caller-supplied sink.</param>
+    /// <param name="compose">
+    /// Composes the line, INSIDE the guard. Returns nullable because
+    /// <see cref="DisplaySanitiser.SanitiseForDisplay"/> does, and because
+    /// <see cref="TextWriter.WriteLineAsync(string?)"/> takes it either way — a null writes a
+    /// blank line rather than refusing the diagnostic.
+    /// </param>
+    /// <param name="cancellationToken">
+    /// The System.CommandLine action's own token — consulted ONLY to decide whether a cancellation
+    /// raised by the write itself is the user's and must propagate.
+    /// </param>
+    /// <remarks>
+    /// <para>
+    /// THE DIAGNOSTIC IS BEST-EFFORT; THE EXIT CODE IS NOT. <paramref name="output"/> is a
+    /// caller-supplied sink and is itself a candidate for the fault that got here (a full disk, a
+    /// closed pipe, a redirected stream the host tore down). Letting the report of the failure
+    /// fail the process would hand back the framework's exit 1 — the exact answer
+    /// <see cref="ExecuteAsync"/>'s catches exist to replace — so the write is guarded and the
+    /// code is returned either way.
+    /// </para>
+    /// <para>
+    /// <strong>A <see cref="Func{TResult}"/> RATHER THAN A STRING, so the COMPOSITION is inside the
+    /// guard too (#518's class).</strong> With a composed string the caller evaluates it as an
+    /// argument, outside this method entirely, and the catch-all's line interpolates
+    /// <c>ex.Message</c> off an arbitrary escaped exception — a type a provider or a
+    /// <c>script.csharp</c> author can define, with a <c>Message</c> override that throws. That
+    /// throw then escaped <see cref="ExecuteAsync"/> and produced System.CommandLine's exit 1, which
+    /// is the very outcome the paragraph above says cannot happen. The parameter type is what makes
+    /// the sentence true rather than aspirational: there is no overload taking a ready-made string,
+    /// so a future call site cannot reintroduce the shape.
+    /// </para>
+    /// <para>
+    /// <strong>TWO GUARDS, NOT ONE, BECAUSE THEY GUARD DIFFERENT THINGS.</strong> Composition is
+    /// wrapped in its own unconditional <c>catch</c>; only the write carries the
+    /// cancellation-rethrow filter below. The first version of this method put
+    /// <paramref name="compose"/> inside the write's <c>try</c> — which closed #518's escape but
+    /// put composition under a filter written for a different purpose. That filter deliberately
+    /// lets an <see cref="OperationCanceledException"/> through while the token is cancelled, so
+    /// a hostile <c>Message</c> getter that threw one DURING a cancelled run escaped
+    /// <see cref="ExecuteAsync"/> and bypassed the taxonomy — the exact outcome the guard exists
+    /// to prevent, reachable by choosing a different exception type. Composition has no
+    /// cancellation semantics of its own: it is string work over an already-caught fault, so
+    /// nothing it raises is a cancellation anybody asked for, and swallowing all of it is right.
+    /// </para>
+    /// <para>
+    /// <paramref name="compose"/> is invoked inside its <c>try</c> and is deliberately not
+    /// null-checked first: a null would be a defect in this file, and throwing for it OUTSIDE the
+    /// guard would trade a wrong message for the wrong exit code.
+    /// </para>
+    /// <para>
+    /// A composition that throws costs the operator the LINE, never the exit code — there is no
+    /// fallback sentence, because the only text this frame could compose without the caller's
+    /// lambda would say less than nothing about the fault.
+    /// </para>
+    /// <para>
+    /// THE WRITE'S FILTER IS THE SAME ONE THE OUTER CATCH USES, AND FOR THE SAME REASON — it was
+    /// written here as the narrower <c>is not OperationCanceledException</c>, which had the
+    /// defect one level down: a sink whose write TIMES OUT raises
+    /// <see cref="TaskCanceledException"/>, an <see cref="OperationCanceledException"/>, so the
+    /// diagnostic's own failure escaped this frame and took the run to System.CommandLine's
+    /// exit 1 — with the taxonomy code already computed and one <c>return</c> away. Caught by
+    /// <c>RunCommandTaxonomyBackstopTests</c>' timeout row, which drives a sink that throws on
+    /// EVERY write including this one. Only a cancellation the USER actually requested is left to
+    /// propagate, matching the outer catch — and that property is unchanged by the split above:
+    /// a genuine Ctrl-C landing on the WRITE still propagates.
+    /// </para>
+    /// </remarks>
+    private static async Task WriteDiagnosticBestEffortAsync(
+        TextWriter output,
+        Func<string?> compose,
+        CancellationToken cancellationToken)
+    {
+        string? line;
+        try
+        {
+            line = compose();
+        }
+        catch
+        {
+            // UNCONDITIONAL, INCLUDING CANCELLATION. Composing a string is not cancellable work,
+            // so an OperationCanceledException from here is a hostile or defective `Message`
+            // getter, not the user's Ctrl-C — and letting it out would hand back the framework's
+            // exit 1 with the taxonomy code one `return` away. See this method's remarks.
+            return;
+        }
+
+        try
+        {
+            await output.WriteLineAsync(line).ConfigureAwait(false);
+        }
+        catch (Exception writeFailure) when (
+            writeFailure is not OperationCanceledException
+            || !cancellationToken.IsCancellationRequested)
+        {
+            // Nothing left to report it to. Swallowed deliberately; see this method's remarks.
+        }
+    }
+
+    /// <summary>
+    /// The line printed when <c>--shutdown-on-stdin-eof</c>'s graceful stop ends the run before it
+    /// reached a verdict (#502).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// It names the flag, says the stop was requested, and asks for nothing. The line it replaced
+    /// told an operator their deliberate shutdown was "an engine or provider defect" and invited
+    /// them to file it with the suite that triggered it — a bug report for the feature working.
+    /// </para>
+    /// <para>
+    /// <strong>IT DOES NOT CLAIM EOF, BECAUSE THE WATCHER CANNOT TELL EOF FROM A BROKEN
+    /// PIPE.</strong> <c>StdinShutdownWatcher.ReadLoopAsync</c> invokes the SAME callback for a
+    /// zero-byte read and for any non-cancellation read failure — a deliberate design, since an
+    /// input that can no longer be read is as final as one that ended — so nothing downstream of
+    /// it, this line included, holds the information needed to say which happened. The line it
+    /// replaced asserted EOF flatly, which told an operator that a real I/O fault was the
+    /// graceful stop they had asked for. Inventing the distinction here would mean inventing it;
+    /// carrying the reason down from the watcher would mean widening its callback for a sentence.
+    /// So the sentence covers both, and the exit code is unchanged either way.
+    /// </para>
+    /// <para>
+    /// ASCII only, and deliberately so: <c>AsciiRuntimeOutputCensusTests</c> refuses a non-ASCII
+    /// character in any runtime-output literal on this boundary (#379).
+    /// </para>
+    /// </remarks>
+    internal const string StdinEofShutdownNotice =
+        "vouchfx run: the run was shut down because stdin reached EOF or could not be read, which "
+        + "--shutdown-on-stdin-eof treats alike, before it reached a verdict.  Stopping on either "
+        + "is what that flag arranges; it is not an engine or provider defect - there is "
+        + "nothing to report.  Reported as Inconclusive (section 12.1).";
+
+    /// <summary>
+    /// Whether an escaped cancellation is the <c>--shutdown-on-stdin-eof</c> graceful stop rather
+    /// than a timeout, a transport hiccup, or the user's own Ctrl-C.
+    /// </summary>
+    /// <param name="shutdownSource">
+    /// The linked source the stdin watcher cancels, or <see langword="null"/> when the flag is off
+    /// (which makes this <see langword="false"/> for every cancellation — the flag-off path is
+    /// untouched by this rule).
+    /// </param>
+    /// <param name="userCancellationToken">
+    /// The System.CommandLine action's own token, cancelled by a real Ctrl-C / SIGTERM.
+    /// </param>
+    /// <returns><see langword="true"/> for an EOF-driven stop, and only for one.</returns>
+    /// <remarks>
+    /// <para>
+    /// BOTH CLAUSES ARE LOAD-BEARING. A genuine TIMEOUT cancels neither source, so it stays with
+    /// the generic mapping it has today and keeps its wording. A real Ctrl-C cancels the
+    /// PARAMETER token, and linking propagates that INTO <paramref name="shutdownSource"/> — so
+    /// without the second clause a user cancellation arriving while the flag is set would be
+    /// re-labelled a stdin stop and stop re-throwing. That is why this is not simply
+    /// "is the run's token cancelled".
+    /// </para>
+    /// <para>
+    /// Exposed as <see langword="internal"/> for the truth-table row: the composition it sits in
+    /// needs a real stdin EOF, which no in-process test can produce (see
+    /// <c>StdinEofShutdownDiagnosticTests</c> for what is and is not measurable here).
+    /// </para>
+    /// </remarks>
+    internal static bool IsStdinEofShutdown(
+        CancellationTokenSource? shutdownSource,
+        CancellationToken userCancellationToken)
+        => shutdownSource is { IsCancellationRequested: true }
+            && !userCancellationToken.IsCancellationRequested;
+
+    /// <summary>
+    /// Marks a run that ended because <c>--shutdown-on-stdin-eof</c>'s graceful stop was
+    /// requested, so <see cref="ExecuteAsync"/> can report it as the requested stop it is.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Deliberately NOT derived from <see cref="OperationCanceledException"/>. That would put it
+    /// back inside the filter it exists to escape — <see cref="ExecuteAsync"/>'s first arm
+    /// re-throws a cancellation the user requested — and the whole point of this type is that the
+    /// classification was already made, one frame down, where the linked source is in scope.
+    /// </para>
+    /// <para>
+    /// Never surfaces to a caller of <see cref="ExecuteAsync"/>: that method catches it and
+    /// returns <see cref="ExitCodes.Inconclusive"/>. It exists only to carry the classification
+    /// across the one frame between the two.
+    /// </para>
+    /// </remarks>
+    internal sealed class StdinEofShutdownException : Exception
+    {
+        /// <summary>Creates the marker around the cancellation that ended the run.</summary>
+        /// <param name="cancellation">
+        /// The cancellation observed by the run, kept as the inner exception for a debugger. Its
+        /// message is never printed — <see cref="StdinEofShutdownNotice"/> is.
+        /// </param>
+        internal StdinEofShutdownException(OperationCanceledException cancellation)
+            : base("The run was shut down on stdin EOF.", cancellation)
+        {
         }
     }
 
@@ -933,19 +1142,21 @@ internal static class RunCommand
         // `cancellationToken` — byte-for-byte identical to today.
         //
         // When set, closing stdin fires the watcher's EOF (or read-error) callback, which does
-        // TWO things:
-        //   1. Cancels `linkedShutdownSource` — every downstream runner below observes this via
-        //      `runCancellationToken` and unwinds the SAME way a Ctrl-C / SIGTERM would
-        //      (HeadlessTopology.DisposeAsync's bounded StopAsync teardown, §4.5). This is
-        //      cancellation-PROPAGATION parity only.
-        //   2. Arms `shutdownBackstop` — a WALL-CLOCK, budget-bound force-exit timer.
-        // Security-review finding (MAJOR-1): step 1 alone is NOT signal-path parity for
+        // TWO things — named rather than numbered, because their ORDER is load-bearing and an
+        // ordinal that drifts from the code says nothing:
+        //   • THE ARM. `shutdownBackstop.Arm()` starts a WALL-CLOCK, budget-bound force-exit
+        //     timer. It goes FIRST; see the callback below for why that is the guarantee.
+        //   • THE CANCEL. `linkedShutdownSource.Cancel()` — every downstream runner below
+        //     observes this via `runCancellationToken` and unwinds the SAME way a Ctrl-C /
+        //     SIGTERM would (HeadlessTopology.DisposeAsync's bounded StopAsync teardown, §4.5).
+        //     This is cancellation-PROPAGATION parity only.
+        // Security-review finding (MAJOR-1): the cancel alone is NOT signal-path parity for
         // TERMINATION ENFORCEMENT. CancellationTokenSource.CreateLinkedTokenSource only
         // propagates cancellation DOWNSTREAM — cancelling `linkedShutdownSource` never touches
         // the ORIGINAL `cancellationToken`, so System.CommandLine's own
         // InvocationConfiguration.ProcessTerminationTimeout watchdog (Program.cs — armed only by
         // a REAL OS Ctrl-C/SIGTERM acting on THAT original token) is NEVER engaged by a
-        // stdin-EOF-triggered stop. Without step 2, a run wedged somewhere that does not observe
+        // stdin-EOF-triggered stop. Without the arm, a run wedged somewhere that does not observe
         // cancellation promptly (a step/provider await, not just teardown) would hang forever
         // once stdin closes. `shutdownBackstop` closes that gap: if the process is still alive
         // TeardownBudgetSeconds after EOF, it force-exits via Environment.Exit — see the
@@ -982,11 +1193,124 @@ internal static class RunCommand
         await using var stdinShutdownWatcher = shutdownOnStdinEof
             ? StdinShutdownWatcher.Start(Console.OpenStandardInput(), () =>
               {
-                  linkedShutdownSource!.Cancel();
+                  // THE ARM PRECEDES THE CANCEL, AND THAT ORDER IS THE GUARANTEE, NOT A STYLE.
+                  // `Cancel()` runs its registrations SYNCHRONOUSLY on this thread and can resume
+                  // the awaited pipeline — here or on another thread — before the next statement
+                  // is reached. With the arm second, `ExecuteCoreAsync` could therefore unwind
+                  // and dispose this backstop first, after which `Arm()` is a documented no-op
+                  // (see ShutdownBackstop.Arm) and the force-exit budget the flag PROMISES is
+                  // silently never armed — leaving a provider or a teardown that ignores
+                  // cancellation to outlive it, which is the one thing the backstop exists for.
+                  //
+                  // Arming first cannot mis-fire: a run that then completes gracefully disposes
+                  // the backstop, cancelling the timer before it can elapse (that disposal is what
+                  // the declaration-order note above guarantees). What it does cost is the
+                  // duration of `Cancel()`'s synchronous registrations, spent out of
+                  // TeardownBudgetSeconds rather than added to it — and that sign is the right one,
+                  // because the flag documents the budget as seconds of EOF (see the
+                  // shutdownOnStdinEof parameter), which is the instant this arm starts it from.
+                  //
+                  // It also survives a `Cancel()` that throws, and the reachable shape is a
+                  // registration on the linked token faulting — `Cancel()` then raises
+                  // AggregateException — while the backstop is still alive: with the arm second
+                  // the watcher swallows that fault by design
+                  // (StdinShutdownWatcher.InvokeCallbackSafely) and the backstop is never armed at
+                  // all, unseen. NOT the already-disposed source this used to cite: disposal runs
+                  // watcher, backstop, source, so a source disposed enough to throw implies a
+                  // backstop disposed before it, where `Arm()` no-ops in EITHER order.
                   shutdownBackstop!.Arm();
+                  linkedShutdownSource!.Cancel();
               })
             : null;
 
+        // #502: THE GRACEFUL STOP IS TRANSLATED HERE, WHERE THE LINKED SOURCE IS IN SCOPE, and
+        // that is the whole reason this frame exists rather than a wider filter one level up.
+        // Cancelling `linkedShutdownSource` never cancels `cancellationToken` (linking only
+        // propagates DOWNSTREAM), so an EOF-driven stop that escapes the pipeline reaches
+        // ExecuteAsync as an OperationCanceledException NOBODY visibly asked for, and was
+        // reported there as "the engine failed unexpectedly ... please report it" — a deliberate,
+        // designed shutdown described to an operator as an engine defect. The exit code was
+        // right throughout (Inconclusive either way), which is precisely why only a test that
+        // asserts the MESSAGE can see the difference.
+        //
+        // The classification is `IsStdinEofShutdown`, and BOTH of its clauses are load-bearing:
+        // a genuine timeout cancels neither source and is left alone, and a real Ctrl-C / SIGTERM
+        // cancels the PARAMETER token — which propagates into the linked source — so excluding it
+        // keeps the user-cancellation re-throw arm above exactly where it was.
+        //
+        // SCOPE LIMIT, STATED RATHER THAN IMPLIED: the arm fires only for an OperationCanceledException
+        // raised THROUGH this frame. An EOF-driven stop that surfaces wrapped — inside an
+        // AggregateException, or as an IOException from a stream the cancellation tore down — is not
+        // one, so it still reaches ExecuteAsync's catch-all and is reported with the engine-defect
+        // wording. Exit 4 either way; only the sentence is wrong. Do NOT widen the catch to cover
+        // it: an unwrapping filter would also admit faults that merely happened during a cancelled
+        // run, which is how a real engine defect gets relabelled a requested shutdown.
+        try
+        {
+            return await ExecuteRunPipelineAsync(
+                path,
+                criteria,
+                parallel,
+                watch,
+                failOnEnvironmentError,
+                failOnInconclusive,
+                htmlReportPath,
+                junitReportPath,
+                eventsReportPath,
+                eventsStreamPath,
+                decorate,
+                output,
+                telemetryHook,
+                runCancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException ex)
+            when (IsStdinEofShutdown(linkedShutdownSource, cancellationToken))
+        {
+            // Re-shaped rather than handled here: the diagnostic belongs on the SAME frame that
+            // owns every other "the run could not reach a verdict" line, so the two answers can
+            // never come apart. The original cancellation is carried as the inner exception for a
+            // debugger; nothing prints it (see StdinEofShutdownNotice).
+            throw new StdinEofShutdownException(ex);
+        }
+    }
+
+    /// <summary>
+    /// The run pipeline itself: everything <see cref="ExecuteCoreAsync"/> does once the
+    /// graceful-shutdown seam is wired — discovery, selection, the watch branch, the runners,
+    /// telemetry, and the exit code.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Split out of <see cref="ExecuteCoreAsync"/> for ONE reason: the stdin-EOF translation needs
+    /// a <c>try</c> around the whole pipeline, and the alternative — wrapping it in place — would
+    /// have re-indented ~400 lines and hidden the change inside them. The body moved verbatim
+    /// except for ONE line, and it is named here because this paragraph is what tells a reviewer
+    /// they may read the extraction as a move: the <c>ChangeSetException</c> arm now writes
+    /// <c>DisplaySanitiser.SanitiseForDisplay(ex.Message)</c> rather than <c>ex.Message</c>.
+    /// </para>
+    /// <para>
+    /// Every parameter is <see cref="ExecuteCoreAsync"/>'s own, forwarded verbatim, with one
+    /// substitution: the token is the RUN's token (the linked one when
+    /// <c>--shutdown-on-stdin-eof</c> is set, the caller's otherwise), which is the only token
+    /// anything below this point ever observed.
+    /// </para>
+    /// </remarks>
+    private static async Task<int> ExecuteRunPipelineAsync(
+        string path,
+        SelectionCriteria criteria,
+        int? parallel,
+        bool watch,
+        bool failOnEnvironmentError,
+        bool failOnInconclusive,
+        string? htmlReportPath,
+        string? junitReportPath,
+        string? eventsReportPath,
+        string? eventsStreamPath,
+        bool decorate,
+        TextWriter output,
+        TelemetryRunHook? telemetryHook,
+        CancellationToken runCancellationToken)
+    {
         // --watch and --parallel are mutually exclusive: one keeps a SINGLE topology alive for
         // one file, the other fans MANY scenarios across MANY topologies.  Reject the combo as a
         // usage error (exit 2) up front — before discovering or running anything (no Docker).
@@ -1094,7 +1418,15 @@ internal static class RunCommand
         }
         catch (ChangeSetException ex)
         {
-            await output.WriteLineAsync(ex.Message).ConfigureAwait(false);
+            // SANITISED, because this message is the one place GIT'S OWN BYTES reach the terminal.
+            // `GitChangeSet` relays git's stderr, its stdout fallback, or a BCL IOException from a
+            // failed pipe read — path-substituted, but not stripped of control characters. A
+            // repository-configured `filter.*.clean` or `core.fsmonitor` inherits git's stderr, so
+            // an OSC title rewrite, an ESC[2J, or a '\r' overwrite lands verbatim in a terminal or a
+            // CI log. That is #266 Item 4's class exactly, and the sibling arm in ExecuteAsync
+            // already applies this treatment for the same reason.
+            await output.WriteLineAsync(DisplaySanitiser.SanitiseForDisplay(ex.Message))
+                .ConfigureAwait(false);
             return ExitCodes.UsageError;
         }
 

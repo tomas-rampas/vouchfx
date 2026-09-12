@@ -18,6 +18,7 @@ This guide covers real failure modes, what they mean, and how to fix them.
 - [Capture fails or placeholder is empty](#capture-fails-or-placeholder-is-empty)
 - [Kafka messages not consumed (ordering or timing)](#kafka-messages-not-consumed-ordering-or-timing)
 - [Validation errors at authoring time](#validation-errors-at-authoring-time)
+- [Git selection diagnostics](#git-selection-diagnostics)
 
 ---
 
@@ -1406,6 +1407,95 @@ A step's `type` field is well-formed (matches the `<family>.<provider>` pattern)
    ```bash
    vouchfx validate ./tests/e2e
    ```
+
+---
+
+## Git selection diagnostics
+
+When using `--changed-since`, the CLI invokes git to determine which scenarios have changed. Two distinct error messages indicate different failure modes:
+
+**Symptom 1:**
+```
+Could not run git for <operation>. Is git installed and on PATH?
+```
+
+**What it means:**
+The CLI searched `PATH` but found no executable called `git` (or `git.exe` on Windows). Either git is not installed, or its installation directory is not in the `PATH` environment variable.
+
+**Fix:**
+
+1. **Verify git is installed:**
+   ```bash
+   git --version
+   ```
+   If this command fails, install git for your platform.
+
+2. **Add git to `PATH`:**
+   - **Windows:** Git for Windows installer typically adds `git.exe` to `PATH` automatically. If you installed git manually or to a custom location, add its `bin` directory to your `PATH`. **Note:** The selection looks only for `git.exe`, not `.cmd` or `.bat` shims. If your `PATH` contains only a git shim (e.g. from Chocolatey or another package manager), you must install the full Git for Windows package (which includes `git.exe`) or locate a real `git.exe` and add that directory to `PATH` *before* the shim directory.
+   - **macOS:** If you installed git via Homebrew or Xcode, it is already on `PATH`. If installed manually, verify the installation directory is in `PATH`:
+     ```bash
+     which git
+     ```
+   - **Linux:** Install via your package manager (e.g. `sudo apt-get install git`), which adds it to `PATH`.
+
+3. **Verify `PATH` from vouchfx:**
+   The selection searches `PATH` in the order it appears in your environment. Print your current `PATH`:
+   ```bash
+   # Windows (PowerShell)
+   $env:PATH
+   
+   # POSIX
+   echo $PATH
+   ```
+   and confirm that the directory containing your git executable appears in this list.
+
+---
+
+**Symptom 2:**
+```
+Could not start git for <operation>. A git executable was found on PATH, but the operating system refused to start it. Is the first git on PATH a valid executable this user may run?
+```
+
+**What it means:**
+A file named `git.exe` (or `git` on POSIX) was found on `PATH`, but the operating system would not execute it. Common causes:
+
+- **Broken symlink on Windows:** The git executable is a symlink whose target is missing.
+  This reaches *this* symptom only on Windows, where `File.Exists` returns true for a
+  dangling symlink and the candidate is therefore retained. On POSIX the same file is
+  skipped during the search, so a broken symlink there produces Symptom 1 above instead.
+- **Wrong architecture:** The executable was compiled for a different CPU architecture (32-bit vs 64-bit).
+- **Permissions:** The file lacks read and execute permissions for the current user.
+- **File system race:** The file existed during the search but was deleted or replaced before execution.
+
+**Fix:**
+
+1. **On Windows, identify which `git.exe` was resolved:**
+   ```powershell
+   Get-Command git -CommandType Application | Where-Object { $_.Source -like '*.exe' } | Select-Object -First 1 Source
+   ```
+   The selection uses the **first `git.exe` on `PATH`**, so that is the file the operating system
+   refused. Confirm it is a genuine executable of the right architecture, rather than a placeholder,
+   a partially written download, or a text file that happens to be named `git.exe`.
+
+   A `.cmd` or `.bat` shim is **not** this symptom. Shims are never candidates, so a host whose only
+   git is a shim reports Symptom 1 above, not this one.
+
+2. **On POSIX, verify the symlink resolves and the file is executable:**
+   ```bash
+   ls -la $(which git)
+   ```
+   If the output shows a broken symlink (target `->` pointing to a non-existent path), reinstall git via your package manager.
+
+3. **Check the file's permissions (POSIX):**
+   ```bash
+   stat $(which git)
+   ```
+   Ensure the current user can read and execute it. If not, run:
+   ```bash
+   chmod u+rx $(which git)
+   ```
+
+4. **In CI environments:** If this error occurs in a CI/CD pipeline, ensure the CI runner's git installation is correct and its `PATH` includes the git binary directory. Some container images ship only a git stub; use an image with a full git installation.
 
 ---
 

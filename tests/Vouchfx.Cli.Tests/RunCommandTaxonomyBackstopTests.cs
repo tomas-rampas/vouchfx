@@ -121,6 +121,86 @@ public sealed class RunCommandTaxonomyBackstopTests : IDisposable
         Assert.Equal(ExitCodes.Inconclusive, exitCode);
     }
 
+    /// <summary>
+    /// <strong>An escaped exception whose <see cref="Exception.Message"/> ITSELF throws still
+    /// returns the taxonomy code.</strong>
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The catch-all's diagnostic interpolates <c>ex.Message</c>. While that interpolation was
+    /// evaluated as a CALL-SITE ARGUMENT it sat outside the best-effort guard, so a <c>Message</c>
+    /// override that throws escaped <c>ExecuteAsync</c> entirely and handed the run to
+    /// System.CommandLine's exit <strong>1</strong> — with the taxonomy code already decided and one
+    /// <c>return</c> away. That is the same defect this whole file exists to pin, reached through
+    /// the reporting of the fault rather than the fault itself, and it is open issue #518's class.
+    /// </para>
+    /// <para>
+    /// <strong>Not a hypothetical exception type.</strong> A provider, or a <c>script.csharp</c>
+    /// author, can define one; <c>Message</c> is virtual and nothing constrains an override. The row
+    /// asserts the INTEGER because that is what the defect changed — the diagnostic is
+    /// unproducible here by construction, and saying so is the point of the best-effort contract.
+    /// </para>
+    /// <para>
+    /// MEASURED RED by reverting the composition to a call-site argument: this row then fails with
+    /// the injected <see cref="InvalidOperationException"/> propagating out of <c>ExecuteAsync</c>,
+    /// and it is the only row in the project that moves.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task ExecuteAsync_ExceptionWhoseMessageThrows_StillReturnsTheTaxonomyCode()
+    {
+        var exitCode = await ExecuteAsync(new ThrowingWriter(_ => new HostileMessageException()));
+
+        Assert.Equal(ExitCodes.Inconclusive, exitCode);
+    }
+
+    /// <summary>
+    /// <strong>A <see cref="Exception.Message"/> getter that throws an
+    /// <see cref="OperationCanceledException"/> WHILE THE TOKEN IS CANCELLED still returns the
+    /// taxonomy code.</strong>
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The row above pins a hostile <c>Message</c> that throws
+    /// <see cref="InvalidOperationException"/>, and it cannot see this: the guard's write filter
+    /// deliberately declines an <see cref="OperationCanceledException"/> raised while the token is
+    /// cancelled, so that a genuine Ctrl-C during the WRITE propagates. Composition used to sit
+    /// inside that same <c>try</c> and therefore under that same filter — so a <c>Message</c>
+    /// getter that raised THAT type rather than any other walked straight out of
+    /// <c>ExecuteAsync</c> and past the taxonomy again. Nothing constrains which type an override
+    /// throws, so #518's fix was undone by the choice of exception type alone.
+    /// </para>
+    /// <para>
+    /// <strong>The row is not vacuous, and it asserts so rather than claiming it.</strong> A
+    /// cancelled token can also make the pipeline itself throw before the injected fault is ever
+    /// raised, which would leave this passing on the wrong mechanism;
+    /// <c>MessageWasRead</c> fails the row unless the hostile getter was actually reached.
+    /// </para>
+    /// <para>
+    /// MEASURED RED by reverting composition back inside the write's <c>try</c>: this row then
+    /// fails with the injected <see cref="OperationCanceledException"/> propagating out of
+    /// <c>ExecuteAsync</c>, while every other row in this class — the
+    /// <see cref="InvalidOperationException"/> one above included — stays green, which is the
+    /// whole reason this row had to be added rather than the existing one extended.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task ExecuteAsync_MessageThrowsCancellationWhileCancelled_StillReturnsTheCode()
+    {
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+
+        var hostile = new CancellingMessageException(cts.Token);
+
+        var exitCode = await ExecuteAsync(new ThrowingWriter(_ => hostile), cts.Token);
+
+        Assert.True(
+            hostile.MessageWasRead,
+            "The hostile Message getter was never reached, so this row proves nothing: the run "
+            + "returned before the catch-all composed its diagnostic.");
+        Assert.Equal(ExitCodes.Inconclusive, exitCode);
+    }
+
     private Task<int> ExecuteAsync(TextWriter output, CancellationToken cancellationToken = default)
         => RunCommand.ExecuteAsync(
             path: _root,
@@ -137,6 +217,48 @@ public sealed class RunCommandTaxonomyBackstopTests : IDisposable
             output: output,
             telemetryHook: null,
             cancellationToken: cancellationToken);
+
+    /// <summary>
+    /// An exception whose <see cref="Exception.Message"/> throws rather than returning text.
+    /// </summary>
+    /// <remarks>
+    /// <c>Message</c> is virtual, so this is a shape any provider-defined or author-defined
+    /// exception type can have — deliberately or by accident, since a lazily-composed message can
+    /// dereference state the failure already invalidated.
+    /// </remarks>
+    private sealed class HostileMessageException : Exception
+    {
+        public override string Message =>
+            throw new InvalidOperationException("this exception's Message throws");
+    }
+
+    /// <summary>
+    /// An exception whose <see cref="Exception.Message"/> throws an
+    /// <see cref="OperationCanceledException"/> — the one type the write guard's filter lets
+    /// through while the token is cancelled.
+    /// </summary>
+    /// <remarks>
+    /// Nothing stops an override raising that type in particular, which is exactly why the
+    /// composition may not share a filter written to let a real Ctrl-C out of the WRITE.
+    /// <see cref="MessageWasRead"/> exists so the row asserting this cannot pass vacuously.
+    /// </remarks>
+    private sealed class CancellingMessageException : Exception
+    {
+        private readonly CancellationToken _token;
+
+        public CancellingMessageException(CancellationToken token) => _token = token;
+
+        public bool MessageWasRead { get; private set; }
+
+        public override string Message
+        {
+            get
+            {
+                MessageWasRead = true;
+                throw new OperationCanceledException("this exception's Message cancels", _token);
+            }
+        }
+    }
 
     /// <summary>A sink that raises a caller-chosen exception on every write.</summary>
     private sealed class ThrowingWriter : TextWriter

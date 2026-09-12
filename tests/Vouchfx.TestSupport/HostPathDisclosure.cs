@@ -58,9 +58,57 @@ public static class HostPathDisclosure
     /// <remarks>
     /// <c>&amp;</c> and <c>;</c> are separators so an HTML-escaped quote (<c>&amp;#39;</c>) splits
     /// off the path it wraps instead of gluing itself to the front of it.
+    /// <para>
+    /// <c>=</c> is one so a rooted path behind a prefix — <c>cwd=/home/runner/work/x</c>, the
+    /// shape a helper that echoes its environment prints — is a token of its own rather than one
+    /// token beginning <c>c</c>, which <see cref="Path.IsPathRooted(string)"/> reads as relative
+    /// and this gate then waved through whole. <c>`</c> is one for the same reason in a different
+    /// dialect: GNU tools quote as <c>`/abs/path'</c>, which was one token beginning <c>`</c>.
+    /// <c>:</c> is deliberately NOT one: it would split <c>C:\Users\x</c> at the drive colon.
+    /// </para>
+    /// <para>
+    /// The seven non-ASCII members are the same argument one locale further on: gettext quotes as
+    /// <c>\u2018/abs/path\u2019</c> in a UTF-8 locale and, through gnulib's localised quoting, as
+    /// the German and French pairs too. Measured before they were added: every one of those shapes
+    /// came back unchanged from the relay AND was accepted by this gate, so the two halves of the
+    /// rule agreed on missing it. <c>GitChangeSet.TokenSeparators</c> carries the decision.
+    /// </para>
+    /// <para>
+    /// What that leaves is a CLASS rather than a character — any glue this set omits makes prefix
+    /// and path one token, which <see cref="Path.IsPathRooted(string)"/> reads as relative — and it
+    /// is enumerated per character over PRINTABLE ASCII plus those named non-ASCII quoting
+    /// characters, with the reason each residue stays out, by
+    /// <c>GitChangeSetTests.SubstituteAbsolutePaths_PrefixGlue_IsSubstitutedOrDocumentedResidue</c>
+    /// and <c>GitChangeSet.TokenSeparators</c>, which carry the reasoning for both sides. Over the
+    /// rest of Unicode the class is open, and the corpus says so rather than implying otherwise.
+    /// </para>
+    /// <para>
+    /// <strong>The class has a SECOND half, and it is a character this set CONTAINS rather than
+    /// one it omits.</strong> A separator sitting immediately after the root splits a rooted token
+    /// into a head of <c>/</c> — one character, below this method's own two-character floor, so
+    /// skipped — and a tail that is not rooted, so this gate ACCEPTS the shape. MEASURED here:
+    /// <c>/'etc/passwd</c>, its Windows spelling <c>C:'Users\x</c>, and the same two with any of
+    /// the seven non-ASCII members or fourteen other incumbents in place of the apostrophe, all
+    /// pass. It is PRE-EXISTING rather than something the non-ASCII members introduced, but they
+    /// did add instances to it: an earlier note claimed a wider separator set could only turn a
+    /// leak into a refusal and never the reverse, and that was false — <c>GitChangeSet</c>'s
+    /// <c>TokenSeparators</c> carries the measurement and why the residue is still the right
+    /// trade. Closing it needs the same non-character rule that paragraph rules out.
+    /// </para>
+    /// <para>
+    /// These three arrays are ALSO <c>GitChangeSet</c>'s, and the equality is asserted rather than
+    /// requested: <c>GitChangeSetTests.SubstitutionTokenRules_AreTheSharedDisclosureGates</c>
+    /// compares them by reflection, so an edit here that is not made there reddens.
+    /// </para>
     /// </remarks>
     private static readonly char[] s_tokenSeparators =
-        { ' ', '\t', '\r', '\n', '"', '\'', '<', '>', '&', ';', ',', '(', ')', '[', ']' };
+    {
+        ' ', '\t', '\r', '\n', '"', '\'', '<', '>', '&', ';', ',', '(', ')', '[', ']', '=', '`',
+
+        // Escapes rather than the characters themselves: U+2018 and U+0027 are a pixel apart in a
+        // monospace font, and a separator set is the last place a reader should have to guess.
+        '\u2018', '\u2019', '\u201C', '\u201D', '\u201E', '\u00AB', '\u00BB',
+    };
 
     private static readonly char[] s_pathSeparators = { '\\', '/' };
 
