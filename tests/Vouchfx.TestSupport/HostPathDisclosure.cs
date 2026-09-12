@@ -76,11 +76,24 @@ public static class HostPathDisclosure
     /// <para>
     /// What that leaves is a CLASS rather than a character — any glue this set omits makes prefix
     /// and path one token, which <see cref="Path.IsPathRooted(string)"/> reads as relative — and it
-    /// is enumerated per character over ASCII plus those named non-ASCII quoting characters, with
-    /// the reason each residue stays out, by
+    /// is enumerated per character over PRINTABLE ASCII plus those named non-ASCII quoting
+    /// characters, with the reason each residue stays out, by
     /// <c>GitChangeSetTests.SubstituteAbsolutePaths_PrefixGlue_IsSubstitutedOrDocumentedResidue</c>
     /// and <c>GitChangeSet.TokenSeparators</c>, which carry the reasoning for both sides. Over the
     /// rest of Unicode the class is open, and the corpus says so rather than implying otherwise.
+    /// </para>
+    /// <para>
+    /// <strong>The class has a SECOND half, and it is a character this set CONTAINS rather than
+    /// one it omits.</strong> A separator sitting immediately after the root splits a rooted token
+    /// into a head of <c>/</c> — one character, below this method's own two-character floor, so
+    /// skipped — and a tail that is not rooted, so this gate ACCEPTS the shape. MEASURED here:
+    /// <c>/'etc/passwd</c>, its Windows spelling <c>C:'Users\x</c>, and the same two with any of
+    /// the seven non-ASCII members or fourteen other incumbents in place of the apostrophe, all
+    /// pass. It is PRE-EXISTING rather than something the non-ASCII members introduced, but they
+    /// did add instances to it: an earlier note claimed a wider separator set could only turn a
+    /// leak into a refusal and never the reverse, and that was false — <c>GitChangeSet</c>'s
+    /// <c>TokenSeparators</c> carries the measurement and why the residue is still the right
+    /// trade. Closing it needs the same non-character rule that paragraph rules out.
     /// </para>
     /// <para>
     /// These three arrays are ALSO <c>GitChangeSet</c>'s, and the equality is asserted rather than

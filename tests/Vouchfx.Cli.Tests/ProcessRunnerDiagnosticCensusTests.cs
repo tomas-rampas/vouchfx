@@ -182,11 +182,36 @@ public sealed class ProcessRunnerDiagnosticCensusTests
     /// as a runner in one file makes every <c>runner.Run(...)</c> in <c>src/</c> a candidate. That
     /// over-matches, and over-matching is the safe direction: the worst case is this row demanding
     /// an <c>environment</c> argument of a call that did not need one, which reddens and is read,
-    /// rather than a leak nobody is told about. What stays invisible is every receiver whose TYPE
-    /// is not written at its declaration — a <c>var</c> local or a <c>var</c>/deconstruction
-    /// pattern filled from a factory — and every receiver declared in no source file under
-    /// <c>src/</c> at all, such as an inherited member from a referenced assembly. Both need a
-    /// semantic model to resolve, and a semantic model needs the CLI compiled inside the test.
+    /// rather than a leak nobody is told about.
+    /// </para>
+    /// <para>
+    /// <strong>THE SEMANTIC-MODEL RESIDUE IS REAL, AND IT USED TO BE STATED AS THOUGH IT WERE THE
+    /// ONLY ONE.</strong> What genuinely needs a semantic model is every receiver whose TYPE is
+    /// not written at its declaration — a <c>var</c> local or a <c>var</c>/deconstruction pattern
+    /// filled from a factory — and every receiver declared in no source file under <c>src/</c> at
+    /// all, such as an inherited member from a referenced assembly. Those two clauses were the
+    /// whole stated residue, and they did not cover the five spellings MEASURED missing in the
+    /// round that added the paragraph below: each of those receivers had its type written at its
+    /// declaration AND was declared under <c>src/</c>, so the residue claimed coverage it did not
+    /// have. Three were syntactic wrappers and are now unwrapped
+    /// (<see cref="UnwrapReceiver"/>). The other two are named in the next paragraph on their own
+    /// terms rather than folded into a limit that does not fit them.
+    /// </para>
+    /// <para>
+    /// <strong>WHAT IS STILL NOT MATCHED, PRECISELY: A CALL WHOSE RECEIVER IS THE ENCLOSING
+    /// TYPE.</strong> Inside a class that itself implements the runner interface,
+    /// <c>this.Run(…)</c>, <c>base.Run(…)</c> and a bare <c>Run(…)</c> are all invisible —
+    /// MEASURED: the first two reach the <c>name</c> switch as <c>this</c>/<c>base</c> and fall
+    /// out, and the bare form is not even a candidate, because <see cref="RunReceiver"/> only
+    /// answers for a member access and a bare call has no receiver node at all. This needs no
+    /// semantic model either; it needs a DIFFERENT question — "is the ENCLOSING type a runner?"
+    /// rather than "is the RECEIVER one" — and that is why it is not simply another arm. It is
+    /// left out on merit, not cost: <c>Run</c> is an ordinary method name, so asking the enclosing
+    /// question would make every bare <c>Run(…)</c> inside such a class a candidate, including
+    /// private helpers that merely share the name; and the only shape it would catch is the one
+    /// implementation re-entering its own <c>Run</c>, where the block in hand is the one the
+    /// implementation was handed rather than this process's. Should a second implementation ever
+    /// land under <c>src/</c>, reopen this — the reasoning is about there being exactly one today.
     /// </para>
     /// <para>
     /// <strong>A NULL ARGUMENT IS NOT AN ARGUMENT.</strong> The check used to be the mere
@@ -317,6 +342,68 @@ public sealed class ProcessRunnerDiagnosticCensusTests
             $"'{expression}' did not parse, so this row proves nothing about the predicate.");
 
         Assert.Equal(expected, IsNullOnSomePath(parsed));
+    }
+
+    /// <summary>
+    /// The receiver resolution sees every spelling of the SAME receiver, and the spellings it
+    /// deliberately does not see are rows here rather than absences.
+    /// </summary>
+    /// <param name="statement">A <c>Run</c> call, spelled as a caller would write it.</param>
+    /// <param name="expected">Whether the census must treat it as a call site.</param>
+    /// <remarks>
+    /// <para>
+    /// The sibling of <see cref="IsNullOnSomePath_SeesEverySpellingOfNull"/>, and it exists for
+    /// the same reason: a receiver this census cannot resolve leaves the count assertion green at
+    /// 1 while the new call inherits the whole process block, so a limit that is merely STATED
+    /// closes nothing. Every round of this census so far found its hole by someone rewriting the
+    /// production call — a drill that leaves nothing behind. These rows are what a drill cannot
+    /// be: permanent, and a moved expectation when the resolution changes.
+    /// </para>
+    /// <para>
+    /// The FALSE rows carry as much weight as the true ones. <c>this</c>, <c>base</c> and the bare
+    /// call are the residue the class remarks name, pinned so that closing it later is a decision
+    /// rather than a side effect; and a receiver of no relation must stay unmatched, since a
+    /// predicate that answered true for everything would satisfy every positive row while turning
+    /// the census into a refusal of all call sites.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    // The shapes the collector resolves through a declared name.
+    [InlineData("_runner.Run(x);", true)]
+    [InlineData("_runner?.Run(x);", true)]
+    [InlineData("this._runner.Run(x);", true)]
+    // The three syntactic wrappers, each MEASURED missing before they were unwrapped.
+    [InlineData("_runner!.Run(x);", true)]
+    [InlineData("(_runner).Run(x);", true)]
+    [InlineData("((_runner!)).Run(x);", true)]
+    [InlineData("_runners[0].Run(x);", true)]
+    [InlineData("_runners[0]!.Run(x);", true)]
+    // The spelling match, for a static entry point whose trailing identifier names no runner.
+    [InlineData("SystemProcessRunner.Instance.Run(x);", true)]
+    [InlineData("new SystemProcessRunner().Run(x);", true)]
+    // The documented residue: the receiver is the enclosing type, which is a different question.
+    [InlineData("this.Run(x);", false)]
+    [InlineData("base.Run(x);", false)]
+    [InlineData("Run(x);", false)]
+    // Negative controls. Without these the row is satisfied by a predicate that says yes to all.
+    [InlineData("_logger.Run(x);", false)]
+    [InlineData("_runner.Start(x);", false)]
+    public void ReceiverResolution_SeesEverySpellingOfTheRunner(string statement, bool expected)
+    {
+        var root = CSharpSyntaxTree
+            .ParseText($"class C {{ void M() {{ {statement} }} }}")
+            .GetCompilationUnitRoot();
+
+        Assert.False(
+            root.GetDiagnostics().Any(d => d.Severity == DiagnosticSeverity.Error),
+            $"'{statement}' did not parse, so this row proves nothing about the resolution.");
+
+        var call = root.DescendantNodes().OfType<InvocationExpressionSyntax>().First();
+        var names = new HashSet<string> { "_runner", "_runners" };
+        var matched = RunReceiver(call) is { } receiver
+            && IsProcessRunnerReceiver(receiver, names);
+
+        Assert.Equal(expected, matched);
     }
 
     /// <summary>
@@ -476,15 +563,31 @@ public sealed class ProcessRunnerDiagnosticCensusTests
     /// <see cref="RunnerTypedNames"/>.</param>
     /// <returns><see langword="true"/> when the call is one this census must police.</returns>
     /// <remarks>
+    /// <para>
     /// The trailing identifier is what is resolved, so <c>_runner</c>, <c>this._runner</c> and
     /// <c>Selection.Runner</c> all reduce to the same question. The spelling match is kept as a
     /// third clause rather than replaced: it covers a static entry point such as
     /// <c>SystemProcessRunner.Instance</c>, whose trailing identifier is <c>Instance</c> and whose
     /// declaring type may not be under <c>src/</c> at all.
+    /// </para>
+    /// <para>
+    /// <strong>THE SYNTACTIC WRAPPERS COME OFF FIRST, and <c>!</c> is the reason.</strong> Three
+    /// spellings of the SAME receiver used to reach the <c>name</c> switch as node kinds it has no
+    /// arm for, and fall out at <c>_ =&gt; null</c>: <c>_runner!.Run(…)</c>,
+    /// <c>(_runner).Run(…)</c> and <c>_runners[0].Run(…)</c>. Each was MEASURED missing here —
+    /// the census reported "found 0" rather than an offender. The first is the one that
+    /// matters — it is the same null-forgiving <c>!</c> that has walked past this file's guard
+    /// twice already, and <see cref="IsNullOnSomePath"/> two methods down was already unwrapping
+    /// that exact node kind on the ARGUMENT side. The file held the unwrap it needed and did not
+    /// apply it here, which is why <see cref="UnwrapReceiver"/> mirrors that predicate's arms
+    /// rather than inventing a rule.
+    /// </para>
     /// </remarks>
     private static bool IsProcessRunnerReceiver(
         ExpressionSyntax receiver, HashSet<string> runnerNames)
     {
+        receiver = UnwrapReceiver(receiver);
+
         if (receiver.ToString().Contains(RunnerTypeMarker, System.StringComparison.Ordinal))
         {
             return true;
@@ -504,6 +607,38 @@ public sealed class ProcessRunnerDiagnosticCensusTests
 
         return name is not null && runnerNames.Contains(name);
     }
+
+    /// <summary>
+    /// Strips the wrappers that hide a receiver's trailing identifier without changing which
+    /// object <c>Run</c> is called on.
+    /// </summary>
+    /// <param name="receiver">The expression the <c>Run</c> was invoked on.</param>
+    /// <returns>The innermost expression that still names the receiver.</returns>
+    /// <remarks>
+    /// <para>
+    /// Three arms, and all three are pure noise around the same object. <c>!</c> asserts
+    /// non-nullness and evaluates to its operand; parentheses group; an indexer reaches an ELEMENT
+    /// of a runner-typed collection, whose declaration (<c>IProcessRunner[] _runners</c>) names a
+    /// runner type by the same text test everything else here uses, so the trailing identifier is
+    /// still the right question. The indexer arm is the sibling of the <c>foreach</c> declaration
+    /// shape the collector already reads: a census that contemplates a COLLECTION of runners has
+    /// no business missing the call that indexes one.
+    /// </para>
+    /// <para>
+    /// Recursive because the wrappers nest — <c>(_runner!)</c> is both — and because unwrapping
+    /// one and stopping is the same half-fix this method has already shipped twice.
+    /// </para>
+    /// </remarks>
+    private static ExpressionSyntax UnwrapReceiver(ExpressionSyntax receiver) => receiver switch
+    {
+        ParenthesizedExpressionSyntax parenthesised =>
+            UnwrapReceiver(parenthesised.Expression),
+        PostfixUnaryExpressionSyntax suppression
+            when suppression.IsKind(SyntaxKind.SuppressNullableWarningExpression) =>
+            UnwrapReceiver(suppression.Operand),
+        ElementAccessExpressionSyntax indexed => UnwrapReceiver(indexed.Expression),
+        _ => receiver,
+    };
 
     /// <summary>
     /// Whether an expression is <see langword="null"/> on at least one path, by inspection alone.

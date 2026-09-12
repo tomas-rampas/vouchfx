@@ -599,17 +599,48 @@ internal sealed class GitChangeSet : IChangeSet
     /// a different one. The heading itself made that mistake one level up: it claimed the CLASS
     /// while the body below it claimed ASCII, and a fifth round duly arrived with
     /// <c>‘/etc/gitconfig’</c>. Beyond the corpus the class is open, and no character set
-    /// closes it. The answer for every non-alphanumeric ASCII character, and for the eight
-    /// non-ASCII ones named below, is recorded by
+    /// closes it. The answer for every PRINTABLE non-alphanumeric ASCII character, and for the
+    /// twelve non-ASCII ones named below, is recorded by
     /// <c>GitChangeSetTests.SubstituteAbsolutePaths_PrefixGlue_IsSubstitutedOrDocumentedResidue</c>
     /// — that row asserts the exact output per character and carries the reason for each of the
-    /// twenty residues. In short: <c>/</c> and <c>\</c> ARE the path separators; <c>:</c> is the
-    /// paragraph above; <c>- . _ ~ + $ % # @ ^ { } !</c> occur inside real paths, where making one
-    /// a separator leaves the tail standing (measured); <c>| ? *</c> are illegal in a Windows
+    /// twenty-four residues. In short: <c>/</c> and <c>\</c> ARE the path separators; <c>:</c> is
+    /// the paragraph above; <c>- . _ ~ + $ % # @ ^ { } !</c> occur inside real paths, where making
+    /// one a separator leaves the tail standing (measured); <c>| ? *</c> are illegal in a Windows
     /// filename but legal in a POSIX one and close no shape anyone has named. Closing the class
     /// outright needs a rule that is not a separator character at all — scan for a path separator
     /// and ask whether the run from there is rooted behind a non-alphanumeric predecessor — which
     /// cannot live in the three shared <c>char[]</c> arrays this set is held to. Not taken.
+    /// </para>
+    /// <para>
+    /// <strong>AND THE CLASS HAS A SECOND HALF, WHICH BELONGS HERE BESIDE <c>error:/home/x</c>:
+    /// A SEPARATOR IMMEDIATELY AFTER THE ROOT.</strong> The paragraph above is about a character
+    /// this set OMITS, gluing prefix to path. This one is about a character it CONTAINS, sitting
+    /// one position INTO a rooted token. <c>/'etc/passwd</c> splits into a head of <c>/</c> — one
+    /// character, below <see cref="IsAbsoluteHostPath"/>'s two-character floor, so skipped — and a
+    /// tail that is no longer rooted, so the shape is relayed verbatim and the gate accepts it.
+    /// <c>C:'Users\x</c> is the Windows spelling: the head <c>C:</c> holds no path separator and so
+    /// is not a path either. MEASURED on this host, input back unchanged with
+    /// <c>HostPathDisclosure</c> ACCEPTING, for all seven non-ASCII members and for fifteen
+    /// incumbents — <c>' " = ` &lt; &gt; &amp; ; , ( ) [ ]</c>, space and tab. It is the same
+    /// open class as the paragraph above, reached from the other side, and it is pinned the same
+    /// way: <c>GitChangeSetTests.SubstituteAbsolutePaths_SeparatorAfterTheRoot_</c>
+    /// <c>IsADocumentedResidue</c> asserts the exact output for all twenty-two, so closing the
+    /// shape later is a moved expectation rather than a silent change.
+    /// </para>
+    /// <para>
+    /// <strong>IT IS PRE-EXISTING, AND A CLAIM THAT IT COULD NOT HAPPEN WAS WRONG.</strong> The
+    /// seven below were justified partly on the ground that widening a separator set can only make
+    /// the scan split MORE, so a previously-unrooted glued token can only become a refusal and
+    /// never the reverse. MEASURED, it goes both ways, and the seven moved it the wrong way for
+    /// this one shape: before they were added <c>/‘etc/passwd</c> was ONE token, rooted, and came
+    /// out <c>&lt;path&gt;</c> with the gate REFUSING; after, it is two tokens, comes out verbatim,
+    /// and the gate ACCEPTS. Seven instances joined a class fifteen incumbents already populated.
+    /// That is not a reason to remove them, and the reason is what bounds the cost: every shape a
+    /// tool actually emits wraps the path on BOTH sides — <c>‘/etc/gitconfig’</c> — where the
+    /// quote BEFORE the root is what makes the path its own token (measured: substituted, gate
+    /// REFUSING) and no separator follows the root at all. The residue needs a path whose first
+    /// component begins with a quotation mark. Every realistic shape improved; the monotonicity
+    /// claim was false and is struck.
     /// </para>
     /// <para>
     /// <strong>THE SEVEN CURLY QUOTES ARE THE BACKTICK ONE LOCALE LATER.</strong> U+2018/U+2019 is
@@ -622,10 +653,29 @@ internal sealed class GitChangeSet : IChangeSet
     /// were; what is MEASURED is what this scan did.) Measured before the addition:
     /// <c>cannot open ‘/etc/gitconfig’</c> came back verbatim — the whole path — and the
     /// disclosure gate ACCEPTED it, so neither half of the rule saw it. After: the path is
-    /// <c>&lt;path&gt;</c> and the quotes stand. The cost is the tail of a path whose own name
-    /// carries one, measured: <c>/opt/a‘b/c</c> becomes <c>&lt;path&gt;‘b/c</c> — the same trade
-    /// <c>'</c> already makes for <c>/home/john/don't/x</c>, which is a likelier directory name
-    /// than any of these seven.
+    /// <c>&lt;path&gt;</c> and the quotes stand. There are TWO costs, not one. The first is the
+    /// tail of a path whose own name carries a quote, measured: <c>/opt/a‘b/c</c> becomes
+    /// <c>&lt;path&gt;‘b/c</c> — the same trade <c>'</c> already makes for
+    /// <c>/home/john/don't/x</c>, which is a likelier directory name than any of these seven. The
+    /// second is the root-adjacent reversal two paragraphs up, which is the one this comment used
+    /// to deny could exist.
+    /// </para>
+    /// <para>
+    /// <strong>U+201A, U+2039 AND U+203A ARE A DECISION, NOT WHERE THE LIST RAN OUT.</strong> The
+    /// German single pair (<c>‚ ‘</c>) and the single guillemets (<c>‹ ›</c>) look like the same
+    /// pair-completion argument that put U+201E in, and all three leak: MEASURED,
+    /// <c>cannot open ‹/etc/gitconfig›</c> and the <c>key‚/home/john/x</c> glue shape both come
+    /// back verbatim with the gate ACCEPTING. They stay OUT because the bound on this list is a
+    /// NAMED EMITTER, not typographic symmetry. gnulib's <c>locale_quoting_style</c> takes its two
+    /// characters from the catalogue's translations of <c>`</c> and <c>'</c>; the German catalogue
+    /// gives the DOUBLE pair <c>„ “</c> and the French and Russian the double guillemets, which is
+    /// why those six are in. No catalogue in that family emits the single forms, and U+2018 is
+    /// here as gettext's UTF-8 closer rather than as a German single closer, so completing a pair
+    /// around it completes a pair nothing writes. Admitting characters on symmetry alone has no
+    /// stopping point — Unicode has dozens more quotation marks. They are documented residues with
+    /// rows of their own, by the same rule U+00A0 is held to below: recording the answer and
+    /// choosing to leave a character out are separate acts. (The emitter claim is INFERRED from
+    /// gnulib, as the seven's was; the leak is MEASURED.)
     /// </para>
     /// <para>
     /// <strong>U+00A0 IS NOT ONE OF THEM, AND IT IS A SEPARATE ANSWER RATHER THAN AN OVERSIGHT.
@@ -640,16 +690,36 @@ internal sealed class GitChangeSet : IChangeSet
     /// residue instead.
     /// </para>
     /// <para>
-    /// <strong>AND THE LOCALE INTERLOCK SHRINKS ALL OF THIS, WITHOUT CLOSING IT.</strong>
-    /// <see cref="GitEnvironmentAllowList"/> does not forward <c>LANG</c>/<c>LC_*</c> (#500), so
-    /// git and everything it spawns run in the C locale, where gettext falls back to ASCII
-    /// quoting — which is why the backtick shape is the one that actually arrives and the curly
-    /// ones mostly do not. That exclusion is pinned, not assumed:
+    /// <strong>AND THAT EXCLUSION CANCELS PART OF THE ADDITION MADE IN THE SAME COMMIT — the one
+    /// place in this set where two decisions work against each other, stated as the cost of
+    /// this one.</strong> U+00AB/U+00BB went in because gnulib's French catalogue emits
+    /// guillemets; French typography puts a no-break space INSIDE them, which is exactly the
+    /// character the paragraph above excludes. MEASURED: <c>«/etc/gitconfig»</c> and the
+    /// ordinary-space <c>« /etc/gitconfig »</c> are both substituted and REFUSED, while the same
+    /// pair spelled with U+00A0, or with the narrow no-break space U+202F, comes back verbatim and
+    /// is ACCEPTED. So the guillemets close the shape only in the spelling a French catalogue is
+    /// least likely to produce (that French sets a no-break space inside guillemets is INFERRED
+    /// from typographic convention; the four outcomes are MEASURED). This is NOT an argument to
+    /// add either space — the paragraph above stands for both, and either would cost a real path
+    /// its tail — but leaving it unsaid would let the guillemets read as closing more than they
+    /// do. U+202F is a documented residue with a row of its own for the same reason U+00A0 is.
+    /// </para>
+    /// <para>
+    /// <strong>AND THE LOCALE INTERLOCK PROBABLY SHRINKS ALL OF THIS — one link of it is pinned
+    /// and the next is not, so they are labelled separately.</strong> PINNED: the child git's
+    /// environment does not carry <c>LANG</c>/<c>LC_*</c> (#500).
     /// <c>GitChangeSetTests.ConfineEnvironment_KeepsTheAllowListAndTheGitPrefix_AndNothingElse</c>
-    /// puts <c>LANG</c> in its input and not in its expected output, on every lane. It does not
-    /// close the shape, which is why the seven are in the set anyway: the stderr relayed here
-    /// carries whatever a repository-chosen helper wrote, and a helper that hard-codes its quoting
-    /// never consults the locale at all.
+    /// puts <c>LANG</c> in its input and not in its expected output, on every lane, so that much is
+    /// a test failure away rather than an assumption. INFERRED, and NOT pinned by that row: that
+    /// git therefore runs in the C locale and gettext therefore falls back to ASCII quoting, which
+    /// is the step that would make the backtick shape the one that actually arrives and the curly
+    /// ones rare. Dropping the variable is not the same as selecting the locale — Git for Windows'
+    /// libintl can take its language from the OS user-default rather than from the environment
+    /// block at all, so on that platform the conclusion may simply not follow. No lane here
+    /// measures which quoting a real git emits. Either way it does not CLOSE the shape, which is
+    /// why the seven are in the set regardless: the stderr relayed here carries whatever a
+    /// repository-chosen helper wrote, and a helper that hard-codes its quoting never consults the
+    /// locale at all.
     /// </para>
     /// </remarks>
     private static readonly char[] TokenSeparators =

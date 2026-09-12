@@ -770,11 +770,13 @@ public sealed class GitChangeSetTests
     /// the corpus. Every OTHER character the corpus enumerates is substituted.
     /// </summary>
     /// <remarks>
-    /// Twenty: the nineteen ASCII ones, and U+00A0. Each is out of
+    /// Twenty-four: the nineteen ASCII ones, the two no-break spaces (U+00A0, U+202F), and the
+    /// three single-quote forms (U+201A, U+2039, U+203A). Each is out of
     /// <c>GitChangeSet.TokenSeparators</c> for a stated reason; see
     /// <see cref="SubstituteAbsolutePaths_PrefixGlue_IsSubstitutedOrDocumentedResidue"/>.
     /// </remarks>
-    private const string PrefixGlueResidue = "!#$%*+-./:?@\\^_{|}~\u00A0";
+    private const string PrefixGlueResidue =
+        "!#$%*+-./:?@\\^_{|}~\u00A0\u202F\u201A\u2039\u203A";
 
     /// <summary>
     /// Every non-alphanumeric ASCII character, plus the non-ASCII quoting and spacing characters
@@ -783,17 +785,27 @@ public sealed class GitChangeSetTests
     /// <returns>One row per character, the three control separators included.</returns>
     /// <remarks>
     /// <para>
-    /// <strong>THE ASCII SWEEP IS EXHAUSTIVE; THE NON-ASCII TAIL IS A NAMED LIST, and the
-    /// difference is the honest part.</strong> A sweep of every non-alphanumeric code point would
-    /// be a hundred thousand rows deciding nothing, so beyond ASCII the corpus enumerates the
-    /// characters a tool actually wraps a path in: gettext's UTF-8 pair, gnulib's localised German
-    /// and French pairs, and the no-break space. Anything else non-ASCII is outside the corpus and
-    /// therefore outside the claim — <c>GitChangeSet.TokenSeparators</c> says so in the same words.
+    /// <strong>THE ASCII SWEEP IS EXHAUSTIVE OVER PRINTABLE ASCII; THE NON-ASCII TAIL IS A NAMED
+    /// LIST, and both bounds are the honest part.</strong> The loop runs <c>' '</c> to <c>'~'</c>
+    /// and three control characters are hand-added, which is 36 of the 66 non-alphanumeric ASCII
+    /// code points — MEASURED by counting them, not by reading the loop. The thirty it leaves are
+    /// the other C0 controls and DEL; the gap is inert, since no relay glues a prefix to a path
+    /// with a control character — but this file's discipline is stating bounds exactly, and
+    /// "exhaustive over ASCII" overstated one. A sweep beyond ASCII would be a
+    /// hundred thousand rows deciding nothing, so there the corpus enumerates the characters a
+    /// tool actually wraps a path in: gettext's UTF-8 pair, gnulib's localised German and French
+    /// pairs, the two no-break spaces, and the three single-quote forms that look like they belong
+    /// and do not. Anything else non-ASCII is outside the corpus and therefore outside the claim —
+    /// <c>GitChangeSet.TokenSeparators</c> says so in the same words.
     /// </para>
     /// <para>
     /// U+00A0 earns a row while remaining a RESIDUE: recording the answer and choosing to leave a
     /// character out of the separator set are separate acts, and the row is what stops the second
-    /// from being mistaken for the first.
+    /// from being mistaken for the first. U+202F, U+201A, U+2039 and U+203A are here on that same
+    /// rule and for the same reason — each was CONSIDERED for the separator set and refused, so
+    /// each owes a recorded answer. <c>GitChangeSet.TokenSeparators</c> carries the two refusals:
+    /// the narrow no-break space is a space, excluded with U+00A0; the single quotes have no named
+    /// emitter, which is the bound on this list rather than typographic symmetry.
     /// </para>
     /// </remarks>
     public static TheoryData<char> PrefixGlueCorpus()
@@ -808,10 +820,16 @@ public sealed class GitChangeSetTests
             }
         }
 
-        // Named, not swept: see the remarks. Left single/right single (gettext, UTF-8 locale),
-        // left double/right double and the German low-9 opener, the two guillemets, and the
-        // no-break space — the one of the eight that stays a residue.
-        foreach (var glue in "\u2018\u2019\u201C\u201D\u201E\u00AB\u00BB\u00A0")
+        // Named, not swept: see the remarks. First the seven that ARE separators: left/right
+        // single (gettext, UTF-8 locale), left/right double and the German low-9 opener, and the
+        // two guillemets. Then the five that are RESIDUES and are here to record that: the two
+        // no-break spaces, and the three single-quote forms with no named emitter.
+        foreach (var glue in "\u2018\u2019\u201C\u201D\u201E\u00AB\u00BB")
+        {
+            corpus.Add(glue);
+        }
+
+        foreach (var glue in "\u00A0\u202F\u201A\u2039\u203A")
         {
             corpus.Add(glue);
         }
@@ -884,7 +902,22 @@ public sealed class GitChangeSetTests
     /// a real path losing its tail, which is the test the nineteen ASCII residues fail.
     /// <c>GitChangeSet.TokenSeparators</c> adds the second reason — being whitespace, it would
     /// also have to join <c>WhitespaceSeparators</c>, and the parity row polices that direction
-    /// only, so getting it wrong is silent.
+    /// only, so getting it wrong is silent. U+202F, the narrow no-break space, is a row and a
+    /// residue on exactly that reasoning and is here because the guillemets made it relevant: it
+    /// is the space French typography sets INSIDE <c>« »</c>, so a French-quoted path can defeat
+    /// the very pair that was added to catch it. <c>GitChangeSet.TokenSeparators</c> carries that
+    /// measurement as the stated cost of excluding a space.
+    /// </para>
+    /// <para>
+    /// <strong>U+201A, U+2039 AND U+203A ARE ROWS AND RESIDUES, and what they record is a REFUSAL
+    /// rather than an omission.</strong> The German single pair and the single guillemets look
+    /// like the pair-completion argument that put U+201E in the separator set, and they leak —
+    /// this row measures that. They stay out because the bound on the non-ASCII list is a NAMED
+    /// EMITTER: gnulib's localised quoting takes its characters from a catalogue's translation of
+    /// <c>`</c> and <c>'</c>, and those catalogues give the DOUBLE forms. Adding characters on
+    /// typographic symmetry alone has no stopping point. <c>GitChangeSet.TokenSeparators</c>
+    /// carries the argument; these three rows are what keep it a decision on the record instead of
+    /// the place a list happened to end.
     /// </para>
     /// <para>
     /// Beyond the corpus the class stays open: a sweep of every non-alphanumeric code point would
@@ -919,6 +952,80 @@ public sealed class GitChangeSetTests
         Assert.Equal(
             residue ? windows : $"key{glue}<path>",
             GitChangeSet.SubstituteAbsolutePaths(windows));
+    }
+
+    /// <summary>
+    /// A SEPARATOR sitting immediately after the root is a residue too — the other half of the
+    /// glue class, and the half a claim on this branch said could not exist.
+    /// </summary>
+    /// <param name="separator">A member of <c>GitChangeSet.TokenSeparators</c>.</param>
+    /// <remarks>
+    /// <para>
+    /// <strong>THE ROW ABOVE IS ABOUT A CHARACTER THE SET OMITS; THIS ONE IS ABOUT A CHARACTER IT
+    /// CONTAINS.</strong> <c>/'etc/passwd</c> splits at the separator into a head of <c>/</c> —
+    /// one character, below the two-character floor in <c>GitChangeSet.IsAbsoluteHostPath</c>, so
+    /// skipped — and a tail that is not rooted. Nothing is substituted and
+    /// <c>HostPathDisclosure</c> accepts the result, so both halves of the rule
+    /// miss it. The Windows spelling <c>C:'Users\x</c> fails for the neighbouring reason: the head
+    /// <c>C:</c> holds no path separator and so is not a path either.
+    /// </para>
+    /// <para>
+    /// <strong>IT IS PRE-EXISTING, AND THE POINT OF PINNING IT IS THE CLAIM IT FALSIFIES.</strong>
+    /// The seven non-ASCII separators were justified partly on the ground that a wider separator
+    /// set can only make the scan split MORE, so a glued token can only move from leak to refusal
+    /// and never back. This row is the counter-example: each of these characters became a
+    /// separator, and for THIS shape that turned a substituted path into a relayed one. The
+    /// incumbents carry rows here too, which is what makes the class pre-existing rather than
+    /// introduced — the seven added instances to it. <c>GitChangeSet.TokenSeparators</c> records
+    /// why they are kept anyway: a real emitter wraps a path on BOTH sides, and the separator
+    /// BEFORE the root is the one that does the work.
+    /// </para>
+    /// <para>
+    /// Asserted as EXACT output rather than "contains no placeholder", so closing this shape later
+    /// is a moved expectation rather than a silent change, exactly as the glue row is.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(RootAdjacentSeparators))]
+    public void SubstituteAbsolutePaths_SeparatorAfterTheRoot_IsADocumentedResidue(char separator)
+    {
+        var posix = $"/{separator}etc/passwd";
+        Assert.Equal(posix, GitChangeSet.SubstituteAbsolutePaths(posix));
+
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var windows = $@"C:{separator}Users\x";
+        Assert.Equal(windows, GitChangeSet.SubstituteAbsolutePaths(windows));
+    }
+
+    /// <summary>
+    /// The separators exercised by
+    /// <see cref="SubstituteAbsolutePaths_SeparatorAfterTheRoot_IsADocumentedResidue"/>.
+    /// </summary>
+    /// <returns>All seven non-ASCII members, and the fifteen incumbents that can glue.</returns>
+    /// <remarks>
+    /// Every member of <c>GitChangeSet.TokenSeparators</c> except <c>\r</c> and <c>\n</c>, which
+    /// would make the shape two lines rather than one token — a different question. The incumbent
+    /// rows are what show the class predates the seven rather than arriving with them.
+    /// </remarks>
+    public static TheoryData<char> RootAdjacentSeparators()
+    {
+        var separators = new TheoryData<char>();
+
+        foreach (var separator in "'\"= `<>&;,()[]\t")
+        {
+            separators.Add(separator);
+        }
+
+        foreach (var separator in "\u2018\u2019\u201C\u201D\u201E\u00AB\u00BB")
+        {
+            separators.Add(separator);
+        }
+
+        return separators;
     }
 
     /// <summary>
