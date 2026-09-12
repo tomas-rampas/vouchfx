@@ -1628,7 +1628,7 @@ Operators who need a variable outside this list can forward it as a `GIT_`-prefi
 
 **Git binary resolution.** The git executable is located by searching `PATH` **in order** and taking the first fully-qualified match. This differs from the default OS search:
 
-- On **Windows:** the search looks **only** for `git.exe`. Git shims installed as `.cmd` or `.bat` files are **refused** — they would otherwise enable command injection through argument parsing. If a shim is found on `PATH` but no `git.exe`, the selection fails with the error "A git executable was found on PATH, but the operating system refused to start it."
+- On **Windows:** the search looks **only** for `git.exe`. Git shims installed as `.cmd` or `.bat` files are skipped — they are not considered as candidates — because shims would otherwise enable command injection through argument parsing. If no `git.exe` is found on `PATH`, the selection fails with the error `Could not run git for <operation>. Is git installed and on PATH?`
 - On **POSIX:** the search looks for the bare name `git` with an executable bit set; symlinks are resolved.
 
 This resolution happens **once per change-set** and is cached across all three git invocations. The binary must exist and be executable by the current user at the moment of the selection; a file system race (the binary is replaced between resolution and execution) is treated as a launch failure.

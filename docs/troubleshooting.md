@@ -1431,7 +1431,7 @@ The CLI searched `PATH` but found no executable called `git` (or `git.exe` on Wi
    If this command fails, install git for your platform.
 
 2. **Add git to `PATH`:**
-   - **Windows:** Git for Windows installer typically adds `git.exe` to `PATH` automatically. If you installed git manually or to a custom location, add its `bin` directory to your `PATH`.
+   - **Windows:** Git for Windows installer typically adds `git.exe` to `PATH` automatically. If you installed git manually or to a custom location, add its `bin` directory to your `PATH`. **Note:** The selection looks only for `git.exe`, not `.cmd` or `.bat` shims. If your `PATH` contains only a git shim (e.g. from Chocolatey or another package manager), you must install the full Git for Windows package (which includes `git.exe`) or locate a real `git.exe` and add that directory to `PATH` *before* the shim directory.
    - **macOS:** If you installed git via Homebrew or Xcode, it is already on `PATH`. If installed manually, verify the installation directory is in `PATH`:
      ```bash
      which git
@@ -1459,7 +1459,6 @@ Could not start git for <operation>. A git executable was found on PATH, but the
 **What it means:**
 A file named `git.exe` (or `git` on POSIX) was found on `PATH`, but the operating system would not execute it. Common causes:
 
-- On **Windows:** A `git.cmd` or `git.bat` shim was found instead of `git.exe`. The selection refuses batch file shims to prevent command injection (an attacker-controlled `.bat` file on `PATH` could interpret arguments in unsafe ways).
 - **Broken symlink on POSIX:** The git executable is a symlink whose target is missing.
 - **Wrong architecture:** The executable was compiled for a different CPU architecture (32-bit vs 64-bit).
 - **Permissions:** The file lacks read and execute permissions for the current user.
@@ -1467,13 +1466,16 @@ A file named `git.exe` (or `git` on POSIX) was found on `PATH`, but the operatin
 
 **Fix:**
 
-1. **On Windows, ensure `git.exe` exists (not a `.bat` or `.cmd`):**
+1. **On Windows, identify which `git.exe` was resolved:**
    ```powershell
-   Get-Command git -CommandType Application | Select-Object Source
+   Get-Command git -CommandType Application | Where-Object { $_.Source -like '*.exe' } | Select-Object -First 1 Source
    ```
-   If this returns a `.bat` or `.cmd` file, you have a git shim. Either:
-   - Uninstall the shim and install the full Git for Windows package (which includes `git.exe`), or
-   - Locate the real `git.exe` elsewhere on your system and add that directory to `PATH` *before* the shim directory.
+   The selection uses the **first `git.exe` on `PATH`**, so that is the file the operating system
+   refused. Confirm it is a genuine executable of the right architecture, rather than a placeholder,
+   a partially written download, or a text file that happens to be named `git.exe`.
+
+   A `.cmd` or `.bat` shim is **not** this symptom. Shims are never candidates, so a host whose only
+   git is a shim reports Symptom 1 above, not this one.
 
 2. **On POSIX, verify the symlink resolves and the file is executable:**
    ```bash
