@@ -1285,6 +1285,12 @@ internal sealed class GitChangeSet : IChangeSet
             return -1;
         }
 
+        // SAFE BECAUSE THE COUPLE COUNT IS PINNED, AND IT IS PINNED IN ANOTHER FILE.
+        // An int gives 31 usable bits and QuoteSpanPairs declares six couples, so this
+        // shift cannot overflow today. What keeps that true is not the array's length but
+        // GitChangeSetTests.QuoteSpanPairs_AreSeparators_AndPairDirectedly, which asserts
+        // the exact couple list — so a thirty-third couple must edit that row first. This
+        // array has grown twice in two days; the reader deserves the reason here.
         var coupleBit = 1 << couple;
         if ((failedOpeners & coupleBit) != 0)
         {

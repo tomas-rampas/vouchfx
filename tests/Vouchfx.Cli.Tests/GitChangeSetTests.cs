@@ -1304,8 +1304,13 @@ public sealed class GitChangeSetTests
     /// openers), and fifty times below the 5,010 to 5,078 ms the quadratic scan takes at that
     /// length (measured, by reverting the memo against this row). The two clauses cover opposite
     /// hosts: the floor carries a fast one, the ratio carries a loaded one where both measurements
-    /// inflate together, and a quadratic scan breaches both. The revert produced 16.0x to 17.3x
-    /// against the 8x the ratio allows. Each measurement is the FASTEST of three attempts, because
+    /// inflate together, and a quadratic scan breaches both. THE DETECTION MARGIN IS THE
+    /// SMALLER NUMBER, NOT THE LOUDER ONE: reverting the memo makes the SMALLER measurement
+    /// quadratic too (around 355 ms at 16,033 characters), so the ceiling inflates with it to
+    /// roughly 2,840 ms while the larger is about 5,010 ms — the row still reds, but by some
+    /// 1.8x, not by the 16.0x to 17.3x the raw ratio against a healthy ceiling suggests.
+    /// 1.8x is adequate and it is the number that bounds the decision, so it is the one
+    /// stated. Each measurement is the FASTEST of three attempts, because
     /// a scheduling hiccup can only inflate a timing, so the minimum is the least noisy estimator
     /// available.
     /// </para>
