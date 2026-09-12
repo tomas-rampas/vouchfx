@@ -62,10 +62,16 @@ public static class HostPathDisclosure
     /// <c>=</c> is one so a rooted path behind a prefix — <c>cwd=/home/runner/work/x</c>, the
     /// shape a helper that echoes its environment prints — is a token of its own rather than one
     /// token beginning <c>c</c>, which <see cref="Path.IsPathRooted(string)"/> reads as relative
-    /// and this gate then waved through whole. <c>:</c> is deliberately NOT one: it would split
-    /// <c>C:\Users\x</c> at the drive colon. The residue that leaves — a path glued on by a colon
-    /// alone, <c>error:/home/x</c> — is stated at <c>GitChangeSet.TokenSeparators</c>, which
-    /// carries the reasoning for both sides.
+    /// and this gate then waved through whole. <c>`</c> is one for the same reason in a different
+    /// dialect: GNU tools quote as <c>`/abs/path'</c>, which was one token beginning <c>`</c>.
+    /// <c>:</c> is deliberately NOT one: it would split <c>C:\Users\x</c> at the drive colon.
+    /// </para>
+    /// <para>
+    /// What that leaves is a CLASS rather than a character — any glue this set omits makes prefix
+    /// and path one token, which <see cref="Path.IsPathRooted(string)"/> reads as relative — and
+    /// it is enumerated per character, with the reason each residue stays out, by
+    /// <c>GitChangeSetTests.SubstituteAbsolutePaths_PrefixGlue_IsSubstitutedOrDocumentedResidue</c>
+    /// and <c>GitChangeSet.TokenSeparators</c>, which carry the reasoning for both sides.
     /// </para>
     /// <para>
     /// These three arrays are ALSO <c>GitChangeSet</c>'s, and the equality is asserted rather than
@@ -74,7 +80,7 @@ public static class HostPathDisclosure
     /// </para>
     /// </remarks>
     private static readonly char[] s_tokenSeparators =
-        { ' ', '\t', '\r', '\n', '"', '\'', '<', '>', '&', ';', ',', '(', ')', '[', ']', '=' };
+        { ' ', '\t', '\r', '\n', '"', '\'', '<', '>', '&', ';', ',', '(', ')', '[', ']', '=', '`' };
 
     private static readonly char[] s_pathSeparators = { '\\', '/' };
 

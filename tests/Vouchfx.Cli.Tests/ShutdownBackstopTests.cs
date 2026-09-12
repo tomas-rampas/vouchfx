@@ -154,9 +154,13 @@ public sealed class ShutdownBackstopTests
     /// <para>
     /// <strong>Why not a behavioural row.</strong> Reaching the callback means a real stdin —
     /// <c>RunCommand.ExecuteCoreAsync</c> passes <c>Console.OpenStandardInput()</c>, which
-    /// <c>Console.SetIn</c> does not redirect — and even with one the failure is a thread race that
-    /// no deterministic test can force to occur. The property that IS deterministic is the
-    /// statement order in the source, so that is what is asserted.
+    /// <c>Console.SetIn</c> does not redirect. What no test can force is the RACE: a resumption
+    /// landing between the two statements. The ORDERING is a different property and is not
+    /// unobservable in principle — were that lambda an internal factory taking the source and the
+    /// backstop, a row could register a continuation on the token that asks "is the backstop
+    /// armed?" while <c>Cancel()</c> runs its registrations. That refactor is not made, so the
+    /// ordering is pinned HERE, by the statement order in the source, rather than by a behavioural
+    /// row.
     /// </para>
     /// <para>
     /// VACUITY FIRST: the single <c>StdinShutdownWatcher.Start</c> call site and both statements

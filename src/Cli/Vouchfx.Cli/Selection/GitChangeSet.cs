@@ -460,8 +460,17 @@ internal sealed class GitChangeSet : IChangeSet
             // arm is reached only AFTER the locator has returned a candidate, so "is git installed
             // and on PATH?" asks a question already answered yes — and sends the reader looking in
             // the one place that is not the problem. What failed is the START of a candidate that
-            // was found: it may be a directory, a broken symlink, a file with no execute bit, or
-            // one the current user may not run.
+            // was found, and IsExecutableFile has already excluded some of what a reader would
+            // guess: File.Exists is false for a directory on either platform, and on POSIX it
+            // resolves the symlink, so a broken one never reaches here — after which access(X_OK)
+            // has answered "this caller may run it" as well. On WINDOWS neither of those last two
+            // holds: File.Exists is TRUE for a symlink whose target is missing (measured, net8.0
+            // on this host), and the Windows arm asks no permission question at all. So the
+            // reachable causes are a file that is no loadable image for this machine (ENOEXEC, the
+            // wrong architecture, something merely NAMED git.exe), a broken symlink or an
+            // execute-denying ACL on Windows, the mode-bit fallback on a runtime with no libc.so
+            // accepting a file somebody ELSE may execute, and a candidate replaced between the
+            // resolution and the launch.
             throw new ChangeSetException(GitNotStartable(operation), ex);
         }
         catch (ProcessTimeoutException ex)
@@ -560,28 +569,58 @@ internal sealed class GitChangeSet : IChangeSet
     /// a helper that echoes its own environment prints exactly this <c>KEY=/path</c> form.
     /// </para>
     /// <para>
+    /// <strong><c>`</c> IS ONE, AND IT CLOSES A MEASURED WHOLE-PATH LEAK.</strong> GNU tooling of
+    /// the backtick-apostrophe quoting era — older <c>make</c>, an autoconf-generated
+    /// <c>configure</c>, older coreutils — writes <c>`/abs/path'</c>, and a <c>.git/hooks/*</c>
+    /// script that shells out to one puts that on the stderr relayed here. That quoting style is
+    /// inferred from those tools rather than measured on this host; what IS measured is what this
+    /// scan did with it. MEASURED before the addition: <c>cannot open `/etc/gitconfig'</c> came
+    /// back verbatim — the whole path — because the token began <c>`</c> and was therefore not
+    /// rooted. It costs the tail of a path whose own name carries a backtick: <c>/opt/a`b/c</c> is
+    /// <c>&lt;path&gt;`b/c</c>, measured — which is the same trade <c>=</c> makes, paid here for a
+    /// shape that occurs in real output.
+    /// </para>
+    /// <para>
     /// <strong><c>:</c> IS DELIBERATELY NOT ONE.</strong> It would split <c>C:\Users\x</c> at the
-    /// drive colon into <c>C</c> and <c>\Users\x</c>; the tail is rooted and would be substituted,
-    /// but the head survives and every Windows expectation here becomes <c>C:&lt;path&gt;</c>.
-    /// The residue that leaves is stated rather than implied: a rooted path glued to a prefix by a
-    /// colon ALONE — <c>error:/home/x</c> — is still one token and still escapes. Closing it needs
-    /// a rule that is not a separator character at all (a colon followed by a single path
-    /// separator, with a prefix longer than a drive letter), which cannot live in the shared
-    /// char-array parity this set is held to and would have to be hand-written into both sides.
-    /// Not taken: git writes a space after its own <c>error:</c>/<c>fatal:</c> prefixes, so the
-    /// shape conceded is narrower than the one <c>=</c> closes.
+    /// drive colon into <c>C</c> — one character, below the two-character floor, so skipped — and
+    /// <c>\Users\x</c>. MEASURED on Windows: every expectation here becomes <c>C:&lt;path&gt;</c>.
+    /// On POSIX <c>\Users\x</c> is not rooted at all and the whole path survives, which is worse
+    /// than the residue the exclusion concedes (inferred from
+    /// <see cref="Path.IsPathRooted(string)"/>'s documented Unix behaviour, not measured — no lane
+    /// here is POSIX).
+    /// </para>
+    /// <para>
+    /// <strong>THE RESIDUE IS A CLASS, AND IT IS NOW ENUMERATED RATHER THAN SAMPLED.</strong> Any
+    /// character this set does not contain glues a rooted path to a prefix into ONE token, which
+    /// <see cref="Path.IsPathRooted(string)"/> reads as relative. <c>error:/home/x</c> is the
+    /// instance that matters, because <c>:</c> is git's own prefix punctuation — but
+    /// <c>user@/home/x</c> and <c>ref#/home/x</c> survive identically, and naming one character as
+    /// though the list were complete is how this comment read while four review rounds each found
+    /// a different one. The answer for EVERY non-alphanumeric ASCII character is recorded by
+    /// <c>GitChangeSetTests.SubstituteAbsolutePaths_PrefixGlue_IsSubstitutedOrDocumentedResidue</c>
+    /// — that row asserts the exact output per character and carries the reason for each of the
+    /// nineteen residues. In short: <c>/</c> and <c>\</c> ARE the path separators; <c>:</c> is the
+    /// paragraph above; <c>- . _ ~ + $ % # @ ^ { } !</c> occur inside real paths, where making one
+    /// a separator leaves the tail standing (measured); <c>| ? *</c> are illegal in a Windows
+    /// filename but legal in a POSIX one and close no shape anyone has named. Closing the class
+    /// outright needs a rule that is not a separator character at all — scan for a path separator
+    /// and ask whether the run from there is rooted behind a non-alphanumeric predecessor — which
+    /// cannot live in the three shared <c>char[]</c> arrays this set is held to. Not taken.
     /// </para>
     /// </remarks>
     private static readonly char[] TokenSeparators =
-        { ' ', '\t', '\r', '\n', '"', '\'', '<', '>', '&', ';', ',', '(', ')', '[', ']', '=' };
+        { ' ', '\t', '\r', '\n', '"', '\'', '<', '>', '&', ';', ',', '(', ')', '[', ']', '=', '`' };
 
     /// <summary>
     /// The separators <see cref="IsOnePathWholly"/> alone splits on — the whitespace members of
     /// <see cref="TokenSeparators"/>, and deliberately nothing else.
     /// </summary>
     /// <remarks>
-    /// Not a second copy of the shared rule set and not gated against it: the parity row polices
-    /// the three arrays the scan and the disclosure gate share, and this one belongs to neither.
+    /// Not a second copy of the shared rule set: the parity row polices by EQUALITY the three
+    /// arrays the scan and the disclosure gate share, and this one belongs to neither. It is held
+    /// to that row as a SUBSET of <see cref="TokenSeparators"/> and nothing more — a whitespace
+    /// character added there and not here would make the one-path test stop splitting where the
+    /// scan does, which leaks nothing and decides wrongly in silence.
     /// <see cref="IsOnePathWholly"/> carries the measurement that says why it is narrower.
     /// </remarks>
     private static readonly char[] WhitespaceSeparators = { ' ', '\t', '\r', '\n' };

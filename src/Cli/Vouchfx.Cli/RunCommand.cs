@@ -1202,14 +1202,22 @@ internal static class RunCommand
                   // silently never armed — leaving a provider or a teardown that ignores
                   // cancellation to outlive it, which is the one thing the backstop exists for.
                   //
-                  // Arming first costs nothing and cannot mis-fire: a run that then completes
-                  // gracefully disposes the backstop, cancelling the timer before it can elapse
-                  // (that disposal is what the declaration-order note above guarantees). It also
-                  // starts the budget at the instant EOF was OBSERVED, which is where the flag's
-                  // documented teardown budget is measured from. And it survives a `Cancel()`
-                  // that throws: the watcher swallows a callback fault by design
-                  // (StdinShutdownWatcher.InvokeCallbackSafely), so with the arm second an
-                  // already-disposed source would take the backstop down with it, unseen.
+                  // Arming first cannot mis-fire: a run that then completes gracefully disposes
+                  // the backstop, cancelling the timer before it can elapse (that disposal is what
+                  // the declaration-order note above guarantees). What it does cost is the
+                  // duration of `Cancel()`'s synchronous registrations, spent out of
+                  // TeardownBudgetSeconds rather than added to it — and that sign is the right one,
+                  // because the flag documents the budget as seconds of EOF (see the
+                  // shutdownOnStdinEof parameter), which is the instant this arm starts it from.
+                  //
+                  // It also survives a `Cancel()` that throws, and the reachable shape is a
+                  // registration on the linked token faulting — `Cancel()` then raises
+                  // AggregateException — while the backstop is still alive: with the arm second
+                  // the watcher swallows that fault by design
+                  // (StdinShutdownWatcher.InvokeCallbackSafely) and the backstop is never armed at
+                  // all, unseen. NOT the already-disposed source this used to cite: disposal runs
+                  // watcher, backstop, source, so a source disposed enough to throw implies a
+                  // backstop disposed before it, where `Arm()` no-ops in EITHER order.
                   shutdownBackstop!.Arm();
                   linkedShutdownSource!.Cancel();
               })

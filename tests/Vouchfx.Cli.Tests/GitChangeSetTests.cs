@@ -684,10 +684,27 @@ public sealed class GitChangeSetTests
 
         // The residue `=` does NOT close, pinned rather than described: a colon alone still glues
         // a rooted path to its prefix, because `:` cannot join the separator set without
-        // splitting `C:\Users\x` at the drive colon. See GitChangeSet.TokenSeparators.
+        // splitting `C:\Users\x` at the drive colon. See GitChangeSet.TokenSeparators. This is the
+        // git-flavoured instance; the drive-letter spelling, and the same question asked of every
+        // other non-alphanumeric ASCII character, belong to the corpus theory below rather than to
+        // a row of their own here.
         Assert.Equal(
             "error:/home/john/x",
             GitChangeSet.SubstituteAbsolutePaths("error:/home/john/x"));
+
+        // The backtick-apostrophe quoting older GNU tooling uses, which leaked a WHOLE path until
+        // the backtick joined the separator set: a hook that shells out to such a tool puts that
+        // shape on the stderr relayed here, and the token began with the backtick, so it was not
+        // rooted. POSIX-shaped, so this row is asserted on every lane.
+        Assert.Equal(
+            "cannot open `<path>'",
+            GitChangeSet.SubstituteAbsolutePaths("cannot open `/etc/gitconfig'"));
+
+        // What that costs, pinned so it is a moved expectation rather than a surprise: a path
+        // whose own name carries a backtick now loses only its head.
+        Assert.Equal(
+            "<path>`b/c",
+            GitChangeSet.SubstituteAbsolutePaths("/opt/a`b/c"));
 
         if (!OperatingSystem.IsWindows())
         {
@@ -729,6 +746,111 @@ public sealed class GitChangeSetTests
     }
 
     /// <summary>
+    /// The characters that glue a prefix to a rooted path and survive it — the residue class,
+    /// enumerated. Every OTHER non-alphanumeric ASCII character is substituted.
+    /// </summary>
+    /// <remarks>
+    /// Nineteen, and each is out of <c>GitChangeSet.TokenSeparators</c> for a stated reason; see
+    /// <see cref="SubstituteAbsolutePaths_PrefixGlue_IsSubstitutedOrDocumentedResidue"/>.
+    /// </remarks>
+    private const string PrefixGlueResidue = "!#$%*+-./:?@\\^_{|}~";
+
+    /// <summary>
+    /// Every non-alphanumeric ASCII character, as the glue in <c>key&lt;glue&gt;/home/john/x</c>.
+    /// </summary>
+    /// <returns>One row per character, the three control separators included.</returns>
+    public static TheoryData<char> PrefixGlueCorpus()
+    {
+        var corpus = new TheoryData<char> { '\t', '\r', '\n' };
+
+        for (var c = ' '; c <= '~'; c++)
+        {
+            if (!char.IsAsciiLetterOrDigit(c))
+            {
+                corpus.Add(c);
+            }
+        }
+
+        return corpus;
+    }
+
+    /// <summary>
+    /// A prefix glued to a rooted path by any one character is either substituted, or the exact
+    /// input back and that character is in <see cref="PrefixGlueResidue"/>.
+    /// </summary>
+    /// <param name="glue">The character between the prefix and the path.</param>
+    /// <remarks>
+    /// <para>
+    /// <strong>THE RESIDUE IS A CLASS, AND THIS ROW IS THE ENUMERATION OF IT.</strong> Any
+    /// character <c>GitChangeSet.TokenSeparators</c> does not contain makes prefix and path ONE
+    /// token, which <see cref="System.IO.Path.IsPathRooted(string)"/> reads as relative, so the
+    /// path is relayed whole. <c>error:/home/x</c> was named as though it were the instance; it is
+    /// not — <c>user@/home/x</c> and <c>ref#/home/x</c> survive identically, and four review rounds
+    /// each found a character nobody had thought of. Asserting the EXACT output per character is
+    /// what converts "we thought of <c>=</c>" into "there is a recorded answer for each", and makes
+    /// a character joining or leaving the separator set a moved expectation rather than a
+    /// discovery.
+    /// </para>
+    /// <para>
+    /// Alphanumerics are excluded by construction rather than overlooked: <c>keya/home/john/x</c>
+    /// is a word, and nothing in the shape distinguishes it from a prefix glued to a path.
+    /// </para>
+    /// <para>
+    /// <strong>WHY EACH OF THE NINETEEN STAYS OUT.</strong> <c>/</c> and <c>\</c> ARE the path
+    /// separators, so a separator there splits every path into fragments. <c>:</c> is the drive
+    /// colon, measured at <c>GitChangeSet.TokenSeparators</c>. The rest were MEASURED by adding
+    /// them and re-running this corpus, and each leaves the TAIL of a real path standing:
+    /// <c>@</c> turns <c>/etc/systemd/system/getty@tty1.service</c> into
+    /// <c>&lt;path&gt;@tty1.service</c>; <c>~</c> turns <c>C:\Users\John\a~1\c</c>, the 8.3
+    /// short-name shape, into <c>&lt;path&gt;~1\c</c>; <c>.</c> turns
+    /// <c>C:\Users\John\.git\config</c> into <c>&lt;path&gt;.git\config</c>; <c>-</c>, <c>_</c>,
+    /// <c>+</c>, <c>%</c>, <c>$</c>, <c>!</c> and <c>^</c> do the same to
+    /// <c>/home/john-smith/x</c>, <c>/home/john_smith/x</c>, <c>/opt/a+b/c</c>,
+    /// <c>/opt/a%20b/c</c>, <c>/opt/a$b/c</c>, <c>/opt/a!b/c</c> and <c>/opt/a^b/c</c>; <c>#</c>
+    /// strands an interior component instead, <c>/tmp/#autosave#/x</c> becoming
+    /// <c>&lt;path&gt;#autosave#&lt;path&gt;</c>. With <c>$ { }</c> in the set
+    /// <c>${GIT_DIR}/objects</c> — which names no
+    /// host path at all — becomes <c>${GIT_DIR}&lt;path&gt;</c>, an over-reach onto prose.
+    /// <c>| ? *</c> cannot occur in a Windows filename at all, which is what separates them from
+    /// the rest; they ARE legal in a POSIX one, so adding them could only weaken the POSIX side,
+    /// and no relayed shape glues a path with one.
+    /// </para>
+    /// <para>
+    /// <c>`</c> is the one character this round ADDED, against exactly that test: the
+    /// backtick-apostrophe quoting older GNU tooling uses relayed a whole path, and it is a shape
+    /// a hook that shells out to such a tool produces. The rows above pin both the gain and the
+    /// cost, and <c>GitChangeSet.TokenSeparators</c> carries what is measured and what is not.
+    /// </para>
+    /// <para>
+    /// The drive-letter spelling is asserted on Windows only, for the reason the row above gives —
+    /// <see cref="System.IO.Path.IsPathRooted(string)"/> reads a drive letter there alone — and it
+    /// SUBSUMES the Windows spelling of the <c>error:</c> residue rather than adding a duplicate
+    /// row for it.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(PrefixGlueCorpus))]
+    public void SubstituteAbsolutePaths_PrefixGlue_IsSubstitutedOrDocumentedResidue(char glue)
+    {
+        var residue = PrefixGlueResidue.Contains(glue);
+
+        var posix = $"key{glue}/home/john/x";
+        Assert.Equal(
+            residue ? posix : $"key{glue}<path>",
+            GitChangeSet.SubstituteAbsolutePaths(posix));
+
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var windows = $@"key{glue}C:\Users\John\x";
+        Assert.Equal(
+            residue ? windows : $"key{glue}<path>",
+            GitChangeSet.SubstituteAbsolutePaths(windows));
+    }
+
+    /// <summary>
     /// The substitution's token rules and the shared gate's are the SAME three arrays, asserted
     /// structurally rather than by a comment asking the next editor to change both.
     /// </summary>
@@ -746,6 +868,14 @@ public sealed class GitChangeSetTests
     /// Compared ORDER-INSENSITIVELY: both are membership tests
     /// (<see cref="System.Array.IndexOf{T}(T[], T)"/>, <c>string.Split</c>,
     /// <c>TrimEnd</c>), so a reordering changes no decision and must not redden this row.
+    /// </para>
+    /// <para>
+    /// <strong>And a FOURTH array rides along, which the three pairs do not cover.</strong>
+    /// <c>GitChangeSet.WhitespaceSeparators</c> is <c>IsOnePathWholly</c>'s alone and is
+    /// deliberately narrower, but it is hand-written and must stay a SUBSET: add a whitespace
+    /// character to <c>TokenSeparators</c> and not to it, and the one-path test stops splitting
+    /// where the scan does. Neither direction leaks, but the decision goes wrong silently, which
+    /// is exactly the failure mode this row exists for.
     /// </para>
     /// </remarks>
     [Fact]
@@ -765,6 +895,10 @@ public sealed class GitChangeSetTests
 
             Assert.Equal(theirs.OrderBy(c => c), mine.OrderBy(c => c));
         }
+
+        Assert.Empty(
+            CharSet(typeof(GitChangeSet), "WhitespaceSeparators")
+                .Except(CharSet(typeof(GitChangeSet), "TokenSeparators")));
     }
 
     /// <summary>
