@@ -1029,6 +1029,260 @@ public sealed class GitChangeSetTests
     }
 
     /// <summary>
+    /// A host directory no row below names, so <see cref="GateAccepts"/> exercises the gate's
+    /// rooted-token clause alone.
+    /// </summary>
+    /// <remarks>
+    /// <c>HostPathDisclosure.AssertNoAbsoluteHostPath</c> refuses on three checks, two of which
+    /// need a host directory known in advance. The rows here are about the THIRD — the generic
+    /// scan — so the directory handed to it must be one the text cannot contain.
+    /// </remarks>
+    private const string NoSuchHostDirectory = "/no/such/host/directory";
+
+    /// <summary>
+    /// The shared disclosure gate's verdict on one string, as a value rather than as a throw.
+    /// </summary>
+    /// <param name="text">The relayed text, before or after substitution.</param>
+    /// <returns><see langword="true"/> when the gate sees no absolute host path.</returns>
+    /// <remarks>
+    /// The rows below assert what the gate DECIDES, not merely that it is satisfied: a residue
+    /// whose whole point is that the gate cannot see it needs the ACCEPT pinned, which a bare
+    /// call could only express as "does not throw" at the site of a passing assertion.
+    /// </remarks>
+    private static bool GateAccepts(string text)
+    {
+        try
+        {
+            HostPathDisclosure.AssertNoAbsoluteHostPath(
+                "the quotation-pair probe", text, NoSuchHostDirectory);
+            return true;
+        }
+        catch (InvalidOperationException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Every quotation pair, with whether it OPENS a span — the row that separates "is a token
+    /// separator" from "delimits a span", which the seven non-ASCII members arrived conflating.
+    /// </summary>
+    /// <returns>The six pairs that open, and three separator couples that do not.</returns>
+    /// <remarks>
+    /// <para>
+    /// U+201C appears TWICE on purpose: as the opener of the English double pair, and as the
+    /// CLOSER of the German one U+201E opens (gnulib's German catalogue quotes <c>„…“</c>). Both
+    /// roles are exercised, so a map that made the character mean one thing only would redden.
+    /// </para>
+    /// <para>
+    /// The three <see langword="false"/> rows are REFUSALS with a recorded answer, by the same
+    /// rule U+00A0 and the single quotes are held to: <c>»…«</c> is the reversed-guillemet style
+    /// no gnulib catalogue emits, and <c>’…‘</c> / <c>”…“</c> are the closers of real pairs used
+    /// backwards. Each is a separator, so each still splits a path from its prefix; none opens a
+    /// span, so each keeps the with-space tail. Recording the answer and choosing to leave a
+    /// pairing out are separate acts.
+    /// </para>
+    /// </remarks>
+    public static TheoryData<char, char, bool> QuotationPairs() => new()
+    {
+        { '\'', '\'', true },
+        { '"', '"', true },
+        { '\u2018', '\u2019', true },
+        { '\u201C', '\u201D', true },
+        { '\u201E', '\u201C', true },
+        { '\u00AB', '\u00BB', true },
+        { '\u00BB', '\u00AB', false },
+        { '\u2019', '\u2018', false },
+        { '\u201D', '\u201C', false },
+    };
+
+    /// <summary>
+    /// A quoted path CONTAINING A SPACE is one token for every pair that opens a span, and keeps
+    /// its tail for every couple that does not.
+    /// </summary>
+    /// <param name="open">The opening character.</param>
+    /// <param name="close">The closing character.</param>
+    /// <param name="opensASpan">Whether it is a <c>GitChangeSet.QuoteSpanPairs</c> entry.</param>
+    /// <remarks>
+    /// <para>
+    /// <strong>THE WITH-SPACE CASE IS THE ONE THE QUOTE-AWARENESS EXISTS FOR, AND IT WAS THE HALF
+    /// THE SEVEN NON-ASCII SEPARATORS LEFT OPEN.</strong> MEASURED before
+    /// <c>GitChangeSet.QuoteSpanPairs</c>: <c>cannot open ‘/home/john smith/x’</c> came back as
+    /// <c>cannot open ‘&lt;path&gt; smith/x’</c> — the space ended the token, the remainder is not
+    /// rooted, and the gate ACCEPTED it. All four pairs behaved identically, in the POSIX and the
+    /// drive-letter spelling alike. A path with a space is precisely the Windows default
+    /// (<c>C:\Users\John Smith</c>, <c>C:\Program Files\Git</c>), so the harder half was also the
+    /// likelier one.
+    /// </para>
+    /// <para>
+    /// <strong>THE NO-SPACE ROW CATCHES A WIDENING, not a case that was ever broken.</strong>
+    /// Both characters of every row are <c>GitChangeSet.TokenSeparators</c> members, so the path
+    /// was already a token of its own and was already substituted. It is asserted for all nine
+    /// rows so that a change to the span rules that silently moved an existing answer reddens here
+    /// rather than passing as "the new rows are green".
+    /// </para>
+    /// <para>
+    /// <strong>THE GATE'S VERDICT IS ASSERTED ON BOTH SIDES, and the INPUT half is the load-bearing
+    /// one.</strong> The gate refuses every input here — <c>/home/john</c> is a rooted token
+    /// however the message is quoted — so the relay is the only thing between git's stderr and a
+    /// printed message. On the OUTPUT side the gate accepts the residue exactly as it accepts the
+    /// substituted form, which is the fact that made this class invisible to the assertion that
+    /// polices it: the residue's tail is not rooted, so nothing sees it but a row like this one.
+    /// </para>
+    /// <para>
+    /// The drive-letter spelling is behind the Windows gate for the reason every other row here is
+    /// — <see cref="System.IO.Path.IsPathRooted(string)"/> reads <c>C:</c> on Windows alone — and
+    /// the <c>/home/john smith/x</c> shape carries a real space on every lane, so the mechanism is
+    /// discriminated in CI rather than only on a maintainer's host.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(QuotationPairs))]
+    public void QuotedPathWithASpace_IsOneToken_PerPair(char open, char close, bool opensASpan)
+    {
+        // Unchanged by the span rules: both characters separate, so the path is its own token.
+        Assert.Equal(
+            $"cannot open {open}<path>{close}",
+            GitChangeSet.SubstituteAbsolutePaths($"cannot open {open}/etc/gitconfig{close}"));
+
+        var posix = $"cannot open {open}/home/john smith/x{close}";
+        Assert.False(GateAccepts(posix));
+        Assert.Equal(
+            opensASpan
+                ? $"cannot open {open}<path>{close}"
+                : $"cannot open {open}<path> smith/x{close}",
+            GitChangeSet.SubstituteAbsolutePaths(posix));
+        Assert.True(GateAccepts(GitChangeSet.SubstituteAbsolutePaths(posix)));
+
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var windows = $@"cannot open {open}C:\Users\John Smith\x{close}";
+        Assert.False(GateAccepts(windows));
+        Assert.Equal(
+            opensASpan
+                ? $"cannot open {open}<path>{close}"
+                : $@"cannot open {open}<path> Smith\x{close}",
+            GitChangeSet.SubstituteAbsolutePaths(windows));
+    }
+
+    /// <summary>
+    /// A quoted span PADDED with spaces is not one path, so the with-space tail survives it — a
+    /// residue the span rules do not close, in the ASCII spelling as much as the non-ASCII one.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>IT IS PRE-EXISTING, AND THE ASCII ROW IS WHAT SAYS SO.</strong> The span handed to
+    /// <c>IsOnePathWholly</c> begins with a space, which is not a path separator, so
+    /// <see cref="System.IO.Path.IsPathRooted(string)"/> is <see langword="false"/> for it and the
+    /// span is re-scanned token by token — where the space inside the path splits it exactly as an
+    /// unquoted one would. MEASURED identically before and after the pairs became span delimiters,
+    /// and for <c>' … '</c> as for <c>« … »</c>: the padding, not the pair, is what defeats it.
+    /// </para>
+    /// <para>
+    /// <strong>IT IS WHERE THE FRENCH SPACING LANDS, which is the one place the guillemets were
+    /// always weakest.</strong> French typography sets a space inside <c>« »</c>. In its no-break
+    /// spellings that space is not a separator at all and the whole path is relayed (the U+00A0
+    /// row below); in its ORDINARY-space spelling the path is a token again, and this row is what
+    /// the with-space case then costs. Closing it would mean trimming a span before the one-path
+    /// test, which widens what the placeholder swallows on every pair including <c>'</c>; not
+    /// taken, and recorded here instead so that taking it later is a moved expectation.
+    /// </para>
+    /// <para>
+    /// The last two rows are the counter-examples that keep this one honest: an ordinary space
+    /// inside the guillemets still closes a path that has none of its own, and the U+00A0 spelling
+    /// is relayed whole — the cost of excluding a no-break space from the separator set, and
+    /// unchanged by the span rules, since a span that is not one path is re-scanned under exactly
+    /// the separator set it was scanned under before.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void SubstituteAbsolutePaths_APaddedQuotedSpan_IsADocumentedResidue()
+    {
+        const string Guillemets = "cannot open \u00AB /home/john smith/x \u00BB";
+        Assert.Equal(
+            "cannot open \u00AB <path> smith/x \u00BB",
+            GitChangeSet.SubstituteAbsolutePaths(Guillemets));
+        Assert.True(GateAccepts(GitChangeSet.SubstituteAbsolutePaths(Guillemets)));
+
+        const string Ascii = "cannot open ' /home/john smith/x '";
+        Assert.Equal(
+            "cannot open ' <path> smith/x '",
+            GitChangeSet.SubstituteAbsolutePaths(Ascii));
+
+        // An ordinary space inside the pair still closes a path that carries none of its own.
+        Assert.Equal(
+            "cannot open \u00AB <path> \u00BB",
+            GitChangeSet.SubstituteAbsolutePaths("cannot open \u00AB /etc/gitconfig \u00BB"));
+
+        // The no-break spelling is relayed whole, and the gate does not see it either. This is
+        // the stated cost of keeping U+00A0 out of the separator set, not a span-rule effect.
+        const string NoBreak = "cannot open \u00AB\u00A0/etc/gitconfig\u00A0\u00BB";
+        Assert.Equal(NoBreak, GitChangeSet.SubstituteAbsolutePaths(NoBreak));
+        Assert.True(GateAccepts(NoBreak));
+    }
+
+    /// <summary>
+    /// The pair map is exactly the six couples it claims, every character of it is a token
+    /// separator, and no character opens twice.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>THE SEPARATOR INVARIANT IS THE ONE WITH TEETH.</strong> An opener that is not a
+    /// <c>GitChangeSet.TokenSeparators</c> member would never be reached — the scan consults the
+    /// pair map only at a separator — and a CLOSER that is not one would end a span whose closing
+    /// character then glues itself to whatever follows. Both are silent, so the array is held to
+    /// the separator set structurally rather than by review.
+    /// </para>
+    /// <para>
+    /// The exact-content assertion is what makes ADDING a pair a decision: <c>»…«</c> and the
+    /// reversed single pairs all look like they belong, and each is refused at
+    /// <c>GitChangeSet.QuoteSpanPairs</c> on the named-emitter bound. A widening that skipped that
+    /// argument reddens here.
+    /// </para>
+    /// <para>
+    /// Openers must be DISTINCT because <c>CloserFor</c> takes the first match, so a duplicate key
+    /// would make the second couple dead code that reads as live. Closers deliberately are not:
+    /// U+201C closes the German pair and opens the English one, and the row asserts that dual role
+    /// rather than tolerating it.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void QuoteSpanPairs_AreSeparators_AndPairDirectedly()
+    {
+        var pairs = CharSet(typeof(GitChangeSet), "QuoteSpanPairs");
+        var separators = CharSet(typeof(GitChangeSet), "TokenSeparators");
+
+        Assert.Equal(0, pairs.Length % 2);
+        Assert.Empty(pairs.Except(separators));
+
+        var couples = Enumerable
+            .Range(0, pairs.Length / 2)
+            .Select(i => (Open: pairs[(i * 2)], Close: pairs[(i * 2) + 1]))
+            .ToList();
+
+        Assert.Equal(
+            new[]
+            {
+                ('\'', '\''),
+                ('"', '"'),
+                ('\u2018', '\u2019'),
+                ('\u201C', '\u201D'),
+                ('\u201E', '\u201C'),
+                ('\u00AB', '\u00BB'),
+            },
+            couples);
+
+        Assert.Equal(couples.Count, couples.Select(c => c.Open).Distinct().Count());
+
+        // U+201C in both roles, asserted rather than left to the list above to imply.
+        Assert.Contains(couples, c => c.Open == '\u201C');
+        Assert.Contains(couples, c => c.Close == '\u201C');
+    }
+
+    /// <summary>
     /// The substitution's token rules and the shared gate's are the SAME three arrays, asserted
     /// structurally rather than by a comment asking the next editor to change both.
     /// </summary>

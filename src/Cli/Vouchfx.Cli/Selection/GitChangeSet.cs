@@ -653,7 +653,16 @@ internal sealed class GitChangeSet : IChangeSet
     /// were; what is MEASURED is what this scan did.) Measured before the addition:
     /// <c>cannot open ‘/etc/gitconfig’</c> came back verbatim — the whole path — and the
     /// disclosure gate ACCEPTED it, so neither half of the rule saw it. After: the path is
-    /// <c>&lt;path&gt;</c> and the quotes stand. There are TWO costs, not one. The first is the
+    /// <c>&lt;path&gt;</c> and the quotes stand.
+    /// </para>
+    /// <para>
+    /// <strong>AND THAT CLOSED THE NO-SPACE SHAPE ONLY.</strong> Membership here ends a TOKEN; it
+    /// does not delimit a SPAN, and those are two different jobs. So the same seven characters left
+    /// <c>cannot open ‘/home/john smith/x’</c> coming back as
+    /// <c>cannot open ‘&lt;path&gt; smith/x’</c> — the harder half, and the likelier one.
+    /// <see cref="QuoteSpanPairs"/> is where that was closed, and the reason it is a SECOND array
+    /// rather than a widening of this one: a span needs an opener's own closer, which a membership
+    /// test cannot express. There are TWO costs, not one. The first is the
     /// tail of a path whose own name carries a quote, measured: <c>/opt/a‘b/c</c> becomes
     /// <c>&lt;path&gt;‘b/c</c> — the same trade <c>'</c> already makes for
     /// <c>/home/john/don't/x</c>, which is a likelier directory name than any of these seven. The
@@ -703,6 +712,17 @@ internal sealed class GitChangeSet : IChangeSet
     /// add either space — the paragraph above stands for both, and either would cost a real path
     /// its tail — but leaving it unsaid would let the guillemets read as closing more than they
     /// do. U+202F is a documented residue with a row of its own for the same reason U+00A0 is.
+    /// </para>
+    /// <para>
+    /// <strong>AND MAKING THE GUILLEMETS A SPAN PAIR MOVED NONE OF THOSE FOUR OUTCOMES.</strong>
+    /// RE-MEASURED after <see cref="QuoteSpanPairs"/>: all four answer exactly as above. The
+    /// mechanism is that <see cref="AppendQuotedSpan"/> re-scans a span that is not one path under
+    /// THIS set, so a span padded with a no-break space is tokenised precisely as it was before —
+    /// which is also why the ORDINARY-space French spelling keeps its with-space residue
+    /// (<c>« /home/john smith/x »</c> still loses only its rooted head, pinned by
+    /// <c>GitChangeSetTests.SubstituteAbsolutePaths_APaddedQuotedSpan_IsADocumentedResidue</c>).
+    /// What the pair DID close is the unpadded spelling <c>«/home/john smith/x»</c>. The
+    /// interlock above is narrowed by that and not removed.
     /// </para>
     /// <para>
     /// <strong>AND THE LOCALE INTERLOCK PROBABLY SHRINKS ALL OF THIS — one link of it is pinned
@@ -800,8 +820,9 @@ internal sealed class GitChangeSet : IChangeSet
     /// </para>
     /// <para>
     /// <strong>The TOKENISATION is this method's own, and is stricter than the gate's in one
-    /// case.</strong> A span opened by <c>'</c> or <c>"</c> is taken whole, up to the matching close
-    /// on the same line, WHEN the span is one path by <see cref="IsOnePathWholly"/> — so a quoted
+    /// case.</strong> A span opened by any <see cref="QuoteSpanPairs"/> opener is taken whole, to
+    /// that opener's closer on the same line, WHEN the span is one path by
+    /// <see cref="IsOnePathWholly"/> — so a quoted
     /// path CONTAINING SPACES is one token here and several in the gate. That is the common Windows
     /// shape rather than an exotic one (below), and the gate catching the pieces anyway — through
     /// (a), or through whichever piece is still rooted — is why the divergence costs nothing. A
@@ -816,7 +837,9 @@ internal sealed class GitChangeSet : IChangeSet
     /// residue, and a relayed message this file does not own may not quote. A QUOTED path with a
     /// space leaves the same residue whenever its span is prose rather than one path (<c>'cannot
     /// run hook pre-commit in /home/john smith/hooks'</c>), since the fallback scan splits on the
-    /// space exactly as the unquoted case does. It is also platform-relative:
+    /// space exactly as the unquoted case does. So does a span merely PADDED with spaces — a
+    /// leading space is no path separator, so <c>« /home/john smith/x »</c> is not one path either,
+    /// measured and pinned as a residue row of its own. It is also platform-relative:
     /// <see cref="Path.IsPathRooted(string)"/> reads a drive letter only on Windows, so a
     /// Windows-shaped path would survive on a POSIX host. That costs nothing in practice, since the
     /// text being scrubbed was produced by a child of THIS process on THIS host.
@@ -850,19 +873,22 @@ internal sealed class GitChangeSet : IChangeSet
     /// <para>
     /// A quote opens a span only at the start of the text or after a
     /// <see cref="TokenSeparators"/> member, which is what keeps an apostrophe inside a word
-    /// (<c>couldn't</c>) from pairing with the quote that opens the path later on the same line. An
-    /// unmatched quote, and one mid-word, are emitted as ordinary separators — never allowed to
-    /// swallow the remainder — and the search for a close is bounded to the line, so an apostrophe
-    /// cannot reach across a multi-line stderr. Mispairing degrades to the pre-quote behaviour
-    /// (the head substituted, the tail standing); it never widens what is substituted.
+    /// (<c>couldn't</c>) from pairing with the quote that opens the path later on the same line.
+    /// The guard is KEPT for the non-ASCII pairs unchanged, and it buys the same thing there: it is
+    /// what leaves <c>/opt/a‘b/c</c> and <c>key‘/home/john/x</c> deciding exactly as they
+    /// did, since neither opener follows a separator. An unmatched quote, and one mid-word, are
+    /// emitted as ordinary separators — never allowed to swallow the remainder — and the search for
+    /// a close is bounded to the line, so an apostrophe cannot reach across a multi-line stderr.
+    /// Mispairing degrades to the pre-quote behaviour (the head substituted, the tail standing); it
+    /// never widens what is substituted.
     /// </para>
     /// <para>
-    /// It stays LINEAR. Each close-quote search scans forward only and stops at the line end, and a
-    /// search that finds nothing proves the rest of that line holds no further quote of the same
-    /// character — so at most two failed scans per line, each bounded by that line. The re-scan of
-    /// a span that is not one path adds a bounded constant rather than a recursion to reason about:
-    /// a span holds no further instance of its own opening quote, so it can nest at most one level
-    /// deeper before no quote is left to open a span at all (<see cref="AppendQuotedSpan"/>).
+    /// It stays LINEAR. Each closer search scans forward only and stops at the line end, and a
+    /// search that finds nothing proves the rest of that line holds no closer for THAT opener — so
+    /// at most one failed scan per opener per line, six in all, each bounded by that line. The
+    /// re-scan of a span that is not one path adds a bounded constant rather than a recursion to
+    /// reason about: a span holds no closer for its own opener, so each of the six can open at most
+    /// once down a chain (<see cref="AppendQuotedSpan"/>).
     /// </para>
     /// <para>
     /// One over-reach is accepted knowingly: on Windows a ref spelt <c>/weird</c> is rooted, so a
@@ -888,7 +914,8 @@ internal sealed class GitChangeSet : IChangeSet
     /// <remarks>
     /// Separate from <see cref="SubstituteAbsolutePaths"/> because a quoted span that is NOT one
     /// path is re-scanned by this same method; see <see cref="AppendQuotedSpan"/> for why, and for
-    /// why the nesting that implies is bounded at two.
+    /// why the nesting that implies is bounded at the number of openers
+    /// <see cref="QuoteSpanPairs"/> declares.
     /// </remarks>
     private static void AppendSubstituted(StringBuilder builder, string text)
     {
@@ -900,9 +927,10 @@ internal sealed class GitChangeSet : IChangeSet
                 // A quote is a separator that can also OPEN a span — see the remarks for why a
                 // quoted path with spaces has to be one token. `index` is the opener's own
                 // position, so `index == 0 || previous is a separator` is the "not mid-word" test.
-                var close = text[index] is '\'' or '"'
-                    && (index == 0 || Array.IndexOf(TokenSeparators, text[index - 1]) >= 0)
-                    ? MatchingQuoteOnThisLine(text, index)
+                // WHETHER this character opens at all is the pair map's question, asked inside
+                // MatchingCloserOnThisLine: a character with no closer is an ordinary separator.
+                var close = index == 0 || Array.IndexOf(TokenSeparators, text[index - 1]) >= 0
+                    ? MatchingCloserOnThisLine(text, index)
                     : -1;
 
                 builder.Append(text[index]);
@@ -958,11 +986,13 @@ internal sealed class GitChangeSet : IChangeSet
     /// separator set for that test is whitespace ALONE rather than the scan's own.
     /// </para>
     /// <para>
-    /// THE RECURSION IS BOUNDED AT TWO, and by the tokenisation rather than by a counter.
-    /// <see cref="MatchingQuoteOnThisLine"/> returns the FIRST close, so a span opened by
-    /// <c>'</c> contains no further <c>'</c> — only a <c>"</c> can open inside it, and that
-    /// nested span then contains neither quote character. So the third scan opens no span at all,
-    /// and each scan runs over a strictly shorter string than its caller's.
+    /// THE RECURSION IS BOUNDED AT SIX, and by the tokenisation rather than by a counter.
+    /// <see cref="MatchingCloserOnThisLine"/> returns the FIRST closer FOR THAT OPENER, so a span
+    /// opened by <c>X</c> contains no closer for <c>X</c> — and neither does any span nested
+    /// inside it, being a substring. So <c>X</c> opens at most ONCE down any chain, and the depth
+    /// is the number of openers <see cref="QuoteSpanPairs"/> declares. It was two while <c>'</c>
+    /// and <c>"</c> were the only pair; the argument is unchanged and the constant is not.
+    /// Each scan still runs over a strictly shorter string than its caller's.
     /// </para>
     /// </remarks>
     private static void AppendQuotedSpan(StringBuilder builder, string span)
@@ -1060,22 +1090,129 @@ internal sealed class GitChangeSet : IChangeSet
     }
 
     /// <summary>
-    /// Finds the closing quote that matches the one at <paramref name="opening"/>, searching no
+    /// The quotation pairs that OPEN a span, flattened as opener/closer couples.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>OPENING A SPAN AND SEPARATING A TOKEN ARE TWO DIFFERENT JOBS, and the seven
+    /// non-ASCII members of <see cref="TokenSeparators"/> arrived doing only the second.</strong>
+    /// MEASURED before this array existed: <c>cannot open ‘/home/john smith/x’</c> came back as
+    /// <c>cannot open ‘&lt;path&gt; smith/x’</c> — the space ended the token, <c>smith/x</c> is not
+    /// rooted, and <c>HostPathDisclosure</c> ACCEPTED the result. The no-space spelling was already
+    /// closed; the WITH-SPACE one, which is the case the whole quote-awareness exists for
+    /// (<c>C:\Users\John Smith</c>, <c>C:\Program Files\Git</c>), was not. All four pairs leaked
+    /// identically, in both the POSIX and the drive-letter spelling.
+    /// </para>
+    /// <para>
+    /// <strong>DIRECTED PAIRS, THE STRUCTURAL DIFFERENCE FROM <c>'</c> AND <c>"</c>.</strong>
+    /// The ASCII quotes are self-matching, so "the same character again" was the whole rule. U+2018
+    /// closes with U+2019, so the rule is "the closer FOR THIS opener" and the mapping has to be
+    /// written down. It lives in one array rather than in a <c>switch</c> so the invariant every
+    /// member must satisfy — being a <see cref="TokenSeparators"/> member — is assertable by
+    /// reflection rather than by review;
+    /// <c>GitChangeSetTests.QuoteSpanPairs_AreSeparators_AndPairDirectedly</c> is that row.
+    /// </para>
+    /// <para>
+    /// <strong>U+201C IS BOTH AN OPENER AND A CLOSER, DELIBERATELY.</strong> It opens the English
+    /// double pair (closing U+201D) and CLOSES the German one that U+201E opens — gnulib's German
+    /// catalogue quotes <c>„…“</c>. Nothing mis-matches, because a span is taken from its opener to
+    /// the FIRST closer for THAT opener: inside a <c>„</c> span the terminating <c>“</c> is taken
+    /// as the close and never gets to open an English one. Both roles are measured, by the two rows
+    /// <c>GitChangeSetTests.QuotedPathWithASpace_IsOneToken_PerPair</c> carries for U+201C.
+    /// </para>
+    /// <para>
+    /// <strong>THE CLOSERS ARE NOT OPENERS, AND THAT IS WORTH MORE HERE THAN SYMMETRY WOULD
+    /// BE.</strong> U+2019 is also the typographic apostrophe (<c>don’t</c>), so making it open
+    /// would hand the ASCII <c>couldn't</c> problem to a character for which the "not mid-word"
+    /// guard is the only defence. Directedness removes the question instead.
+    /// </para>
+    /// <para>
+    /// <strong>U+00BB DOES NOT OPEN, AND THAT IS A REFUSAL WITH A ROW.</strong> German house styles
+    /// reverse the guillemets (<c>»…«</c>), so the pair looks like it belongs here. It stays out on
+    /// the bound this file already holds the separator set to — a NAMED EMITTER — and no gnulib
+    /// catalogue quotes that way: the German one gives <c>„ “</c> and the French and Russian ones
+    /// give <c>« »</c>. It is the same refusal U+201A, U+2039 and U+203A are held to one level up.
+    /// The cost is MEASURED and pinned as a residue row of
+    /// <c>GitChangeSetTests.QuotedPathWithASpace_IsOneToken_PerPair</c>: <c>»/home/j smith/x«</c>
+    /// keeps its tail, exactly as it did before.
+    /// </para>
+    /// </remarks>
+    private static readonly char[] QuoteSpanPairs =
+    {
+        '\'', '\'',
+        '"', '"',
+
+        // Spelled as escapes for the reason TokenSeparators is: U+2018 and U+0027 are a pixel
+        // apart. Read in couples — opener, then the closer that ends its span.
+        '\u2018', '\u2019',
+        '\u201C', '\u201D',
+        '\u201E', '\u201C',
+        '\u00AB', '\u00BB',
+    };
+
+    /// <summary>
+    /// The closer for <paramref name="opener"/>, or <see cref="NotAnOpener"/> when the character
+    /// opens no span.
+    /// </summary>
+    /// <param name="opener">The candidate opening character.</param>
+    /// <returns>The closing character, or <see cref="NotAnOpener"/>.</returns>
+    private static char CloserFor(char opener)
+    {
+        for (var i = 0; i < QuoteSpanPairs.Length; i += 2)
+        {
+            if (QuoteSpanPairs[i] == opener)
+            {
+                return QuoteSpanPairs[i + 1];
+            }
+        }
+
+        return NotAnOpener;
+    }
+
+    /// <summary>
+    /// The <see cref="CloserFor"/> answer for a character that opens nothing.
+    /// </summary>
+    /// <remarks>
+    /// A NUL in relayed text is therefore treated as an ordinary separator-or-token character,
+    /// which is what it was before this map existed.
+    /// </remarks>
+    private const char NotAnOpener = '\0';
+
+    /// <summary>
+    /// Finds the closer that matches the opener at <paramref name="opening"/>, searching no
     /// further than the end of that line.
     /// </summary>
     /// <param name="text">The text being scanned.</param>
-    /// <param name="opening">The index of the opening quote character.</param>
-    /// <returns>The index of the close, or <c>-1</c> when the line holds none.</returns>
+    /// <param name="opening">The index of the candidate opening character.</param>
+    /// <returns>
+    /// The index of the close, or <c>-1</c> when the character opens no span or the line holds no
+    /// closer for it.
+    /// </returns>
     /// <remarks>
+    /// <para>
+    /// ONE method rather than an ASCII one and a non-ASCII sibling. Everything a sibling would
+    /// duplicate is shared — the first-match rule the recursion bound rests on, and the
+    /// line-bounding below — and the ONLY difference between the two cases is which character
+    /// closes, which is exactly what <see cref="CloserFor"/> returns. A sibling would be two
+    /// copies of the loop held equal by prose, which is the arrangement this file has already
+    /// watched diverge once.
+    /// </para>
+    /// <para>
     /// Bounded to the line so an apostrophe on one line of a multi-line stderr cannot pair with the
     /// quote that opens a path on the next one and hide it from the substitution.
+    /// </para>
     /// </remarks>
-    private static int MatchingQuoteOnThisLine(string text, int opening)
+    private static int MatchingCloserOnThisLine(string text, int opening)
     {
-        var quote = text[opening];
+        var closer = CloserFor(text[opening]);
+        if (closer == NotAnOpener)
+        {
+            return -1;
+        }
+
         for (var i = opening + 1; i < text.Length; i++)
         {
-            if (text[i] == quote)
+            if (text[i] == closer)
             {
                 return i;
             }
