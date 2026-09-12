@@ -238,6 +238,8 @@ internal sealed class GitChangeSet : IChangeSet
             gitEnvironment,
             $"diff for ref '{changedSinceRef}'",
             cancellationToken,
+            // See the status call below for why every call carries this.
+            "--no-optional-locks",
             "diff", "--name-only", "--end-of-options", $"{changedSinceRef}...HEAD");
         AddPaths(changed, repoRoot, diff.StandardOutput, status: false);
 
@@ -247,19 +249,39 @@ internal sealed class GitChangeSet : IChangeSet
         // Unquote step below still handles the remaining `\"`/`\\` escapes for paths whose
         // names contain a quote or backslash.)
         //
-        // `--no-optional-locks` IS HERE BECAUSE STATUS WRITES, AND ONLY THIS CALL DOES. `git status`
-        // opportunistically refreshes the index and persists the result to `.git/index` under
-        // `index.lock`, so a concurrent git in the same working tree — an editor's background fetch,
-        // a second test process — makes this call exit 128. That refuses the whole change-set for a
-        // reason unrelated to the suite, and the diagnostic then blames the confined environment
-        // this file built. The flag tells git to take no lock it does not strictly need; what it
-        // costs is not persisting the refreshed stat cache, which nothing here reads.
+        // `--no-optional-locks` IS ABOUT WHAT VOUCHFX TAKES, NOT ABOUT WHAT IT SURVIVES, and this
+        // is the canonical statement of it — the other two call sites point here.
+        //
+        // WHAT AN EARLIER DRAFT CLAIMED, AND WHY IT IS RETRACTED. It said `git status` takes
+        // `.git/index.lock` to persist its opportunistic index refresh, so a concurrent git in the
+        // same working tree made THIS call exit 128 and refused the whole change-set. git has no
+        // such failure mode: `cmd_status` takes the index lock through `repo_hold_locked_index`
+        // WITHOUT `LOCK_DIE_ON_ERROR`, so a lock it cannot get is silently skipped along with the
+        // refresh. MEASURED by review on this host (git 2.54.0.windows.1) with an `index.lock`
+        // planted in a temp repository: plain `status --porcelain` still answered `?? b.txt` at
+        // exit 0, with and without a stat-dirty tracked file, and identically with the flag. The
+        // retraction is recorded rather than quietly deleted, the same way this branch handles the
+        // `0311`->`0611` correction: a rationale that names a failure mode the tool does not have
+        // is how a later reader deletes the flag as useless.
+        //
+        // THE REAL REASON IS THE DIRECTION GIT'S OWN DOCUMENTATION GIVES. `GIT_OPTIONAL_LOCKS` is
+        // documented for a caller that "does not want to cause lock contention with other
+        // operations on the repository" — the aggressor is US. A `--changed-since` run is a
+        // read-only query about which scenarios to execute; it has no business taking a lock in an
+        // operator's working tree, however briefly, and the refreshed stat cache it declines to
+        // persist is something nothing here reads. Same conclusion, opposite direction, and only
+        // this one survives contact with git.
+        //
+        // SO IT GOES ON ALL THREE CALLS. Under "take no lock we do not need" the flag costs nothing
+        // anywhere, and the previous scoping rested on an INFERENCE that `rev-parse
+        // --show-toplevel` and a two-commit diff take no index lock — unmeasured, and load-bearing
+        // only while the rationale was about surviving a lock rather than declining one. Applying
+        // it uniformly deletes the inference instead of labelling it.
         //
         // IT IS A GIT-LEVEL OPTION AND MUST PRECEDE THE SUBCOMMAND. Spelt after `status` it is
-        // parsed as a status option and refused. `rev-parse --show-toplevel` and the `<ref>...HEAD`
-        // diff compare two commits and take no index lock, so neither carries it. (That scoping is
-        // INFERRED from git's documented behaviour; what is MEASURED is that the flag leaves this
-        // call's output unchanged — see GitChangeSetTests' parity row.)
+        // parsed as a status option and refused. What is MEASURED here is that a real git accepts
+        // it in that position and answers the SAME porcelain status with it as without it — see
+        // GitChangeSetTests' parity row.
         var status = RunGit(
             gitExecutable,
             processRunner,
@@ -325,6 +347,8 @@ internal sealed class GitChangeSet : IChangeSet
             environment,
             "repository-root lookup",
             cancellationToken,
+            // See the constructor's status call for why every call carries this.
+            "--no-optional-locks",
             "rev-parse", "--show-toplevel");
 
         var root = result.StandardOutput.Trim();
@@ -527,7 +551,10 @@ internal sealed class GitChangeSet : IChangeSet
     /// contains a path separator, and is <see cref="Path.IsPathRooted(string)"/>. Those are exactly
     /// the conditions <c>Vouchfx.TestSupport.HostPathDisclosure</c>'s rooted-token scan refuses on,
     /// in the same order — it spells them as a negated early exit rather than a conjunction, so the
-    /// two read differently and decide identically. If either predicate is edited, edit both.
+    /// two read differently and decide identically. The three rule arrays behind them are held
+    /// equal STRUCTURALLY rather than by this sentence, by
+    /// <c>GitChangeSetTests.SubstitutionTokenRules_AreTheSharedDisclosureGates</c>; a request to
+    /// "edit both" is the arrangement under which the gate's own two former copies diverged.
     /// </para>
     /// <para>
     /// <strong>THE GATE IS STRICTER OVERALL, AND THAT ASYMMETRY IS DELIBERATE.</strong> This used to
@@ -543,20 +570,32 @@ internal sealed class GitChangeSet : IChangeSet
     /// <para>
     /// <strong>The TOKENISATION is this method's own, and is stricter than the gate's in one
     /// case.</strong> A span opened by <c>'</c> or <c>"</c> is taken whole, up to the matching close
-    /// on the same line, so a quoted path CONTAINING SPACES is one token here and several in the
-    /// gate. That is the common Windows shape rather than an exotic one (below), and the gate
-    /// catching the pieces anyway — through (a), or through whichever piece is still rooted — is why
-    /// the divergence costs nothing.
+    /// on the same line, WHEN the span is one path by <see cref="IsOnePathWholly"/> — so a quoted
+    /// path CONTAINING SPACES is one token here and several in the gate. That is the common Windows
+    /// shape rather than an exotic one (below), and the gate catching the pieces anyway — through
+    /// (a), or through whichever piece is still rooted — is why the divergence costs nothing. A
+    /// span that is NOT one path is re-scanned token by token rather than emitted, which is the
+    /// only reason this tokenisation is never WEAKER than the plain scan.
     /// </para>
     /// <para>
     /// <strong>WHAT IT STILL DOES NOT CATCH, stated rather than implied.</strong> An UNQUOTED path
     /// containing a space is split: <c>C:\Program Files\Git\x</c> loses <c>C:\Program</c> to the
     /// placeholder and leaves <c>Files\Git\x</c> standing, because the remainder is not rooted. git
     /// quotes the paths it names, so this is the narrower residue it looks like — but it is a
-    /// residue, and a relayed message this file does not own may not quote. It is also
-    /// platform-relative: <see cref="Path.IsPathRooted(string)"/> reads a drive letter only on
-    /// Windows, so a Windows-shaped path would survive on a POSIX host. That costs nothing in
-    /// practice, since the text being scrubbed was produced by a child of THIS process on THIS host.
+    /// residue, and a relayed message this file does not own may not quote. A QUOTED path with a
+    /// space leaves the same residue whenever its span is prose rather than one path (<c>'cannot
+    /// run hook pre-commit in /home/john smith/hooks'</c>), since the fallback scan splits on the
+    /// space exactly as the unquoted case does. It is also platform-relative:
+    /// <see cref="Path.IsPathRooted(string)"/> reads a drive letter only on Windows, so a
+    /// Windows-shaped path would survive on a POSIX host. That costs nothing in practice, since the
+    /// text being scrubbed was produced by a child of THIS process on THIS host.
+    /// </para>
+    /// <para>
+    /// <strong>WHAT IT NO LONGER OVER-REACHES ON, for the same reason.</strong> A span that BEGINS
+    /// rooted and continues in prose is rooted as a whole, so the first quote-aware draft replaced
+    /// <c>'/etc/gitconfig is unreadable, and /tmp/x too'</c> with a bare <c>&lt;path&gt;</c> —
+    /// wider than any residue, since it deleted a sentence the operator needed. The second rooted
+    /// token is what refuses the whole-span treatment there; see <see cref="IsOnePathWholly"/>.
     /// </para>
     /// <para>
     /// <strong>WHY THE QUOTED SPAN IS ONE TOKEN — the default Windows shape, not an edge
@@ -580,7 +619,10 @@ internal sealed class GitChangeSet : IChangeSet
     /// <para>
     /// It stays LINEAR. Each close-quote search scans forward only and stops at the line end, and a
     /// search that finds nothing proves the rest of that line holds no further quote of the same
-    /// character — so at most two failed scans per line, each bounded by that line.
+    /// character — so at most two failed scans per line, each bounded by that line. The re-scan of
+    /// a span that is not one path adds a bounded constant rather than a recursion to reason about:
+    /// a span holds no further instance of its own opening quote, so it can nest at most one level
+    /// deeper before no quote is left to open a span at all (<see cref="AppendQuotedSpan"/>).
     /// </para>
     /// <para>
     /// One over-reach is accepted knowingly: on Windows a ref spelt <c>/weird</c> is rooted, so a
@@ -594,6 +636,22 @@ internal sealed class GitChangeSet : IChangeSet
         ArgumentNullException.ThrowIfNull(text);
 
         var builder = new StringBuilder(text.Length);
+        AppendSubstituted(builder, text);
+        return builder.ToString();
+    }
+
+    /// <summary>
+    /// Scans one stretch of text, appending each token substituted or verbatim.
+    /// </summary>
+    /// <param name="builder">The output under construction.</param>
+    /// <param name="text">The stretch to scan — the whole relay, or one quoted span of it.</param>
+    /// <remarks>
+    /// Separate from <see cref="SubstituteAbsolutePaths"/> because a quoted span that is NOT one
+    /// path is re-scanned by this same method; see <see cref="AppendQuotedSpan"/> for why, and for
+    /// why the nesting that implies is bounded at two.
+    /// </remarks>
+    private static void AppendSubstituted(StringBuilder builder, string text)
+    {
         var index = 0;
         while (index < text.Length)
         {
@@ -615,8 +673,7 @@ internal sealed class GitChangeSet : IChangeSet
                     continue;
                 }
 
-                // The span between the quotes, taken whole however many separators it contains.
-                AppendToken(builder, text[index..close]);
+                AppendQuotedSpan(builder, text[index..close]);
                 builder.Append(text[close]);
                 index = close + 1;
                 continue;
@@ -631,8 +688,83 @@ internal sealed class GitChangeSet : IChangeSet
             AppendToken(builder, text[index..end]);
             index = end;
         }
+    }
 
-        return builder.ToString();
+    /// <summary>
+    /// Appends the text between a pair of quotes: whole when it is ONE path, re-scanned when it
+    /// is not.
+    /// </summary>
+    /// <param name="builder">The output under construction.</param>
+    /// <param name="span">The span, quotes excluded.</param>
+    /// <remarks>
+    /// <para>
+    /// <strong>THE FALLBACK IS THE POINT.</strong> Taking every span whole made a quoted sentence
+    /// that merely CONTAINS a path — <c>error: cannot run hook 'pre-commit in /home/john
+    /// smith/repo/hooks'</c> — emit the path verbatim, because the span as a whole is not rooted
+    /// and so failed the predicate with no second chance. That is strictly worse than the
+    /// per-token scan the quote-awareness replaced, which at least substituted the rooted head.
+    /// Re-scanning the span is what restores it.
+    /// </para>
+    /// <para>
+    /// <strong>AND THE WHOLE-SPAN CASE IS NARROWER THAN "STARTS ROOTED".</strong> A span that
+    /// BEGINS with a path and continues in prose — <c>'/etc/gitconfig is unreadable, and /tmp/x
+    /// too'</c> — IS <see cref="Path.IsPathRooted(string)"/>, so taking it whole replaced the
+    /// sentence with <c>&lt;path&gt;</c> and swallowed the second path's existence along with the
+    /// words. A SECOND rooted token inside the span is the signal that the span is a sentence
+    /// naming paths rather than one path containing spaces: no genuine path holds a rooted token
+    /// after its first.
+    /// </para>
+    /// <para>
+    /// THE RECURSION IS BOUNDED AT TWO, and by the tokenisation rather than by a counter.
+    /// <see cref="MatchingQuoteOnThisLine"/> returns the FIRST close, so a span opened by
+    /// <c>'</c> contains no further <c>'</c> — only a <c>"</c> can open inside it, and that
+    /// nested span then contains neither quote character. So the third scan opens no span at all,
+    /// and each scan runs over a strictly shorter string than its caller's.
+    /// </para>
+    /// </remarks>
+    private static void AppendQuotedSpan(StringBuilder builder, string span)
+    {
+        if (IsOnePathWholly(span))
+        {
+            AppendToken(builder, span);
+            return;
+        }
+
+        AppendSubstituted(builder, span);
+    }
+
+    /// <summary>
+    /// Whether a quoted span is ONE absolute host path rather than prose that names one.
+    /// </summary>
+    /// <param name="span">The span, quotes excluded.</param>
+    /// <returns><see langword="true"/> when the span may be substituted whole.</returns>
+    /// <remarks>
+    /// Two conditions, and the second is what keeps the whole-span treatment off a sentence: the
+    /// span is itself an absolute host path, AND no token after its first is one. The first
+    /// condition alone accepts <c>/etc/gitconfig is unreadable, and /tmp/x too</c>; the second
+    /// rejects it. <c>C:\Users\John Smith\src\repo</c> — the shape the quote-awareness exists for
+    /// — splits into <c>C:\Users\John</c> and <c>Smith\src\repo</c>, only the first of which is
+    /// rooted, so it is unaffected.
+    /// </remarks>
+    private static bool IsOnePathWholly(string span)
+    {
+        if (!IsAbsoluteHostPath(span.TrimEnd(TrailingPunctuation)))
+        {
+            return false;
+        }
+
+        var first = true;
+        foreach (var token in span.Split(TokenSeparators, StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (!first && IsAbsoluteHostPath(token.TrimEnd(TrailingPunctuation)))
+            {
+                return false;
+            }
+
+            first = false;
+        }
+
+        return true;
     }
 
     /// <summary>

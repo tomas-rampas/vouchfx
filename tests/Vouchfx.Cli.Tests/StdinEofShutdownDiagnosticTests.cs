@@ -218,6 +218,14 @@ public sealed class StdinEofShutdownDiagnosticTests : IDisposable
     /// and every integer-asserting row still green. Drop the THROW and #502 is fully back.
     /// </para>
     /// <para>
+    /// <strong>POLARITY AND ARGUMENTS ARE PINNED, because merely NAMING the method is not the
+    /// property.</strong> Two mutations satisfied an earlier "some invocation named
+    /// <c>IsStdinEofShutdown</c> appears in the filter" and disabled #502 with all eight rows and
+    /// this census green: negating the call, and passing <c>runCancellationToken</c> as its second
+    /// argument (in scope, compiles, and on an EOF stop it IS the linked source — so the method
+    /// returns false forever). Both are asserted against below.
+    /// </para>
+    /// <para>
     /// VACUITY FIRST: the expected count is asserted before anything is concluded from it, so a
     /// rename cannot leave this guard matching nothing and passing for free.
     /// </para>
@@ -261,12 +269,27 @@ public sealed class StdinEofShutdownDiagnosticTests : IDisposable
         var filter = enclosingCatch.Filter;
 
         Assert.NotNull(filter);
-        Assert.Contains(
-            filter!.FilterExpression.DescendantNodesAndSelf().OfType<InvocationExpressionSyntax>(),
-            i => i.Expression is IdentifierNameSyntax
-            {
-                Identifier.ValueText: "IsStdinEofShutdown",
-            });
+
+        // The filter expression IS the call, not merely one node somewhere inside it. A
+        // `Contains` over the descendants is satisfied by `!IsStdinEofShutdown(...)`, which
+        // inverts the classification and restores #502 with every row still green.
+        var classification = Assert.IsType<InvocationExpressionSyntax>(filter!.FilterExpression);
+
+        Assert.Equal(
+            "IsStdinEofShutdown",
+            (classification.Expression as IdentifierNameSyntax)?.Identifier.ValueText);
+
+        var arguments = classification.ArgumentList.Arguments;
+
+        Assert.Equal(2, arguments.Count);
+
+        // The USER's token, by name. `runCancellationToken` is in scope at that frame and
+        // compiles here — and on an EOF stop it IS the linked source, so the method's
+        // `!userCancellationToken.IsCancellationRequested` clause would be false forever, the
+        // marker would never be raised, and the engine-defect wording would return silently.
+        Assert.Equal(
+            "cancellationToken",
+            (arguments[1].Expression as IdentifierNameSyntax)?.Identifier.ValueText);
     }
 
     /// <summary>

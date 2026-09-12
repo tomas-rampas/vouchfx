@@ -1207,10 +1207,12 @@ internal static class RunCommand
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Split out of <see cref="ExecuteCoreAsync"/> for ONE reason, and the body below is otherwise
-    /// unchanged: the stdin-EOF translation needs a <c>try</c> around the whole pipeline, and the
-    /// alternative — wrapping it in place — would have re-indented ~400 lines and hidden the
-    /// change inside them.
+    /// Split out of <see cref="ExecuteCoreAsync"/> for ONE reason: the stdin-EOF translation needs
+    /// a <c>try</c> around the whole pipeline, and the alternative — wrapping it in place — would
+    /// have re-indented ~400 lines and hidden the change inside them. The body moved verbatim
+    /// except for ONE line, and it is named here because this paragraph is what tells a reviewer
+    /// they may read the extraction as a move: the <c>ChangeSetException</c> arm now writes
+    /// <c>DisplaySanitiser.SanitiseForDisplay(ex.Message)</c> rather than <c>ex.Message</c>.
     /// </para>
     /// <para>
     /// Every parameter is <see cref="ExecuteCoreAsync"/>'s own, forwarded verbatim, with one

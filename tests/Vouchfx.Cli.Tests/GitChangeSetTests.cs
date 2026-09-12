@@ -174,9 +174,13 @@ public sealed class GitChangeSetTests
         var runner = Runner(diffOutput: "a.e2e.yaml\n");
         _ = NewChangeSet("release/1.2", runner);
 
-        var diffCall = Assert.Single(runner.Calls, c => c.Args.Count > 0 && c.Args[0] == "diff");
+        var diffCall = Assert.Single(runner.Calls, c => c.Args.Contains("diff"));
         Assert.Equal(
-            new[] { "diff", "--name-only", "--end-of-options", "release/1.2...HEAD" },
+            new[]
+            {
+                "--no-optional-locks",
+                "diff", "--name-only", "--end-of-options", "release/1.2...HEAD",
+            },
             diffCall.Args);
     }
 
@@ -194,9 +198,11 @@ public sealed class GitChangeSetTests
     /// what pins the ordering — a <c>Contains</c> would pass against the broken spelling.
     /// </para>
     /// <para>
-    /// What the flag is FOR is a concurrency hazard rather than an argument:
-    /// <c>RealGit_NoOptionalLocks_ChangesNoStatusOutput</c> is the row that measures a real git
-    /// accepting it in this position and answering identically with and without it.
+    /// What the flag is FOR is lock contention this process declines to CAUSE, not a failure it
+    /// survives — see <c>GitChangeSet</c>'s status call for the measurement that retracted the
+    /// other direction. <c>RealGit_NoOptionalLocks_ChangesNoStatusOutput</c> is the row that
+    /// measures a real git accepting it in this position and answering identically with and
+    /// without it.
     /// </para>
     /// </remarks>
     [Fact]
@@ -349,6 +355,38 @@ public sealed class GitChangeSetTests
         Assert.Contains("repository-root lookup", ex.Message, System.StringComparison.Ordinal);
         Assert.DoesNotContain("PATH", ex.Message, System.StringComparison.Ordinal);
         Assert.IsType<ProcessCaptureException>(ex.InnerException);
+    }
+
+    /// <summary>
+    /// The capture path's relayed BCL message is substituted too — the third scrub site, and the
+    /// one the row above cannot see.
+    /// </summary>
+    /// <remarks>
+    /// The row above plants an <see cref="IOException"/> whose text names no path, so it is green
+    /// whether or not <c>RunGit</c> scrubs the inner message. The inner exception is the BCL's:
+    /// its text is not the engine's to constrain, and a pipe fault can name the handle it was
+    /// reading. This row plants one that does.
+    /// </remarks>
+    [Fact]
+    public void GitOutputCaptureFails_SubstitutesAbsolutePaths_InTheRelayedInnerMessage()
+    {
+        const string HostRepository = "/host/x/y";
+
+        var runner = FakeProcessRunner.Refusing(
+            new ProcessCaptureException(
+                "Reading the output of 'git' failed: The pipe has been ended.",
+                new IOException($"The pipe at '{HostRepository}' has been ended.")));
+
+        var ex = Assert.Throws<ChangeSetException>(
+            () => NewChangeSet("main", runner));
+
+        HostPathDisclosure.AssertNoAbsoluteHostPath(
+            "the capture-failure diagnostic", ex.Message, HostRepository);
+
+        // The diagnosis survives the substitution — the half that stops this being satisfied by
+        // dropping the relay.
+        Assert.Contains("The pipe at", ex.Message, System.StringComparison.Ordinal);
+        Assert.Contains("has been ended", ex.Message, System.StringComparison.Ordinal);
     }
 
     [Fact]
@@ -524,9 +562,13 @@ public sealed class GitChangeSetTests
     /// character and the path's own quotes still pair with each other.
     /// </para>
     /// <para>
-    /// The Windows-shaped cases are asserted only on Windows:
-    /// <see cref="Path.IsPathRooted(string)"/> reads a drive letter on that platform alone, so a
-    /// POSIX run would be asserting a coincidence.
+    /// <strong>ONLY THE DRIVE-LETTER SHAPES ARE GATED, AND THAT IS A FIX NOT A TIDY-UP.</strong>
+    /// Every lane in <c>build.yml</c> is <c>ubuntu-latest</c>, so while the gate sat above the
+    /// first quote-aware row this method asserted three things in CI and ALL THREE passed with the
+    /// quote-awareness deleted — a whole mechanism with no blocking coverage, measured by review.
+    /// The <c>/home/john smith/…</c> rows are rooted on either platform and carry a real space, so
+    /// they discriminate everywhere; <see cref="Path.IsPathRooted(string)"/> reads a drive letter
+    /// on Windows alone, so only the <c>C:\</c>-shaped rows stay behind the gate.
     /// </para>
     /// </remarks>
     [Fact]
@@ -546,6 +588,47 @@ public sealed class GitChangeSetTests
         Assert.Equal(
             "at <path>.",
             GitChangeSet.SubstituteAbsolutePaths("at /var/lib/x."));
+
+        // ---- POSIX-shaped, and therefore asserted on EVERY lane ------------------------
+        //
+        // These four are the rows that can see the quote-awareness. `/home/john smith/...` is
+        // rooted on both platforms, so the space inside the quotes is a real token boundary
+        // everywhere — which is what the Windows-gated rows below could not establish in CI.
+
+        // A QUOTED path containing a space is one token: nothing of it survives.
+        Assert.Equal(
+            "fatal: ownership in repository at '<path>'",
+            GitChangeSet.SubstituteAbsolutePaths(
+                "fatal: ownership in repository at '/home/john smith/src/repo'"));
+
+        // An apostrophe mid-word does not open a span, so the path's own quotes still pair. The
+        // mechanism is the "only after a separator" rule, which reads no drive letter and is
+        // therefore platform-independent — which is why this row sits above the gate.
+        Assert.Equal(
+            "error: couldn't read '<path>'",
+            GitChangeSet.SubstituteAbsolutePaths("error: couldn't read '/home/john smith/x'"));
+
+        // A quoted span that merely CONTAINS a path is PROSE, and is re-scanned token by token
+        // rather than emitted whole. Taking it whole failed the rooted test and let the path
+        // through verbatim — strictly worse than no quote-awareness at all.
+        Assert.Equal(
+            "error: cannot run hook 'pre-commit in <path> smith/repo/hooks'",
+            GitChangeSet.SubstituteAbsolutePaths(
+                "error: cannot run hook 'pre-commit in /home/john smith/repo/hooks'"));
+
+        // The other half of the same rule: a span that BEGINS rooted and continues in prose is
+        // rooted as a whole, and must not be collapsed to a bare placeholder that deletes the
+        // sentence — the second rooted token is what refuses the whole-span treatment.
+        Assert.Equal(
+            "warning: '<path> is unreadable, and <path> too'",
+            GitChangeSet.SubstituteAbsolutePaths(
+                "warning: '/etc/gitconfig is unreadable, and /tmp/x too'"));
+
+        // The documented residue, in its POSIX spelling: an UNQUOTED path with a space loses only
+        // its rooted head. Pinned on every lane, not just Windows.
+        Assert.Equal(
+            "<path> smith/x",
+            GitChangeSet.SubstituteAbsolutePaths("/home/john smith/x"));
 
         if (!OperatingSystem.IsWindows())
         {
@@ -567,15 +650,79 @@ public sealed class GitChangeSetTests
             @"in repository at '<path>'",
             GitChangeSet.SubstituteAbsolutePaths(@"in repository at 'C:\Program Files\Git\repo'"));
 
-        // An apostrophe mid-word does not open a span, so the path's own quotes still pair.
-        Assert.Equal(
-            @"error: couldn't read '<path>'",
-            GitChangeSet.SubstituteAbsolutePaths(@"error: couldn't read 'C:\Users\John Smith\x'"));
-
         // The documented residue: an UNQUOTED path with a space loses only its rooted head.
         Assert.Equal(
             @"<path> Files\Git\x",
             GitChangeSet.SubstituteAbsolutePaths(@"C:\Program Files\Git\x"));
+    }
+
+    /// <summary>
+    /// The substitution's token rules and the shared gate's are the SAME three arrays, asserted
+    /// structurally rather than by a comment asking the next editor to change both.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>GitChangeSet.SubstituteAbsolutePaths</c> and
+    /// <c>HostPathDisclosure.AssertNoAbsoluteHostPath</c> decide what a "token" is, what a path
+    /// separator is, and what punctuation is trimmed. The gate is the assertion the substitution
+    /// is measured against; if the two disagree, a relay this method passes is refused by the row
+    /// that polices it, or — the direction that matters — a leak the gate cannot see is emitted.
+    /// Parity was held by prose ("if either predicate is edited, edit both"), which is the same
+    /// arrangement under which the two former copies of the gate itself diverged.
+    /// </para>
+    /// <para>
+    /// Compared ORDER-INSENSITIVELY: both are membership tests
+    /// (<see cref="System.Array.IndexOf{T}(T[], T)"/>, <c>string.Split</c>,
+    /// <c>TrimEnd</c>), so a reordering changes no decision and must not redden this row.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void SubstitutionTokenRules_AreTheSharedDisclosureGates()
+    {
+        var pairs = new[]
+        {
+            ("TokenSeparators", "s_tokenSeparators"),
+            ("PathSeparators", "s_pathSeparators"),
+            ("TrailingPunctuation", "s_trailingPunctuation"),
+        };
+
+        foreach (var (substitution, gate) in pairs)
+        {
+            var mine = CharSet(typeof(GitChangeSet), substitution);
+            var theirs = CharSet(typeof(HostPathDisclosure), gate);
+
+            Assert.Equal(theirs.OrderBy(c => c), mine.OrderBy(c => c));
+        }
+    }
+
+    /// <summary>
+    /// One private <c>char[]</c> rule set, by reflection, with its existence asserted first.
+    /// </summary>
+    /// <param name="declaring">The type that holds it.</param>
+    /// <param name="name">The field name.</param>
+    /// <returns>The array.</returns>
+    /// <remarks>
+    /// VACUITY FIRST, as everywhere else: a renamed field would otherwise leave the caller
+    /// comparing nothing.
+    /// </remarks>
+    private static char[] CharSet(System.Type declaring, string name)
+    {
+        var field = declaring.GetField(
+            name,
+            System.Reflection.BindingFlags.Static
+            | System.Reflection.BindingFlags.NonPublic
+            | System.Reflection.BindingFlags.Public);
+
+        Assert.True(
+            field is not null,
+            $"{declaring.Name} no longer declares '{name}'. This parity row names the fields it "
+            + "compares; a rename leaves it comparing nothing and passing for free.");
+
+        var value = Assert.IsType<char[]>(field!.GetValue(obj: null));
+
+        Assert.NotEmpty(value);
+
+        return value;
     }
 
     [Theory]
@@ -593,10 +740,12 @@ public sealed class GitChangeSetTests
 
         Assert.Contains("must not start with '-'", ex.Message, System.StringComparison.Ordinal);
 
-        // No git invocation may have spliced the malicious ref into a diff range.
+        // No git invocation may have spliced the malicious ref into a diff range. Matched by
+        // CONTAINS rather than by position: the diff argv leads with `--no-optional-locks`, and an
+        // `Args[0] == "diff"` predicate would simply stop matching and pass for free.
         Assert.DoesNotContain(
             runner.Calls,
-            c => c.Args.Count > 0 && c.Args[0] == "diff"
+            c => c.Args.Contains("diff")
                  && c.Args.Any(a => a.Contains(maliciousRef, System.StringComparison.Ordinal)));
     }
 
@@ -1454,8 +1603,12 @@ public sealed class GitChangeSetTests
 
         var subcommands = new[]
         {
-            new[] { "rev-parse", "--show-toplevel" },
-            new[] { "diff", "--name-only", "--end-of-options", "HEAD...HEAD" },
+            new[] { "--no-optional-locks", "rev-parse", "--show-toplevel" },
+            new[]
+            {
+                "--no-optional-locks",
+                "diff", "--name-only", "--end-of-options", "HEAD...HEAD",
+            },
             new[]
             {
                 "--no-optional-locks", "-c", "core.quotepath=false", "status", "--porcelain",
@@ -1469,14 +1622,17 @@ public sealed class GitChangeSetTests
 
             Assert.True(
                 result.ExitCode == 0,
-                $"git {arguments[0]} exited {result.ExitCode} under the confined environment: "
-                + result.StandardError.Trim());
+                $"git {string.Join(' ', arguments)} exited {result.ExitCode} under the confined "
+                + "environment: " + result.StandardError.Trim());
         }
 
         // rev-parse must have produced a root, not merely exited 0: an empty answer is the shape
         // ResolveRepoRoot refuses, and it would mean the confinement had changed what git sees.
         var root = SystemProcessRunner.Instance.Run(
-            gitExecutable, new[] { "rev-parse", "--show-toplevel" }, repoDir, confined);
+            gitExecutable,
+            new[] { "--no-optional-locks", "rev-parse", "--show-toplevel" },
+            repoDir,
+            confined);
         Assert.NotEmpty(root.StandardOutput.Trim());
     }
 
@@ -1493,9 +1649,18 @@ public sealed class GitChangeSetTests
     /// </para>
     /// <para>
     /// The second claim is that the flag changes no OUTPUT. It suppresses the opportunistic
-    /// rewrite of <c>.git/index</c> — which is the point, since that write is what a concurrent git
-    /// in the same working tree turns into exit 128 — and suppressing it must not change which
-    /// paths are reported, or <c>--changed-since</c> would select a different set of scenarios.
+    /// rewrite of <c>.git/index</c>, and with it the lock that write takes in an operator's
+    /// working tree — which is the point, since a read-only query about which scenarios to run has
+    /// no business taking one. Suppressing it must not change which paths are reported, or
+    /// <c>--changed-since</c> would select a different set of scenarios.
+    /// </para>
+    /// <para>
+    /// <strong>WHAT IT IS NOT, retracted here as well as at the call site.</strong> An earlier
+    /// draft of both said a concurrent git holding <c>index.lock</c> made the unflagged call exit
+    /// 128. It does not: <c>cmd_status</c> takes the lock without <c>LOCK_DIE_ON_ERROR</c> and
+    /// silently skips the refresh when it cannot get it — measured by review on this host with a
+    /// planted <c>index.lock</c>, plain <c>status --porcelain</c> answering at exit 0. This row
+    /// never tested that claim; it measures acceptance and parity, which are what remain true.
     /// </para>
     /// <para>
     /// <strong>Quiescence is CHECKED rather than assumed, because this reads a live working
@@ -1545,6 +1710,96 @@ public sealed class GitChangeSetTests
         }
 
         Assert.Equal(before.StandardOutput, flagged.StandardOutput);
+    }
+
+    /// <summary>
+    /// The relayed change-set diagnostic is SANITISED before it reaches the CLI's sink: an ESC
+    /// carried in on the ref never lands in a terminal or a CI log.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>RunCommand</c>'s <c>ChangeSetException</c> arm is the one place a change-set failure
+    /// reaches an operator, and until this row nothing asserted the <c>SanitiseForDisplay</c> on
+    /// it. Deleting that call changes no exit code and no other assertion in the tree.
+    /// </para>
+    /// <para>
+    /// <strong>THE ESCAPE ARRIVES ON THE REF, NOT ON GIT'S STDERR, AND THAT LIMIT IS STATED
+    /// RATHER THAN IMPLIED.</strong> What the arm exists for is git's own bytes — a
+    /// repository-configured <c>filter.*.clean</c> inheriting git's stderr — and no test here can
+    /// produce those: <c>SelectScenarios</c> builds its <c>GitChangeSet</c> with
+    /// <c>SystemProcessRunner.Instance</c>, so no fake runner can be injected from outside
+    /// <c>RunCommand</c>. The ref is the other operator-controlled string that reaches the same
+    /// message, and it exercises the same single call site.
+    /// </para>
+    /// <para>
+    /// <strong>THE REF IS DASH-LEADING DELIBERATELY, and the alternative was MEASURED not to
+    /// work.</strong> Driving it through a real git instead — an unresolvable ref carrying the
+    /// escape — exited 0, not 2: <c>git diff --name-only --end-of-options &lt;ref&gt;...HEAD</c>
+    /// accepted the unknown ref, the change-set came back empty, and the run reported "No
+    /// scenarios matched the selection criteria". The argument-injection guard refuses BEFORE any
+    /// git call, so this row needs no git and no work tree, and runs on every lane.
+    /// </para>
+    /// <para>
+    /// VACUITY IS GUARDED by asserting the ref's own text arrives: exit 2 alone is also what a
+    /// discovery failure that never reached the change-set would produce.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task ChangedSinceFailure_SanitisesTheRelayedDiagnostic_BeforeTheSink()
+    {
+        var root = Directory.CreateTempSubdirectory("vouchfx-changed-since-sanitise-").FullName;
+        try
+        {
+            var scenario = Path.Combine(root, "probe.e2e.yaml");
+            await File.WriteAllTextAsync(scenario, "steps: []");
+
+            // A clear-screen sequence on the one input an operator types. Dash-leading, so the
+            // argument-injection guard refuses it and its message quotes the ref back verbatim.
+            const string EscapingRef = "-\u001b[2Jvouchfx-bad-ref";
+
+            var output = new StringWriter();
+
+            var exitCode = await RunCommand.ExecuteAsync(
+                path: root,
+                criteria: new SelectionCriteria(
+                    System.Array.Empty<string>(),
+                    System.Array.Empty<string>(),
+                    PathGlob: null,
+                    ChangedSinceRef: EscapingRef),
+                parallel: null,
+                watch: false,
+                failOnEnvironmentError: false,
+                failOnInconclusive: false,
+                htmlReportPath: null,
+                junitReportPath: null,
+                eventsReportPath: null,
+                eventsStreamPath: null,
+                decorate: false,
+                output: output,
+                telemetryHook: null,
+                cancellationToken: default);
+
+            var written = output.ToString();
+
+            Assert.True(
+                exitCode == ExitCodes.UsageError, $"exit {exitCode}; wrote: {written}");
+
+            // The change-set arm is what wrote this line, and the diagnosis survived the scrub.
+            Assert.Contains("vouchfx-bad-ref", written, System.StringComparison.Ordinal);
+
+            Assert.DoesNotContain("\u001b", written, System.StringComparison.Ordinal);
+        }
+        finally
+        {
+            try
+            {
+                Directory.Delete(root, recursive: true);
+            }
+            catch (IOException)
+            {
+                // Best-effort temp cleanup; a locked file must not fail the test.
+            }
+        }
     }
 
     private static string? FindRepoRoot(string start)

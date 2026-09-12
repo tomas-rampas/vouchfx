@@ -74,6 +74,14 @@ public sealed class ProcessRunnerDiagnosticCensusTests
     /// scope here: it is not one of the three failures <c>IProcessRunner</c> documents, and it names
     /// the argument the caller passed rather than a path this runner resolved.
     /// </para>
+    /// <para>
+    /// <strong>WHAT "THE RESOLVED PATH" MEANS HERE, and it is an identifier list rather than a
+    /// property.</strong> The scan looks for the runner parameters that hold one —
+    /// <c>fileName</c> and <c>workingDirectory</c> (<see cref="HostPathParameters"/>). A message
+    /// that composed an absolute path from something else entirely is invisible to it; a syntax
+    /// walk cannot evaluate a string. The list is what bounds the claim, and adding to it is how
+    /// the claim widens.
+    /// </para>
     /// </remarks>
     [Fact]
     public void EveryRunnerException_NamesTheLeafFileName_ExceptTheDocumentedControl()
@@ -111,18 +119,19 @@ public sealed class ProcessRunnerDiagnosticCensusTests
 
         // The control still names the bare path: it is what GitChangeSetTests compares the mapped
         // message against, so a "tidy-up" that narrowed it would take the control with it.
-        Assert.Contains(FileNameIdentifiers(control[0]), id => !IsLeafName(id));
+        Assert.Contains(HostPathIdentifiers(control[0]), id => !IsLeafName(id));
 
         var offenders = guarded
-            .SelectMany(FileNameIdentifiers)
+            .SelectMany(HostPathIdentifiers)
             .Where(id => !IsLeafName(id))
             .Select(id => $"  line {Line(id)}: `{id.Parent}`")
             .ToList();
 
         Assert.True(
             offenders.Count == 0,
-            $"{offenders.Count} runner exception message(s) interpolate the resolved `fileName` "
-            + "rather than `Path.GetFileName(fileName)` (#498). Since #499 that value is an "
+            $"{offenders.Count} runner exception message(s) interpolate a resolved host path "
+            + $"({string.Join("/", HostPathParameters)}) rather than its leaf name (#498). Since "
+            + "#499 that value is an "
             + "absolute path, so the message names where git lives on the host — the #357 rule's "
             + "class, widened by #375/#473/#488. Unreachable-to-print today is not a defence: one "
             + "later caller that prints the message turns it into a live leak, which is the fix's "
@@ -218,25 +227,42 @@ public sealed class ProcessRunnerDiagnosticCensusTests
     /// Either spelling counts: the production call passes it positionally, and a named argument is
     /// what a caller who skips <c>workingDirectory</c>'s neighbours would write. What is refused is
     /// the argument being ABSENT, which is the only spelling that means "inherit".
+    /// <para>
+    /// The positional count is over POSITIONAL arguments only. A plain <c>Count &gt;= 4</c> is
+    /// satisfied by three positional arguments plus <c>cancellationToken:</c> by name — which is
+    /// exactly the inheriting shape this row exists to refuse, passing it for free.
+    /// </para>
     /// </remarks>
     private static bool SuppliesEnvironment(InvocationExpressionSyntax call)
     {
         var arguments = call.ArgumentList.Arguments;
 
         return arguments.Any(a => a.NameColon?.Name.Identifier.ValueText == "environment")
-            || arguments.Count >= 4;
+            || arguments.TakeWhile(a => a.NameColon is null).Count() >= 4;
     }
 
     /// <summary>
-    /// Every <c>fileName</c> identifier inside <paramref name="creation"/>'s arguments.
+    /// The runner parameters that hold an absolute host path.
     /// </summary>
-    private static IEnumerable<IdentifierNameSyntax> FileNameIdentifiers(
+    /// <remarks>
+    /// <c>workingDirectory</c> is here although no message interpolates it today: it is equally an
+    /// absolute path, and it is precisely the value the sibling fix removed from
+    /// <c>GitChangeSet</c>'s "git answered with no root" message. Matching only <c>fileName</c>
+    /// let a message naming the other one pass silently, which is the same unreachable-today bet
+    /// the fix this census guards refused to make.
+    /// </remarks>
+    private static readonly string[] HostPathParameters = { "fileName", "workingDirectory" };
+
+    /// <summary>
+    /// Every absolute-host-path identifier inside <paramref name="creation"/>'s arguments.
+    /// </summary>
+    private static IEnumerable<IdentifierNameSyntax> HostPathIdentifiers(
         ObjectCreationExpressionSyntax creation) =>
         creation.ArgumentList is null
             ? Enumerable.Empty<IdentifierNameSyntax>()
             : creation.ArgumentList.DescendantNodes()
                 .OfType<IdentifierNameSyntax>()
-                .Where(id => id.Identifier.ValueText == "fileName");
+                .Where(id => HostPathParameters.Contains(id.Identifier.ValueText));
 
     /// <summary>
     /// Whether <paramref name="identifier"/> is wrapped in a <c>Path.GetFileName(...)</c> call.

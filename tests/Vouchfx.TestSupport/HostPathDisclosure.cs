@@ -58,6 +58,11 @@ public static class HostPathDisclosure
     /// <remarks>
     /// <c>&amp;</c> and <c>;</c> are separators so an HTML-escaped quote (<c>&amp;#39;</c>) splits
     /// off the path it wraps instead of gluing itself to the front of it.
+    /// <para>
+    /// These three arrays are ALSO <c>GitChangeSet</c>'s, and the equality is asserted rather than
+    /// requested: <c>GitChangeSetTests.SubstitutionTokenRules_AreTheSharedDisclosureGates</c>
+    /// compares them by reflection, so an edit here that is not made there reddens.
+    /// </para>
     /// </remarks>
     private static readonly char[] s_tokenSeparators =
         { ' ', '\t', '\r', '\n', '"', '\'', '<', '>', '&', ';', ',', '(', ')', '[', ']' };
