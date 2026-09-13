@@ -167,9 +167,16 @@ public sealed class DcpFlightRecorderDockerTests
     /// <para>
     /// The cost of that choice is that a failing Docker leg could leave an artefact in a real
     /// directory whose entire value is that a file in it means something. So the row snapshots the
-    /// directory first and deletes, in a <c>finally</c>, the new files it can prove ARE ITS OWN —
-    /// whether it passed, failed or threw — and reports the names it deleted in the failure
-    /// message so the evidence survives the cleanup.
+    /// directory first and then, in a <c>finally</c> — whether it passed, failed or threw —
+    /// deletes the new files it can prove ARE ITS OWN, one at a time, so a single locked capture
+    /// does not abandon the rest.
+    /// </para>
+    /// <para>
+    /// Either way the names reach the failure message, and that is what keeps the evidence alive
+    /// across the cleanup: the ones it deleted, so the finding survives the file that carried it,
+    /// and the ones it could NOT delete, flagged with the exception type and an instruction to
+    /// remove them by hand — because those are still sitting in the operator's directory, where
+    /// the next reader will take them for a real finding.
     /// </para>
     /// <para>
     /// <strong>"Its own", not "everything new", and that narrowing is a bug fix rather than
@@ -250,8 +257,9 @@ public sealed class DcpFlightRecorderDockerTests
             {
                 // Per file, so one locked capture does not abandon the rest. Exception TYPE and
                 // bare filename only: the message of an IOException from File.Delete carries the
-                // resolved path, and this row asserts a few lines further down that the ENGINE
-                // must keep resolved paths out of a diagnostic (see (d) in the sibling row).
+                // resolved path, and the sibling failing row asserts at (d) that the ENGINE must
+                // keep resolved paths out of a diagnostic. This row holds itself to the rule it
+                // holds the engine to.
                 try
                 {
                     File.Delete(stray);

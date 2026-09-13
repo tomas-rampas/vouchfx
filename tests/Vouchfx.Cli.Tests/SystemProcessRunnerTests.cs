@@ -1012,6 +1012,18 @@ public sealed class SystemProcessRunnerTests
         // correctly reporting a wedged runner. Nothing downstream of that assertion runs, so what
         // the child does at 60s cannot change the verdict.
         //
+        // AND THE TWO CONDITIONS ARE MUTUALLY EXCLUSIVE ANYWAY, which is a stronger statement than
+        // "fails first" and is the one that actually closes the question. For WaitForPid to run to
+        // its full ceiling, the pid must stay absent for budget+13s — meaning no child is going to
+        // write one, because it is dead or was never started. For ChildLifetime to matter at all,
+        // the child must be ALIVE for the whole minute so that its own exit is what closes the
+        // pipes — and a live child publishes its pid as its FIRST action, so WaitForPid returned
+        // then and the race that follows expires at most grace later. Taking the slowest start-up
+        // this file has ever measured (13.6s, at 128 burners) and the largest budget: 13.6+34 =
+        // 47.6s, still short of 60. So the clock that could reach ChildLifetime only runs when no
+        // child is alive to meet it, and whenever one is alive the clocks are short. There is no
+        // shape in which this ceiling decides that path, and no need to re-derive that next time.
+        //
         // Folding that path in would not be free, which is why it is excluded rather than covered:
         // 2*budget+23 < 60 forces BudgetAttempts down to 3 and caps the escalation at a 12s budget
         // — below the worst start-up this file has measured (13.6s). The guard would then be
@@ -1303,9 +1315,29 @@ public sealed class SystemProcessRunnerTests
     /// than the tidy sentence that used to stand here.</strong> This concatenates every ASCII digit
     /// it finds rather than validating a whole line, so a torn read of <c>51234</c> that catches
     /// only the first byte parses cleanly as <c>5</c> — a different number, and possibly a live and
-    /// unrelated process. Tracked as <strong>#528</strong>. #524 did not introduce it and does not
-    /// fix it; this method is the same logic lifted out of <see cref="WaitForPid"/>. What #524 did
-    /// do is delete the claim that the case was covered.
+    /// unrelated process. Tracked as <strong>#528</strong>.
+    /// </para>
+    /// <para>
+    /// <strong>THE WORSE CONSEQUENCE IS NOT THE WRONG KILL, IT IS ROW 1 GOING GREEN WITH THE CHILD
+    /// STILL ALIVE — and the recycle guard is what produces it rather than what prevents it.</strong>
+    /// Follow <c>5</c> through: <see cref="WaitForDeath"/> asks <see cref="IsAlive"/>, which asks
+    /// <see cref="TryOpen"/>, and every outcome there collapses to <see langword="null"/>. Either
+    /// <see cref="Process.GetProcessById(int)"/> finds nothing and throws into the first catch, or
+    /// it resolves a boot-time process whose <see cref="Process.StartTime"/> sits before
+    /// <c>startedUtc</c> minus five seconds, so the guard reads it as a recycled pid and discards
+    /// it, or <see cref="Process.StartTime"/> is unreadable and the second catch discards it.
+    /// <see cref="IsAlive"/> then answers <see langword="false"/>, <see cref="WaitForDeath"/>
+    /// answers <see langword="true"/> at its first sample, and the <c>dead</c> assertion — the
+    /// whole point of the #481 leak cover — PASSES over a child that is still running. MEASURED on
+    /// the maintainer's Windows host: pids 4 and 5 resolve to boot-time processes whose start time
+    /// is days old and therefore trip the lower bound, and pids 8 and 100 do not resolve at all.
+    /// Torn values are small, so they land in exactly that range.
+    /// </para>
+    /// <para>
+    /// A leak test that fails to fail is worth more attention than a wrong kill, which is why the
+    /// order of those two paragraphs is deliberate. #524 did not introduce either and does not fix
+    /// either; this method is the same logic lifted out of <see cref="WaitForPid"/>. What #524 did
+    /// was delete the claim that the case was covered and write down where it actually leads.
     /// </para>
     /// </remarks>
     private static int? ReadPid(string pidFile)
