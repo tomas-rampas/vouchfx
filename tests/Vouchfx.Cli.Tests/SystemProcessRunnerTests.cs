@@ -1328,16 +1328,34 @@ public sealed class SystemProcessRunnerTests
     /// it, or <see cref="Process.StartTime"/> is unreadable and the second catch discards it.
     /// <see cref="IsAlive"/> then answers <see langword="false"/>, <see cref="WaitForDeath"/>
     /// answers <see langword="true"/> at its first sample, and the <c>dead</c> assertion — the
-    /// whole point of the #481 leak cover — PASSES over a child that is still running. MEASURED on
-    /// the maintainer's Windows host: pids 4 and 5 resolve to boot-time processes whose start time
-    /// is days old and therefore trip the lower bound, and pids 8 and 100 do not resolve at all.
-    /// Torn values are small, so they land in exactly that range.
+    /// whole point of the #481 leak cover — PASSES over a child that is still running.
+    /// </para>
+    /// <para>
+    /// <strong>WHICH CONSEQUENCE YOU GET DEPENDS ON HOW MANY BYTES THE READ CAUGHT, because a torn
+    /// read yields a PREFIX rather than a small number.</strong> From <c>51234</c> the reachable
+    /// values are <c>5</c>, <c>51</c>, <c>512</c> and <c>5123</c>. A short prefix produces the green
+    /// pass above; a four-digit one is an ordinary live pid, and if it postdates <c>startedUtc</c>
+    /// minus five seconds then <see cref="TryOpen"/> hands it back alive, <see cref="WaitForDeath"/>
+    /// polls out, and the row reddens naming a stranger — after which the <c>finally</c>'s
+    /// <c>KillTreeQuietly</c> kills that stranger. Both consequences are live and neither is
+    /// theoretical.
+    /// </para>
+    /// <para>
+    /// MEASURED on the maintainer's Windows host, through
+    /// <see cref="Process.GetProcessById(int)"/> itself rather than a shell wrapper: pids 4 and 5
+    /// resolve to processes started 2.1 days earlier, so they trip the lower bound; pids 8 and 100
+    /// throw <see cref="ArgumentException"/>. That is the short-prefix range. The long-prefix range
+    /// is populated too — 192 live processes held four-digit pids at the same moment, three of them
+    /// started within the previous ten minutes. NOT MEASURED on Linux, which is the lane that gates
+    /// merges; low pids there are boot-time kernel threads, so the short-prefix conclusion is
+    /// expected to carry, but nobody has probed it.
     /// </para>
     /// <para>
     /// A leak test that fails to fail is worth more attention than a wrong kill, which is why the
-    /// order of those two paragraphs is deliberate. #524 did not introduce either and does not fix
-    /// either; this method is the same logic lifted out of <see cref="WaitForPid"/>. What #524 did
-    /// was delete the claim that the case was covered and write down where it actually leads.
+    /// order of these paragraphs is deliberate — not because the wrong kill cannot happen. #524 did
+    /// not introduce either and does not fix either; this method is the same logic lifted out of
+    /// <see cref="WaitForPid"/>. What #524 did was delete the claim that the case was covered and
+    /// write down where it actually leads.
     /// </para>
     /// </remarks>
     private static int? ReadPid(string pidFile)
