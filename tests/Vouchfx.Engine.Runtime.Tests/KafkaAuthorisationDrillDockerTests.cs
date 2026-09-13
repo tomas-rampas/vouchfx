@@ -450,6 +450,24 @@ public sealed class KafkaAuthorisationDrillDockerTests
         // image pull, a loaded host — cancels the second before it starts, and the failure arrives
         // as `Assert.Equal(3, gated)` seeing a cancellation code. That reads as a taxonomy defect
         // and is a stopwatch.
+        // EACH RUN'S WHOLE STDOUT IS WRITTEN, UNCONDITIONALLY, AND THE LOG VOLUME IS A DECISION.
+        // Before it, the row's entire test output on a failure was the two `exit=` lines below,
+        // and xUnit truncated the assertion's own string to about forty characters. On the red
+        // CI run cited in section 0 that came to, verbatim, `String: "warn:
+        // Aspire.Hosting.Dcp.DcpHost[0]\n     "···` — which names nothing — and the whole of
+        // that run's Standard Output Messages was the two `exit=` lines. Every later diagnosis in
+        // this file was made by reading these two dumps; they are the part of the change that
+        // keeps paying.
+        //
+        // The cost is accepted rather than unnoticed: a GREEN run publishes none of this,
+        // because xUnit holds per-test output and the runner surfaces it only for a FAILING test
+        // at default verbosity. Measured on this row's own runs: the console log of a green
+        // two-class run contains zero occurrences of `flagless output`, and the log of a
+        // deliberately failed one contains it. The volume lands on the run that needs it.
+        //
+        // Cleared by security review on this suite specifically: it declares no `${secret:}`,
+        // `${env:}` or `${conn:}` and no `clientKeyPassword`, and the engine's `dcp-capture:`
+        // emits an unexpanded root token rather than a resolved host path.
         using var flaglessBudget = new CancellationTokenSource(TimeSpan.FromMinutes(6));
         var (flagless, flaglessOutput) = await RunCliAsync(cli, suite, null, flaglessBudget.Token);
         _output.WriteLine($"flagless exit={flagless}");
@@ -487,10 +505,25 @@ public sealed class KafkaAuthorisationDrillDockerTests
         // earlier draft of this very comment already had.
         //
         // MEASURED, and the reason this is a gap rather than bad luck: commit 66f75d7 triggered a
-        // push run and a pull_request run three seconds apart, same SHA, same test set. One was
-        // green (Failed: 0, Passed: 34); the other was red (Failed: 1, Passed: 33), with THIS ROW
-        // failing in 42 seconds — a fast-fail, not a topology that came up and then misbehaved.
-        // Both exit codes were correct in both runs. What the red run reported was
+        // push run and a pull_request run three seconds apart, same SHA, same test set. The push
+        // run (34121131522) was green — Failed: 0, Passed: 34. The pull_request run
+        // (34121136740, ATTEMPT 1, job 101740686858) was red — Failed: 1, Passed: 33, Total: 34
+        // — with THIS ROW failing in 42 seconds, a fast-fail rather than a topology that came up
+        // and then misbehaved. Both exit codes were correct in both runs.
+        //
+        // THE ATTEMPT NUMBER IS THE WHOLE OF WHAT MAKES THAT CITATION FOLLOWABLE, and is recorded
+        // because a reviewer already lost a verification cycle to its absence. That run was later
+        // re-run, so it now reports `run_attempt: 2` and a conclusion of `cancelled`, and its
+        // attempt-2 Docker job (101765038721) was cancelled outright — it contains no `FAIL`, no
+        // `publish` and no `flagless`. `gh run view --log` serves the LATEST attempt, so the
+        // default view of this run shows none of the evidence below and reads as though the
+        // paragraph were invented. Reach attempt 1 explicitly:
+        // `gh api repos/tomas-rampas/vouchfx/actions/jobs/101740686858/logs`.
+        //
+        // What that log carries, re-derived line by line rather than restated: the row's own
+        // `[FAIL]` and `[42 s]`, the `Not found: "step 'publish'"` below, `flagless exit=0` and
+        // `--fail-on-env-error exit=3` under Standard Output Messages, and the assembly summary
+        // `Failed: 1, Passed: 33, Total: 34`. What the red run reported was
         // `Assert.Contains() Failure: Sub-string not found … Not found: "step 'publish'"`, which
         // sends the reader hunting through the renderer for a step id while the cause was bring-up.
         //
