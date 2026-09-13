@@ -39,6 +39,15 @@
 // existing gap rather than opening a new one, and it is stated here because the header is where a
 // reader looks for the gap.
 //
+// THE SAME MULTIPLIER APPLIES TO SCRATCH DIRECTORIES, and that one leaves litter on disk rather
+// than in the process table. Every attempt calls CreateScratchDirectory, and TryDeleteDirectory is
+// best-effort by design: on Windows a child still holding the directory as its working directory
+// makes Directory.Delete throw, and the catch swallows it so that teardown never replaces the real
+// failure with its own. So a bad run can leave up to BudgetAttempts %TEMP%\vouchfx-procrunner-*
+// directories per escalating row — eight, where before the escalation it was two. Each is a few
+// bytes holding at most a pid file. It is named here because this repository sweeps after a run as
+// a standing rule, and a sweep is only reliable if the thing being swept has been written down.
+//
 // WHAT IS NOT COVERED HERE, STATED RATHER THAN IMPLIED
 // ───────────────────────────────────────────────────
 // A read that FAULTS mid-capture (issue #481's closing request) has no row in this file. Provoking
@@ -534,12 +543,11 @@ public sealed class SystemProcessRunnerTests
                     var timeout = await Assert.ThrowsAsync<ProcessTimeoutException>(() => work);
                     Assert.Equal(budget, timeout.Budget);
 
-                    if (pid is null)
-                    {
-                        return false;
-                    }
-
-                    return true;
+                    // Every assertion this row makes has now run, so the pid decides only whether
+                    // the grandchild was ever recorded — which is the premise, not a verdict.
+                    // Row 1 keeps the longer form because it has a death assertion to place
+                    // between the two.
+                    return pid is not null;
                 }
                 finally
                 {
@@ -994,11 +1002,26 @@ public sealed class SystemProcessRunnerTests
         // the child's death, so it is the SUM that has to fit inside the child's lifetime. Checking
         // the budget alone would pin 24s of a 36s requirement and silently leave the remaining 12s
         // free to drift — which is exactly the shape of gap an assertion like this exists to close.
-        var longestAttempt = GraceFor(LargestBudget) + DeathWindow;
+        //
+        // "REACHES A VERDICT" IS A DELIBERATE NARROWING, AND ONE PATH IS EXCLUDED BY IT. If Run
+        // does not settle at all, WaitForPid first spends its own ceiling (grace + PidSettleWindow)
+        // and the race after it adds up to another grace, so an attempt can run to roughly two
+        // budgets plus twenty-three seconds — about 71s at the largest budget, past ChildLifetime.
+        // That is not a hole in this guard: it is a path that never reaches the death poll the
+        // guard protects, because it fails first at `Assert.True(finished, …)`, which IS the row
+        // correctly reporting a wedged runner. Nothing downstream of that assertion runs, so what
+        // the child does at 60s cannot change the verdict.
+        //
+        // Folding that path in would not be free, which is why it is excluded rather than covered:
+        // 2*budget+23 < 60 forces BudgetAttempts down to 3 and caps the escalation at a 12s budget
+        // — below the worst start-up this file has measured (13.6s). The guard would then be
+        // protecting an assertion nobody reaches at the cost of the escalation every loaded host
+        // needs.
+        var longestAttemptToAVerdict = GraceFor(LargestBudget) + DeathWindow;
         Assert.True(
-            longestAttempt < ChildLifetime,
+            longestAttemptToAVerdict < ChildLifetime,
             FormattableString.Invariant(
-                $"The longest possible attempt ({longestAttempt.TotalSeconds:F0}s = a {LargestBudget.TotalSeconds:F0}s largest budget, plus {RunUnwindSlack.TotalSeconds:F0}s of unwind slack, plus a {DeathWindow.TotalSeconds:F0}s death poll) is not below the child's own lifetime ({ChildLifetime.TotalSeconds:F0}s). The child would exit on its own inside that window, so rows 1 and 2 would be asserting a timeout that cannot occur and a death that proves nothing. Lower BudgetAttempts, or raise ChildLifetime."));
+                $"The longest attempt that reaches a verdict ({longestAttemptToAVerdict.TotalSeconds:F0}s = a {LargestBudget.TotalSeconds:F0}s largest budget, plus {RunUnwindSlack.TotalSeconds:F0}s of unwind slack, plus a {DeathWindow.TotalSeconds:F0}s death poll) is not below the child's own lifetime ({ChildLifetime.TotalSeconds:F0}s). The child would exit on its own inside that window, so rows 1 and 2 would be asserting a timeout that cannot occur and a death that proves nothing. Lower BudgetAttempts, or raise ChildLifetime."));
 
         var attempted = new List<string>(BudgetAttempts);
         var budget = StartingBudget;
@@ -1270,9 +1293,20 @@ public sealed class SystemProcessRunnerTests
     /// whole one to read.
     /// </summary>
     /// <remarks>
-    /// Absent, unreadable and half-written are all the same answer — "not yet" — because the caller
-    /// does the same thing with each of them: poll again. Distinguishing them would only let the
-    /// wait end on a race with the child's own write.
+    /// <para>
+    /// Absent and unreadable are the same answer — "not yet" — because the caller does the same
+    /// thing with each of them: poll again. Distinguishing those two would only let the wait end on
+    /// a race with the child's own write.
+    /// </para>
+    /// <para>
+    /// <strong>A HALF-WRITTEN FILE IS NOT RELIABLY IN THAT SET, and the honest limit is worth more
+    /// than the tidy sentence that used to stand here.</strong> This concatenates every ASCII digit
+    /// it finds rather than validating a whole line, so a torn read of <c>51234</c> that catches
+    /// only the first byte parses cleanly as <c>5</c> — a different number, and possibly a live and
+    /// unrelated process. Tracked as <strong>#528</strong>. #524 did not introduce it and does not
+    /// fix it; this method is the same logic lifted out of <see cref="WaitForPid"/>. What #524 did
+    /// do is delete the claim that the case was covered.
+    /// </para>
     /// </remarks>
     private static int? ReadPid(string pidFile)
     {
@@ -1308,10 +1342,18 @@ public sealed class SystemProcessRunnerTests
     /// have started.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// The <see cref="Process.StartTime"/> check is a pid-reuse guard. The window between the
     /// child writing its pid and teardown reading it is seconds, but the consequence of losing
     /// that race is killing an unrelated process on a shared CI agent, which is worth three lines
     /// to rule out.
+    /// </para>
+    /// <para>
+    /// It is a LOWER BOUND, not an identity check, and no test pins it: a pid recycled onto a
+    /// process that started after this row did passes the comparison unchanged. Tracked as
+    /// <strong>#529</strong>. Named here because #524 multiplied the number of pids this file reads
+    /// per run without changing the guard that decides which of them may be killed.
+    /// </para>
     /// </remarks>
     private static Process? TryOpen(int? pid, DateTime startedUtc)
     {
