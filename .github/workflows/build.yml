@@ -341,7 +341,7 @@ jobs:
       #     a row owns no named resource, prove the property in-process instead.
       #   • UNRESOLVED: the ~20s DCP startup-watchdog concern this serialisation was
       #     added for is only half contained — topologies in different assemblies
-      #     can still start at the same time. Raised separately; the lever, if one is
+      #     can still start at the same time. Tracked as #525; the lever, if one is
       #     wanted here, is on the `dotnet test` invocation below, and changing it is
       #     deliberately NOT part of the #489 fix.
       # (The Sprint08 parallel capstone intentionally runs two topologies at once

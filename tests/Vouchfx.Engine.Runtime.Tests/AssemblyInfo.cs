@@ -90,8 +90,8 @@
 // contained. Topologies started by other assemblies can still overlap this one's,
 // and nothing here prevents that; the attribute closes the in-assembly half only
 // (with the S08 parallel capstone excepted even there, by design — its concurrency
-// is the engine's ParallelSuiteRunner, not xUnit). That gap is being raised
-// separately — do not read this note as saying it is fixed.
+// is the engine's ParallelSuiteRunner, not xUnit). That gap is tracked as #525 —
+// do not read this note as saying it is fixed.
 
 // WHY a collection orderer is registered here
 // ───────────────────────────────────────────

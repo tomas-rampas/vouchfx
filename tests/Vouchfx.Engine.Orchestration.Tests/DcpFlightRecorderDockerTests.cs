@@ -95,11 +95,11 @@ namespace Vouchfx.Engine.Orchestration.Tests;
 /// </para>
 /// <para>
 /// <strong>No UNRESOLVED note here, deliberately, and the two AssemblyInfo files carry one.</strong>
-/// The open gap those files record is the serialisation LEVER - other assemblies' topologies can
-/// still start alongside this one's, and the DCP ~20s startup-watchdog concern is therefore only
-/// half contained. Nothing in this file turns on that: these rows are made sound by owning what
-/// they assert on, which holds whether or not the lever is ever pulled. Should the lever change,
-/// nothing here needs revisiting.
+/// The open gap those files record is the serialisation LEVER (#525) - other assemblies'
+/// topologies can still start alongside this one's, and the DCP ~20s startup-watchdog concern is
+/// therefore only half contained. Nothing in this file turns on that: these rows are made sound
+/// by owning what they assert on, which holds whether or not the lever is ever pulled. Should
+/// the lever change, nothing here needs revisiting.
 /// </para>
 /// </remarks>
 public sealed class DcpFlightRecorderDockerTests
@@ -135,7 +135,7 @@ public sealed class DcpFlightRecorderDockerTests
     /// well under thirty characters - the conservative shape for a container or service name
     /// rather than one probed against a documented limit. Measured, not assumed: both topologies
     /// start and reach their intended outcome with the suffix applied, and the suffixed name
-    /// reaches the capture body (assertion (e) in the failing row asserts exactly that).
+    /// reaches the capture body (assertion (c) in the failing row asserts exactly that).
     /// </para>
     /// </remarks>
     private readonly string _healthyResourceName =
@@ -198,7 +198,8 @@ public sealed class DcpFlightRecorderDockerTests
         var before = ListCaptures(directory!);
 
         var mine = Array.Empty<string>();
-        string? cleanupFault = null;
+        string? listFault = null;
+        var undeleted = new List<string>();
         try
         {
             // Act - a real, successful topology start through the production path, with the
@@ -216,35 +217,55 @@ public sealed class DcpFlightRecorderDockerTests
             // row run's own leavings and nothing else. NewCapturesNaming applies the ownership
             // key; its own comments argue what that key does and does not establish.
             //
-            // The whole block is caught, and NOT because a fault here is unimportant. This is a
-            // finally: a throw escaping it REPLACES the topology exception the row is being run
-            // to diagnose. Listing a directory is TOCTOU-prone (see ListCaptures) and File.Delete
-            // races retention, so the throw is reachable. Recording the fault and asserting on it
-            // AFTER the try keeps both - the primary exception survives when there is one, and a
-            // cleanup that could not run reddens the row instead of passing quietly.
+            // Nothing here may throw, and NOT because a fault is unimportant. This is a finally:
+            // a throw escaping it REPLACES the topology exception the row is being run to
+            // diagnose. Listing a directory is TOCTOU-prone (see ListCaptures) and File.Delete
+            // races retention, so the throw is reachable on both lines. Each fault is recorded
+            // and reported after the try instead, so the primary exception survives when there is
+            // one and a cleanup that could not run still reddens the row.
+            //
+            // THE TWO FAULTS ARE RECORDED SEPARATELY, because they mean opposite things and an
+            // earlier version of this row collapsed them into one message that was false in one
+            // of the two cases. A listing that failed leaves this row unable to say ANYTHING
+            // about what it left behind. A delete that failed means the row has already FOUND a
+            // capture naming its own resource - the very regression it exists to catch - and
+            // knows the filename; the only thing it could not do is tidy up. Reporting that as
+            // "cannot say whether it left an artefact behind" would file a real finding under
+            // infrastructure trouble, which is the section-12.1 conflation this project refuses
+            // to make about verdicts, committed here about a test report.
             try
             {
                 mine = NewCapturesNaming(directory!, before, _healthyResourceName);
-
-                foreach (var stray in mine)
-                {
-                    File.Delete(stray);
-                }
             }
             catch (IOException ex)
             {
-                cleanupFault = ex.Message;
+                listFault = ex.GetType().Name;
             }
             catch (UnauthorizedAccessException ex)
             {
-                cleanupFault = ex.Message;
+                listFault = ex.GetType().Name;
+            }
+
+            foreach (var stray in mine)
+            {
+                // Per file, so one locked capture does not abandon the rest. Exception TYPE and
+                // bare filename only: the message of an IOException from File.Delete carries the
+                // resolved path, and this row asserts a few lines further down that the ENGINE
+                // must keep resolved paths out of a diagnostic (see (d) in the sibling row).
+                try
+                {
+                    File.Delete(stray);
+                }
+                catch (IOException ex)
+                {
+                    undeleted.Add(Path.GetFileName(stray) + " (" + ex.GetType().Name + ")");
+                }
+                catch (UnauthorizedAccessException ex)
+                {
+                    undeleted.Add(Path.GetFileName(stray) + " (" + ex.GetType().Name + ")");
+                }
             }
         }
-
-        Assert.True(
-            cleanupFault is null,
-            "the capture-directory cleanup could not complete, so this row cannot say whether it "
-            + "left an artefact behind: " + cleanupFault);
 
         // Assert - nothing of this row's own. A healthy run pays a bounded in-memory buffer for
         // the duration of the start and the health gates, and nothing else: no file, no output,
@@ -253,9 +274,17 @@ public sealed class DcpFlightRecorderDockerTests
         // Property 1 holds for the shape this row exists to catch: a capture written because a
         // SUCCESSFUL start flushed instead of dropping is written after DCP created the
         // container, so the buffer it holds names _healthyResourceName and nothing else on the
-        // machine can. That the resource name reaches the capture body at all is not left to
-        // inference here - the sibling failing row asserts it on its own capture, in this same
-        // docker leg, which is what keeps this row's key from going quietly vacuous.
+        // machine can.
+        //
+        // THAT THE RESOURCE NAME REACHES A CAPTURE BODY AT ALL IS ARGUED HERE, MEASURED NEXT
+        // DOOR. Assertion (c) in the sibling failing row pins it on a real capture in this same
+        // docker leg, so the key cannot go silently vacuous - but that capture differs from this
+        // row's hypothetical one in three ways: a topology that FAILED rather than succeeded, a
+        // different resource name, and the gate-failure flush site rather than a success-path
+        // one. What carries across the three is the mechanism, not the circumstance: the name is
+        // echoed by DCP's own reconciler traffic as it brings a resource up, which both
+        // topologies do identically and neither outcome is a precondition for. What does NOT
+        // carry across is timing, and that is the limit below.
         //
         // KNOWN LIMIT, stated rather than papered over, and it is a FAMILY rather than one case.
         // Measured on real captures from this host, the name arrives only at the very end of the
@@ -264,21 +293,52 @@ public sealed class DcpFlightRecorderDockerTests
         // counting nine captures got 3 of 20, first at entry 17 - same shape). Everything DCP
         // logs before its reconcilers run - apiserver start, controller host, kubeconfig read,
         // network creation, image pull - is nameless. So ANY failure before that point - the
-        // #420 shape among them,
-        // but equally an image-pull failure, a network-creation failure, or an apiserver or
-        // controller death - leaves a capture this row cannot claim, and it is therefore neither
-        // asserted on nor deleted. The row still goes red, on the Assert.NotNull/throw above
-        // rather than here, and the file stays put. That is the safe direction: an unclaimable
-        // capture in this directory is indistinguishable from a real finding, and deleting it on
-        // suspicion is exactly the bug fixed here.
-        Assert.True(
-            mine.Length == 0,
-            "A successful topology start wrote " + mine.Length.ToString(
-                System.Globalization.CultureInfo.InvariantCulture)
-            + " DCP capture file(s) naming this run's own resource '" + _healthyResourceName
-            + "', which only the FAILURE path may do. They have been deleted "
-            + "again so they cannot be mistaken for a real finding:\n  "
-            + string.Join("\n  ", mine.Select(Path.GetFileName)));
+        // #420 shape among them, but equally an image-pull failure, a network-creation failure,
+        // or an apiserver or controller death - leaves a capture this row cannot claim, and it is
+        // therefore neither asserted on nor deleted. The row still goes red, on the
+        // Assert.NotNull/throw above rather than here, and the file stays put. That is the safe
+        // direction: an unclaimable capture in this directory is indistinguishable from a real
+        // finding, and deleting it on suspicion is exactly the bug fixed here.
+        //
+        // A SECOND, NARROWER SILENT MISS, on the other side of the listing. Retention keeps
+        // DcpCapture.RetainedFiles = 12 files and each write prunes the oldest, so if twelve
+        // captures were written by OTHER hosts after this row's own flush and before the listing
+        // below, this row's file is gone before it can be seen: `mine` comes back empty and the
+        // row passes green on a real leak. It needs twelve concurrent writers inside one row's
+        // window, which nothing observed comes close to - but it is the #489 class stated in this
+        // fix's own terms, and every other residual here is stated.
+        //
+        // FINDING FIRST, HYGIENE SECOND, and the order is the point rather than style. A
+        // populated `mine` is the regression; an unfinished cleanup is trouble tidying up after
+        // it. Asserting the cleanup first would let a locked capture - reachable, see
+        // NewCapturesNaming's remarks on DcpCapture.WriteAsync - report a real engine regression
+        // as an infrastructure problem, and the reader would never see the filename.
+        //
+        // Composed on the failing path only. Assert.True(cond, message) builds its message on
+        // every pass; here that meant rendering a sentence about files that do not exist on every
+        // green run.
+        if (mine.Length > 0)
+        {
+            Assert.Fail(
+                "A successful topology start wrote " + mine.Length.ToString(
+                    System.Globalization.CultureInfo.InvariantCulture)
+                + " DCP capture file(s) naming this run's own resource '" + _healthyResourceName
+                + "', which only the FAILURE path may do:\n  "
+                + string.Join("\n  ", mine.Select(Path.GetFileName))
+                + (undeleted.Count == 0
+                    ? "\nThey have been deleted again so they cannot be mistaken for a real "
+                        + "finding."
+                    : "\nThese could NOT be deleted and are still in the operator's capture "
+                        + "directory, where a later reader will take them for a real finding - "
+                        + "remove them by hand:\n  " + string.Join("\n  ", undeleted)));
+        }
+
+        if (listFault is not null)
+        {
+            Assert.Fail(
+                "the capture directory could not be listed (" + listFault + "), so this row "
+                + "cannot say whether it left an artefact behind. Nothing was deleted.");
+        }
     }
 
     /// <summary>
@@ -400,7 +460,7 @@ public sealed class DcpFlightRecorderDockerTests
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <strong>Assertion (d) is the one that matters.</strong> The capture written at the gate
+    /// <strong>Assertion (e) is the one that matters.</strong> The capture written at the gate
     /// failure contains <c>Aspire.Hosting.Dcp*</c> lines, and those can only be there because the
     /// buffer survived <c>StartAsync</c> returning. An arming window that closed when the start
     /// returned — the shape this feature originally shipped — would leave the file with a header
@@ -486,7 +546,7 @@ public sealed class DcpFlightRecorderDockerTests
             //     Property 1 is exact here. If the redirect were ignored, the production flush
             //     would put THIS topology's buffer - which names _failingResourceName, because
             //     DCP echoes the resource it is bringing up into the traffic the recorder holds,
-            //     and assertion (e) below pins that on this very capture - into the real root.
+            //     and assertion (c) below pins that on this very capture - into the real root.
             //     The name carries a per-run suffix, so nothing else on the machine, in this
             //     process or any other, runs a resource by it: a leak by this row run reddens
             //     this assertion and only this row run's leak can.
@@ -496,23 +556,48 @@ public sealed class DcpFlightRecorderDockerTests
             //     the injected directory" and say nothing about the file now sitting in the
             //     operator's directory.
             var leaked = NewCapturesNaming(realDirectory!, realBefore, _failingResourceName);
-            Assert.True(
-                leaked.Length == 0,
-                "the redirect did not hold: " + leaked.Length.ToString(
-                    System.Globalization.CultureInfo.InvariantCulture)
-                + " capture(s) naming this run's own resource '" + _failingResourceName
-                + "' appeared in the operator's real capture directory. They are left in place "
-                + "deliberately - this row does not delete evidence - and must be removed by "
-                + "hand:\n  " + string.Join("\n  ", leaked.Select(Path.GetFileName)));
+            if (leaked.Length > 0)
+            {
+                Assert.Fail(
+                    "the redirect did not hold: " + leaked.Length.ToString(
+                        System.Globalization.CultureInfo.InvariantCulture)
+                    + " capture(s) naming this run's own resource '" + _failingResourceName
+                    + "' appeared in the operator's real capture directory. They are left in "
+                    + "place deliberately - this row does not delete evidence - and must be "
+                    + "removed by hand:\n  " + string.Join("\n  ", leaked.Select(Path.GetFileName)));
+            }
 
             // (b) A capture appears in the INJECTED directory ...
             var captures = ListCaptures(scratch);
-            Assert.True(
-                captures.Length == 1,
-                "expected exactly one capture in the injected directory, found "
-                + captures.Length.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            if (captures.Length != 1)
+            {
+                Assert.Fail(
+                    "expected exactly one capture in the injected directory, found "
+                    + captures.Length.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            }
 
-            // (c) The failure carries the location TOKEN and the tail - and not the resolved
+            // (c) THE OWNERSHIP PREMISE ITSELF, pinned on a real capture in a blocking lane.
+            //     Every leak assertion in this class - (a) above and the one in the healthy row -
+            //     is an emptiness assertion over NewCapturesNaming, and emptiness assertions fail
+            //     open: if DCP ever stopped echoing the resource name into the buffered traffic,
+            //     the filter would return nothing for a row's OWN capture, both would pass for
+            //     free, and no test would notice. This repo advances Aspire per engine release,
+            //     so "what DCP echoes" is a moving dependency, not a constant.
+            //
+            //     THIRD, not last, and the position is load-bearing. This is the only positive
+            //     check that the key exists at all, so every assertion placed ahead of it is one
+            //     that can leave the premise unverified for a whole docker leg. It sits directly
+            //     behind the two it cannot run without: (a), because a row that has already
+            //     leaked should say so first, and (b), because it needs a capture to read.
+            //
+            //     Measured on real captures from this host, the key is genuine but thin and late:
+            //     one 20-entry capture named its resource on entries 18 and 19 only, and this
+            //     row's own drill capture held 18 entries with 2 naming the resource. Thin is
+            //     survivable; silent is not.
+            var body = await File.ReadAllTextAsync(captures[0]);
+            Assert.Contains(_failingResourceName, body, StringComparison.OrdinalIgnoreCase);
+
+            // (d) The failure carries the location TOKEN and the tail - and not the resolved
             //     path, which would put the operator's account name into a public CI artefact.
             Assert.Contains("dcp-capture: ", failure.Info.Detail, StringComparison.Ordinal);
             Assert.DoesNotContain(scratch, failure.Info.Detail, StringComparison.OrdinalIgnoreCase);
@@ -533,37 +618,30 @@ public sealed class DcpFlightRecorderDockerTests
                 failure.Info.Detail,
                 StringComparison.Ordinal);
 
-            // (d) The capture holds DCP traffic rather than being an empty file with a header.
+            // (e) The capture holds DCP traffic rather than being an empty file with a header.
             //     See this row's remarks for what that does and does NOT establish about WHICH
             //     of the two flush sites produced it.
-            var body = await File.ReadAllTextAsync(captures[0]);
+            //
+            //     Composed on the failing path only, which here is more than tidiness: the
+            //     message embeds the WHOLE capture body, so Assert.True would have built that
+            //     string on every green run. That it embeds the body at all is a separate open
+            //     defect - a body can carry Aspire per-run generated passwords and absolute host
+            //     paths into a public job log - tracked as #526 and deliberately not changed
+            //     here.
             var dcpLines = body
                 .Split('\n')
                 .Where(l => l.Contains(
                     DcpFlightRecorder.DcpCategoryPrefix, StringComparison.OrdinalIgnoreCase))
                 .ToList();
 
-            Assert.True(
-                dcpLines.Count > 0,
-                "the capture written at the health-gate timeout contains no "
-                + DcpFlightRecorder.DcpCategoryPrefix
-                + "* line, which means the buffer was empty by the time the gate failed - the "
-                + "arming window closed too early. Capture body:\n" + body);
-
-            // (e) THE OWNERSHIP PREMISE ITSELF, pinned on a real capture in a blocking lane.
-            //     Every leak assertion in this class - (a) above and the one in the healthy row -
-            //     is an emptiness assertion over NewCapturesNaming, and emptiness assertions fail
-            //     open: if DCP ever stopped echoing the resource name into the buffered traffic,
-            //     the filter would return nothing for a row's OWN capture, both would pass for
-            //     free, and no test would notice. This repo advances Aspire per engine release,
-            //     so "what DCP echoes" is a moving dependency, not a constant.
-            //
-            //     Measured on real captures from this host, the key is genuine but thin and late:
-            //     one 20-entry capture named its resource on entries 18 and 19 only, and this
-            //     row's own drill capture held 18 entries with 2 naming the resource. Thin is
-            //     survivable; silent is not. This row already has the body in hand, so the
-            //     premise costs one assertion here and is checked on every docker leg.
-            Assert.Contains(_failingResourceName, body, StringComparison.OrdinalIgnoreCase);
+            if (dcpLines.Count == 0)
+            {
+                Assert.Fail(
+                    "the capture written at the health-gate timeout contains no "
+                    + DcpFlightRecorder.DcpCategoryPrefix
+                    + "* line, which means the buffer was empty by the time the gate failed - the "
+                    + "arming window closed too early. Capture body:\n" + body);
+            }
         }
         finally
         {

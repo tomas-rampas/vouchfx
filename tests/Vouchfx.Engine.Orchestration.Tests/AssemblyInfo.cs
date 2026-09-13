@@ -72,7 +72,7 @@
 // UNRESOLVED: the DCP ~20s startup-watchdog flake above is therefore only half
 // contained. Topologies started by other assemblies can still overlap this one's,
 // and nothing here prevents that; the attribute closes the in-assembly half only.
-// That gap is being raised separately — do not read this note as saying it is fixed.
+// That gap is tracked as #525 — do not read this note as saying it is fixed.
 
 using Xunit;
 
