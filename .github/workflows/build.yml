@@ -309,18 +309,41 @@ jobs:
       # The trait selects the docker-gated topology and provider-integration tests
       # (spread across the orchestration, runtime and compilation test assemblies).
       #
-      # Topology startup is serialised so at most ONE Aspire topology starts at a
-      # time — fitting DCP's internal ~20s per-resource startup window on a loaded
-      # runner and killing the intermittent `startup` HealthGate flake. Two facts
-      # combine to guarantee this:
-      #   • per-assembly [assembly: CollectionBehavior(DisableTestParallelization
-      #     = true)] in Runtime.Tests + Orchestration.Tests serialises the
-      #     topology-starting classes WITHIN each assembly; and
-      #   • under the pinned .NET 8 SDK (global.json 8.0.400), with single-TFM
-      #     classic-VSTest projects and no parallelism flag set, `dotnet test
-      #     <solution>` runs ONE test host per project SEQUENTIALLY by default, so
-      #     assemblies don't overlap either. (If a future SDK/MTP/`-m` change
-      #     enabled cross-assembly parallelism, revisit with the right lever.)
+      # Topology startup is serialised WITHIN each assembly, and only within each
+      # assembly, by per-assembly [assembly: CollectionBehavior(
+      # DisableTestParallelization = true)] in Runtime.Tests + Orchestration.Tests.
+      # That is aimed at DCP's internal ~20s per-resource startup window on a loaded
+      # runner and the intermittent `startup` HealthGate flake.
+      #
+      # CROSS-ASSEMBLY OVERLAP DOES OCCUR. This comment used to claim the opposite —
+      # that under the pinned .NET 8 SDK `dotnet test <solution>` runs one test host
+      # per project SEQUENTIALLY, so assemblies never overlap — and flagged its own
+      # expiry condition. That condition had already fired. MEASURED on run
+      # 33904509538 (2026-09-04, this job — the run behind issue #489): 37 test hosts
+      # announced "Test run for ..." between 18:22:01.481Z and 18:23:09.437Z, a
+      # 68-second span. Durations below carry their KIND, because the two kinds
+      # differ by a minute:
+      #   • Vouchfx.Engine.Orchestration.Tests — banner 18:22:01.728Z to summary
+      #     19:05:59.833Z = 43m58s WALL CLOCK; VSTest reported 43m27s of test
+      #     EXECUTION on its summary line.
+      #   • Vouchfx.Engine.Runtime.Tests — banner 18:22:10.137Z to summary
+      #     18:36:35.436Z = 14m25s WALL CLOCK; VSTest reported 13m25s of execution.
+      # Runtime's window is contained in Orchestration's, so the OVERLAP IS
+      # Runtime's window: 14m25s. 37 hosts announcing inside 68 seconds while two of
+      # them run for 14 and 44 minutes makes sequential per-project execution
+      # arithmetically impossible — that, not any single duration, is decisive.
+      #
+      # Two consequences, and neither is fixed by anything in this step:
+      #   • No test may assume exclusive access to a machine-wide or user-wide
+      #     resource (a per-user directory, a fixed port, a certificate store).
+      #     #489 was that assumption failing on the shared DCP capture directory;
+      #     the rows involved now key their claims on a resource they own, or, where
+      #     a row owns no named resource, prove the property in-process instead.
+      #   • UNRESOLVED: the ~20s DCP startup-watchdog concern this serialisation was
+      #     added for is only half contained — topologies in different assemblies
+      #     can still start at the same time. Raised separately; the lever, if one is
+      #     wanted here, is on the `dotnet test` invocation below, and changing it is
+      #     deliberately NOT part of the #489 fix.
       # (The Sprint08 parallel capstone intentionally runs two topologies at once
       # via the engine's own ParallelSuiteRunner — unaffected by, and orthogonal
       # to, xUnit/VSTest scheduling.)
