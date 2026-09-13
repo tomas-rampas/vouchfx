@@ -30,6 +30,15 @@
 // pid, teardown has nothing to kill and the only backstop is the child's own bounded
 // ChildLifetimeSeconds, which is why that lifetime is finite rather than infinite.
 //
+// SINCE #524 THAT GAP IS WIDER BY A FACTOR OF BudgetAttempts, and both escalating rows sit in it,
+// not just the one whose remarks mention it. An attempt that ends without a pid is retried, so rows
+// 1 and 2 can each leave up to BudgetAttempts unannounced children behind — worst case four per
+// row, eight per run of this file. Bounded, not unbounded: every one of them is a child that
+// SystemProcessRunner tree-killed (row 1) or a grandchild the header already excludes from
+// teardown's reach (row 2), and either way ChildLifetime is the ceiling. The escalation widens an
+// existing gap rather than opening a new one, and it is stated here because the header is where a
+// reader looks for the gap.
+//
 // WHAT IS NOT COVERED HERE, STATED RATHER THAN IMPLIED
 // ───────────────────────────────────────────────────
 // A read that FAULTS mid-capture (issue #481's closing request) has no row in this file. Provoking
@@ -44,15 +53,81 @@
 //
 // THE BUDGET IS INJECTED, NOT INHERITED
 // ─────────────────────────────────────
-// Rows 1 and 2 construct their own runner with TestBudget rather than using
-// SystemProcessRunner.Instance, which carries the production ceiling (minutes). Coupling a test's
-// wall-clock to the production ceiling would make this file slow in order to prove nothing extra,
-// and it would force RunGraceWindow to track a constant chosen for a cold `git status` on a huge
-// repository. Rows 3, 4 and 6 keep using Instance: they exercise the happy path, the
-// launch-failure path and the argument guard, where the budget is never approached and the shared
-// instance is the thing shipped. Row 5
+// Rows 1 and 2 construct their own runner rather than using SystemProcessRunner.Instance, which
+// carries the production ceiling (minutes). Coupling a test's wall-clock to the production ceiling
+// would make this file slow in order to prove nothing extra, and it would force the grace window to
+// track a constant chosen for a cold `git status` on a huge repository. Rows 3, 4, 4b, 6 and 7 keep
+// using Instance: they exercise the happy path, the two launch-failure assertions, the argument
+// guard and the confined environment, where the budget is never approached and the shared instance
+// is the thing shipped. Row 5
 // injects a budget for the OPPOSITE reason — one so long it cannot be reached, so that a call
 // which ends is one the cancellation token ended.
+//
+// …AND ON ROWS 1 AND 2 IT IS ESCALATED RATHER THAN GUESSED (#524)
+// ───────────────────────────────────────────────────────────────
+// WHAT THE INJECTED BUDGET IS RACING. Rows 1 and 2 judge nothing until the child has published its
+// pid, and the runner tree-kills that child the moment the budget expires. Two clocks therefore run
+// against each other: the child has from Process.Start until the budget expires to be scheduled and
+// reach its first write, and if the kill gets there first the pid file is never written AT ALL. No
+// length of pid wait recovers that — there is nothing left alive to do the writing. MEASURED rather
+// than reasoned: with the budget cut to 50ms, the row fails after twenty seconds of polling with
+// the scratch directory still EMPTY (`pidFileExists=False dirEntries=[]`). So a fixed budget is a
+// bet that the operating system will schedule an unrelated process inside a constant, and #524 is
+// that bet losing under load.
+//
+// WHY NO CONSTANT IS THE RIGHT ONE, AND THE ANSWER IS THE TAIL. The old budget was three seconds,
+// chosen as roughly fifteen times a warm start of 190-220ms. That start was re-measured on the
+// maintainer's 20-core host at four load levels, eight samples each, taken twenty seconds after the
+// load had settled:
+//
+//     idle           154-190ms
+//     32 burners     532-649ms
+//     64 burners     1092-1230ms
+//     128 burners    2335-2511ms in six samples, and 9100ms and 13627ms in the other two
+//
+// READ THAT AS A LOWER BOUND ON THE SPREAD AND AS NOTHING ELSE. Eight samples cannot bound a tail,
+// and this probe demonstrably failed to find the one that matters: #524 was filed from 32 burners
+// on a 20-core host, one run in nine red. At THAT load — the second line, where the probe's worst
+// reading was 649ms — the real distribution therefore reaches past three seconds often enough to
+// redden roughly one run in nine. The probe never saw it. The 128-burner line is the same
+// phenomenon caught in the act rather than a different one, and it is quoted here only because two
+// samples in eight happening to land at 9.1s and 13.6s is what a heavy tail looks like when a small
+// sample does catch it.
+//
+// So the table establishes that start-up under contention is heavy-tailed and that eight samples
+// understate it at every load. What it cannot establish is a number — and that is the argument
+// against choosing one. A constant sized on samples anybody has collected is sized on the part of
+// the distribution that does not cause the failure.
+//
+// SO THE BUDGET IS MEASURED INSTEAD. An attempt in which the child never announced itself is not a
+// verdict about SystemProcessRunner; it is a measurement saying THIS budget was too short for THIS
+// host at THIS moment. WithEscalatingBudget treats it as one: it discards that attempt and repeats
+// it with the budget doubled. Nothing about the property under test depends on the number — "the
+// budget is enforced and the tree is killed" is as true at twenty-four seconds as at three — so
+// enlarging it costs the row nothing but time, and only on a host that has just demonstrated it
+// needs the time.
+//
+// THE ESCALATION CANNOT MASK A LIVE CHILD, which is the objection that has to be answered before a
+// retry is allowed anywhere near a leak test. A larger budget makes the child MORE likely to
+// publish its pid, and the pid is precisely what arms the death assertion; the only outcome
+// escalation can convert is "the row could not establish its premise" into "the row established its
+// premise and judged the runner". It never converts a judgement into a retry: once a pid is in
+// hand, the assertions run to completion and a failure among them is final. A run whose every
+// attempt failed to establish the premise FAILS; it is never reported as a pass.
+//
+// THE PID WAIT ENDS ON AN EVENT, NOT ON A CLOCK
+// ─────────────────────────────────────────────
+// Waiting a fixed twenty seconds for the pid file was dead time in exactly the case it was written
+// for: once Run has returned, the child it killed will never write anything, so the rest of the
+// wait polls a corpse. MEASURED, at the drill's own 50ms budget: it waited the full 20.02s with the
+// run already settled, so all but about 50ms of that wait had no live target. DERIVED for the
+// production budget by the same subtraction: seventeen of the twenty. Seventeen is arithmetic, not
+// a reading — nobody probed the 3s case — and it is written down that way here so the two are not
+// later quoted as one measurement. WaitForPid now gives up a short settle after the RUN ITSELF has
+// settled, so a failed premise is detected in about one budget rather than in a constant, and the
+// escalation above is affordable. Row 5's Run does not settle on its own — its budget is
+// unreachable and it is the row that cancels — so that row alone still carries an absolute ceiling;
+// UnracedPidCeiling records why an absolute figure is defensible there and was not here.
 //
 // ROW 6 IS NOT ABOUT #481 AT ALL
 // ──────────────────────────────
@@ -92,18 +167,27 @@ namespace Vouchfx.Cli.Tests;
 public sealed class SystemProcessRunnerTests
 {
     /// <summary>
-    /// How long <see cref="SystemProcessRunner.Run"/> is given to return before the row fails.
+    /// How long <see cref="SystemProcessRunner.Run"/> is given to do its post-trigger work.
     /// </summary>
     /// <remarks>
-    /// The failure latency of a re-broken runner, and it must stay comfortably above
-    /// <see cref="TestBudget"/>: the runner has to spend its whole budget, tree-kill the child and
-    /// unwind inside this window. Better than three times the injected budget, which leaves room
-    /// for a loaded agent without letting a genuine hang masquerade as slowness.
+    /// <para>
+    /// The failure latency of a re-broken runner. It covers only what <c>Run</c> does AFTER
+    /// whatever ends the call has already fired: tree-kill the child, dispose two captured streams,
+    /// throw. That work is the same however long the call waited first, which is why this is a flat
+    /// slack rather than a multiple of anything — see <see cref="GraceFor"/>, where rows that must
+    /// also sit out a budget add the budget to it, and row 5, whose token fires at once and which
+    /// therefore waits for this and nothing else.
+    /// </para>
+    /// <para>
+    /// Ten seconds for an unwind measured in milliseconds is not a latency target; it is the margin
+    /// that keeps a loaded agent from being reported as a hang. A genuine hang is unbounded and so
+    /// still fails here.
+    /// </para>
     /// </remarks>
-    private static readonly TimeSpan RunGraceWindow = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan RunUnwindSlack = TimeSpan.FromSeconds(10);
 
     /// <summary>
-    /// The budget rows 1 and 2 inject into the runner under test.
+    /// The budget rows 1 and 2 inject into the runner under test on their FIRST attempt.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -113,26 +197,107 @@ public sealed class SystemProcessRunnerTests
     /// a very large repository and is not something a unit test should sit through.
     /// </para>
     /// <para>
-    /// <strong>Its floor is not the runner, it is the CHILD.</strong> Both rows wait for the child
-    /// to publish its pid before they judge anything, and a budget that expired first would kill
-    /// the child before it ever wrote the file — turning a healthy runner into a row that fails on
-    /// its own teardown machinery. The window that matters is process start to first write:
-    /// measured at 190-220ms over five warm runs of the Windows shape (<c>powershell.exe
-    /// -NoProfile -NonInteractive</c>) on the maintainer's host. Three seconds is roughly fifteen
-    /// times that warm figure, which absorbs a cold interpreter start without making either row
-    /// slow. The <c>/bin/sh</c> shape CI runs has NOT been measured, and no figure is claimed for
-    /// it here — a number carried over from the Windows shape would inherit an authority it never
-    /// earned in the lane that gates merges.
+    /// <strong>Its floor is not the runner, it is the CHILD</strong> — and that is what makes it a
+    /// STARTING point rather than a choice. Both rows wait for the child to publish its pid before
+    /// they judge anything, and a budget that expires first kills the child before it ever writes
+    /// the file. The window that matters is process start to first write, measured for the Windows
+    /// shape (<c>powershell.exe -NoProfile -NonInteractive</c>) on the maintainer's 20-core host at
+    /// 154-190ms idle, 532-649ms under 32 CPU burners and 1092-1230ms under 64. Three seconds clears
+    /// all of those, which is why this row was usually green. It does NOT clear the tail: at 128
+    /// burners six of eight samples sat at 2.3-2.5s but the remaining two took 9.1s and 13.6s.
+    /// Three is therefore not defended here as sufficient — nothing is — but as the cheapest budget
+    /// that works on a host which is not thrashing, with <see cref="WithEscalatingBudget"/>
+    /// supplying the rest when it is. The <c>/bin/sh</c> shape CI runs has NOT been measured at any
+    /// load, and no figure is claimed for it — a number carried over from the Windows shape would
+    /// inherit an authority it never earned in the lane that gates merges, and the escalation is
+    /// what makes that unmeasured gap survivable rather than a second guess.
     /// </para>
     /// </remarks>
-    private static readonly TimeSpan TestBudget = TimeSpan.FromSeconds(3);
+    private static readonly TimeSpan StartingBudget = TimeSpan.FromSeconds(3);
 
-    /// <summary>How long the child is given to announce its pid before the row gives up.</summary>
+    /// <summary>
+    /// How many doublings of <see cref="StartingBudget"/> a row may spend establishing its premise.
+    /// </summary>
     /// <remarks>
-    /// Generous because a cold Windows PowerShell start is seconds, not milliseconds. It costs
-    /// nothing on the happy path: the wait ends the moment the file appears.
+    /// <para>
+    /// Four gives 3s, 6s, 12s and 24s. Sized against the tail rather than the median, because the
+    /// tail is what the shorter budgets lose to: the worst start-up measured anywhere in
+    /// <see cref="StartingBudget"/>'s figures was 13.6s, at a load of 128 CPU burners against 20
+    /// cores, and 24s clears that sample. Four rather than more because the ceiling is
+    /// <see cref="ChildLifetime"/> and it is the whole attempt that has to fit under it, not the
+    /// budget alone: 24s of budget plus the unwind slack plus the death poll comes to 36s of the
+    /// available 60, and one more doubling would not. A host that cannot start a shell inside the
+    /// largest budget is thrashing rather than busy, and a red row is then telling the truth about
+    /// the host.
+    /// </para>
+    /// <para>
+    /// Paid only on a host that has already failed the shorter budgets — an unloaded run never
+    /// leaves the first, so the common case costs exactly what it did before.
+    /// </para>
     /// </remarks>
-    private static readonly TimeSpan PidBudget = TimeSpan.FromSeconds(20);
+    private const int BudgetAttempts = 4;
+
+    /// <summary>The budget the last attempt uses.</summary>
+    /// <remarks>
+    /// <para>
+    /// Derived rather than written down, so it cannot drift from <see cref="BudgetAttempts"/> or
+    /// <see cref="StartingBudget"/>.
+    /// </para>
+    /// <para>
+    /// <strong>A property rather than a <see langword="static"/> <see langword="readonly"/> field,
+    /// and not as a matter of taste.</strong> A field initialiser reading
+    /// <see cref="StartingBudget"/> would be evaluated in TEXTUAL order: move that declaration below
+    /// this one and the field initialises from <see cref="TimeSpan.Zero"/>, leaving this at zero,
+    /// the drift guard in <see cref="WithEscalatingBudget"/> satisfied trivially, and the "cannot
+    /// drift" above false in the one way nothing would report. A property is evaluated on use, so
+    /// declaration order stops mattering at no cost.
+    /// </para>
+    /// </remarks>
+    private static TimeSpan LargestBudget => StartingBudget * (1 << (BudgetAttempts - 1));
+
+    /// <summary>
+    /// How long <see cref="WaitForPid"/> keeps polling after <c>Run</c> itself has settled.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Not zero, because <c>Run</c> returns having only ISSUED the tree-kill — both
+    /// <c>TerminateProcess</c> and <c>SIGKILL</c> return once the request is queued (the same fact
+    /// <see cref="DeathWindow"/> exists for). A child killed at the instant it was about to write
+    /// may still get its write in, and a row that stopped looking the moment <c>Run</c> returned
+    /// would discard a pid that was on its way and then have nothing to kill in teardown.
+    /// </para>
+    /// <para>
+    /// Not long either, because on the path where it is actually consumed the child is already dead
+    /// and every millisecond of it is waste multiplied by <see cref="BudgetAttempts"/>. Anything
+    /// this window misses is caught by the next, larger attempt.
+    /// </para>
+    /// </remarks>
+    private static readonly TimeSpan PidSettleWindow = TimeSpan.FromSeconds(3);
+
+    /// <summary>
+    /// The absolute ceiling on a pid wait whose <c>Run</c> is not going to settle by itself.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Row 5 only. Its runner carries <see cref="UnreachableBudget"/> and the row is what ends the
+    /// call, so "wait until Run settles" would wait for something the row has not done yet, and the
+    /// wait needs a figure.
+    /// </para>
+    /// <para>
+    /// <strong>An absolute figure is defensible HERE for the reason it was not defensible on rows 1
+    /// and 2: nothing is racing to destroy the child.</strong> On those rows the constant had to
+    /// beat a competing deadline that was already killing the thing being waited for, so any host
+    /// slow enough to lose the race produced an empty directory and a red row. Row 5's child has
+    /// five minutes of budget and no killer; this ceiling has only to exceed a shell start-up, and a
+    /// host that cannot manage one in thirty seconds — against a worst case of 13.6s across every
+    /// load measured in <see cref="StartingBudget"/>'s figures — has a problem this row should
+    /// report rather than absorb. It must stay below <see cref="ChildLifetime"/> so that a wait
+    /// which ran to the ceiling is known to have been waiting on a live child rather than on one
+    /// that had already exited — asserted at the top of row 5 itself, because that is the only row
+    /// this ceiling governs and a doc-comment does not fail a build.
+    /// </para>
+    /// </remarks>
+    private static readonly TimeSpan UnracedPidCeiling = TimeSpan.FromSeconds(30);
 
     /// <summary>
     /// How long teardown waits for the abandoned <c>Run</c> to unwind once its child is dead.
@@ -164,7 +329,7 @@ public sealed class SystemProcessRunnerTests
     private const int PollIntervalMs = 100;
 
     /// <summary>
-    /// The lifetime of a child that is supposed to outlast the row, as text.
+    /// The lifetime of a child that is supposed to outlast the row.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -173,11 +338,35 @@ public sealed class SystemProcessRunnerTests
     /// reasoning ChildProcessKillTreeTests records for its own child.
     /// </para>
     /// <para>
-    /// Held as a string because it is only ever spliced into a command line; that keeps every
-    /// interpolation in this file culture-free without a formatting ceremony.
+    /// It is also the CEILING every other window in this file has to stay under, which is why it is
+    /// a number here and a string only where a command line needs one. A child that exits while a
+    /// row is still waiting stops being the shape that row describes: rows 1 and 2 would see the
+    /// pipes close and the call succeed, and would then fail asserting a timeout that could not
+    /// happen.
+    /// </para>
+    /// <para>
+    /// <strong>Two relationships depend on it, and each is asserted where it applies rather than
+    /// described here.</strong> Rows 1 and 2 need the WHOLE of an attempt to fit — the largest
+    /// budget, the unwind slack after it and the death poll after that — which is what
+    /// <see cref="WithEscalatingBudget"/> checks; asserting only the budget would have left the
+    /// other twelve seconds unpinned. Row 5 needs <see cref="UnracedPidCeiling"/> to fit, and
+    /// asserts that itself. Neither is currently near its limit; the assertions exist so that the
+    /// next edit to any of these numbers is caught by a red row rather than by a reader.
     /// </para>
     /// </remarks>
-    private const string ChildLifetimeSeconds = "60";
+    private static readonly TimeSpan ChildLifetime = TimeSpan.FromSeconds(60);
+
+    /// <summary>
+    /// <see cref="ChildLifetime"/> as the text a command line splices in.
+    /// </summary>
+    /// <remarks>
+    /// Formatted once, invariantly, from the single source above rather than written out a second
+    /// time: two spellings of one lifetime is exactly the pair that drifts, and the drift would be
+    /// silent — the rows would keep passing until the day a budget outgrew the number nobody
+    /// updated.
+    /// </remarks>
+    private static readonly string ChildLifetimeSeconds =
+        ChildLifetime.TotalSeconds.ToString("F0", CultureInfo.InvariantCulture);
 
     /// <summary>
     /// Row 1 — an unbounded read against a child that never exits must not wedge the caller.
@@ -189,46 +378,81 @@ public sealed class SystemProcessRunnerTests
     [Fact]
     public async Task Run_WhenTheChildNeverExits_ThrowsWithinTheBudgetAndLeavesNoLiveChild()
     {
-        var startedUtc = DateTime.UtcNow;
-        var directory = CreateScratchDirectory();
-        var pidFile = Path.Combine(directory, "child.pid");
-        var shape = NeverExitingChild(pidFile);
-        var runner = new SystemProcessRunner(TestBudget);
+        await WithEscalatingBudget(
+            "the never-exiting child never published a pid, at any of the budgets below",
+            async budget =>
+            {
+                var startedUtc = DateTime.UtcNow;
+                var directory = CreateScratchDirectory();
+                var pidFile = Path.Combine(directory, PidFileName);
+                var shape = NeverExitingChild();
+                var runner = new SystemProcessRunner(budget);
+                var grace = GraceFor(budget);
 
-        var work = Task.Run(() => runner.Run(shape.FileName, shape.Arguments, directory));
-        int? pid = null;
-        try
-        {
-            pid = await Task.Run(() => WaitForPid(pidFile, PidBudget));
-            Assert.True(
-                pid is not null,
-                FormattableString.Invariant(
-                    $"The never-exiting child did not write its pid to '{pidFile}' within {PidBudget.TotalSeconds:F0}s, so this row could not establish that a child was ever running. That is a defect in the row, not in SystemProcessRunner."));
+                var attemptClock = Stopwatch.StartNew();
+                var work = Task.Run(() => runner.Run(shape.FileName, shape.Arguments, directory));
+                int? pid = null;
+                try
+                {
+                    pid = await Task.Run(
+                        () => WaitForPid(pidFile, work, PidSettleWindow, grace + PidSettleWindow));
 
-            var finished = await Task.WhenAny(work, Task.Delay(RunGraceWindow)) == work;
-            Assert.True(
-                finished,
-                FormattableString.Invariant(
-                    $"SystemProcessRunner.Run did not return within {RunGraceWindow.TotalSeconds:F0}s against a child that never exits, although it was given a {TestBudget.TotalSeconds:F0}s budget. Without a budget, StandardOutput.ReadToEnd() blocks until the child closes the pipe and WaitForExit() is unbounded besides."));
+                    // ASSERTED BEFORE THE PREMISE IS JUDGED, AND THAT ORDER IS THE POINT. A missing
+                    // pid is about to be handed back to WithEscalatingBudget as "too small a
+                    // budget, try again" — so the things it could otherwise hide have to be ruled
+                    // out here, while this attempt still owns the run. A run that has NOT returned
+                    // is not a child that started too slowly; it is the wedge this row exists to
+                    // catch, and retrying it three more times would bury the row's own finding
+                    // under its setup machinery. Costs nothing when the run has already settled,
+                    // which on the escalating path it always has.
+                    //
+                    // The elapsed figure is reported rather than the window, because the window is
+                    // not what was waited: WaitForPid above may already have spent up to
+                    // grace + PidSettleWindow, and this race then adds up to grace on top of it.
+                    var finished = await Task.WhenAny(work, Task.Delay(grace)) == work;
+                    Assert.True(
+                        finished,
+                        FormattableString.Invariant(
+                            $"SystemProcessRunner.Run had still not returned {attemptClock.Elapsed.TotalSeconds:F0}s after it was launched against a child that never exits, although it was given a {budget.TotalSeconds:F0}s budget. Without a budget, StandardOutput.ReadToEnd() blocks until the child closes the pipe and WaitForExit() is unbounded besides."));
 
-            // Only now that the task is known to be complete is it safe to await it: this is what
-            // turns "returned" into "returned by refusing", and a timeout must be reported as a
-            // timeout rather than as an empty capture that would silently narrow the change-set.
-            var timeout = await Assert.ThrowsAsync<ProcessTimeoutException>(() => work);
-            Assert.Equal(TestBudget, timeout.Budget);
+                    // HOISTED ABOVE THE PREMISE CHECK, and that is a correctness fix rather than
+                    // tidying. Three shapes reach the `pid is null` return without any timeout
+                    // having happened: Run throws ProcessLaunchException; Run throws
+                    // ProcessCaptureException; or a re-broken runner kills its child at once and
+                    // returns a perfectly ordinary ProcessResult — which is the "budget is
+                    // enforced" property itself failing. In each of them the child dies before it
+                    // writes, so the pid is missing for a reason that has nothing to do with
+                    // scheduling, and DrainAsync's observer would swallow the real exception on the
+                    // way out. Left below the return, the row would recycle a genuine runner defect
+                    // four times and then blame the host — the #512 failure mode exactly.
+                    //
+                    // Always valid here, whatever the pid did: the runner sets `exceeded` from the
+                    // reads still being pending when the budget expires, and throws on that alone.
+                    // The pid file plays no part in it.
+                    var timeout = await Assert.ThrowsAsync<ProcessTimeoutException>(() => work);
+                    Assert.Equal(budget, timeout.Budget);
 
-            var dead = await Task.Run(() => WaitForDeath(pid, startedUtc, DeathWindow));
-            Assert.True(
-                dead,
-                FormattableString.Invariant(
-                    $"SystemProcessRunner.Run returned but child pid {pid} was still alive {DeathWindow.TotalSeconds:F0}s later. Abandoning the timed-out child is the leak #481 is about; the timeout path must tree-kill it. The window is there because the kill is asynchronous, not because a live child is tolerable."));
-        }
-        finally
-        {
-            KillTreeQuietly(pid, startedUtc);
-            await DrainAsync(work);
-            TryDeleteDirectory(directory);
-        }
+                    if (pid is null)
+                    {
+                        // Now narrowed to exactly one meaning: the run refused correctly, and the
+                        // child was tree-killed before it announced itself.
+                        return false;
+                    }
+
+                    var dead = await Task.Run(() => WaitForDeath(pid, startedUtc, DeathWindow));
+                    Assert.True(
+                        dead,
+                        FormattableString.Invariant(
+                            $"SystemProcessRunner.Run returned but child pid {pid} was still alive {DeathWindow.TotalSeconds:F0}s later. Abandoning the timed-out child is the leak #481 is about; the timeout path must tree-kill it. The window is there because the kill is asynchronous, not because a live child is tolerable."));
+                    return true;
+                }
+                finally
+                {
+                    KillTreeQuietly(pid, startedUtc);
+                    await DrainAsync(work);
+                    TryDeleteDirectory(directory);
+                }
+            });
     }
 
     /// <summary>
@@ -259,50 +483,80 @@ public sealed class SystemProcessRunnerTests
     /// The pid captured here is the GRANDCHILD's, not the child's: the child is expected to be
     /// dead by the time teardown runs, and a tree-kill of a dead parent reaches nothing.
     /// </para>
+    /// <para>
+    /// <strong>It escalates its budget for the same reason row 1 does, and has more to lose by not
+    /// doing so.</strong> Its child has to start an interpreter AND launch a grandchild through it
+    /// before it writes anything, so by construction it does strictly more work before its first
+    /// write than row 1's child does. How much more has NOT been measured — the figures quoted for
+    /// <see cref="StartingBudget"/> are row 1's shape, and this row's are simply unknown, which is
+    /// itself an argument for a budget that adapts rather than one somebody picked. The one
+    /// consequence worth naming: an attempt killed between spawning the grandchild and
+    /// recording its pid leaves a grandchild nothing in this file can reach, and escalation can
+    /// repeat that up to <see cref="BudgetAttempts"/> times. That is the header's stated gap rather
+    /// than a new one, and the backstop is the same — the grandchild's own
+    /// <see cref="ChildLifetime"/>, which is why that lifetime is finite.
+    /// </para>
     /// </remarks>
     [Fact]
     public async Task Run_WhenAGrandchildHoldsTheInheritedPipes_ThrowsWithinTheBudget()
     {
-        var startedUtc = DateTime.UtcNow;
-        var directory = CreateScratchDirectory();
-        var pidFile = Path.Combine(directory, "grandchild.pid");
-        var shape = GrandchildHoldingPipesChild(pidFile);
-        var runner = new SystemProcessRunner(TestBudget);
+        await WithEscalatingBudget(
+            "the pipe-holding grandchild was never recorded, at any of the budgets below",
+            async budget =>
+            {
+                var startedUtc = DateTime.UtcNow;
+                var directory = CreateScratchDirectory();
+                var pidFile = Path.Combine(directory, GrandchildPidFileName);
+                var shape = GrandchildHoldingPipesChild();
+                var runner = new SystemProcessRunner(budget);
+                var grace = GraceFor(budget);
 
-        var work = Task.Run(() => runner.Run(shape.FileName, shape.Arguments, directory));
-        int? pid = null;
-        try
-        {
-            pid = await Task.Run(() => WaitForPid(pidFile, PidBudget));
-            Assert.True(
-                pid is not null,
-                FormattableString.Invariant(
-                    $"The pipe-holding grandchild did not write its pid to '{pidFile}' within {PidBudget.TotalSeconds:F0}s, so this row could not establish the #392 shape. That is a defect in the row, not in SystemProcessRunner."));
+                var attemptClock = Stopwatch.StartNew();
+                var work = Task.Run(() => runner.Run(shape.FileName, shape.Arguments, directory));
+                int? pid = null;
+                try
+                {
+                    pid = await Task.Run(
+                        () => WaitForPid(pidFile, work, PidSettleWindow, grace + PidSettleWindow));
 
-            var finished = await Task.WhenAny(work, Task.Delay(RunGraceWindow)) == work;
-            Assert.True(
-                finished,
-                FormattableString.Invariant(
-                    $"SystemProcessRunner.Run did not return within {RunGraceWindow.TotalSeconds:F0}s although its direct child exited almost immediately and it was given a {TestBudget.TotalSeconds:F0}s budget. The orphaned grandchild still holds the inherited stdout/stderr handles, so ReadToEnd() never sees EOF — bounding WaitForExit alone does not fix this row (#392)."));
+                    // Before the premise is judged, exactly as in row 1 and for the same reason,
+                    // including the elapsed figure rather than the window.
+                    var finished = await Task.WhenAny(work, Task.Delay(grace)) == work;
+                    Assert.True(
+                        finished,
+                        FormattableString.Invariant(
+                            $"SystemProcessRunner.Run had still not returned {attemptClock.Elapsed.TotalSeconds:F0}s after it was launched, although its direct child exited almost immediately and it was given a {budget.TotalSeconds:F0}s budget. The orphaned grandchild still holds the inherited stdout/stderr handles, so ReadToEnd() never sees EOF — bounding WaitForExit alone does not fix this row (#392)."));
 
-            var timeout = await Assert.ThrowsAsync<ProcessTimeoutException>(() => work);
-            Assert.Equal(TestBudget, timeout.Budget);
-        }
-        finally
-        {
-            KillTreeQuietly(pid, startedUtc);
-            await DrainAsync(work);
-            TryDeleteDirectory(directory);
-        }
+                    // Hoisted above the premise check for the reason row 1 sets out at length: a
+                    // launch failure, a capture fault or a runner that stopped enforcing its budget
+                    // all reach here with no pid, and all three are findings about
+                    // SystemProcessRunner rather than about the host's scheduler.
+                    var timeout = await Assert.ThrowsAsync<ProcessTimeoutException>(() => work);
+                    Assert.Equal(budget, timeout.Budget);
+
+                    if (pid is null)
+                    {
+                        return false;
+                    }
+
+                    return true;
+                }
+                finally
+                {
+                    KillTreeQuietly(pid, startedUtc);
+                    await DrainAsync(work);
+                    TryDeleteDirectory(directory);
+                }
+            });
     }
 
     /// <summary>
-    /// The budget row 5 injects: far above <see cref="RunGraceWindow"/> on purpose.
+    /// The budget row 5 injects: far above <see cref="RunUnwindSlack"/> on purpose.
     /// </summary>
     /// <remarks>
     /// If the row passes, it is the TOKEN that ended the call and nothing else — a budget anywhere
-    /// near the grace window would let a runner that ignores the token pass on the ceiling's
-    /// timing, which is the one confusion this row exists to rule out.
+    /// near the window that row waits out would let a runner which ignores the token pass on the
+    /// ceiling's timing, which is the one confusion this row exists to rule out.
     /// </remarks>
     private static readonly TimeSpan UnreachableBudget = TimeSpan.FromMinutes(5);
 
@@ -321,9 +575,22 @@ public sealed class SystemProcessRunnerTests
     /// <para>
     /// FAIL-FAST LIKE ROWS 1 AND 2, and for the same reason: this assembly is a blocking CI gate
     /// with no per-test timeout, so <c>Run</c> is launched on a background task and the row
-    /// asserts FIRST that it completed inside <see cref="RunGraceWindow"/>. A runner that ignored
+    /// asserts FIRST that it completed inside <see cref="RunUnwindSlack"/>. A runner that ignored
     /// the token would fail this row in ten seconds rather than sitting on
     /// <see cref="UnreachableBudget"/> for five minutes.
+    /// </para>
+    /// <para>
+    /// <strong>It waits for the unwind alone, where rows 1 and 2 wait for a budget PLUS the
+    /// unwind</strong> (<see cref="GraceFor"/>). Nothing is missing here: the token fires
+    /// immediately, so there is no budget for this row to sit out, and adding
+    /// <see cref="UnreachableBudget"/> to the window would let a runner that ignores the token pass
+    /// on the ceiling's timing — the one confusion the unreachable budget exists to rule out.
+    /// </para>
+    /// <para>
+    /// It does not escalate a budget either, and that is not an omission. The escalation on rows 1
+    /// and 2 answers a race between the child's start-up and a kill scheduled by the budget; here
+    /// the budget is five minutes and nothing is racing the child at all, so the only figure the
+    /// row needs is <see cref="UnracedPidCeiling"/>.
     /// </para>
     /// <para>
     /// The child is killed by the row's own <c>finally</c> on every path, exactly as in rows 1
@@ -333,10 +600,19 @@ public sealed class SystemProcessRunnerTests
     [Fact]
     public async Task Run_WhenTheCallerCancels_ThrowsOperationCanceledAndLeavesNoLiveChild()
     {
+        // Row 5's own window invariant, asserted rather than left in a doc-comment: a ceiling at or
+        // above the child's lifetime would let the wait end against a child that had simply exited,
+        // and the pid assertion below would then describe a host that never started a shell when
+        // what actually happened is that the shell finished.
+        Assert.True(
+            UnracedPidCeiling < ChildLifetime,
+            FormattableString.Invariant(
+                $"UnracedPidCeiling ({UnracedPidCeiling.TotalSeconds:F0}s) is not below ChildLifetime ({ChildLifetime.TotalSeconds:F0}s), so a pid wait that runs to the ceiling can no longer be attributed to a child that never started."));
+
         var startedUtc = DateTime.UtcNow;
         var directory = CreateScratchDirectory();
-        var pidFile = Path.Combine(directory, "child.pid");
-        var shape = NeverExitingChild(pidFile);
+        var pidFile = Path.Combine(directory, PidFileName);
+        var shape = NeverExitingChild();
         var runner = new SystemProcessRunner(UnreachableBudget);
         using var cancellation = new CancellationTokenSource();
 
@@ -352,19 +628,36 @@ public sealed class SystemProcessRunnerTests
             // Cancelled only once the child is known to be RUNNING. Cancelling earlier could be
             // answered by the pre-launch ThrowIfCancellationRequested, which would leave the row
             // asserting nothing about a live child.
-            pid = await Task.Run(() => WaitForPid(pidFile, PidBudget));
+            pid = await Task.Run(
+                () => WaitForPid(pidFile, work, PidSettleWindow, UnracedPidCeiling));
+
+            // CHECKED BEFORE THE PID IS JUDGED, because the pid wait now ends early when the RUN
+            // settles — a bound this row did not have before #524. Nothing has been cancelled yet,
+            // and the budget is five minutes against a child that never exits, so a run that has
+            // already finished did so by failing: a launch failure or a capture fault, either of
+            // which is a finding about SystemProcessRunner. Awaiting it here is what puts that
+            // exception in front of xunit; left alone it would be swallowed by DrainAsync's
+            // observer and the row would report a host that could not start a shell.
+            if (work.IsCompleted)
+            {
+                var premature = await work;
+                Assert.Fail(
+                    FormattableString.Invariant(
+                        $"SystemProcessRunner.Run returned exit code {premature.ExitCode} before this row cancelled anything, against a child that sleeps for {ChildLifetime.TotalSeconds:F0}s and a {UnreachableBudget.TotalMinutes:F0}-minute budget. Neither the token nor the budget can have ended that call, so the runner stopped waiting on its own."));
+            }
+
             Assert.True(
                 pid is not null,
                 FormattableString.Invariant(
-                    $"The never-exiting child did not write its pid to '{pidFile}' within {PidBudget.TotalSeconds:F0}s, so this row could not establish that a child was ever running. That is a defect in the row, not in SystemProcessRunner."));
+                    $"The never-exiting child did not write '{PidFileName}' into its working directory within {UnracedPidCeiling.TotalSeconds:F0}s, so this row could not establish that a child was ever running. The run had not finished and nothing was racing to kill that child — the injected budget is {UnreachableBudget.TotalMinutes:F0} minutes — so this is a host that could not start a shell. That is a defect in the row's environment, not in SystemProcessRunner."));
 
             cancellation.Cancel();
 
-            var finished = await Task.WhenAny(work, Task.Delay(RunGraceWindow)) == work;
+            var finished = await Task.WhenAny(work, Task.Delay(RunUnwindSlack)) == work;
             Assert.True(
                 finished,
                 FormattableString.Invariant(
-                    $"SystemProcessRunner.Run did not return within {RunGraceWindow.TotalSeconds:F0}s of its cancellation token being signalled, against a child that never exits and a {UnreachableBudget.TotalMinutes:F0}-minute budget it cannot have reached. The token is not being raced against the budget, so a Ctrl+C reaches this runner's cleanup only after the process is force-killed — which is to say, never."));
+                    $"SystemProcessRunner.Run did not return within {RunUnwindSlack.TotalSeconds:F0}s of its cancellation token being signalled, against a child that never exits and a {UnreachableBudget.TotalMinutes:F0}-minute budget it cannot have reached. The token is not being raced against the budget, so a Ctrl+C reaches this runner's cleanup only after the process is force-killed — which is to say, never."));
 
             // ThrowsAny rather than Throws: TaskCanceledException derives from
             // OperationCanceledException, and the property under test is that cancellation
@@ -625,21 +918,162 @@ public sealed class SystemProcessRunnerTests
         }
     }
 
+    // ── budget machinery (#524) ──────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// How long <c>Run</c> is given to return once it has been handed <paramref name="budget"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The budget PLUS a flat unwind slack, not a multiple of the budget.</strong> A row
+    /// that injects a budget is waiting for two different things end to end: the call sitting out
+    /// the budget, which is proportional to it by definition, and then the tree-kill, the two
+    /// stream disposals and the throw, which are the same handful of operations whatever the budget
+    /// was. Multiplying would grant the second part a window that grows with the first for no
+    /// reason, and the escalation in <see cref="WithEscalatingBudget"/> makes that compounding
+    /// rather than merely untidy — at the largest budget a factor of three would be waiting over a
+    /// minute to notice a hang.
+    /// </para>
+    /// <para>
+    /// A genuine hang is unbounded, so it still fails this however the window is composed; what the
+    /// composition decides is only how long a re-broken runner takes to say so.
+    /// </para>
+    /// </remarks>
+    private static TimeSpan GraceFor(TimeSpan budget) => budget + RunUnwindSlack;
+
+    /// <summary>
+    /// Runs <paramref name="attempt"/> against a doubling budget until it establishes its premise.
+    /// </summary>
+    /// <param name="premise">
+    /// What could not be established, phrased to complete a sentence about the exhausted attempts.
+    /// </param>
+    /// <param name="attempt">
+    /// One whole attempt at one budget. <see langword="true"/> means it established its premise and
+    /// its assertions have already run; <see langword="false"/> means the child was never observed
+    /// and the attempt judged nothing.
+    /// </param>
+    /// <remarks>
+    /// <para>
+    /// <strong>THIS IS NOT A RETRY OF A FAILED ASSERTION, AND THE DISTINCTION IS THE WHOLE
+    /// LICENCE FOR IT.</strong> An attempt that returns <see langword="false"/> made no judgement
+    /// about <see cref="SystemProcessRunner"/> at all: its child was tree-killed by the runner
+    /// before the operating system scheduled the child's first write, so there was never a pid to
+    /// arm the death assertion with. An attempt that DID get a pid runs its assertions to
+    /// completion, and a failure among them throws straight out through this method — assertions
+    /// are never re-run, and there is no path here that sees one fail and tries again.
+    /// </para>
+    /// <para>
+    /// <strong>Why doubling cannot hide a leak.</strong> The worry with any retry near a leak test
+    /// is that repetition buys a pass. It cannot here, because the escalation moves the row in the
+    /// opposite direction: a larger budget gives the child longer to publish its pid, the pid is
+    /// what arms the assertion that the child is dead, so every doubling makes the row MORE likely
+    /// to judge the runner and never less. The only transition available is "could not establish a
+    /// premise" to "established it and judged" — and if the premise is never established the row
+    /// FAILS below rather than passing quietly.
+    /// </para>
+    /// <para>
+    /// <strong>Why the budget may be enlarged at all.</strong> Because the property under test does
+    /// not name it: "the budget is enforced and the tree is killed" is the same statement at three
+    /// seconds and at twenty-four, and each row asserts the timeout against the budget IT was given
+    /// rather than against a constant. What the number has to do is outlast the child's start-up on
+    /// the host of the day, and only the host of the day knows that figure — see
+    /// <see cref="StartingBudget"/> for the spread: 154ms for the fastest idle sample against 13.6s
+    /// for the slowest 128-burner one, a factor near ninety on one machine.
+    /// </para>
+    /// </remarks>
+    private static async Task WithEscalatingBudget(string premise, Func<TimeSpan, Task<bool>> attempt)
+    {
+        // The relationship the whole escalation rests on, asserted rather than trusted to whoever
+        // next edits any of these numbers. Every budget here ends in the runner killing a child
+        // that is still running; a budget that outlived ChildLifetime would instead be answered by
+        // the child EXITING, the pipes closing and Run SUCCEEDING, and the row would then fail
+        // demanding a timeout that had become impossible — a confusing red for a healthy runner.
+        //
+        // THE WHOLE ATTEMPT IS WEIGHED, NOT JUST THE BUDGET, and the difference is not cosmetic:
+        // after the budget expires an attempt still waits out the unwind slack and then polls for
+        // the child's death, so it is the SUM that has to fit inside the child's lifetime. Checking
+        // the budget alone would pin 24s of a 36s requirement and silently leave the remaining 12s
+        // free to drift — which is exactly the shape of gap an assertion like this exists to close.
+        var longestAttempt = GraceFor(LargestBudget) + DeathWindow;
+        Assert.True(
+            longestAttempt < ChildLifetime,
+            FormattableString.Invariant(
+                $"The longest possible attempt ({longestAttempt.TotalSeconds:F0}s = a {LargestBudget.TotalSeconds:F0}s largest budget, plus {RunUnwindSlack.TotalSeconds:F0}s of unwind slack, plus a {DeathWindow.TotalSeconds:F0}s death poll) is not below the child's own lifetime ({ChildLifetime.TotalSeconds:F0}s). The child would exit on its own inside that window, so rows 1 and 2 would be asserting a timeout that cannot occur and a death that proves nothing. Lower BudgetAttempts, or raise ChildLifetime."));
+
+        var attempted = new List<string>(BudgetAttempts);
+        var budget = StartingBudget;
+        for (var i = 0; i < BudgetAttempts; i++)
+        {
+            if (await attempt(budget))
+            {
+                return;
+            }
+
+            attempted.Add(FormattableString.Invariant($"{budget.TotalSeconds:F0}s"));
+            budget += budget;
+        }
+
+        Assert.Fail(
+            FormattableString.Invariant(
+                $"Across {BudgetAttempts} attempts at budgets of {string.Join(", ", attempted)}, {premise}. The child is started by SystemProcessRunner and tree-killed by it the moment the budget expires, so a child that publishes nothing is one the kill reached before the operating system scheduled its first write. Doubling the budget is how that is told apart from a defect in the runner, and a host that still cannot start a shell inside the largest budget is reporting a problem of its own. Nothing about SystemProcessRunner has been established either way by this failure."));
+    }
+
     // ── child shapes ─────────────────────────────────────────────────────────────────────────
 
     /// <summary>An executable plus its argument vector.</summary>
     private sealed record ChildShape(string FileName, IReadOnlyList<string> Arguments);
 
     /// <summary>
+    /// The file name, relative to the working directory, that every child announces itself into.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>RELATIVE, AND THE ABSOLUTE PATH IS DELIBERATELY KEPT OFF THE COMMAND LINE.</strong>
+    /// Both shapes below splice this into a shell command inside single quotes, and in BOTH shells a
+    /// single quote is the one character that terminates such a literal — neither splice escapes it,
+    /// and there is no portable escape that would serve both. The scratch directory sits under
+    /// <see cref="Path.GetTempPath"/>, which on Windows contains the account name, and Windows
+    /// permits an apostrophe in one: <c>C:\Users\O'Brien\…</c> is an ordinary developer host.
+    /// </para>
+    /// <para>
+    /// MEASURED on such a path, with the absolute form spliced in as this file used to do: the
+    /// PowerShell child exits 1 with "The string is missing the terminator: '." and writes no pid,
+    /// and <c>/bin/sh</c> fails the same way with "unexpected EOF while looking for matching `''".
+    /// That is not merely a broken row — it is a broken row wearing the wrong label, because a child
+    /// that dies instantly looks exactly like a child that was never scheduled, so
+    /// <see cref="WithEscalatingBudget"/> would spend all four attempts on it and then report a
+    /// host that cannot start a shell. Confidently blaming the host for a defect is the failure
+    /// mode #512 is about, and #524 must not reintroduce it one file over.
+    /// </para>
+    /// <para>
+    /// Passing a bare name removes the character class rather than escaping it: the runner already
+    /// hands the child <c>directory</c> as its working directory, and a relative path resolves
+    /// against it. Verified rather than assumed, precisely because PowerShell's current LOCATION is
+    /// not always its process working directory: a child launched with
+    /// <c>ProcessStartInfo.WorkingDirectory</c> set to a path containing an apostrophe wrote its pid
+    /// to that directory, and the file contents matched the child's real pid.
+    /// </para>
+    /// </remarks>
+    private const string PidFileName = "child.pid";
+
+    /// <summary>
+    /// The grandchild's announcement file, relative to the working directory.
+    /// </summary>
+    /// <remarks>Named apart from <see cref="PidFileName"/> only so a stray file is attributable.</remarks>
+    private const string GrandchildPidFileName = "grandchild.pid";
+
+    /// <summary>
     /// A child that writes its own pid and then holds the pipes open for its whole lifetime.
     /// </summary>
-    private static ChildShape NeverExitingChild(string pidFile)
+    private static ChildShape NeverExitingChild()
     {
         if (OperatingSystem.IsWindows())
         {
             // Single quotes throughout: the argument reaches CreateProcess quoted by the runtime,
             // and an embedded double quote would have to survive both that escaping and
-            // powershell.exe's own command-line parsing. Nothing here needs one.
+            // powershell.exe's own command-line parsing. Nothing here needs one — and nothing
+            // spliced in can contain a single quote either, which is why PidFileName is a constant
+            // rather than a path.
             return new ChildShape(
                 WindowsPowerShell,
                 new[]
@@ -647,13 +1081,13 @@ public sealed class SystemProcessRunnerTests
                     "-NoProfile",
                     "-NonInteractive",
                     "-Command",
-                    $"$PID | Set-Content -LiteralPath '{pidFile}'; Start-Sleep -Seconds {ChildLifetimeSeconds}",
+                    $"$PID | Set-Content -LiteralPath '{PidFileName}'; Start-Sleep -Seconds {ChildLifetimeSeconds}",
                 });
         }
 
         return new ChildShape(
             "/bin/sh",
-            new[] { "-c", $"echo $$ > '{pidFile}'; sleep {ChildLifetimeSeconds}" });
+            new[] { "-c", $"echo $$ > '{PidFileName}'; sleep {ChildLifetimeSeconds}" });
     }
 
     /// <summary>
@@ -665,7 +1099,7 @@ public sealed class SystemProcessRunnerTests
     /// redirection, which hands the child the parent's std handles — here, the runner's pipes.
     /// On POSIX the background job inherits them through fork/exec, and <c>$!</c> is its pid.
     /// </remarks>
-    private static ChildShape GrandchildHoldingPipesChild(string pidFile)
+    private static ChildShape GrandchildHoldingPipesChild()
     {
         if (OperatingSystem.IsWindows())
         {
@@ -676,13 +1110,13 @@ public sealed class SystemProcessRunnerTests
                     "-NoProfile",
                     "-NonInteractive",
                     "-Command",
-                    $"(Start-Process -FilePath 'ping.exe' -ArgumentList '-n','{ChildLifetimeSeconds}','127.0.0.1' -NoNewWindow -PassThru).Id | Set-Content -LiteralPath '{pidFile}'",
+                    $"(Start-Process -FilePath 'ping.exe' -ArgumentList '-n','{ChildLifetimeSeconds}','127.0.0.1' -NoNewWindow -PassThru).Id | Set-Content -LiteralPath '{GrandchildPidFileName}'",
                 });
         }
 
         return new ChildShape(
             "/bin/sh",
-            new[] { "-c", $"sleep {ChildLifetimeSeconds} & echo $! > '{pidFile}'" });
+            new[] { "-c", $"sleep {ChildLifetimeSeconds} & echo $! > '{GrandchildPidFileName}'" });
     }
 
     /// <summary>A child that prints to both streams and exits 7.</summary>
@@ -765,38 +1199,105 @@ public sealed class SystemProcessRunnerTests
     // ── teardown machinery ───────────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Polls <paramref name="pidFile"/> until it holds a pid, or <paramref name="budget"/>
-    /// expires. Synchronous on purpose — callers wrap it in <c>Task.Run</c> so no blocking file
-    /// read sits directly inside an async method.
+    /// Polls <paramref name="pidFile"/> until it holds a pid, until <paramref name="work"/> has
+    /// been settled for <paramref name="settle"/>, or until <paramref name="ceiling"/> expires —
+    /// whichever comes first.
     /// </summary>
-    private static int? WaitForPid(string pidFile, TimeSpan budget)
+    /// <param name="pidFile">Where the child announces itself.</param>
+    /// <param name="work">The <c>Run</c> whose child is being waited for.</param>
+    /// <param name="settle">How long to keep looking after <paramref name="work"/> has settled.</param>
+    /// <param name="ceiling">The backstop for a <paramref name="work"/> that will not settle.</param>
+    /// <remarks>
+    /// <para>
+    /// <strong>THE RUN'S OWN COMPLETION IS THE REAL BOUND; <paramref name="ceiling"/> is the
+    /// backstop (#524).</strong> A fixed wall-clock wait was wrong in both directions. Too short
+    /// and a loaded host fails a row about SystemProcessRunner for a reason that is not about
+    /// SystemProcessRunner; too long and the wait spends the difference polling a file nothing is
+    /// alive to write — seventeen of twenty seconds at the production budget, which is a
+    /// SUBTRACTION rather than a reading (the drill that measured the dead time directly used a
+    /// 50ms budget and saw 20.02s of it) — because the runner tree-kills its
+    /// child when the budget expires and a child killed before its first write never makes one.
+    /// Ending the wait when the RUN has ended keys it to the only event that can still change the
+    /// answer, so a failed premise is reported in about a budget instead of in a constant, which is
+    /// what makes <see cref="WithEscalatingBudget"/> affordable.
+    /// </para>
+    /// <para>
+    /// <paramref name="settle"/> rather than stopping the instant <paramref name="work"/>
+    /// completes, because <c>Run</c> returns having only ISSUED the tree-kill: the child may still
+    /// be executing, and a pid discarded here is a pid teardown cannot kill.
+    /// </para>
+    /// <para>
+    /// Synchronous on purpose — callers wrap it in <c>Task.Run</c> so no blocking file read sits
+    /// directly inside an async method. Reading <see cref="Task.IsCompleted"/> from that thread is
+    /// safe and is the whole of the coupling: nothing here awaits, continues or faults
+    /// <paramref name="work"/>, which stays the caller's to observe.
+    /// </para>
+    /// </remarks>
+    private static int? WaitForPid(string pidFile, Task work, TimeSpan settle, TimeSpan ceiling)
     {
-        var deadline = DateTime.UtcNow + budget;
-        while (DateTime.UtcNow < deadline)
-        {
-            if (File.Exists(pidFile))
-            {
-                string text;
-                try
-                {
-                    text = File.ReadAllText(pidFile);
-                }
-                catch (IOException)
-                {
-                    // The child is mid-write; try again.
-                    text = string.Empty;
-                }
+        var ceilingAt = DateTime.UtcNow + ceiling;
+        DateTime? settledAt = null;
 
-                // Digits only: PowerShell's Set-Content may prepend a BOM and appends a newline.
-                var digits = new string(text.Where(char.IsAsciiDigit).ToArray());
-                if (digits.Length > 0
-                    && int.TryParse(digits, NumberStyles.None, CultureInfo.InvariantCulture, out var pid))
-                {
-                    return pid;
-                }
+        while (true)
+        {
+            if (ReadPid(pidFile) is int pid)
+            {
+                return pid;
+            }
+
+            var now = DateTime.UtcNow;
+
+            // Sampled AFTER the read above, never before it: the opposite order can see the run
+            // complete, start the settle clock, and only then look at a file the child wrote in
+            // between — which is the same answer, one poll later, but it makes the settle window
+            // one poll shorter than it says it is.
+            if (settledAt is null && work.IsCompleted)
+            {
+                settledAt = now;
+            }
+
+            if (now >= ceilingAt || (settledAt is { } observed && now - observed >= settle))
+            {
+                return null;
             }
 
             Thread.Sleep(PollIntervalMs);
+        }
+    }
+
+    /// <summary>
+    /// The pid in <paramref name="pidFile"/>, or <see langword="null"/> while there is not yet a
+    /// whole one to read.
+    /// </summary>
+    /// <remarks>
+    /// Absent, unreadable and half-written are all the same answer — "not yet" — because the caller
+    /// does the same thing with each of them: poll again. Distinguishing them would only let the
+    /// wait end on a race with the child's own write.
+    /// </remarks>
+    private static int? ReadPid(string pidFile)
+    {
+        if (!File.Exists(pidFile))
+        {
+            return null;
+        }
+
+        string text;
+        try
+        {
+            text = File.ReadAllText(pidFile);
+        }
+        catch (IOException)
+        {
+            // The child is mid-write; the caller will try again.
+            return null;
+        }
+
+        // Digits only: PowerShell's Set-Content may prepend a BOM and appends a newline.
+        var digits = new string(text.Where(char.IsAsciiDigit).ToArray());
+        if (digits.Length > 0
+            && int.TryParse(digits, NumberStyles.None, CultureInfo.InvariantCulture, out var pid))
+        {
+            return pid;
         }
 
         return null;
