@@ -404,11 +404,62 @@ jobs:
             esac
           }
 
-          # Collapse the pull's multi-line combined output to one line so it fits in
-          # a ::error::/::warning:: annotation, which the reader sees without opening
-          # the log at all.
+          # Make the pull's combined output SAFE to interpolate into a
+          # ::error::/::warning:: annotation, and fit it on one line so the reader
+          # sees it without opening the log at all. Both halves matter, and the
+          # sanitising half is a TRUST BOUNDARY, not cosmetics: an annotation body
+          # carries text a REMOTE chose (a registry's error message), and the runner
+          # parses `::`-prefixed workflow commands out of the very stream this is
+          # echoed into. Unsanitised, a crafted pull error can end the annotation
+          # early and start a workflow command of its own.
+          #
+          # This is a FIX, not a precaution. MEASURED against the version of this
+          # function that translated only LF: a pull error of
+          # "pull failed\r::error::INJECTED" reached the runner verbatim as
+          #   pull failed^M::error::INJECTED
+          # — a live CR immediately followed by a workflow command. The security
+          # review had cleared this path on the reasoning that "one_line() collapses
+          # newlines to spaces, so injected text cannot start a new command line";
+          # that reasoning held for LF and not for CR, which `tr '\n' ' '` leaves
+          # untouched.
+          #
+          # ORDER IS LOAD-BEARING: `%` becomes `%25` FIRST, before anything else.
+          # GitHub decodes `%25`/`%0A`/`%0D` in a command body, so a literal `%0A`
+          # arriving in registry text would otherwise be decoded by the runner into
+          # a real newline — injecting the line break this function exists to
+          # prevent. Escaping `%` first turns it into `%250A`, which decodes back to
+          # the harmless literal text `%0A`. Going first is also what stops the
+          # escaping re-escaping its own output (`%25` -> `%2525`), and what would
+          # keep this correct if the C0 step below were ever changed to emit
+          # `%0D`/`%0A` instead of spaces. Ordinary prose survives readably: a
+          # registry saying "third 100% done" is emitted as "third 100%25 done",
+          # which the runner decodes back to "third 100% done".
+          #
+          # DO NOT "SIMPLIFY" THE `%` ESCAPE BACK INTO A `sed` CALL. Parameter
+          # expansion here is a correctness requirement. `sed` is LINE-oriented: it
+          # parses this value into lines and may normalise the terminators it finds.
+          # Measured while writing this — a `sed 's/%/%25/g'` in this position ATE
+          # the CR of a CRLF on a Git Bash host before `tr` could see it, yielding
+          # one space where two were due. That is the dangerous shape, not a
+          # cosmetic one: the local run looked GREEN while the behaviour actually
+          # shipped to an Ubuntu runner (whose GNU sed does not strip the CR)
+          # differed. Parameter expansion touches no line structure and `tr` is
+          # byte-oriented, so the pipeline below has NO stage whose behaviour can
+          # differ by platform — which is what makes the CR rows in the harness
+          # trustworthy despite being exercised on Windows.
+          #
+          # C0 SCOPE: every control character 0x00-0x1F becomes a space, not just
+          # LF. LF and CR are the injection-critical pair — the runner's command
+          # parser treats BOTH as line terminators — and translating only LF is
+          # exactly the gap described above. The rest of the range is covered
+          # because it is one character class rather than three special cases, and
+          # because ESC (0x1B) in particular lets an ANSI sequence hide or overwrite
+          # text in the rendered annotation, which would falsify precisely the "see
+          # the registry's own words" property this annotation exists for. NUL
+          # cannot reach here (command substitution drops it), but the range costs
+          # nothing by covering it.
           one_line() {
-            printf '%s' "$1" | tr '\n' ' '
+            printf '%s' "${1//%/%25}" | tr '\000-\037' ' '
           }
 
           max_attempts=3
