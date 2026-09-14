@@ -39,8 +39,8 @@ namespace Vouchfx.Engine.Orchestration.Tests;
 /// <para>
 /// <strong>What it pins.</strong> Rule 1: within every production source under <c>src/</c>, each
 /// construction of the recorder sits inside the parameterless factory. Rule 2: every exit from
-/// <c>HeadlessTopology.StartAsync</c> hands back a topology whose recorder is the value that
-/// factory produced, unmodified between the two. The two are complements, and neither alone is
+/// <c>HeadlessTopology.StartAsync</c> hands back a topology whose recorder is a local initialised
+/// by that factory and never rebound. The two are complements, and neither alone is
 /// the property: rule 1 without rule 2 admits a <c>StartAsync</c> that calls the factory, drops
 /// the answer on the floor and hands over <see langword="null"/>; rule 2 without rule 1 admits a
 /// recorder constructed and registered elsewhere in the assembly, past the opt-out, on a path the
@@ -52,7 +52,10 @@ namespace Vouchfx.Engine.Orchestration.Tests;
 /// (<c>CreateUnlessDisabled(bool ignoreOptOut)</c>) that constructs a recorder without consulting
 /// the environment is a perfectly ordinary thing for somebody to add, and a census keyed on the
 /// method NAME alone would sanction both its construction site and a <c>StartAsync</c> that called
-/// it. Every name match below is therefore paired with an argument- or parameter-count check.
+/// it. Both matches on the FACTORY name below are therefore paired with a parameter- or
+/// argument-count check. The <c>HeadlessTopology</c> constructor and <c>StartAsync</c> matches are
+/// guarded differently — by an assert that exactly one declaration answers to the name, so an
+/// added overload reddens the census rather than silently supplying a second candidate.
 /// </para>
 /// <para>
 /// <strong>What it CANNOT pin, stated so it is not quoted as more than it is.</strong> This reads
@@ -69,7 +72,8 @@ namespace Vouchfx.Engine.Orchestration.Tests;
 ///     <c>DcpFlightRecorder? r = new();</c> constructs a recorder needs a semantic model, and this
 ///     census — like every other in this assembly — has no compilation. The explicit form is the
 ///     one anybody writes by accident; the implicit one would have to be chosen. (Rule 2 does see
-///     it, because there it is a return this rule cannot trace and is reported as one.)
+///     it inside <c>StartAsync</c>, where the declarator's initialiser is not a factory call and is
+///     reported as one — elsewhere under <c>src/</c>, neither rule sees it.)
 ///   </item>
 ///   <item>
 ///     Type ALIASES are resolved per file but not across files. <c>using R = …DcpFlightRecorder;</c>
@@ -244,6 +248,14 @@ public sealed class DcpRecorderFactoryCensusTests
     /// refused too, and re-aiming this rule is the right answer if anybody ever wants one.
     /// </para>
     /// <para>
+    /// <strong>Conservative in one more place, admitted here rather than discovered.</strong>
+    /// <c>return new HeadlessTopology(app, null);</c> is reported as an offender — the slot carries
+    /// an expression, not a local — even though a literal <c>null</c> there is the SAFE exit: no
+    /// recorder means no capture, whatever the opt-out said. The rule refuses it because tracing
+    /// provenance is the only thing it knows how to do, and an exit it cannot trace is one it must
+    /// not bless. Writing that exit deliberately means re-aiming this rule, not deleting it.
+    /// </para>
+    /// <para>
     /// The recorder's SLOT is read off the private constructor's parameter list rather than
     /// hard-coded as an index, so reordering the constructor's parameters re-aims this rule
     /// instead of breaking it.
@@ -325,6 +337,7 @@ public sealed class DcpRecorderFactoryCensusTests
             + "re-aim it rather than deleting it.");
 
         var offenders = new List<string>();
+        var scanned = new HashSet<string>(StringComparer.Ordinal);
 
         foreach (var statement in returns)
         {
@@ -382,6 +395,15 @@ public sealed class DcpRecorderFactoryCensusTests
                 continue;
             }
 
+            // Once per LOCAL, not once per exit: the rebinding scan covers the whole method, so two
+            // exits naming the same local would otherwise report each rebinding twice. Keyed on the
+            // name rather than hoisted out of the loop because different exits may name different
+            // locals, and each of those still needs its own scan.
+            if (!scanned.Add(local))
+            {
+                continue;
+            }
+
             offenders.AddRange(method
                 .DescendantNodes(descendIntoTrivia: false)
                 .Where(n => IsRebindingOf(n, local))
@@ -396,7 +418,7 @@ public sealed class DcpRecorderFactoryCensusTests
             + $"{RecorderTypeName}.{FactoryMethodName}() and the recorder handed to the returned "
             + "topology, so the VOUCHFX_DCP_CAPTURE=0 opt-out no longer governs whether production "
             + "captures DCP traffic — the factory is the only place that switch is read. Take the "
-            + "recorder from the factory and hand THAT value, unmodified, to every exit:\n  "
+            + "recorder from the factory and hand THAT local on, unrebound, at every exit:\n  "
             + string.Join("\n  ", offenders));
     }
 
