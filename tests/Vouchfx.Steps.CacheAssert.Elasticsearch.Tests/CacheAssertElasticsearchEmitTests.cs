@@ -15,7 +15,8 @@
 //   9.  Resources: yields an elasticsearch ResourceRequirement whose Name equals model.Target.
 //   10. CompileReferenceAssemblies: contains the System.Net.Http assembly.
 //   11. Full compile-and-run (no docker): EnvironmentError when conn key is absent.
-//   12. Full compile-and-run (no docker): EnvironmentError when endpoint is dead (count mismatch path).
+//   12. Full compile-and-run (no docker): EnvironmentError when the endpoint refuses the
+//       connect (transport-failure path — the POST throws, so no count branch is reached).
 //   13. Full compile-and-run (no docker): credential URL not leaked in observation (§17 redaction).
 //   14. Full compile-and-run (no docker): match_all default query compiles (no explicit query).
 //   15. Full compile-and-run (no docker): field assertion path compiles (with expect.fields).
@@ -78,9 +79,6 @@ public sealed class CacheAssertElasticsearchEmitTests
         typeof(System.Text.RegularExpressions.Regex).Assembly.Location,
         typeof(System.Uri).Assembly.Location,
     };
-
-    // A dead local endpoint — nothing listens on 56790, so HTTP POST fails fast.
-    private const string DeadBaseUrl = "http://localhost:56790";
 
     // ── 1. StatementBlock braces ──────────────────────────────────────────────
 
@@ -231,9 +229,10 @@ public sealed class CacheAssertElasticsearchEmitTests
     {
         var model = MakeModel(target: "search", count: 1);
 
+        using var dead = DeadLoopbackEndpoint.Reserve();
         var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
         {
-            [VarKeys.Connection("search")] = DeadBaseUrl,
+            [VarKeys.Connection("search")] = dead.BaseUrl,
         };
 
         var outcome = await RunStepAsync(model, "es-dead", vars);
@@ -257,7 +256,8 @@ public sealed class CacheAssertElasticsearchEmitTests
     [Fact]
     public async Task Emit_CompileAndRun_CredentialedConnFails_ObservationContainsOnlyTypeName()
     {
-        const string connUrl = "http://elastic:sup3rsecret@localhost:56790";
+        using var dead = DeadLoopbackEndpoint.Reserve();
+        var connUrl = $"http://elastic:sup3rsecret@{dead.Host}:{dead.Port}";
         var model = MakeModel(target: "search");
 
         var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
@@ -271,13 +271,33 @@ public sealed class CacheAssertElasticsearchEmitTests
         Assert.NotNull(outcome.Observation);
 
         // §17 layer (2): generic catch emits ONLY the exception type name — no URL,
-        // no host, no password.
+        // no host, no password.  Each leak shape gets its own row so a failure names the
+        // thing that leaked rather than just reporting that the JSON changed.
         Assert.DoesNotContain("sup3rsecret", outcome.Observation!, StringComparison.Ordinal);
         Assert.DoesNotContain("elastic", outcome.Observation!, StringComparison.Ordinal);
-        Assert.DoesNotContain("56790", outcome.Observation!, StringComparison.Ordinal);
 
-        // The observation must be the type-name-only JSON produced by the catch block.
-        Assert.Contains("HttpRequestException", outcome.Observation!, StringComparison.Ordinal);
+        // The credential also exists in a form the two plaintext rows above cannot see.
+        // The provider base64-encodes user + ":" + pass into the Basic auth header
+        // (CacheAssertElasticsearchProvider.cs, Convert.ToBase64String at the authHeader
+        // assignment), so a regression that echoed authHeader would emit
+        // ZWxhc3RpYzpzdXAzcnNlY3JldA== — a trivially reversible full credential pair that
+        // contains neither "elastic" nor "sup3rsecret" as a substring.
+        Assert.DoesNotContain(
+            "ZWxhc3RpYzpzdXAzcnNlY3JldA==", outcome.Observation!, StringComparison.Ordinal);
+
+        // Host and port are asserted separately because a provider can leak the endpoint
+        // without leaking the credential — rebuilding scheme://host:port for a message is
+        // the obvious way to do it.  Both name the values this run actually used, not
+        // literals that would go stale the moment the endpoint stopped being hard-coded.
+        Assert.DoesNotContain(dead.Host, outcome.Observation!, StringComparison.Ordinal);
+        var portText = $"{dead.Port}";
+        Assert.DoesNotContain(portText, outcome.Observation!, StringComparison.Ordinal);
+
+        // Equality, not Contains: the block comment above claims the observation IS
+        // exactly this JSON, and until it was an Assert.Equal nothing enforced the claim —
+        // {"error":"HttpRequestException","host":"127.0.0.1"} satisfies a Contains.  This
+        // subsumes the five rows above; they are kept for their failure messages.
+        Assert.Equal("{\"error\":\"HttpRequestException\"}", outcome.Observation);
     }
 
     // ── 14. Compile round-trip: default match_all query compiles ──────────────
@@ -289,9 +309,10 @@ public sealed class CacheAssertElasticsearchEmitTests
         // Against a dead endpoint it must surface EnvironmentError (not a compile error).
         var model = MakeModel(target: "search", query: null);
 
+        using var dead = DeadLoopbackEndpoint.Reserve();
         var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
         {
-            [VarKeys.Connection("search")] = DeadBaseUrl,
+            [VarKeys.Connection("search")] = dead.BaseUrl,
         };
 
         var outcome = await RunStepAsync(model, "es-matchall", vars);
@@ -308,9 +329,10 @@ public sealed class CacheAssertElasticsearchEmitTests
         var fields = new[] { new EsFieldAssertion("status", "active") };
         var model = MakeModel(target: "search", fields: fields);
 
+        using var dead = DeadLoopbackEndpoint.Reserve();
         var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
         {
-            [VarKeys.Connection("search")] = DeadBaseUrl,
+            [VarKeys.Connection("search")] = dead.BaseUrl,
         };
 
         var outcome = await RunStepAsync(model, "es-fields", vars);
@@ -513,6 +535,97 @@ public sealed class CacheAssertElasticsearchEmitTests
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────
+
+    /// <summary>
+    /// A loopback endpoint that cannot answer, for the rows in this file that need a
+    /// connect to be refused.  A TCP socket is bound to an OS-allocated port and
+    /// <see cref="Socket.Listen(int)"/> is never called; the socket is held until
+    /// <see cref="Dispose"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Why nothing answers: binding without listening puts no listening endpoint on the
+    /// port, so an inbound SYN is answered with RST and the connect fails with
+    /// <see cref="SocketError.ConnectionRefused"/> — which the provider's generic catch
+    /// turns into <c>{"error":"HttpRequestException"}</c>, the observation row 13 asserts
+    /// on.  Measured on Windows: no LISTENING row appears for a held port, the refusal is
+    /// <c>ConnectionRefused</c>, and its latency is unchanged from the released-port
+    /// arrangement this replaces.  The Linux CI runner is not measured here and this
+    /// comment claims nothing about it — the assertions are the cross-platform check,
+    /// since they demand that exact observation on whatever platform runs them.
+    /// </para>
+    /// <para>
+    /// Why it stays dead — the point of holding the socket rather than releasing it: while
+    /// the reservation is open the OS will not give the port to anything else, so there is
+    /// no window in which a stranger can answer.  Measured on Windows: a second bind of a
+    /// held port fails with <c>AddressAlreadyInUse</c>, and a second bind that first sets
+    /// <c>SO_REUSEADDR</c> fails with <c>AccessDenied</c>; after <see cref="Dispose"/> the
+    /// port binds again, so the reservation releases cleanly.  Finding a port free and
+    /// then closing the socket — what <see cref="FindFreePort"/> does for the stub-server
+    /// rows, which need a port they can actually listen on — would leave the port dead
+    /// only by assumption from that moment on, which is the defect #461 was filed for and
+    /// the reason none of these four rows may name a port.
+    /// </para>
+    /// <para>
+    /// The host is the IPv4 literal 127.0.0.1, not "localhost": the reservation is bound to
+    /// <see cref="IPAddress.Loopback"/>, so naming IPv4 keeps the reservation and the
+    /// connect on one stack — a dual-stack "localhost" could try ::1 first, a port nothing
+    /// reserved.
+    /// </para>
+    /// <para>
+    /// Scope: this covers the four connect-refused rows in this file.  Other suites still
+    /// name a dead port; consolidating them is tracked separately, as commit f89f07e
+    /// (#431/#377) recorded when it verified the listener binds under <c>tests/</c> were
+    /// OS-allocated and left the rest on #461.
+    /// </para>
+    /// </remarks>
+    private sealed class DeadLoopbackEndpoint : IDisposable
+    {
+        private readonly Socket _reservation;
+
+        private DeadLoopbackEndpoint(Socket reservation, IPEndPoint bound)
+        {
+            _reservation = reservation;
+            Host = bound.Address.ToString();
+            Port = bound.Port;
+        }
+
+        /// <summary>
+        /// The address the reservation is bound to, read back off the socket rather than
+        /// restated — so the row that asserts the host is absent from an observation is
+        /// checking the host this run really used.
+        /// </summary>
+        public string Host { get; }
+
+        /// <summary>The OS-allocated port the reservation holds.</summary>
+        public int Port { get; }
+
+        /// <summary>The base URL to point a step at.</summary>
+        public string BaseUrl => $"http://{Host}:{Port}";
+
+        /// <summary>Binds — but does not listen on — an OS-allocated loopback port.</summary>
+        public static DeadLoopbackEndpoint Reserve()
+        {
+            var reservation = new Socket(
+                AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+            try
+            {
+                // Port 0: the OS picks a port it considers unused. The successful bind is
+                // the evidence it was free; holding it is what keeps it that way.
+                reservation.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+                return new DeadLoopbackEndpoint(
+                    reservation, (IPEndPoint)reservation.LocalEndPoint!);
+            }
+            catch
+            {
+                reservation.Dispose();
+                throw;
+            }
+        }
+
+        /// <summary>Releases the port. Nothing else may use it before this runs.</summary>
+        public void Dispose() => _reservation.Dispose();
+    }
 
     /// <summary>Finds a free loopback TCP port by binding temporarily to port 0.</summary>
     private static int FindFreePort()

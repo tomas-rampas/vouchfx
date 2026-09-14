@@ -59,11 +59,27 @@
 // -------------------------------------
 // Every test snapshots and restores NUGET_PACKAGES and ASPIRE_DCP_PATH via EnvironmentVariableScope
 // so ambient values on a developer's or CI's machine never leak in, and so the mutation never
-// survives the test. No dedicated xUnit collection is declared for that mutation: AssemblyInfo.cs
-// already disables ALL intra-assembly parallelism for this project
-// ([assembly: CollectionBehavior(DisableTestParallelization = true)]), and `dotnet test <solution>`
+// survives the test. No dedicated xUnit collection is declared for that mutation, and the reason
+// is INTRA-PROCESS, not machine-wide. Two facts, and together they are sufficient:
+//   • AssemblyInfo.cs disables ALL intra-assembly parallelism for this project
+//     ([assembly: CollectionBehavior(DisableTestParallelization = true)]), so no test in this
+//     assembly runs concurrently with another IN THIS PROCESS; and
+//   • Environment.SetEnvironmentVariable — which is what EnvironmentVariableScope wraps — writes
+//     to this process's own block and is invisible to every other process on the machine.
+//
+// THE JUSTIFICATION THIS COMMENT USED TO GIVE WAS FALSE, and is retired here rather than quietly
+// dropped, because it is the premise #489 was filed against. It read: "`dotnet test <solution>`
 // runs one test host per project sequentially — so no test in this assembly, in this file or any
-// other, ever runs concurrently with another.
+// other, ever runs concurrently with another." MEASURED on CI run 33904509538 (2026-09-04,
+// integration job): 37 test hosts announced "Test run for ..." between 18:22:01.481Z and
+// 18:23:09.437Z, and this assembly's host (banner 18:22:01.728Z, summary 19:05:59.833Z) overlapped
+// Vouchfx.Engine.Runtime.Tests' host (18:22:10.137Z → 18:36:35.436Z) for the whole 14m25s of the
+// latter. Tests in other assemblies DO run concurrently with these.
+//
+// The conclusion above survives that intact — but only because the mutated state is
+// process-scoped. Anything user-wide or machine-wide (a per-user directory, a fixed port, a
+// certificate store) would NOT be protected by either fact, which is what #489 cost. See
+// AssemblyInfo.cs for that rule and DcpFlightRecorderDockerTests for the worked example.
 
 using System.Reflection;
 using System.Runtime.InteropServices;

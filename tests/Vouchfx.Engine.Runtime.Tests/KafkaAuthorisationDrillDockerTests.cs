@@ -133,6 +133,7 @@ using System.Threading.Tasks;
 using Vouchfx.Engine.Abstractions;
 using Vouchfx.Engine.Abstractions.Events;
 using Vouchfx.Engine.Authoring;
+using Vouchfx.Engine.Orchestration;
 using Vouchfx.Engine.Runtime;
 using Vouchfx.Sdk;
 using Vouchfx.Steps.MqExpect.Kafka;
@@ -449,24 +450,232 @@ public sealed class KafkaAuthorisationDrillDockerTests
         // image pull, a loaded host — cancels the second before it starts, and the failure arrives
         // as `Assert.Equal(3, gated)` seeing a cancellation code. That reads as a taxonomy defect
         // and is a stopwatch.
+        // EACH RUN'S WHOLE STDOUT IS WRITTEN, UNCONDITIONALLY, AND THE LOG VOLUME IS A DECISION.
+        // Before it, the row's entire test output on a failure was the two `exit=` lines below,
+        // and xUnit truncated the assertion's own string to about forty characters. On the red
+        // CI run cited in section 0 that came to, verbatim, `String: "warn:
+        // Aspire.Hosting.Dcp.DcpHost[0]\n     "···` — which names nothing — and the whole of
+        // that run's Standard Output Messages was the two `exit=` lines. Every later diagnosis in
+        // this file was made by reading these two dumps; they are the part of the change that
+        // keeps paying.
+        //
+        // The cost is accepted rather than unnoticed: a GREEN run publishes none of this,
+        // because xUnit holds per-test output and the runner surfaces it only for a FAILING test
+        // at default verbosity. Measured on this row's own runs: the console log of a green
+        // two-class run contains zero occurrences of `flagless output`, and the log of a
+        // deliberately failed one contains it. The volume lands on the run that needs it.
+        //
+        // Cleared by security review on this suite specifically: it declares no `${secret:}`,
+        // `${env:}` or `${conn:}` and no `clientKeyPassword`, and the engine's `dcp-capture:`
+        // emits an unexpanded root token rather than a resolved host path.
         using var flaglessBudget = new CancellationTokenSource(TimeSpan.FromMinutes(6));
         var (flagless, flaglessOutput) = await RunCliAsync(cli, suite, null, flaglessBudget.Token);
         _output.WriteLine($"flagless exit={flagless}");
+        _output.WriteLine("── flagless output ──\n" + flaglessOutput);
 
         using var gatedBudget = new CancellationTokenSource(TimeSpan.FromMinutes(6));
         var (gated, gatedOutput) = await RunCliAsync(
             cli, suite, "--fail-on-env-error", gatedBudget.Token);
         _output.WriteLine($"--fail-on-env-error exit={gated}");
+        _output.WriteLine("── --fail-on-env-error output ──\n" + gatedOutput);
+
+        var runs = new[]
+        {
+            (Invocation: "flagless", Output: flaglessOutput),
+            (Invocation: "--fail-on-env-error", Output: gatedOutput),
+        };
+
+        // ── 0. BEFORE THE CODES MEAN ANYTHING: DID EACH RUN'S TOPOLOGY COME UP? ───────────────
+        //
+        // THIS GUARD IS FIRST BECAUSE THE PAIR BELOW PASSES VACUOUSLY WITHOUT IT, AND THAT — not
+        // the missing sub-string — IS THE DEFECT (#512). MEASURED, on the red run described in
+        // the next paragraph: that run's own stdout was the two exit lines `flagless exit=0` and
+        // `--fail-on-env-error exit=3` — exactly the pair this row asserts — and neither run
+        // reached the step. So `0 then 3` is not evidence that the flag did anything. The only
+        // assertion separating "the flag changed the code" from "neither run got as far as a
+        // step" was the step sub-string in section 1, and a sub-string ABSENCE is the worst
+        // available way to say "the broker never came up".
+        //
+        // Grounded in the codes those runs RETURNED rather than in a rule about codes, and that
+        // is a deliberate choice rather than a stylistic one. A sentence restating
+        // `ExitCodes.FromVerdict` here would have to carry every disjunct it maps on —
+        // `failOnEnvironmentError || securityUnconfirmed` — and this suite declares `security:`,
+        // so the abbreviated form would be false in precisely the family this file exists to
+        // test. An observed pair cannot go stale against the mapping; a restatement can, and an
+        // earlier draft of this very comment already had.
+        //
+        // MEASURED, and the reason this is a gap rather than bad luck: commit 66f75d7 triggered a
+        // push run and a pull_request run three seconds apart, same SHA, same test set. The push
+        // run (34121131522) was green — Failed: 0, Passed: 34. The pull_request run
+        // (34121136740, ATTEMPT 1, job 101740686858) was red — Failed: 1, Passed: 33, Total: 34
+        // — with THIS ROW failing in 42 seconds, a fast-fail rather than a topology that came up
+        // and then misbehaved. Both exit codes were correct in both runs.
+        //
+        // THE ATTEMPT NUMBER IS THE WHOLE OF WHAT MAKES THAT CITATION FOLLOWABLE, and is recorded
+        // because a reviewer already lost a verification cycle to its absence. That run was later
+        // re-run, so it now reports `run_attempt: 2` and a conclusion of `cancelled`, and its
+        // attempt-2 Docker job (101765038721) was cancelled outright — it contains no `FAIL`, no
+        // `publish` and no `flagless`. `gh run view --log` serves the LATEST attempt, so the
+        // default view of this run shows none of the evidence below and reads as though the
+        // paragraph were invented. Reach attempt 1 explicitly:
+        // `gh api repos/tomas-rampas/vouchfx/actions/jobs/101740686858/logs`.
+        //
+        // What that log carries, re-derived line by line rather than restated: the row's own
+        // `[FAIL]` and `[42 s]`, the `Not found: "step 'publish'"` below, `flagless exit=0` and
+        // `--fail-on-env-error exit=3` under Standard Output Messages, and the assembly summary
+        // `Failed: 1, Passed: 33, Total: 34`. What the red run reported was
+        // `Assert.Contains() Failure: Sub-string not found … Not found: "step 'publish'"`, which
+        // sends the reader hunting through the renderer for a step id while the cause was bring-up.
+        //
+        // THE MARKER IS THE ENGINE'S OWN SENTENCE, NOT ONE INVENTED HERE. How that was
+        // established: `ScenarioRunner.RunSuiteAsync`'s `OrchestrationException` catch composes
+        // `"RunSuiteAsync: topology failed to start - " + oex.Message` and writes it to stdout.
+        // That catch is the composing site, and its own commentary states why it is the SOLE
+        // surface — the return beneath it emits no environment-error event, so the terminal
+        // renderer's `Environment error on '…'` line is never written on this path. Measured
+        // rather than taken on trust: the drill described below produced no such renderer line
+        // anywhere in its output, and no `step '<id>'` line either. This row reaches that catch,
+        // because `RunCliAsync` passes no --parallel and the CLI hands a sequential suite to
+        // `RunSuiteAsync` rather than to `ParallelSuiteRunner`. See `BringUpFailureLine`.
+        //
+        // ── THE SECURITY-CONFIRMATION FAMILY IS EXCLUDED, AND MUST STAY EXCLUDED. ────────
+        //
+        // That same catch handles two different failures and tells them apart by
+        // `oex.Info.Kind == OrchestrationErrorKind.SecurityConfirmation`, recording
+        // `SecurityAbortKind.ProbeUnconfirmed` for that kind and `TopologyUnavailable` for every
+        // other one. BOTH leave through the same catch carrying the same "topology failed to
+        // start" prefix, so the prefix alone cannot separate them. The KIND can — it is
+        // interpolated into the message by `OrchestrationException.BuildMessage` as
+        // `Orchestration <Kind> on resource '<name>'` — which is why `BringUpFailureLine` keys
+        // on `nameof(OrchestrationErrorKind.SecurityConfirmation)` and not on a hand-typed
+        // literal: renaming that member breaks this build instead of silently disarming the
+        // exclusion.
+        //
+        // BOTH OF THIS GUARD'S CLAIMS ARE FALSE FOR THAT FAMILY, which is why it is excluded
+        // outright rather than softened:
+        //   • "the topology never came up" is wrong in KIND. The secured-endpoint probe runs
+        //     AFTER the health gate is satisfied and before any step, so a probe refusal means
+        //     the topology DID come up and was then refused.
+        //   • the codes are wrong in FACT. `ProbeUnconfirmed` sets `SecurityAssurance.Unconfirmed`
+        //     (`Unconfirmed` lists it as one of its three disjuncts), and `ExitCodes.FromVerdict`
+        //     maps `EnvironmentError` to 3 when `failOnEnvironmentError || securityUnconfirmed`.
+        //     So on this SECURED suite a probe failure exits 3 FLAGLESS, not 0.
+        //     `KafkaSecurityConfirmationDrillDockerTests` pins that in the blocking lane with
+        //     `Assert.Equal(3, exitCode)` beside `Assert.Contains("SecurityConfirmation", output)`
+        //     on a flagless run, and this file's own header states it at the top.
+        //
+        // The two claims fail over DIFFERENT scopes, and the exclusion is drawn at the wider one.
+        // The kind is raised at two sites: the probe, and `SuiteTopology.StartAsync`'s Step 0
+        // missing-accessor guard, which genuinely does precede the topology. So "never came up"
+        // is false only for the probe — but the CODES claim is false for both, because
+        // `ScenarioRunner` keys on the kind alone and records `ProbeUnconfirmed` whichever site
+        // threw. Excluding the kind therefore excludes exactly the set for which this guard would
+        // assert something untrue.
+        //
+        // Why it matters more than a wording nit: an mTLS or cert-fixture regression is the most
+        // plausible NON-infrastructure way this row goes red, and swallowing it here would answer
+        // a real security regression with a confident infrastructure explanation — #512's own
+        // defect class, reintroduced by the fix for #512.
+        //
+        // WHERE THE EXCLUDED FAMILY LANDS INSTEAD, stated because "it falls through" is not an
+        // answer by itself. Both runs refused — the deterministic shape of a cert regression —
+        // reaches `Assert.Equal(0, flagless)` below and reports `Expected: 0, Actual: 3`: terse,
+        // but pointing at the right layer. ONE run refused leaves both codes at 0 and 3 and
+        // reaches section 1, where the `SecurityConfirmation` check is ordered FIRST so the
+        // reader is told the token was found rather than that a step id was missing. See
+        // section 1 for why that ordering is the whole of what makes that assertion worth having.
+        //
+        // WHAT THIS GUARD DOES NOT BUY, PLAINLY: stability. A bring-up failure still reddens the
+        // row, exactly as before; only the sentence changes. Retrying bring-up was considered and
+        // rejected — a retry wide enough to re-run an assertion is a retry that stops the row
+        // failing for the reason it exists, and one narrow enough to be safe would still have to
+        // decide, from this same evidence, that bring-up was the problem, which is what the guard
+        // already says out loud.
+        //
+        // ITS DEGRADATION MODE, because a marker matched by text and owned by another assembly
+        // has one: if that sentence is reworded engine-side, this guard silently stops firing and
+        // the row reverts to reporting a bring-up failure as a missing sub-string — the
+        // behaviour before this fix, not a false pass. The guard can only ever turn a red into a
+        // differently-worded red.
+        //
+        // AND THE ENGINE'S ACCOUNT ALREADY CARRIES THE LAYER BENEATH IT, which is why the guard
+        // needs nothing further. Measured by driving this row against a deliberately unpullable
+        // image: the quoted sentence came back as `… Orchestration HealthGate on resource
+        // 'acl-broker': Stopped waiting for resource 'acl-broker' to become healthy because it
+        // failed to start. | dcp-capture: %LOCALAPPDATA%\vouchfx\dcp-capture-<stamp>.log |
+        // dcp-tail: …`, so the engine appends the DCP capture file (as an unexpanded root token,
+        // not a resolved path) and a tail of it. Nothing here sets VOUCHFX_DCP_CAPTURE_DIR
+        // (#477 owns that); the guard simply stops throwing that evidence away.
+        //
+        // WHAT THAT DRILL DOES AND DOES NOT MEASURE, since it is cited twice above. With the
+        // flagless run healthy and only the gated run's topology unable to start, it measures
+        // that a gated bring-up failure still returns 3, that the guard reddens the row, and that
+        // the message names the failure. It does NOT measure the flagless half of the vacuity
+        // claim — that a flagless bring-up failure returns 0 — which is why that claim is
+        // sourced above to the red CI run's own stdout instead.
+        var bringUpFailures = runs
+            .Select(run => (run.Invocation, Line: BringUpFailureLine(run.Output)))
+            .Where(candidate => candidate.Line is not null)
+            .ToArray();
+
+        // Composed and thrown only on the failing path. `Assert.True(cond, message)` evaluates its
+        // message eagerly on EVERY pass, which cost nothing here but built a sentence ending
+        // "The engine's account: " with nothing after it, twice, on every green run. Reported
+        // for BOTH invocations rather than the first, too: a `foreach` of asserts stops at the
+        // first, so a double bring-up failure named only `flagless` and left the reader to
+        // discover the second by re-running.
+        if (bringUpFailures.Length > 0)
+        {
+            Assert.Fail(
+                "the topology never came up for "
+                + string.Join(
+                    "; and for ",
+                    bringUpFailures.Select(failure =>
+                        $"the {failure.Invocation} run — {failure.Line}"))
+                + $". A run that reports this never reached the '{StepId}' step, so nothing below "
+                + "this guard is measuring the flag. The codes the two invocations actually "
+                + $"returned were flagless={flagless} and --fail-on-env-error={gated}.");
+        }
 
         Assert.Equal(0, flagless);
         Assert.Equal(3, gated);
 
-        // Both runs reached and failed the STEP — so the codes differ because of the flag, not
-        // because the two runs took different paths.
-        foreach (var output in new[] { flaglessOutput, gatedOutput })
+        // ── 1. Both runs reached and failed the STEP. ────────────────────────────────────
+        // So the codes differ because of the flag, not because the two runs took different paths.
+        //
+        // UNCHANGED IN MEANING, and deliberately still able to fail: section 0 does not weaken
+        // the step check, it narrows what reaching it implies. Anything that gets here has an
+        // engine that reported no bring-up failure, so an absent `step '<id>'` now means a
+        // genuine divergence between two invocations of the same suite — which is the property
+        // this row exists for and the one thing that must never be traded for stability. Both
+        // whole outputs are already in the test output above, so the reader can diff them.
+        //
+        // THE `SecurityConfirmation` CHECK IS ORDERED FIRST, and that ordering is the only thing
+        // that makes it worth having. Before this change it could never be the first assertion to
+        // fail. Any output carrying the token was written by the catch that aborts BEFORE any
+        // step, so `Assert.Contains($"step '{StepId}'")` fired first in the same iteration —
+        // and when the flagless run was the one that aborted, `Assert.Equal(0, flagless)` above
+        // fired before either, a probe failure exiting 3 flagless. It was decorative. Ordered
+        // first it becomes the diagnosis for the one shape section 0 deliberately declines: a
+        // refusal on ONE of the two runs, where both codes are still 0 and 3 and this is the only
+        // line that can say why.
+        //
+        // The token cannot appear on a healthy run, which is what lets the check be an absence
+        // assertion at all. A confirmation that SUCCEEDS renders through
+        // `SecurityConfirmation.ToString()`, and for THIS suite's target — `acl-broker`,
+        // declared under `services:`, so `SecuredTargets.ServiceKind` — that reads
+        // `security: service 'acl-broker' declared profile 'mtls' …`, carrying no such token.
+        // Measured on a passing run of this row. (The literal `service` is the SERVICE kind
+        // specifically: a DEPENDENCY renders its own declared type in that position. This suite
+        // declares no dependency, so the distinction does not arise here — but it is the reason
+        // the sentence names why the word is `service` rather than asserting it always is.)
+        //
+        // The absence check reads the same `nameof`-derived constant the guard's exclusion keys
+        // on, so a rename of the engine member moves the pair together or breaks this build.
+        foreach (var run in runs)
         {
-            Assert.Contains($"step '{StepId}'", output, StringComparison.Ordinal);
-            Assert.DoesNotContain("SecurityConfirmation", output, StringComparison.Ordinal);
+            Assert.DoesNotContain(SecurityConfirmationKind, run.Output, StringComparison.Ordinal);
+            Assert.Contains($"step '{StepId}'", run.Output, StringComparison.Ordinal);
         }
     }
 
@@ -824,6 +1033,70 @@ public sealed class KafkaAuthorisationDrillDockerTests
             .ConfigureAwait(false))
         .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
         .ToHashSet(StringComparer.Ordinal);
+
+    /// <summary>
+    /// The engine's own sentence for "the topology never came up", as it reaches the CLI's
+    /// stdout — the marker section 0 of the exit-code row keys on.
+    /// </summary>
+    /// <remarks>
+    /// The prefix is matched rather than the whole line because the remainder is
+    /// <c>OrchestrationException.Message</c> (<c>"Orchestration &lt;Kind&gt; on resource
+    /// '&lt;name&gt;': &lt;detail&gt;"</c>), whose kind, resource and detail are exactly the
+    /// run-varying diagnosis this guard exists to REPORT rather than to assert.
+    /// </remarks>
+    private const string BringUpFailurePrefix = "RunSuiteAsync: topology failed to start";
+
+    /// <summary>
+    /// The <see cref="OrchestrationErrorKind"/> whose name marks the security-confirmation
+    /// family, as <c>OrchestrationException.BuildMessage</c> interpolates it.
+    /// </summary>
+    /// <remarks>
+    /// Taken from the engine enum with <c>nameof</c> rather than typed as a literal, so that
+    /// renaming the member fails this compilation instead of quietly turning the exclusion in
+    /// section 0 — and the absence assertion in section 1 — into checks that match nothing.
+    /// </remarks>
+    private const string SecurityConfirmationKind =
+        nameof(OrchestrationErrorKind.SecurityConfirmation);
+
+    /// <summary>
+    /// The line on which a CLI run reported that its topology never started, or
+    /// <see langword="null"/> when it reported none.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>Contains</c> rather than <c>StartsWith</c>: the sentence is written with its own
+    /// <c>WriteLine</c> so it does begin its line today, but a future prefix (a timestamp, a
+    /// scenario label) would silently disarm a <c>StartsWith</c> guard, and a guard that stops
+    /// firing is precisely the failure this method was added to remove.
+    /// </para>
+    /// <para>
+    /// A line naming <see cref="SecurityConfirmationKind"/> is deliberately NOT a match. It
+    /// arrives through the same catch and carries the same prefix, but the caller's guard would
+    /// assert two untrue things about it — see section 0 of the exit-code row for the
+    /// measurement. Excluding it here rather than at the call site is what keeps this method's
+    /// NAME true.
+    /// </para>
+    /// <para>
+    /// The FIRST match is returned, not all of them — and structurally there is at most one per
+    /// run: the catch that writes the sentence returns from the suite immediately after, so the
+    /// run cannot reach a second topology to fail at. Taking the first therefore discards
+    /// nothing, and both whole outputs are written to the test output unconditionally regardless.
+    /// </para>
+    /// <para>
+    /// A second degradation mode, beside the reworded-sentence one the caller records: this
+    /// returns one PHYSICAL line, so an <c>oex.Message</c> spanning several would be reported
+    /// truncated to its first — and <c>DisplaySanitiser</c> preserves newlines rather than
+    /// collapsing them. Unreachable today, every producer on that path composing a single line,
+    /// and stated because the value here is the diagnosis rather than a matched token: losing
+    /// the tail would cost exactly what the guard exists to deliver.
+    /// </para>
+    /// </remarks>
+    private static string? BringUpFailureLine(string output) =>
+        output
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .FirstOrDefault(line =>
+                line.Contains(BringUpFailurePrefix, StringComparison.Ordinal)
+                && !line.Contains(SecurityConfirmationKind, StringComparison.Ordinal));
 
     private static int CountEvents(IEnumerable<string> buffer, string eventType) =>
         buffer.Count(line => line.Contains($"\"type\":\"{eventType}\"", StringComparison.Ordinal));
