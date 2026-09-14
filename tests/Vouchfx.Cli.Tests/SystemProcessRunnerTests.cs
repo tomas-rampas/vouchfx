@@ -1537,13 +1537,13 @@ public sealed class SystemProcessRunnerTests
     /// <para>
     /// <strong>A SECOND RESIDUAL OF THE SAME CLASS, AND THIS PATH IS HOW IT IS REACHED.</strong> If
     /// the look catches the survivor's write TORN, <see cref="ReadPid"/> hands back a prefix —
-    /// <c>512</c> for <c>51234</c> — the caller's <c>pid</c> then holds a number that is not its
-    /// child's, and the <c>finally</c> aims the tree-kill at whatever that number names. The
-    /// survivor this method exists to reclaim is left alive and unreferenced, which is precisely the
-    /// outcome the change was made to close, arrived at down a path the change opened. The
-    /// mechanism is pre-existing and tracked (#528 for the torn read, #529 for the identity guard);
-    /// what belongs here is that this method can reach it, because a paragraph that promises to
-    /// state what it does not close has to include the case it creates.
+    /// <c>512</c> for <c>51234</c> — so <c>pid</c> holds a number that is not the child's and the
+    /// <c>finally</c> aims the tree-kill at whatever that number names. The survivor this method
+    /// exists to reclaim is left alive and unreferenced: the outcome the change was made to close,
+    /// reached down a path the change opened. The mechanism is pre-existing and tracked (#528 for
+    /// the torn read, #529 for the identity guard); what belongs here is that this method can reach
+    /// it, because a paragraph promising to state what it does not close has to include the case it
+    /// creates.
     /// </para>
     /// <para>
     /// <strong>A THIRD, RECORDED WHERE IT LIVES RATHER THAN RESTATED HERE.</strong>
