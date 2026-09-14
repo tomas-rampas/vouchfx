@@ -1072,6 +1072,25 @@ public sealed class SystemProcessRunnerTests
         }
     }
 
+    [Fact]
+    public void ReadPid_WhenThePidFileHasNoTrailingNewline_ReturnsNull()
+    {
+        var directory = CreateScratchDirectory();
+        var pidFile = Path.Combine(directory, PidFileName);
+        try
+        {
+            File.WriteAllText(pidFile, "51234");
+            Assert.Null(ReadPid(pidFile));
+
+            File.WriteAllText(pidFile, "51234" + Environment.NewLine);
+            Assert.Equal(51234, ReadPid(pidFile));
+        }
+        finally
+        {
+            TryDeleteDirectory(directory);
+        }
+    }
+
     // ── budget machinery (#524) ──────────────────────────────────────────────────────────────
 
     /// <summary>
@@ -1687,10 +1706,20 @@ public sealed class SystemProcessRunnerTests
             return null;
         }
 
-        // Digits only: PowerShell's Set-Content may prepend a BOM and appends a newline.
-        var digits = new string(text.Where(char.IsAsciiDigit).ToArray());
-        if (digits.Length > 0
-            && int.TryParse(digits, NumberStyles.None, CultureInfo.InvariantCulture, out var pid))
+        // Read only a complete pid line: writers append a newline when publication is complete.
+        var candidate = text.TrimStart('\uFEFF');
+        if (!candidate.EndsWith('\n'))
+        {
+            return null;
+        }
+
+        candidate = candidate.TrimEnd('\r', '\n');
+        if (candidate.Length == 0 || candidate.Any(static c => !char.IsAsciiDigit(c)))
+        {
+            return null;
+        }
+
+        if (int.TryParse(candidate, NumberStyles.None, CultureInfo.InvariantCulture, out var pid))
         {
             return pid;
         }
