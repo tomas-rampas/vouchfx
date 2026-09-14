@@ -36,7 +36,9 @@ namespace Vouchfx.Engine.Orchestration.Tests;
 
 /// <summary>
 /// Docker-gated end-to-end execution tests for <see cref="StorageAssertS3Provider"/>.
-/// Requires a running Docker daemon with the <c>minio/minio</c> image available.
+/// Requires a running Docker daemon with the <c>quay.io/minio/minio</c> image available.
+/// The reference is registry-qualified because Docker Hub no longer serves the
+/// <c>minio/minio</c> repository (#533); quay.io carries the identical tag.
 /// </summary>
 public sealed class StorageAssertS3DockerTests
 {

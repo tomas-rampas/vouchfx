@@ -268,19 +268,156 @@ jobs:
       #                                            docker.io/library/mysql:9.7);
       #                                            no test overrides the tag.
       #
-      # Best-effort & non-fatal by design
-      # ---------------------------------
-      # continue-on-error: true PLUS a per-image `|| echo` guard ensure a stale,
-      # renamed or unreachable tag NEVER fails the job — it simply degrades to
-      # today's behaviour (a cold pull inside StartAsync). This step only REMOVES
-      # the cold-pull flake; it can never MASK a genuine pull failure, because a
-      # truly bad/unreachable image still fails the real pull inside StartAsync
-      # and surfaces as an EnvironmentError, exactly as before. When the pinned
-      # Aspire minor advances and a default tag changes, a missed update here is
-      # harmless (degrades, never breaks).
-      - name: Pre-pull dependency images (warm Docker cache for DCP's ~20s window)
-        continue-on-error: true
+      # Fatal on a missing pin, tolerant of a rate limit (#533) — this step is a
+      # PIN CHECK, not just a cache warm
+      # ------------------------------------------------------------------------
+      # This block used to be "best-effort & non-fatal by design": the step carried
+      # continue-on-error: true AND a per-image `|| echo ::warning::` guard, on the
+      # reasoning that a stale or renamed tag should degrade to a cold pull inside
+      # StartAsync rather than fail the job, because "a truly bad/unreachable image
+      # still fails the real pull inside StartAsync and surfaces as an
+      # EnvironmentError, exactly as before".
+      #
+      # MEASURED refutation of that reasoning, and the reason the BLANKET demotion
+      # is gone (a warn-and-continue path survives, but only for the one bucket
+      # below that earns it): minio/minio stopped being publicly pullable from
+      # Docker Hub. StorageAssertS3DockerTests carries EIGHT [Fact] rows, all
+      # docker-trait; SEVEN then failed on EVERY run of this lane. The eighth
+      # (Execute_AbsentConnKey_ReturnsEnvironmentError) survived because it starts
+      # no topology and so never pulls. What the log showed for the seven was not a
+      # named pull failure but
+      #   Orchestration HealthGate on resource 'testminio': Stopped waiting for
+      #   resource 'testminio' to become healthy because it failed to start.
+      # repeated per row against the 120s gate configured below. The indictment is
+      # not the gate's duration but the job's: this assembly ran ~44 minutes (see
+      # its measured span further down) and never once named an image. The demotion
+      # did not preserve the diagnosis at a later point; it destroyed it, because
+      # DCP's cold pull failure reaches the operator only through a health-gate
+      # timeout that cannot name a registry. The one place in this job that knows
+      # both the image reference and the pull's exit code is this loop, so this
+      # loop is where the failure has to be reported.
+      #
+      # NOT every pull failure is that failure, though, and the classification below
+      # is the whole reason this step can be fatal without re-flaking the lane it
+      # exists to de-flake. Docker Hub rate-limits unauthenticated pulls, and a
+      # shared CI egress IP reaches that limit routinely — MEASURED on this project's
+      # own host while diagnosing #533, where `nats:2.14` and `mysql:9.7` both
+      # answered `toomanyrequests: You have reached your unauthenticated pull rate
+      # limit` on one sweep and resolved clean on the next. Reading only the exit
+      # code cannot tell that apart from a withdrawn repository, and a step that
+      # reds on it would trade a 44-minute timeout for a new intermittent red.
+      #
+      # RETRY FIRST, CLASSIFY ONLY THE FINAL FAILURE. Every image gets up to
+      # max_attempts pulls with linear backoff regardless of why the previous one
+      # failed, and only the last failure's text is bucketed. The ordering is the
+      # point, not an implementation detail: a TLS handshake timeout against
+      # registry-1.docker.io, or a daemon momentarily unreachable, very likely
+      # succeeds on attempt 2 and therefore NEVER REACHES classification at all —
+      # so the most likely source of an intermittent red is removed by
+      # construction, rather than by pattern-matching error text nobody here has
+      # actually observed. Retrying the doomed cases too costs at most ~45s on a
+      # run that was going to fail anyway, which is the cheap side of the trade.
+      #
+      # So the FINAL failure's text decides, in three buckets:
+      #
+      #   absent    — `denied`, `repository does not exist`, `manifest unknown`,
+      #               `not found`. FATAL. This never self-resolves — a withdrawn
+      #               repository fails all three attempts identically — so
+      #               re-running the job is pure latency. The #533 text is in this
+      #               bucket verbatim: "pull access denied for minio/minio,
+      #               repository does not exist or may require 'docker login'".
+      #   transient — `toomanyrequests`, `rate limit`, `too many requests`. WARNS
+      #               and continues. Justified because it clears on its own, an
+      #               authenticated layer of the same run may be unaffected, and
+      #               DCP's own cold pull may still succeed — so the lane is not
+      #               necessarily lost, and a hard red would be a claim this step
+      #               cannot support.
+      #   unknown   — anything else. FATAL, DELIBERATELY. An unclassified failure is
+      #               loud rather than silently bucketed as transient: the default
+      #               has to be a decision, and a wrong fatal costs one obvious red
+      #               line naming the image, whereas a wrong transient restores
+      #               exactly the silence #533 was made of. Retrying first is what
+      #               keeps this rule affordable — reaching it means the failure
+      #               survived three attempts and matched no bucket, which genuinely
+      #               deserves to be loud. When a new failure mode shows up here,
+      #               add it to a bucket on purpose.
+      #
+      # Precedence is absent-then-transient, i.e. ambiguity resolves LOUD, matching
+      # the unknown rule. The two token sets are disjoint in Docker's actual output
+      # (a `toomanyrequests` body carries none of the absent tokens), so the order
+      # is a stated tie-break rather than a live discriminator.
+      #
+      # THE COST OF A FATAL BUCKET, stated plainly because it is the largest one and
+      # the argument above does not otherwise account for it: this step aborts before
+      # the test step, and the test step carries no `if: always()`, so one stale pin
+      # costs the signal from EVERY docker row in the lane, including every row
+      # unrelated to the image that failed. That is the price of refusing to start a
+      # run whose result would be meaningless for the affected rows anyway — and it
+      # is why the fatal buckets are narrow and the loop below reports ALL bad pins
+      # before aborting, rather than one per run.
+      #
+      # AND "FATAL" HERE DOES NOT MEAN CI GOES RED. The step-level
+      # continue-on-error is gone, but the JOB keeps its own (see `integration:`
+      # above): it is documented non-blocking and is not a required check, so this
+      # step aborting skips the tests and the workflow still concludes green. What
+      # is actually bought is diagnosis, not gating — a named annotation within
+      # seconds instead of a 44-minute run that never says which image. Do not read
+      # this block as a merge gate; whether that job should gate at all is a
+      # separate decision tracked in its own issue.
+      - name: Pre-pull dependency images (warm Docker cache; fail fast on an unpullable pin)
         run: |
+          set -euo pipefail
+
+          # Classify a failed `docker pull` from the pull's COMBINED OUTPUT.
+          # Echoes exactly one of: absent | transient | unknown (see the step comment).
+          # Matched case-insensitively — these strings are not casing-stable.
+          #
+          # "Combined output", not "the registry's error text", is the precise
+          # description and it constrains the patterns below. The caller captures
+          # `2>&1` over the whole `docker pull`, so LOCAL client and daemon errors
+          # land here too. That is why the absent bucket anchors on whole phrases
+          # rather than on the bare words `denied` or `not found`: the daemon's own
+          #   Got permission denied while trying to connect to the Docker daemon
+          #   socket at unix:///var/run/docker.sock
+          # contains `denied`, and a bare-word match would confidently tell the
+          # operator that the registry says the image is not there and that the pin
+          # needs fixing — a fluent, entirely wrong diagnosis of a local problem.
+          # It classifies `unknown` instead, which is fatal but honest about not
+          # knowing. Any future pattern added here must be similarly anchored.
+          #
+          # Why the absent bucket is hard for a remote to evade, which is what makes
+          # a fatal bucket safe: these strings are CLIENT-generated. MEASURED — the
+          # registry's own body for the withdrawn repository is
+          #   {"errors":[{"code":"UNAUTHORIZED","message":"authentication required"}]}
+          # on HTTP 401, which contains none of the tokens below. What is matched is
+          # the Docker CLI's canned translation of a 401/404, so a hostile or merely
+          # broken remote cannot suppress the phrase while still answering 401/404.
+          classify_pull_failure() {
+            lowered=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
+            case "$lowered" in
+              *"pull access denied"*|*"repository does not exist"*|*"manifest unknown"*|*"manifest for "*" not found"*)
+                printf 'absent\n' ;;
+              *toomanyrequests*|*"rate limit"*|*"too many requests"*)
+                printf 'transient\n' ;;
+              *)
+                printf 'unknown\n' ;;
+            esac
+          }
+
+          # Collapse the pull's multi-line combined output to one line so it fits in
+          # a ::error::/::warning:: annotation, which the reader sees without opening
+          # the log at all.
+          one_line() {
+            printf '%s' "$1" | tr '\n' ' '
+          }
+
+          max_attempts=3
+          # Collected rather than acted on immediately: the loop reports EVERY bad
+          # pin and aborts afterwards. Exiting on the first one would contradict the
+          # error text's own advice — it tells the operator that re-running will not
+          # help, which is only true if they can see all of the failures they must
+          # fix, not just the earliest one in list order.
+          fatal=0
           for image in \
             postgres:18.3 \
             mcr.microsoft.com/mssql/server:2022-latest \
@@ -299,11 +436,50 @@ jobs:
             mcr.microsoft.com/azure-messaging/servicebus-emulator:1.1.2 \
             quay.io/prometheus/node-exporter:v1.8.2 \
             amazon/dynamodb-local:2.5.2 \
-            minio/minio:RELEASE.2025-09-07T16-13-09Z ; do
+            quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z ; do
             echo "::group::docker pull $image"
-            docker pull "$image" || echo "::warning::pre-pull of $image failed (non-fatal; DCP will cold-pull it during StartAsync)"
+            attempt=1
+            pulled=no
+            while :; do
+              if output=$(docker pull "$image" 2>&1); then
+                printf '%s\n' "$output"
+                pulled=yes
+                break
+              fi
+              printf '%s\n' "$output"
+              if [ "$attempt" -ge "$max_attempts" ]; then
+                break
+              fi
+              delay=$((attempt * 15))
+              echo "pull of $image failed (attempt $attempt/$max_attempts); retrying in ${delay}s"
+              sleep "$delay"
+              attempt=$((attempt + 1))
+            done
             echo "::endgroup::"
+
+            # Succeeded on some attempt — the failure text of the earlier ones is
+            # deliberately never classified, which is what keeps a recoverable blip
+            # from ever being bucketed at all.
+            if [ "$pulled" = yes ]; then
+              continue
+            fi
+
+            kind=$(classify_pull_failure "$output")
+            if [ "$kind" = transient ]; then
+              echo "::warning::pre-pull of $image was rate-limited on all $max_attempts attempts; continuing without it (non-fatal — the limit clears on its own and DCP may still cold-pull it during StartAsync). Registry said: $(one_line "$output")"
+              continue
+            fi
+            if [ "$kind" = absent ]; then
+              echo "::error::could not pull the pinned image $image — after $max_attempts attempts the registry still says it is not there, which never self-resolves, so re-running will not help. Fix the pin (verify with: docker manifest inspect $image). Left unpulled this surfaces only as a health-gate timeout that never names the image. Registry said: $(one_line "$output")"
+            else
+              echo "::error::could not pull the pinned image $image after $max_attempts attempts, and the output matches neither 'not there' nor 'rate limited' — it may not even be a registry error (a local daemon or client failure is captured here too). Failing loudly rather than guessing it is transient; if this is a registry condition, classify it into a bucket in classify_pull_failure above. Pull output: $(one_line "$output")"
+            fi
+            fatal=1
           done
+
+          # Every bad pin has now been reported by name, so the operator fixes them
+          # in one pass. The abort still precedes the test step.
+          [ "$fatal" -eq 0 ] || exit 1
 
       # Run only tests carrying [Trait("requires","docker")].
       # The trait selects the docker-gated topology and provider-integration tests
