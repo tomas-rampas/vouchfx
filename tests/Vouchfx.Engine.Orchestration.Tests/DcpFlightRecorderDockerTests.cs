@@ -394,6 +394,17 @@ public sealed class DcpFlightRecorderDockerTests
     /// what it gives up was conditional on a coincidence and what it gains is unconditional, not
     /// because it dominates.
     /// </para>
+    /// <para>
+    /// <strong>That residual is covered, and not here.</strong>
+    /// <see cref="DcpRecorderFactoryCensusTests"/> pins the drift the count used to watch for -
+    /// rule 1 refuses any construction of the recorder in production source outside the
+    /// parameterless <c>CreateUnlessDisabled</c>, rule 2 refuses a <c>StartAsync</c> whose hand-off
+    /// carries a recorder that did not come from it - structurally, in the blocking non-docker
+    /// lane, on every run rather than on the runs where a start happens to fail. Being a
+    /// source-level census it cannot see reflection, a target-typed <c>new()</c>, or a
+    /// <c>global using</c> type alias declared in another file; those limits are enumerated in its
+    /// own class remarks.
+    /// </para>
     /// </remarks>
     [Fact]
     [Trait("requires", "docker")]
