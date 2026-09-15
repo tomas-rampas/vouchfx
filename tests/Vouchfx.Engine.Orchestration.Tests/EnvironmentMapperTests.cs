@@ -1754,10 +1754,11 @@ public sealed class EnvironmentMapperTests : IDisposable
 
     /// <summary>
     /// A minio dependency produces a plain container resource pinned to the
-    /// minio/minio image, started in server mode ('server /data'), health-gated
+    /// quay.io/minio/minio image, started in server mode ('server /data'), health-gated
     /// on itself — the off-docker registration lock for the Phase B dependency
     /// type (the /minio/health/cluster readiness gate is exercised live by
-    /// StorageAssertS3DockerTests).
+    /// StorageAssertS3DockerTests). The reference is registry-qualified because Docker
+    /// Hub no longer serves the repository (#533); quay.io carries the identical tag.
     /// </summary>
     [Fact]
     public async Task Map_MinioDependency_AddsPinnedContainer_ServerMode_GateOnSelf()
@@ -1782,7 +1783,7 @@ public sealed class EnvironmentMapperTests : IDisposable
         Assert.Contains("artefacts", mapped.DependencyNames);
 
         var image = resource!.Annotations.OfType<ContainerImageAnnotation>().Single();
-        Assert.Equal("minio/minio", image.Image);
+        Assert.Equal("quay.io/minio/minio", image.Image);
         Assert.False(string.IsNullOrEmpty(image.Tag));
 
         var args = new List<object>();
@@ -3568,7 +3569,10 @@ public sealed class EnvironmentMapperTests : IDisposable
 
     /// <summary>
     /// An 'image:' override on an AddContainer-based kind (minio) replaces the hardcoded
-    /// "minio/minio" literal entirely.
+    /// "quay.io/minio/minio" literal entirely. Since #533 qualified that default with a
+    /// registry, this is also the documented replacement for the env-level 'imageRegistry'
+    /// redirect the same change stopped applying to this dependency — see
+    /// <see cref="Map_MinioDependency_ImageRegistry_DoesNotApplyToQualifiedDefault"/>.
     /// </summary>
     [Fact]
     public void Map_DependencyImage_OverridesMinioContainer()
@@ -3656,6 +3660,61 @@ public sealed class EnvironmentMapperTests : IDisposable
         var image = builder.Resources.Single(r => r.Name == "cache")
             .Annotations.OfType<ContainerImageAnnotation>().Single();
         Assert.Equal("artifactory.mycompany.com", image.Registry);
+    }
+
+    /// <summary>
+    /// The inverse of the test above, and the author-visible cost of pinning minio's default
+    /// image to a registry-qualified reference (<c>quay.io/minio/minio</c>): an env-level
+    /// <c>imageRegistry</c> no longer reaches a <c>minio</c> dependency that sets no
+    /// <c>image:</c> of its own. <c>ApplyImageOverrides</c> reads the CURRENT image annotation
+    /// in that branch, <c>HasExplicitRegistryComponent</c> sees a first path component
+    /// containing a dot, and the re-prefix branch is skipped — the same
+    /// already-qualified-is-left-alone rule
+    /// <see cref="Map_AzureServiceBusDependency_ImageRegistry_DoesNotDoublePrefixEmbeddedRegistry"/>
+    /// pins for the only other built-in whose default image embeds a registry, now reached by
+    /// minio too. Without this the pull reference would become
+    /// <c>artifactory.mycompany.com/quay.io/minio/minio</c>, a path that does not exist.
+    /// <para>
+    /// This is a BEHAVIOUR CHANGE, not an invariant that always held: before the registry move
+    /// this dependency's default was the bare <c>minio/minio</c> and an env-level
+    /// <c>imageRegistry</c> DID apply to it. The documented replacement for a mirroring or
+    /// air-gapped author is the per-dependency <c>image:</c> override, which still works — pinned
+    /// by <see cref="Map_DependencyImage_OverridesMinioContainer"/>.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void Map_MinioDependency_ImageRegistry_DoesNotApplyToQualifiedDefault()
+    {
+        var env = new EnvironmentSpec(
+            Services: null,
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["artefacts"] = new DependencySpec(Type: "minio", Version: null, Extra: null),
+            },
+            Seed: null,
+            ImageRegistry: "artifactory.mycompany.com",
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+        mapped.Configure(builder);
+
+        var image = builder.Resources.Single(r => r.Name == "artefacts")
+            .Annotations.OfType<ContainerImageAnnotation>().Single();
+        Assert.Equal("quay.io/minio/minio", image.Image);
+        Assert.Null(image.Registry);
+
+        // The TAG is pinned here, not merely asserted non-empty, and the reason is a
+        // measured cost rather than tidiness. Four published surfaces hardcode this
+        // exact release — the CI pre-pull list, the DSL specification's registry-scope
+        // section, the troubleshooting guide and the CHANGELOG — so an engine-side tag
+        // bump that nobody mirrors into them desynchronises all four silently. That has
+        // already happened once in this repository: the pre-pull warmed
+        // 'rabbitmq:4-management' while the engine requested '4.3-management', so the
+        // cache warmed nothing for that dependency and no test noticed. The sibling
+        // azureservicebus registration pins its own tag for the same reason
+        // (Map_AzureServiceBusDependency_ImageRegistry_DoesNotDoublePrefixEmbeddedRegistry).
+        Assert.Equal("RELEASE.2025-09-07T16-13-09Z", image.Tag);
     }
 
     /// <summary>

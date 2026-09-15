@@ -589,14 +589,49 @@ public static class EnvironmentMapper
             ["minio"] = new DependencyRegistration(
                 Build: (builder, name, spec, serviceEndpoints, depConnBuilders, imageRegistry, pullPolicy) =>
                 {
-                    // Pin a specific tag (§4) — verified to exist on Docker Hub before use.
-                    // Authors may override via 'version', or now via 'image:'
+                    // Pin a specific tag (§4), and name the registry EXPLICITLY (#533).
+                    // This reference used to be the bare "minio/minio", which resolves to
+                    // Docker Hub — and Docker Hub no longer serves that repository at all:
+                    // an unauthenticated pull returns "pull access denied for minio/minio,
+                    // repository does not exist or may require 'docker login'", and Docker
+                    // Hub's own API answers {"message":"object not found"} for both the tag
+                    // and the repository. quay.io publishes the same release TAG, and does so
+                    // as MinIO's own build target rather than as a third-party mirror —
+                    // upstream's Makefile line 9 is `REPO ?= quay.io/minio`. Note what is and
+                    // is not claimed: the tag STRING is identical and the publisher is the
+                    // same, which is the strongest available provenance; byte-equivalence with
+                    // the image Docker Hub used to serve is NOT checkable, because Hub now
+                    // serves nothing to compare against. Re-verify with `docker manifest
+                    // inspect` against quay.io — NOT Docker Hub — before advancing this pin,
+                    // which is what the superseded "verified to exist on Docker Hub before
+                    // use" claim asked for against a registry that no longer has the image.
+                    // A trap for anyone auditing provenance here: the image's `vcs-ref` label
+                    // does NOT resolve in the minio/minio GitHub repository — it is inherited
+                    // from the Red Hat UBI9-micro base layer, so a mismatch there is a false
+                    // alarm rather than a finding.
+                    //
+                    // AUTHOR-VISIBLE CONSEQUENCE of qualifying it: an env-level
+                    // 'imageRegistry' no longer rewrites this dependency. In the branch this
+                    // default takes (no 'image:' set on the dependency), ApplyImageOverrides
+                    // reads the CURRENT image annotation and skips its re-prefix branch
+                    // because HasExplicitRegistryComponent sees the dot in "quay.io". That
+                    // annotation is consulted ONLY in that branch — when spec.Image is set the
+                    // flag comes from the parsed spec image instead and the annotation is
+                    // never read. Either way this is the documented "never rewrites
+                    // already-qualified references" rule, now reaching minio as well. That is deliberate — the
+                    // alternative is the non-existent pull reference
+                    // "<mirror>/quay.io/minio/minio" — and the replacement for a mirroring or
+                    // air-gapped author is the per-dependency 'image:' override, which is
+                    // unaffected. Pinned by
+                    // Map_MinioDependency_ImageRegistry_DoesNotApplyToQualifiedDefault.
+                    //
+                    // Authors may override via 'version', or via 'image:'
                     // (feat/dependency-image-override) — ApplyImageOverrides applies
                     // spec.Image/spec.Version/imageRegistry/pullPolicy on top of this default.
                     const string accessKey = "vouchfx-minio";
                     const string secretKey = "vouchfx-minio-secret";
                     var containerBuilder = ApplyImageOverrides(
-                        builder.AddContainer(name, "minio/minio", "RELEASE.2025-09-07T16-13-09Z"),
+                        builder.AddContainer(name, "quay.io/minio/minio", "RELEASE.2025-09-07T16-13-09Z"),
                         spec,
                         imageRegistry,
                         pullPolicy)
