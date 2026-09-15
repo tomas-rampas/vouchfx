@@ -315,11 +315,35 @@ jobs:
       # succeeds on attempt 2 and therefore NEVER REACHES classification at all —
       # so the most likely source of an intermittent red is removed by
       # construction, rather than by pattern-matching error text nobody here has
-      # actually observed. Retrying the doomed cases too costs at most ~45s on a
-      # run that was going to fail anyway, which is the cheap side of the trade.
+      # actually observed.
       #
-      # So the FINAL failure's text decides, in three buckets:
+      # WHAT RETRYING COSTS, stated per image because that is the honest unit.
+      # An earlier version of this comment claimed "at most ~45s on a run"; that
+      # was simply wrong. The backoff is 15s + 30s = 45s PER FAILING IMAGE, and the
+      # loop walks all 18 entries serially, so 45s is the cost of ONE doomed image
+      # and the run-level figure is 18x that. Combined with the per-pull bound
+      # below, a run in which every pin fails would otherwise spend
+      # 18 x (3 x 120s + 45s) = 2h 1m before aborting. That is why the step carries
+      # a declarative `timeout-minutes` budget — see the arithmetic at the
+      # per-pull-bound comment below, which is where the two numbers are reconciled.
       #
+      # So the FINAL failure decides, in four buckets. One is keyed on an EXIT
+      # CODE and the other three on text:
+      #
+      #   stalled   — the pull exceeded its per-attempt bound, i.e. `timeout` exited
+      #               124. FATAL, but framed as an ENVIRONMENT condition, never as a
+      #               bad pin. This bucket is keyed on a code WE generate, not on
+      #               remote text, which is exactly what makes it principled where a
+      #               text-guessed "network" bucket was not: 124 is our own
+      #               `timeout`'s documented exit status, not a string a registry
+      #               chose and might phrase differently tomorrow. Fatal rather than
+      #               warn because a pull still stalling after three attempts and
+      #               45s of backoff means the registry or the local daemon is not
+      #               serving — and DCP's own cold pull then stalls the health gate
+      #               for EVERY row, reproducing the 44-minute anonymous timeout
+      #               this whole step exists to prevent. Its advice is the OPPOSITE
+      #               of `absent`'s: re-running is reasonable once the registry
+      #               recovers, and the message says so rather than "fix the pin".
       #   absent    — `denied`, `repository does not exist`, `manifest unknown`,
       #               `not found`. FATAL. This never self-resolves — a withdrawn
       #               repository fails all three attempts identically — so
@@ -342,10 +366,20 @@ jobs:
       #               deserves to be loud. When a new failure mode shows up here,
       #               add it to a bucket on purpose.
       #
-      # Precedence is absent-then-transient, i.e. ambiguity resolves LOUD, matching
-      # the unknown rule. The two token sets are disjoint in Docker's actual output
-      # (a `toomanyrequests` body carries none of the absent tokens), so the order
-      # is a stated tie-break rather than a live discriminator.
+      # Precedence: `stalled` is decided first and alone, because an exit code is a
+      # fact about OUR invocation while the text buckets are inferences about a
+      # remote's wording — and a timed-out pull's partial output can contain
+      # anything, including an absent token from a previous line of progress. Among
+      # the text buckets it is absent-then-transient, i.e. ambiguity resolves LOUD,
+      # matching the unknown rule. Those two token sets are disjoint in Docker's
+      # actual output (a `toomanyrequests` body carries none of the absent tokens),
+      # so that order is a stated tie-break rather than a live discriminator.
+      #
+      # A STALL DOES RETRY, and needs no special case to do so: the loop above
+      # retries EVERY failure up to max_attempts before anything is classified, so
+      # a stall gets its three attempts for the same reason a network blip does.
+      # That is the retry-first design paying off again — `stalled` only ever
+      # describes a pull that stalled three times running.
       #
       # THE COST OF A FATAL BUCKET, stated plainly because it is the largest one and
       # the argument above does not otherwise account for it: this step aborts before
@@ -365,6 +399,14 @@ jobs:
       # this block as a merge gate; whether that job should gate at all is a
       # separate decision tracked in its own issue.
       - name: Pre-pull dependency images (warm Docker cache; fail fast on an unpullable pin)
+        # The TOTAL retry budget, enforced by the runner rather than by shell logic
+        # of our own. Neither this job nor this step previously set one, so the
+        # effective bound was GitHub's 360-minute job default. Derivation of the 15
+        # is in the `per_pull_timeout` comment inside the script: measured cold-pull
+        # cost is 165s for all 18 images, the legitimate worst case (that doubled
+        # for runner variance, plus one image burning a full 405s stall cycle) is
+        # about 12m 15s, and the unbounded pathological case is 2h 1m.
+        timeout-minutes: 15
         run: |
           set -euo pipefail
 
@@ -393,6 +435,24 @@ jobs:
           # the Docker CLI's canned translation of a 401/404, so a hostile or merely
           # broken remote cannot suppress the phrase while still answering 401/404.
           classify_pull_failure() {
+            # $1 = the pull's combined output. $2 = its exit code (optional; absent
+            # means "not a code we generated", which is why it defaults to 0 rather
+            # than to anything that could accidentally read as a stall).
+            #
+            # The exit code is consulted FIRST and decides alone. 124 is GNU
+            # `timeout`'s documented "the command timed out" status, and it is a
+            # fact about OUR invocation rather than an inference about a remote's
+            # wording — so it outranks every text pattern below. It must, and that
+            # is MEASURED rather than hypothetical: `timeout` yields whatever the
+            # command printed before it was killed, so
+            #   out=$(timeout 1 sh -c 'echo "pull access denied for x"; sleep 5' 2>&1)
+            # returns rc=124 with out="pull access denied for x". Classified on
+            # text first, that stall reads as `absent` and the operator is told to
+            # fix a pin that is perfectly fine.
+            if [ "${2:-0}" -eq 124 ]; then
+              printf 'stalled\n'
+              return 0
+            fi
             lowered=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
             case "$lowered" in
               *"pull access denied"*|*"repository does not exist"*|*"manifest unknown"*|*"manifest for "*" not found"*)
@@ -482,6 +542,53 @@ jobs:
           }
 
           max_attempts=3
+
+          # PER-ATTEMPT BOUND, and the arithmetic behind this step's
+          # `timeout-minutes`. Without a bound, a pull that hangs rather than fails
+          # produces NOTHING: the output is captured in a command substitution, so
+          # there is no progress to watch, the retry and classification logic below
+          # is never reached, and the job sits silent until the RUNNER's job
+          # timeout — which, since neither this job nor this step previously set
+          # `timeout-minutes`, was GitHub's 360-minute default. Six hours of silence
+          # is a worse version of the same 44-minute anonymous timeout this step
+          # exists to replace.
+          #
+          # 120s is chosen from MEASURED data, not intuition. In the last fully
+          # green run of this lane (34883024632, 2026-09-14), the whole step took
+          # 165s for all 18 images from a cold cache, and the slowest SINGLE pull
+          # was confluentinc/cp-schema-registry:7.6.1 at 28.9s — not the SQL Server
+          # image, which was third at 19.1s behind elasticsearch's 21.1s. 120s is
+          # therefore ~4x the slowest observed cold pull, which leaves room for a
+          # slow runner, a contended registry, or a future image appreciably larger
+          # than the current worst, while still being short enough that three
+          # attempts plus backoff stay inside the step budget below.
+          #
+          # THE BUDGET. Per stalled image the worst case is
+          # 3 x 120s + 15s + 30s backoff = 405s, so 18 stalled images would run
+          # 2h 1m. The step-level `timeout-minutes: 15` caps that declaratively —
+          # GitHub enforces it with no shell logic of our own — while comfortably
+          # admitting the legitimate worst case: a fully cold pull of all 18 images
+          # (165s measured, doubled to 330s for runner variance) plus one image
+          # burning a complete stall cycle (405s) is 735s, about 12m 15s. A registry
+          # outage therefore aborts this job in 15 minutes rather than in two hours,
+          # or in the six the runner default would have allowed.
+          #
+          # IF `timeout` IS MISSING the bound degrades, but not to nothing: the
+          # step's `timeout-minutes` is still enforced by the runner, so a stall is
+          # bounded at 15 minutes instead of 120 seconds. That is worth a warning
+          # rather than a refusal — it is a real loss of precision and no loss of
+          # containment. coreutils `timeout` is present on `ubuntu-latest` (verified
+          # as GNU coreutils 8.32 on the maintainer's host and used unconditionally
+          # by countless Actions workflows), so this path is for a self-hosted
+          # runner with a minimal image.
+          per_pull_timeout=120
+          if command -v timeout >/dev/null 2>&1; then
+            pull_cmd=(timeout "$per_pull_timeout" docker pull)
+          else
+            pull_cmd=(docker pull)
+            echo "::warning::coreutils 'timeout' is unavailable on this runner, so an individual pull is not bounded at ${per_pull_timeout}s; a stalled pull is instead bounded only by this step's timeout-minutes budget, and will be reported as that timeout rather than as a named stall."
+          fi
+
           # Collected rather than acted on immediately: the loop reports EVERY bad
           # pin and aborts afterwards. Exiting on the first one would contradict the
           # error text's own advice — it tells the operator that re-running will not
@@ -550,11 +657,16 @@ jobs:
             echo "::stop-commands::$log_token"
             attempt=1
             pulled=no
+            pull_rc=0
             while :; do
-              if output=$(docker pull "$image" 2>&1); then
+              if output=$("${pull_cmd[@]}" "$image" 2>&1); then
                 printf '%s\n' "$output"
                 pulled=yes
                 break
+              else
+                # Captured in the else branch, where $? is still the condition's
+                # status. Read after `printf` below it would be printf's instead.
+                pull_rc=$?
               fi
               printf '%s\n' "$output"
               if [ "$attempt" -ge "$max_attempts" ]; then
@@ -584,7 +696,12 @@ jobs:
               continue
             fi
 
-            kind=$(classify_pull_failure "$output")
+            kind=$(classify_pull_failure "$output" "$pull_rc")
+            if [ "$kind" = stalled ]; then
+              echo "::error::pulling $image timed out after $max_attempts attempts of ${per_pull_timeout}s each — the registry or the local Docker daemon is not serving this pull. THIS IS AN ENVIRONMENT CONDITION, NOT A BAD PIN: do not change the image reference. Check the registry's status and re-run once it recovers, which unlike a withdrawn image is worth doing. Aborting here rather than continuing because a registry that cannot serve a pull will also stall DCP's own cold pull during StartAsync, turning every docker row into an unnamed health-gate timeout. Last output before the timeout: $(one_line "$output")"
+              fatal=1
+              continue
+            fi
             if [ "$kind" = transient ]; then
               echo "::warning::pre-pull of $image was rate-limited on all $max_attempts attempts; continuing without it (non-fatal — the limit clears on its own and DCP may still cold-pull it during StartAsync). Registry said: $(one_line "$output")"
               continue
