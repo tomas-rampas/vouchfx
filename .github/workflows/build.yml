@@ -344,8 +344,17 @@ jobs:
       #               this whole step exists to prevent. Its advice is the OPPOSITE
       #               of `absent`'s: re-running is reasonable once the registry
       #               recovers, and the message says so rather than "fix the pin".
-      #   absent    — `denied`, `repository does not exist`, `manifest unknown`,
-      #               `not found`. FATAL. This never self-resolves — a withdrawn
+      #   absent    — the WHOLE PHRASES `pull access denied`, `repository does not
+      #               exist`, `manifest unknown`, `manifest for … not found`. Quoted
+      #               exactly as the code matches them, because the difference is
+      #               load-bearing and an earlier version of this summary got it
+      #               wrong: it listed the bare words `denied` and `not found`,
+      #               which the function has never used. A bare-word match swallows
+      #               the local daemon's own "Got permission denied while trying to
+      #               connect to the Docker daemon socket" and blames a perfectly
+      #               good pin for it. See the anchoring note on the function
+      #               itself; an editor who trusts a loose summary re-opens that
+      #               hole. FATAL. This never self-resolves — a withdrawn
       #               repository fails all three attempts identically — so
       #               re-running the job is pure latency. The #533 text is in this
       #               bucket verbatim: "pull access denied for minio/minio,
@@ -394,25 +403,33 @@ jobs:
       # continue-on-error is gone, but the JOB keeps its own (see `integration:`
       # above): it is documented non-blocking and is not a required check, so this
       # step aborting skips the tests and the workflow still concludes green. What
-      # is actually bought is diagnosis, not gating — a named annotation within
-      # seconds instead of a 44-minute run that never says which image. Do not read
+      # is actually bought is diagnosis, not gating — a named annotation in single
+      # -digit minutes instead of a 44-minute run that never says which image. Be
+      # precise about that number rather than saying "within seconds": the pulls run
+      # serially in list order, and the minio image that motivated #533 is LAST of
+      # eighteen, so on a cold cache its annotation arrives only after the other
+      # seventeen have been pulled — 165s measured for the full sweep, so roughly
+      # 3.5 minutes. The gain over a 44-minute anonymous health-gate timeout is an
+      # order of magnitude and does not need overstating. Do not read
       # this block as a merge gate; whether that job should gate at all is a
       # separate decision tracked in its own issue.
       - name: Pre-pull dependency images (warm Docker cache; fail fast on an unpullable pin)
         # The TOTAL retry budget, enforced by the runner rather than by shell logic
         # of our own. Neither this job nor this step previously set one, so the
-        # effective bound was GitHub's 360-minute job default. Derivation of the 15
-        # is in the `per_pull_timeout` comment inside the script: measured cold-pull
-        # cost is 165s for all 18 images, the legitimate worst case (that doubled
-        # for runner variance, plus one image burning a full 405s stall cycle) is
-        # about 12m 15s, and the unbounded pathological case is 2h 1m.
-        timeout-minutes: 15
+        # effective bound was GitHub's 360-minute job default. Derivation of the 25
+        # is in the `per_pull_timeout` comment inside the script and is driven by
+        # the MIXED failure case — one stalling image plus seventeen fail-fast ones
+        # is 1,170s, so the budget must exceed 19m 30s for a fully misconfigured
+        # list to finish being read. A registry-wide stall (2h 1m) deliberately does
+        # NOT fit; see that comment for what the operator sees when it truncates.
+        timeout-minutes: 25
         run: |
           set -euo pipefail
 
-          # Classify a failed `docker pull` from the pull's COMBINED OUTPUT.
-          # Echoes exactly one of: absent | transient | unknown (see the step comment).
-          # Matched case-insensitively — these strings are not casing-stable.
+          # Classify a failed `docker pull` from its EXIT CODE and, failing that,
+          # its COMBINED OUTPUT. Echoes exactly one of the FOUR buckets described in
+          # the step comment: stalled | absent | transient | unknown.
+          # Text matching is case-insensitive — these strings are not casing-stable.
           #
           # "Combined output", not "the registry's error text", is the precise
           # description and it constrains the patterns below. The caller captures
@@ -563,19 +580,41 @@ jobs:
           # than the current worst, while still being short enough that three
           # attempts plus backoff stay inside the step budget below.
           #
-          # THE BUDGET. Per stalled image the worst case is
-          # 3 x 120s + 15s + 30s backoff = 405s, so 18 stalled images would run
-          # 2h 1m. The step-level `timeout-minutes: 15` caps that declaratively —
-          # GitHub enforces it with no shell logic of our own — while comfortably
-          # admitting the legitimate worst case: a fully cold pull of all 18 images
-          # (165s measured, doubled to 330s for runner variance) plus one image
-          # burning a complete stall cycle (405s) is 735s, about 12m 15s. A registry
-          # outage therefore aborts this job in 15 minutes rather than in two hours,
-          # or in the six the runner default would have allowed.
+          # THE BUDGET, derived for N failing images rather than one. An earlier
+          # version of this note derived it from "all 18 cold + ONE stall" and set
+          # 15 minutes; that covered only the single-failure case and two scenarios
+          # this block's own prose calls expected fell outside it. Building blocks:
+          # a failing-fast image costs ~45s (three quick attempts plus 15s + 30s of
+          # backoff); a STALLING image costs 3 x 120s + 45s = 405s; a full cold
+          # sweep of all 18 healthy images is 165s, MEASURED.
+          #
+          #   * Mixed, and the binding case: one stall plus seventeen fail-fast
+          #     absents = 405s + 17 x 45s = 1,170s = 19m 30s. This MUST fit —
+          #     "reports every pin it reaches" is worth little if a genuinely
+          #     misconfigured list cannot finish being read.
+          #   * Rate-limit sweep, AFTER the aggregate cap above: the first Hub
+          #     image spends a full ~45s, the remaining 13 Hub images get one
+          #     attempt each with no backoff (~1s each), and the 4 non-Hub images
+          #     pull normally. Roughly 45s + 13s + ~60s = under 2 minutes, against
+          #     the ~630s of pure backoff the same sweep cost before the cap.
+          #   * Registry-wide stall: 18 x 405s = 2h 1m. THIS CANNOT BE BUDGETED and
+          #     is not meant to be. At 25 minutes the step reaches its first three
+          #     or four images, annotates each as a named stall, and is then killed
+          #     by the runner. What the operator sees is three stall annotations and
+          #     NO tally line — which is the intended signal, because the tally's
+          #     absence is what says "this list was truncated" (see its own comment
+          #     below). Three annotations naming a registry outage are the whole
+          #     diagnosis; the remaining fifteen identical timeouts would add 90
+          #     minutes and no information.
+          #
+          # `timeout-minutes: 25` therefore comes from the mixed case: 1,170s plus
+          # ~28% for runner variance is ~1,500s. It still aborts a registry outage
+          # in 25 minutes rather than the 2h 1m the loop would otherwise take, or
+          # the 6h the runner's own default allowed before this step declared one.
           #
           # IF `timeout` IS MISSING the bound degrades, but not to nothing: the
           # step's `timeout-minutes` is still enforced by the runner, so a stall is
-          # bounded at 15 minutes instead of 120 seconds. That is worth a warning
+          # bounded at 25 minutes instead of 120 seconds. That is worth a warning
           # rather than a refusal — it is a real loss of precision and no loss of
           # containment. coreutils `timeout` is present on `ubuntu-latest` (verified
           # as GNU coreutils 8.32 on the maintainer's host and used unconditionally
@@ -589,12 +628,71 @@ jobs:
             echo "::warning::coreutils 'timeout' is unavailable on this runner, so an individual pull is not bounded at ${per_pull_timeout}s; a stalled pull is instead bounded only by this step's timeout-minutes budget, and will be reported as that timeout rather than as a named stall."
           fi
 
-          # Collected rather than acted on immediately: the loop reports EVERY bad
-          # pin and aborts afterwards. Exiting on the first one would contradict the
-          # error text's own advice — it tells the operator that re-running will not
-          # help, which is only true if they can see all of the failures they must
-          # fix, not just the earliest one in list order.
-          fatal=0
+          # AGGREGATE CAP ON RATE-LIMITING, and why it is scoped to a registry
+          # rather than applied to everything that follows. A Docker Hub pull limit
+          # is enforced PER CLIENT IP against DOCKER HUB, so once one Hub image has
+          # been limited every other Hub image in the list will hit the same wall:
+          # retrying each of them three times with 15s + 30s of backoff is pure
+          # latency buying nothing. MEASURED composition of the list below: 14 of
+          # the 18 pins are Docker Hub, 2 are quay.io and 2 are mcr.microsoft.com.
+          # Without a cap a Hub-wide sweep spends 14 x 45s = 630s in backoff alone.
+          #
+          # But the same fact that justifies the cap also bounds it: a Hub limit
+          # says NOTHING about quay.io or mcr.microsoft.com. Capping those would
+          # remove genuine retry value from four images for a condition that cannot
+          # affect them — trading a real defence against an unrelated blip for no
+          # saving at all, since they were never going to be limited. So the cap
+          # keys on the registry that actually reported the limit and applies only
+          # to later images resolving to that same registry.
+          capped_registry=""
+
+          # The registry an image reference resolves to. Same rule the engine's own
+          # ApplyImageOverrides uses to decide whether a reference is already
+          # qualified: a first path component containing a dot or a colon, or equal
+          # to `localhost`, IS a registry; anything else is an implicit Docker Hub
+          # reference. So `postgres:18.3` and `traefik/whoami:latest` are docker.io
+          # while `quay.io/minio/minio:…` and `mcr.microsoft.com/mssql/server:…`
+          # are not.
+          registry_of() {
+            case "$1" in
+              */*)
+                first=${1%%/*}
+                case "$first" in
+                  *.*|*:*|localhost) printf '%s\n' "$first"; return 0 ;;
+                esac
+                ;;
+            esac
+            printf 'docker.io\n'
+          }
+
+          # Collected rather than acted on immediately: the loop reports EVERY pin
+          # it REACHES, at the moment it reaches it (the annotations are emitted
+          # inside the loop; only the non-zero exit is deferred to the end). Exiting
+          # on the first failure would contradict the error text's own advice — it
+          # tells the operator that re-running will not help, which is only true if
+          # they can see every failure they must fix rather than the earliest one in
+          # list order.
+          #
+          # "Every pin it REACHES" is the honest promise, and the earlier
+          # unconditional "reports ALL bad pins" was not. The step's
+          # `timeout-minutes` bounds how far down the list execution gets, and one
+          # scenario deliberately exceeds it: a registry-wide stall, where each
+          # image burns a full 405s cycle and the budget therefore reaches only the
+          # first few. That truncation is BY DESIGN, not an oversight — two
+          # simultaneous stalls are a registry outage, which the first stall's own
+          # annotation already names, and grinding through sixteen more identical
+          # timeouts would add 90 minutes and no information.
+          #
+          # WHAT AN OPERATOR SHOULD CONCLUDE FROM A TRUNCATED LIST: the tally line
+          # printed after the loop is the marker. If it is present, every pin was
+          # examined and the failures named are the complete set. If it is ABSENT,
+          # the runner killed the step mid-list and the pins after the last one
+          # named are UNKNOWN, not healthy — fix the named condition (which for a
+          # truncated list is nearly always a registry outage) and re-run to learn
+          # about the rest.
+          fatal_count=0
+          warn_count=0
+          examined=0
           for image in \
             postgres:18.3 \
             mcr.microsoft.com/mssql/server:2022-latest \
@@ -655,6 +753,16 @@ jobs:
             # Inside the group so grouping still works; resumed before ::endgroup::
             # so that, and every annotation after it, is still processed.
             echo "::stop-commands::$log_token"
+
+            examined=$((examined + 1))
+            # Per-image attempt budget: the full allowance, unless this image's own
+            # registry has already rate-limited us this run.
+            image_attempts=$max_attempts
+            if [ -n "$capped_registry" ] && [ "$(registry_of "$image")" = "$capped_registry" ]; then
+              image_attempts=1
+              echo "pre-pull: $capped_registry already reported a rate limit this run, so $image gets 1 attempt instead of $max_attempts (retrying would hit the same per-IP limit)"
+            fi
+
             attempt=1
             pulled=no
             pull_rc=0
@@ -669,11 +777,11 @@ jobs:
                 pull_rc=$?
               fi
               printf '%s\n' "$output"
-              if [ "$attempt" -ge "$max_attempts" ]; then
+              if [ "$attempt" -ge "$image_attempts" ]; then
                 break
               fi
               delay=$((attempt * 15))
-              echo "pull of $image failed (attempt $attempt/$max_attempts); retrying in ${delay}s"
+              echo "pull of $image failed (attempt $attempt/$image_attempts); retrying in ${delay}s"
               sleep "$delay"
               attempt=$((attempt + 1))
             done
@@ -686,6 +794,17 @@ jobs:
             # would silently swallow the annotation this whole step exists to
             # produce, so if a `continue` or an early `exit` is ever added inside
             # the loop, it must emit this line first.
+            #
+            # ONE PATH IS OUTSIDE THAT ARGUMENT: the runner killing this step on its
+            # `timeout-minutes` budget, which can land between the stop and the
+            # resume. No shell code runs after that kill, so no resume is emitted.
+            # Whether the runner resets the stop token at a step boundary — leaving
+            # a later step's commands processed normally — is UNVERIFIED here, and
+            # this comment deliberately claims neither outcome. The exposure is
+            # bounded either way: on that path this step has already failed, the
+            # next step in the job is the test run it gates, and nothing after the
+            # kill depends on an annotation from this one. Worth knowing before
+            # anyone relies on a stopped span surviving, or not surviving, a kill.
             echo "::${log_token}::"
             echo "::endgroup::"
 
@@ -698,25 +817,39 @@ jobs:
 
             kind=$(classify_pull_failure "$output" "$pull_rc")
             if [ "$kind" = stalled ]; then
-              echo "::error::pulling $image timed out after $max_attempts attempts of ${per_pull_timeout}s each — the registry or the local Docker daemon is not serving this pull. THIS IS AN ENVIRONMENT CONDITION, NOT A BAD PIN: do not change the image reference. Check the registry's status and re-run once it recovers, which unlike a withdrawn image is worth doing. Aborting here rather than continuing because a registry that cannot serve a pull will also stall DCP's own cold pull during StartAsync, turning every docker row into an unnamed health-gate timeout. Last output before the timeout: $(one_line "$output")"
-              fatal=1
+              echo "::error::pulling $image timed out after $image_attempts attempts of ${per_pull_timeout}s each — the registry or the local Docker daemon is not serving this pull. THIS IS AN ENVIRONMENT CONDITION, NOT A BAD PIN: do not change the image reference. Check the registry's status and re-run once it recovers, which unlike a withdrawn image is worth doing. This will fail the step once every image has been examined, because a registry that cannot serve a pull will also stall DCP's own cold pull during StartAsync, turning every docker row into an unnamed health-gate timeout. Last output before the timeout: $(one_line "$output")"
+              fatal_count=$((fatal_count + 1))
               continue
             fi
             if [ "$kind" = transient ]; then
-              echo "::warning::pre-pull of $image was rate-limited on all $max_attempts attempts; continuing without it (non-fatal — the limit clears on its own and DCP may still cold-pull it during StartAsync). Registry said: $(one_line "$output")"
+              echo "::warning::pre-pull of $image was rate-limited on all $image_attempts attempts; continuing without it (non-fatal — the limit clears on its own and DCP may still cold-pull it during StartAsync). Registry said: $(one_line "$output")"
+              warn_count=$((warn_count + 1))
+              # Arm the aggregate cap for this registry only — see the rationale at
+              # its declaration. Set AFTER the annotation so this image itself keeps
+              # the full allowance it was already given.
+              capped_registry=$(registry_of "$image")
               continue
             fi
             if [ "$kind" = absent ]; then
-              echo "::error::could not pull the pinned image $image — after $max_attempts attempts the registry still says it is not there, which never self-resolves, so re-running will not help. Fix the pin (verify with: docker manifest inspect $image). Left unpulled this surfaces only as a health-gate timeout that never names the image. Registry said: $(one_line "$output")"
+              echo "::error::could not pull the pinned image $image — after $image_attempts attempts the registry still says it is not there, which never self-resolves, so re-running will not help. Fix the pin (verify with: docker manifest inspect $image). Left unpulled this surfaces only as a health-gate timeout that never names the image. Registry said: $(one_line "$output")"
             else
-              echo "::error::could not pull the pinned image $image after $max_attempts attempts, and the output matches neither 'not there' nor 'rate limited' — it may not even be a registry error (a local daemon or client failure is captured here too). Failing loudly rather than guessing it is transient; if this is a registry condition, classify it into a bucket in classify_pull_failure above. Pull output: $(one_line "$output")"
+              echo "::error::could not pull the pinned image $image after $image_attempts attempts, and the output matches neither 'not there' nor 'rate limited' — it may not even be a registry error (a local daemon or client failure is captured here too). Failing loudly rather than guessing it is transient; if this is a registry condition, classify it into a bucket in classify_pull_failure above. Pull output: $(one_line "$output")"
             fi
-            fatal=1
+            fatal_count=$((fatal_count + 1))
           done
 
-          # Every bad pin has now been reported by name, so the operator fixes them
-          # in one pass. The abort still precedes the test step.
-          [ "$fatal" -eq 0 ] || exit 1
+          # THE TALLY, and it is load-bearing rather than decorative: its PRESENCE
+          # is how an operator tells a completed step from one the runner killed
+          # part-way down the list. Reaching this line means every pin was examined
+          # and the failures annotated above are the complete set; its absence means
+          # the `timeout-minutes` budget ran out mid-list and the pins after the
+          # last one named were never tried. Printed on the success path too, so
+          # "no tally" is unambiguous rather than merely unusual.
+          echo "pre-pull complete: examined $examined pinned images; $fatal_count failed, $warn_count rate-limited and skipped."
+
+          # Every pin that was reached has now been reported by name, so the
+          # operator fixes them in one pass. The abort still precedes the test step.
+          [ "$fatal_count" -eq 0 ] || exit 1
 
       # Run only tests carrying [Trait("requires","docker")].
       # The trait selects the docker-gated topology and provider-integration tests

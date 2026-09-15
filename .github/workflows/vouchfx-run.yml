@@ -171,8 +171,11 @@ on:
           run, to warm the Docker cache and dodge Aspire/DCP's ~20s per-resource cold-start
           watchdog (mirrors build.yml). Each pull is best-effort and non-fatal — a stale or
           unreachable tag only degrades to a cold pull during startup, it never fails the
-          job. SUPPLY-CHAIN: pin each entry to an immutable image DIGEST (name@sha256:...),
-          not a floating tag.
+          job. Each pull's output is echoed inside a `::stop-commands::` fence so a
+          registry response cannot be executed as a workflow command, and the image
+          reference you supply is escaped before it is placed in any log annotation;
+          both are transparent to callers and change no behaviour. SUPPLY-CHAIN: pin
+          each entry to an immutable image DIGEST (name@sha256:...), not a floating tag.
         type: string
         required: false
         default: ""
@@ -295,13 +298,65 @@ jobs:
         env:
           PREWARM_IMAGES: ${{ inputs.prewarm-images }}
         run: |
+          # HARDENING ONLY — THE POLICY HERE IS DELIBERATELY NOT build.yml's.
+          # The equivalent block in this repository's own build.yml classifies pull
+          # failures, bounds each pull, retries, and FAILS the job on a bad pin.
+          # None of that is ported here and none of it should be: this is a
+          # `workflow_call` reusable workflow with external consumers, its
+          # `prewarm-images` contract has always promised best-effort, non-fatal
+          # pre-warming, and turning a stale tag into a red job would break every
+          # caller relying on that. The two workflows now differ in POLICY (what a
+          # failed pull means) while agreeing completely on HARDENING (what untrusted
+          # text may do to the runner) — and hardening is the half that cannot be
+          # left to policy, because both echo remote-controlled text into a stream
+          # the runner parses workflow commands out of.
+          #
+          # Two injection paths are closed, and both matter more here than in
+          # build.yml because the image reference is CALLER-supplied rather than
+          # pinned in-tree:
+          #   1. `$image` itself is interpolated into ::group:: and ::warning::
+          #      bodies. A caller passing a reference containing `%0A` would have it
+          #      decoded by the runner into a real newline inside the annotation,
+          #      ending the command early and starting one of the caller's choosing.
+          #      Escaping `%` to `%25` first (and collapsing C0 controls) makes the
+          #      reference inert while still readable.
+          #   2. The pull's own output is the registry's text, and the runner parses
+          #      `::`-prefixed commands from ordinary stdout, not just annotations.
+          #      It is fenced with `::stop-commands::` and an unpredictable
+          #      per-image token rather than escaped, because nothing in it is ever
+          #      meant as a command and fencing keeps it byte-for-byte readable.
+          # See the long-form rationale on both techniques in build.yml's pre-pull
+          # step; this is the same reasoning applied to the published surface.
+          one_line() {
+            printf '%s' "${1//%/%25}" | tr '\000-\037' ' '
+          }
           echo "$PREWARM_IMAGES" | while IFS= read -r image; do
             # Skip blank lines (trailing newline / indentation in the multiline input).
             image="$(echo "$image" | xargs)"
             [ -z "$image" ] && continue
-            echo "::group::docker pull $image"
-            docker pull "$image" || echo "::warning::pre-pull of $image failed (non-fatal; DCP will cold-pull it during StartAsync)"
+
+            # The reference as it is safe to put inside a workflow command. The pull
+            # below still uses the RAW $image — escaping is for the annotation, not
+            # for docker.
+            safe_image="$(one_line "$image")"
+
+            log_token="$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')" || log_token=""
+            if [ "${#log_token}" -ne 32 ]; then
+              # Non-fatal, matching this workflow's contract: skip the pre-warm
+              # rather than echo the pull's output unfenced. The documented
+              # consequence of a skipped pre-warm is a cold pull during StartAsync,
+              # which is exactly what a failed one already means here.
+              echo "::warning::could not generate a random log-fencing token, so $safe_image was not pre-warmed (non-fatal; DCP will cold-pull it during StartAsync)"
+              continue
+            fi
+
+            echo "::group::docker pull $safe_image"
+            echo "::stop-commands::$log_token"
+            pull_ok=yes
+            docker pull "$image" || pull_ok=no
+            echo "::${log_token}::"
             echo "::endgroup::"
+            [ "$pull_ok" = yes ] || echo "::warning::pre-pull of $safe_image failed (non-fatal; DCP will cold-pull it during StartAsync)"
           done
 
       # 6. Run the suite. `dotnet run --project` invokes the just-built `vouchfx` executable

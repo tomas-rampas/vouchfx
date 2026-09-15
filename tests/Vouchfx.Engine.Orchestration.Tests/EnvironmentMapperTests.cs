@@ -3703,6 +3703,18 @@ public sealed class EnvironmentMapperTests : IDisposable
             .Annotations.OfType<ContainerImageAnnotation>().Single();
         Assert.Equal("quay.io/minio/minio", image.Image);
         Assert.Null(image.Registry);
+
+        // The TAG is pinned here, not merely asserted non-empty, and the reason is a
+        // measured cost rather than tidiness. Four published surfaces hardcode this
+        // exact release — the CI pre-pull list, the DSL specification's registry-scope
+        // section, the troubleshooting guide and the CHANGELOG — so an engine-side tag
+        // bump that nobody mirrors into them desynchronises all four silently. That has
+        // already happened once in this repository: the pre-pull warmed
+        // 'rabbitmq:4-management' while the engine requested '4.3-management', so the
+        // cache warmed nothing for that dependency and no test noticed. The sibling
+        // azureservicebus registration pins its own tag for the same reason
+        // (Map_AzureServiceBusDependency_ImageRegistry_DoesNotDoublePrefixEmbeddedRegistry).
+        Assert.Equal("RELEASE.2025-09-07T16-13-09Z", image.Tag);
     }
 
     /// <summary>
