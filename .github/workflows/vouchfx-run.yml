@@ -290,7 +290,8 @@ jobs:
       # 5. OPTIONAL image pre-warm. Pull each requested image BEFORE the run so DCP's
       #    internal ~20s per-resource startup watchdog is never spent on a cold pull (the
       #    documented CI-flake mitigation, mirroring build.yml). Best-effort and non-fatal:
-      #    a per-image `|| echo` guard means a stale/unreachable tag degrades to a cold pull
+      #    each pull records its own outcome (`|| pull_ok=no`) and a failure is reported as a
+      #    warning after the group closes, so a stale/unreachable tag degrades to a cold pull
       #    rather than failing the job. Skipped entirely when `prewarm-images` is empty.
       #    SUPPLY-CHAIN: callers should pin each entry to an image DIGEST (name@sha256:...).
       - name: Pre-warm container images (best-effort, non-fatal)

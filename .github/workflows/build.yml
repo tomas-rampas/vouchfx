@@ -407,16 +407,17 @@ jobs:
       # continue-on-error is gone, but the JOB keeps its own (see `integration:`
       # above): it is documented non-blocking and is not a required check, so this
       # step aborting skips the tests and the workflow still concludes green. What
-      # is actually bought is diagnosis, not gating — a named annotation in single
-      # -digit minutes instead of a 44-minute run that never says which image. Be
-      # precise about that number rather than saying "within seconds": the pulls run
+      # is actually bought is diagnosis, not gating — a named annotation in a few
+      # minutes instead of a 44-minute run that never says which image. Be precise
+      # about that number rather than saying "within seconds": the pulls run
       # serially in list order, and the minio image that motivated #533 is LAST of
       # eighteen, so on a cold cache its annotation arrives only after the other
-      # seventeen have been pulled — 165s measured for the full sweep, so roughly
-      # 3.5 minutes. The gain over a 44-minute anonymous health-gate timeout is an
-      # order of magnitude and does not need overstating. Do not read
-      # this block as a merge gate; whether that job should gate at all is a
-      # separate decision tracked in its own issue.
+      # seventeen. The measured cold sweep is 164.4s of per-image pulls; for the
+      # #533 case substitute minio's own 3.8s success for the 48s a failing image
+      # costs, giving 164.4 - 3.8 + 48 = 208.6s, about 3.5 minutes. The gain over a
+      # 44-minute anonymous health-gate timeout is an order of magnitude and does
+      # not need overstating. Do not read this block as a merge gate; whether that
+      # job should gate at all is a separate decision tracked in its own issue.
       - name: Pre-pull dependency images (warm Docker cache; fail fast on an unpullable pin)
         # The TOTAL retry budget, enforced by the runner rather than by shell logic
         # of our own. Neither this job nor this step previously set one, so the
@@ -448,13 +449,28 @@ jobs:
           # It classifies `unknown` instead, which is fatal but honest about not
           # knowing. Any future pattern added here must be similarly anchored.
           #
-          # Why the absent bucket is hard for a remote to evade, which is what makes
-          # a fatal bucket safe: these strings are CLIENT-generated. MEASURED — the
-          # registry's own body for the withdrawn repository is
+          # ONE PATTERN IS AN ANCHORED PAIR, and deliberately not a single phrase.
+          # Docker Engine 29 with the containerd image store reports a missing tag
+          # as `failed to resolve reference "…": …: not found` — which contains none
+          # of the other four tokens, so before this pair a plain bad pin classified
+          # `unknown` and the operator was told it "may not even be a registry
+          # error". But the SAME wrapper carries transport failures:
+          # `failed to resolve reference "…": dial tcp …: i/o timeout`. Matching the
+          # bare phrase would bucket a network timeout as a withdrawn image and tell
+          # the operator to fix a pin that is fine, so both halves must be present.
+          #
+          # ON PROVENANCE, stated more carefully than it once was here. Most of
+          # these strings are CLIENT-generated, which does make them awkward for a
+          # remote to suppress — MEASURED, the registry's own body for the withdrawn
+          # repository is
           #   {"errors":[{"code":"UNAUTHORIZED","message":"authentication required"}]}
-          # on HTTP 401, which contains none of the tokens below. What is matched is
-          # the Docker CLI's canned translation of a 401/404, so a hostile or merely
-          # broken remote cannot suppress the phrase while still answering 401/404.
+          # on HTTP 401, containing none of the tokens below, so what is matched is
+          # the CLI's canned translation of a 401/404. But do not lean on that:
+          # `manifest unknown` is the registry's own OCI error code echoed through,
+          # not client text, and the containerd phrasing above shows the client's
+          # wording changes between engine versions anyway. What actually makes a
+          # fatal bucket safe is the DEFAULT — anything unrecognised is `unknown`,
+          # which is fatal too. Provenance buys precision in the message, not safety.
           classify_pull_failure() {
             # $1 = the pull's combined output. $2 = its exit code (optional; absent
             # means "not a code we generated", which is why it defaults to 0 rather
@@ -476,7 +492,7 @@ jobs:
             fi
             lowered=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
             case "$lowered" in
-              *"pull access denied"*|*"repository does not exist"*|*"manifest unknown"*|*"manifest for "*" not found"*)
+              *"pull access denied"*|*"repository does not exist"*|*"manifest unknown"*|*"manifest for "*" not found"*|*"failed to resolve reference"*" not found"*)
                 printf 'absent\n' ;;
               *toomanyrequests*|*"rate limit"*|*"too many requests"*)
                 printf 'transient\n' ;;
@@ -783,8 +799,9 @@ jobs:
             # FENCE THE RAW PULL OUTPUT. The two printf sites below echo the
             # registry's (or the local daemon's) response into the log verbatim,
             # and the runner parses `::`-prefixed workflow commands out of ORDINARY
-            # STDOUT, not only out of annotations — so a response containing a line
-            # `::error::…` line, or a line invoking the retired set-output command, is executed by the runner
+            # STDOUT, not only out of annotations — so a response containing an
+            # `::error::…` line, or a line invoking the retired set-output command,
+            # is executed by the runner
             # despite the annotation paths being escaped. `::stop-commands::` is
             # GitHub's own documented mechanism for logging untrusted text
             # (workflow-commands reference, "Stopping and starting workflow
@@ -811,7 +828,14 @@ jobs:
             # is treated as a hard failure rather than degraded to a weak token —
             # emitting `::stop-commands::` with an empty or truncated endtoken
             # would leave the output unfenced while looking correct.
-            log_token=$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')
+            # `|| log_token=""` is what makes the check below REACHABLE. Under this
+            # step's `set -euo pipefail` a failure anywhere in that pipeline would
+            # otherwise kill the shell at the assignment — exit 1 with no output at
+            # all, so neither the annotation below nor the tally's "look for an
+            # ::error:: naming the reason" could ever fire. Measured with a `head`
+            # stub returning 1: exit 1, empty log. Falling back to the empty string
+            # hands the failure to the length check, which is where it is explained.
+            log_token=$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n') || log_token=""
             if [ "${#log_token}" -ne 32 ]; then
               echo "::error::could not generate a random log-fencing token, so the pre-pull refuses to echo remote-controlled registry output with workflow-command processing enabled"
               exit 1
@@ -919,7 +943,7 @@ jobs:
               continue
             fi
             if [ "$kind" = absent ]; then
-              echo "::error::could not pull the pinned image $safe_image — after $max_attempts attempts the registry still says it is not there, which never self-resolves, so re-running will not help. Fix the pin (verify with: docker manifest inspect $safe_image). Left unpulled this surfaces only as a health-gate timeout that never names the image. Registry said: $(one_line "$output")"
+              echo "::error::could not pull the pinned image $safe_image — after $max_attempts attempts the registry still says it is not there, which never self-resolves, so re-running will not help. Fix the pin (verify with: docker manifest inspect $safe_image) — or, if a mirror or proxy fronts the registry, the indirection: a 404 from it classifies the same way. Left unpulled this surfaces only as a health-gate timeout that never names the image. Registry said: $(one_line "$output")"
             else
               echo "::error::could not pull the pinned image $safe_image after $max_attempts attempts, and the output matches neither 'not there' nor 'rate limited' — it may not even be a registry error (a local daemon or client failure is captured here too). Failing loudly rather than guessing it is transient; if this is a registry condition, classify it into a bucket in classify_pull_failure above. Pull output: $(one_line "$output")"
             fi
