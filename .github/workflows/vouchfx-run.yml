@@ -332,7 +332,32 @@ jobs:
           }
           echo "$PREWARM_IMAGES" | while IFS= read -r image; do
             # Skip blank lines (trailing newline / indentation in the multiline input).
-            image="$(echo "$image" | xargs)"
+            #
+            # Trimmed with parameter expansion rather than `xargs`, and that is a
+            # bug fix rather than a style preference. `xargs` applies SHELL-LIKE
+            # QUOTE PARSING to its input, so a reference containing an unbalanced
+            # quote makes it exit non-zero ("xargs: unmatched double quote") — and
+            # under the runner's default `bash -e` that killed the whole step,
+            # contradicting this input's documented promise that a bad entry "never
+            # fails the job". MEASURED: `echo 'foo"bar:1' | xargs` exits 1. The
+            # expansions below cannot fail on any input: they strip leading and then
+            # trailing [:space:] by pattern, with no parsing of the value at all.
+            #
+            # The change cuts BOTH WAYS, and both are worth knowing. `xargs` did not
+            # only fail on malformed input, it also NORMALISED input — MEASURED:
+            # `echo '"postgres:18.3"' | xargs` yields `postgres:18.3` and
+            # `echo 'foo\bar' | xargs` yields `foobar`, so a quoted or
+            # backslash-bearing entry used to be silently turned into a pullable
+            # reference. The expansions keep such a value verbatim, so it now
+            # reaches `docker pull` as written, fails there, and is reported as the
+            # ordinary non-fatal warning below. Net effect in each direction: an
+            # unbalanced quote goes from KILLING THE JOB to a warning, and a quoted
+            # or backslashed entry that used to pull by accident goes from a silent
+            # success to a warning. Both outcomes are non-fatal, so the documented
+            # contract on `prewarm-images` — best-effort, never fails the job — now
+            # holds in every case rather than in most of them.
+            image=${image#"${image%%[![:space:]]*}"}
+            image=${image%"${image##*[![:space:]]}"}
             [ -z "$image" ] && continue
 
             # The reference as it is safe to put inside a workflow command. The pull
@@ -356,6 +381,18 @@ jobs:
             docker pull "$image" || pull_ok=no
             echo "::${log_token}::"
             echo "::endgroup::"
+            # ONE VISIBLE DIFFERENCE from the pre-fence shape, recorded because the
+            # behaviour is identical and the LOG LAYOUT is not: the failure warning
+            # used to be emitted INSIDE the ::group::, and now follows ::endgroup::.
+            # The HARD CONSTRAINT is only that it follow the fence RESUME: while the
+            # fence is up the runner ignores workflow commands, so a ::warning::
+            # raised inside it would simply be swallowed. Placing it after
+            # ::endgroup:: rather than between the resume and ::endgroup:: is a
+            # CHOICE, not a requirement — a ::warning:: in that gap is processed
+            # normally. The choice is argued just below: an annotation buried in a
+            # collapsed group is easy to miss, and this one now sits beside the
+            # group rather than inside it. Same trigger, same text, same non-fatal
+            # semantics, different position.
             [ "$pull_ok" = yes ] || echo "::warning::pre-pull of $safe_image failed (non-fatal; DCP will cold-pull it during StartAsync)"
           done
 
