@@ -413,6 +413,25 @@ jobs:
           # echoed into. Unsanitised, a crafted pull error can end the annotation
           # early and start a workflow command of its own.
           #
+          # TWO PATHS, TREATED OPPOSITELY ON PURPOSE — read this with the
+          # `::stop-commands::` fence further down, which guards the other one:
+          #
+          #   * THIS path, the annotation body, MUST be interpreted as a workflow
+          #     command — `::error::`/`::warning::` is the whole point, since that
+          #     is what puts the registry's words in front of a reader without
+          #     them opening the log. Command processing therefore has to stay ON,
+          #     and the remote-controlled text is ESCAPED so it cannot break out of
+          #     the command it is embedded in.
+          #   * The RAW log echo of the same `$output` must NOT be interpreted at
+          #     all — nothing in it is ever meant as a command. There the text is
+          #     left byte-for-byte intact and command processing is switched OFF
+          #     around it instead.
+          #
+          # Escaping is the weaker tool and is used only where interpretation is
+          # required; fencing is used wherever it is not. Neither substitutes for
+          # the other: fencing here would suppress the annotation, and escaping
+          # there would corrupt the output a reader is meant to diagnose from.
+          #
           # This is a FIX, not a precaution. MEASURED against the version of this
           # function that translated only LF: a pull error of
           # "pull failed\r::error::INJECTED" reached the runner verbatim as
@@ -488,7 +507,47 @@ jobs:
             quay.io/prometheus/node-exporter:v1.8.2 \
             amazon/dynamodb-local:2.5.2 \
             quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z ; do
+            # FENCE THE RAW PULL OUTPUT. The two printf sites below echo the
+            # registry's (or the local daemon's) response into the log verbatim,
+            # and the runner parses `::`-prefixed workflow commands out of ORDINARY
+            # STDOUT, not only out of annotations — so a response containing a line
+            # `::error::…` or `::set-output name=x::…` is executed by the runner
+            # despite the annotation paths being escaped. `::stop-commands::` is
+            # GitHub's own documented mechanism for logging untrusted text
+            # (workflow-commands reference, "Stopping and starting workflow
+            # commands"): everything between it and the matching `::<token>::`
+            # resume line is ignored by the command parser. It is used here in
+            # preference to sanitising the text because it is robust to HOW the
+            # injected line is terminated — a per-line prefix such as
+            # `sed 's/^/  /'` would not survive a bare CR followed by `::`, which
+            # is the exact shape measured in the annotation work above — and
+            # because it leaves the registry's words byte-for-byte readable, which
+            # is the point of echoing them at all.
+            #
+            # THE TOKEN MUST BE UNPREDICTABLE, and is regenerated per image rather
+            # than once per step. A fixed or guessable token makes the fence FAIL
+            # OPEN: a remote that can predict it simply emits `::<token>::` to
+            # resume command processing and then injects freely, which is strictly
+            # worse than no fence because the log now looks fenced. GitHub's own
+            # guidance is that the token be "randomly generated and unique for each
+            # run". 128 bits are taken from the kernel CSPRNG via /dev/urandom,
+            # which needs no package (openssl would) and is always present on a
+            # Linux runner. Deliberately NOT $RANDOM, alone or salted with $$ and a
+            # timestamp: it carries 15 bits and is seeded predictably, so it is
+            # guessable by exactly the attacker this defends against. A short read
+            # is treated as a hard failure rather than degraded to a weak token —
+            # emitting `::stop-commands::` with an empty or truncated endtoken
+            # would leave the output unfenced while looking correct.
+            log_token=$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')
+            if [ "${#log_token}" -ne 32 ]; then
+              echo "::error::could not generate a random log-fencing token, so the pre-pull refuses to echo remote-controlled registry output with workflow-command processing enabled"
+              exit 1
+            fi
+
             echo "::group::docker pull $image"
+            # Inside the group so grouping still works; resumed before ::endgroup::
+            # so that, and every annotation after it, is still processed.
+            echo "::stop-commands::$log_token"
             attempt=1
             pulled=no
             while :; do
@@ -506,6 +565,16 @@ jobs:
               sleep "$delay"
               attempt=$((attempt + 1))
             done
+            # Resume command processing. ONE resume covers every path because every
+            # path out of the while loop lands here: both `break`s (success, and
+            # attempts exhausted) fall through to this line, and nothing inside the
+            # loop `continue`s past it or exits. Everything that must be
+            # interpreted — this ::endgroup::, and the ::error::/::warning::
+            # annotations below — is emitted after it. A resume missed on any path
+            # would silently swallow the annotation this whole step exists to
+            # produce, so if a `continue` or an early `exit` is ever added inside
+            # the loop, it must emit this line first.
+            echo "::${log_token}::"
             echo "::endgroup::"
 
             # Succeeded on some attempt — the failure text of the earlier ones is
