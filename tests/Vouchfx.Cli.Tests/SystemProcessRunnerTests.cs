@@ -48,8 +48,8 @@
 // write is merely late, so the attempt hands back `false` over an empty pid file, the `finally`
 // calls KillTreeQuietly(null) and kills nothing, and that child is now live and unreferenced. The
 // NEXT attempt gets a pid, its kill happens to work, every assertion passes and the row goes GREEN
-// — a leak row passing over a leak it caused. That is the #528 defect class (an assertion passing
-// for a reason it does not claim), not a housekeeping wrinkle.
+// — a leak row passing over a leak it caused. That is an assertion passing for a reason it does not
+// claim, not a housekeeping wrinkle.
 //
 // SO THE NO-PID PATH LOOKS ONCE MORE BEFORE IT GIVES UP. ReclaimPidForTeardownAsync re-polls the
 // pid file for LateReadWindow and hands whatever lands to the same `finally` that would have
@@ -1072,6 +1072,91 @@ public sealed class SystemProcessRunnerTests
         }
     }
 
+    /// <summary>
+    /// The pid file is read as a pid only when it holds one complete, newline-terminated digit
+    /// line (#528).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Pins <see cref="ReadPid"/>'s contract (#528) shape by shape: the SAME digits read as "not
+    /// yet" unterminated and as a pid terminated, so a reader that filtered digits out of whatever
+    /// it happened to catch fails here rather than in a teardown that kills a stranger. The newline
+    /// is the delimiter because every child writer appends one — <c>Set-Content</c> and <c>echo</c>
+    /// in <see cref="NeverExitingChild"/> and <see cref="GrandchildHoldingPipesChild"/> — so a file
+    /// without one is a write still in flight. <c>51234\r</c> is a torn CRLF: reachable by
+    /// construction at a byte boundary inside the writer's seven-byte write, not something observed
+    /// here. <c>51234\n999\n</c> pins the WHOLE-LINE half of the guard, which the four shapes above
+    /// it leave free — none of them holds an interior non-digit, so a reader that went back to
+    /// filtering digits out of a terminated file would keep all four green and read this one as
+    /// <c>51234999</c>. <c>51234\n\n</c> and <c>51234\r\n\r\n</c> pin the count of terminators
+    /// stripped, which no other shape reaches: the <c>TrimEnd('\r', '\n')</c> this change first
+    /// carried removed the whole trailing run and handed both of them back as <c>51234</c>.
+    /// </para>
+    /// <para>
+    /// <strong>BOTH ENDINGS ARE WRITTEN AS LITERALS RATHER THAN AS
+    /// <see cref="Environment.NewLine"/>.</strong> That constant was this row's first draft and was
+    /// rejected: it expands to CRLF on Windows and LF on Linux, so on the lane that gates merges it
+    /// would have exercised the LF half only, and a reader that dropped <see cref="ReadPid"/>'s
+    /// carriage-return strip would have passed CI while failing every pid read on Windows. The
+    /// literals remove that blind spot rather than narrowing it:
+    /// <see cref="File.WriteAllText(string,string)"/> writes these bytes verbatim and
+    /// <see cref="File.ReadAllText(string)"/> translates none of them, so the CRLF member is a CRLF
+    /// member on every platform. MEASURED on Windows with that strip deleted: four rows red — this
+    /// one and the three that read a pid.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void ReadPid_AcceptsOnlyACompleteNewlineTerminatedDigitLine()
+    {
+        var directory = CreateScratchDirectory();
+        var pidFile = Path.Combine(directory, PidFileName);
+        try
+        {
+            File.WriteAllText(pidFile, "51234");
+            var unterminated = ReadPid(pidFile);
+
+            File.WriteAllText(pidFile, "51234\r");
+            var carriageReturnOnly = ReadPid(pidFile);
+
+            File.WriteAllText(pidFile, "51234\r\n");
+            var windowsEnding = ReadPid(pidFile);
+
+            File.WriteAllText(pidFile, "51234\n");
+            var posixEnding = ReadPid(pidFile);
+
+            File.WriteAllText(pidFile, "51234\n999\n");
+            var twoLines = ReadPid(pidFile);
+
+            File.WriteAllText(pidFile, "51234\n\n");
+            var extraPosixTerminator = ReadPid(pidFile);
+
+            File.WriteAllText(pidFile, "51234\r\n\r\n");
+            var extraWindowsTerminator = ReadPid(pidFile);
+
+            // One assertion over all seven, so a failure names the shape that moved rather than
+            // reporting the same "Expected: null" for whichever of them broke.
+            Assert.Equal(
+                ((int?)null,
+                    (int?)null,
+                    (int?)51234,
+                    (int?)51234,
+                    (int?)null,
+                    (int?)null,
+                    (int?)null),
+                (unterminated,
+                    carriageReturnOnly,
+                    windowsEnding,
+                    posixEnding,
+                    twoLines,
+                    extraPosixTerminator,
+                    extraWindowsTerminator));
+        }
+        finally
+        {
+            TryDeleteDirectory(directory);
+        }
+    }
+
     // ── budget machinery (#524) ──────────────────────────────────────────────────────────────
 
     /// <summary>
@@ -1535,15 +1620,20 @@ public sealed class SystemProcessRunnerTests
     /// that lifetime is a minute rather than infinite.
     /// </para>
     /// <para>
-    /// <strong>A SECOND RESIDUAL OF THE SAME CLASS, AND THIS PATH IS HOW IT IS REACHED.</strong> If
-    /// the look catches the survivor's write TORN, <see cref="ReadPid"/> hands back a prefix —
-    /// <c>512</c> for <c>51234</c> — so <c>pid</c> holds a number that is not the child's and the
-    /// <c>finally</c> aims the tree-kill at whatever that number names. The survivor this method
-    /// exists to reclaim is left alive and unreferenced: the outcome the change was made to close,
-    /// reached down a path the change opened. The mechanism is pre-existing and tracked (#528 for
-    /// the torn read, #529 for the identity guard); what belongs here is that this method can reach
-    /// it, because a paragraph promising to state what it does not close has to include the case it
-    /// creates.
+    /// <strong>A SECOND RESIDUAL, OF THE OPPOSITE CLASS, AND THIS PATH WIDENS IT.</strong> A pid
+    /// recovered here is handed to the <c>finally</c>'s tree-kill under <see cref="TryOpen"/>'s
+    /// start-time LOWER BOUND, which is not an identity check: a pid recycled onto a process that
+    /// started after this row did passes it unchanged and that process is killed. Tracked as
+    /// <strong>#529</strong>, and open. It belongs here in ONE sub-case only, and the first
+    /// paragraph above names the shape this method actually exists for. A SURVIVOR's pid is not
+    /// recycled while it is alive: <see cref="TryOpen"/> runs in the same <c>finally</c> a beat
+    /// later and opens the real child, so for a survivor the identity question is confined to
+    /// that beat — one of #529's exposures, not an exception to it. The recycle needs the
+    /// other shape — a child that DID write, WAS genuinely killed, and whose write the original
+    /// wait missed, landing any time before this late look gives up — so that what lands here
+    /// names a process which has since died and whose pid the operating system is free to
+    /// reissue. Narrow, and still not closed; a paragraph promising to state what it does not
+    /// close has to include the case it widens.
     /// </para>
     /// <para>
     /// <strong>A THIRD, RECORDED WHERE IT LIVES RATHER THAN RESTATED HERE.</strong>
@@ -1562,18 +1652,6 @@ public sealed class SystemProcessRunnerTests
     /// still discards the attempt. On rows 1 and 2 the hoisted
     /// <c>Assert.ThrowsAsync&lt;ProcessTimeoutException&gt;</c> above the call site is what keeps
     /// "the budget was too short" apart from a runner fault, and this runs strictly after it.
-    /// </para>
-    /// <para>
-    /// It reads through <see cref="ReadPid"/> and so inherits #528's torn read. ONE half of that is
-    /// narrower here: this path makes no assertion, so a prefix cannot green anything. The other
-    /// half is not narrower at all, and the first draft of this paragraph got it wrong by saying
-    /// <see cref="TryOpen"/>'s start-time lower bound "filters" it. It NARROWS it. As
-    /// <see cref="ReadPid"/>'s own remarks set out and measure, the bound discards the SHORT-prefix
-    /// range (<c>5</c>, <c>51</c> from <c>51234</c> — boot-time or absent) and accepts the
-    /// LONG-prefix range: 192 live four-digit pids were held on the maintainer's host at one moment,
-    /// three of them started within the previous ten minutes, and such a pid postdates
-    /// <c>startedUtc</c> minus five seconds and is handed back alive and tree-killed. A stranger
-    /// really can be killed here; the bound only makes it unlikely.
     /// </para>
     /// <para>
     /// <see cref="WaitForPid"/> with both its windows set to <see cref="LateReadWindow"/> rather
@@ -1612,44 +1690,48 @@ public sealed class SystemProcessRunnerTests
     /// a race with the child's own write.
     /// </para>
     /// <para>
-    /// <strong>A HALF-WRITTEN FILE IS NOT RELIABLY IN THAT SET, and the honest limit is worth more
-    /// than the tidy sentence that used to stand here.</strong> This concatenates every ASCII digit
-    /// it finds rather than validating a whole line, so a torn read of <c>51234</c> that catches
-    /// only the first byte parses cleanly as <c>5</c> — a different number, and possibly a live and
-    /// unrelated process. Tracked as <strong>#528</strong>.
+    /// <strong>A HALF-WRITTEN FILE IS IN THAT SET TOO, because publication is DELIMITED rather than
+    /// inferred (#528).</strong> A pid comes back only from a file whose whole content is one line:
+    /// ASCII digits, then ONE terminator — a newline, optionally preceded by a carriage return.
+    /// Anything else is "not yet" and the caller polls again: a prefix of the digits, the whole
+    /// number with no terminator, a trailing <c>\r</c> whose <c>\n</c> has not landed, a second line
+    /// that the first one's newline would otherwise make look complete, a second terminator that a
+    /// greedier trim would have swallowed. The newline is what makes the line observable as WHOLE,
+    /// and every child writer in this file appends one. MEASURED by running the shapes' own commands
+    /// on the maintainer's host: <see cref="NeverExitingChild"/> left the digits then <c>0D 0A</c>
+    /// under <c>Set-Content</c> (seven bytes for a five-digit pid, one byte per character, no mark)
+    /// and the digits then <c>0A</c> under <c>/bin/sh</c>'s <c>echo</c>, which the shell
+    /// specification requires; <see cref="GrandchildHoldingPipesChild"/> left
+    /// <c>31 33 30 34 38 0D 0A</c> and <c>33 39 34 0A</c> respectively.
     /// </para>
     /// <para>
-    /// <strong>THE WORSE CONSEQUENCE IS NOT THE WRONG KILL, IT IS ROW 1 GOING GREEN WITH THE CHILD
-    /// STILL ALIVE — and the recycle guard is what produces it rather than what prevents it.</strong>
-    /// Follow <c>5</c> through: <see cref="WaitForDeath"/> asks <see cref="IsAlive"/>, which asks
-    /// <see cref="TryOpen"/>, and every outcome there collapses to <see langword="null"/>. Either
-    /// <see cref="Process.GetProcessById(int)"/> finds nothing and throws into the first catch, or
-    /// it resolves a boot-time process whose <see cref="Process.StartTime"/> sits before
-    /// <c>startedUtc</c> minus five seconds, so the guard reads it as a recycled pid and discards
-    /// it, or <see cref="Process.StartTime"/> is unreadable and the second catch discards it.
-    /// <see cref="IsAlive"/> then answers <see langword="false"/>, <see cref="WaitForDeath"/>
-    /// answers <see langword="true"/> at its first sample, and the <c>dead</c> assertion — the
-    /// whole point of the #481 leak cover — PASSES over a child that is still running.
+    /// <strong>THE <c>TrimStart</c> BELOW IS DEFENCE IN DEPTH, NOT PART OF THAT CONTRACT.</strong>
+    /// <see cref="File.ReadAllText(string)"/> already removes a real byte-order mark while decoding,
+    /// so the hand-trim fires only on a second, literal <c>U+FEFF</c> that survived it — and no
+    /// writer here emits even the first (measured: no mark on either platform). It costs nothing and
+    /// pins nothing; deleting it reddens no row.
     /// </para>
     /// <para>
-    /// <strong>WHICH CONSEQUENCE YOU GET DEPENDS ON HOW MANY BYTES THE READ CAUGHT, because a torn
-    /// read yields a PREFIX rather than a small number.</strong> From <c>51234</c> the reachable
-    /// values are <c>5</c>, <c>51</c>, <c>512</c> and <c>5123</c>. A short prefix produces the green
-    /// pass above; a four-digit one is an ordinary live pid, and if it postdates <c>startedUtc</c>
-    /// minus five seconds then <see cref="TryOpen"/> hands it back alive, <see cref="WaitForDeath"/>
-    /// polls out, and the row reddens naming a stranger — after which the <c>finally</c>'s
-    /// <c>KillTreeQuietly</c> kills that stranger. Both consequences are live and neither is
-    /// theoretical.
-    /// </para>
-    /// <para>
-    /// MEASURED on the maintainer's Windows host, through
-    /// <see cref="Process.GetProcessById(int)"/> itself rather than a shell wrapper: pids 4 and 5
-    /// resolve to processes started 2.1 days earlier, so they trip the lower bound; pids 8 and 100
-    /// throw <see cref="ArgumentException"/>. That is the short-prefix range. The long-prefix range
-    /// is populated too — 192 live processes held four-digit pids at the same moment, three of them
-    /// started within the previous ten minutes. NOT MEASURED on Linux, which is the lane that gates
-    /// merges; low pids there are boot-time kernel threads, so the short-prefix conclusion is
-    /// expected to carry, but nobody has probed it.
+    /// <strong>WHY A DELIMITER RATHER THAN THE FILTER THAT USED TO STAND HERE, in that reader's own
+    /// measurements.</strong> It concatenated every ASCII digit it found, which cannot tell a
+    /// partial number from a whole one: a torn read of <c>51234</c> handed back <c>5</c>,
+    /// <c>51</c>, <c>512</c> or <c>5123</c>, each a syntactically valid pid. A SHORT prefix made the
+    /// leak assertion PASS over a live child, with the recycle guard producing that pass rather than
+    /// preventing it — <see cref="TryOpen"/> discarded a boot-time pid as recycled (pids 4 and 5
+    /// resolved to processes started 2.1 days earlier; 8 and 100 threw
+    /// <see cref="ArgumentException"/>), so <see cref="IsAlive"/> answered <see langword="false"/>,
+    /// <see cref="WaitForDeath"/> answered <see langword="true"/> at its first sample, and the
+    /// <c>dead</c> assertion — the whole point of the #481 leak cover — went green over a child
+    /// that was still running. A LONG prefix is an ordinary live pid, so WHEN it resolved to a
+    /// process that also cleared that same lower bound the row reddened naming a stranger and the
+    /// <c>finally</c>'s <c>KillTreeQuietly</c> killed it — one that had already exited, or that
+    /// started before <c>startedUtc</c> minus five seconds, was discarded by the guard exactly as
+    /// above. The guard is what kept that kill uncommon rather than what made it common: 192 live
+    /// processes held four-digit pids at the same moment, and three of them had started within the
+    /// previous ten minutes — a window far wider than the guard admits, so the point is only that
+    /// the young end of the range is not structurally empty: uncommon, but not zero. Both were
+    /// reachable, which is the whole reason the reader now refuses to convert an incomplete file
+    /// into a pid instead of filtering one out of it.
     /// </para>
     /// <para>
     /// <strong>ONE CATCH IS NARROWER THAN THE COMMENT BELOW IT SUGGESTS.</strong> The
@@ -1662,11 +1744,18 @@ public sealed class SystemProcessRunnerTests
     /// blamed on the host's scheduler. Recorded rather than fixed so the choice is visible.
     /// </para>
     /// <para>
-    /// A leak test that fails to fail is worth more attention than a wrong kill, which is why the
-    /// order of these paragraphs is deliberate — not because the wrong kill cannot happen. #524 did
-    /// not introduce either and does not fix either; this method is the same logic lifted out of
-    /// <see cref="WaitForPid"/>. What #524 did was delete the claim that the case was covered and
-    /// write down where it actually leads.
+    /// <strong>THE STRICTNESS IS A CONTRACT WITH THE WRITERS, AND BREAKING IT REDDENS RATHER THAN
+    /// GREENS.</strong> A writer that stopped terminating its line, or emitted UTF-16 without a
+    /// mark — which <see cref="File.ReadAllText(string)"/> cannot sniff, so a <c>U+0000</c> lands
+    /// beside every digit and the reader refuses the file whichever byte order it was — would make
+    /// this method answer <see langword="null"/> forever. No row passes over that: rows 1 and 2
+    /// exhaust every budget and fail at <see cref="WithEscalatingBudget"/>'s <c>Assert.Fail</c>,
+    /// row 5 fails its <c>childWasObserved</c> assertion. That is why strictness is safe in a reader
+    /// whose "not yet" is indistinguishable from "never" — the cost of a broken writer contract is a
+    /// red row, not a green one. It is a red row wearing the wrong label, though: those failures
+    /// blame the HOST ("a host that did not start a shell inside 30s", "a host that still cannot
+    /// start a shell inside the largest budget") and name nothing about this contract — the same
+    /// #512 mislabel shape <see cref="PidFileName"/>'s remarks warn against.
     /// </para>
     /// </remarks>
     private static int? ReadPid(string pidFile)
@@ -1687,10 +1776,29 @@ public sealed class SystemProcessRunnerTests
             return null;
         }
 
-        // Digits only: PowerShell's Set-Content may prepend a BOM and appends a newline.
-        var digits = new string(text.Where(char.IsAsciiDigit).ToArray());
-        if (digits.Length > 0
-            && int.TryParse(digits, NumberStyles.None, CultureInfo.InvariantCulture, out var pid))
+        // Read only a complete pid line: writers append a newline when publication is complete.
+        var candidate = text.TrimStart('\uFEFF');
+        if (!candidate.EndsWith('\n'))
+        {
+            return null;
+        }
+
+        // EXACTLY ONE terminator, not every trailing one: strip the newline the gate above proved
+        // is there, then the carriage return that may precede it. Trimming the whole run would let
+        // a file whose extra lines are EMPTY in through its last line ending — the digit check
+        // below is what refuses a second line, and it can only see one if this leaves it there.
+        candidate = candidate[..^1];
+        if (candidate.EndsWith('\r'))
+        {
+            candidate = candidate[..^1];
+        }
+
+        if (candidate.Length == 0 || candidate.Any(static c => !char.IsAsciiDigit(c)))
+        {
+            return null;
+        }
+
+        if (int.TryParse(candidate, NumberStyles.None, CultureInfo.InvariantCulture, out var pid))
         {
             return pid;
         }
