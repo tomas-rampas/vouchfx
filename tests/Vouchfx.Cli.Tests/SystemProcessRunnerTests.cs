@@ -1089,20 +1089,20 @@ public sealed class SystemProcessRunnerTests
     /// it leave free — none of them holds an interior non-digit, so a reader that went back to
     /// filtering digits out of a terminated file would keep all four green and read this one as
     /// <c>51234999</c>. <c>51234\n\n</c> and <c>51234\r\n\r\n</c> pin the count of terminators
-    /// stripped, which no other shape reaches: the <c>TrimEnd('\r', '\n')</c> this reader first
-    /// shipped with removed the whole trailing run and handed both of them back as <c>51234</c>.
+    /// stripped, which no other shape reaches: the <c>TrimEnd('\r', '\n')</c> this change first
+    /// carried removed the whole trailing run and handed both of them back as <c>51234</c>.
     /// </para>
     /// <para>
     /// <strong>BOTH ENDINGS ARE WRITTEN AS LITERALS RATHER THAN AS
     /// <see cref="Environment.NewLine"/>.</strong> That constant was this row's first draft and was
     /// rejected: it expands to CRLF on Windows and LF on Linux, so on the lane that gates merges it
     /// would have exercised the LF half only, and a reader that dropped <see cref="ReadPid"/>'s
-    /// carriage-return strip would have passed CI while failing every pid read on
-    /// Windows. The literals remove that blind spot rather than narrowing it:
+    /// carriage-return strip would have passed CI while failing every pid read on Windows. The
+    /// literals remove that blind spot rather than narrowing it:
     /// <see cref="File.WriteAllText(string,string)"/> writes these bytes verbatim and
     /// <see cref="File.ReadAllText(string)"/> translates none of them, so the CRLF member is a CRLF
-    /// member on every platform. MEASURED on Windows with that character deleted: four rows red —
-    /// this one and the three that read a pid.
+    /// member on every platform. MEASURED on Windows with that strip deleted: four rows red — this
+    /// one and the three that read a pid.
     /// </para>
     /// </remarks>
     [Fact]
@@ -1727,7 +1727,8 @@ public sealed class SystemProcessRunnerTests
     /// started before <c>startedUtc</c> minus five seconds, was discarded by the guard exactly as
     /// above. The guard is what kept that kill uncommon rather than what made it common: 192 live
     /// processes held four-digit pids at the same moment, and three of them had started within the
-    /// previous ten minutes — young enough to be candidates, so uncommon but not zero. Both were
+    /// previous ten minutes — a window far wider than the guard admits, so the point is only that
+    /// the young end of the range is not structurally empty: uncommon, but not zero. Both were
     /// reachable, which is the whole reason the reader now refuses to convert an incomplete file
     /// into a pid instead of filtering one out of it.
     /// </para>
@@ -1783,8 +1784,8 @@ public sealed class SystemProcessRunnerTests
 
         // EXACTLY ONE terminator, not every trailing one: strip the newline the gate above proved
         // is there, then the carriage return that may precede it. Trimming the whole run would let
-        // a file with more than one line in through its LAST line ending — the digit check below
-        // is what refuses the rest, and it can only see a second line if this leaves it there.
+        // a file whose extra lines are EMPTY in through its last line ending — the digit check
+        // below is what refuses a second line, and it can only see one if this leaves it there.
         candidate = candidate[..^1];
         if (candidate.EndsWith('\r'))
         {
