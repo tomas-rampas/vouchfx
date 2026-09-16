@@ -1085,17 +1085,19 @@ public sealed class SystemProcessRunnerTests
     /// in <see cref="NeverExitingChild"/> and <see cref="GrandchildHoldingPipesChild"/> — so a file
     /// without one is a write still in flight. <c>51234\r</c> is a torn CRLF: reachable by
     /// construction at a byte boundary inside the writer's seven-byte write, not something observed
-    /// here. <c>51234\n999\n</c> pins the WHOLE-LINE half of the guard, which the four single-line
-    /// shapes leave free — none of them holds an interior non-digit, so a reader that went back to
+    /// here. <c>51234\n999\n</c> pins the WHOLE-LINE half of the guard, which the four shapes above
+    /// it leave free — none of them holds an interior non-digit, so a reader that went back to
     /// filtering digits out of a terminated file would keep all four green and read this one as
-    /// <c>51234999</c>.
+    /// <c>51234999</c>. <c>51234\n\n</c> and <c>51234\r\n\r\n</c> pin the count of terminators
+    /// stripped, which no other shape reaches: the <c>TrimEnd('\r', '\n')</c> this reader first
+    /// shipped with removed the whole trailing run and handed both of them back as <c>51234</c>.
     /// </para>
     /// <para>
     /// <strong>BOTH ENDINGS ARE WRITTEN AS LITERALS RATHER THAN AS
     /// <see cref="Environment.NewLine"/>.</strong> That constant was this row's first draft and was
     /// rejected: it expands to CRLF on Windows and LF on Linux, so on the lane that gates merges it
-    /// would have exercised the LF half only, and a reader that dropped the <c>'\r'</c> from
-    /// <see cref="ReadPid"/>'s <c>TrimEnd</c> would have passed CI while failing every pid read on
+    /// would have exercised the LF half only, and a reader that dropped <see cref="ReadPid"/>'s
+    /// carriage-return strip would have passed CI while failing every pid read on
     /// Windows. The literals remove that blind spot rather than narrowing it:
     /// <see cref="File.WriteAllText(string,string)"/> writes these bytes verbatim and
     /// <see cref="File.ReadAllText(string)"/> translates none of them, so the CRLF member is a CRLF
@@ -1125,11 +1127,29 @@ public sealed class SystemProcessRunnerTests
             File.WriteAllText(pidFile, "51234\n999\n");
             var twoLines = ReadPid(pidFile);
 
-            // One assertion over all five, so a failure names the shape that moved rather than
+            File.WriteAllText(pidFile, "51234\n\n");
+            var extraPosixTerminator = ReadPid(pidFile);
+
+            File.WriteAllText(pidFile, "51234\r\n\r\n");
+            var extraWindowsTerminator = ReadPid(pidFile);
+
+            // One assertion over all seven, so a failure names the shape that moved rather than
             // reporting the same "Expected: null" for whichever of them broke.
             Assert.Equal(
-                ((int?)null, (int?)null, (int?)51234, (int?)51234, (int?)null),
-                (unterminated, carriageReturnOnly, windowsEnding, posixEnding, twoLines));
+                ((int?)null,
+                    (int?)null,
+                    (int?)51234,
+                    (int?)51234,
+                    (int?)null,
+                    (int?)null,
+                    (int?)null),
+                (unterminated,
+                    carriageReturnOnly,
+                    windowsEnding,
+                    posixEnding,
+                    twoLines,
+                    extraPosixTerminator,
+                    extraWindowsTerminator));
         }
         finally
         {
@@ -1671,16 +1691,17 @@ public sealed class SystemProcessRunnerTests
     /// <para>
     /// <strong>A HALF-WRITTEN FILE IS IN THAT SET TOO, because publication is DELIMITED rather than
     /// inferred (#528).</strong> A pid comes back only from a file whose whole content is one line:
-    /// ASCII digits, then a newline. Anything short of that is "not yet" and the caller polls again
-    /// — a prefix of the digits, the whole number with no terminator, a trailing <c>\r</c> whose
-    /// <c>\n</c> has not landed, a second line that the first one's newline would otherwise make
-    /// look complete. The newline is what makes the line observable as WHOLE, and every child writer
-    /// in this file appends one. MEASURED by running the shapes' own commands on the maintainer's
-    /// host: <see cref="NeverExitingChild"/> left the digits then <c>0D 0A</c> under
-    /// <c>Set-Content</c> (seven bytes for a five-digit pid, one byte per character, no mark) and
-    /// the digits then <c>0A</c> under <c>/bin/sh</c>'s <c>echo</c>, which the shell specification
-    /// requires; <see cref="GrandchildHoldingPipesChild"/> left <c>31 33 30 34 38 0D 0A</c> and
-    /// <c>33 39 34 0A</c> respectively.
+    /// ASCII digits, then ONE terminator — a newline, optionally preceded by a carriage return.
+    /// Anything else is "not yet" and the caller polls again: a prefix of the digits, the whole
+    /// number with no terminator, a trailing <c>\r</c> whose <c>\n</c> has not landed, a second line
+    /// that the first one's newline would otherwise make look complete, a second terminator that a
+    /// greedier trim would have swallowed. The newline is what makes the line observable as WHOLE,
+    /// and every child writer in this file appends one. MEASURED by running the shapes' own commands
+    /// on the maintainer's host: <see cref="NeverExitingChild"/> left the digits then <c>0D 0A</c>
+    /// under <c>Set-Content</c> (seven bytes for a five-digit pid, one byte per character, no mark)
+    /// and the digits then <c>0A</c> under <c>/bin/sh</c>'s <c>echo</c>, which the shell
+    /// specification requires; <see cref="GrandchildHoldingPipesChild"/> left
+    /// <c>31 33 30 34 38 0D 0A</c> and <c>33 39 34 0A</c> respectively.
     /// </para>
     /// <para>
     /// <strong>THE <c>TrimStart</c> BELOW IS DEFENCE IN DEPTH, NOT PART OF THAT CONTRACT.</strong>
@@ -1700,11 +1721,15 @@ public sealed class SystemProcessRunnerTests
     /// <see cref="ArgumentException"/>), so <see cref="IsAlive"/> answered <see langword="false"/>,
     /// <see cref="WaitForDeath"/> answered <see langword="true"/> at its first sample, and the
     /// <c>dead</c> assertion — the whole point of the #481 leak cover — went green over a child
-    /// that was still running. A LONG prefix is an ordinary live pid, so the row reddened naming a
-    /// stranger and the <c>finally</c>'s <c>KillTreeQuietly</c> killed it: 192 live processes held
-    /// four-digit pids at the same moment, three of them started within the previous ten minutes.
-    /// Both were reachable, which is the whole reason the reader now refuses to convert an
-    /// incomplete file into a pid instead of filtering one out of it.
+    /// that was still running. A LONG prefix is an ordinary live pid, so WHEN it resolved to a
+    /// process that also cleared that same lower bound the row reddened naming a stranger and the
+    /// <c>finally</c>'s <c>KillTreeQuietly</c> killed it — one that had already exited, or that
+    /// started before <c>startedUtc</c> minus five seconds, was discarded by the guard exactly as
+    /// above. The guard is what kept that kill uncommon rather than what made it common: 192 live
+    /// processes held four-digit pids at the same moment, and three of them had started within the
+    /// previous ten minutes — young enough to be candidates, so uncommon but not zero. Both were
+    /// reachable, which is the whole reason the reader now refuses to convert an incomplete file
+    /// into a pid instead of filtering one out of it.
     /// </para>
     /// <para>
     /// <strong>ONE CATCH IS NARROWER THAN THE COMMENT BELOW IT SUGGESTS.</strong> The
@@ -1756,7 +1781,16 @@ public sealed class SystemProcessRunnerTests
             return null;
         }
 
-        candidate = candidate.TrimEnd('\r', '\n');
+        // EXACTLY ONE terminator, not every trailing one: strip the newline the gate above proved
+        // is there, then the carriage return that may precede it. Trimming the whole run would let
+        // a file with more than one line in through its LAST line ending — the digit check below
+        // is what refuses the rest, and it can only see a second line if this leaves it there.
+        candidate = candidate[..^1];
+        if (candidate.EndsWith('\r'))
+        {
+            candidate = candidate[..^1];
+        }
+
         if (candidate.Length == 0 || candidate.Any(static c => !char.IsAsciiDigit(c)))
         {
             return null;
