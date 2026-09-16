@@ -1627,7 +1627,8 @@ public sealed class SystemProcessRunnerTests
     /// <strong>#529</strong>, and open. It belongs here in ONE sub-case only, and the first
     /// paragraph above names the shape this method actually exists for. A SURVIVOR's pid is not
     /// recycled while it is alive: <see cref="TryOpen"/> runs in the same <c>finally</c> a beat
-    /// later and opens the real child, so no question of identity arises. The recycle needs the
+    /// later and opens the real child, so for a survivor the identity question is confined to
+    /// that beat — one of #529's exposures, not an exception to it. The recycle needs the
     /// other shape — a child that DID write, WAS genuinely killed, and whose write the original
     /// wait missed, landing any time before this late look gives up — so that what lands here
     /// names a process which has since died and whose pid the operating system is free to
