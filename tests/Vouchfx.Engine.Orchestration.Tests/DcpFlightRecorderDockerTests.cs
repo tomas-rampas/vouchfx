@@ -922,7 +922,8 @@ public sealed class DcpFlightRecorderDockerTests
         // mid-write or a stub and is not a capture either.
         //
         // The bound is per FILE. Since #538 the listing is no longer differenced against a
-        // snapshot, so every dcp-capture-*.log in the directory is read: a count bounded by
+        // snapshot, so every dcp-capture-*.log in the directory is considered - stat'd, and read
+        // when it clears the bound: a count bounded by
         // DcpCapture.RetainedFiles where the engine wrote them, and by nothing at all in an
         // operator-chosen directory.
         const int HeaderSlack = 8 * 1024;
@@ -982,10 +983,14 @@ public sealed class DcpFlightRecorderDockerTests
     /// property both rows are built on — that the input came from the production formatter.
     /// </para>
     /// <para>
-    /// The other two are reachable, and an earlier version of this paragraph wrongly filed them
-    /// here as unproducible. Both are now pinned from real formatter output: the empty-buffer
-    /// shape — zero entries, and the "none - the capture holds no entry line" wording — by
-    /// <see cref="DescribeCaptureForDiagnostics_WithNoEntries_ReportsHeaderSizeAndNoCategory"/>,
+    /// The other degenerate shapes are reachable, and an earlier version of this paragraph wrongly
+    /// filed two of them here as unproducible. All are pinned from real formatter output: the
+    /// empty-buffer shape — zero entries, and the "none - the capture holds no entry line"
+    /// wording — by
+    /// <see cref="DescribeCaptureForDiagnostics_WithNoEntries_ReportsHeaderSizeAndNoCategory"/>;
+    /// the entries-but-no-category shape — entry lines present, none yielding a category, and the
+    /// "none - no entry line yielded a category" wording — by
+    /// <see cref="DescribeCaptureForDiagnostics_WithUncategorisedEntries_CountsThemAndNamesNone"/>;
     /// and <c>CategoryOf</c>'s empty-category guard by the <c>CreateLogger("")</c> entry in this
     /// row's own fixture, which the recorder renders as a genuine
     /// <c>{stamp} {level} : {message}</c> line because nothing between <c>CreateLogger</c> and
@@ -1219,6 +1224,50 @@ public sealed class DcpFlightRecorderDockerTests
         Assert.Contains("dcp-capture-x.log", description, StringComparison.Ordinal);
         Assert.DoesNotContain("unlikely-parent-segment", description, StringComparison.Ordinal);
         Assert.DoesNotContain("unlikely-child-segment", description, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A capture whose every entry line yields no category describes as a file WITH entries and
+    /// says so, rather than claiming the buffer was empty.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The "none" wording is keyed on the entry count precisely so that it cannot contradict the
+    /// count printed beside it; this row is the branch where the two would otherwise have
+    /// disagreed — entry lines present, none of them censused. It is reachable from real
+    /// formatter output because <c>CreateLogger</c> accepts an empty category name and the
+    /// recorder renders it as a genuine <c>{stamp} {level} : {message}</c> line, which
+    /// <c>CategoryOf</c>'s empty-category guard refuses. That guard is pinned negatively by the
+    /// populated row (no blank token in the census) and positively here (the guard is the ONLY
+    /// thing that empties this census).
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void DescribeCaptureForDiagnostics_WithUncategorisedEntries_CountsThemAndNamesNone()
+    {
+        using var recorder = new DcpFlightRecorder();
+        DcpTestLog.Emit(
+            recorder.CreateLogger(string.Empty),
+            Microsoft.Extensions.Logging.LogLevel.Debug,
+            "reconciling resource");
+
+        var body = recorder.FormatCapture(
+            new DateTimeOffset(2026, 9, 17, 12, 0, 0, TimeSpan.Zero));
+
+        // Non-vacuity: the formatter really did record one entry, under an empty category.
+        Assert.Contains("entries: 1, evicted: 0", body, StringComparison.Ordinal);
+        Assert.Contains(" : reconciling resource", body, StringComparison.Ordinal);
+
+        var description = DescribeCaptureForDiagnostics("dcp-capture-x.log", body);
+
+        Assert.Contains(
+            "4 header line(s), 1 entry line(s)", description, StringComparison.Ordinal);
+        Assert.Contains(
+            "Categories present: none - no entry line yielded a category.",
+            description,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("holds no entry line", description, StringComparison.Ordinal);
+        Assert.DoesNotContain("reconciling resource", description, StringComparison.Ordinal);
     }
 
     /// <summary>
