@@ -220,6 +220,8 @@
 // No Docker, no trait: these rows belong to the fast `requires!=docker` lane.
 using System.Diagnostics;
 using System.Globalization;
+using System.Security.AccessControl;
+using System.Security.Principal;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -1512,6 +1514,215 @@ public sealed class SystemProcessRunnerTests
     }
 
     /// <summary>
+    /// The quiet wrapper answers <see langword="null"/> on the ACL fault its loud sibling throws,
+    /// and answers it at once.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The swallow is <see cref="ReclaimPidForTeardownQuietlyAsync"/>'s ONLY non-trivial
+    /// behaviour, and until this row nothing exercised it.</strong> Everything else that method
+    /// does is delegate. Its <c>catch</c> exists because a <c>finally</c> that throws REPLACES the
+    /// finding being propagated — the wedged runner, the undead child — with a permission detail,
+    /// and the three teardown blocks that call it are all <c>finally</c> blocks. A deleted catch
+    /// changes no other row in this file: rows 1, 2 and 5 never meet an ACL fault on a scratch
+    /// directory they created themselves, so the suite would stay green over it.
+    /// </para>
+    /// <para>
+    /// <strong>Three things are pinned, and the middle one is what makes the first mean
+    /// something.</strong> The LOUD reader (<see cref="ReclaimPidForTeardownAsync"/>) throws
+    /// <see cref="UnauthorizedAccessException"/> on this arrangement — that is
+    /// <see cref="ReadPid"/>'s deliberate choice, recorded at its remarks, and asserting it here
+    /// is what proves the quiet wrapper's <see langword="null"/> is a SWALLOW rather than an
+    /// absence of anything to swallow. The QUIET wrapper answers <see langword="null"/>. And it
+    /// answers PROMPTLY: the fault fires on the first <see cref="ReadPid"/>, so a wrapper that
+    /// caught it and went on polling would still answer <see langword="null"/> but spend the whole
+    /// of <see cref="LateReadWindow"/> doing it, which is the cost every "at most once per row"
+    /// claim in this file is written against.
+    /// </para>
+    /// <para>
+    /// <strong>THE ARRANGEMENT IS ASSERTED BEFORE IT IS USED, because a denial that did not take
+    /// is a silent green.</strong> If the read were permitted, the loud reader would return a pid,
+    /// the quiet one would return the same pid, and both of this row's real assertions would fail
+    /// loudly — but only after a reader of the failure had been sent to look at the wrapper rather
+    /// than at the host. So the row reads the file itself first and requires the fault, with a
+    /// message naming the host condition that produces the other answer: running as <c>root</c>,
+    /// or as a Windows identity whose access is evaluated against a different token than the one
+    /// the ACE names.
+    /// </para>
+    /// <para>
+    /// <strong>The platform split, and why the Windows side uses a DENY ace.</strong> On POSIX the
+    /// denial is <see cref="UnixFileMode.None"/> — mode 000, which <c>root</c> ignores and nobody
+    /// else does. On Windows it is an explicit DENY of <see cref="FileSystemRights.Read"/> for
+    /// <see cref="WindowsIdentity"/>'s own user SID rather than the removal of an ALLOW, because
+    /// deny entries are evaluated first: a developer box where the account also picks up access
+    /// through Administrators still sees the fault. The file is created first and denied
+    /// afterwards, so the arrangement does not depend on inheritance.
+    /// </para>
+    /// <para>
+    /// <strong>The residual is a LOUD one, which is the safe direction.</strong> A host on which
+    /// the denial is not enforced for the running identity fails this row at the arrangement
+    /// assertion, naming that condition — it does not pass over an unexercised catch. Restoring
+    /// access happens in a <c>finally</c> and BEFORE the directory delete, guarded, so a host that
+    /// refuses the restore cannot turn teardown into the row's reported failure; see
+    /// <see cref="TryRestoreRead"/>.
+    /// </para>
+    /// <para>
+    /// <strong>REDDENING RATHER THAN SKIPPING IS A DIVERGENCE FROM THIS REPOSITORY'S OWN
+    /// PRECEDENT, and it is deliberate.</strong> <c>GitChangeSetTests.HasRootsReach()</c> meets
+    /// the same POSIX fact — <c>root</c> ignores file modes — and SKIPS its affected rows. This
+    /// one does not, because the two have different things to lose. Those rows test whether a
+    /// mode-0000 file can be launched, a property that is VACUOUS under root — root can launch it,
+    /// so there is nothing left to diverge and a skip retires nothing. This row's property — that
+    /// <see cref="ReclaimPidForTeardownQuietlyAsync"/>'s <c>catch</c> exists and swallows — holds
+    /// under root just as well; it is only this ARRANGEMENT that root defeats, and this row is the
+    /// catch's only cover, so a skip would retire it precisely on the lane that gates merges if
+    /// that lane ever runs as root. A red row naming the host condition is recoverable in one
+    /// reading; a green suite over an unexercised catch is not.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task ReclaimPidForTeardownQuietly_AnswersNullOnAnAclFault_WhereTheLoudReaderThrows()
+    {
+        const int ProbePid = 51234;
+
+        // HALF THE WINDOW. The discrimination this needs is "promptly" against "sat out the whole
+        // of LateReadWindow", and 2.5s of 5s draws that line as cleanly as any smaller figure
+        // while leaving 2.5x the margin against thread-pool scheduling — which this row's clock
+        // starts before and therefore charges to the wrapper. A first-read fault costs
+        // milliseconds; a swallow-then-keep-polling regression costs the full five seconds.
+        var promptCeiling = LateReadWindow / 2;
+
+        var directory = CreateScratchDirectory();
+        var pidFile = Path.Combine(directory, PidFileName);
+        var never = new TaskCompletionSource();
+
+        // INSIDE THE TRY, both of them. Every other row in this file has its filesystem work
+        // under the try that owns the cleanup; these two were the exception, and a throw from
+        // either — a full disk on the write, a platform refusal on the deny — would have skipped
+        // TryRestoreRead and TryDeleteDirectory and left a denied file behind. TryRestoreRead is
+        // a guarded no-op against a file that was never denied or never created, so moving them
+        // in costs nothing on the paths where only one of the two ran.
+        try
+        {
+            File.WriteAllText(pidFile, ProbePid.ToString(CultureInfo.InvariantCulture) + "\n");
+            DenyRead(pidFile);
+
+            // THE ARRANGEMENT, first and on its own terms. The EXISTENCE check is part of it:
+            // stat is authorised by the parent directory rather than by the file's own DACL, so
+            // it holds under the denial today — but on a host where it did not, ReadPid would
+            // answer null from its File.Exists guard rather than throwing, and the loud-reader
+            // assertion below would fail while pointing at the wrong thing.
+            var arrangement = Record.Exception(() => File.ReadAllText(pidFile));
+            Assert.True(
+                File.Exists(pidFile) && arrangement is UnauthorizedAccessException,
+                FormattableString.Invariant(
+                    $"this row denies itself read access to its own pid file and then requires the read to fault, but the file {(File.Exists(pidFile) ? "is present" : "cannot even be stat'd")} and File.ReadAllText answered with {(arrangement is null ? "no exception at all" : arrangement.GetType().Name)}. The denial did not take for the identity this process runs as — running as root on POSIX ignores mode 000, and on Windows an identity whose access is evaluated against a token the deny ACE does not name sees no fault. Nothing below this line would be testing the wrapper's catch on such a host, so the row stops here rather than passing over it."));
+
+            // THE LOUD READER THROWS, which is what makes the null below a swallow.
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(
+                () => ReclaimPidForTeardownAsync(pidFile, never.Task));
+
+            // THE QUIET WRAPPER ANSWERS NULL, AND PROMPTLY. Raced rather than awaited outright,
+            // in this file's idiom: a wrapper that neither threw nor returned would wedge a
+            // blocking gate instead of reddening it.
+            var clock = Stopwatch.StartNew();
+            var quiet = ReclaimPidForTeardownQuietlyAsync(pidFile, never.Task);
+            var settled = await Task.WhenAny(quiet, Task.Delay(LateReadWindow * 3)) == quiet;
+            Assert.True(
+                settled,
+                FormattableString.Invariant(
+                    $"ReclaimPidForTeardownQuietlyAsync had not returned {clock.Elapsed.TotalSeconds:F0}s after being handed a pid file it cannot read, although the fault fires on its first read and its own ceiling is {LateReadWindow.TotalSeconds:F0}s. A teardown look that neither answers nor throws hangs the finally it is called from, and this assembly is a blocking gate with no per-test timeout."));
+
+            Assert.Null(await quiet);
+
+            var elapsed = clock.Elapsed;
+            Assert.True(
+                elapsed < promptCeiling,
+                FormattableString.Invariant(
+                    $"ReclaimPidForTeardownQuietlyAsync answered null after {elapsed.TotalSeconds:F1}s against a pid file whose very first read faults, which is not the prompt answer the three finally blocks are costed against. A catch that swallows the fault and then keeps polling spends the whole {LateReadWindow.TotalSeconds:F0}s window on a file that will never become readable, and every 'at most one LateReadWindow per row' claim in this file is written against the prompt answer."));
+        }
+        finally
+        {
+            // Access back BEFORE the delete, so the directory sweep is not the thing that fails.
+            TryRestoreRead(pidFile);
+            TryDeleteDirectory(directory);
+        }
+    }
+
+    /// <summary>Denies the current identity read access to one file, on either platform.</summary>
+    private static void DenyRead(string path)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            using var identity = WindowsIdentity.GetCurrent();
+            var file = new FileInfo(path);
+            var security = file.GetAccessControl();
+            security.AddAccessRule(new FileSystemAccessRule(
+                identity.User!,
+                FileSystemRights.Read,
+                AccessControlType.Deny));
+            file.SetAccessControl(security);
+            return;
+        }
+
+        File.SetUnixFileMode(path, UnixFileMode.None);
+    }
+
+    /// <summary>
+    /// Undoes <see cref="DenyRead"/>, best effort.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Guarded for the reason every teardown in this file is: it runs from a <c>finally</c>, where
+    /// a throw would replace the row's own finding with a permission detail — the same rule the
+    /// wrapper under test follows, and the reason the filter takes
+    /// <see cref="InvalidOperationException"/> as well as the two I/O families.
+    /// <c>RemoveAccessRuleAll</c> and <c>SetAccessControl</c> can raise it on a security
+    /// descriptor the platform will not accept, and an exception kind left off this list is one
+    /// that erases a finding. A host that refuses the restore leaves one unreadable file inside a
+    /// Guid-named scratch directory; the recursive delete below it can still remove that
+    /// directory, because deletion is authorised by the PARENT, which this row created.
+    /// </para>
+    /// <para>
+    /// <strong>The Windows restore reads the DACL of a file it has just denied itself
+    /// <see cref="FileSystemRights.Read"/> on, and that is not the contradiction it looks
+    /// like.</strong> <c>Read</c> includes <see cref="FileSystemRights.ReadPermissions"/> —
+    /// READ_CONTROL, the very right <c>GetAccessControl</c> needs — so the restore works only
+    /// because the file's OWNER holds implicit READ_CONTROL and WRITE_DAC whatever the DACL says,
+    /// and this row created the file. MEASURED on this host: the deny takes, the restore succeeds,
+    /// and the scratch directory is gone afterwards. A host that defeats that — an OWNER RIGHTS
+    /// ACE narrowing the owner's implicit grant, or a filtered token — makes this a no-op, which
+    /// is the bounded consequence the paragraph above already describes rather than a new one.
+    /// </para>
+    /// </remarks>
+    private static void TryRestoreRead(string path)
+    {
+        try
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                using var identity = WindowsIdentity.GetCurrent();
+                var file = new FileInfo(path);
+                var security = file.GetAccessControl();
+                security.RemoveAccessRuleAll(new FileSystemAccessRule(
+                    identity.User!,
+                    FileSystemRights.Read,
+                    AccessControlType.Deny));
+                file.SetAccessControl(security);
+                return;
+            }
+
+            File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        }
+        catch (Exception ex) when (ex is IOException
+                                       or UnauthorizedAccessException
+                                       or PlatformNotSupportedException
+                                       or InvalidOperationException)
+        {
+        }
+    }
+
+    /// <summary>
     /// Every <c>finally</c> in THIS file that tree-kills is preceded, in the same block, by a
     /// <c>pid is null</c>-guarded reclaim — and there are exactly three of them.
     /// </summary>
@@ -1571,9 +1782,35 @@ public sealed class SystemProcessRunnerTests
     /// unguarded reclaim would spend <see cref="LateReadWindow"/> on every green run of every row,
     /// re-reading a file the caller already has a pid from —
     /// <see cref="LateReadWindow"/>'s own remarks turn on the claim that no green path reaches it.
-    /// Row 5's guard carries a second conjunct (<c>lateLookTaken</c>); the rule asks only that
-    /// <c>pid is null</c> appear in the condition, so a narrower guard satisfies it and a
-    /// vanished one does not.
+    /// </para>
+    /// <para>
+    /// <strong>SO IS ROW 5's SECOND CONJUNCT, <c>&amp;&amp; !lateLookTaken</c>, and it needed a
+    /// rule of its own because the first one is blind to it.</strong> <c>pid is null</c> holds on
+    /// the path where row 5's BODY look already ran and found nothing, so a guard testing only
+    /// that repeats a look the row has just finished — two <see cref="LateReadWindow"/>s where the
+    /// row is costed for one. Deleting the conjunct leaves the <c>pid is null</c> check intact and
+    /// the arming-point rule
+    /// (<see cref="TheLateLookFlag_IsArmedOnlyAfterTheLookCompletes"/>) intact, so both existing
+    /// censuses stay green over it. What it breaks is arithmetic stated elsewhere: the
+    /// <c>longestLook</c> assertion at the top of row 5 weighs
+    /// <see cref="UnracedPidCeiling"/> plus ONE <see cref="LateReadWindow"/> against
+    /// <see cref="ChildLifetime"/>, and a row spending two is no longer the row that guard
+    /// describes.
+    /// </para>
+    /// <para>
+    /// <strong>Applied only where it can apply, by looking for the flag's DECLARATION.</strong>
+    /// Rows 1 and 2 take no body look, so they have nothing to repeat and carry no flag; requiring
+    /// the conjunct of them would be requiring a test of a local that does not exist. The rule
+    /// therefore asks which killing <c>finally</c> sits in a method declaring a
+    /// <c>lateLookTaken</c> local, requires EXACTLY ONE to (row 5), and requires that one's guard
+    /// to carry the negation. Both halves are counted: a second flagged method means another row
+    /// grew a body look and needs the same conjunct, and none means row 5's flag has gone.
+    /// </para>
+    /// <para>
+    /// Its limit is the one this file's other syntax rules share: the conjunct is PATTERN-matched,
+    /// not reasoned about. <c>!lateLookTaken</c> satisfies it; <c>lateLookTaken is false</c> and
+    /// <c>lateLookTaken == false</c> mean the same thing and would redden it. Loud and re-aimable
+    /// at the line, which is the safe direction for a rule that must never go quiet.
     /// </para>
     /// <para>
     /// <strong>Exactly three, because a count is what turns this from a check into a
@@ -1612,6 +1849,7 @@ public sealed class SystemProcessRunnerTests
     {
         const string KillMethod = "KillTreeQuietly";
         const string ReclaimMethod = "ReclaimPidForTeardownQuietlyAsync";
+        const string FlagName = "lateLookTaken";
         const int ExpectedKillingFinallies = 3;
 
         var killing = SelfSource()
@@ -1642,7 +1880,67 @@ public sealed class SystemProcessRunnerTests
             FormattableString.Invariant(
                 $"{offenders.Count} tree-kill(s) in a `finally` are not preceded, in the same block and under a `pid is null` guard, by `{ReclaimMethod}`. Without that look the kill receives whatever the attempt happened to hold — which on the path an assertion ended is null — and a child whose first write was merely late is left to ChildLifetime (#539). Put the guarded reclaim first:\n  ")
             + string.Join("\n  ", offenders));
+
+        // THE SECOND CONJUNCT, which the guard-shape check above cannot see. Only the `finally`
+        // whose METHOD declares a `lateLookTaken` local is in a position to repeat a look its own
+        // body already took, and only that one must therefore test the flag as well.
+        var flagged = killing
+            .Where(clause => DeclaresTheLateLookFlag(clause, FlagName))
+            .ToList();
+
+        Assert.True(
+            flagged.Count == 1,
+            FormattableString.Invariant(
+                $"{flagged.Count} of the {ExpectedKillingFinallies} killing `finally` blocks sit in a method declaring a `{FlagName}` local, not the 1 this rule covers (row 5). Rows 1 and 2 have no body look to repeat, so they carry no flag; row 5 does. A second flagged method means another row grew a body look — it needs the same `&& !{FlagName}` conjunct — and none means row 5's has gone."));
+
+        var unflagged = flagged
+            .Where(clause => !GuardAlsoTestsTheFlag(clause, ReclaimMethod, FlagName))
+            .Select(Describe)
+            .ToList();
+
+        Assert.True(
+            unflagged.Count == 0,
+            FormattableString.Invariant(
+                $"row 5's teardown reclaim is not guarded by `&& !{FlagName}` as well as by `pid is null`. Without that conjunct the `finally` repeats the look the body has already taken, so the row spends TWO {LateReadWindow.TotalSeconds:F0}s windows rather than one — and the `longestLook` guard at the top of that row, which weighs UnracedPidCeiling plus a single LateReadWindow against ChildLifetime, is then measuring less than the row actually spends. Restore the conjunct:\n  ")
+            + string.Join("\n  ", unflagged));
     }
+
+    /// <summary>
+    /// Whether the member enclosing <paramref name="clause"/> declares a local by this name.
+    /// </summary>
+    private static bool DeclaresTheLateLookFlag(FinallyClauseSyntax clause, string flagName) =>
+        clause.Ancestors()
+            .OfType<MethodDeclarationSyntax>()
+            .FirstOrDefault()
+            ?.DescendantNodes(descendIntoTrivia: false)
+            .OfType<VariableDeclaratorSyntax>()
+            .Any(declarator => declarator.Identifier.ValueText == flagName)
+            ?? false;
+
+    /// <summary>
+    /// Whether the <c>if</c> guarding this clause's reclaim also tests <c>!flagName</c>.
+    /// </summary>
+    /// <remarks>
+    /// Matched as a <see cref="PrefixUnaryExpressionSyntax"/> carrying <c>!</c> over the bare
+    /// identifier, anywhere in the condition — so <c>pid is null &amp;&amp; !lateLookTaken</c>
+    /// satisfies it and the operand order does not matter. Pattern-matched rather than reasoned
+    /// about: <c>lateLookTaken is false</c> and <c>lateLookTaken == false</c> mean the same thing
+    /// and would redden this, which is the same safe direction
+    /// <see cref="GuardedOnANullPid"/>'s remarks argue for the other conjunct.
+    /// </remarks>
+    private static bool GuardAlsoTestsTheFlag(
+        FinallyClauseSyntax clause, string reclaimMethod, string flagName) =>
+        InvocationsNamed(clause, reclaimMethod)
+            .SelectMany(reclaim => reclaim.Ancestors()
+                .TakeWhile(ancestor => ancestor is not FinallyClauseSyntax)
+                .OfType<IfStatementSyntax>())
+            .Any(statement => statement.Condition
+                .DescendantNodesAndSelf()
+                .OfType<PrefixUnaryExpressionSyntax>()
+                .Any(negation =>
+                    negation.OperatorToken.IsKind(SyntaxKind.ExclamationToken)
+                    && negation.Operand is IdentifierNameSyntax { Identifier.ValueText: { } name }
+                    && name == flagName));
 
     /// <summary>
     /// Writes <paramref name="content"/> over the pid file, retrying briefly while a concurrent

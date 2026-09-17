@@ -508,13 +508,36 @@ public sealed class DcpFlightRecorderDockerTests
         var captured = recorder.Snapshot();
 
         // Guard against a vacuous pass first: a recorder that received nothing would satisfy
-        // every "nothing unrelated was captured" assertion below for free.
+        // every "nothing unrelated was captured" assertion below for free. Assert.NotEmpty fails
+        // only when the collection IS empty, so there is nothing in it to print - safe here where
+        // the two positive checks below are not.
         Assert.NotEmpty(captured);
 
-        Assert.Contains(
-            captured,
-            e => e.Category.StartsWith(
-                DcpFlightRecorder.DcpCategoryPrefix, StringComparison.OrdinalIgnoreCase));
+        // NO Assert.Contains OVER `captured`, AND THAT IS #526 BY A SHORTER ROUTE THAN THE
+        // FAILING ROW'S. These entries are real traffic from a live Aspire host, and xunit's
+        // collection overload prints the COLLECTION on failure. DcpFlightEntry is a POSITIONAL
+        // record, so its compiler-generated ToString() renders every member it was declared
+        // with - Message, Exception and the whole formatted Line among them - which puts host
+        // data in a public CI job log without anyone having written a line of it out. The
+        // predicates below read only Category and Level; the failure messages name only the
+        // constant the predicate tested. Composed on the failing path, as every message here that
+        // could cost anything is; the strays join below is free because a passing list is empty.
+        //
+        // The `strays` projection further down is exempt and stays as it is: it has already
+        // narrowed the entries to their CATEGORY, which is the one field
+        // DescribeCaptureForDiagnostics' remarks argue at length is printable - composed from
+        // names the engine, DCP or this suite chose, never from logged content.
+        if (!captured.Any(e => e.Category.StartsWith(
+            DcpFlightRecorder.DcpCategoryPrefix, StringComparison.OrdinalIgnoreCase)))
+        {
+            Assert.Fail(
+                "no entry under a '" + DcpFlightRecorder.DcpCategoryPrefix + "*' category "
+                + "reached the recorder inside the real Aspire host, so the registration's DCP "
+                + "re-admit rule did not survive contact with the host's own logging "
+                + "configuration. The captured entries are deliberately not reproduced here "
+                + "(#526): they are real host traffic, and DcpFlightEntry is a positional record "
+                + "whose ToString carries its Message and Line.");
+        }
 
         // The floor rule holds inside the host: no category outside Aspire reaches the recorder,
         // at any level.
@@ -532,11 +555,17 @@ public sealed class DcpFlightRecorderDockerTests
 
         // And the Debug rule is the one that matters: below-Warning traffic arrives for DCP
         // categories, which is the evidence #420 has never captured.
-        Assert.Contains(
-            captured,
-            e => e.Level < Microsoft.Extensions.Logging.LogLevel.Warning
-                && e.Category.StartsWith(
-                    DcpFlightRecorder.DcpCategoryPrefix, StringComparison.OrdinalIgnoreCase));
+        if (!captured.Any(e => e.Level < Microsoft.Extensions.Logging.LogLevel.Warning
+            && e.Category.StartsWith(
+                DcpFlightRecorder.DcpCategoryPrefix, StringComparison.OrdinalIgnoreCase)))
+        {
+            Assert.Fail(
+                "no entry BELOW Warning under a '" + DcpFlightRecorder.DcpCategoryPrefix
+                + "*' category reached the recorder, so the Debug rule - the one that admits the "
+                + "evidence #420 has never captured - is not holding inside the real host. The "
+                + "captured entries are deliberately not reproduced here (#526), for the reason "
+                + "given at the assertion above.");
+        }
     }
 
     /// <summary>
@@ -679,8 +708,37 @@ public sealed class DcpFlightRecorderDockerTests
             //     one 20-entry capture named its resource on entries 18 and 19 only, and this
             //     row's own drill capture held 18 entries with 2 naming the resource. Thin is
             //     survivable; silent is not.
+            //
+            //     NOT Assert.Contains, AND THAT IS #526 AGAIN. Xunit prints the ACTUAL argument
+            //     on failure, whatever that argument is - measured on this branch against a
+            //     DESCRIPTION, where the printed prefix was
+            //     `String: "The capture is 'dcp-capture-x.log', 1528 "...`. A description is safe
+            //     to print, which is the whole point of DescribeCaptureForDiagnostics; the
+            //     argument HERE is not one. It is a real capture - the buffered traffic of a live
+            //     Aspire host, opening `vouchfx DCP flight recorder capture` and going on to hold
+            //     per-run generated passwords, values this suite declared through `env`, and
+            //     absolute host paths. Truncation bounds how much of it lands in a public CI job
+            //     log, not whether any of it does.
+            //
+            //     Composed on the failing path only, like (e) below and like the healthy row's
+            //     leak message: the message is ten fragments wide and Assert.True(cond, message)
+            //     would build it on every green Docker run. The (e) branch also explains at length
+            //     what such a message will and will not carry; this one follows that rule rather
+            //     than restating it.
             var body = await File.ReadAllTextAsync(captures[0]);
-            Assert.Contains(_failingResourceName, body, StringComparison.OrdinalIgnoreCase);
+            if (!body.Contains(_failingResourceName, StringComparison.OrdinalIgnoreCase))
+            {
+                Assert.Fail(
+                    "the capture written at the health-gate timeout does not name this run's own "
+                    + "resource '" + _failingResourceName + "', so the ownership key every leak "
+                    + "assertion in this class rests on is no longer in the traffic DCP echoes - "
+                    + "and those assertions, being emptiness checks, would now pass for free. The "
+                    + "body is deliberately not reproduced here (#526): it is a real capture and "
+                    + "can carry generated credentials and host paths. To read it, see the (e) "
+                    + "message below - this row redirects the capture to a scratch directory of "
+                    + "its own and attempts to delete it as it unwinds, so reading a full body "
+                    + "means running the row with that deletion suspended.");
+            }
 
             // (d) The failure carries the location TOKEN and the tail - and not the resolved
             //     path, which would put the operator's account name into a public CI artefact.
@@ -1224,6 +1282,19 @@ public sealed class DcpFlightRecorderDockerTests
     /// the path, so "bare file name" is a claim about this row's input rather than about a
     /// filename that never had a directory.
     /// </para>
+    /// <para>
+    /// <strong>This row asserts over the BODY with <c>Assert.Contains</c>, which prints the actual
+    /// string on failure — acceptable HERE and nowhere a real capture is read.</strong> Every
+    /// character of this body but the per-entry stamps was put there by this row: the categories,
+    /// the messages and the sentinel are all literals a few lines below, and the formatter added
+    /// only its own header. The stamps come from the clock —
+    /// <c>DcpFlightEntry.Create</c> takes <c>DateTimeOffset.UtcNow</c> for each entry, so only
+    /// <c>FormatCapture</c>'s header stamp is the fixed one this row supplies — and a wall-clock
+    /// reading is not host data in the sense #526 is about. There is nothing else in here to
+    /// leak, so the rule the failing Docker row follows — boolean assertions over a real capture,
+    /// see assertion (c) there — does not bind. The sentinel is deliberately a FAKE credential
+    /// for the same reason.
+    /// </para>
     /// </remarks>
     [Fact]
     public void DescribeCaptureForDiagnostics_CountsTheCaptureAndNamesOnlyItsCategories()
@@ -1401,6 +1472,13 @@ public sealed class DcpFlightRecorderDockerTests
     /// that text, so a literal-absence assertion would fail on a capture whose header happened to
     /// be 250 bytes long. The property is the figure, not its spelling.
     /// </para>
+    /// <para>
+    /// The <c>Assert.Contains</c> over the body prints the actual string on failure, which is
+    /// acceptable here for the reason the populated row states at length: this body is the
+    /// formatter's header over an EMPTY buffer, so there is not one character of host data in it.
+    /// A real capture is asserted over as a boolean instead — see the failing Docker row's
+    /// assertion (c), and #526.
+    /// </para>
     /// </remarks>
     [Fact]
     public void DescribeCaptureForDiagnostics_WithNoEntries_ReportsHeaderSizeAndNoCategory()
@@ -1449,6 +1527,14 @@ public sealed class DcpFlightRecorderDockerTests
     /// <c>CategoryOf</c>'s empty-category guard refuses. That guard is pinned negatively by the
     /// populated row (no blank token in the census) and positively here (the guard is the ONLY
     /// thing that empties this census).
+    /// </para>
+    /// <para>
+    /// The <c>Assert.Contains</c> calls over the body print the actual string on failure, which is
+    /// acceptable here on the same terms as the two sibling rows: the single entry is emitted by
+    /// this row from its own literals — every character but its stamp, which
+    /// <c>DcpFlightEntry.Create</c> takes from the clock — so the body carries no host data.
+    /// Anything read from a REAL capture goes through a boolean assertion instead — the failing
+    /// Docker row's (c), and #526.
     /// </para>
     /// </remarks>
     [Fact]
