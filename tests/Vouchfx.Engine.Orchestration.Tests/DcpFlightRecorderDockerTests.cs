@@ -640,11 +640,41 @@ public sealed class DcpFlightRecorderDockerTests
             //     of the two flush sites produced it.
             //
             //     Composed on the failing path only, which here is more than tidiness: the
-            //     message embeds the WHOLE capture body, so Assert.True would have built that
-            //     string on every green run. That it embeds the body at all is a separate open
-            //     defect - a body can carry Aspire per-run generated passwords and absolute host
-            //     paths into a public job log - tracked as #526 and deliberately not changed
-            //     here.
+            //     description below walks the whole body, so Assert.True would have built it on
+            //     every green run.
+            //
+            //     WHAT THE MESSAGE CARRIES AND WHAT IT REFUSES TO (#526). It carries the bare
+            //     file name, the byte count, the header and entry line counts, and a capped
+            //     census of the logger CATEGORIES the entries arrived under. It carries no OTHER
+            //     part of the body - no message segment, no exception segment, no header line's
+            //     content - and no path, neither the scratch directory's nor the file's. The body
+            //     is the buffered traffic of a real Aspire host, so it can hold per-run generated
+            //     passwords, values this suite declared through `env`, and absolute host paths;
+            //     this message reaches a public CI job log.
+            //
+            //     Each field earns its place separately. The file name is DcpCapture.BuildFileName
+            //     output and nothing else - a fixed prefix, a UTC stamp off the clock, the
+            //     suffix, plus a numeric collision suffix - so it is composed entirely from
+            //     things the ENGINE chose. The three counts are integers. The categories are the
+            //     one field drawn from the file, and DescribeCaptureForDiagnostics' remarks argue
+            //     that one at length.
+            //
+            //     The census is also the more useful diagnostic here, not merely the safer one:
+            //     this branch fires exactly when NO line names DcpCategoryPrefix, so the matching
+            //     lines are empty BY CONSTRUCTION and the question worth answering is which
+            //     categories did arrive. Three answers, and the counts separate them: none at all
+            //     (an empty buffer - zero entry lines); Aspire's non-DCP categories only (either
+            //     the routing or the filter rules regressed, or the arming window closed before
+            //     DCP logged anything - those two look alike here and the census cannot tell them
+            //     apart); or DCP traffic that WAS recorded and was then evicted by later non-DCP
+            //     Aspire traffic under the recorder's bounds, which leaves entry lines but no DCP
+            //     line and announces itself in the header count - FormatCapture adds a TRUNCATED
+            //     note when anything was evicted, making the header five lines rather than four.
+            //
+            //     Which is why the message below states the OBSERVATION and stops. It used to
+            //     diagnose ("the buffer was empty - the arming window closed too early"), which
+            //     named one of the three and was then immediately contradicted by the census
+            //     printed beside it: a drill produced "17 entry line(s)" under that sentence.
             var dcpLines = body
                 .Split('\n')
                 .Where(l => l.Contains(
@@ -656,8 +686,13 @@ public sealed class DcpFlightRecorderDockerTests
                 Assert.Fail(
                     "the capture written at the health-gate timeout contains no "
                     + DcpFlightRecorder.DcpCategoryPrefix
-                    + "* line, which means the buffer was empty by the time the gate failed - the "
-                    + "arming window closed too early. Capture body:\n" + body);
+                    + "* line by the time the gate failed. "
+                    + DescribeCaptureForDiagnostics(captures[0], body)
+                    + " The body is deliberately not reproduced here (#526). Nor is it kept: this "
+                    + "row redirects the capture to a scratch directory of its own - overriding "
+                    + "any " + DcpCapture.DirectoryOverrideVariable + " the operator set - and "
+                    + "attempts to delete it as it unwinds, so reading a full body means running "
+                    + "the row with that deletion suspended.");
             }
         }
         finally
@@ -911,6 +946,404 @@ public sealed class DcpFlightRecorderDockerTests
             {
                 return false;
             }
+        }
+    }
+
+    /// <summary>
+    /// <see cref="DescribeCaptureForDiagnostics"/> counts a real capture exactly, names only its
+    /// categories, and lets no message text or directory segment through.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Without this row the helper had no test at all.</strong> It runs on one branch of
+    /// one Docker row, and that branch fires only when something has already regressed — so a
+    /// green 4/4 says nothing about it, and the first version's off-by-one line count (it counted
+    /// the empty element <c>Split</c> leaves after the body's final newline, reporting 24 lines
+    /// for a 23-line file) shipped through exactly that gap. What the helper promises about a
+    /// WELL-FORMED capture is asserted here instead, in the blocking non-docker lane: the counts,
+    /// the byte figure, the file name, the refusal of message text and directory segments, the
+    /// cap and its tail, and the 64-character truncation with its marker.
+    /// </para>
+    /// <para>
+    /// <strong>ONE degenerate branch remains unasserted, and it is named rather than implied.
+    /// </strong> The separator-absent fallback cannot be reached from a real capture:
+    /// <c>FormatCapture</c> always writes its <c>----</c> line, so a body without one is a file
+    /// this helper's caller could never have read. That branch is a guard against a malformed
+    /// file, not a contract any row can state without hand-writing a fixture and giving up the
+    /// property both rows are built on — that the input came from the production formatter.
+    /// </para>
+    /// <para>
+    /// The other two are reachable, and an earlier version of this paragraph wrongly filed them
+    /// here as unproducible. Both are now pinned from real formatter output: the empty-buffer
+    /// shape — zero entries, and the "none - no line parsed as an entry" wording — by
+    /// <see cref="DescribeCaptureForDiagnostics_WithNoEntries_ReportsHeaderSizeAndNoCategory"/>,
+    /// and <c>CategoryOf</c>'s empty-category guard by the <c>CreateLogger("")</c> entry in this
+    /// row's own fixture, which the recorder renders as a genuine
+    /// <c>{stamp} {level} : {message}</c> line because nothing between <c>CreateLogger</c> and
+    /// the sanitiser rejects an empty name.
+    /// </para>
+    /// <para>
+    /// <strong>The body is built by the production formatter, not typed out here.</strong>
+    /// <c>DcpFlightRecorder.FormatCapture</c> writes the header block, the <c>----</c> separator
+    /// and the entry lines this helper parses; a hand-written fixture would pin this row to a
+    /// layout the engine had stopped emitting. The recorder is driven through
+    /// <c>CreateLogger</c>/<c>DcpTestLog.Emit</c>, which is how the host fills it.
+    /// </para>
+    /// <para>
+    /// <strong>The arrangement is chosen to exercise every branch that can leak.</strong> Twelve
+    /// distinct categories against a cap of eight, so the cap and the "+N more" tail both fire; a
+    /// pair of categories longer than the 64-character cut and sharing a 67-character prefix, so
+    /// the truncation, its ASCII marker and the documented lossy case (rendered identically,
+    /// counted separately) are all observed; one category carrying <c>": "</c>, so the parse's
+    /// AT-MOST property is observed rather than assumed; one entry whose MESSAGE holds a
+    /// path-and-secret sentinel, asserted present in the body and absent from the description, so
+    /// the refusal is measured on a string that really was there; and a two-segment directory in
+    /// the path, so "bare file name" is a claim about this row's input rather than about a
+    /// filename that never had a directory.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void DescribeCaptureForDiagnostics_CountsTheCaptureAndNamesOnlyItsCategories()
+    {
+        // TWELVE distinct categories in first-seen order: the first eight are what the census may
+        // show, the last four are what "+4 more" must stand for.
+        //
+        // Two of the eight are the long pair. They share a 67-character prefix - longer than the
+        // helper's 64-character cut - and differ only after it, so each must render as the SAME
+        // truncated token while still being COUNTED as two. That is the one lossy direction the
+        // helper's remarks admit to, and it is asserted here rather than left as prose.
+        //
+        // The sixth carries a ": " of its own, so the parse must yield its prefix and stop there.
+        const string LongShared =
+            "Aspire.Hosting.Dcp.VeryLongCategoryNameSharingAPrefixWithItsSibling";
+        const string LongOne = LongShared + "One";
+        const string LongTwo = LongShared + "Two";
+        const string AwkwardCategory = "Aspire.Hosting.Dcp.awkward: colon";
+        const string AwkwardPrefix = "Aspire.Hosting.Dcp.awkward";
+        const string CappedOne = "Aspire.Hosting.Dcp.CappedOne";
+        const string CappedTwo = "Aspire.Hosting.Dcp.CappedTwo";
+        var shown = new[]
+        {
+            "Aspire.Hosting.Dcp.DcpExecutor",
+            "Aspire.Hosting.Dcp.KubernetesService",
+            LongOne,
+            LongTwo,
+            "Aspire.Hosting.Lifecycle",
+            AwkwardCategory,
+            "Aspire.Hosting.Dcp.DcpHost",
+            "Aspire.Hosting.Dcp.NetworkReconciler",
+        };
+        var hidden = new[]
+        {
+            "Aspire.Hosting.Dcp.dcp.start-apiserver.api-server",
+            "Aspire.Hosting.ApplicationModel",
+            CappedOne,
+            CappedTwo,
+        };
+
+        // The premise the long pair rests on, asserted rather than counted by hand: the shared
+        // part really does outrun the cut, so the two really are indistinguishable after it.
+        Assert.True(LongShared.Length > 64);
+
+        // A path and a credential in ONE message, which is the disclosure shape #526 is about.
+        const string Sentinel = @"C:\secret\hunter2";
+
+        using var recorder = new DcpFlightRecorder();
+
+        // FIRST entry, under an EMPTY category name, and first on purpose. Nothing between
+        // CreateLogger and the sanitiser rejects one - RecordingLogger stores
+        // `category ?? string.Empty` and ToCappedPrintableAsciiLine returns empty for empty - so
+        // the recorder renders a real "{stamp} {level} : {message}" line. It is an entry, so it
+        // counts toward the entry total, and CategoryOf must refuse it rather than census a blank
+        // token. Emitted ahead of every named category so that, without the guard, the blank
+        // token would take the FIRST shown slot and the assertions below would fire; emitted
+        // last, it would have landed beyond the cap and the same assertions could not fail.
+        DcpTestLog.Emit(
+            recorder.CreateLogger(string.Empty),
+            Microsoft.Extensions.Logging.LogLevel.Debug,
+            "reconciling resource");
+
+        foreach (var category in shown.Concat(hidden))
+        {
+            DcpTestLog.Emit(
+                recorder.CreateLogger(category),
+                Microsoft.Extensions.Logging.LogLevel.Debug,
+                "reconciling resource");
+        }
+
+        // Fourteenth entry, repeating the first named category: the census must count DISTINCT
+        // tokens, so this must not consume one of the eight slots.
+        DcpTestLog.Emit(
+            recorder.CreateLogger(shown[0]),
+            Microsoft.Extensions.Logging.LogLevel.Warning,
+            "stopping container; credential file " + Sentinel + " left on disk");
+
+        var body = recorder.FormatCapture(
+            new DateTimeOffset(2026, 9, 17, 12, 0, 0, TimeSpan.Zero));
+
+        // Non-vacuity, three ways: the sentinel really is in the body, the body really does carry
+        // the entry count this row is about to require of the description, and the empty-category
+        // line really was rendered rather than dropped on the way in.
+        Assert.Contains(Sentinel, body, StringComparison.Ordinal);
+        Assert.Contains("entries: 14, evicted: 0", body, StringComparison.Ordinal);
+        Assert.Contains(" : reconciling resource", body, StringComparison.Ordinal);
+
+        var description = DescribeCaptureForDiagnostics(
+            Path.Combine("unlikely-parent-segment", "unlikely-child-segment", "dcp-capture-x.log"),
+            body);
+
+        // The counts. Four header lines is FormatCapture's layout with nothing evicted (banner,
+        // written, issue, entries); a TRUNCATED note would make it five, which is the eviction
+        // signature assertion (e)'s comment names.
+        Assert.Contains(
+            body.Length.ToString(System.Globalization.CultureInfo.InvariantCulture) + " byte(s)",
+            description,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "4 header line(s), 14 entry line(s)", description, StringComparison.Ordinal);
+
+        // The file name, and neither directory segment.
+        Assert.Contains("dcp-capture-x.log", description, StringComparison.Ordinal);
+        Assert.DoesNotContain("unlikely-parent-segment", description, StringComparison.Ordinal);
+        Assert.DoesNotContain("unlikely-child-segment", description, StringComparison.Ordinal);
+
+        // No message text, and the message text that must not appear is the one just proved to be
+        // in the body. The message segment shared by thirteen entries is checked too, so the
+        // refusal is not merely about the unusual-looking string.
+        Assert.DoesNotContain(Sentinel, description, StringComparison.Ordinal);
+        Assert.DoesNotContain("reconciling resource", description, StringComparison.Ordinal);
+        Assert.DoesNotContain("stopping container", description, StringComparison.Ordinal);
+
+        // The five of the eight that render verbatim. The awkward one and the long pair do not,
+        // and each is checked on its own terms below.
+        foreach (var category in shown.Where(
+            c => c != AwkwardCategory && c != LongOne && c != LongTwo))
+        {
+            Assert.Contains(category, description, StringComparison.Ordinal);
+        }
+
+        // The awkward one renders as its prefix and no further: its own ": " ends the slice,
+        // which is why the slice can never reach a message.
+        Assert.Contains(AwkwardPrefix, description, StringComparison.Ordinal);
+        Assert.DoesNotContain(AwkwardCategory, description, StringComparison.Ordinal);
+
+        // The long pair. Neither survives whole - which is the 64-character cut doing its work -
+        // and both collapse onto ONE rendered token carrying the ASCII marker. The token is
+        // therefore expected TWICE: rendered identically, counted separately. That doubled token
+        // is also the bound in miniature, 64 characters plus a three-character marker, which is
+        // what makes the census's worst case 8 x 67 characters of category text.
+        var truncated = string.Concat(LongShared.AsSpan(0, 64), "...");
+        Assert.DoesNotContain(LongOne, description, StringComparison.Ordinal);
+        Assert.DoesNotContain(LongTwo, description, StringComparison.Ordinal);
+        Assert.Equal(67, truncated.Length);
+        Assert.Equal(2, description.Split(truncated).Length - 1);
+
+        // Four distinct categories never reached the census, and the tail says so without naming
+        // them - including the long pair's two slots, which counted separately even though they
+        // rendered as one token.
+        Assert.Contains("+4 more", description, StringComparison.Ordinal);
+        foreach (var category in hidden)
+        {
+            Assert.DoesNotContain(category, description, StringComparison.Ordinal);
+        }
+
+        // The empty-category entry censused as NOTHING rather than as a blank token. It was the
+        // first entry emitted, so without the guard the blank would be the first shown item and
+        // "present: ," would appear; it also did not enter `seen`, which is why "+4 more" above
+        // is four and not five - the guard refuses the line outright rather than counting an
+        // unnameable category toward the hidden tail.
+        Assert.DoesNotContain("present: ,", description, StringComparison.Ordinal);
+        Assert.DoesNotContain(", ,", description, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A capture whose buffer was empty describes as a real file with zero entries, and names no
+    /// category at all.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The empty-buffer shape is producible, which is why it is pinned here rather than
+    /// listed as unreachable.</strong> <c>FormatCapture</c> on a recorder that never recorded
+    /// anything still writes its four header lines and its <c>----</c> separator, so the helper
+    /// meets a body with a separator, no entry lines, and nothing to census. That drives two
+    /// branches nothing else reaches: <c>entryLines</c> resolving to zero, and the
+    /// "none - no line parsed as an entry" wording.
+    /// </para>
+    /// <para>
+    /// <strong>An empty BUFFER is not an empty FILE, and the byte figure is what says so.</strong>
+    /// The header is real text, so the description must report the header's own size rather than
+    /// zero — an operator reading "0 byte(s)" would be looking for a truncated write, which is a
+    /// different fault entirely. The assertion is written against <c>body.Length</c> rather than
+    /// against the literal absence of "0 byte(s)": any length ending in a zero digit contains
+    /// that text, so a literal-absence assertion would fail on a capture whose header happened to
+    /// be 250 bytes long. The property is the figure, not its spelling.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void DescribeCaptureForDiagnostics_WithNoEntries_ReportsHeaderSizeAndNoCategory()
+    {
+        using var recorder = new DcpFlightRecorder();
+
+        var body = recorder.FormatCapture(
+            new DateTimeOffset(2026, 9, 17, 12, 0, 0, TimeSpan.Zero));
+
+        // Non-vacuity: the formatter really did produce an entry-less body, and it is not empty.
+        Assert.Contains("entries: 0, evicted: 0", body, StringComparison.Ordinal);
+        Assert.True(body.Length > 0);
+
+        var description = DescribeCaptureForDiagnostics(
+            Path.Combine("unlikely-parent-segment", "unlikely-child-segment", "dcp-capture-x.log"),
+            body);
+
+        Assert.Contains(
+            body.Length.ToString(System.Globalization.CultureInfo.InvariantCulture) + " byte(s)",
+            description,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "4 header line(s), 0 entry line(s)", description, StringComparison.Ordinal);
+        Assert.Contains(
+            "Categories present: none - no line parsed as an entry.",
+            description,
+            StringComparison.Ordinal);
+
+        // The same disclosure floor as the populated row: bare name, neither directory segment.
+        Assert.Contains("dcp-capture-x.log", description, StringComparison.Ordinal);
+        Assert.DoesNotContain("unlikely-parent-segment", description, StringComparison.Ordinal);
+        Assert.DoesNotContain("unlikely-child-segment", description, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A bounded, non-disclosing description of a capture file for a failure message: its bare
+    /// name, its byte count, its header and entry line counts, and the DISTINCT logger categories
+    /// its entries arrived under.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>What it refuses to return is the reason it exists — #526.</strong> No part of the
+    /// body except the categories: not a MESSAGE segment, not an EXCEPTION segment, not a header
+    /// line's content, and not a path. A capture is the buffered traffic of a real Aspire host, so
+    /// it can hold per-run generated passwords for managed dependencies, values the suite declared
+    /// through <c>env</c>, and absolute host paths — and the message this feeds reaches a public
+    /// CI job log. The caller that used to paste the whole body in is the defect being closed.
+    /// </para>
+    /// <para>
+    /// <strong>Why a CATEGORY may be printed where a message may not, stated against the pinned
+    /// Aspire rather than in general.</strong> Only <c>Aspire</c>-prefixed categories can be in a
+    /// capture at all: <see cref="DcpFlightRecorder.Register"/> installs
+    /// <c>AddFilter&lt;DcpFlightRecorder&gt;(category: null, LogLevel.None)</c> as the floor and
+    /// then re-admits exactly the <c>Aspire</c> and DCP prefixes. The type argument is
+    /// load-bearing, not decoration: it scopes every one of those rules to THIS provider, so the
+    /// floor silences the recorder alone and leaves the console's own levels untouched. Nothing
+    /// outside the re-admitted prefixes ever reaches the buffer.
+    /// </para>
+    /// <para>
+    /// Those names ARE composed at run time, and the honest claim is narrower than "they are
+    /// static". Measured on Aspire 13.4.2, a real gate-failure capture from this row yielded
+    /// <c>Aspire.Hosting.Dcp.DcpExecutor</c> and <c>Aspire.Hosting.Dcp.KubernetesService</c>
+    /// alongside <c>Aspire.Hosting.Dcp.dcp.start-apiserver.api-server</c> — the second shape is
+    /// built at run time from DCP's own component and process names. What none of them is built
+    /// from is LOGGED CONTENT: the composed parts are names the engine, DCP or the topology
+    /// chose — and the topology's names, in this suite, are ones this row itself chose. That is
+    /// the property the message segment lacks, and it is what makes a category printable where a
+    /// message is not.
+    /// </para>
+    /// <para>
+    /// This repo advances Aspire per engine release, so the paragraph above is a statement about
+    /// a pinned dependency and not a law. The cap of eight and the per-token truncation at 64
+    /// characters are the standing defence if a later Aspire composes a category out of something
+    /// observed: they bound the category text to 8 x 67 characters whatever the file holds. The
+    /// truncation is lossy in one direction worth knowing about — two categories sharing a
+    /// 64-character prefix render identically here while still being counted as two.
+    /// </para>
+    /// <para>
+    /// <strong>The parse is <see cref="DcpFlightRecorder"/>'s own line layout</strong> —
+    /// <c>{stamp} {level} {category}: {message}</c>, with a header block ahead of the entries that
+    /// <c>FormatCapture</c> closes with a <c>----</c> line. Neither the stamp nor the
+    /// four-character level token contains a space, so what sits between the second space and the
+    /// first <c>": "</c> is AT MOST the category: a category containing <c>": "</c> itself yields
+    /// a prefix of it, never more. That inequality is the safety property — the slice stops at the
+    /// first <c>": "</c>, so it cannot reach into the message however the category is spelled. A
+    /// line that does not parse is skipped rather than guessed at: this runs while the row is
+    /// already failing, and a wrong token in a diagnostic is worse than a missing one.
+    /// </para>
+    /// </remarks>
+    private static string DescribeCaptureForDiagnostics(string path, string body)
+    {
+        const int MaxCategories = 8;
+        const int MaxCategoryChars = 64;
+
+        var lines = body.Split('\n');
+
+        // FormatCapture TERMINATES every line it writes - the header lines, the separator and
+        // each entry - so the split always yields one trailing empty element that is not a line.
+        // Exactly one is dropped, and never by TrimEnd: a greedy trim would also eat a genuinely
+        // empty last line and under-report the count, which is the class Copilot caught on #528.
+        var lineCount = lines.Length > 0 && lines[^1].Length == 0 ? lines.Length - 1 : lines.Length;
+
+        // Everything ahead of FormatCapture's "----" is header: counted, never quoted. No
+        // separator at all means nothing here is a recognisable entry line.
+        var separator = Array.IndexOf(lines, "----");
+        var headerLines = separator < 0 ? lineCount : separator;
+        var entryLines = separator < 0 ? 0 : lineCount - (separator + 1);
+
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var shown = new List<string>();
+        for (var i = headerLines + 1; i < lineCount; i++)
+        {
+            var category = CategoryOf(lines[i]);
+            if (category is null || !seen.Add(category))
+            {
+                continue;
+            }
+
+            if (shown.Count < MaxCategories)
+            {
+                shown.Add(
+                    category.Length <= MaxCategoryChars
+                        ? category
+                        : string.Concat(category.AsSpan(0, MaxCategoryChars), "..."));
+            }
+        }
+
+        var invariant = System.Globalization.CultureInfo.InvariantCulture;
+        var hidden = seen.Count - shown.Count;
+
+        // body.Length IS the byte count, not an approximation of it, and reading it off the
+        // string rather than off the file is what keeps this composition unable to throw.
+        // DcpFlightEntry.Create folds every component to printable ASCII precisely so one
+        // character is one byte, and DcpCapture writes UTF8Encoding(false) - no BOM - for the
+        // same premise. A FileInfo probe here would be an unguarded I/O call inside a failure
+        // message: its exception would replace the assertion, and its own message carries the
+        // FULL path, which is the disclosure this method exists to prevent.
+        return "The capture is '" + Path.GetFileName(path) + "', "
+            + body.Length.ToString(invariant) + " byte(s), "
+            + headerLines.ToString(invariant) + " header line(s), "
+            + entryLines.ToString(invariant) + " entry line(s). Categories present: "
+            + (shown.Count == 0
+                ? "none - no line parsed as an entry."
+                : string.Join(", ", shown)
+                    + (hidden > 0
+                        ? ", +" + hidden.ToString(invariant) + " more."
+                        : "."));
+
+        static string? CategoryOf(string line)
+        {
+            var afterStamp = line.IndexOf(' ');
+            if (afterStamp < 0)
+            {
+                return null;
+            }
+
+            var afterLevel = line.IndexOf(' ', afterStamp + 1);
+            if (afterLevel < 0)
+            {
+                return null;
+            }
+
+            // colon == afterLevel + 1 is an EMPTY category ("{stamp} {level} : {message}"), which
+            // would otherwise census as a stray empty token. Not a line this method can describe.
+            var colon = line.IndexOf(": ", afterLevel + 1, StringComparison.Ordinal);
+            return colon <= afterLevel + 1 ? null : line[(afterLevel + 1)..colon];
         }
     }
 
