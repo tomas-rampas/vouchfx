@@ -67,6 +67,17 @@
 // named itself, so ChildLifetime remains the ceiling on that residual, which is why that lifetime is
 // finite rather than infinite.
 //
+// THAT PLACEMENT IS PINNED BY TWO ROWS RATHER THAN ASSERTED HERE, AND BETWEEN THEM THEY LEAVE ONE
+// HALF OPEN. EveryFinallyThatKills_ReclaimsAPidFirst is a Roslyn census over this file's own
+// source: each killing `finally` must carry a `pid is null`-guarded reclaim ahead of its kill, and
+// there must be exactly three of them. The other row pins the wrapper that census names — a whole
+// line written a second late is picked up inside LateReadWindow, and a file that never appears
+// costs the window and yields null. What NEITHER establishes is that the kill a line below reaches
+// a LIVE survivor: that half needs a child which defeats the production tree-kill (WMI re-parenting
+// on Windows, setsid on Linux) and no portable one exists, so it was measured once as a
+// before/after drill and recorded in #539's commit message (ebddeca) rather than carried as a
+// permanent row. Each of the two rows states this at its own declaration too.
+//
 // THE SAME MULTIPLIER APPLIES TO SCRATCH DIRECTORIES, and that one leaves litter on disk rather
 // than in the process table. Every attempt calls CreateScratchDirectory, and TryDeleteDirectory is
 // best-effort by design: on Windows a child still holding the directory as its working directory
@@ -205,6 +216,9 @@
 // No Docker, no trait: these rows belong to the fast `requires!=docker` lane.
 using System.Diagnostics;
 using System.Globalization;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Vouchfx.Cli.Selection;
 using Vouchfx.TestSupport;
 using Xunit;
@@ -1269,6 +1283,379 @@ public sealed class SystemProcessRunnerTests
         {
             TryDeleteDirectory(directory);
         }
+    }
+
+    // ── #539's two halves, pinned (see each row for what it does NOT pin) ────────────────────
+
+    /// <summary>
+    /// The quiet wrapper reclaims a pid that arrives LATE inside
+    /// <see cref="LateReadWindow"/>, and answers <see langword="null"/> when none arrives at all.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>NOT A <c>Run</c> ROW.</strong> It launches no child and never calls
+    /// <see cref="SystemProcessRunner"/>. What it pins is the SEMANTICS the three <c>finally</c>
+    /// blocks depend on: that a write landing after the caller's original wait gave up is still
+    /// picked up, which is the entire mechanism
+    /// <see cref="ReclaimPidForTeardownAsync"/>'s first paragraph describes, and that a file which
+    /// never appears costs the window and yields nothing rather than hanging or throwing.
+    /// </para>
+    /// <para>
+    /// <strong>What it does NOT pin, stated here because the row's name invites the stronger
+    /// reading.</strong> It says nothing about whether a real, live, late-writing CHILD is killed
+    /// on the red path — that is the liveness half, and it has no portable harness (see
+    /// <see cref="EveryFinallyThatKills_ReclaimsAPidFirst"/>'s remarks, which carry the argument
+    /// for both rows). The pid written here is a literal; nothing opens it, and
+    /// <see cref="KillTreeQuietly"/> is never called.
+    /// </para>
+    /// <para>
+    /// <strong>The <c>work</c> handed over NEVER settles, and that is what makes both cases
+    /// measure the window rather than a coincidence.</strong> <see cref="WaitForPid"/> ends on
+    /// whichever of two arms fires first, and an unsettled task leaves only the CEILING —
+    /// <see cref="LateReadWindow"/>, since <see cref="ReclaimPidForTeardownAsync"/> passes it as
+    /// both arguments. Nothing awaits that task, so leaving it incomplete costs nothing: it
+    /// carries no result and no exception, and is collected with the row.
+    /// </para>
+    /// <para>
+    /// <strong>The write is a WHOLE line — digits then <c>\n</c> — deliberately.</strong>
+    /// <see cref="ReadPid"/> refuses anything else (#528), so an unterminated write would make
+    /// this row assert the reader's strictness a second time instead of the wrapper's polling. A
+    /// LF literal rather than <see cref="Environment.NewLine"/>, for the reason
+    /// <see cref="ReadPid_AcceptsOnlyACompleteNewlineTerminatedDigitLine"/> gives at length: the
+    /// constant is per-platform and would pin only the lane it ran in.
+    /// </para>
+    /// <para>
+    /// <strong>The delay is longer than a poll interval and far shorter than the window.</strong>
+    /// One second against <see cref="PollIntervalMs"/>'s hundred milliseconds means the wrapper
+    /// cannot have caught the file on its FIRST read — it had to keep polling, which is the
+    /// property — and against a five-second window it leaves four seconds of slack, so a loaded
+    /// agent does not turn this into a flake. Total cost is about six seconds: one for the
+    /// arriving case, five for the missing one, which is irreducible because the missing case IS
+    /// the window.
+    /// </para>
+    /// <para>
+    /// <strong>Neither case asserts an elapsed UPPER bound on the arriving path, and case (b)
+    /// races rather than awaits.</strong> Returning the pid at all already proves the arriving
+    /// look stayed inside its ceiling, so an elapsed check there would add nothing and could
+    /// subtract — this row's clock starts before the wrapper's, and the gap between them is
+    /// thread-pool scheduling the assertion would charge to the wrapper. Case (b) cannot lean on
+    /// that argument, since its expected answer is <see langword="null"/> and a ceiling regressed
+    /// to "never" returns nothing to assert on: it is raced against three windows first, in the
+    /// idiom the file header sets out for every hang row, so a lost ceiling reddens this blocking
+    /// gate instead of wedging it. Its LOWER bound stays — that is the half proving the window was
+    /// actually spent.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task ReclaimPidForTeardownQuietly_TakesALateWholeLinePid_AndNullWhenNoneArrives()
+    {
+        const int ProbePid = 51234;
+        var lateWriteDelay = TimeSpan.FromSeconds(1);
+
+        // DateTime.UtcNow, which WaitForPid's ceiling is computed from, ticks at roughly 15ms on
+        // Windows, while the Stopwatch below is high-resolution. The lower-bound assertion in case
+        // (b) is therefore allowed to come in a shade under the window without that being a
+        // finding about the wrapper.
+        var clockTolerance = TimeSpan.FromMilliseconds(250);
+
+        var directory = CreateScratchDirectory();
+        var pidFile = Path.Combine(directory, PidFileName);
+        var never = new TaskCompletionSource();
+        try
+        {
+            // (a) A write that lands INSIDE the window is reclaimed.
+            //
+            // NO WALL-CLOCK ASSERTION HERE, and its absence is the point rather than an omission.
+            // Returning the pid at all IS the in-window evidence: the wrapper's ceiling is
+            // LateReadWindow, so a look that had outrun it would have answered null and the
+            // equality below would be what reddens. A separate elapsed check would add nothing and
+            // could subtract: this row's clock starts before the wrapper's own does, so thread-pool
+            // scheduling between the two is time the assertion would charge to the wrapper.
+            var arriving = ReclaimPidForTeardownQuietlyAsync(pidFile, never.Task);
+
+            await Task.Delay(lateWriteDelay);
+            File.WriteAllText(
+                pidFile, ProbePid.ToString(CultureInfo.InvariantCulture) + "\n");
+
+            Assert.Equal(ProbePid, await arriving);
+
+            // (b) No write at all: null, and only after the whole window has been spent.
+            //
+            // RACED RATHER THAN AWAITED OUTRIGHT, in this file's own idiom: an unbounded await on
+            // a ceiling that had regressed to "never" would WEDGE this blocking gate instead of
+            // failing it, which is the trade the file header sets out for every hang row. Three
+            // windows is slack against a loaded agent while still being finite.
+            File.Delete(pidFile);
+            var clock = Stopwatch.StartNew();
+
+            var look = ReclaimPidForTeardownQuietlyAsync(pidFile, never.Task);
+            var settled = await Task.WhenAny(look, Task.Delay(LateReadWindow * 3)) == look;
+            Assert.True(
+                settled,
+                FormattableString.Invariant(
+                    $"ReclaimPidForTeardownQuietlyAsync had not returned {clock.Elapsed.TotalSeconds:F0}s after it was called against a pid file that never appeared, although its own ceiling is {LateReadWindow.TotalSeconds:F0}s. A teardown look with no ceiling does not delay a red row — it hangs the finally it is called from, and this assembly is a blocking gate with no per-test timeout."));
+
+            var missing = await look;
+            var missingElapsed = clock.Elapsed;
+
+            Assert.Null(missing);
+            Assert.True(
+                missingElapsed >= LateReadWindow - clockTolerance,
+                FormattableString.Invariant(
+                    $"ReclaimPidForTeardownQuietlyAsync gave up after {missingElapsed.TotalSeconds:F1}s against a pid file that never appeared, short of its own {LateReadWindow.TotalSeconds:F0}s window. The window is the whole of what this wrapper buys a late-writing survivor; a look that returns early buys less than the finally blocks are told it does."));
+        }
+        finally
+        {
+            TryDeleteDirectory(directory);
+        }
+    }
+
+    /// <summary>
+    /// Every <c>finally</c> in THIS file that tree-kills is preceded, in the same block, by a
+    /// <c>pid is null</c>-guarded reclaim — and there are exactly three of them.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>WHY A CENSUS AND NOT A BEHAVIOURAL ROW — the honest version, because the reviewer's
+    /// request was for the behavioural one.</strong> Copilot asked for a permanent test that forces
+    /// the red path #539 added and verifies the late-published child is killed. That path is only
+    /// taken when an attempt has no pid AND an assertion has already ended the body, so provoking
+    /// it means a child that SURVIVES the runner's own tree-kill — WMI re-parenting on Windows,
+    /// <c>setsid</c> on Linux — and then publishes a pid. A harness for that is a second,
+    /// platform-forked child fixture whose whole purpose is to defeat the production kill, carried
+    /// permanently in a blocking lane, to cover a teardown detail of a test file. The before/after
+    /// for that path was measured once and recorded in #539's commit message
+    /// (<c>ebddeca</c>): with the tree-kill defeated by re-parenting the child and the grace
+    /// assertion forced red, the child was alive after the red row before the fix and dead after
+    /// it, on the same assertion message both times. What is kept permanently instead is the pair
+    /// below it decomposes into, each of which is cheap and deterministic: the WRAPPER's semantics
+    /// (<see cref="ReclaimPidForTeardownQuietly_TakesALateWholeLinePid_AndNullWhenNoneArrives"/>)
+    /// and this row's PLACEMENT. Between them, a reclaim deleted from any of the three
+    /// <c>finally</c> blocks reddens here, and a reclaim that stopped picking up late writes
+    /// reddens there.
+    /// </para>
+    /// <para>
+    /// <strong>What the pair still does NOT establish.</strong> That the kill issued a line later
+    /// actually reaches a live survivor. Nothing here opens a process. That is the liveness half,
+    /// and it is exactly the half no portable child can reproduce; it is named rather than implied
+    /// so that nobody quotes these two rows as cover for it.
+    /// </para>
+    /// <para>
+    /// <strong>PRECEDES is dominance within the block, not lexical position</strong> — the
+    /// distinction <c>DcpArmingWindowCensusTests</c>'s rule 2 records as a real defect in its own
+    /// first version. Each of the two invocations is reduced to its BLOCK-LEVEL ANCESTOR —
+    /// <see cref="BlockLevelStatement"/>, the statement on the <c>finally</c> block's own
+    /// statement list that contains it, whatever KIND that statement is — and the reclaim's must
+    /// sit at a lower index than the kill's. Control entering a block runs its statements in
+    /// order, so a reclaim whose block-level ancestor is at index <em>i</em> has executed by the
+    /// time index <em>j &gt; i</em> is reached. The invocations themselves need not be direct
+    /// children: today's reclaims sit inside an <c>if</c>, and one inside a loop or a nested
+    /// <c>try</c> would be reduced to that loop or try and counted the same way. What does NOT
+    /// count is an invocation outside this <c>finally</c> altogether — and that exclusion is done
+    /// by scope, since <c>InvocationsNamed</c> enumerates only the clause's own descendants; the
+    /// helper's <see langword="null"/> answer for a node with no block-level ancestor is a
+    /// defensive branch nothing here reaches.
+    /// </para>
+    /// <para>
+    /// That reduction is a deliberate over-approximation in one direction: a reclaim inside
+    /// <c>if (false)</c>, or a loop that runs zero times, is credited as though it ran. The
+    /// dominance argument is about statement ORDER, not reachability, and deciding the latter
+    /// needs the control-flow analysis rule 1 of the sibling census records having no compilation
+    /// for. It is aimed at a reclaim being deleted or moved, not at one being disabled in place.
+    /// </para>
+    /// <para>
+    /// <strong>The <c>pid is null</c> guard is part of the rule, and not decoration.</strong> An
+    /// unguarded reclaim would spend <see cref="LateReadWindow"/> on every green run of every row,
+    /// re-reading a file the caller already has a pid from —
+    /// <see cref="LateReadWindow"/>'s own remarks turn on the claim that no green path reaches it.
+    /// Row 5's guard carries a second conjunct (<c>lateLookTaken</c>); the rule asks only that
+    /// <c>pid is null</c> appear in the condition, so a narrower guard satisfies it and a
+    /// vanished one does not.
+    /// </para>
+    /// <para>
+    /// <strong>Exactly three, because a count is what turns this from a check into a
+    /// census.</strong> Rows 1, 2 and 5 each carry one. Without the count, a FOURTH killing
+    /// <c>finally</c> added without a reclaim would simply not be looked at — the same
+    /// "enumeration standing in for a property" failure this repository's census remarks warn
+    /// about. <see cref="KillTreeQuietly"/>'s own body is not one: its
+    /// <c>ChildProcess.KillTreeQuietly</c> call sits inside a <c>using</c> statement, which is not
+    /// a <c>finally</c> clause in syntax however the compiler lowers it.
+    /// </para>
+    /// <para>
+    /// <strong>Roslyn over this file's own source, and the self-reference is safe by NODE
+    /// KIND.</strong> The method names below are string constants, and this row's messages spell
+    /// them too, but the scan switches on <see cref="InvocationExpressionSyntax"/> — a string
+    /// literal is never one, however it is spelled. <c>descendIntoTrivia: false</c> keeps the
+    /// file's very large comment and doc-comment blocks out on top of that. The house precedent is
+    /// <c>Vouchfx.Engine.Orchestration.Tests.ChildProcessKillCallSiteCensusTests</c>, which reads
+    /// trees it does not reference for the same reason: the file is parsed as text off disk, so
+    /// nothing has to load.
+    /// </para>
+    /// <para>
+    /// <strong>Its limits.</strong> Identifier matching, not symbols: a reclaim reached through a
+    /// differently-named wrapper, or a kill spelled through an alias, is invisible — as is the
+    /// question of whether the pid the guard tests is the pid the kill receives. The guard is
+    /// matched by PATTERN and not by meaning, so <c>pid is null</c> satisfies it while
+    /// <c>pid == null</c>, <c>pid.HasValue is false</c> and a <c>pid ??= …</c> that needs no
+    /// <c>if</c> at all do not — each would redden this row despite being the same intent. That is
+    /// the safe direction (loud, at the line it names, and fixed by spelling the pattern) and it
+    /// is also why the rule is stated as the pattern rather than as "a guarded look". It is aimed
+    /// at the accident (somebody tidies the <c>finally</c> and the reclaim goes with it), not at
+    /// an adversary.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void EveryFinallyThatKills_ReclaimsAPidFirst()
+    {
+        const string KillMethod = "KillTreeQuietly";
+        const string ReclaimMethod = "ReclaimPidForTeardownQuietlyAsync";
+        const int ExpectedKillingFinallies = 3;
+
+        var path = Path.Combine(
+            RepositoryRoot(), "tests", "Vouchfx.Cli.Tests", "SystemProcessRunnerTests.cs");
+
+        // The repository-relative tail, not the resolved path: the account name above the checkout
+        // belongs in nobody's public job log, and the tail is the whole of what a reader re-aims.
+        Assert.True(
+            File.Exists(path),
+            "this census reads its own source at "
+            + "'tests/Vouchfx.Cli.Tests/SystemProcessRunnerTests.cs' under the repository root, "
+            + "which is not there. The file was renamed or moved — re-aim this row rather than "
+            + "deleting it.");
+
+        var root = CSharpSyntaxTree.ParseText(File.ReadAllText(path), path: path).GetRoot();
+
+        var killing = root
+            .DescendantNodes(descendIntoTrivia: false)
+            .OfType<FinallyClauseSyntax>()
+            .Where(clause => InvocationsNamed(clause, KillMethod).Any())
+            .ToList();
+
+        Assert.True(
+            killing.Count == ExpectedKillingFinallies,
+            FormattableString.Invariant(
+                $"This file holds {killing.Count} `finally` block(s) calling `{KillMethod}`, not the {ExpectedKillingFinallies} this census covers (rows 1, 2 and 5). A new one needs the same guarded `{ReclaimMethod}` ahead of its kill — see #539 — and one that has gone means a teardown path was removed. Re-aim this count rather than deleting it."));
+
+        var offenders = new List<string>();
+        foreach (var clause in killing)
+        {
+            foreach (var kill in InvocationsNamed(clause, KillMethod))
+            {
+                if (!GuardedReclaimPrecedes(clause, kill, ReclaimMethod))
+                {
+                    offenders.Add(Describe(kill));
+                }
+            }
+        }
+
+        Assert.True(
+            offenders.Count == 0,
+            FormattableString.Invariant(
+                $"{offenders.Count} tree-kill(s) in a `finally` are not preceded, in the same block and under a `pid is null` guard, by `{ReclaimMethod}`. Without that look the kill receives whatever the attempt happened to hold — which on the path an assertion ended is null — and a child whose first write was merely late is left to ChildLifetime (#539). Put the guarded reclaim first:\n  ")
+            + string.Join("\n  ", offenders));
+    }
+
+    /// <summary>
+    /// Whether a guarded reclaim is a block-level statement of <paramref name="clause"/> ahead of
+    /// <paramref name="kill"/>'s own.
+    /// </summary>
+    private static bool GuardedReclaimPrecedes(
+        FinallyClauseSyntax clause, InvocationExpressionSyntax kill, string reclaimMethod)
+    {
+        var block = clause.Block;
+        var killAnchor = BlockLevelStatement(block, kill);
+        if (killAnchor is null)
+        {
+            return false;
+        }
+
+        return InvocationsNamed(clause, reclaimMethod).Any(reclaim =>
+        {
+            var anchor = BlockLevelStatement(block, reclaim);
+            return anchor is not null
+                && block.Statements.IndexOf(anchor) < block.Statements.IndexOf(killAnchor)
+                && GuardedOnANullPid(reclaim);
+        });
+    }
+
+    /// <summary>
+    /// The statement of <paramref name="block"/> that <paramref name="node"/> sits in — the node's
+    /// own statement when it is a direct child, otherwise the enclosing <c>if</c>/loop/try that
+    /// is. <see langword="null"/> when the node is not inside this block at all.
+    /// </summary>
+    private static StatementSyntax? BlockLevelStatement(BlockSyntax block, SyntaxNode node) =>
+        node.AncestorsAndSelf()
+            .OfType<StatementSyntax>()
+            .FirstOrDefault(statement => ReferenceEquals(statement.Parent, block));
+
+    /// <summary>
+    /// Whether an enclosing <c>if</c> inside the same <c>finally</c> tests <c>pid is null</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The condition need only CONTAIN the pattern, so row 5's
+    /// <c>pid is null &amp;&amp; !lateLookTaken</c> satisfies it: a narrower guard is still a
+    /// guard.
+    /// </para>
+    /// <para>
+    /// <strong>What it refuses is a look not guarded BY THAT SPELLING, which is narrower than "an
+    /// unguarded look" and the difference is worth stating.</strong> This matches an
+    /// <see cref="IsPatternExpressionSyntax"/>, so <c>pid == null</c>, <c>!pid.HasValue</c> and a
+    /// <c>pid ??= …</c> with no <c>if</c> around it are all refused even though each guards the
+    /// look perfectly well. The census reddens on them, loudly and at the line, and the fix is to
+    /// spell the pattern; pinning one spelling is what keeps this decidable without a symbol
+    /// table, and the call sites it governs are three lines in one file.
+    /// </para>
+    /// </remarks>
+    private static bool GuardedOnANullPid(SyntaxNode node) =>
+        node.Ancestors()
+            .TakeWhile(ancestor => ancestor is not FinallyClauseSyntax)
+            .OfType<IfStatementSyntax>()
+            .Any(statement => statement.Condition
+                .DescendantNodesAndSelf()
+                .OfType<IsPatternExpressionSyntax>()
+                .Any(pattern =>
+                    pattern.Expression is IdentifierNameSyntax { Identifier.ValueText: "pid" }
+                    && pattern.Pattern is ConstantPatternSyntax constant
+                    && constant.Expression.IsKind(SyntaxKind.NullLiteralExpression)));
+
+    /// <summary>Every invocation of a method with this bare name, at any depth.</summary>
+    private static IEnumerable<InvocationExpressionSyntax> InvocationsNamed(
+        SyntaxNode node, string methodName) =>
+        node.DescendantNodes(descendIntoTrivia: false)
+            .OfType<InvocationExpressionSyntax>()
+            .Where(invocation => invocation.Expression switch
+            {
+                MemberAccessExpressionSyntax access =>
+                    access.Name.Identifier.ValueText == methodName,
+                IdentifierNameSyntax name => name.Identifier.ValueText == methodName,
+                _ => false,
+            });
+
+    /// <summary>
+    /// A census offender as its failure message names it: line, then first line of text.
+    /// </summary>
+    private static string Describe(SyntaxNode node)
+    {
+        var line = node.SyntaxTree.GetLineSpan(node.Span).StartLinePosition.Line + 1;
+        return FormattableString.Invariant($"line {line}: ")
+            + node.ToString().Split('\n')[0].Trim();
+    }
+
+    /// <summary>
+    /// The repository root, found by walking up to the directory holding the solution.
+    /// </summary>
+    private static string RepositoryRoot()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null
+            && !File.Exists(Path.Combine(directory.FullName, "vouchfx.sln")))
+        {
+            directory = directory.Parent;
+        }
+
+        Assert.NotNull(directory);
+        return directory!.FullName;
     }
 
     // ── budget machinery (#524) ──────────────────────────────────────────────────────────────

@@ -8,9 +8,9 @@ namespace Vouchfx.Engine.Orchestration.Tests;
 /// The three assertions the #420 flight recorder needs a real topology for: that a start which
 /// SUCCEEDS leaves nothing behind, that the filter rules survive contact with the real Aspire
 /// host, and that a FAILING topology writes a capture holding real DCP traffic through the
-/// production flush path. Four Docker-free rows sit beside them and pin the helpers the Docker
-/// rows lean on, in the blocking lane: the ownership filter on production-named files, and the
-/// failure-message description on real formatter output.
+/// production flush path. Five Docker-free rows sit beside them and pin the helpers the Docker
+/// rows lean on, in the blocking lane: the ownership filter on production-named files, that
+/// filter's candidate bound, and the failure-message description on real formatter output.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -21,7 +21,7 @@ namespace Vouchfx.Engine.Orchestration.Tests;
 /// <para>
 /// <strong>Each Docker row states its own relationship to the operator's REAL capture
 /// directory, because they differ and the difference is deliberate</strong> (the Docker-free
-/// rows never touch it: one owns a scratch directory of its own, the other three touch no
+/// rows never touch it: two own a scratch directory of their own, the other three touch no
 /// directory at all):
 /// </para>
 /// <list type="bullet">
@@ -109,6 +109,70 @@ namespace Vouchfx.Engine.Orchestration.Tests;
 public sealed class DcpFlightRecorderDockerTests
 {
     private const string AppHostAssemblyName = "Vouchfx.Engine.Orchestration.Tests";
+
+    /// <summary>
+    /// How many captures <see cref="CapturesNaming"/> will stat and read, newest first.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Why a bound at all.</strong> <c>RetainedFiles</c> bounds only what the ENGINE
+    /// leaves in a directory it prunes. The directory these rows read is
+    /// <see cref="DcpCapture.ResolveDirectory()"/>'s, which an operator may point anywhere -
+    /// this project's own troubleshooting guide suggests a workspace directory - so it can hold an
+    /// unbounded historical or foreign set of <c>dcp-capture-*.log</c> files that nothing prunes.
+    /// One caller runs this filter inside a <c>finally</c>, where per-file I/O over such a set is
+    /// teardown latency paid on every run.
+    /// </para>
+    /// <para>
+    /// <strong>Newest first is what makes the bound safe, and the ordering is EXACT rather than
+    /// approximate.</strong> <see cref="DcpCapture.BuildFileName(DateTimeOffset)"/> is a fixed
+    /// prefix, a fixed-width zero-padded UTC stamp and a fixed suffix, so an ordinal descending
+    /// sort of the NAMES is a chronological sort - the same property
+    /// <c>DcpCapture</c>'s own retention relies on, and the reason no file timestamp is read here.
+    /// </para>
+    /// <para>
+    /// <strong>The engine mints ONE shape that breaks strict order, and it is harmless at this
+    /// scale.</strong> On a name collision <c>DcpCapture</c> retries under a <c>-N</c> suffix
+    /// (<c>dcp-capture-&lt;stamp&gt;Z-2.log</c>), and <c>-</c> (0x2D) sorts below <c>.</c> (0x2E),
+    /// so such a file lands one place BELOW its same-millisecond sibling rather than beside it.
+    /// The retry is capped at five attempts, so the displacement is at most four places against a
+    /// window of sixty-four: it cannot move a file out of the window, only within it.
+    /// </para>
+    /// <para>
+    /// <strong>Why the calling row's OWN capture is inside the bound.</strong> That capture is
+    /// stamped at its flush, which is during the row, so it sorts among the newest. Two things
+    /// could push it out, and both are bounded. A host clock that stepped BACKWARDS by more than
+    /// the span of <see cref="MaxCandidates"/> captures would file it under an older stamp - the
+    /// same backwards-clock case <c>DcpCapture.SelectForDeletion</c>'s <c>justWritten</c> remark
+    /// already names, and the same one the snapshot argument in <see cref="CapturesNaming"/>'s
+    /// remarks turns on. Concurrent FOREIGN writers can push it down by exactly as many captures
+    /// as they write between this row's flush and its listing, which is a window of seconds; 64 is
+    /// far above <c>DcpCapture.RetainedFiles</c> (12), so even a writer that filled the engine's
+    /// whole retention set inside that window five times over would not reach it.
+    /// </para>
+    /// <para>
+    /// The residual is real and is the same CLASS the healthy row's "SECOND, NARROWER SILENT MISS"
+    /// paragraph already records: a row's own capture that the filter cannot see passes green over
+    /// a leak. <strong>It is WORSE than that one in its consequence, though, and the difference is
+    /// worth writing down.</strong> There the file had already been pruned away by retention, so
+    /// there was nothing left to tidy; here the file still EXISTS, just outside the window — so the
+    /// healthy row not only fails to assert on it but fails to DELETE it, and the artefact stays in
+    /// the operator's directory for the next reader to mistake for a real finding.
+    /// <see cref="CapturesNaming_ConsidersOnlyTheNewestCandidates"/> pins the bound in both
+    /// directions so the residual is a measured figure rather than a belief.
+    /// </para>
+    /// <para>
+    /// The ordering is exact only for names the ENGINE minted — and even there with the one
+    /// documented exception above, the <c>-N</c> collision suffix, which displaces by at most four
+    /// places and so cannot reach this window's edge. A FOREIGN file that merely matches the
+    /// glob — <c>dcp-capture-99999999T999999999Z.log</c>, say — sorts above every real stamp
+    /// whenever it was written, so in a shared directory sixty-four such names occupy the whole
+    /// window and the bound is a LATENCY bound, not an ownership guarantee. That is no escalation:
+    /// whoever can plant files there can already delete the capture outright, or make a
+    /// pre-existing file name the token — the sibling row pins that such a file IS reported.
+    /// </para>
+    /// </remarks>
+    private const int MaxCandidates = 64;
 
     /// <summary>
     /// The container <see cref="StartAsync_WhenTheTopologyComesUp_WritesNoCaptureFile"/> splices
@@ -761,6 +825,11 @@ public sealed class DcpFlightRecorderDockerTests
     /// of a method one caller runs inside a <c>finally</c>. That file shape is what another
     /// process's mid-write leaves on disk.
     /// </para>
+    /// <para>
+    /// Three files is far below <see cref="MaxCandidates"/>, so this row says nothing about the
+    /// filter's candidate window and is not meant to:
+    /// <see cref="CapturesNaming_ConsidersOnlyTheNewestCandidates"/> is what pins that.
+    /// </para>
     /// </remarks>
     [Fact]
     public void CapturesNaming_ReportsAPreExistingFileThatNamesTheToken()
@@ -825,6 +894,126 @@ public sealed class DcpFlightRecorderDockerTests
     }
 
     /// <summary>
+    /// <see cref="CapturesNaming"/> reads only the newest <see cref="MaxCandidates"/> captures:
+    /// a naming file inside that window is reported, and one pushed past it is not.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Two assertions that are not the same kind of claim, and the second is the one worth
+    /// labelling.</strong> The first is the contract, and what it guards is the SHAPE rather than
+    /// the size: a capture naming the token, NEWEST of a directory holding more files than the
+    /// bound admits, is still reported — so the sort must run descending and the window must be
+    /// taken from that end. It does not guard the NUMBER, and cannot: both arrangements below are
+    /// derived from <see cref="MaxCandidates"/>, so changing the bound moves the fixture with it
+    /// and this row stays green. MEASURED, which is how the split was established rather than
+    /// reasoned: turning the sort ascending reddens this assertion
+    /// (<c>Expected: ["dcp-capture-…070Z.log"] / Actual: []</c>), while deleting the
+    /// <c>Take</c> outright leaves it passing and reddens the second one instead.
+    /// The second is the bound's RESIDUAL, recorded rather than desired: a naming capture with
+    /// <see cref="MaxCandidates"/> newer files stacked on top of it is invisible to the filter, and
+    /// in a live row that is a leak the caller would pass green over. It is asserted here so the
+    /// figure is measured instead of assumed, not because anyone wants that outcome.
+    /// <see cref="MaxCandidates"/>'s own remarks argue why a real row cannot reach it: the row's
+    /// capture is stamped during the row, and 64 is five times the engine's whole retention set.
+    /// </para>
+    /// <para>
+    /// <strong>The counts are derived from <see cref="MaxCandidates"/>, not written out.</strong>
+    /// Today that is 70 older files against a bound of 64, and 64 newer ones stacked on for the
+    /// second case; a change to the bound moves both arrangements with it rather than leaving this
+    /// row asserting a window the filter no longer has.
+    /// </para>
+    /// <para>
+    /// Docker-free and deterministic for the reason
+    /// <see cref="CapturesNaming_ReportsAPreExistingFileThatNamesTheToken"/> gives: the property is
+    /// a claim about the FILTER. The row owns a Guid-suffixed directory under
+    /// <see cref="Path.GetTempPath"/>, removed in a <c>finally</c>, so nothing here touches the
+    /// operator's real capture directory. The non-naming files carry this same instance's OTHER
+    /// token, so "not reported" holds by the differing prefix rather than by a Guid not colliding.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void CapturesNaming_ConsidersOnlyTheNewestCandidates()
+    {
+        var directory = Path.Combine(
+            Path.GetTempPath(), "vouchfx-dcp-bound-drill-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+
+        try
+        {
+            // Minted through production's own BuildFileName, for the reason the sibling row states:
+            // a literal would survive a timestamp-layout change the glob did not notice. Distinct
+            // milliseconds, because that is the layout's resolution and two files may not share a
+            // name - and because ordinal name order IS chronological order, which is the premise
+            // the bound's "newest first" rests on.
+            var stamp = new DateTimeOffset(2026, 9, 17, 12, 0, 0, TimeSpan.Zero);
+            var older = MaxCandidates + 6;
+
+            for (var i = 0; i < older; i++)
+            {
+                WriteCapture(directory, stamp.AddMilliseconds(i), _failingResourceName);
+            }
+
+            var naming = WriteCapture(
+                directory, stamp.AddMilliseconds(older), _healthyResourceName);
+
+            // Non-vacuity: the directory really does hold more files than the bound admits, so the
+            // first assertion is about a window rather than about a short listing.
+            Assert.True(ListCaptures(directory).Length > MaxCandidates);
+
+            Assert.Equal(
+                new[] { Path.GetFileName(naming) },
+                CapturesNaming(directory, _healthyResourceName)
+                    .Select(Path.GetFileName)
+                    .ToArray());
+
+            // Stack exactly MaxCandidates newer captures on top, which is the fewest that can push
+            // the naming file out of the window.
+            for (var i = 1; i <= MaxCandidates; i++)
+            {
+                WriteCapture(
+                    directory, stamp.AddMilliseconds(older + i), _failingResourceName);
+            }
+
+            // THE RESIDUAL, not a desired outcome - see this row's remarks.
+            // Projected to bare names, as every assertion over this filter's output is: on failure
+            // xunit prints the collection, and a full path here is the operator's account name in
+            // a public job log - the rule this file holds the engine to.
+            Assert.Empty(CapturesNaming(directory, _healthyResourceName).Select(Path.GetFileName));
+        }
+        finally
+        {
+            // Guarded for the same reason the sibling rows' cleanups are: a throw here would
+            // replace the assertion failure that is the row's whole output.
+            try
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+            catch (IOException)
+            {
+            }
+            catch (UnauthorizedAccessException)
+            {
+            }
+        }
+    }
+
+    /// <summary>
+    /// Writes one capture-shaped file naming <paramref name="resourceName"/>, and returns its path.
+    /// </summary>
+    /// <remarks>
+    /// A capture body is a header plus DCP log lines; all the filter asks of it is whether the
+    /// resource name occurs and whether the file has a non-zero length, so a representative line
+    /// serves. The NAME comes from production's own <see cref="DcpCapture.BuildFileName"/>.
+    /// </remarks>
+    private static string WriteCapture(
+        string directory, DateTimeOffset stamp, string resourceName)
+    {
+        var path = Path.Combine(directory, DcpCapture.BuildFileName(stamp));
+        File.WriteAllText(path, "Aspire.Hosting.Dcp: creating container " + resourceName + "\n");
+        return path;
+    }
+
+    /// <summary>
     /// The captures in <paramref name="directory"/> whose body names
     /// <paramref name="resourceName"/> — that is, the ones the calling row can prove are its own.
     /// </summary>
@@ -854,18 +1043,29 @@ public sealed class DcpFlightRecorderDockerTests
     /// That is the whole case for removing it, and it needs no failure mode to stand.
     /// </para>
     /// <para>
-    /// <strong>The failure mode #538 was filed on is NOT reachable against today's engine, and
-    /// saying so is cheaper than carrying a story that does not hold.</strong> The hypothesis was
-    /// that a snapshotted name could be freed by another writer's retention pass and then taken by
-    /// this row's own capture, so the difference would drop the row's own file by pathname. It
-    /// cannot: a capture name encodes the moment it was written
+    /// <strong>THE PER-RUN TOKEN IS THE PROTECTION, AND THE REMOVAL RESTS ON REDUNDANCY — that is
+    /// the whole argument, and it does not need the story #538 was filed on to be true.</strong>
+    /// A capture naming the token is this run's and no other run's capture can name it, so the
+    /// snapshot stage could only ever DISCARD a file the token accepts. That holds whichever way
+    /// the paragraph below comes out.
+    /// </para>
+    /// <para>
+    /// <strong>The story itself is narrower than it was filed as, and one leg of the argument
+    /// against it does NOT hold.</strong> The hypothesis was that a snapshotted name could be
+    /// freed by another writer's retention pass and then taken by this row's own capture, so the
+    /// difference would drop the row's own file by pathname. Two legs were offered against it. The
+    /// one that stands: a capture name encodes the moment it was written
     /// (<see cref="DcpCapture.BuildFileName(DateTimeOffset)"/>, from <c>DateTimeOffset.UtcNow</c>
     /// at the flush), so every name in a snapshot taken at T0 encodes a moment at or before T0
-    /// while this row's capture is stamped later and can equal none of them; and a name already
-    /// taken on disk is not reusable anyway, because <c>DcpCapture</c> creates the file with
-    /// <c>FileMode.CreateNew</c> and retries under a <c>-N</c> suffix on collision. The chain
-    /// closes only under a host clock that stepped backwards — the case
-    /// <c>DcpCapture.SelectForDeletion</c>'s own <c>justWritten</c> remark already names.
+    /// while this row's capture is stamped later and can equal none of them — unless the host
+    /// clock stepped backwards, the case <c>DcpCapture.SelectForDeletion</c>'s own
+    /// <c>justWritten</c> remark already names. The one that does NOT:
+    /// <c>FileMode.CreateNew</c> and the <c>-N</c> retry were cited as making a taken name
+    /// unreusable, and they are not. <c>CreateNew</c> refuses a name only while a file of that
+    /// name still EXISTS; once another process's retention pass has deleted the snapshotted file
+    /// the name is free and <c>CreateNew</c> takes it without complaint. That mechanism rules out
+    /// two LIVE files colliding inside one millisecond — which is what the <c>-N</c> retry is
+    /// for — and says nothing about delete-then-reuse.
     /// <see cref="CapturesNaming_ReportsAPreExistingFileThatNamesTheToken"/> pins what is left
     /// of the contract, deterministically and without Docker.
     /// </para>
@@ -876,7 +1076,9 @@ public sealed class DcpFlightRecorderDockerTests
     /// <c>LocalApplicationData</c>, and this project's own troubleshooting guide recommends
     /// pointing it at <c>${{ github.workspace }}/vouchfx-captures</c>. An operator following that
     /// recipe has this method enumerating, reading and deleting inside a workspace. The blast
-    /// radius stays bounded by the ownership key and the <c>dcp-capture-*.log</c> glob — which on
+    /// radius stays bounded by the ownership key, by <see cref="MaxCandidates"/> — which is what
+    /// keeps an unpruned operator directory from being stat'd and read file by file inside a
+    /// <c>finally</c> — and by the <c>dcp-capture-*.log</c> glob — which on
     /// Windows admits a little more than it reads as, since a three-character extension pattern
     /// there also matches extensions that merely BEGIN with it (<c>.logs</c>, <c>.logfile</c>) —
     /// but it is not confined to a private directory, so it is stated rather than assumed away.
@@ -912,24 +1114,31 @@ public sealed class DcpFlightRecorderDockerTests
     /// </remarks>
     private static string[] CapturesNaming(string directory, string resourceName)
     {
-        // A capture cannot be larger than the recorder's own budget plus its header, so anything
-        // past this bound is not one of ours and is not worth reading. The bound is not thrift:
-        // File.ReadAllText is unbounded and uncancellable and this runs inside a finally, and
-        // EnumerateFiles will happily return a FIFO on Unix - reading one blocks for ever, and
+        // TWO bounds, and they are independent: one on the SIZE of any file this reads, one on the
+        // NUMBER of files it considers at all.
+        //
+        // SIZE. A capture cannot be larger than the recorder's own budget plus its header, so
+        // anything past this bound is not one of ours and is not worth reading. The bound is not
+        // thrift: File.ReadAllText is unbounded and uncancellable and this runs inside a finally,
+        // and EnumerateFiles will happily return a FIFO on Unix - reading one blocks for ever, and
         // DcpCapture.CreateDirectoryOwnerOnly deliberately does not narrow the mode of a
         // PRE-EXISTING directory, so a group-writable capture directory is possible. A FIFO also
         // reports length 0, which the lower bound rejects; a zero-length regular file is a
         // mid-write or a stub and is not a capture either.
-        //
-        // The bound is per FILE. Since #538 the listing is no longer differenced against a
-        // snapshot, so every dcp-capture-*.log in the directory is considered - stat'd, and read
-        // when it clears the bound: a count bounded by
-        // DcpCapture.RetainedFiles where the engine wrote them, and by nothing at all in an
-        // operator-chosen directory.
         const int HeaderSlack = 8 * 1024;
         var maxCaptureBytes = (long)DcpFlightRecorder.DefaultCharLimit * 4 + HeaderSlack;
 
+        // COUNT, and it is the bound #538 took away without putting one back. The removed snapshot
+        // had bounded this listing incidentally: only files that appeared during the row's own
+        // window were ever stat'd or read. Without it every dcp-capture-*.log in the directory was
+        // considered - which is DcpCapture.RetainedFiles files where the ENGINE wrote them and an
+        // unbounded historical or foreign set in an operator-chosen directory (see the
+        // ${{ github.workspace }} recipe named in the remarks). One caller runs this inside a
+        // `finally`, so an unbounded per-file stat-and-read there delays teardown by however much
+        // junk shares the directory. MaxCandidates puts the bound back explicitly instead.
         return ListCaptures(directory)
+            .OrderByDescending(Path.GetFileName, StringComparer.Ordinal)
+            .Take(MaxCandidates)
             .Where(path => Names(path, resourceName, maxCaptureBytes))
             .ToArray();
 

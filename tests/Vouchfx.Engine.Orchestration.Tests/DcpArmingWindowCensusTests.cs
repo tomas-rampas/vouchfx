@@ -35,9 +35,10 @@ namespace Vouchfx.Engine.Orchestration.Tests;
 /// header.</strong> Rules 1 and 2 close the two exits above; rule 3 orders the flush ahead of the
 /// classification that has to read it; rules 4 and 5 pin the two halves of the hand-off at the
 /// START of the window — that <c>HeadlessTopology.StartAsync</c> gives the recorder to the
-/// topology it returns, and that it drops one only from a failure path; rule 6 pins the CALLER
-/// SET itself, so rules 1–3's <c>InlineData</c> cannot silently go stale. Read the rule, not this
-/// paragraph, before quoting any of them as a guarantee: four of the six — rules 1, 2, 3 and 4 —
+/// topology it returns, and that it drops one only from a failure path; rule 6 pins the CALL SITES
+/// themselves — every invocation under <c>src/</c>, counted rather than the files holding them —
+/// so rules 1–3's <c>InlineData</c> cannot silently go stale. Read the rule, not this
+/// paragraph, before quoting any of them as a guarantee: five of the six — every rule but 5 —
 /// name a gap of their own, and saying so is the point.
 /// </para>
 /// <para>
@@ -52,13 +53,25 @@ namespace Vouchfx.Engine.Orchestration.Tests;
 public sealed class DcpArmingWindowCensusTests
 {
     /// <summary>
-    /// The name rules 4 and 5 know the recorder by inside <c>HeadlessTopology.StartAsync</c>. A
+    /// The name by which rules 4 and 5 identify the recorder inside
+    /// <c>HeadlessTopology.StartAsync</c>. A
     /// syntax census has no symbol table, so the spelling IS the subject — but a RENAME does not
     /// go quiet: it renames the two failure-path <c>recorder?.Dispose()</c> receivers too, so rule
     /// 4's <c>Assert.NotEmpty</c> over the invocation scan reddens first, and rule 5 reddens on the
     /// hand-off argument as well. Rule 4's second vacuity guard covers the narrower case those two
     /// miss: a DECLARATION hoisted out of <c>StartAsync</c> while the disposals still spell it.
     /// </summary>
+    /// <remarks>
+    /// Rule 4's disposal MATCHING does not compare against this constant directly. It SEEDS
+    /// <see cref="RecorderNamesIn"/> with it and then matches every shape against the resulting
+    /// alias set, so a local bound from the recorder is the recorder for that rule's purposes.
+    /// Rule 5 and the declarator guard below still read the constant itself, and deliberately:
+    /// each is about a site with exactly one spelling — the hand-off argument, and the
+    /// declaration. Rule 4's FIRST vacuity guard is not in that company and the summary above
+    /// should not be read as putting it there: it counts what the SET-based scan returned. It
+    /// still reddens on a rename, but by a different route — the set is then just the seed, and
+    /// no disposal receiver is spelled like it any more, so the scan returns nothing.
+    /// </remarks>
     private const string RecorderLocal = "recorder";
 
     /// <summary>
@@ -287,6 +300,17 @@ public sealed class DcpArmingWindowCensusTests
     /// above by another spelling.
     /// </para>
     /// <para>
+    /// <strong>"The recorder" means a NAME SET rather than one spelling, and all three shapes plus
+    /// the invocation scan read the same set.</strong> <see cref="RecorderNamesIn"/> seeds it with
+    /// <see cref="RecorderLocal"/> and closes it over every local initialised from a name already
+    /// in it, to a fixed point. So <c>var alias = recorder;</c> bound in one statement and disposed
+    /// in a later one — by <c>alias.Dispose()</c>, by <c>using (alias) { }</c>, or through a second
+    /// hop <c>var b = alias;</c> — is refused exactly as the recorder itself is. Without that
+    /// closure the two-statement alias was the nearest edit to the one-keyword mutation above that
+    /// this rule could not see. What the set still cannot follow is stated on
+    /// <see cref="RecorderNamesIn"/>.
+    /// </para>
+    /// <para>
     /// <strong>Why that shape earns a rule rather than a comment.</strong>
     /// <c>DcpFlightRecorder.CreateUnlessDisabled</c> is the only reader of
     /// <c>VOUCHFX_DCP_CAPTURE=0</c>, so a recorder disposed as the start returns is
@@ -302,9 +326,9 @@ public sealed class DcpArmingWindowCensusTests
     /// included — inside a <c>catch</c> of an outer throwaway <c>try</c> would be exempt from this
     /// rule while rules 1-3 and 5 still passed. That is a deliberate construction rather than a
     /// plausible refactor, and the Docker-gated behavioural row is what covers it. The
-    /// <c>using</c> half's own remaining limits — an alias bound in one statement and disposed in
-    /// a later one, a parenthesised or cast resource expression — are stated on
-    /// <see cref="UsingDisposalsOf"/>.
+    /// <c>using</c> half's own remaining limit — a resource reached through a field, a property, a
+    /// method's return value, a cast or a parenthesised expression rather than through a bare
+    /// name — is stated on <see cref="UsingDisposalsOf"/> and on <see cref="RecorderNamesIn"/>.
     /// </para>
     /// <para>
     /// <c>FlushOnFailureAsync</c> disposes the recorder too, in its own <c>finally</c>
@@ -320,9 +344,18 @@ public sealed class DcpArmingWindowCensusTests
     {
         var start = PublicStartAsync("HeadlessTopology.cs");
 
+        // Every name that refers to the recorder inside StartAsync, computed once and used by the
+        // invocation scan below as well as by all three `using` shapes. The seed is the
+        // declaration's own name; the closure is what makes `var alias = recorder;` two statements
+        // above a disposal count as a disposal of the recorder. See RecorderNamesIn for the fixed
+        // point and for what it cannot follow.
+        var names = RecorderNamesIn(start);
+
         var disposals = start.DescendantNodes()
             .OfType<InvocationExpressionSyntax>()
-            .Where(i => NameOf(i) == "Dispose" && ReceiverOf(i) == RecorderLocal)
+            .Where(i => NameOf(i) == "Dispose"
+                && ReceiverOf(i) is { } receiver
+                && names.Contains(receiver))
             .ToList();
 
         // Guard against a vacuous pass: a StartAsync that never drops the recorder on any failure
@@ -367,14 +400,15 @@ public sealed class DcpArmingWindowCensusTests
             .Select(i => Describe(i))
             .ToList();
 
-        offenders.AddRange(UsingDisposalsOf(start, RecorderLocal)
+        offenders.AddRange(UsingDisposalsOf(start, names)
             .Where(u => !InsideACatch(u.Node, start))
             .Select(u => $"{Describe(u.Node)} - {u.Why}"));
 
         Assert.True(
             offenders.Count == 0,
-            $"{offenders.Count} disposal(s) of the `{RecorderLocal}` local in "
-            + "HeadlessTopology.StartAsync sit outside a catch clause, so the #420 arming window "
+            $"{offenders.Count} disposal(s) of the `{RecorderLocal}` local (or a name bound from "
+            + "it) in HeadlessTopology.StartAsync sit outside a catch clause, so the #420 arming "
+            + "window "
             + "closes when the start returns rather than when the caller reports the topology "
             + "ready. The recorder is handed to the returned topology and dropped by "
             + "SuiteTopology/StubTopology (or by DisposeAsync); it must only be disposed here on "
@@ -412,52 +446,123 @@ public sealed class DcpArmingWindowCensusTests
     }
 
     /// <summary>
-    /// Rule 6 — the CALLER SET itself, so rules 1–3's <c>InlineData</c> cannot silently go stale.
+    /// Rule 6 — the CALL SITES themselves, so rules 1–3's <c>InlineData</c> cannot silently go
+    /// stale.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Rules 1, 2 and 3 pin two files by name. That is a complete census only while those two are
-    /// the only callers of <c>HeadlessTopology.StartAsync</c> that own the far end of the arming
+    /// Rules 1, 2 and 3 pin two files by name. That is a complete census only while those two files
+    /// hold every call to <c>HeadlessTopology.StartAsync</c> that owns the far end of the arming
     /// window — and nothing checked it. A third caller could be added tomorrow, never drop or
     /// flush the recorder, and every row above would stay green while describing a set that no
     /// longer matched reality: an enumeration standing in for a property, which is the failure
     /// mode this file's own header warns about.
     /// </para>
     /// <para>
+    /// <strong>CALL SITES rather than files, because the first version of this rule could not tell
+    /// the two apart and the gap was real.</strong> It read each file as TEXT and recorded one FILE
+    /// NAME per file containing <c>HeadlessTopology.StartAsync(</c>, so a SECOND call added to
+    /// <c>SuiteTopology.cs</c> or <c>StubTopology.cs</c> left both filename checks green. Rules 1-3
+    /// would not have caught it either: they are aimed at the single <c>try</c> that returns the
+    /// topology type (<see cref="PostStartTry"/>), so a second call in another member of the same
+    /// file sits outside everything this census looks at — and would own an arming window nobody
+    /// drops or flushes. A PROSE mention was indistinguishable from a call as well:
+    /// <c>SuiteTopology.cs</c> names the method in its own header comment, so that file was being
+    /// counted for two reasons of which only one is a call. The rule now enumerates INVOCATION
+    /// NODES with Roslyn, and the count is part of the assertion.
+    /// </para>
+    /// <para>
+    /// <strong>It cannot pass vacuously, which is why it carries no separate emptiness
+    /// guard.</strong>
+    /// The assertion is an ordered sequence equality against exactly two named call sites, so a
+    /// census that found nothing — because <c>src/</c> resolved somewhere thin, or because every
+    /// call moved behind a spelling this rule cannot see — fails on the same line as one that found
+    /// too many.
+    /// </para>
+    /// <para>
     /// Modelled on <c>SuiteProtocolTargetsTests.EverySuiteTopologyStartCallSite_PassesBothTargetSets</c>,
-    /// which pins a call-site set the same way and for the same reason. A new caller reddens this
-    /// row and the fix is to add its <c>InlineData</c> above — or, if it genuinely owns no window,
-    /// to say so here.
+    /// which pins a call-site set the same way and for the same reason, and on
+    /// <see cref="ChildProcessKillCallSiteCensusTests"/> for reading a tree this project does not
+    /// reference: the files are parsed as text off disk, so assembly boundaries and project
+    /// references are irrelevant. A new call site reddens this row and the fix is to add its
+    /// <c>InlineData</c> above — or, if it genuinely owns no window, to say so here.
+    /// </para>
+    /// <para>
+    /// <strong>Its own limits, since every rule in this file states them.</strong> The match is
+    /// syntactic and name-based: the receiver is read on its RIGHTMOST identifier, so
+    /// <c>Vouchfx.Engine.Orchestration.HeadlessTopology.StartAsync(...)</c> counts, while four
+    /// spellings escape. A call through a <c>using</c> alias that renames the TYPE; a delegate
+    /// captured from the method group and invoked later; reflection; and — the one that is not
+    /// exotic — the BARE or <c>this.</c>-qualified form, because
+    /// <see cref="StartAsyncCallSitesIn"/> requires a
+    /// <see cref="MemberAccessExpressionSyntax"/> whose receiver names the type. A bare
+    /// <c>StartAsync(...)</c> can only be written from inside <c>HeadlessTopology</c> itself, and a
+    /// <c>this.</c>-qualified one not even there — <c>StartAsync</c> is static — so the gap is
+    /// confined to a self-call spelled without the type name. None of the four occurs under
+    /// <c>src/</c> today. Build output (<c>bin</c>, <c>obj</c>) is skipped so a generated source
+    /// cannot join the population.
+    /// </para>
+    /// <para>
+    /// One further way a call site could go missing, and it is bounded by the build rather than by
+    /// anything here: <c>CSharpSyntaxTree.ParseText</c>
+    /// RECOVERS from malformed input rather than failing, and no diagnostics are read, so a file
+    /// that did not parse cleanly could contribute fewer call sites than it spells. A file under
+    /// <c>src/</c> that does not parse does not compile, so this census would be running against a
+    /// tree that never built.
+    /// </para>
+    /// <para>
+    /// <c>HeadlessTopology.cs</c> is no longer excluded, and the exclusion's disappearance is a
+    /// consequence of the change rather than a relaxation. The text scan needed it because the
+    /// method's own declaration and remarks spell the name; an invocation census sees neither — a
+    /// declaration is not an invocation, and remarks are trivia. Should <c>StartAsync</c> ever call
+    /// itself through the TYPE NAME, that call WOULD own a window and this rule should say so; a
+    /// self-call spelled bare is the gap named above.
     /// </para>
     /// </remarks>
     [Fact]
     public void TheOnlyCallersOfHeadlessTopologyStartAsync_AreTheOnesThisCensusCovers()
     {
-        var engine = Path.Combine(RepositoryRoot(), "src");
+        var root = RepositoryRoot();
+        var engine = Path.Combine(root, "src");
 
-        var callers = Directory
+        // The root's own directory name rather than its absolute path: the diagnostic's value is
+        // which directory the vouchfx.sln walk landed on, and the account name above it belongs
+        // in nobody's public job log.
+        Assert.True(
+            Directory.Exists(engine),
+            $"this census reads the production tree at '{Path.GetFileName(root)}/src', which "
+            + "does not exist. The root is resolved by walking up to the directory holding "
+            + "vouchfx.sln, so a move that invalidates that walk would otherwise leave every "
+            + "caller uncensused.");
+
+        var callSites = Directory
             .EnumerateFiles(engine, "*.cs", SearchOption.AllDirectories)
-            .Where(p => File.ReadAllText(p)
-                .Contains("HeadlessTopology.StartAsync(", StringComparison.Ordinal))
-            .Select(p => Path.GetFileName(p))
-            .OrderBy(n => n, StringComparer.Ordinal)
+            .Where(path => !IsUnderBuildOutput(engine, path))
+            .SelectMany(StartAsyncCallSitesIn)
+            .OrderBy(site => site.File, StringComparer.Ordinal)
+            .ThenBy(site => site.Line)
             .ToList();
 
-        // HeadlessTopology.cs itself is excluded: the string occurs there in its own remarks and
-        // its own declaration, not as a call.
-        var external = callers
-            .Where(n => !string.Equals(n, "HeadlessTopology.cs", StringComparison.Ordinal))
-            .ToList();
+        // Ordinal order: 'St' sorts before 'Su'.
+        var covered = new[] { "StubTopology.cs", "SuiteTopology.cs" };
+
+        var invariant = System.Globalization.CultureInfo.InvariantCulture;
+        var found = callSites.Count == 0
+            ? "none"
+            : string.Join(
+                ", ",
+                callSites.Select(s => s.File + "(" + s.Line.ToString(invariant) + ")"));
 
         Assert.True(
-            external.Count == 2
-                && external.Contains("SuiteTopology.cs")
-                && external.Contains("StubTopology.cs"),
-            "the set of HeadlessTopology.StartAsync callers under src/ has changed, so this "
+            callSites.Select(site => site.File).SequenceEqual(covered, StringComparer.Ordinal),
+            "the set of HeadlessTopology.StartAsync CALL SITES under src/ has changed, so this "
             + "census's InlineData no longer enumerates every owner of the #420 arming window. "
-            + "Found: " + string.Join(", ", external) + ". Add the new caller to rules 1-3 (and "
-            + "give it a DropDiagnostics on its ready path and a FlushDiagnosticsAsync in its "
-            + "catches), or record here why it owns no window.");
+            + "Expected exactly one call in each of " + string.Join(", ", covered) + "; found: "
+            + found
+            + ". Add the new call site's file to rules 1-3 (and give it a DropDiagnostics on its "
+            + "ready path and a FlushDiagnosticsAsync in its catches), or record here why it owns "
+            + "no window. A SECOND call in a file already listed above needs the same treatment: "
+            + "rules 1-3 only ever look at the one try block that returns the topology.");
     }
 
     // -----------------------------------------------------------------------
@@ -491,6 +596,77 @@ public sealed class DcpArmingWindowCensusTests
         return (candidates[0], candidates[0].Catches.ToArray());
     }
 
+    /// <summary>One call to <c>HeadlessTopology.StartAsync</c>, by file and line.</summary>
+    /// <remarks>
+    /// Rendered at rule 6's single call site rather than by a <c>Display</c> member of its own.
+    /// Such a member cannot be <c>private</c> — a nested type's private members are NOT reachable
+    /// from the containing type, only the other way round — so it would have to be spelled
+    /// <c>internal</c> or <c>public</c>, and neither word describes something one expression in
+    /// this file uses. MEASURED: <c>private</c> there is CS0122.
+    /// </remarks>
+    private sealed record StartAsyncCallSite(string File, int Line);
+
+    /// <summary>
+    /// Every <c>HeadlessTopology.StartAsync(...)</c> INVOCATION in one source file.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The receiver is matched on its RIGHTMOST identifier, so both the bare and the
+    /// namespace-qualified spellings count — the same rule
+    /// <see cref="ChildProcessKillCallSiteCensusTests"/> applies to <c>Process.Start</c>, and for
+    /// the same reason.
+    /// </para>
+    /// <para>
+    /// <c>descendIntoTrivia: false</c> keeps comments and XML doc blocks out, which is the whole
+    /// point of parsing rather than scanning text: <c>SuiteTopology.cs</c> spells this call in its
+    /// own header comment. String literals are not trivia and are not excluded by that flag; what
+    /// makes them invisible is the <c>OfType&lt;InvocationExpressionSyntax&gt;()</c> filter below,
+    /// since a literal — interpolated or not — is not an invocation however it is spelled. The
+    /// receiver switch after it narrows invocations; it is not what keeps literals out.
+    /// </para>
+    /// </remarks>
+    private static IEnumerable<StartAsyncCallSite> StartAsyncCallSitesIn(string path)
+    {
+        var tree = CSharpSyntaxTree.ParseText(File.ReadAllText(path), path: path);
+
+        foreach (var invocation in tree.GetRoot()
+            .DescendantNodes(descendIntoTrivia: false)
+            .OfType<InvocationExpressionSyntax>())
+        {
+            if (invocation.Expression is not MemberAccessExpressionSyntax access
+                || access.Name.Identifier.ValueText != "StartAsync")
+            {
+                continue;
+            }
+
+            var receiver = access.Expression switch
+            {
+                IdentifierNameSyntax name => name.Identifier.ValueText,
+                MemberAccessExpressionSyntax qualified => qualified.Name.Identifier.ValueText,
+                _ => null,
+            };
+
+            if (receiver != "HeadlessTopology")
+            {
+                continue;
+            }
+
+            yield return new StartAsyncCallSite(
+                Path.GetFileName(path),
+                invocation.GetLocation().GetLineSpan().StartLinePosition.Line + 1);
+        }
+    }
+
+    /// <summary>
+    /// Whether a source file sits under a build-output directory of the census root.
+    /// </summary>
+    private static bool IsUnderBuildOutput(string root, string path) =>
+        Path.GetRelativePath(root, path)
+            .Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            .Any(segment =>
+                string.Equals(segment, "bin", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(segment, "obj", StringComparison.OrdinalIgnoreCase));
+
     /// <summary>The single public <c>StartAsync</c> declared in <paramref name="fileName"/>.</summary>
     private static MethodDeclarationSyntax PublicStartAsync(string fileName) =>
         Parse(fileName)
@@ -500,26 +676,111 @@ public sealed class DcpArmingWindowCensusTests
                 && m.Modifiers.Any(SyntaxKind.PublicKeyword));
 
     /// <summary>
-    /// Every <c>using</c> construct in <paramref name="method"/> that ends the lifetime of the
-    /// local named <paramref name="local"/>, paired with the reason to put in the failure message.
+    /// Every name inside <paramref name="method"/> that refers to the recorder: the declaration's
+    /// own name, plus every local initialised — directly or through another such local — from one
+    /// already in the set.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>A fixed point rather than one pass, and NOT because a chain needs two
+    /// sweeps.</strong>
+    /// <c>DescendantNodes</c> yields declarators in document order, so
+    /// <c>var a = recorder; var b = a;</c> closes in the FIRST sweep — <c>a</c> is already in the
+    /// set by the time <c>b</c> is visited — and under C#'s declare-before-use rule a chain in
+    /// code that COMPILES always does. The loop is what makes the result independent of that
+    /// order: it is a property of the traversal, not of the rule, and a rule whose correctness
+    /// rests on an enumeration order nothing here pins is a rule that breaks quietly. Locals are
+    /// finite and each is added once, so the iteration terminates on any method; on today's
+    /// StartAsync it costs one sweep that adds nothing.
+    /// </para>
+    /// <para>
+    /// <strong>What it deliberately does not follow, and why the line is drawn here.</strong> Only
+    /// an initialiser that is a bare <see cref="IdentifierNameSyntax"/> propagates. An alias that
+    /// reaches the recorder through a field, a property, a method's return value, a cast or a
+    /// parenthesised expression is invisible to this set and therefore to rule 4. That is the
+    /// boundary of the threat this rule exists for: the mutation it was written against is ONE
+    /// KEYWORD (<c>var</c> to <c>using var</c>) on a declaration that is already there, and the
+    /// two-statement alias is the smallest neighbouring edit — both now refused. Routing the
+    /// recorder out through a member or a call before disposing it is a deliberate construction
+    /// that no maintainer performs by accident, and the Docker-gated
+    /// <c>AFailingTopology_WritesACaptureIntoTheRedirectedDirectory</c> is what covers it. A
+    /// syntax census with no symbol table could not follow a field or a return value in any case.
+    /// </para>
+    /// <para>
+    /// <strong>It OVER-approximates in the other direction, which is the safe one.</strong> The
+    /// set holds NAMES and knows nothing of scope, so a local that merely shares a spelling with
+    /// an alias — declared in a sibling block the alias never reaches, say — is treated as the
+    /// recorder and its disposal is refused. That is a false red, loud and re-aimable at the line
+    /// it names, rather than the silent green a scope-aware version could produce by being wrong
+    /// the other way. Nothing in <c>StartAsync</c> is shaped like that today.
+    /// </para>
+    /// <para>
+    /// Declarators inside a lambda or a local function are NOT excluded, and that is the safe
+    /// direction: a name bound there is still a name, and the disposal it reaches is judged by
+    /// <see cref="InsideACatch"/>, which refuses anything behind a lambda boundary outright.
+    /// </para>
+    /// </remarks>
+    private static HashSet<string> RecorderNamesIn(SyntaxNode method)
+    {
+        var names = new HashSet<string>(StringComparer.Ordinal) { RecorderLocal };
+        var declarators = method.DescendantNodes().OfType<VariableDeclaratorSyntax>().ToList();
+
+        bool added;
+        do
+        {
+            added = false;
+            foreach (var declarator in declarators)
+            {
+                if (declarator.Initializer?.Value is IdentifierNameSyntax id
+                    && names.Contains(id.Identifier.Text)
+                    && names.Add(declarator.Identifier.Text))
+                {
+                    added = true;
+                }
+            }
+        }
+        while (added);
+
+        return names;
+    }
+
+    /// <summary>
+    /// Every <c>using</c> construct in <paramref name="method"/> that ends the lifetime of a local
+    /// in <paramref name="names"/>, paired with the reason to put in the failure message.
     /// </summary>
     /// <remarks>
     /// <para>
     /// Three constructs, because C# spells this disposal three ways: the using DECLARATION
     /// (<c>using var x = ...;</c>), the using STATEMENT that declares
     /// (<c>using (var x = ...) { }</c>), and the using STATEMENT that takes an already-declared
-    /// local as its resource (<c>using (x) { }</c>). The two DECLARING forms are matched by the
-    /// name they declare or by an INITIALISER that is the local, so <c>using var alias = recorder;</c>
-    /// is refused as well as <c>using var recorder = ...;</c> — the alias ends the same lifetime;
-    /// the RESOURCE form is matched by the expression itself. None of the three produces a
-    /// <c>Dispose</c> invocation node, which is why the invocation scan cannot see them.
+    /// local as its resource (<c>using (x) { }</c>). Each is matched against
+    /// <paramref name="names"/> — <see cref="RecorderNamesIn"/>'s closure over the recorder local —
+    /// so all three refuse an ALIAS exactly as they refuse the recorder itself. None of the three
+    /// produces a <c>Dispose</c> invocation node, which is why the invocation scan cannot see them.
     /// </para>
     /// <para>
-    /// The remaining limit, stated rather than implied: an alias bound with a plain <c>var</c> and
-    /// handed to one of these constructs in a LATER statement escapes — two deliberate edits,
-    /// against the one-keyword edit this rule exists to catch — as does a resource expression that
-    /// is parenthesised or cast (<c>using ((IDisposable)recorder)</c>), which is not an
-    /// <see cref="IdentifierNameSyntax"/>.
+    /// <strong>The two DECLARING forms are split into an alias arm and a plain arm, alias FIRST,
+    /// purely so the message is precise.</strong> Either arm alone would redden the same edits:
+    /// a declarator initialised from a name in the set is itself in the set, so the plain arm
+    /// would catch it too. Testing the INITIALISER first is what lets
+    /// <c>using var alias = recorder;</c> be reported as an alias while
+    /// <c>using var recorder = DcpFlightRecorder.CreateUnlessDisabled();</c> — whose initialiser is
+    /// a call, not a name — falls through to the plain arm. Neither arm is dead.
+    /// </para>
+    /// <para>
+    /// <strong>The remaining limit, stated rather than implied, and it is no longer the
+    /// two-statement alias.</strong> <c>var alias = recorder;</c> followed by
+    /// <c>using (alias) { }</c> some statements later is refused, because
+    /// <see cref="RecorderNamesIn"/> carries the name across the gap. What still escapes is an
+    /// alias that reaches the recorder through something other than a bare name: a field, a
+    /// property, a method's return value, a cast or a parenthesised expression
+    /// (<c>using ((IDisposable)recorder)</c>, which is not an
+    /// <see cref="IdentifierNameSyntax"/>). Each of those is a deliberate indirection rather than
+    /// a keystroke away from the code that is there — the mutation this rule exists to refuse is
+    /// <c>var</c> becoming <c>using var</c>, and the two-statement alias was its nearest
+    /// neighbour — and none of them is decidable without the symbol table a syntax census does not
+    /// have. The behavioural row is what covers that class; see
+    /// <see cref="RecorderNamesIn"/> for the same boundary argued from the other side.
     /// </para>
     /// <para>
     /// The declaration form is detected by the KEYWORD rather than by the absence of one: an
@@ -528,43 +789,43 @@ public sealed class DcpArmingWindowCensusTests
     /// </para>
     /// </remarks>
     private static IEnumerable<(SyntaxNode Node, string Why)> UsingDisposalsOf(
-        SyntaxNode method, string local)
+        SyntaxNode method, HashSet<string> names)
     {
         foreach (var node in method.DescendantNodes())
         {
             switch (node)
             {
-                case LocalDeclarationStatementSyntax { UsingKeyword.RawKind: not 0 } declaration
-                    when Declares(declaration.Declaration, local):
-                    yield return (declaration,
-                        "declared with `using`, so the recorder is disposed as StartAsync returns "
-                        + "and the post-start capture records nothing");
-                    break;
-
                 case LocalDeclarationStatementSyntax { UsingKeyword.RawKind: not 0 } alias
-                    when Aliases(alias.Declaration, local):
+                    when Aliases(alias.Declaration, names):
                     yield return (alias,
                         "aliased into a `using` declaration, so the recorder is disposed as "
                         + "StartAsync returns and the post-start capture records nothing");
                     break;
 
-                case UsingStatementSyntax { Declaration: { } declared } declaringStatement
-                    when Declares(declared, local):
-                    yield return (declaringStatement,
-                        "declared inside a `using` statement, so the recorder is disposed when "
-                        + "that block ends and the post-start capture records nothing");
+                case LocalDeclarationStatementSyntax { UsingKeyword.RawKind: not 0 } declaration
+                    when Declares(declaration.Declaration, names):
+                    yield return (declaration,
+                        "declared with `using`, so the recorder is disposed as StartAsync returns "
+                        + "and the post-start capture records nothing");
                     break;
 
                 case UsingStatementSyntax { Declaration: { } aliased } aliasStatement
-                    when Aliases(aliased, local):
+                    when Aliases(aliased, names):
                     yield return (aliasStatement,
                         "aliased into a `using` statement's declaration, so the recorder is "
                         + "disposed when that block ends and the post-start capture records "
                         + "nothing");
                     break;
 
+                case UsingStatementSyntax { Declaration: { } declared } declaringStatement
+                    when Declares(declared, names):
+                    yield return (declaringStatement,
+                        "declared inside a `using` statement, so the recorder is disposed when "
+                        + "that block ends and the post-start capture records nothing");
+                    break;
+
                 case UsingStatementSyntax { Expression: IdentifierNameSyntax resource }
-                    resourceStatement when resource.Identifier.Text == local:
+                    resourceStatement when names.Contains(resource.Identifier.Text):
                     yield return (resourceStatement,
                         "handed to a `using` statement as its resource, so the recorder is "
                         + "disposed when that block ends and the post-start capture records "
@@ -574,12 +835,13 @@ public sealed class DcpArmingWindowCensusTests
         }
     }
 
-    private static bool Declares(VariableDeclarationSyntax declaration, string local) =>
-        declaration.Variables.Any(v => v.Identifier.Text == local);
+    private static bool Declares(
+        VariableDeclarationSyntax declaration, HashSet<string> names) =>
+        declaration.Variables.Any(v => names.Contains(v.Identifier.Text));
 
-    private static bool Aliases(VariableDeclarationSyntax declaration, string local) =>
+    private static bool Aliases(VariableDeclarationSyntax declaration, HashSet<string> names) =>
         declaration.Variables.Any(v =>
-            v.Initializer?.Value is IdentifierNameSyntax id && id.Identifier.Text == local);
+            v.Initializer?.Value is IdentifierNameSyntax id && names.Contains(id.Identifier.Text));
 
     // Whether a disposal sits on one of StartAsync's OWN failure paths, which is the only thing
     // this rule exempts. A closure runs when its caller runs it, not when a catch does, so a
