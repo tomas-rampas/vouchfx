@@ -31,13 +31,14 @@ namespace Vouchfx.Engine.Orchestration.Tests;
 /// Docker-gated teardown-leak tests already fail on, so it cannot be added silently either.
 /// </para>
 /// <para>
-/// <strong>Five rules, and each states its own limit in its own remarks rather than in this
+/// <strong>Six rules, and each rule's limits are stated in its own remarks rather than in this
 /// header.</strong> Rules 1 and 2 close the two exits above; rule 3 orders the flush ahead of the
 /// classification that has to read it; rules 4 and 5 pin the two halves of the hand-off at the
 /// START of the window — that <c>HeadlessTopology.StartAsync</c> gives the recorder to the
-/// topology it returns, and that it drops one only from a failure path. Read the rule, not this
-/// paragraph, before quoting any of them as a guarantee: two of the five are approximations with
-/// a named gap, and saying so is the point.
+/// topology it returns, and that it drops one only from a failure path; rule 6 pins the CALLER
+/// SET itself, so rules 1–3's <c>InlineData</c> cannot silently go stale. Read the rule, not this
+/// paragraph, before quoting any of them as a guarantee: four of the six — rules 1, 2, 3 and 4 —
+/// name a gap of their own, and saying so is the point.
 /// </para>
 /// <para>
 /// <strong>Why a census at all, when a behavioural drill exists.</strong> Both are here.
@@ -50,6 +51,16 @@ namespace Vouchfx.Engine.Orchestration.Tests;
 /// </remarks>
 public sealed class DcpArmingWindowCensusTests
 {
+    /// <summary>
+    /// The name rules 4 and 5 know the recorder by inside <c>HeadlessTopology.StartAsync</c>. A
+    /// syntax census has no symbol table, so the spelling IS the subject — but a RENAME does not
+    /// go quiet: it renames the two failure-path <c>recorder?.Dispose()</c> receivers too, so rule
+    /// 4's <c>Assert.NotEmpty</c> over the invocation scan reddens first, and rule 5 reddens on the
+    /// hand-off argument as well. Rule 4's second vacuity guard covers the narrower case those two
+    /// miss: a DECLARATION hoisted out of <c>StartAsync</c> while the disposals still spell it.
+    /// </summary>
+    private const string RecorderLocal = "recorder";
+
     /// <summary>
     /// Rule 1 — every catch of the post-start region flushes.
     /// </summary>
@@ -253,16 +264,52 @@ public sealed class DcpArmingWindowCensusTests
     /// </para>
     /// <para>
     /// The rule is therefore stated as a location rather than as a presence: within
-    /// <c>StartAsync</c>'s body, every <c>Dispose</c> call whose receiver is the recorder must sit
-    /// inside a <c>catch</c>. Both legitimate drops are failure-path drops, so the constraint
-    /// costs nothing and refuses the mutation above by construction. The behavioural half is
+    /// <c>StartAsync</c>'s body, every disposal of the recorder spelled as a <c>Dispose</c> call or
+    /// as a <c>using</c> must sit inside a <c>catch</c>.
+    /// Both legitimate drops are failure-path drops, so the constraint costs nothing and refuses
+    /// the mutation above by construction. The behavioural half is
     /// <c>AFailingTopology_WritesACaptureIntoTheRedirectedDirectory</c>, which the same mutation
     /// reddens with real containers; this is the free half that runs in the default lane.
     /// </para>
     /// <para>
-    /// <c>FlushOnFailureAsync</c> disposes the recorder too, in its own <c>finally</c>, and is
-    /// deliberately not matched here: it is a different call, on a different type, and it is the
-    /// flush this window is supposed to end with.
+    /// <strong>Three shapes of disposal, alias forms included, because the first version knew only
+    /// one (#534).</strong>
+    /// It matched <c>Dispose</c> INVOCATIONS whose receiver is the recorder, which leaves
+    /// <c>using var recorder = DcpFlightRecorder.CreateUnlessDisabled();</c> — one keyword away
+    /// from the declaration the method actually carries — invisible: a using declaration disposes
+    /// without an invocation node to match, and the two <c>recorder?.Dispose()</c> calls on the
+    /// failure paths keep the vacuity guard below satisfied, so the rule did not even go quiet.
+    /// MEASURED before the widening: with that one keyword added, all eleven rows of this census
+    /// and of <c>DcpRecorderFactoryCensusTests</c> passed. The rule now refuses, alongside the
+    /// invocations, a using DECLARATION over the recorder local or over an alias of it, a using
+    /// STATEMENT declaring either, and a using STATEMENT taking it as a resource expression — all
+    /// of them dispose the recorder at a scope <c>StartAsync</c> owns, which is the drop mutation
+    /// above by another spelling.
+    /// </para>
+    /// <para>
+    /// <strong>Why that shape earns a rule rather than a comment.</strong>
+    /// <c>DcpFlightRecorder.CreateUnlessDisabled</c> is the only reader of
+    /// <c>VOUCHFX_DCP_CAPTURE=0</c>, so a recorder disposed as the start returns is
+    /// indistinguishable, from outside, from a run where capture was switched off: same absent
+    /// capture file, no error, no log line. The failure surfaces later, as a missing capture at
+    /// the moment someone needs one. No analyzer closes the gap either: MEASURED — building the
+    /// engine with the keyword added reports <c>0 Warning(s)</c>, so nothing in the toolchain would
+    /// have nudged the maintainer who wrote it.
+    /// </para>
+    /// <para>
+    /// <strong>The catch exemption has a limit of its own, and it is worth naming.</strong> A
+    /// <c>using</c> over the recorder that wrapped the whole success path — the hand-off
+    /// included — inside a <c>catch</c> of an outer throwaway <c>try</c> would be exempt from this
+    /// rule while rules 1-3 and 5 still passed. That is a deliberate construction rather than a
+    /// plausible refactor, and the Docker-gated behavioural row is what covers it.
+    /// </para>
+    /// <para>
+    /// <c>FlushOnFailureAsync</c> disposes the recorder too, in its own <c>finally</c>
+    /// (<c>DcpCapture.cs</c>), and is deliberately not matched here: it is a different call, on a
+    /// different type, and it is the flush this window is supposed to end with. A SUCCESS-path call
+    /// to it placed before the return would be a disposal this rule does not see — it takes
+    /// an exception argument the success path has none of, which is why constructing one sits
+    /// outside this rule's threat rather than inside its blind spot.
     /// </para>
     /// </remarks>
     [Fact]
@@ -272,7 +319,7 @@ public sealed class DcpArmingWindowCensusTests
 
         var disposals = start.DescendantNodes()
             .OfType<InvocationExpressionSyntax>()
-            .Where(i => NameOf(i) == "Dispose" && ReceiverOf(i) == "recorder")
+            .Where(i => NameOf(i) == "Dispose" && ReceiverOf(i) == RecorderLocal)
             .ToList();
 
         // Guard against a vacuous pass: a StartAsync that never drops the recorder on any failure
@@ -280,18 +327,51 @@ public sealed class DcpArmingWindowCensusTests
         // not a green one.
         Assert.NotEmpty(disposals);
 
-        var offenders = disposals
-            .Where(i => !i.Ancestors().OfType<CatchClauseSyntax>().Any())
-            .Select(i => Describe(i))
+        // The second vacuity guard, and it belongs to the `using` half specifically: that half
+        // finds the recorder by the SPELLING of its local, so a DECLARATION that has left
+        // StartAsync - hoisted to a field, or taken as a parameter - while the two failure-path
+        // `recorder?.Dispose()` calls still spell it would leave the using scan matching nothing
+        // and this rule green on a method it no longer describes. A RENAME is not that case: it
+        // renames those two receivers too, so the Assert.NotEmpty above reddens first, and rule 5
+        // reddens on the hand-off argument. DcpRecorderFactoryCensusTests pins the declarator count
+        // inside StartAsync as well, so this guard is defence in depth - it keeps this rule's own
+        // vacuity stated inside this rule, which is the convention the rest of the file follows.
+        //
+        // What it does NOT do, stated because the guard above invites the stronger reading: it
+        // refuses a subject that has VANISHED, not a check that someone DELETES. MEASURED: with
+        // the using scan below removed and `using var` on the declaration, all nine rows of this
+        // census pass. No assertion can guard its own deletion; the drill is what catches that.
+        var declarations = start.DescendantNodes()
+            .OfType<VariableDeclaratorSyntax>()
+            .Where(d => d.Identifier.Text == RecorderLocal)
+            // Rule 2's lambda boundary again: a declarator inside a closure is not StartAsync's.
+            .Where(d => !d.Ancestors().TakeWhile(a => a != start).Any(IsLambdaBoundary))
             .ToList();
 
         Assert.True(
+            declarations.Count > 0,
+            $"no local named `{RecorderLocal}` is declared in HeadlessTopology.StartAsync, so the "
+            + "`using` half of this rule is scanning for a name that no longer exists and would "
+            + "pass on any disposal shape. The declaration moved out of StartAsync - re-aim this "
+            + "rule rather than deleting it.");
+
+        var offenders = disposals
+            .Where(i => !InsideACatch(i, start))
+            .Select(i => Describe(i))
+            .ToList();
+
+        offenders.AddRange(UsingDisposalsOf(start, RecorderLocal)
+            .Where(u => !InsideACatch(u.Node, start))
+            .Select(u => $"{Describe(u.Node)} - {u.Why}"));
+
+        Assert.True(
             offenders.Count == 0,
-            $"{offenders.Count} `recorder.Dispose()` call(s) in HeadlessTopology.StartAsync sit "
-            + "outside a catch clause, so the #420 arming window closes when the start returns "
-            + "rather than when the caller reports the topology ready. The recorder is handed to "
-            + "the returned topology and dropped by SuiteTopology/StubTopology (or by "
-            + "DisposeAsync); it must only be disposed here on a failure path:\n  "
+            $"{offenders.Count} disposal(s) of the `{RecorderLocal}` local in "
+            + "HeadlessTopology.StartAsync sit outside a catch clause, so the #420 arming window "
+            + "closes when the start returns rather than when the caller reports the topology "
+            + "ready. The recorder is handed to the returned topology and dropped by "
+            + "SuiteTopology/StubTopology (or by DisposeAsync); it must only be disposed here on "
+            + "a failure path:\n  "
             + string.Join("\n  ", offenders));
     }
 
@@ -315,7 +395,7 @@ public sealed class DcpArmingWindowCensusTests
             .Any(r => r.Expression is ObjectCreationExpressionSyntax o
                 && o.Type.ToString() == "HeadlessTopology"
                 && o.ArgumentList is not null
-                && o.ArgumentList.Arguments.Any(a => a.ToString() == "recorder"));
+                && o.ArgumentList.Arguments.Any(a => a.ToString() == RecorderLocal));
 
         Assert.True(
             handOff,
@@ -411,6 +491,105 @@ public sealed class DcpArmingWindowCensusTests
             .OfType<MethodDeclarationSyntax>()
             .Single(m => m.Identifier.Text == "StartAsync"
                 && m.Modifiers.Any(SyntaxKind.PublicKeyword));
+
+    /// <summary>
+    /// Every <c>using</c> construct in <paramref name="method"/> that ends the lifetime of the
+    /// local named <paramref name="local"/>, paired with the reason to put in the failure message.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Three constructs, because C# spells this disposal three ways: the using DECLARATION
+    /// (<c>using var x = ...;</c>), the using STATEMENT that declares
+    /// (<c>using (var x = ...) { }</c>), and the using STATEMENT that takes an already-declared
+    /// local as its resource (<c>using (x) { }</c>). The two DECLARING forms are matched by the
+    /// name they declare or by an INITIALISER that is the local, so <c>using var alias = recorder;</c>
+    /// is refused as well as <c>using var recorder = ...;</c> — the alias ends the same lifetime;
+    /// the RESOURCE form is matched by the expression itself. None of the three produces a
+    /// <c>Dispose</c> invocation node, which is why the invocation scan cannot see them.
+    /// </para>
+    /// <para>
+    /// The remaining limit, stated rather than implied: an alias bound with a plain <c>var</c> and
+    /// handed to one of these constructs in a LATER statement escapes — two deliberate edits,
+    /// against the one-keyword edit this rule exists to catch — as does a resource expression that
+    /// is parenthesised or cast (<c>using ((IDisposable)recorder)</c>), which is not an
+    /// <see cref="IdentifierNameSyntax"/>.
+    /// </para>
+    /// <para>
+    /// The declaration form is detected by the KEYWORD rather than by the absence of one: an
+    /// omitted <c>using</c> is a default <see cref="SyntaxToken"/> rather than a null, so
+    /// <c>UsingKeyword.RawKind</c> is 0 exactly when there is no <c>using</c> keyword.
+    /// </para>
+    /// </remarks>
+    private static IEnumerable<(SyntaxNode Node, string Why)> UsingDisposalsOf(
+        SyntaxNode method, string local)
+    {
+        foreach (var node in method.DescendantNodes())
+        {
+            switch (node)
+            {
+                case LocalDeclarationStatementSyntax { UsingKeyword.RawKind: not 0 } declaration
+                    when Declares(declaration.Declaration, local):
+                    yield return (declaration,
+                        "declared with `using`, so the recorder is disposed as StartAsync returns "
+                        + "and the post-start capture records nothing");
+                    break;
+
+                case LocalDeclarationStatementSyntax { UsingKeyword.RawKind: not 0 } alias
+                    when Aliases(alias.Declaration, local):
+                    yield return (alias,
+                        "aliased into a `using` declaration, so the recorder is disposed as "
+                        + "StartAsync returns and the post-start capture records nothing");
+                    break;
+
+                case UsingStatementSyntax { Declaration: { } declared } declaringStatement
+                    when Declares(declared, local):
+                    yield return (declaringStatement,
+                        "declared inside a `using` statement, so the recorder is disposed when "
+                        + "that block ends and the post-start capture records nothing");
+                    break;
+
+                case UsingStatementSyntax { Declaration: { } aliased } aliasStatement
+                    when Aliases(aliased, local):
+                    yield return (aliasStatement,
+                        "aliased into a `using` statement's declaration, so the recorder is "
+                        + "disposed when that block ends and the post-start capture records "
+                        + "nothing");
+                    break;
+
+                case UsingStatementSyntax { Expression: IdentifierNameSyntax resource }
+                    resourceStatement when resource.Identifier.Text == local:
+                    yield return (resourceStatement,
+                        "handed to a `using` statement as its resource, so the recorder is "
+                        + "disposed when that block ends and the post-start capture records "
+                        + "nothing");
+                    break;
+            }
+        }
+    }
+
+    private static bool Declares(VariableDeclarationSyntax declaration, string local) =>
+        declaration.Variables.Any(v => v.Identifier.Text == local);
+
+    private static bool Aliases(VariableDeclarationSyntax declaration, string local) =>
+        declaration.Variables.Any(v =>
+            v.Initializer?.Value is IdentifierNameSyntax id && id.Identifier.Text == local);
+
+    // Whether a disposal sits on one of StartAsync's OWN failure paths, which is the only thing
+    // this rule exempts. A closure runs when its caller runs it, not when a catch does, so a
+    // disposal inside one is refused either way round: a catch INSIDE the closure - the
+    // `AddLogging(lb => ...)` one, say - encloses that closure's body rather than a StartAsync
+    // failure path, and a catch OUTSIDE it does not run the closure's body on its own path. Hence
+    // both halves: no lambda boundary between the disposal and the method, AND a catch on that
+    // same stretch. Nothing in StartAsync's one closure disposes the recorder today, so this
+    // cannot false-red; it is the shape a future closure would be judged by.
+    private static bool InsideACatch(SyntaxNode node, SyntaxNode start)
+    {
+        var path = node.Ancestors().TakeWhile(a => a != start).ToList();
+        return !path.Any(IsLambdaBoundary) && path.Any(a => a is CatchClauseSyntax);
+    }
+
+    private static bool IsLambdaBoundary(SyntaxNode node) =>
+        node is AnonymousFunctionExpressionSyntax or LocalFunctionStatementSyntax;
 
     /// <summary>
     /// Whether <paramref name="drop"/> is guaranteed to have executed before
