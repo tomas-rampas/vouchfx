@@ -354,8 +354,8 @@ public sealed class DcpArmingWindowCensusTests
         var disposals = start.DescendantNodes()
             .OfType<InvocationExpressionSyntax>()
             .Where(i => NameOf(i) == "Dispose"
-                && ReceiverOf(i) is { } receiver
-                && names.Contains(receiver))
+                && Unwrap(ReceiverOf(i)) is IdentifierNameSyntax receiver
+                && names.Contains(receiver.Identifier.Text))
             .ToList();
 
         // Guard against a vacuous pass: a StartAsync that never drops the recorder on any failure
@@ -397,7 +397,10 @@ public sealed class DcpArmingWindowCensusTests
 
         var offenders = disposals
             .Where(i => !InsideACatch(i, start))
-            .Select(i => Describe(i))
+            // A conditional-access disposal is the invocation UNDER the `?.`, whose own text is
+            // just `.Dispose()`; describe the enclosing conditional access so the offender line
+            // names its receiver.
+            .Select(i => Describe(i.Parent as ConditionalAccessExpressionSyntax ?? (SyntaxNode)i))
             .ToList();
 
         offenders.AddRange(UsingDisposalsOf(start, names)
@@ -490,8 +493,14 @@ public sealed class DcpArmingWindowCensusTests
     /// <para>
     /// <strong>Its own limits, since every rule in this file states them.</strong> The match is
     /// syntactic and name-based: the receiver is read on its RIGHTMOST identifier, so
-    /// <c>Vouchfx.Engine.Orchestration.HeadlessTopology.StartAsync(...)</c> counts, while four
-    /// spellings escape. A call through a <c>using</c> alias that renames the TYPE; a delegate
+    /// <c>Vouchfx.Engine.Orchestration.HeadlessTopology.StartAsync(...)</c> counts, the
+    /// <c>global::</c>-prefixed spelling counts (measured, not assumed — it parses to the same
+    /// member-access shape), and since the alias-qualified arm was added so does
+    /// <c>O::HeadlessTopology.StartAsync(...)</c> under a <c>using O = …</c> NAMESPACE alias.
+    /// Four spellings still escape. A call through a <c>using</c> alias that renames the TYPE —
+    /// a different construct from the namespace alias above, and not read by the <c>::</c> arm,
+    /// since a renamed type appears as an ordinary identifier that is not
+    /// <c>HeadlessTopology</c>; a delegate
     /// captured from the method group and invoked later; reflection; and — the one that is not
     /// exotic — the BARE or <c>this.</c>-qualified form, because
     /// <see cref="StartAsyncCallSitesIn"/> requires a
@@ -639,10 +648,19 @@ public sealed class DcpArmingWindowCensusTests
                 continue;
             }
 
+            // The RIGHTMOST identifier of the receiver, whatever qualifies it. The
+            // MemberAccessExpression arm already covers both the namespace-qualified spelling and
+            // the `global::`-prefixed one — MEASURED by drill: `global::Vouchfx.Engine
+            // .Orchestration.HeadlessTopology.StartAsync(...)` parses with `HeadlessTopology` as
+            // that arm's Name, so it was matched before this comment existed. The alias-qualified
+            // arm is the one that was missing: `O::HeadlessTopology` after
+            // `using O = Vouchfx.Engine.Orchestration;` is an AliasQualifiedNameSyntax, which
+            // neither of the other two arms accepts.
             var receiver = access.Expression switch
             {
                 IdentifierNameSyntax name => name.Identifier.ValueText,
                 MemberAccessExpressionSyntax qualified => qualified.Name.Identifier.ValueText,
+                AliasQualifiedNameSyntax aliased => aliased.Name.Identifier.ValueText,
                 _ => null,
             };
 
@@ -695,9 +713,11 @@ public sealed class DcpArmingWindowCensusTests
     /// </para>
     /// <para>
     /// <strong>What it deliberately does not follow, and why the line is drawn here.</strong> Only
-    /// an initialiser that is a bare <see cref="IdentifierNameSyntax"/> propagates. An alias that
-    /// reaches the recorder through a field, a property, a method's return value, a cast or a
-    /// parenthesised expression is invisible to this set and therefore to rule 4. That is the
+    /// an initialiser that reduces, under <see cref="Unwrap"/>, to a bare
+    /// <see cref="IdentifierNameSyntax"/> propagates — so parentheses, a null-forgiving <c>!</c>
+    /// and a cast are seen through, while an alias that reaches the recorder through a field, a
+    /// property, a method's return value or an <c>as</c> conversion is invisible to this set and
+    /// therefore to rule 4. That is the
     /// boundary of the threat this rule exists for: the mutation it was written against is ONE
     /// KEYWORD (<c>var</c> to <c>using var</c>) on a declaration that is already there, and the
     /// two-statement alias is the smallest neighbouring edit — both now refused. Routing the
@@ -731,7 +751,10 @@ public sealed class DcpArmingWindowCensusTests
             added = false;
             foreach (var declarator in declarators)
             {
-                if (declarator.Initializer?.Value is IdentifierNameSyntax id
+                // Unwrapped for the same reason Aliases is: `var a = recorder!;` binds the same
+                // object, and a set that admitted the bare spelling only would accept
+                // `using (a)` while refusing `using (recorder!)` — one rule with two answers.
+                if (Unwrap(declarator.Initializer?.Value) is IdentifierNameSyntax id
                     && names.Contains(id.Identifier.Text)
                     && names.Add(declarator.Identifier.Text))
                 {
@@ -768,19 +791,45 @@ public sealed class DcpArmingWindowCensusTests
     /// a call, not a name — falls through to the plain arm. Neither arm is dead.
     /// </para>
     /// <para>
-    /// <strong>The remaining limit, stated rather than implied, and it is no longer the
-    /// two-statement alias.</strong> <c>var alias = recorder;</c> followed by
-    /// <c>using (alias) { }</c> some statements later is refused, because
-    /// <see cref="RecorderNamesIn"/> carries the name across the gap. What still escapes is an
-    /// alias that reaches the recorder through something other than a bare name: a field, a
-    /// property, a method's return value, a cast or a parenthesised expression
-    /// (<c>using ((IDisposable)recorder)</c>, which is not an
-    /// <see cref="IdentifierNameSyntax"/>). Each of those is a deliberate indirection rather than
-    /// a keystroke away from the code that is there — the mutation this rule exists to refuse is
-    /// <c>var</c> becoming <c>using var</c>, and the two-statement alias was its nearest
-    /// neighbour — and none of them is decidable without the symbol table a syntax census does not
-    /// have. The behavioural row is what covers that class; see
-    /// <see cref="RecorderNamesIn"/> for the same boundary argued from the other side.
+    /// <strong>The remaining limit, stated rather than implied, and it is neither the
+    /// two-statement alias nor a re-SPELLING of the local.</strong> Both of those used to escape
+    /// and no longer do. <c>var alias = recorder;</c> followed by <c>using (alias) { }</c> some
+    /// statements later is refused, because <see cref="RecorderNamesIn"/> carries the name across
+    /// the gap; and <c>using (recorder!)</c>, <c>using ((recorder))</c>,
+    /// <c>using ((IDisposable)recorder)</c> and <c>recorder!.Dispose()</c> are refused because
+    /// <see cref="Unwrap"/> strips the parentheses, the null-forgiving <c>!</c> and the cast
+    /// before the name is read. Those four were each ONE KEYSTROKE from the code that is there,
+    /// which is squarely inside the mutation this rule exists to refuse.
+    /// </para>
+    /// <para>
+    /// What still escapes is an alias that reaches the recorder through something that is not a
+    /// re-spelling of a local at all, and each is a deliberate indirection rather than a
+    /// keystroke:
+    /// </para>
+    /// <list type="bullet">
+    ///   <item><description>
+    ///     A FIELD or a PROPERTY. Reaching one means adding a member to
+    ///     <c>HeadlessTopology</c> and writing the recorder into it — new declared state on a type
+    ///     whose whole subject is that the recorder is handed on rather than held, and a change
+    ///     <c>DcpRecorderFactoryCensusTests</c> is aimed at besides.
+    ///   </description></item>
+    ///   <item><description>
+    ///     A METHOD's return value. Reaching one means writing a method that hands the recorder
+    ///     back, which is a second exit for a value this method exists to hand to exactly one
+    ///     place; a syntax census with no symbol table could not follow it in any case.
+    ///   </description></item>
+    ///   <item><description>
+    ///     An <c>as</c> conversion, or any conversion that is not a cast.
+    ///     <c>recorder as IDisposable</c> is a <see cref="BinaryExpressionSyntax"/> whose value
+    ///     may be <see langword="null"/> rather than the operand, so <see cref="Unwrap"/>
+    ///     deliberately does not treat it as the same object — stripping it would be a claim
+    ///     about types this census cannot make. It is also a strictly longer edit than the cast it
+    ///     sits beside, which IS refused.
+    ///   </description></item>
+    /// </list>
+    /// <para>
+    /// The behavioural row is what covers that class; see <see cref="RecorderNamesIn"/> for the
+    /// same boundary argued from the other side.
     /// </para>
     /// <para>
     /// The declaration form is detected by the KEYWORD rather than by the absence of one: an
@@ -824,13 +873,75 @@ public sealed class DcpArmingWindowCensusTests
                         + "that block ends and the post-start capture records nothing");
                     break;
 
-                case UsingStatementSyntax { Expression: IdentifierNameSyntax resource }
-                    resourceStatement when names.Contains(resource.Identifier.Text):
+                case UsingStatementSyntax { Expression: { } resourceExpression } resourceStatement
+                    when Unwrap(resourceExpression) is IdentifierNameSyntax resource
+                        && names.Contains(resource.Identifier.Text):
                     yield return (resourceStatement,
                         "handed to a `using` statement as its resource, so the recorder is "
                         + "disposed when that block ends and the post-start capture records "
                         + "nothing");
                     break;
+            }
+        }
+    }
+
+    /// <summary>
+    /// The expression underneath the wrappers that change how a value is SPELLED without changing
+    /// WHICH object it is: parentheses, the null-forgiving <c>!</c>, and casts.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Every one of these is a single keystroke against the recorder local, which puts
+    /// them inside this rule's stated threat rather than outside it.</strong>
+    /// <c>using (recorder!) { }</c>, <c>using ((recorder)) { }</c>,
+    /// <c>using ((IDisposable)recorder) { }</c> and <c>recorder!.Dispose()</c> all end the same
+    /// object's lifetime at a scope <c>StartAsync</c> owns; before this helper each of them parsed
+    /// to a node rule 4's <see cref="IdentifierNameSyntax"/> test did not accept, and slipped.
+    /// </para>
+    /// <para>
+    /// <strong>The cast is included on purpose, and the reason is worth stating because a cast
+    /// LOOKS like an indirection.</strong> <c>(IDisposable)recorder</c> changes the static type
+    /// the compiler reasons about; it does not change the object — for a reference conversion,
+    /// which is all this sealed type admits. The <c>Dispose</c> that runs is
+    /// the recorder's, at the recorder's scope, so the disposal this rule refuses has happened
+    /// whatever the expression was annotated as. A <c>using</c> over a cast is the drop mutation
+    /// in a costume.
+    /// </para>
+    /// <para>
+    /// Iterative rather than recursive so a stack of them (<c>((IDisposable)(recorder!))</c>) is
+    /// reduced in one pass, and it terminates because each step strips exactly one node from a
+    /// finite tree. <see langword="null"/> in, <see langword="null"/> out, so callers can hand it
+    /// an absent initialiser or an unreachable receiver without a guard of their own.
+    /// </para>
+    /// <para>
+    /// <strong>What it deliberately does NOT strip is the conversion that is not a cast.</strong>
+    /// <c>recorder as IDisposable</c> is a <see cref="BinaryExpressionSyntax"/> whose result may
+    /// be <see langword="null"/> rather than the operand, so treating it as the same object would
+    /// be a claim this census cannot make. It escapes, and is named among the limits on
+    /// <see cref="UsingDisposalsOf"/>.
+    /// </para>
+    /// </remarks>
+    private static ExpressionSyntax? Unwrap(ExpressionSyntax? expression)
+    {
+        while (true)
+        {
+            switch (expression)
+            {
+                case ParenthesizedExpressionSyntax parenthesised:
+                    expression = parenthesised.Expression;
+                    break;
+
+                case PostfixUnaryExpressionSyntax postfix
+                    when postfix.OperatorToken.IsKind(SyntaxKind.ExclamationToken):
+                    expression = postfix.Operand;
+                    break;
+
+                case CastExpressionSyntax cast:
+                    expression = cast.Expression;
+                    break;
+
+                default:
+                    return expression;
             }
         }
     }
@@ -841,7 +952,8 @@ public sealed class DcpArmingWindowCensusTests
 
     private static bool Aliases(VariableDeclarationSyntax declaration, HashSet<string> names) =>
         declaration.Variables.Any(v =>
-            v.Initializer?.Value is IdentifierNameSyntax id && names.Contains(id.Identifier.Text));
+            Unwrap(v.Initializer?.Value) is IdentifierNameSyntax id
+            && names.Contains(id.Identifier.Text));
 
     // Whether a disposal sits on one of StartAsync's OWN failure paths, which is the only thing
     // this rule exempts. A closure runs when its caller runs it, not when a catch does, so a
@@ -891,26 +1003,37 @@ public sealed class DcpArmingWindowCensusTests
     }
 
     /// <summary>
-    /// The text of an invocation's RECEIVER — <c>x</c> for both <c>x.M()</c> and <c>x?.M()</c>.
+    /// An invocation's RECEIVER expression — <c>x</c> for both <c>x.M()</c> and <c>x?.M()</c>.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// The conditional form is why this is not a one-liner: <c>recorder?.Dispose()</c> parses as a
     /// <see cref="ConditionalAccessExpressionSyntax"/> whose invocation carries only a
     /// <see cref="MemberBindingExpressionSyntax"/>, so the receiver is not reachable from the
     /// invocation's own <c>Expression</c> and has to be read off the nearest conditional-access
     /// ancestor. Getting this wrong makes rule 4 silently match nothing, which is exactly the
     /// vacuous pass its <c>Assert.NotEmpty</c> exists to refuse.
+    /// </para>
+    /// <para>
+    /// <strong>The NODE, not its rendered text, and the change is what lets
+    /// <see cref="Unwrap"/> reach it.</strong> This used to return <c>.ToString()</c>, which made
+    /// the caller's comparison a string equality — so <c>recorder!.Dispose()</c> produced
+    /// <c>"recorder!"</c> and matched nothing, and no amount of unwrapping downstream could help,
+    /// because the structure had already been flattened. Handing back the expression keeps the
+    /// wrappers strippable and keeps one spelling rule (<see cref="Unwrap"/>) serving every site.
+    /// </para>
     /// </remarks>
-    private static string? ReceiverOf(InvocationExpressionSyntax invocation) => invocation.Expression switch
-    {
-        MemberAccessExpressionSyntax m => m.Expression.ToString(),
-        MemberBindingExpressionSyntax => invocation
-            .Ancestors()
-            .OfType<ConditionalAccessExpressionSyntax>()
-            .FirstOrDefault()
-            ?.Expression.ToString(),
-        _ => null,
-    };
+    private static ExpressionSyntax? ReceiverOf(InvocationExpressionSyntax invocation) =>
+        invocation.Expression switch
+        {
+            MemberAccessExpressionSyntax m => m.Expression,
+            MemberBindingExpressionSyntax => invocation
+                .Ancestors()
+                .OfType<ConditionalAccessExpressionSyntax>()
+                .FirstOrDefault()
+                ?.Expression,
+            _ => null,
+        };
 
     private static bool InvokesAnywhere(SyntaxNode node, string methodName) =>
         FirstInvocationPosition(node, methodName).HasValue;
