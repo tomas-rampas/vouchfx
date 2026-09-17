@@ -57,7 +57,9 @@ public sealed class DcpArmingWindowCensusTests
     /// <c>HeadlessTopology.StartAsync</c>. A
     /// syntax census has no symbol table, so the spelling IS the subject — but a RENAME does not
     /// go quiet: it renames the two failure-path <c>recorder?.Dispose()</c> receivers too, so rule
-    /// 4's <c>Assert.NotEmpty</c> over the invocation scan reddens first, and rule 5 reddens on the
+    /// 4's first vacuity guard, which counts BOTH disposal scans, reddens first — a rename leaves
+    /// nothing in the method spelled like the seed, so neither scan finds anything — and rule 5
+    /// reddens on the
     /// hand-off argument as well. Rule 4's second vacuity guard covers the narrower case those two
     /// miss: a DECLARATION hoisted out of <c>StartAsync</c> while the disposals still spell it.
     /// </summary>
@@ -68,9 +70,10 @@ public sealed class DcpArmingWindowCensusTests
     /// Rule 5 and the declarator guard below still read the constant itself, and deliberately:
     /// each is about a site with exactly one spelling — the hand-off argument, and the
     /// declaration. Rule 4's FIRST vacuity guard is not in that company and the summary above
-    /// should not be read as putting it there: it counts what the SET-based scan returned. It
-    /// still reddens on a rename, but by a different route — the set is then just the seed, and
-    /// no disposal receiver is spelled like it any more, so the scan returns nothing.
+    /// should not be read as putting it there: it counts what the two SET-based scans returned —
+    /// the <c>Dispose</c> invocations and the <c>using</c> constructs together. It still reddens
+    /// on a rename, but by a different route — the set is then just the seed, and nothing in the
+    /// method is spelled like it any more, so neither scan returns anything.
     /// </remarks>
     private const string RecorderLocal = "recorder";
 
@@ -327,8 +330,9 @@ public sealed class DcpArmingWindowCensusTests
     /// rule while rules 1-3 and 5 still passed. That is a deliberate construction rather than a
     /// plausible refactor, and the Docker-gated behavioural row is what covers it. The
     /// <c>using</c> half's own remaining limit — a resource reached through a field, a property, a
-    /// method's return value, a cast or a parenthesised expression rather than through a bare
-    /// name — is stated on <see cref="UsingDisposalsOf"/> and on <see cref="RecorderNamesIn"/>.
+    /// method's return value or an <c>as</c> conversion rather than through a bare name, casts and
+    /// parentheses being stripped by <see cref="Unwrap"/> — is stated on
+    /// <see cref="UsingDisposalsOf"/> and on <see cref="RecorderNamesIn"/>.
     /// </para>
     /// <para>
     /// <c>FlushOnFailureAsync</c> disposes the recorder too, in its own <c>finally</c>
@@ -358,17 +362,39 @@ public sealed class DcpArmingWindowCensusTests
                 && names.Contains(receiver.Identifier.Text))
             .ToList();
 
+        // Materialised BEFORE the vacuity guard, because the guard counts it. Enumerating the
+        // iterator twice would also re-parse nothing but re-walk the whole method, and the
+        // offender projection below reuses this same list.
+        var usingDisposals = UsingDisposalsOf(start, names).ToList();
+
         // Guard against a vacuous pass: a StartAsync that never drops the recorder on any failure
         // path leaks the buffer instead of leaking the window, which is a different defect but
         // not a green one.
-        Assert.NotEmpty(disposals);
+        //
+        // EITHER FORM COUNTS, and requiring the INVOCATION form specifically was a false red on
+        // legal code. The two failure-path drops are `recorder?.Dispose()` today, but
+        // `using (recorder) { }` inside those same catches disposes on exactly the same paths and
+        // is a refactor this rule has no business refusing - rule 4 is about WHERE a disposal
+        // sits, not how it is spelled, and the `using` scan below finds those just as the
+        // invocation scan finds these. Keyed on the invocation count alone, such a refactor
+        // reddened here and the offender projection never ran at all, so the rule reported a
+        // vacuity that was not one and said nothing about the property it exists for.
+        Assert.True(
+            disposals.Count + usingDisposals.Count > 0,
+            "HeadlessTopology.StartAsync disposes the #420 recorder on no path at all - neither "
+            + "as a `Dispose` invocation nor through a `using` - or on none this census can see "
+            + "under the name `" + RecorderLocal + "`, so this rule has nothing to judge and would "
+            + "pass on any arrangement. If the local was renamed, re-aim RecorderLocal rather than "
+            + "deleting this guard. A start that never drops the recorder on a failure path leaks "
+            + "the buffer instead of leaking the window: a different defect, but not a green one.");
 
         // The second vacuity guard, and it belongs to the `using` half specifically: that half
         // finds the recorder by the SPELLING of its local, so a DECLARATION that has left
         // StartAsync - hoisted to a field, or taken as a parameter - while the two failure-path
         // `recorder?.Dispose()` calls still spell it would leave the using scan matching nothing
         // and this rule green on a method it no longer describes. A RENAME is not that case: it
-        // renames those two receivers too, so the Assert.NotEmpty above reddens first, and rule 5
+        // renames those two receivers too, so the combined vacuity guard above reddens first (both
+        // scans then find nothing, because the set is just the unmatched seed), and rule 5
         // reddens on the hand-off argument. DcpRecorderFactoryCensusTests pins the declarator count
         // inside StartAsync as well, so this guard is defence in depth - it keeps this rule's own
         // vacuity stated inside this rule, which is the convention the rest of the file follows.
@@ -403,7 +429,7 @@ public sealed class DcpArmingWindowCensusTests
             .Select(i => Describe(i.Parent as ConditionalAccessExpressionSyntax ?? (SyntaxNode)i))
             .ToList();
 
-        offenders.AddRange(UsingDisposalsOf(start, names)
+        offenders.AddRange(usingDisposals
             .Where(u => !InsideACatch(u.Node, start))
             .Select(u => $"{Describe(u.Node)} - {u.Why}"));
 
@@ -411,9 +437,8 @@ public sealed class DcpArmingWindowCensusTests
             offenders.Count == 0,
             $"{offenders.Count} disposal(s) of the `{RecorderLocal}` local (or a name bound from "
             + "it) in HeadlessTopology.StartAsync sit outside a catch clause, so the #420 arming "
-            + "window "
-            + "closes when the start returns rather than when the caller reports the topology "
-            + "ready. The recorder is handed to the returned topology and dropped by "
+            + "window closes when the start returns rather than when the caller reports the "
+            + "topology ready. The recorder is handed to the returned topology and dropped by "
             + "SuiteTopology/StubTopology (or by DisposeAsync); it must only be disposed here on "
             + "a failure path:\n  "
             + string.Join("\n  ", offenders));
@@ -1011,8 +1036,12 @@ public sealed class DcpArmingWindowCensusTests
     /// <see cref="ConditionalAccessExpressionSyntax"/> whose invocation carries only a
     /// <see cref="MemberBindingExpressionSyntax"/>, so the receiver is not reachable from the
     /// invocation's own <c>Expression</c> and has to be read off the nearest conditional-access
-    /// ancestor. Getting this wrong makes rule 4 silently match nothing, which is exactly the
-    /// vacuous pass its <c>Assert.NotEmpty</c> exists to refuse.
+    /// ancestor. Getting this wrong makes rule 4's invocation scan silently match nothing, which
+    /// is exactly the vacuous pass its first guard exists to refuse — though that guard now counts
+    /// the <c>using</c> scan too, so once either failure-path drop is spelled as a <c>using</c> a
+    /// broken receiver reader alone would no longer be enough to trip it; with today's two
+    /// invocation-spelled drops it still is. It is the OFFENDER check that would go quiet, which
+    /// is the worse half.
     /// </para>
     /// <para>
     /// <strong>The NODE, not its rendered text, and the change is what lets

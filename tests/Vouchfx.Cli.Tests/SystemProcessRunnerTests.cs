@@ -603,6 +603,8 @@ public sealed class SystemProcessRunnerTests
                     //
                     // Quiet rather than loud, for the reason ReclaimPidForTeardownQuietlyAsync
                     // gives: a throw out of a `finally` replaces the finding being propagated.
+                    // The pid it hands on passes TryOpen's lower-bound guard only (#529), as it
+                    // did from the return above; the placement moves the paths, not the guard.
                     if (pid is null)
                     {
                         pid = await ReclaimPidForTeardownQuietlyAsync(pidFile, work);
@@ -718,6 +720,8 @@ public sealed class SystemProcessRunnerTests
                     // First, and quiet, for the reasons row 1's `finally` sets out at length: the
                     // attempt can also end at an assertion with no pid in hand, and a `finally`
                     // that throws replaces the finding it was supposed to be tidying up after.
+                    // The pid it hands on passes TryOpen's lower-bound guard only (#529), as
+                    // before; the placement moves the paths, not the guard.
                     if (pid is null)
                     {
                         pid = await ReclaimPidForTeardownQuietlyAsync(pidFile, work);
@@ -996,7 +1000,9 @@ public sealed class SystemProcessRunnerTests
             // as well as the pid so the body's look is never repeated. Reached on the two paths
             // that end this row in front of that look — the work.IsCompleted block and a WaitForPid
             // that threw — and on neither of them has anything looked at the child yet, so without
-            // this KillTreeQuietly would receive null over a child that may well be alive.
+            // this KillTreeQuietly would receive null over a child that may well be alive. The
+            // pid it hands on passes TryOpen's lower-bound guard only (#529), as the body look's
+            // does; the placement moves the paths, not the guard.
             if (pid is null && !lateLookTaken)
             {
                 pid = await ReclaimPidForTeardownQuietlyAsync(pidFile, work);
@@ -2839,6 +2845,16 @@ public sealed class SystemProcessRunnerTests
     /// and cannot convert a red row into a green one. Contrast
     /// <see cref="ReclaimPidForTeardownAsync"/>'s one remaining BODY caller, row 5's late look,
     /// where the same neutrality has to be arranged by capturing the verdict before the call.
+    /// </para>
+    /// <para>
+    /// <strong>What a pid recovered here is NOT: proof that the process it names is still the
+    /// child (#529).</strong> By the time a <c>finally</c> reads it, <c>Run</c> may have returned
+    /// and its own tree-kill freed the number, so <see cref="KillTreeQuietly"/>'s
+    /// <see cref="TryOpen"/> is the only thing between this pid and a stranger — and its start-time
+    /// check is a lower bound, which a process started after the attempt began passes. That was
+    /// equally true of the body-sited look this replaced on the discarded path; the maximum
+    /// lateness between the read and the kill is the same at both sites, so #539 moved the paths
+    /// that reach the guard and not the guard. #529 is where the guard gets its upper bound.
     /// </para>
     /// </remarks>
     private static async Task<int?> ReclaimPidForTeardownQuietlyAsync(string pidFile, Task work)
