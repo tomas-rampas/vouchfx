@@ -30,11 +30,12 @@
 // pid, teardown has nothing to kill and the only backstop is the child's own bounded
 // ChildLifetimeSeconds, which is why that lifetime is finite rather than infinite.
 //
-// EVERY ROW THAT CAN REACH THAT GAP NOW TAKES ONE LATE LOOK BEFORE GIVING UP — rows 1 and 2 on
-// their no-pid return, row 5 before its pid assertion — so the slice of the gap where the write was
-// merely LATE is closed, because a late write becomes observable and therefore killable. See
-// ReclaimPidForTeardownAsync. What remains of the gap is a child that never writes a pid AT ALL,
-// and ChildLifetimeSeconds is still its only backstop.
+// EVERY ROW THAT CAN REACH THAT GAP TAKES ONE LATE LOOK BEFORE ITS CHILD BECOMES UNREACHABLE — rows
+// 1 and 2 in their `finally`, row 5 in front of its pid assertion and, on the paths that end it
+// before that, in its `finally` too — so the slice of the gap where the write was merely LATE is
+// closed, because a late write becomes observable and therefore killable. See
+// ReclaimPidForTeardownAsync. What remains of the gap is a child that never writes a pid AT ALL, and
+// ChildLifetimeSeconds is still its only backstop.
 //
 // SINCE #524 THAT GAP IS WIDER BY A FACTOR OF BudgetAttempts, and both escalating rows sit in it,
 // not just the one whose remarks mention it. An attempt that ends without a pid is retried, so rows
@@ -51,13 +52,35 @@
 // — a leak row passing over a leak it caused. That is an assertion passing for a reason it does not
 // claim, not a housekeeping wrinkle.
 //
-// SO THE NO-PID PATH LOOKS ONCE MORE BEFORE IT GIVES UP. ReclaimPidForTeardownAsync re-polls the
-// pid file for LateReadWindow and hands whatever lands to the same `finally` that would have
-// received it normally, which is exactly the mechanism above: a late write becomes observable and
-// therefore killable. What survives is narrower and is stated at that method — a child that
-// publishes NO pid inside the widened window and whose kill also failed. Nothing in this file can
-// name a process that never named itself, so ChildLifetime remains the ceiling on that residual,
-// which is why that lifetime is finite rather than infinite.
+// SO TEARDOWN LOOKS ONCE MORE BEFORE IT GIVES UP, AND ON ROWS 1 AND 2 IT IS THE `finally` THAT LOOKS
+// (#539). ReclaimPidForTeardownQuietlyAsync re-polls the pid file for LateReadWindow and hands
+// whatever lands to the KillTreeQuietly a line below it — the quiet wrapper is what those two
+// `finally` blocks call, ReclaimPidForTeardownAsync being the body form row 5 still uses. That is
+// exactly the mechanism above: a late write becomes observable and therefore killable. THE PLACEMENT
+// IS THE WHOLE OF #539: the look used to sit on the no-pid return, so it ran only when the attempt
+// ended by REACHING that return. An attempt can instead end at `Assert.True(finished, …)` — the
+// wedged-runner finding these rows exist to make — and that path skipped the look entirely, killed
+// nothing, and left a child licensed to live for ChildLifetime. A `finally` cannot be skipped by an
+// assertion, so siting the look there covers both endings without asking which one happened. What
+// survives is narrower and is stated at that method — a child that publishes NO pid inside the
+// widened window and whose kill also failed. Nothing in this file can name a process that never
+// named itself, so ChildLifetime remains the ceiling on that residual, which is why that lifetime is
+// finite rather than infinite.
+//
+// THAT PLACEMENT IS PINNED BY THREE ROWS RATHER THAN ASSERTED HERE, AND BETWEEN THEM THEY LEAVE
+// ONE HALF OPEN. EveryFinallyThatKills_ReclaimsAPidFirst is a Roslyn census over this file's own
+// source: each killing `finally` must carry a `pid is null`-guarded reclaim ahead of its kill, and
+// there must be exactly three of them. TheLateLookFlag_IsArmedOnlyAfterTheLookCompletes is its
+// counterpart in the BODY: row 5's `lateLookTaken = true` must sit after the loud look it records,
+// because a flag armed first suppresses the `finally`'s only look on the path where that look
+// throws. The third row pins the quiet wrapper the placement census names — a pid
+// line left TORN and completed a second later is picked up inside LateReadWindow, so the reader
+// has to look again after refusing one, and a file that never appears costs the whole window and
+// yields null. What NONE of them establishes is that the kill a line below reaches
+// a LIVE survivor: that half needs a child which defeats the production tree-kill (WMI re-parenting
+// on Windows, setsid on Linux) and no portable one exists, so it was measured once as a
+// before/after drill and recorded in #539's commit message (ebddeca) rather than carried as a
+// permanent row. Each of the two rows states this at its own declaration too.
 //
 // THE SAME MULTIPLIER APPLIES TO SCRATCH DIRECTORIES, and that one leaves litter on disk rather
 // than in the process table. Every attempt calls CreateScratchDirectory, and TryDeleteDirectory is
@@ -146,12 +169,13 @@
 //
 // THE HEADING ABOVE SAID "CANNOT MASK A LIVE CHILD" UNTIL PR #532, AND THAT WAS A CLAIM ABOUT
 // PROCESSES RESTING ON AN ARGUMENT ABOUT ASSERTIONS. The two come apart: a discarded attempt can
-// leave a live PROCESS behind even though it cannot leave a live FINDING behind. Most of that is
-// now closed by the late look above — a discarded attempt reclaims and kills a late-writing
-// survivor before it returns. What is NOT closed, and what the old heading therefore could not have
-// carried even post-fix, is a child that publishes no pid at all inside budget+8s and whose kill
-// also failed: escalation still discards it unseen, ChildLifetime is still its only backstop, and
-// no wording in this paragraph changes that.
+// leave a live PROCESS behind even though it cannot leave a live FINDING behind. Most of that is now
+// closed by the late look above — a discarded attempt's `finally` reclaims and kills a late-writing
+// survivor before the loop sees the discard, and since #539 an attempt that threw instead of
+// returning is covered by the same `finally` rather than by nothing at all. What is NOT closed, and
+// what the old heading therefore could not have carried even post-fix, is a child that publishes no
+// pid at all inside budget+8s and whose kill also failed: escalation still discards it unseen,
+// ChildLifetime is still its only backstop, and no wording in this paragraph changes that.
 //
 // THE PID WAIT ENDS ON AN EVENT, NOT ON A CLOCK
 // ─────────────────────────────────────────────
@@ -164,7 +188,8 @@
 // later quoted as one measurement. WaitForPid now gives up a short settle after the RUN ITSELF has
 // settled, so a failed premise is detected in about one budget rather than in a constant, and the
 // escalation above is affordable; the one path that deliberately keeps waiting after that is the
-// late look, and only once the attempt has already given up on its premise. Row 5's Run does not
+// late look, and only once the attempt is over — on rows 1 and 2 in the `finally`, whether the
+// attempt gave its premise up or an assertion ended it. Row 5's Run does not
 // settle on its own — its budget is unreachable and it is the row that cancels — so that row alone
 // still carries an absolute ceiling; UnracedPidCeiling records why an absolute figure is defensible
 // there and was not here.
@@ -195,6 +220,11 @@
 // No Docker, no trait: these rows belong to the fast `requires!=docker` lane.
 using System.Diagnostics;
 using System.Globalization;
+using System.Security.AccessControl;
+using System.Security.Principal;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Vouchfx.Cli.Selection;
 using Vouchfx.TestSupport;
 using Xunit;
@@ -315,22 +345,37 @@ public sealed class SystemProcessRunnerTests
     private static readonly TimeSpan PidSettleWindow = TimeSpan.FromSeconds(3);
 
     /// <summary>
-    /// How much longer <see cref="ReclaimPidForTeardownAsync"/> looks after an attempt has given up.
+    /// How much longer <see cref="ReclaimPidForTeardownAsync"/> looks after a wait has given up.
     /// </summary>
     /// <remarks>
     /// <para>
     /// <strong>Paid only on a path that has ALREADY failed to observe its child, so a healthy run
-    /// never reaches it.</strong> On rows 1 and 2 that is an attempt about to hand its budget back
-    /// to be doubled, at most <see cref="BudgetAttempts"/> times — twenty seconds added to a row
-    /// already spending forty-five on budgets alone. On row 5 it is paid at most once, immediately
-    /// before an assertion that is going to fail anyway, so it delays a red row by five seconds and
-    /// costs a green one nothing.
+    /// never reaches it.</strong> Rows 1 and 2 pay it in their <c>finally</c>, and since #539 that
+    /// is two paths rather than one, costing differently. The first is an attempt about to hand its
+    /// budget back to be doubled: at most <see cref="BudgetAttempts"/> times, twenty seconds added
+    /// to a row already spending forty-five on budgets alone. The second is the one #539 added and
+    /// it is RED — an attempt that ended at an assertion with no pid in hand ends the row outright,
+    /// so the window is paid once and delays a failure being reported by five seconds. That is
+    /// <c>Assert.True(finished, …)</c> against a wedged runner, and equally either of the two
+    /// assertions after it (<c>Assert.ThrowsAsync&lt;ProcessTimeoutException&gt;</c> and the budget
+    /// equality) against the #512 launch-fault or budget-not-enforced shapes, where the run HAS
+    /// settled. On row 5 it is likewise paid at most once, but since #539 at either of two sites:
+    /// in the body immediately before an assertion that is going to fail anyway, or — when one of
+    /// the two paths that skip that body look ended the row instead — in the <c>finally</c>, after
+    /// the failure is already settled. A <c>lateLookTaken</c> flag is what makes it "either" rather
+    /// than "both", and it is set only once the body look has RUN TO COMPLETION: the body look
+    /// uses the loud reader, so an ACL fault escapes it, and on that path the <c>finally</c> is
+    /// meant to look. "At most once" survives that anyway, because the quiet wrapper meets the
+    /// same fault on its own first read and answers at once rather than sitting out a window. No
+    /// green path on any row reaches it.
     /// </para>
     /// <para>
-    /// It is on no assertion's critical path within its own attempt: it runs after that attempt's
-    /// last assertion (rows 1 and 2) or in front of one already determined to fail (row 5). It does
-    /// sit ahead of the NEXT attempt, so the wall clock it adds is real; what it cannot do is delay
-    /// or alter a finding that has already been made.
+    /// It is on no assertion's critical path within its own attempt: on rows 1 and 2 it runs in the
+    /// <c>finally</c>, by which point the attempt has already returned or thrown, and on row 5
+    /// either in front of an assertion already determined to fail or, from that row's own
+    /// <c>finally</c>, after one already has. It does sit ahead of the NEXT attempt, and
+    /// on the red path ahead of the report of a failure, so the wall clock it adds is real; what it
+    /// cannot do is alter a finding that has already been made.
     /// </para>
     /// <para>
     /// <strong>Five rather than reusing <see cref="PidSettleWindow"/>'s three, because the two are
@@ -340,6 +385,19 @@ public sealed class SystemProcessRunnerTests
     /// it, and whose first write is therefore still ahead of it. The figure that matters is the
     /// TOTAL observation window — the budget, plus <see cref="PidSettleWindow"/>, plus this — which
     /// comes to 11s on the first attempt, 14s on the second, 20s on the third and 32s on the last.
+    /// Unmoved by #539 relocating the look into the <c>finally</c>, whenever the wait ended on its
+    /// SETTLE arm — which is the clean discarded path, and the two steps now between the wait and
+    /// the look return at once there for two DIFFERENT reasons. The grace race returns at once
+    /// because that arm only fires <see cref="PidSettleWindow"/> after <c>work</c> completed, so
+    /// the race is handed an already-finished task; it is not <c>Assert.True(finished, …)</c> that
+    /// makes it immediate, which sits AFTER the race and cannot be its cause. The hoisted
+    /// <c>Assert.ThrowsAsync</c> is the step that assertion accounts for: reaching it means
+    /// <c>finished</c> was true, so the task it awaits is already complete. A wait that ended on
+    /// its CEILING instead (<c>grace + PidSettleWindow</c>) with <c>work</c> still pending is the
+    /// corner the first clause excludes: a run settling inside the race's own
+    /// <c>Task.Delay(grace)</c> reaches the discarded return having spent real time there — at a 3s
+    /// budget, a <c>Run</c> taking 16-29s. That LENGTHENS the observation window rather than
+    /// shortening it, so the figures above are a floor and the conclusion they support is safe.
     /// The slowest process start this file has ever measured is 13.6s (128 CPU burners against 20
     /// cores; see <see cref="StartingBudget"/>), so from the SECOND attempt on the window clears
     /// even that sample. The escalation and this window therefore widen together, which is what
@@ -517,10 +575,11 @@ public sealed class SystemProcessRunnerTests
                         // Now narrowed to exactly one meaning, and it is NOT "the child is dead":
                         // the run refused correctly, and no pid had appeared by the time it did.
                         // Run issues the tree-kill without confirming it, so the survivor case is
-                        // live (PR #532's review) and one more bounded look is what keeps a
-                        // late-writing survivor killable by the `finally` below. It cannot rescue
-                        // the attempt — the return is `false` whatever it finds.
-                        pid = await ReclaimPidForTeardownAsync(pidFile, work);
+                        // live (PR #532's review) — and the look that keeps such a survivor
+                        // killable is in the `finally` below rather than here (#539). Nothing is
+                        // reclaimed on this line any more: a look sited here runs only when the
+                        // attempt ends by REACHING here, and the attempt's own assertions can end
+                        // it sooner. The return is `false` either way, read off the ORIGINAL wait.
                         return false;
                     }
 
@@ -533,6 +592,24 @@ public sealed class SystemProcessRunnerTests
                 }
                 finally
                 {
+                    // TEARDOWN'S OWN LOOK, AND IT IS FIRST BECAUSE EVERYTHING BELOW IT NEEDS A
+                    // TARGET (#539). Two paths reach a `finally` with `pid` still null, and only
+                    // one of them is the no-pid return above. The other is any assertion in the
+                    // body that threw while the pid was missing — above all
+                    // `Assert.True(finished, …)`, the wedged-runner finding this row exists to
+                    // make, which is precisely the path where a survivor is most likely and where
+                    // a look sited on that return never ran. Siting it here covers both without
+                    // asking which one happened.
+                    //
+                    // Quiet rather than loud, for the reason ReclaimPidForTeardownQuietlyAsync
+                    // gives: a throw out of a `finally` replaces the finding being propagated.
+                    // The pid it hands on passes TryOpen's lower-bound guard only (#529), as it
+                    // did from the return above; the placement moves the paths, not the guard.
+                    if (pid is null)
+                    {
+                        pid = await ReclaimPidForTeardownQuietlyAsync(pidFile, work);
+                    }
+
                     KillTreeQuietly(pid, startedUtc);
                     await DrainAsync(work);
                     TryDeleteDirectory(directory);
@@ -580,8 +657,9 @@ public sealed class SystemProcessRunnerTests
     /// repeat that up to <see cref="BudgetAttempts"/> times. That is the header's stated gap rather
     /// than a new one, and the backstop is the same — the grandchild's own
     /// <see cref="ChildLifetime"/>, which is why that lifetime is finite.
-    /// <see cref="ReclaimPidForTeardownAsync"/> narrows it to a grandchild whose pid never lands at
-    /// all, by giving a late write time to become one; it does not remove it.
+    /// <see cref="ReclaimPidForTeardownQuietlyAsync"/>, in this row's <c>finally</c>, narrows it to
+    /// a grandchild whose pid never lands at all, by giving a late write time to become one; it
+    /// does not remove it.
     /// </para>
     /// </remarks>
     [Fact]
@@ -630,15 +708,25 @@ public sealed class SystemProcessRunnerTests
                         return true;
                     }
 
-                    // The premise is read off the ORIGINAL wait above, before this runs, and
-                    // deliberately: a pid the late look recovers is a target for teardown, not
-                    // evidence that this attempt observed a grandchild. Assigning it after the
-                    // premise has been decided is what keeps the two apart.
-                    pid = await ReclaimPidForTeardownAsync(pidFile, work);
+                    // No grandchild was recorded inside the original window, so the attempt is
+                    // discarded. The look that gives teardown a target is in the `finally` below
+                    // rather than on this line (#539): the premise is read off the ORIGINAL wait
+                    // either way, and looking once the attempt is over also covers the paths where
+                    // an assertion above threw instead of reaching this return.
                     return false;
                 }
                 finally
                 {
+                    // First, and quiet, for the reasons row 1's `finally` sets out at length: the
+                    // attempt can also end at an assertion with no pid in hand, and a `finally`
+                    // that throws replaces the finding it was supposed to be tidying up after.
+                    // The pid it hands on passes TryOpen's lower-bound guard only (#529), as
+                    // before; the placement moves the paths, not the guard.
+                    if (pid is null)
+                    {
+                        pid = await ReclaimPidForTeardownQuietlyAsync(pidFile, work);
+                    }
+
                     KillTreeQuietly(pid, startedUtc);
                     await DrainAsync(work);
                     TryDeleteDirectory(directory);
@@ -698,11 +786,26 @@ public sealed class SystemProcessRunnerTests
     /// <see cref="ChildLifetime"/>. Milder than the same hole on rows 1 and 2, and deliberately
     /// described that way: there an orphan could hide behind a LATER attempt that passed, whereas a
     /// failure here is read by whoever ran the suite. Hygiene on a red row, not a leak test failing
-    /// to fail. It is the header's original ×1 gap on the last row still carrying it.
+    /// to fail. It is the header's original ×1 gap on the last row still carrying it — ×1 because
+    /// this row runs once and never escalates, which #539 did not change.
+    /// </para>
+    /// <para>
+    /// <strong>IT TAKES THAT LOOK IN TWO PLACES, AND THE SPLIT IS #539.</strong> The body keeps
+    /// the look because it feeds the <c>childWasObserved</c> message, which is a job the escalating
+    /// rows' looks never had. The <c>finally</c> carries a second, guarded one for the paths on
+    /// which the body look does not run to completion — two that end the row in front of it, the
+    /// <c>work.IsCompleted</c> block and a <see cref="WaitForPid"/> that threw, and the look
+    /// itself throwing, since it uses the LOUD reader and an ACL fault escapes it. A
+    /// <c>lateLookTaken</c> flag, set only once the body
+    /// look has RUN TO COMPLETION, keeps the two from both firing on the paths where both would
+    /// find something, so <see cref="LateReadWindow"/> is still paid at most once per row and the
+    /// guard at the top of the row still weighs the whole of what the row spends looking.
     /// </para>
     /// <para>
     /// The child is killed by the row's own <c>finally</c> on every path, exactly as in rows 1
-    /// and 2 — an assertion that fails must not leave a live child on the agent.
+    /// and 2 — an assertion that fails must not leave a live child on the agent. Before #539 that
+    /// sentence was truer of the intent than of the code: on the two paths above the
+    /// <c>finally</c> ran with nothing to kill.
     /// </para>
     /// </remarks>
     [Fact]
@@ -743,6 +846,24 @@ public sealed class SystemProcessRunnerTests
                 directory,
                 cancellationToken: cancellation.Token));
         int? pid = null;
+
+        // Whether the body's late look below RAN TO COMPLETION, so the `finally` does not repeat it
+        // (#539). It is the flag rather than `pid is null` that decides: a body look which found
+        // nothing leaves the pid null too, and without this the `finally` would spend a second
+        // LateReadWindow re-reading a file the row has just finished waiting on. With it, this row
+        // pays that window at most once whichever path it takes, which is what keeps the
+        // longestLook guard above weighing the whole of what the row spends looking.
+        //
+        // "RAN TO COMPLETION" rather than "was started", and the distinction is load-bearing: the
+        // body look is the LOUD reader, so an ACL fault escapes it, and the assignment therefore
+        // sits AFTER its await. A flag set before it would be true on a path where nothing had
+        // looked at the child at all, and would suppress the `finally`'s look as well. That does
+        // not, on today's code, cost a child — the quiet wrapper meets the same ACL fault and
+        // answers null, so nothing is killed either way; what it costs is the flag's meaning and
+        // a teardown that looks on its own account instead of resting on the two readers failing
+        // alike. The argument is at the assignment; the ordering itself is pinned by
+        // TheLateLookFlag_IsArmedOnlyAfterTheLookCompletes.
+        var lateLookTaken = false;
         try
         {
             // Cancelled only once the child is known to be RUNNING. Cancelling earlier could be
@@ -781,6 +902,32 @@ public sealed class SystemProcessRunnerTests
             // one, and it is worth the five seconds only because a red row must still not leave a
             // live child on a CI agent.
             //
+            // KEPT IN THE BODY WHERE ROWS 1 AND 2 MOVED THEIRS INTO A `finally` (#539), because
+            // this one has a second job theirs never had: it precedes the childWasObserved
+            // assertion and FEEDS ITS MESSAGE. `lateLook` below is the difference between telling
+            // the reader "no shell ever started" and "a shell did start, later than this row is
+            // willing to wait, and teardown has it" — a look that ran after the assertion could
+            // not say either. Rows 1 and 2's look reported to nobody, so it lost nothing by moving.
+            //
+            // THE TWO PATHS THAT SKIP THIS LOOK ARE COVERED BY THE `finally` INSTEAD, which is the
+            // whole of what #539 added to this row. The work.IsCompleted block above ends the row
+            // on a runner defect, and WaitForPid can escape with an UnauthorizedAccessException;
+            // either way the body look never runs, and before #539 teardown then received null and
+            // left the child to ChildLifetime. That is the same class of hole the escalating rows
+            // had, milder only in that it reddens loudly rather than hiding inside a later attempt
+            // that passed — and "milder" was never a reason to leave a live child on a CI agent.
+            //
+            // IT COSTS AT MOST ONE LateReadWindow PER ROW, not two, because lateLookTaken is what
+            // the `finally` tests rather than the pid — a body look that found nothing leaves the
+            // pid null too, and a pid test alone would buy a second window to re-read a file this
+            // row has just finished waiting on. The UnauthorizedAccessException path is the one
+            // case where the `finally` DOES look again, deliberately: this reader is the loud one,
+            // so that fault escapes before the flag is set and the `finally`'s quiet look is then
+            // the only look this row has made. It costs nothing to let it run — the quiet wrapper
+            // meets the same fault on its own first ReadPid and answers null there, and an ACL on
+            // the scratch file does not heal in the moment between the two reads, so there is no
+            // window to sit out.
+            //
             // BRANCHED RATHER THAN `??=`, so that nothing describing the late look is composed on
             // the path that never takes it. With `??=` the green path fell through to a `lateLook`
             // string calling the ALREADY-OBSERVED pid a late arrival — dead today because the
@@ -793,7 +940,29 @@ public sealed class SystemProcessRunnerTests
             }
             else
             {
+                // THE FLAG IS SET AFTER THE AWAIT, NOT BEFORE IT, and the order is a fix rather
+                // than a style choice (Copilot, round 2). This is the LOUD reader —
+                // ReclaimPidForTeardownAsync, not the quiet wrapper — so an ACL fault on the
+                // scratch file escapes as an UnauthorizedAccessException and this look never
+                // completes. Setting the flag first would leave the `finally` looking at
+                // `pid is null && lateLookTaken` and skipping its own look on exactly the path
+                // where nothing has yet looked at the child at all. Set afterwards, the flag means
+                // what the `finally` reads it to mean: a body look that RAN TO COMPLETION.
+                //
+                // WHAT THAT BUYS IS THE FLAG'S MEANING, NOT A CHILD SAVED, and the distinction is
+                // worth keeping straight because the obvious reading is the wrong one. On that
+                // path the child is abandoned either way: the quiet wrapper meets the same ACL
+                // fault on its own first ReadPid and answers null, so KillTreeQuietly is handed
+                // nothing whether the `finally` looks or not. The gain is that the `finally`
+                // looks ON ITS OWN ACCOUNT rather than the row resting on the coincidence that
+                // the loud and quiet readers fail alike — true today, pinned by nothing.
+                //
+                // The double-spend the flag exists to prevent is not reopened either, for the
+                // same reason the look finds nothing: an ACL does not heal in the moment between
+                // the two reads, so the second answers at once. LateReadWindow is still paid at
+                // most once per row.
                 pid = await ReclaimPidForTeardownAsync(pidFile, work);
+                lateLookTaken = true;
                 lateLook = pid is null
                     ? "nothing either"
                     : FormattableString.Invariant(
@@ -827,6 +996,18 @@ public sealed class SystemProcessRunnerTests
         }
         finally
         {
+            // The same first-statement reclaim rows 1 and 2 carry (#539), conditioned on the flag
+            // as well as the pid so the body's look is never repeated. Reached on the two paths
+            // that end this row in front of that look — the work.IsCompleted block and a WaitForPid
+            // that threw — and on neither of them has anything looked at the child yet, so without
+            // this KillTreeQuietly would receive null over a child that may well be alive. The
+            // pid it hands on passes TryOpen's lower-bound guard only (#529), as the body look's
+            // does; the placement moves the paths, not the guard.
+            if (pid is null && !lateLookTaken)
+            {
+                pid = await ReclaimPidForTeardownQuietlyAsync(pidFile, work);
+            }
+
             KillTreeQuietly(pid, startedUtc);
             await DrainAsync(work);
             TryDeleteDirectory(directory);
@@ -1157,6 +1338,905 @@ public sealed class SystemProcessRunnerTests
         }
     }
 
+    // ── #539's halves, pinned (see each row for what it does NOT pin) ────────────────────────
+
+    /// <summary>
+    /// The quiet wrapper keeps polling: a pid line left TORN and COMPLETED late inside
+    /// <see cref="LateReadWindow"/> is reclaimed, and a file that never appears yields
+    /// <see langword="null"/> after the whole window.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>NOT A <c>Run</c> ROW.</strong> It launches no child and never calls
+    /// <see cref="SystemProcessRunner"/>. What it pins is the SEMANTICS the three <c>finally</c>
+    /// blocks depend on: that a write COMPLETING after the caller's original wait gave up is still
+    /// picked up — which requires the reader to look again after refusing an incomplete one, the
+    /// entire mechanism <see cref="ReclaimPidForTeardownAsync"/>'s first paragraph describes — and
+    /// that a file which never appears costs the window and yields nothing rather than hanging or
+    /// throwing.
+    /// </para>
+    /// <para>
+    /// <strong>What it does NOT pin, stated here because the row's name invites the stronger
+    /// reading.</strong> It says nothing about whether a real, live, late-writing CHILD is killed
+    /// on the red path — that is the liveness half, and it has no portable harness (see
+    /// <see cref="EveryFinallyThatKills_ReclaimsAPidFirst"/>'s remarks, which carry the argument
+    /// for both rows). The pid written here is a literal; nothing opens it, and
+    /// <see cref="KillTreeQuietly"/> is never called.
+    /// </para>
+    /// <para>
+    /// <strong>The <c>work</c> handed over NEVER settles, and that is what makes both cases
+    /// measure the window rather than a coincidence.</strong> <see cref="WaitForPid"/> ends on
+    /// whichever of two arms fires first, and an unsettled task leaves only the CEILING —
+    /// <see cref="LateReadWindow"/>, since <see cref="ReclaimPidForTeardownAsync"/> passes it as
+    /// both arguments. Nothing awaits that task, so leaving it incomplete costs nothing: it
+    /// carries no result and no exception, and is collected with the row.
+    /// </para>
+    /// <para>
+    /// <strong>Case (a) starts from a TORN line, not from an absent file, and that is what makes
+    /// it a test of POLLING.</strong> The pid file exists before the wrapper is called, holding
+    /// the digits with NO terminator — the shape <see cref="ReadPid"/>'s #528 contract answers
+    /// "not yet" to. It is completed (<c>digits</c> then <c>\n</c>) one second later. So every
+    /// read the wrapper can possibly make before that moment is a read it MUST refuse, and the
+    /// only way to return the pid is to look again afterwards: a one-shot reader reddens on the
+    /// equality no matter when the thread pool got round to it. Against a file that was merely
+    /// ABSENT at t=0 — the arrangement this case first carried — a one-shot that happened to be
+    /// scheduled after the write would have passed, which is the objection this answers.
+    /// MEASURED: with <see cref="WaitForPid"/> cut down to a single <see cref="ReadPid"/>, this
+    /// case fails <c>Assert.Equal() Failure: Values differ / Expected: 51234 / Actual: null</c>.
+    /// </para>
+    /// <para>
+    /// <strong>It moves one boundary, and that is what <see cref="WriteCompletingTheLine"/> pays
+    /// for.</strong> A file present from t=0 is a file the poll OPENS, every
+    /// <see cref="PollIntervalMs"/> milliseconds, under <see cref="FileShare.Read"/>; the absent
+    /// file it replaced was never opened at all. So the completing write can now collide with a
+    /// read and throw on the test thread — Windows only, and rare — which is a flake rather than a
+    /// finding. That helper retries it briefly; its remarks carry the argument.
+    /// </para>
+    /// <para>
+    /// <strong>The completion is a WHOLE line, and the terminator is an LF literal.</strong>
+    /// <see cref="ReadPid"/> refuses anything else (#528), which is exactly why the torn form
+    /// above works as a "not yet" and why the completed form must be spelled precisely. LF rather
+    /// than <see cref="Environment.NewLine"/>, for the reason
+    /// <see cref="ReadPid_AcceptsOnlyACompleteNewlineTerminatedDigitLine"/> gives at length: the
+    /// constant is per-platform and would pin only the lane it ran in.
+    /// </para>
+    /// <para>
+    /// <strong>The delay is longer than a poll interval and far shorter than the window.</strong>
+    /// One second against <see cref="PollIntervalMs"/>'s hundred milliseconds leaves room for
+    /// several refused reads before the completion, and against a five-second window it leaves
+    /// four seconds of slack, so a loaded agent does not turn this into a flake. Total cost is
+    /// about six seconds: one for the arriving case, five for the missing one, which is
+    /// irreducible because the missing case IS the window.
+    /// </para>
+    /// <para>
+    /// <strong>THE RESIDUAL IN CASE (a), STATED BECAUSE THE TORN LINE NARROWS IT RATHER THAN
+    /// CLOSING IT.</strong> <see cref="ReclaimPidForTeardownAsync"/> dispatches through
+    /// <c>Task.Run</c>, so a thread pool under enough load can leave the work item queued until
+    /// after the completion lands. The wrapper's FIRST read then sees a whole line, the case
+    /// reduces to a single read, and a one-shot implementation passes it. Nothing about the
+    /// wrapper is observable from outside that would let this row tell the two apart — it has no
+    /// seam reporting how many reads happened, and adding one would be production surface existing
+    /// only for a test. What the torn line buys is that the pass is no longer AVAILABLE to a
+    /// one-shot on an unloaded host, which is where the drill above was taken and where this lane
+    /// runs; what it cannot buy is a guarantee under arbitrary load. Case (b)'s lower bound is
+    /// untouched by any of this: it asserts that the whole window was spent, which no scheduling
+    /// delay can shorten.
+    /// </para>
+    /// <para>
+    /// <strong>Neither case asserts an elapsed UPPER bound, and BOTH race rather than await
+    /// outright.</strong> No upper bound, because returning the pid already proves case (a)'s look
+    /// stayed inside its ceiling, and an elapsed check would charge the wrapper for thread-pool
+    /// scheduling that happened before its own clock started. A race in both, because that guards
+    /// a different failure the pid cannot: a wrapper that kept polling PAST its ceiling never
+    /// completes, and an unbounded <c>await</c> on it would WEDGE this blocking assembly rather
+    /// than redden it — the trade the file header sets out for every hang row, and the reason
+    /// three windows is slack rather than a latency target. Case (b) has the extra reason too: its
+    /// expected answer is <see langword="null"/>, so a lost ceiling returns nothing to assert on
+    /// at all. Case (b)'s LOWER bound stays — that is the half proving the window was actually
+    /// spent, and it is the one assertion in this row no scheduling delay can weaken.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task ReclaimPidForTeardownQuietly_TakesALateWholeLinePid_AndNullWhenNoneArrives()
+    {
+        const int ProbePid = 51234;
+        var lateWriteDelay = TimeSpan.FromSeconds(1);
+
+        // DateTime.UtcNow, which WaitForPid's ceiling is computed from, ticks at roughly 15ms on
+        // Windows, while the Stopwatch below is high-resolution. The lower-bound assertion in case
+        // (b) is therefore allowed to come in a shade under the window without that being a
+        // finding about the wrapper.
+        var clockTolerance = TimeSpan.FromMilliseconds(250);
+
+        var directory = CreateScratchDirectory();
+        var pidFile = Path.Combine(directory, PidFileName);
+        var never = new TaskCompletionSource();
+        try
+        {
+            // (a) A line COMPLETED inside the window is reclaimed.
+            //
+            // THE FILE EXISTS FROM t=0, HOLDING A TORN LINE, and that is what makes this case
+            // about POLLING rather than about a delay. The digits are there with no terminator,
+            // which ReadPid's #528 contract answers "not yet" to — so a reader that runs at any
+            // moment before the rewrite below sees a file it must refuse, and only a reader that
+            // LOOKS AGAIN afterwards can return the pid. A one-shot implementation reddens on the
+            // equality whatever the thread pool did with its first read; against a file that
+            // merely did not exist yet, a one-shot scheduled late would have passed.
+            File.WriteAllText(pidFile, ProbePid.ToString(CultureInfo.InvariantCulture));
+
+            // NO WALL-CLOCK UPPER BOUND ASSERTED, but the await IS bounded, and the two are not
+            // the same thing. Returning the pid at all IS the in-window evidence — the wrapper's
+            // ceiling is LateReadWindow, so a look that had outrun it would answer null and the
+            // equality would redden — and an elapsed check would add nothing while charging the
+            // wrapper for thread-pool scheduling that happened before its own clock started. What
+            // the race guards is the other failure: a wrapper that kept polling PAST the ceiling
+            // would never complete, and an unbounded await on it would wedge this blocking
+            // assembly instead of failing it. Same trade, same three-window slack, as case (b).
+            var arriving = ReclaimPidForTeardownQuietlyAsync(pidFile, never.Task);
+            var arrivingClock = Stopwatch.StartNew();
+
+            await Task.Delay(lateWriteDelay);
+            WriteCompletingTheLine(
+                pidFile, ProbePid.ToString(CultureInfo.InvariantCulture) + "\n");
+
+            var arrivingSettled =
+                await Task.WhenAny(arriving, Task.Delay(LateReadWindow * 3)) == arriving;
+            Assert.True(
+                arrivingSettled,
+                FormattableString.Invariant(
+                    $"ReclaimPidForTeardownQuietlyAsync had not returned {arrivingClock.Elapsed.TotalSeconds:F0}s after a whole pid line was completed {lateWriteDelay.TotalSeconds:F0}s into its own {LateReadWindow.TotalSeconds:F0}s window. A look that keeps polling past its ceiling does not delay a red row — it hangs the finally it is called from, and this assembly is a blocking gate with no per-test timeout."));
+
+            Assert.Equal(ProbePid, await arriving);
+
+            // (b) No write at all: null, and only after the whole window has been spent.
+            //
+            // RACED RATHER THAN AWAITED OUTRIGHT, in this file's own idiom: an unbounded await on
+            // a ceiling that had regressed to "never" would WEDGE this blocking gate instead of
+            // failing it, which is the trade the file header sets out for every hang row. Three
+            // windows is slack against a loaded agent while still being finite.
+            File.Delete(pidFile);
+            var clock = Stopwatch.StartNew();
+
+            var look = ReclaimPidForTeardownQuietlyAsync(pidFile, never.Task);
+            var settled = await Task.WhenAny(look, Task.Delay(LateReadWindow * 3)) == look;
+            Assert.True(
+                settled,
+                FormattableString.Invariant(
+                    $"ReclaimPidForTeardownQuietlyAsync had not returned {clock.Elapsed.TotalSeconds:F0}s after it was called against a pid file that never appeared, although its own ceiling is {LateReadWindow.TotalSeconds:F0}s. A teardown look with no ceiling does not delay a red row — it hangs the finally it is called from, and this assembly is a blocking gate with no per-test timeout."));
+
+            var missing = await look;
+            var missingElapsed = clock.Elapsed;
+
+            Assert.Null(missing);
+            Assert.True(
+                missingElapsed >= LateReadWindow - clockTolerance,
+                FormattableString.Invariant(
+                    $"ReclaimPidForTeardownQuietlyAsync gave up after {missingElapsed.TotalSeconds:F1}s against a pid file that never appeared, short of its own {LateReadWindow.TotalSeconds:F0}s window. The window is the whole of what this wrapper buys a late-writing survivor; a look that returns early buys less than the finally blocks are told it does."));
+        }
+        finally
+        {
+            TryDeleteDirectory(directory);
+        }
+    }
+
+    /// <summary>
+    /// The quiet wrapper answers <see langword="null"/> on the ACL fault its loud sibling throws,
+    /// and answers it at once.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The swallow is <see cref="ReclaimPidForTeardownQuietlyAsync"/>'s ONLY non-trivial
+    /// behaviour, and until this row nothing exercised it.</strong> Everything else that method
+    /// does is delegate. Its <c>catch</c> exists because a <c>finally</c> that throws REPLACES the
+    /// finding being propagated — the wedged runner, the undead child — with a permission detail,
+    /// and the three teardown blocks that call it are all <c>finally</c> blocks. A deleted catch
+    /// changes no other row in this file: rows 1, 2 and 5 never meet an ACL fault on a scratch
+    /// directory they created themselves, so the suite would stay green over it.
+    /// </para>
+    /// <para>
+    /// <strong>Three things are pinned, and the middle one is what makes the first mean
+    /// something.</strong> The LOUD reader (<see cref="ReclaimPidForTeardownAsync"/>) throws
+    /// <see cref="UnauthorizedAccessException"/> on this arrangement — that is
+    /// <see cref="ReadPid"/>'s deliberate choice, recorded at its remarks, and asserting it here
+    /// is what proves the quiet wrapper's <see langword="null"/> is a SWALLOW rather than an
+    /// absence of anything to swallow. The QUIET wrapper answers <see langword="null"/>. And it
+    /// answers PROMPTLY: the fault fires on the first <see cref="ReadPid"/>, so a wrapper that
+    /// caught it and went on polling would still answer <see langword="null"/> but spend the whole
+    /// of <see cref="LateReadWindow"/> doing it, which is the cost every "at most once per row"
+    /// claim in this file is written against.
+    /// </para>
+    /// <para>
+    /// <strong>THE ARRANGEMENT IS ASSERTED BEFORE IT IS USED, because a denial that did not take
+    /// is a silent green.</strong> If the read were permitted, the loud reader would return a pid,
+    /// the quiet one would return the same pid, and both of this row's real assertions would fail
+    /// loudly — but only after a reader of the failure had been sent to look at the wrapper rather
+    /// than at the host. So the row reads the file itself first and requires the fault, with a
+    /// message naming the host condition that produces the other answer: running as <c>root</c>,
+    /// or as a Windows identity whose access is evaluated against a different token than the one
+    /// the ACE names.
+    /// </para>
+    /// <para>
+    /// <strong>The platform split, and why the Windows side uses a DENY ace.</strong> On POSIX the
+    /// denial is <see cref="UnixFileMode.None"/> — mode 000, which <c>root</c> ignores and nobody
+    /// else does. On Windows it is an explicit DENY of <see cref="FileSystemRights.Read"/> for
+    /// <see cref="WindowsIdentity"/>'s own user SID rather than the removal of an ALLOW, because
+    /// deny entries are evaluated first: a developer box where the account also picks up access
+    /// through Administrators still sees the fault. The file is created first and denied
+    /// afterwards, so the arrangement does not depend on inheritance.
+    /// </para>
+    /// <para>
+    /// <strong>The residual is a LOUD one, which is the safe direction.</strong> A host on which
+    /// the denial is not enforced for the running identity fails this row at the arrangement
+    /// assertion, naming that condition — it does not pass over an unexercised catch. Restoring
+    /// access happens in a <c>finally</c> and BEFORE the directory delete, guarded, so a host that
+    /// refuses the restore cannot turn teardown into the row's reported failure; see
+    /// <see cref="TryRestoreRead"/>.
+    /// </para>
+    /// <para>
+    /// <strong>REDDENING RATHER THAN SKIPPING IS A DIVERGENCE FROM THIS REPOSITORY'S OWN
+    /// PRECEDENT, and it is deliberate.</strong> <c>GitChangeSetTests.HasRootsReach()</c> meets
+    /// the same POSIX fact — <c>root</c> ignores file modes — and SKIPS its affected rows. This
+    /// one does not, because the two have different things to lose. Those rows test whether a
+    /// mode-0000 file can be launched, a property that is VACUOUS under root — root can launch it,
+    /// so there is nothing left to diverge and a skip retires nothing. This row's property — that
+    /// <see cref="ReclaimPidForTeardownQuietlyAsync"/>'s <c>catch</c> exists and swallows — holds
+    /// under root just as well; it is only this ARRANGEMENT that root defeats, and this row is the
+    /// catch's only cover, so a skip would retire it precisely on the lane that gates merges if
+    /// that lane ever runs as root. A red row naming the host condition is recoverable in one
+    /// reading; a green suite over an unexercised catch is not.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task ReclaimPidForTeardownQuietly_AnswersNullOnAnAclFault_WhereTheLoudReaderThrows()
+    {
+        const int ProbePid = 51234;
+
+        // HALF THE WINDOW. The discrimination this needs is "promptly" against "sat out the whole
+        // of LateReadWindow", and 2.5s of 5s draws that line as cleanly as any smaller figure
+        // while leaving 2.5x the margin against thread-pool scheduling — which this row's clock
+        // starts before and therefore charges to the wrapper. A first-read fault costs
+        // milliseconds; a swallow-then-keep-polling regression costs the full five seconds.
+        var promptCeiling = LateReadWindow / 2;
+
+        var directory = CreateScratchDirectory();
+        var pidFile = Path.Combine(directory, PidFileName);
+        var never = new TaskCompletionSource();
+
+        // INSIDE THE TRY, both of them. Every other row in this file has its filesystem work
+        // under the try that owns the cleanup; these two were the exception, and a throw from
+        // either — a full disk on the write, a platform refusal on the deny — would have skipped
+        // TryRestoreRead and TryDeleteDirectory and left a denied file behind. TryRestoreRead is
+        // a guarded no-op against a file that was never denied or never created, so moving them
+        // in costs nothing on the paths where only one of the two ran.
+        try
+        {
+            File.WriteAllText(pidFile, ProbePid.ToString(CultureInfo.InvariantCulture) + "\n");
+            DenyRead(pidFile);
+
+            // THE ARRANGEMENT, first and on its own terms. The EXISTENCE check is part of it:
+            // stat is authorised by the parent directory rather than by the file's own DACL, so
+            // it holds under the denial today — but on a host where it did not, ReadPid would
+            // answer null from its File.Exists guard rather than throwing, and the loud-reader
+            // assertion below would fail while pointing at the wrong thing.
+            var arrangement = Record.Exception(() => File.ReadAllText(pidFile));
+            Assert.True(
+                File.Exists(pidFile) && arrangement is UnauthorizedAccessException,
+                FormattableString.Invariant(
+                    $"this row denies itself read access to its own pid file and then requires the read to fault, but the file {(File.Exists(pidFile) ? "is present" : "cannot even be stat'd")} and File.ReadAllText answered with {(arrangement is null ? "no exception at all" : arrangement.GetType().Name)}. The denial did not take for the identity this process runs as — running as root on POSIX ignores mode 000, and on Windows an identity whose access is evaluated against a token the deny ACE does not name sees no fault. Nothing below this line would be testing the wrapper's catch on such a host, so the row stops here rather than passing over it."));
+
+            // THE LOUD READER THROWS, which is what makes the null below a swallow.
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(
+                () => ReclaimPidForTeardownAsync(pidFile, never.Task));
+
+            // THE QUIET WRAPPER ANSWERS NULL, AND PROMPTLY. Raced rather than awaited outright,
+            // in this file's idiom: a wrapper that neither threw nor returned would wedge a
+            // blocking gate instead of reddening it.
+            var clock = Stopwatch.StartNew();
+            var quiet = ReclaimPidForTeardownQuietlyAsync(pidFile, never.Task);
+            var settled = await Task.WhenAny(quiet, Task.Delay(LateReadWindow * 3)) == quiet;
+            Assert.True(
+                settled,
+                FormattableString.Invariant(
+                    $"ReclaimPidForTeardownQuietlyAsync had not returned {clock.Elapsed.TotalSeconds:F0}s after being handed a pid file it cannot read, although the fault fires on its first read and its own ceiling is {LateReadWindow.TotalSeconds:F0}s. A teardown look that neither answers nor throws hangs the finally it is called from, and this assembly is a blocking gate with no per-test timeout."));
+
+            Assert.Null(await quiet);
+
+            var elapsed = clock.Elapsed;
+            Assert.True(
+                elapsed < promptCeiling,
+                FormattableString.Invariant(
+                    $"ReclaimPidForTeardownQuietlyAsync answered null after {elapsed.TotalSeconds:F1}s against a pid file whose very first read faults, which is not the prompt answer the three finally blocks are costed against. A catch that swallows the fault and then keeps polling spends the whole {LateReadWindow.TotalSeconds:F0}s window on a file that will never become readable, and every 'at most one LateReadWindow per row' claim in this file is written against the prompt answer."));
+        }
+        finally
+        {
+            // Access back BEFORE the delete, so the directory sweep is not the thing that fails.
+            TryRestoreRead(pidFile);
+            TryDeleteDirectory(directory);
+        }
+    }
+
+    /// <summary>Denies the current identity read access to one file, on either platform.</summary>
+    private static void DenyRead(string path)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            using var identity = WindowsIdentity.GetCurrent();
+            var file = new FileInfo(path);
+            var security = file.GetAccessControl();
+            security.AddAccessRule(new FileSystemAccessRule(
+                identity.User!,
+                FileSystemRights.Read,
+                AccessControlType.Deny));
+            file.SetAccessControl(security);
+            return;
+        }
+
+        File.SetUnixFileMode(path, UnixFileMode.None);
+    }
+
+    /// <summary>
+    /// Undoes <see cref="DenyRead"/>, best effort.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Guarded for the reason every teardown in this file is: it runs from a <c>finally</c>, where
+    /// a throw would replace the row's own finding with a permission detail — the same rule the
+    /// wrapper under test follows, and the reason the filter takes
+    /// <see cref="InvalidOperationException"/> as well as the two I/O families.
+    /// <c>RemoveAccessRuleAll</c> and <c>SetAccessControl</c> can raise it on a security
+    /// descriptor the platform will not accept, and an exception kind left off this list is one
+    /// that erases a finding. A host that refuses the restore leaves one unreadable file inside a
+    /// Guid-named scratch directory; the recursive delete below it can still remove that
+    /// directory, because deletion is authorised by the PARENT, which this row created.
+    /// </para>
+    /// <para>
+    /// <strong>The Windows restore reads the DACL of a file it has just denied itself
+    /// <see cref="FileSystemRights.Read"/> on, and that is not the contradiction it looks
+    /// like.</strong> <c>Read</c> includes <see cref="FileSystemRights.ReadPermissions"/> —
+    /// READ_CONTROL, the very right <c>GetAccessControl</c> needs — so the restore works only
+    /// because the file's OWNER holds implicit READ_CONTROL and WRITE_DAC whatever the DACL says,
+    /// and this row created the file. MEASURED on this host: the deny takes, the restore succeeds,
+    /// and the scratch directory is gone afterwards. A host that defeats that — an OWNER RIGHTS
+    /// ACE narrowing the owner's implicit grant, or a filtered token — makes this a no-op, which
+    /// is the bounded consequence the paragraph above already describes rather than a new one.
+    /// </para>
+    /// </remarks>
+    private static void TryRestoreRead(string path)
+    {
+        try
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                using var identity = WindowsIdentity.GetCurrent();
+                var file = new FileInfo(path);
+                var security = file.GetAccessControl();
+                security.RemoveAccessRuleAll(new FileSystemAccessRule(
+                    identity.User!,
+                    FileSystemRights.Read,
+                    AccessControlType.Deny));
+                file.SetAccessControl(security);
+                return;
+            }
+
+            File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        }
+        catch (Exception ex) when (ex is IOException
+                                       or UnauthorizedAccessException
+                                       or PlatformNotSupportedException
+                                       or InvalidOperationException)
+        {
+        }
+    }
+
+    /// <summary>
+    /// Every <c>finally</c> in THIS file that tree-kills is preceded, in the same block, by a
+    /// <c>pid is null</c>-guarded reclaim — and there are exactly three of them.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>WHY A CENSUS AND NOT A BEHAVIOURAL ROW — the honest version, because the reviewer's
+    /// request was for the behavioural one.</strong> Copilot asked for a permanent test that forces
+    /// the red path #539 added and verifies the late-published child is killed. That path is only
+    /// taken when an attempt has no pid AND an assertion has already ended the body, so provoking
+    /// it means a child that SURVIVES the runner's own tree-kill — WMI re-parenting on Windows,
+    /// <c>setsid</c> on Linux — and then publishes a pid. A harness for that is a second,
+    /// platform-forked child fixture whose whole purpose is to defeat the production kill, carried
+    /// permanently in a blocking lane, to cover a teardown detail of a test file. The before/after
+    /// for that path was measured once and recorded in #539's commit message
+    /// (<c>ebddeca</c>): with the tree-kill defeated by re-parenting the child and the grace
+    /// assertion forced red, the child was alive after the red row before the fix and dead after
+    /// it, on the same assertion message both times. What is kept permanently instead is the set
+    /// below it decomposes into, each of which is cheap and deterministic: the WRAPPER's semantics
+    /// (<see cref="ReclaimPidForTeardownQuietly_TakesALateWholeLinePid_AndNullWhenNoneArrives"/>),
+    /// this row's PLACEMENT, and the ARMING POINT of the flag this row's guard consults
+    /// (<see cref="TheLateLookFlag_IsArmedOnlyAfterTheLookCompletes"/>). Between them, a reclaim
+    /// deleted from any of the three <c>finally</c> blocks reddens here, a reclaim that stopped
+    /// picking up late writes reddens in the first, and a flag armed too early reddens in the
+    /// third — a defect THIS row structurally cannot see, since it changes no <c>finally</c>.
+    /// </para>
+    /// <para>
+    /// <strong>What the set still does NOT establish.</strong> That the kill issued a line later
+    /// actually reaches a live survivor. Nothing here opens a process. That is the liveness half,
+    /// and it is exactly the half no portable child can reproduce; it is named rather than implied
+    /// so that nobody quotes these rows as cover for it.
+    /// </para>
+    /// <para>
+    /// <strong>PRECEDES is dominance within the block, not lexical position</strong> — the
+    /// distinction <c>DcpArmingWindowCensusTests</c>'s rule 2 records as a real defect in its own
+    /// first version. Each of the two invocations is reduced to its BLOCK-LEVEL ANCESTOR —
+    /// <see cref="BlockLevelStatement"/>, the statement on the <c>finally</c> block's own
+    /// statement list that contains it, whatever KIND that statement is — and the reclaim's must
+    /// sit at a lower index than the kill's. Control entering a block runs its statements in
+    /// order, so a reclaim whose block-level ancestor is at index <em>i</em> has executed by the
+    /// time index <em>j &gt; i</em> is reached. The invocations themselves need not be direct
+    /// children: today's reclaims sit inside an <c>if</c>, and one inside a loop or a nested
+    /// <c>try</c> would be reduced to that loop or try and counted the same way. What does NOT
+    /// count is an invocation outside this <c>finally</c> altogether — and that exclusion is done
+    /// by scope, since <c>InvocationsNamed</c> enumerates only the clause's own descendants; the
+    /// helper's <see langword="null"/> answer for a node with no block-level ancestor is a
+    /// defensive branch nothing here reaches.
+    /// </para>
+    /// <para>
+    /// That reduction is a deliberate over-approximation in one direction: a reclaim inside
+    /// <c>if (false)</c>, or a loop that runs zero times, is credited as though it ran. The
+    /// dominance argument is about statement ORDER, not reachability, and deciding the latter
+    /// needs the control-flow analysis rule 1 of the sibling census records having no compilation
+    /// for. It is aimed at a reclaim being deleted or moved, not at one being disabled in place.
+    /// </para>
+    /// <para>
+    /// <strong>The <c>pid is null</c> guard is part of the rule, and not decoration.</strong> An
+    /// unguarded reclaim would spend <see cref="LateReadWindow"/> on every green run of every row,
+    /// re-reading a file the caller already has a pid from —
+    /// <see cref="LateReadWindow"/>'s own remarks turn on the claim that no green path reaches it.
+    /// </para>
+    /// <para>
+    /// <strong>SO IS ROW 5's SECOND CONJUNCT, <c>&amp;&amp; !lateLookTaken</c>, and it needed a
+    /// rule of its own because the first one is blind to it.</strong> <c>pid is null</c> holds on
+    /// the path where row 5's BODY look already ran and found nothing, so a guard testing only
+    /// that repeats a look the row has just finished — two <see cref="LateReadWindow"/>s where the
+    /// row is costed for one. Deleting the conjunct leaves the <c>pid is null</c> check intact and
+    /// the arming-point rule
+    /// (<see cref="TheLateLookFlag_IsArmedOnlyAfterTheLookCompletes"/>) intact, so both existing
+    /// censuses stay green over it. What it breaks is arithmetic stated elsewhere: the
+    /// <c>longestLook</c> assertion at the top of row 5 weighs
+    /// <see cref="UnracedPidCeiling"/> plus ONE <see cref="LateReadWindow"/> against
+    /// <see cref="ChildLifetime"/>, and a row spending two is no longer the row that guard
+    /// describes.
+    /// </para>
+    /// <para>
+    /// <strong>Applied only where it can apply, by looking for the flag's DECLARATION.</strong>
+    /// Rows 1 and 2 take no body look, so they have nothing to repeat and carry no flag; requiring
+    /// the conjunct of them would be requiring a test of a local that does not exist. The rule
+    /// therefore asks which killing <c>finally</c> sits in a method declaring a
+    /// <c>lateLookTaken</c> local, requires EXACTLY ONE to (row 5), and requires that one's guard
+    /// to carry the negation. Both halves are counted: a second flagged method means another row
+    /// grew a body look and needs the same conjunct, and none means row 5's flag has gone.
+    /// </para>
+    /// <para>
+    /// Its limit is the one this file's other syntax rules share: the conjunct is PATTERN-matched,
+    /// not reasoned about. <c>!lateLookTaken</c> satisfies it; <c>lateLookTaken is false</c> and
+    /// <c>lateLookTaken == false</c> mean the same thing and would redden it. Loud and re-aimable
+    /// at the line, which is the safe direction for a rule that must never go quiet.
+    /// </para>
+    /// <para>
+    /// <strong>Exactly three, because a count is what turns this from a check into a
+    /// census.</strong> Rows 1, 2 and 5 each carry one. Without the count, a FOURTH killing
+    /// <c>finally</c> added without a reclaim would simply not be looked at — the same
+    /// "enumeration standing in for a property" failure this repository's census remarks warn
+    /// about. <see cref="KillTreeQuietly"/>'s own body is not one: its
+    /// <c>ChildProcess.KillTreeQuietly</c> call sits inside a <c>using</c> statement, which is not
+    /// a <c>finally</c> clause in syntax however the compiler lowers it.
+    /// </para>
+    /// <para>
+    /// <strong>Roslyn over this file's own source, and the self-reference is safe by NODE
+    /// KIND.</strong> The method names below are string constants, and this row's messages spell
+    /// them too, but the scan switches on <see cref="InvocationExpressionSyntax"/> — a string
+    /// literal is never one, however it is spelled. <c>descendIntoTrivia: false</c> keeps the
+    /// file's very large comment and doc-comment blocks out on top of that. The house precedent is
+    /// <c>Vouchfx.Engine.Orchestration.Tests.ChildProcessKillCallSiteCensusTests</c>, which reads
+    /// trees it does not reference for the same reason: the file is parsed as text off disk, so
+    /// nothing has to load.
+    /// </para>
+    /// <para>
+    /// <strong>Its limits.</strong> Identifier matching, not symbols: a reclaim reached through a
+    /// differently-named wrapper, or a kill spelled through an alias, is invisible — as is the
+    /// question of whether the pid the guard tests is the pid the kill receives. The guard is
+    /// matched by PATTERN and not by meaning, so <c>pid is null</c> satisfies it while
+    /// <c>pid == null</c>, <c>pid.HasValue is false</c> and a <c>pid ??= …</c> that needs no
+    /// <c>if</c> at all do not — each would redden this row despite being the same intent. That is
+    /// the safe direction (loud, at the line it names, and fixed by spelling the pattern) and it
+    /// is also why the rule is stated as the pattern rather than as "a guarded look". It is aimed
+    /// at the accident (somebody tidies the <c>finally</c> and the reclaim goes with it), not at
+    /// an adversary.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void EveryFinallyThatKills_ReclaimsAPidFirst()
+    {
+        const string KillMethod = "KillTreeQuietly";
+        const string ReclaimMethod = "ReclaimPidForTeardownQuietlyAsync";
+        const string FlagName = "lateLookTaken";
+        const int ExpectedKillingFinallies = 3;
+
+        var killing = SelfSource()
+            .DescendantNodes(descendIntoTrivia: false)
+            .OfType<FinallyClauseSyntax>()
+            .Where(clause => InvocationsNamed(clause, KillMethod).Any())
+            .ToList();
+
+        Assert.True(
+            killing.Count == ExpectedKillingFinallies,
+            FormattableString.Invariant(
+                $"This file holds {killing.Count} `finally` block(s) calling `{KillMethod}`, not the {ExpectedKillingFinallies} this census covers (rows 1, 2 and 5). A new one needs the same guarded `{ReclaimMethod}` ahead of its kill — see #539 — and one that has gone means a teardown path was removed. Re-aim this count rather than deleting it."));
+
+        var offenders = new List<string>();
+        foreach (var clause in killing)
+        {
+            foreach (var kill in InvocationsNamed(clause, KillMethod))
+            {
+                if (!GuardedReclaimPrecedes(clause, kill, ReclaimMethod))
+                {
+                    offenders.Add(Describe(kill));
+                }
+            }
+        }
+
+        Assert.True(
+            offenders.Count == 0,
+            FormattableString.Invariant(
+                $"{offenders.Count} tree-kill(s) in a `finally` are not preceded, in the same block and under a `pid is null` guard, by `{ReclaimMethod}`. Without that look the kill receives whatever the attempt happened to hold — which on the path an assertion ended is null — and a child whose first write was merely late is left to ChildLifetime (#539). Put the guarded reclaim first:\n  ")
+            + string.Join("\n  ", offenders));
+
+        // THE SECOND CONJUNCT, which the guard-shape check above cannot see. Only the `finally`
+        // whose METHOD declares a `lateLookTaken` local is in a position to repeat a look its own
+        // body already took, and only that one must therefore test the flag as well.
+        var flagged = killing
+            .Where(clause => DeclaresTheLateLookFlag(clause, FlagName))
+            .ToList();
+
+        Assert.True(
+            flagged.Count == 1,
+            FormattableString.Invariant(
+                $"{flagged.Count} of the {ExpectedKillingFinallies} killing `finally` blocks sit in a method declaring a `{FlagName}` local, not the 1 this rule covers (row 5). Rows 1 and 2 have no body look to repeat, so they carry no flag; row 5 does. A second flagged method means another row grew a body look — it needs the same `&& !{FlagName}` conjunct — and none means row 5's has gone."));
+
+        var unflagged = flagged
+            .Where(clause => !GuardAlsoTestsTheFlag(clause, ReclaimMethod, FlagName))
+            .Select(Describe)
+            .ToList();
+
+        Assert.True(
+            unflagged.Count == 0,
+            FormattableString.Invariant(
+                $"row 5's teardown reclaim is not guarded by `&& !{FlagName}` as well as by `pid is null`. Without that conjunct the `finally` repeats the look the body has already taken, so the row spends TWO {LateReadWindow.TotalSeconds:F0}s windows rather than one — and the `longestLook` guard at the top of that row, which weighs UnracedPidCeiling plus a single LateReadWindow against ChildLifetime, is then measuring less than the row actually spends. Restore the conjunct:\n  ")
+            + string.Join("\n  ", unflagged));
+    }
+
+    /// <summary>
+    /// Whether the member enclosing <paramref name="clause"/> declares a local by this name.
+    /// </summary>
+    private static bool DeclaresTheLateLookFlag(FinallyClauseSyntax clause, string flagName) =>
+        clause.Ancestors()
+            .OfType<MethodDeclarationSyntax>()
+            .FirstOrDefault()
+            ?.DescendantNodes(descendIntoTrivia: false)
+            .OfType<VariableDeclaratorSyntax>()
+            .Any(declarator => declarator.Identifier.ValueText == flagName)
+            ?? false;
+
+    /// <summary>
+    /// Whether the <c>if</c> guarding this clause's reclaim also tests <c>!flagName</c>.
+    /// </summary>
+    /// <remarks>
+    /// Matched as a <see cref="PrefixUnaryExpressionSyntax"/> carrying <c>!</c> over the bare
+    /// identifier, anywhere in the condition — so <c>pid is null &amp;&amp; !lateLookTaken</c>
+    /// satisfies it and the operand order does not matter. Pattern-matched rather than reasoned
+    /// about: <c>lateLookTaken is false</c> and <c>lateLookTaken == false</c> mean the same thing
+    /// and would redden this, which is the same safe direction
+    /// <see cref="GuardedOnANullPid"/>'s remarks argue for the other conjunct.
+    /// </remarks>
+    private static bool GuardAlsoTestsTheFlag(
+        FinallyClauseSyntax clause, string reclaimMethod, string flagName) =>
+        InvocationsNamed(clause, reclaimMethod)
+            .SelectMany(reclaim => reclaim.Ancestors()
+                .TakeWhile(ancestor => ancestor is not FinallyClauseSyntax)
+                .OfType<IfStatementSyntax>())
+            .Any(statement => statement.Condition
+                .DescendantNodesAndSelf()
+                .OfType<PrefixUnaryExpressionSyntax>()
+                .Any(negation =>
+                    negation.OperatorToken.IsKind(SyntaxKind.ExclamationToken)
+                    && negation.Operand is IdentifierNameSyntax { Identifier.ValueText: { } name }
+                    && name == flagName));
+
+    /// <summary>
+    /// Writes <paramref name="content"/> over the pid file, retrying briefly while a concurrent
+    /// reader holds it open.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>This retry exists because the torn-line arrangement moved a boundary.</strong>
+    /// While case (a)'s file merely did not exist yet, <see cref="ReadPid"/>'s
+    /// <see cref="File.Exists(string)"/> answered <see langword="false"/> and no handle was ever
+    /// opened. Now the file is there from t=0, so the wrapper's poll opens it every
+    /// <see cref="PollIntervalMs"/> milliseconds — <see cref="File.ReadAllText(string)"/> takes
+    /// <see cref="FileShare.Read"/>, which excludes writers — and the completing write can land
+    /// inside one of those reads.
+    /// </para>
+    /// <para>
+    /// The fault is an <see cref="IOException"/> on the TEST thread, which would redden the row
+    /// for a reason that is not about the wrapper. It is Windows-only (Unix does not enforce
+    /// share modes) and rare — a hundred-microsecond read against a hundred-millisecond poll
+    /// period, order one run in a thousand — which is exactly the kind of flake that arrives
+    /// months later attached to an unrelated change. Retrying is the whole fix: the reader's
+    /// handle is open for microseconds, so the next attempt finds it gone.
+    /// </para>
+    /// <para>
+    /// Bounded and then RETHROWN rather than swallowed. A write that cannot land after every
+    /// attempt is not a sharing race, and case (a) would fail on the equality anyway with a far
+    /// worse message; letting the <see cref="IOException"/> out names the real fault.
+    /// </para>
+    /// </remarks>
+    private static void WriteCompletingTheLine(string pidFile, string content)
+    {
+        const int Attempts = 10;
+        const int BackoffMs = 20;
+
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                File.WriteAllText(pidFile, content);
+                return;
+            }
+            catch (IOException) when (attempt < Attempts)
+            {
+                // The poll holds a FileShare.Read handle for the length of one read. Wait out
+                // that read rather than the whole poll period.
+                Thread.Sleep(BackoffMs);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Row 5's <c>lateLookTaken = true</c> sits AFTER the body look it records, not before it —
+    /// and there is exactly one such pair.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>A SEPARATE RULE FROM THE PLACEMENT CENSUS ABOVE, because it is about a different
+    /// statement in a different block.</strong> That one reads <c>finally</c> blocks and checks
+    /// the SHAPE of the guard it finds there (<c>pid is null</c>, reclaim before kill). This one
+    /// reads row 5's BODY and checks WHERE the flag that guard consults is assigned. Neither can
+    /// see the other's subject: a flag set at the wrong point leaves every <c>finally</c> in this
+    /// file exactly as it was, and the placement census stays green over it. That is not
+    /// hypothetical — it is how the defect below shipped and how it survived a review round.
+    /// </para>
+    /// <para>
+    /// <strong>What it pins, and why the order is load-bearing rather than tidy.</strong> Row 5's
+    /// body look calls <see cref="ReclaimPidForTeardownAsync"/>, the LOUD reader, which lets
+    /// <see cref="ReadPid"/>'s <see cref="UnauthorizedAccessException"/> escape. Assign the flag
+    /// BEFORE that await and an ACL fault on the scratch file leaves the row's <c>finally</c>
+    /// seeing <c>pid is null &amp;&amp; lateLookTaken</c>, so it skips its own quiet look
+    /// entirely. Assigned after, the flag means what the <c>finally</c> reads it to mean: a body
+    /// look that RAN TO COMPLETION.
+    /// </para>
+    /// <para>
+    /// <strong>THE BENEFIT IS THE FLAG'S MEANING, NOT A CHILD SAVED, and the difference has to be
+    /// stated because the obvious reading is the wrong one.</strong> On today's code the child is
+    /// abandoned on that path either way: the quiet wrapper meets the same ACL fault on its own
+    /// first <see cref="ReadPid"/> and answers <see langword="null"/>, so
+    /// <see cref="KillTreeQuietly"/> is handed nothing whether the <c>finally</c> looks or not.
+    /// What the ordering buys is that the <c>finally</c> takes its look ON ITS OWN ACCOUNT rather
+    /// than the row resting on a coincidence — that the loud and the quiet reader happen to fail
+    /// alike. They do today; nothing pins that they always will, and the version that suppressed
+    /// the look would go on suppressing it if they ever diverged. It is also what keeps the flag
+    /// honest for anyone reading the <c>finally</c>'s guard, which says "a look has already
+    /// happened" and must not be true when none has. The cost of letting the look run is nil for
+    /// the same reason it finds nothing — the second read answers at once — so "at most one
+    /// <see cref="LateReadWindow"/> per row" survives the fix.
+    /// </para>
+    /// <para>
+    /// <strong>Keyed on the ASSIGNMENT, because that is the thing that can move.</strong> The
+    /// method name appears twice in this file as an invocation — row 5's body call, and the one
+    /// inside <see cref="ReclaimPidForTeardownQuietlyAsync"/> — so a rule keyed on the await would
+    /// have to say which. Keyed on the flag there is exactly one, and its block is the block the
+    /// await has to be found in. The count is part of the rule for the reason the sibling census
+    /// gives: a SECOND arming assignment added elsewhere would otherwise not be looked at.
+    /// </para>
+    /// <para>
+    /// <strong>Same dominance machinery as the sibling, inverted.</strong> Both nodes are reduced
+    /// to their block-level ancestor by <see cref="BlockLevelStatement"/>, and the ASSIGNMENT's
+    /// index must be the higher one. Control entering a block runs its statements in order, so an
+    /// assignment at index <em>j</em> is reached only after the statement at <em>i &lt; j</em> has
+    /// executed — which for an <c>await</c> means it completed rather than threw.
+    /// </para>
+    /// <para>
+    /// <strong>Its limit is the same one, and it is worth naming because this rule leans on it
+    /// harder.</strong> Statement ORDER is not reachability: an assignment after an await that is
+    /// itself inside <c>if (false)</c> would satisfy this, and an <c>await</c> whose exception is
+    /// swallowed by a <c>try</c> between the two would defeat the property while satisfying the
+    /// rule. Deciding either needs the control-flow analysis this census has no compilation for.
+    /// What it catches is the edit that actually happened — the two statements swapped — and it
+    /// catches that deterministically.
+    /// </para>
+    /// <para>
+    /// A <c>true</c> literal is required on the right-hand side so a future <c>lateLookTaken =
+    /// false</c> reset could not stand in for the arming assignment. The declaration
+    /// (<c>var lateLookTaken = false;</c>) is a declarator rather than an assignment expression
+    /// and is invisible here, which is what keeps the count at one.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void TheLateLookFlag_IsArmedOnlyAfterTheLookCompletes()
+    {
+        const string FlagName = "lateLookTaken";
+        const string LoudReclaimMethod = "ReclaimPidForTeardownAsync";
+
+        var root = SelfSource();
+
+        var armings = root
+            .DescendantNodes(descendIntoTrivia: false)
+            .OfType<AssignmentExpressionSyntax>()
+            .Where(assignment =>
+                assignment.Left is IdentifierNameSyntax { Identifier.ValueText: FlagName }
+                && assignment.Right.IsKind(SyntaxKind.TrueLiteralExpression))
+            .ToList();
+
+        Assert.True(
+            armings.Count == 1,
+            FormattableString.Invariant(
+                $"This file holds {armings.Count} assignment(s) of `{FlagName} = true`, not the 1 this rule covers (row 5's body look). A second one would be a second place the `finally`'s look can be suppressed from, and this rule would not be looking at it; one that has gone means the flag no longer records anything. Re-aim this count rather than deleting it."));
+
+        var arming = armings[0];
+        var block = arming.Ancestors().OfType<BlockSyntax>().FirstOrDefault();
+        Assert.True(
+            block is not null,
+            FormattableString.Invariant(
+                $"`{FlagName} = true` is not inside a block, so this rule has no statement list to order it against. Re-aim it rather than deleting it."));
+
+        var armingAnchor = BlockLevelStatement(block!, arming);
+        var lookAnchor = InvocationsNamed(block!, LoudReclaimMethod)
+            .Select(look => BlockLevelStatement(block!, look))
+            .FirstOrDefault(anchor => anchor is not null);
+
+        Assert.True(
+            armingAnchor is not null && lookAnchor is not null,
+            FormattableString.Invariant(
+                $"`{FlagName} = true` and the `{LoudReclaimMethod}` call it records are not statements of one block, so this rule cannot order them. The body look moved — re-aim this rule rather than deleting it."));
+
+        Assert.True(
+            block!.Statements.IndexOf(armingAnchor!) > block.Statements.IndexOf(lookAnchor!),
+            FormattableString.Invariant(
+                $"`{FlagName} = true` at {Describe(arming)} does not sit after the `{LoudReclaimMethod}` call it is supposed to record. That call is the LOUD reader: an ACL fault on the pid file escapes it, and a flag armed beforehand then tells row 5's `finally` that a look has already happened when none has — so teardown skips its own look on the one path where nothing has looked at the child at all, and the row's teardown rests on the loud and quiet readers happening to fail alike rather than on a look of its own (#539, Copilot round 2). Move the assignment below the await."));
+    }
+
+    /// <summary>
+    /// This file's own syntax tree, read off disk.
+    /// </summary>
+    /// <remarks>
+    /// Shared by the two census rows above so the path and its diagnostic live in one place. The
+    /// repository-relative tail is what the failure names, never the resolved path: the account
+    /// name above the checkout belongs in nobody's public job log, and the tail is the whole of
+    /// what a reader re-aims.
+    /// </remarks>
+    private static SyntaxNode SelfSource()
+    {
+        var path = Path.Combine(
+            RepositoryRoot(), "tests", "Vouchfx.Cli.Tests", "SystemProcessRunnerTests.cs");
+
+        Assert.True(
+            File.Exists(path),
+            "this census reads its own source at "
+            + "'tests/Vouchfx.Cli.Tests/SystemProcessRunnerTests.cs' under the repository root, "
+            + "which is not there. The file was renamed or moved — re-aim this row rather than "
+            + "deleting it.");
+
+        return CSharpSyntaxTree.ParseText(File.ReadAllText(path), path: path).GetRoot();
+    }
+
+    /// <summary>
+    /// Whether a guarded reclaim is a block-level statement of <paramref name="clause"/> ahead of
+    /// <paramref name="kill"/>'s own.
+    /// </summary>
+    private static bool GuardedReclaimPrecedes(
+        FinallyClauseSyntax clause, InvocationExpressionSyntax kill, string reclaimMethod)
+    {
+        var block = clause.Block;
+        var killAnchor = BlockLevelStatement(block, kill);
+        if (killAnchor is null)
+        {
+            return false;
+        }
+
+        return InvocationsNamed(clause, reclaimMethod).Any(reclaim =>
+        {
+            var anchor = BlockLevelStatement(block, reclaim);
+            return anchor is not null
+                && block.Statements.IndexOf(anchor) < block.Statements.IndexOf(killAnchor)
+                && GuardedOnANullPid(reclaim);
+        });
+    }
+
+    /// <summary>
+    /// The statement of <paramref name="block"/> that <paramref name="node"/> sits in — the node's
+    /// own statement when it is a direct child, otherwise the enclosing <c>if</c>/loop/try that
+    /// is. <see langword="null"/> when the node is not inside this block at all.
+    /// </summary>
+    private static StatementSyntax? BlockLevelStatement(BlockSyntax block, SyntaxNode node) =>
+        node.AncestorsAndSelf()
+            .OfType<StatementSyntax>()
+            .FirstOrDefault(statement => ReferenceEquals(statement.Parent, block));
+
+    /// <summary>
+    /// Whether an enclosing <c>if</c> inside the same <c>finally</c> tests <c>pid is null</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The condition need only CONTAIN the pattern, so row 5's
+    /// <c>pid is null &amp;&amp; !lateLookTaken</c> satisfies it: a narrower guard is still a
+    /// guard.
+    /// </para>
+    /// <para>
+    /// <strong>What it refuses is a look not guarded BY THAT SPELLING, which is narrower than "an
+    /// unguarded look" and the difference is worth stating.</strong> This matches an
+    /// <see cref="IsPatternExpressionSyntax"/>, so <c>pid == null</c>, <c>!pid.HasValue</c> and a
+    /// <c>pid ??= …</c> with no <c>if</c> around it are all refused even though each guards the
+    /// look perfectly well. The census reddens on them, loudly and at the line, and the fix is to
+    /// spell the pattern; pinning one spelling is what keeps this decidable without a symbol
+    /// table, and the call sites it governs are three lines in one file.
+    /// </para>
+    /// </remarks>
+    private static bool GuardedOnANullPid(SyntaxNode node) =>
+        node.Ancestors()
+            .TakeWhile(ancestor => ancestor is not FinallyClauseSyntax)
+            .OfType<IfStatementSyntax>()
+            .Any(statement => statement.Condition
+                .DescendantNodesAndSelf()
+                .OfType<IsPatternExpressionSyntax>()
+                .Any(pattern =>
+                    pattern.Expression is IdentifierNameSyntax { Identifier.ValueText: "pid" }
+                    && pattern.Pattern is ConstantPatternSyntax constant
+                    && constant.Expression.IsKind(SyntaxKind.NullLiteralExpression)));
+
+    /// <summary>Every invocation of a method with this bare name, at any depth.</summary>
+    private static IEnumerable<InvocationExpressionSyntax> InvocationsNamed(
+        SyntaxNode node, string methodName) =>
+        node.DescendantNodes(descendIntoTrivia: false)
+            .OfType<InvocationExpressionSyntax>()
+            .Where(invocation => invocation.Expression switch
+            {
+                MemberAccessExpressionSyntax access =>
+                    access.Name.Identifier.ValueText == methodName,
+                IdentifierNameSyntax name => name.Identifier.ValueText == methodName,
+                _ => false,
+            });
+
+    /// <summary>
+    /// A census offender as its failure message names it: line, then first line of text.
+    /// </summary>
+    private static string Describe(SyntaxNode node)
+    {
+        var line = node.SyntaxTree.GetLineSpan(node.Span).StartLinePosition.Line + 1;
+        return FormattableString.Invariant($"line {line}: ")
+            + node.ToString().Split('\n')[0].Trim();
+    }
+
+    /// <summary>
+    /// The repository root, found by walking up to the directory holding the solution.
+    /// </summary>
+    private static string RepositoryRoot()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null
+            && !File.Exists(Path.Combine(directory.FullName, "vouchfx.sln")))
+        {
+            directory = directory.Parent;
+        }
+
+        Assert.NotNull(directory);
+        return directory!.FullName;
+    }
+
     // ── budget machinery (#524) ──────────────────────────────────────────────────────────────
 
     /// <summary>
@@ -1190,8 +2270,8 @@ public sealed class SystemProcessRunnerTests
     /// One whole attempt at one budget. <see langword="true"/> means it established its premise and
     /// its assertions have already run; <see langword="false"/> means the attempt judged nothing,
     /// because no pid arrived inside the windows its premise depends on. A pid that
-    /// <see cref="ReclaimPidForTeardownAsync"/> recovered afterwards does not change that answer —
-    /// it was used to kill the child, not to establish anything.
+    /// <see cref="ReclaimPidForTeardownQuietlyAsync"/> recovered in the attempt's <c>finally</c>
+    /// does not change that answer — it was used to kill the child, not to establish anything.
     /// </param>
     /// <remarks>
     /// <para>
@@ -1201,10 +2281,11 @@ public sealed class SystemProcessRunnerTests
     /// number to arm the death assertion with. WHY it did not arrive is a separate question that
     /// this fact does not settle — the usual answer is that the runner's tree-kill reached the child
     /// before the operating system scheduled its first write, but "usual" is not "always", and the
-    /// case where the kill did NOT reach it is handled by <see cref="ReclaimPidForTeardownAsync"/>
-    /// rather than assumed away. An attempt that DID get a pid runs its assertions to completion,
-    /// and a failure among them throws straight out through this method — assertions
-    /// are never re-run, and there is no path here that sees one fail and tries again.
+    /// case where the kill did NOT reach it is handled in the attempt's <c>finally</c>, by
+    /// <see cref="ReclaimPidForTeardownQuietlyAsync"/>, rather than assumed away. An attempt that
+    /// DID get a pid runs its assertions to completion, and a failure among them throws straight
+    /// out through this method — assertions are never re-run, and there is no path here that sees
+    /// one fail and tries again.
     /// </para>
     /// <para>
     /// <strong>Why doubling cannot buy a PASS.</strong> The worry with any retry near a leak test is
@@ -1221,9 +2302,9 @@ public sealed class SystemProcessRunnerTests
     /// a statement about PROCESSES, and argued a statement about ASSERTIONS. Repetition genuinely
     /// can leave a live process behind — the attempt that is discarded had a child, and if the
     /// runner's kill failed while that child's first write was still pending, the attempt returned
-    /// here holding no pid to kill it with. The discarded attempt closes that itself, at
-    /// <see cref="ReclaimPidForTeardownAsync"/>, before it returns; nothing in this method does, and
-    /// this paragraph now claims only what it can carry.
+    /// here holding no pid to kill it with. The discarded attempt closes that itself, in its
+    /// <c>finally</c> at <see cref="ReclaimPidForTeardownQuietlyAsync"/>, before it returns;
+    /// nothing in this method does, and this paragraph now claims only what it can carry.
     /// </para>
     /// <para>
     /// <strong>WHAT THE ESCALATION CANNOT DO EITHER WAY IS SAMPLE EVENLY, and this is the one cost
@@ -1281,29 +2362,43 @@ public sealed class SystemProcessRunnerTests
         // free to drift — which is exactly the shape of gap an assertion like this exists to close.
         //
         // "REACHES A VERDICT" IS A DELIBERATE NARROWING, AND ONE PATH IS EXCLUDED BY IT. If Run
-        // does not settle at all, WaitForPid first spends its own ceiling (grace + PidSettleWindow)
-        // and the race after it adds up to another grace, so an attempt can run to roughly two
-        // budgets plus twenty-three seconds — about 71s at the largest budget, past ChildLifetime.
+        // does not settle at all, WaitForPid first spends its own ceiling (GraceFor(budget) +
+        // PidSettleWindow = budget + 13s) and the race after it adds up to another GraceFor(budget)
+        // (budget + 10s), so `Assert.True(finished, …)` is reached at two budgets plus twenty-three
+        // seconds — 71s at the largest budget, already past ChildLifetime. Since #539 the `finally`
+        // after it adds LateReadWindow (5s) for the reclaim and then DrainWindow (10s) for the
+        // drain, so the WHOLE attempt runs to 2*budget + 38s, or 86s at the largest budget. The
+        // drain was always there and was simply not counted in this paragraph before, so the
+        // like-for-like figure #539 moved is 81s to 86s. Either way the sum sits where this
+        // paragraph has always said it sits — outside the 60s lifetime — so the fix widened an
+        // interval that was already outside rather than pushing one across.
+        //
         // That is not a hole in this guard: it is a path that never reaches the death poll the
         // guard protects, because it fails first at `Assert.True(finished, …)`, which IS the row
         // correctly reporting a wedged runner. Nothing downstream of that assertion runs, so what
-        // the child does at 60s cannot change the verdict.
+        // the child does at 60s cannot change the verdict — and the reclaim #539 put in the
+        // `finally` runs strictly AFTER that assertion has thrown, so it cannot change one either.
+        // It is there to give that red row's teardown something to kill, which on exactly this
+        // path it previously had not.
         //
         // THE NO-PID PATH IS EXCLUDED BY THE SAME WORD, and since PR #532 it costs LateReadWindow
         // more than it did. It reaches no death poll either — it returns `false` and the loop below
         // discards it — so ChildLifetime is not the thing bounding it; BudgetAttempts is. What it
         // does cost is written down at LateReadWindow rather than folded in here, because it is a
-        // wall-clock figure and not a correctness relationship.
+        // wall-clock figure and not a correctness relationship. #539 changed WHERE that cost is
+        // paid — the `finally` rather than the return — and therefore WHICH paths pay it: both of
+        // the two above now do, and neither of them reaches the death poll.
         //
         // AND THE TWO CONDITIONS DO NOT MEET ANYWAY, which is a stronger statement than "fails
         // first" and is the one that actually closes the question. For ChildLifetime to matter at
         // all, the child must be ALIVE for the whole minute so that its own exit is what closes the
         // pipes — and a live child publishes its pid as its FIRST action, so WaitForPid returned
-        // then and the race that follows expires at most grace later. Taking the slowest start-up
-        // this file has ever measured (13.6s, at 128 burners) and the largest budget: 13.6+34 =
-        // 47.6s, still short of 60. So whenever a child is alive to meet this ceiling, the clocks
-        // that could reach it are short. There is no shape in which this ceiling decides that path,
-        // and no need to re-derive that next time.
+        // then and the race that follows expires at most grace later — and with a pid in hand the
+        // `finally`'s reclaim is guarded out, so #539 adds nothing to this sum. Taking the slowest
+        // start-up this file has ever measured (13.6s, at 128 burners) and the largest budget:
+        // 13.6+34 = 47.6s, still short of 60. So whenever a child is alive to meet this ceiling,
+        // the clocks that could reach it are short. There is no shape in which this ceiling decides
+        // that path, and no need to re-derive that next time.
         //
         // THE CONVERSE USED TO BE ASSERTED HERE TOO — that WaitForPid running to its full ceiling
         // MEANT no child was going to write, "because it is dead or was never started". PR #532
@@ -1593,21 +2688,29 @@ public sealed class SystemProcessRunnerTests
     /// </summary>
     /// <param name="pidFile">Where the child announces itself.</param>
     /// <param name="work">
-    /// The <c>Run</c> whose child is being reclaimed. Settled on rows 1 and 2, NOT settled on row 5.
+    /// The <c>Run</c> whose child is being reclaimed. Never settled on row 5, the one caller that
+    /// reaches this method directly. Rows 1 and 2 arrive through
+    /// <see cref="ReclaimPidForTeardownQuietlyAsync"/> and may be either: settled when the attempt
+    /// gave its premise up or when an assertion after the grace check threw, NOT settled when a
+    /// wedged runner ended it.
     /// </param>
     /// <remarks>
     /// <para>
-    /// <strong>WHY THIS CLOSES THE MECHANISM IT IS FOR.</strong> A caller that reaches its no-pid
-    /// path has established at most that <c>Run</c> refused correctly. It has NOT established that
-    /// the child is dead: <c>Run</c> only ever ISSUES the tree-kill, and a caller that never saw a
-    /// pid never looked at the child. If that kill was broken AND the child's first write was merely
-    /// delayed past whatever window did the looking — <see cref="PidSettleWindow"/> after the run
-    /// settles on rows 1 and 2, <see cref="UnracedPidCeiling"/> on row 5 — then the pid file is
-    /// empty at the moment the caller looks and non-empty shortly afterwards. Looking a second time,
-    /// later, is precisely what turns that child from unnameable into killable: the pid it finds is
-    /// assigned to the caller's own <c>pid</c>, and the ordinary <c>finally</c> kills it through the
-    /// ordinary <see cref="TryOpen"/> guard. There is no second kill site; this method only widens
-    /// the window in which the existing one has something to aim at.
+    /// <strong>WHY THIS CLOSES THE MECHANISM IT IS FOR.</strong> A caller that ends without a pid
+    /// has established at most that <c>Run</c> refused correctly — and on rows 1 and 2's wedged
+    /// path, where <c>Assert.True(finished, …)</c> is what ended the attempt, not even that. What
+    /// no such caller has established is that the child is DEAD: <c>Run</c> only ever ISSUES the
+    /// tree-kill, and a caller that never saw a pid never looked at the child. If that kill was
+    /// broken AND the child's first write was merely delayed past whatever window did the looking —
+    /// <see cref="PidSettleWindow"/> after the run settles on rows 1 and 2,
+    /// <see cref="UnracedPidCeiling"/> on row 5 — then the pid file is empty at the moment the
+    /// caller looks and non-empty shortly afterwards. Looking a second time, later, is precisely
+    /// what turns that child from unnameable into killable: the pid it finds is assigned to the
+    /// caller's own <c>pid</c>, and the <c>finally</c> kills it through the ordinary
+    /// <see cref="TryOpen"/> guard. There is no second kill site; this method only widens the
+    /// window in which the existing one has something to aim at. Since #539 rows 1 and 2 do that
+    /// widening from inside that same <c>finally</c>, which is what makes it unconditional rather
+    /// than contingent on which of the attempt's endings occurred.
     /// </para>
     /// <para>
     /// <strong>WHAT IT DOES NOT CLOSE, STATED RATHER THAN IMPLIED.</strong> A child that publishes
@@ -1637,21 +2740,33 @@ public sealed class SystemProcessRunnerTests
     /// </para>
     /// <para>
     /// <strong>A THIRD, RECORDED WHERE IT LIVES RATHER THAN RESTATED HERE.</strong>
-    /// <see cref="ReadPid"/> lets an <see cref="UnauthorizedAccessException"/> escape, which at this
-    /// method's call sites turns "retry with a larger budget" into a hard row failure; that remark
-    /// sets out why it is left loud. Named here rather than written out, because this section
-    /// promises completeness and a third residual left off the list would break that promise, while
+    /// <see cref="ReadPid"/> lets an <see cref="UnauthorizedAccessException"/> escape; that remark
+    /// sets out why it is left loud. It reaches the ONE call site that still enters this method
+    /// directly — row 5's body look — and fails that row. The child is abandoned either way on
+    /// that path — the <c>finally</c>'s quiet look meets the same ACL fault and answers
+    /// <see langword="null"/> — but the throw now leaves <c>lateLookTaken</c> unset, so the row
+    /// takes that look on its own account rather than resting on the two readers failing alike.
+    /// Rows 1 and 2 go through
+    /// <see cref="ReclaimPidForTeardownQuietlyAsync"/> since #539 and never see it, which is not a
+    /// softening of that choice but a consequence of where they now call from: a <c>finally</c>
+    /// that throws discards the row's own finding. Named here rather than written out, because this
+    /// section promises completeness and a third residual left off the list would break it, while
     /// a second copy of the reasoning would be one more thing to keep in step.
     /// </para>
     /// <para>
-    /// <strong>It never changes a verdict, and every call site is arranged so that it cannot.</strong>
-    /// Rows 1 and 2 return <see langword="false"/> whatever it finds; row 5 captures
-    /// <c>childWasObserved</c> before calling it and asserts on that. So the verdict is always read
-    /// off the ORIGINAL wait and a pid recovered here arms teardown and nothing else — it cannot
-    /// establish a premise the wait failed to establish, and <see cref="WithEscalatingBudget"/>
-    /// still discards the attempt. On rows 1 and 2 the hoisted
-    /// <c>Assert.ThrowsAsync&lt;ProcessTimeoutException&gt;</c> above the call site is what keeps
-    /// "the budget was too short" apart from a runner fault, and this runs strictly after it.
+    /// <strong>It never changes a verdict, and since #539 the two kinds of caller establish that
+    /// differently.</strong> Rows 1 and 2 no longer rest on an arrangement at all: they call from a
+    /// <c>finally</c>, which runs only once its attempt has already returned or thrown. The premise
+    /// was decided on the ORIGINAL wait, and every assertion has either run or been pre-empted by
+    /// an earlier throw — including the hoisted
+    /// <c>Assert.ThrowsAsync&lt;ProcessTimeoutException&gt;</c> which keeps "the budget was too
+    /// short" apart from a runner fault, which on the discarded path ran and on the wedged path was
+    /// pre-empted by <c>Assert.True(finished, …)</c>, and in both cases before this. Row 5's BODY
+    /// call is the one place an arrangement is still what carries it: that row captures
+    /// <c>childWasObserved</c> before calling this and asserts on that. Its second, guarded call
+    /// from its own <c>finally</c> (#539) rests on the structure like the others. Either way a pid
+    /// recovered here arms teardown and nothing else — it cannot establish a premise the wait
+    /// failed to establish, and <see cref="WithEscalatingBudget"/> still discards the attempt.
     /// </para>
     /// <para>
     /// <see cref="WaitForPid"/> with both its windows set to <see cref="LateReadWindow"/> rather
@@ -1669,15 +2784,91 @@ public sealed class SystemProcessRunnerTests
     /// </para>
     /// <para>
     /// <strong>Equal rather than a smaller <c>settle</c>, deliberately.</strong> A smaller one would
-    /// become live on rows 1 and 2 (where <paramref name="work"/> HAS settled) and would end the
-    /// look early on exactly the callers with the most to find: their survivor is alive because a
-    /// kill failed, and the whole point is to give its pending first write the full window. Row 5
-    /// could not use a settle arm at all — its <c>Run</c> has not settled and the row has not
-    /// cancelled yet — so a shorter figure would buy a divergence between callers and nothing else.
+    /// become live on rows 1 and 2 whenever <paramref name="work"/> HAS settled — which is their
+    /// discarded path, the common one — and would end the look early on exactly the callers with the
+    /// most to find: their survivor is alive because a kill failed, and the whole point is to give
+    /// its pending first write the full window. Row 5 could not use a settle arm at all — its
+    /// <c>Run</c> has not settled and the row has not cancelled yet — so a shorter figure would buy
+    /// a divergence between callers and nothing else.
     /// </para>
     /// </remarks>
     private static Task<int?> ReclaimPidForTeardownAsync(string pidFile, Task work) =>
         Task.Run(() => WaitForPid(pidFile, work, LateReadWindow, LateReadWindow));
+
+    /// <summary>
+    /// <see cref="ReclaimPidForTeardownAsync"/> for a caller that must not throw the one ACL fault
+    /// <see cref="ReadPid"/> lets escape — a <c>finally</c> (#539).
+    /// </summary>
+    /// <param name="pidFile">Where the child announces itself.</param>
+    /// <param name="work">
+    /// The <c>Run</c> whose child is being reclaimed. Either state, and which one says how the row
+    /// ended: settled when an escalating attempt gave its premise up, when an assertion after its
+    /// grace check threw, or when row 5's <c>work.IsCompleted</c> block fired; NOT settled when a
+    /// wedged runner or a throwing <see cref="WaitForPid"/> is what ended it.
+    /// </param>
+    /// <remarks>
+    /// <para>
+    /// <strong>THE ONLY DIFFERENCE IS THE <see cref="UnauthorizedAccessException"/> THAT
+    /// <see cref="ReadPid"/> DELIBERATELY LETS ESCAPE</strong> — an ACL fault on the scratch file;
+    /// that method's remarks set out why it is left loud, and loud was right at the body call sites
+    /// this replaced, where the exception was itself a finding about a directory this file created.
+    /// In a <c>finally</c> the same loudness is wrong, and not as a matter of taste: an exception
+    /// thrown from a <c>finally</c> REPLACES the one being propagated, so a permission fault here
+    /// would erase the assertion the row had just made — the wedged runner, the undead child — and
+    /// report a teardown detail in its place. So this answers <see langword="null"/> instead, which
+    /// is the same answer as "no pid arrived" and leads to the same no-op
+    /// <see cref="KillTreeQuietly"/>. The swallow is confined to this wrapper; the direct method
+    /// keeps its loud reader for row 5, which calls it from a body.
+    /// </para>
+    /// <para>
+    /// <strong>ONE CATCH IS ENOUGH BECAUSE THE SURFACE WAS TRACED, not because a broader one looked
+    /// risky.</strong> Everything under this call is <see cref="WaitForPid"/>'s loop, and the only
+    /// member of it that can throw at all is <see cref="ReadPid"/>. There,
+    /// <see cref="File.Exists(string)"/> answers <see langword="false"/> rather than throwing on a
+    /// path or permission fault, <see cref="File.ReadAllText(string)"/> sits inside an
+    /// <see cref="IOException"/> filter that takes the whole not-found family with it, and the
+    /// parsing below that (<see cref="string.TrimStart(char)"/>, <see cref="char.IsAsciiDigit"/>,
+    /// <see cref="int.TryParse(string,NumberStyles,IFormatProvider,out int)"/>, and the two range
+    /// slices, each gated by the <c>EndsWith</c> test above it) answers rather than throws.
+    /// <see cref="UnauthorizedAccessException"/> derives from <see cref="SystemException"/> and not
+    /// from <see cref="IOException"/>, which is exactly why it slips that filter and is the single
+    /// escape. A <c>catch (Exception)</c> here would therefore widen nothing that exists — it would
+    /// only hide the next escape somebody adds, in the one place where letting it through also
+    /// erases the row's finding.
+    /// </para>
+    /// <para>
+    /// <strong>A PID RECOVERED HERE ARMS TEARDOWN AND NOTHING ELSE, and from a <c>finally</c> that
+    /// is structural rather than arranged.</strong> A <c>finally</c> runs only once its attempt has
+    /// already returned or thrown: the premise was decided on the original wait, every assertion
+    /// has either run or been pre-empted by an earlier throw, and no assertion remains that a pid
+    /// found here could satisfy. It cannot establish a premise, cannot rescue a discarded attempt
+    /// and cannot convert a red row into a green one. Contrast
+    /// <see cref="ReclaimPidForTeardownAsync"/>'s one remaining BODY caller, row 5's late look,
+    /// where the same neutrality has to be arranged by capturing the verdict before the call.
+    /// </para>
+    /// <para>
+    /// <strong>What a pid recovered here is NOT: proof that the process it names is still the
+    /// child (#529).</strong> By the time a <c>finally</c> reads it, <c>Run</c> may have returned
+    /// and its own tree-kill freed the number, so <see cref="KillTreeQuietly"/>'s
+    /// <see cref="TryOpen"/> is the only thing between this pid and a stranger — and its start-time
+    /// check is a lower bound, which a process started after the attempt began passes. That was
+    /// equally true of the body-sited look this replaced on the discarded path; the maximum
+    /// lateness between the read and the kill is the same at both sites, so #539 moved the paths
+    /// that reach the guard and not the guard. #529 is where the guard gets its upper bound.
+    /// </para>
+    /// </remarks>
+    private static async Task<int?> ReclaimPidForTeardownQuietlyAsync(string pidFile, Task work)
+    {
+        try
+        {
+            return await ReclaimPidForTeardownAsync(pidFile, work);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // Teardown must never replace the row's own finding with its own — see above.
+            return null;
+        }
+    }
 
     /// <summary>
     /// The pid in <paramref name="pidFile"/>, or <see langword="null"/> while there is not yet a
@@ -1737,11 +2928,22 @@ public sealed class SystemProcessRunnerTests
     /// <strong>ONE CATCH IS NARROWER THAN THE COMMENT BELOW IT SUGGESTS.</strong> The
     /// <see cref="IOException"/> filter covers the child's own mid-write, but an
     /// <see cref="UnauthorizedAccessException"/> — an ACL fault on the scratch file — escapes and
-    /// faults the wait. PR #532 made that reachable at two more sites
-    /// (<see cref="ReclaimPidForTeardownAsync"/>'s callers), where it converts "retry with a larger
-    /// budget" into a hard row failure. Left as-is on purpose: a permission fault on a directory
-    /// this file created is a real defect and is better loud than retried four times and then
-    /// blamed on the host's scheduler. Recorded rather than fixed so the choice is visible.
+    /// faults the wait. Left as-is on purpose: a permission fault on a directory this file created
+    /// is a real defect and is better loud than retried four times and then blamed on the host's
+    /// scheduler. Recorded rather than fixed so the choice is visible.
+    /// </para>
+    /// <para>
+    /// <strong>WHERE IT IS LOUD IS NO LONGER EVERYWHERE, AND THAT IS #539 RATHER THAN A RETREAT
+    /// FROM THE CHOICE ABOVE.</strong> PR #532 made it reachable at three extra sites — rows 1 and
+    /// 2's late looks and row 5's; #539 moved two of them into <c>finally</c> blocks and routed
+    /// those through <see cref="ReclaimPidForTeardownQuietlyAsync"/>, which swallows it. The reason
+    /// is about the CALLER rather than about the fault: an exception leaving a <c>finally</c>
+    /// replaces the one being propagated, so a loud reader would erase the row's own finding — the
+    /// opposite of what "better loud" argues for, since what makes loudness right everywhere else
+    /// is that the fault is then the most informative thing the row can say. The sites where it is —
+    /// rows 1 and 2's body wait, and row 5's body wait and body late look — remain loud. Row 5's
+    /// third read, the guarded one #539 put in its <c>finally</c>, is quiet for the same reason
+    /// rows 1 and 2's are: it is a <c>finally</c>.
     /// </para>
     /// <para>
     /// <strong>THE STRICTNESS IS A CONTRACT WITH THE WRITERS, AND BREAKING IT REDDENS RATHER THAN
@@ -1822,8 +3024,10 @@ public sealed class SystemProcessRunnerTests
     /// process that started after this row did passes the comparison unchanged. Tracked as
     /// <strong>#529</strong>. Named here because #524 multiplied the number of pids this file reads
     /// per run without changing the guard that decides which of them may be killed — and PR #532
-    /// multiplied it again, by one read per no-pid path per attempt
-    /// (<see cref="ReclaimPidForTeardownAsync"/>), still without changing this guard.
+    /// multiplied it again, by one reclaiming read per attempt that ends without a pid
+    /// (<see cref="ReclaimPidForTeardownAsync"/>), still without changing this guard. #539 moved
+    /// that read into the <c>finally</c>, which leaves the count per attempt where it was and
+    /// widens the set of attempts that take it to include those an assertion ended.
     /// </para>
     /// </remarks>
     private static Process? TryOpen(int? pid, DateTime startedUtc)
