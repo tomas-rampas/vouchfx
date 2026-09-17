@@ -121,7 +121,7 @@ public sealed class DcpFlightRecorderDockerTests
     /// fresh instance of this class for every row execution, so this Guid is unique to one
     /// execution in one process. A class constant would have been a key to "a topology of my
     /// KIND" rather than "my topology": two hosts running this same row on one account write
-    /// captures carrying the same token, neither file appears in the other's snapshot, and
+    /// captures carrying the same token, so each host's ownership filter claims BOTH files and
     /// whichever reaches its cleanup first deletes the other's. The harm is precise and is the
     /// bug being fixed, narrowed rather than closed - if the other process's start had regressed
     /// and flushed a real capture, this row would delete it and that process would find nothing
@@ -166,10 +166,9 @@ public sealed class DcpFlightRecorderDockerTests
     /// </para>
     /// <para>
     /// The cost of that choice is that a failing Docker leg could leave an artefact in a real
-    /// directory whose entire value is that a file in it means something. So the row snapshots the
-    /// directory first and then, in a <c>finally</c> — whether it passed, failed or threw —
-    /// deletes the new files it can prove ARE ITS OWN, one at a time, so a single locked capture
-    /// does not abandon the rest.
+    /// directory whose entire value is that a file in it means something. So the row, in a
+    /// <c>finally</c> — whether it passed, failed or threw — deletes the files it can prove ARE
+    /// ITS OWN, one at a time, so a single locked capture does not abandon the rest.
     /// </para>
     /// <para>
     /// Either way the names reach the failure message, and that is what keeps the evidence alive
@@ -198,11 +197,11 @@ public sealed class DcpFlightRecorderDockerTests
     [Trait("requires", "docker")]
     public async Task StartAsync_WhenTheTopologyComesUp_WritesNoCaptureFile()
     {
-        // Arrange - the capture directory as it stands before this test runs. It may not exist
-        // at all, which is the ordinary case on a machine that has never met #420.
+        // Arrange - the operator's real capture directory, resolved exactly as production
+        // resolves it. It may not exist at all, which is the ordinary case on a machine that has
+        // never met #420.
         var directory = DcpCapture.ResolveDirectory();
         Assert.NotNull(directory);
-        var before = ListCaptures(directory!);
 
         var mine = Array.Empty<string>();
         string? listFault = null;
@@ -221,7 +220,7 @@ public sealed class DcpFlightRecorderDockerTests
         finally
         {
             // Whatever happened, leave the operator's directory as this row found it, less this
-            // row run's own leavings and nothing else. NewCapturesNaming applies the ownership
+            // row run's own leavings and nothing else. CapturesNaming applies the ownership
             // key; its own comments argue what that key does and does not establish.
             //
             // Nothing here may throw, and NOT because a fault is unimportant. This is a finally:
@@ -242,7 +241,7 @@ public sealed class DcpFlightRecorderDockerTests
             // to make about verdicts, committed here about a test report.
             try
             {
-                mine = NewCapturesNaming(directory!, before, _healthyResourceName);
+                mine = CapturesNaming(directory!, _healthyResourceName);
             }
             catch (IOException ex)
             {
@@ -319,7 +318,7 @@ public sealed class DcpFlightRecorderDockerTests
         // FINDING FIRST, HYGIENE SECOND, and the order is the point rather than style. A
         // populated `mine` is the regression; an unfinished cleanup is trouble tidying up after
         // it. Asserting the cleanup first would let a locked capture - reachable, see
-        // NewCapturesNaming's remarks on DcpCapture.WriteAsync - report a real engine regression
+        // CapturesNaming's remarks on DcpCapture.WriteAsync - report a real engine regression
         // as an infrastructure problem, and the reader would never see the filename.
         //
         // Composed on the failing path only. Assert.True(cond, message) builds its message on
@@ -512,7 +511,6 @@ public sealed class DcpFlightRecorderDockerTests
     {
         var realDirectory = DcpCapture.ResolveDirectory();
         Assert.NotNull(realDirectory);
-        var realBefore = ListCaptures(realDirectory!);
 
         var scratch = Path.Combine(
             Path.GetTempPath(), "vouchfx-dcp-gate-drill-" + Guid.NewGuid().ToString("N"));
@@ -574,7 +572,7 @@ public sealed class DcpFlightRecorderDockerTests
             //     is the one whose message names the stray file: (b) would report "found 0 in
             //     the injected directory" and say nothing about the file now sitting in the
             //     operator's directory.
-            var leaked = NewCapturesNaming(realDirectory!, realBefore, _failingResourceName);
+            var leaked = CapturesNaming(realDirectory!, _failingResourceName);
             if (leaked.Length > 0)
             {
                 Assert.Fail(
@@ -597,7 +595,7 @@ public sealed class DcpFlightRecorderDockerTests
 
             // (c) THE OWNERSHIP PREMISE ITSELF, pinned on a real capture in a blocking lane.
             //     Every leak assertion in this class - (a) above and the one in the healthy row -
-            //     is an emptiness assertion over NewCapturesNaming, and emptiness assertions fail
+            //     is an emptiness assertion over CapturesNaming, and emptiness assertions fail
             //     open: if DCP ever stopped echoing the resource name into the buffered traffic,
             //     the filter would return nothing for a row's OWN capture, both would pass for
             //     free, and no test would notice. This repo advances Aspire per engine release,
@@ -684,9 +682,112 @@ public sealed class DcpFlightRecorderDockerTests
     }
 
     /// <summary>
-    /// The captures that appeared in <paramref name="directory"/> since <paramref name="before"/>
-    /// was taken AND that name <paramref name="resourceName"/> in their body — that is, the ones
-    /// the calling row can prove are its own.
+    /// <see cref="CapturesNaming"/> reports a capture whose body names the calling row run's
+    /// token even when that file was ALREADY in the directory, and reports nothing else.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>What this row pins, and what it cannot.</strong> It writes a file naming this run's
+    /// token BEFORE calling the filter and requires the filter to report it, so a stage keyed on
+    /// age relative to the CALL — newer than a mark taken on entry, say — would drop that file
+    /// and redden this row. A stage keyed on the ROW's start would not: the snapshot #538 removed
+    /// was one, and these files are written after the row begins, so such a stage would accept
+    /// them and this row would stay green. The removal therefore rests on the redundancy argument
+    /// in <see cref="CapturesNaming"/>'s remarks, not on this row; what this row guards is the
+    /// contract left behind — a file naming the token is this run's, whatever its age.
+    /// </para>
+    /// <para>
+    /// <strong>The arrangement is synthesised, and saying so is the point.</strong> A live row
+    /// cannot produce it: the token is minted when the row's instance is built, so a capture that
+    /// was on disk before that construction cannot name it. That is the same fact that makes the
+    /// snapshot stage redundant, and <see cref="CapturesNaming"/>'s remarks record why the reuse
+    /// story #538 was filed on does not hold against today's engine. A contract worth keeping is
+    /// still worth pinning, and it can only be pinned by hand.
+    /// </para>
+    /// <para>
+    /// Deterministic and docker-free deliberately. The property is a claim about the FILTER, not
+    /// about a topology, so it belongs in the blocking non-docker lane where a regression cannot
+    /// wait for a docker leg to be noticed. The row owns its directory — a Guid-suffixed one under
+    /// <see cref="Path.GetTempPath"/>, removed in a <c>finally</c> — so nothing here reads, writes
+    /// or deletes in the operator's real capture directory.
+    /// </para>
+    /// <para>
+    /// <strong>What each of the three files pins, since only two of them discriminate.</strong>
+    /// The naming file is the answer; the foreign one proves the filter is not simply returning
+    /// everything it enumerates, and it carries this same instance's OTHER token, so "does not
+    /// contain" holds by the differing prefix rather than by a Guid not colliding. The zero-length
+    /// file discriminates nothing — an empty body cannot contain any token, so removing the
+    /// filter's own length floor would leave this row green — and pins the weaker property that
+    /// is still worth having: a zero-length regular file is neither reported nor able to throw out
+    /// of a method one caller runs inside a <c>finally</c>. That file shape is what another
+    /// process's mid-write leaves on disk.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void CapturesNaming_ReportsAPreExistingFileThatNamesTheToken()
+    {
+        var directory = Path.Combine(
+            Path.GetTempPath(), "vouchfx-dcp-naming-drill-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+
+        try
+        {
+            // Minted through production's own BuildFileName so the three names stay coupled to
+            // the layout production writes. A literal copied here would fail SAFE on a prefix or
+            // suffix change (ListCaptures builds its glob from the same constants, so the listing
+            // would come back empty and this row red), but a change to the timestamp layout inside
+            // an unchanged glob would leave the literal enumerated and this row green while
+            // production wrote a shape it no longer exercised. Distinct milliseconds, because that
+            // is the layout's resolution and two files may not share a name.
+            var stamp = new DateTimeOffset(2026, 9, 17, 12, 0, 0, TimeSpan.Zero);
+            var naming = Path.Combine(directory, DcpCapture.BuildFileName(stamp));
+            var foreign = Path.Combine(
+                directory, DcpCapture.BuildFileName(stamp.AddMilliseconds(1)));
+            var empty = Path.Combine(
+                directory, DcpCapture.BuildFileName(stamp.AddMilliseconds(2)));
+
+            // A capture body is a header plus DCP log lines; all the filter asks of it is whether
+            // the resource name occurs, so a representative line is enough.
+            File.WriteAllText(
+                naming, "Aspire.Hosting.Dcp: creating container " + _healthyResourceName + "\n");
+            File.WriteAllText(
+                foreign, "Aspire.Hosting.Dcp: creating container " + _failingResourceName + "\n");
+            File.WriteAllText(empty, string.Empty);
+
+            // File names rather than full paths: which of the three files came back is the
+            // property, and the path spelling EnumerateFiles happens to return is not.
+            Assert.Equal(
+                new[] { Path.GetFileName(naming) },
+                CapturesNaming(directory, _healthyResourceName)
+                    .Select(Path.GetFileName)
+                    .ToArray());
+
+            Assert.Equal(
+                new[] { Path.GetFileName(foreign) },
+                CapturesNaming(directory, _failingResourceName)
+                    .Select(Path.GetFileName)
+                    .ToArray());
+        }
+        finally
+        {
+            // Guarded for the same reason the failing row's scratch cleanup is: a throw here
+            // would replace the assertion failure that is the row's whole output.
+            try
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+            catch (IOException)
+            {
+            }
+            catch (UnauthorizedAccessException)
+            {
+            }
+        }
+    }
+
+    /// <summary>
+    /// The captures in <paramref name="directory"/> whose body names
+    /// <paramref name="resourceName"/> — that is, the ones the calling row can prove are its own.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -698,12 +799,36 @@ public sealed class DcpFlightRecorderDockerTests
     /// one written by a concurrent host running this same row.
     /// </para>
     /// <para>
-    /// <strong>Why both halves of the filter are needed.</strong> The <c>before</c> difference
-    /// alone is the #489 defect: it is a claim about the whole shared directory, which other test
-    /// hosts write to concurrently (class remarks carry the measurement). The name alone would
-    /// trip over a capture an earlier run left behind. Together they say "written during my
-    /// window, by my topology" — which is now literally what they say, because the suffix makes
-    /// the name an instance key rather than a key to a topology of this KIND.
+    /// <strong>That name is the WHOLE ownership test, and the per-run suffix is what makes it
+    /// sufficient on its own.</strong> The token is minted per row execution
+    /// (see <see cref="_healthyResourceName"/>), so no capture written by any other run — earlier,
+    /// later or concurrent, in this process or another — can contain it. A file that was already
+    /// sitting in the directory when the row began therefore IS this row run's if it names the
+    /// token, and is not if it does not. WHEN a file appeared carries no information the token
+    /// does not already carry.
+    /// </para>
+    /// <para>
+    /// <strong>Which is why the pre-run snapshot this method used to difference against is gone —
+    /// #538.</strong> Against an instance key the stage adds no exclusion power: everything it
+    /// could exclude, the key already rejects, so all it can still do is DISCARD a file the key
+    /// accepts.
+    /// That is the whole case for removing it, and it needs no failure mode to stand.
+    /// </para>
+    /// <para>
+    /// <strong>The failure mode #538 was filed on is NOT reachable against today's engine, and
+    /// saying so is cheaper than carrying a story that does not hold.</strong> The hypothesis was
+    /// that a snapshotted name could be freed by another writer's retention pass and then taken by
+    /// this row's own capture, so the difference would drop the row's own file by pathname. It
+    /// cannot: a capture name encodes the moment it was written
+    /// (<see cref="DcpCapture.BuildFileName(DateTimeOffset)"/>, from <c>DateTimeOffset.UtcNow</c>
+    /// at the flush), so every name in a snapshot taken at T0 encodes a moment at or before T0
+    /// while this row's capture is stamped later and can equal none of them; and a name already
+    /// taken on disk is not reusable anyway, because <c>DcpCapture</c> creates the file with
+    /// <c>FileMode.CreateNew</c> and retries under a <c>-N</c> suffix on collision. The chain
+    /// closes only under a host clock that stepped backwards — the case
+    /// <c>DcpCapture.SelectForDeletion</c>'s own <c>justWritten</c> remark already names.
+    /// <see cref="CapturesNaming_ReportsAPreExistingFileThatNamesTheToken"/> pins what is left
+    /// of the contract, deterministically and without Docker.
     /// </para>
     /// <para>
     /// <strong>WHICH directory this is, since this method both reads and — in one caller —
@@ -712,9 +837,10 @@ public sealed class DcpFlightRecorderDockerTests
     /// <c>LocalApplicationData</c>, and this project's own troubleshooting guide recommends
     /// pointing it at <c>${{ github.workspace }}/vouchfx-captures</c>. An operator following that
     /// recipe has this method enumerating, reading and deleting inside a workspace. The blast
-    /// radius stays bounded by the two filters and the <c>dcp-capture-*.log</c> glob — nothing
-    /// outside that name shape is ever touched — but it is not confined to a private directory,
-    /// so it is stated rather than assumed away.
+    /// radius stays bounded by the ownership key and the <c>dcp-capture-*.log</c> glob — which on
+    /// Windows admits a little more than it reads as, since a three-character extension pattern
+    /// there also matches extensions that merely BEGIN with it (<c>.logs</c>, <c>.logfile</c>) —
+    /// but it is not confined to a private directory, so it is stated rather than assumed away.
     /// </para>
     /// <para>
     /// <strong>A racing writer must not be able to throw out of the per-file READ.</strong> Two
@@ -728,10 +854,10 @@ public sealed class DcpFlightRecorderDockerTests
     /// That is the safe direction rather than the lenient one, though not an airtight one, and the
     /// two ways it can be wrong are both narrow. Misclassifying a FOREIGN file as mine would
     /// redden the calling row for someone else's work and, in the row that deletes, destroy a
-    /// capture it does not own — the filters exist to prevent exactly that. Misclassifying MY OWN
-    /// file as foreign needs the row's own capture to be unreadable, which is reachable rather
-    /// than impossible: <c>DcpCapture.WriteAsync</c> abandons a stalled write after five seconds
-    /// without cancelling the I/O, and the file it left behind can still be open under
+    /// capture it does not own — the ownership key exists to prevent exactly that. Misclassifying
+    /// MY OWN file as foreign needs the row's own capture to be unreadable, which is reachable
+    /// rather than impossible: <c>DcpCapture.WriteAsync</c> abandons a stalled write after five
+    /// seconds without cancelling the I/O, and the file it left behind can still be open under
     /// <c>FileShare.None</c> when this read arrives. The row's own leak would then escape both
     /// the assertion and the deletion. Accepted: the alternative — treating unreadable as mine —
     /// turns every foreign mid-write into a red row and a destroyed file.
@@ -745,8 +871,7 @@ public sealed class DcpFlightRecorderDockerTests
     /// — see that <c>finally</c>.
     /// </para>
     /// </remarks>
-    private static string[] NewCapturesNaming(
-        string directory, IReadOnlyCollection<string> before, string resourceName)
+    private static string[] CapturesNaming(string directory, string resourceName)
     {
         // A capture cannot be larger than the recorder's own budget plus its header, so anything
         // past this bound is not one of ours and is not worth reading. The bound is not thrift:
@@ -760,7 +885,6 @@ public sealed class DcpFlightRecorderDockerTests
         var maxCaptureBytes = (long)DcpFlightRecorder.DefaultCharLimit * 4 + HeaderSlack;
 
         return ListCaptures(directory)
-            .Except(before, StringComparer.OrdinalIgnoreCase)
             .Where(path => Names(path, resourceName, maxCaptureBytes))
             .ToArray();
 
