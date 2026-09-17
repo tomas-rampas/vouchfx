@@ -301,7 +301,10 @@ public sealed class DcpArmingWindowCensusTests
     /// <c>using</c> over the recorder that wrapped the whole success path — the hand-off
     /// included — inside a <c>catch</c> of an outer throwaway <c>try</c> would be exempt from this
     /// rule while rules 1-3 and 5 still passed. That is a deliberate construction rather than a
-    /// plausible refactor, and the Docker-gated behavioural row is what covers it.
+    /// plausible refactor, and the Docker-gated behavioural row is what covers it. The
+    /// <c>using</c> half's own remaining limits — an alias bound in one statement and disposed in
+    /// a later one, a parenthesised or cast resource expression — are stated on
+    /// <see cref="UsingDisposalsOf"/>.
     /// </para>
     /// <para>
     /// <c>FlushOnFailureAsync</c> disposes the recorder too, in its own <c>finally</c>
@@ -341,6 +344,10 @@ public sealed class DcpArmingWindowCensusTests
         // refuses a subject that has VANISHED, not a check that someone DELETES. MEASURED: with
         // the using scan below removed and `using var` on the declaration, all nine rows of this
         // census pass. No assertion can guard its own deletion; the drill is what catches that.
+        //
+        // Declarators only: a recorder introduced by a declaration pattern (`is { } recorder`) is
+        // a SingleVariableDesignation and would trip this guard - loudly and re-aimably, which is
+        // the safe direction for a rule that must never go quiet.
         var declarations = start.DescendantNodes()
             .OfType<VariableDeclaratorSyntax>()
             .Where(d => d.Identifier.Text == RecorderLocal)

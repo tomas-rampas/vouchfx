@@ -9,8 +9,8 @@ namespace Vouchfx.Engine.Orchestration.Tests;
 /// SUCCEEDS leaves nothing behind, that the filter rules survive contact with the real Aspire
 /// host, and that a FAILING topology writes a capture holding real DCP traffic through the
 /// production flush path. Three Docker-free rows sit beside them and pin the helpers the Docker
-/// rows lean on — the ownership filter and the failure-message description — on real formatter
-/// output, in the blocking lane.
+/// rows lean on, in the blocking lane: the ownership filter on production-named files, and the
+/// failure-message description on real formatter output.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -920,6 +920,11 @@ public sealed class DcpFlightRecorderDockerTests
         // PRE-EXISTING directory, so a group-writable capture directory is possible. A FIFO also
         // reports length 0, which the lower bound rejects; a zero-length regular file is a
         // mid-write or a stub and is not a capture either.
+        //
+        // The bound is per FILE. Since #538 the listing is no longer differenced against a
+        // snapshot, so every dcp-capture-*.log in the directory is read: a count bounded by
+        // DcpCapture.RetainedFiles where the engine wrote them, and by nothing at all in an
+        // operator-chosen directory.
         const int HeaderSlack = 8 * 1024;
         var maxCaptureBytes = (long)DcpFlightRecorder.DefaultCharLimit * 4 + HeaderSlack;
 
@@ -979,7 +984,7 @@ public sealed class DcpFlightRecorderDockerTests
     /// <para>
     /// The other two are reachable, and an earlier version of this paragraph wrongly filed them
     /// here as unproducible. Both are now pinned from real formatter output: the empty-buffer
-    /// shape — zero entries, and the "none - no line parsed as an entry" wording — by
+    /// shape — zero entries, and the "none - the capture holds no entry line" wording — by
     /// <see cref="DescribeCaptureForDiagnostics_WithNoEntries_ReportsHeaderSizeAndNoCategory"/>,
     /// and <c>CategoryOf</c>'s empty-category guard by the <c>CreateLogger("")</c> entry in this
     /// row's own fixture, which the recorder renders as a genuine
@@ -1171,7 +1176,7 @@ public sealed class DcpFlightRecorderDockerTests
     /// anything still writes its four header lines and its <c>----</c> separator, so the helper
     /// meets a body with a separator, no entry lines, and nothing to census. That drives two
     /// branches nothing else reaches: <c>entryLines</c> resolving to zero, and the
-    /// "none - no line parsed as an entry" wording.
+    /// "none - the capture holds no entry line" wording.
     /// </para>
     /// <para>
     /// <strong>An empty BUFFER is not an empty FILE, and the byte figure is what says so.</strong>
@@ -1206,7 +1211,7 @@ public sealed class DcpFlightRecorderDockerTests
         Assert.Contains(
             "4 header line(s), 0 entry line(s)", description, StringComparison.Ordinal);
         Assert.Contains(
-            "Categories present: none - no line parsed as an entry.",
+            "Categories present: none - the capture holds no entry line.",
             description,
             StringComparison.Ordinal);
 
@@ -1323,8 +1328,13 @@ public sealed class DcpFlightRecorderDockerTests
             + body.Length.ToString(invariant) + " byte(s), "
             + headerLines.ToString(invariant) + " header line(s), "
             + entryLines.ToString(invariant) + " entry line(s). Categories present: "
+            // Keyed on the ENTRY count, not on the census: every entry line can fail to yield a
+            // category (an empty category name does exactly that), and "no line parsed" beside
+            // "14 entry line(s)" would be the message contradicting itself again.
             + (shown.Count == 0
-                ? "none - no line parsed as an entry."
+                ? (entryLines == 0
+                    ? "none - the capture holds no entry line."
+                    : "none - no entry line yielded a category.")
                 : string.Join(", ", shown)
                     + (hidden > 0
                         ? ", +" + hidden.ToString(invariant) + " more."

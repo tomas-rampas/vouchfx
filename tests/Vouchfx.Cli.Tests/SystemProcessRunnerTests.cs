@@ -1857,7 +1857,7 @@ public sealed class SystemProcessRunnerTests
     /// <see cref="File.Exists(string)"/> answers <see langword="false"/> rather than throwing on a
     /// path or permission fault, <see cref="File.ReadAllText(string)"/> sits inside an
     /// <see cref="IOException"/> filter that takes the whole not-found family with it, and the
-    /// parsing below that (<see cref="string.TrimStart(char[])"/>, <see cref="char.IsAsciiDigit"/>,
+    /// parsing below that (<see cref="string.TrimStart(char)"/>, <see cref="char.IsAsciiDigit"/>,
     /// <see cref="int.TryParse(string,NumberStyles,IFormatProvider,out int)"/>, and the two range
     /// slices, each gated by the <c>EndsWith</c> test above it) answers rather than throws.
     /// <see cref="UnauthorizedAccessException"/> derives from <see cref="SystemException"/> and not
