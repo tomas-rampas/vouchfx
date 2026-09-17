@@ -8,7 +8,7 @@ namespace Vouchfx.Engine.Orchestration.Tests;
 /// The three assertions the #420 flight recorder needs a real topology for: that a start which
 /// SUCCEEDS leaves nothing behind, that the filter rules survive contact with the real Aspire
 /// host, and that a FAILING topology writes a capture holding real DCP traffic through the
-/// production flush path. Three Docker-free rows sit beside them and pin the helpers the Docker
+/// production flush path. Four Docker-free rows sit beside them and pin the helpers the Docker
 /// rows lean on, in the blocking lane: the ownership filter on production-named files, and the
 /// failure-message description on real formatter output.
 /// </summary>
@@ -21,7 +21,7 @@ namespace Vouchfx.Engine.Orchestration.Tests;
 /// <para>
 /// <strong>Each Docker row states its own relationship to the operator's REAL capture
 /// directory, because they differ and the difference is deliberate</strong> (the Docker-free
-/// rows never touch it: one owns a scratch directory of its own, the other two touch no
+/// rows never touch it: one owns a scratch directory of its own, the other three touch no
 /// directory at all):
 /// </para>
 /// <list type="bullet">
