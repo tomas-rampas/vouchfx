@@ -20,6 +20,9 @@
 //   13. Full compile-and-run (no docker): credential URL not leaked in observation (§17 redaction).
 //   14. Full compile-and-run (no docker): match_all default query compiles (no explicit query).
 //   15. Full compile-and-run (no docker): field assertion path compiles (with expect.fields).
+//   16-22. Documented at their own section markers below.
+//   23. DeadLoopbackEndpoint holds its port for the reservation's lifetime (the property the
+//       connect-refused rows in this file, and in three other assemblies, stand on — #527).
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
@@ -28,6 +31,7 @@ using Vouchfx.Engine.Abstractions;
 using Vouchfx.Engine.Compilation;
 using Vouchfx.Sdk;
 using Vouchfx.Steps.CacheAssert.Elasticsearch;
+using Vouchfx.TestSupport;
 using Xunit;
 
 namespace Vouchfx.Steps.CacheAssert.Elasticsearch.Tests;
@@ -232,7 +236,7 @@ public sealed class CacheAssertElasticsearchEmitTests
         using var dead = DeadLoopbackEndpoint.Reserve();
         var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
         {
-            [VarKeys.Connection("search")] = dead.BaseUrl,
+            [VarKeys.Connection("search")] = $"http://{dead.Authority}",
         };
 
         var outcome = await RunStepAsync(model, "es-dead", vars);
@@ -257,7 +261,7 @@ public sealed class CacheAssertElasticsearchEmitTests
     public async Task Emit_CompileAndRun_CredentialedConnFails_ObservationContainsOnlyTypeName()
     {
         using var dead = DeadLoopbackEndpoint.Reserve();
-        var connUrl = $"http://elastic:sup3rsecret@{dead.Host}:{dead.Port}";
+        var connUrl = $"http://elastic:sup3rsecret@{dead.Authority}";
         var model = MakeModel(target: "search");
 
         var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
@@ -270,20 +274,33 @@ public sealed class CacheAssertElasticsearchEmitTests
         Assert.Equal(Verdict.EnvironmentError, outcome.Verdict);
         Assert.NotNull(outcome.Observation);
 
+        var obs = outcome.Observation!;
+
         // §17 layer (2): generic catch emits ONLY the exception type name — no URL,
         // no host, no password.  Each leak shape gets its own row so a failure names the
         // thing that leaked rather than just reporting that the JSON changed.
-        Assert.DoesNotContain("sup3rsecret", outcome.Observation!, StringComparison.Ordinal);
-        Assert.DoesNotContain("elastic", outcome.Observation!, StringComparison.Ordinal);
+        //
+        // The boolean form, not Assert.DoesNotContain: xunit prints the ACTUAL on a failed
+        // DoesNotContain, and the actual in every credential row below is the string under
+        // suspicion of carrying the credential — so the failure output would publish the
+        // leak it is reporting.  The named message carries the diagnosis instead.
+        Assert.True(
+            !obs.Contains("sup3rsecret", StringComparison.Ordinal),
+            "observation leaked the password");
+        Assert.True(
+            !obs.Contains("elastic", StringComparison.Ordinal),
+            "observation leaked the username");
 
-        // The credential also exists in a form the two plaintext rows above cannot see.
-        // The provider base64-encodes user + ":" + pass into the Basic auth header
-        // (CacheAssertElasticsearchProvider.cs, Convert.ToBase64String at the authHeader
-        // assignment), so a regression that echoed authHeader would emit
+        // The credential also exists in a form the two plaintext rows above cannot see —
+        // this one is genuinely independent detection, unlike a row over a superstring of
+        // the password.  The provider base64-encodes user + ":" + pass into the Basic auth
+        // header (CacheAssertElasticsearchProvider.cs, Convert.ToBase64String at the
+        // authHeader assignment), so a regression that echoed authHeader would emit
         // ZWxhc3RpYzpzdXAzcnNlY3JldA== — a trivially reversible full credential pair that
         // contains neither "elastic" nor "sup3rsecret" as a substring.
-        Assert.DoesNotContain(
-            "ZWxhc3RpYzpzdXAzcnNlY3JldA==", outcome.Observation!, StringComparison.Ordinal);
+        Assert.True(
+            !obs.Contains("ZWxhc3RpYzpzdXAzcnNlY3JldA==", StringComparison.Ordinal),
+            "observation leaked the base64 Basic-auth credential pair");
 
         // Host and port are asserted separately because a provider can leak the endpoint
         // without leaking the credential — rebuilding scheme://host:port for a message is
@@ -312,7 +329,7 @@ public sealed class CacheAssertElasticsearchEmitTests
         using var dead = DeadLoopbackEndpoint.Reserve();
         var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
         {
-            [VarKeys.Connection("search")] = dead.BaseUrl,
+            [VarKeys.Connection("search")] = $"http://{dead.Authority}",
         };
 
         var outcome = await RunStepAsync(model, "es-matchall", vars);
@@ -332,7 +349,7 @@ public sealed class CacheAssertElasticsearchEmitTests
         using var dead = DeadLoopbackEndpoint.Reserve();
         var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
         {
-            [VarKeys.Connection("search")] = dead.BaseUrl,
+            [VarKeys.Connection("search")] = $"http://{dead.Authority}",
         };
 
         var outcome = await RunStepAsync(model, "es-fields", vars);
@@ -370,8 +387,12 @@ public sealed class CacheAssertElasticsearchEmitTests
             Assert.Equal(Verdict.EnvironmentError, outcome.Verdict);
             Assert.NotNull(outcome.Observation);
 
-            // Password must never appear in the observation.
-            Assert.DoesNotContain("sup3rsecret", outcome.Observation!, StringComparison.Ordinal);
+            // Password must never appear in the observation.  Boolean form, not
+            // DoesNotContain: the actual xunit would print on failure is the observation
+            // under suspicion of carrying the password.
+            Assert.True(
+                !outcome.Observation!.Contains("sup3rsecret", StringComparison.Ordinal),
+                "observation leaked the password");
 
             // Host authority (host:port) must not appear — only index/status is allowed.
             Assert.DoesNotContain($"localhost:{port}", outcome.Observation!, StringComparison.Ordinal);
@@ -534,100 +555,90 @@ public sealed class CacheAssertElasticsearchEmitTests
         Assert.Contains("inactive", rendered!, StringComparison.Ordinal);
     }
 
-    // ── Private helpers ───────────────────────────────────────────────────────
+    // ── 23. DeadLoopbackEndpoint holds its port until disposed ────────────────
 
     /// <summary>
-    /// A loopback endpoint that cannot answer, for the rows in this file that need a
-    /// connect to be refused.  A TCP socket is bound to an OS-allocated port and
-    /// <see cref="Socket.Listen(int)"/> is never called; the socket is held until
-    /// <see cref="Dispose"/>.
+    /// The property every connect-refused row in this file stands on: while a reservation
+    /// is held the port cannot be taken by anything else, and once it is disposed the port
+    /// is released.  Without this, those rows would be asserting a belief about the host.
     /// </summary>
     /// <remarks>
-    /// <para>
-    /// Why nothing answers: binding without listening puts no listening endpoint on the
-    /// port, so an inbound SYN is answered with RST and the connect fails with
-    /// <see cref="SocketError.ConnectionRefused"/> — which the provider's generic catch
-    /// turns into <c>{"error":"HttpRequestException"}</c>, the observation row 13 asserts
-    /// on.  Measured on Windows: no LISTENING row appears for a held port, the refusal is
-    /// <c>ConnectionRefused</c>, and its latency is unchanged from the released-port
-    /// arrangement this replaces.  The Linux CI runner is not measured here and this
-    /// comment claims nothing about it — the assertions are the cross-platform check,
-    /// since they demand that exact observation on whatever platform runs them.
-    /// </para>
-    /// <para>
-    /// Why it stays dead — the point of holding the socket rather than releasing it: while
-    /// the reservation is open the OS will not give the port to anything else, so there is
-    /// no window in which a stranger can answer.  Measured on Windows: a second bind of a
-    /// held port fails with <c>AddressAlreadyInUse</c>, and a second bind that first sets
-    /// <c>SO_REUSEADDR</c> fails with <c>AccessDenied</c>; after <see cref="Dispose"/> the
-    /// port binds again, so the reservation releases cleanly.  Finding a port free and
-    /// then closing the socket — what <see cref="FindFreePort"/> does for the stub-server
-    /// rows, which need a port they can actually listen on — would leave the port dead
-    /// only by assumption from that moment on, which is the defect #461 was filed for and
-    /// the reason none of these four rows may name a port.
-    /// </para>
-    /// <para>
-    /// The host is the IPv4 literal 127.0.0.1, not "localhost": the reservation is bound to
-    /// <see cref="IPAddress.Loopback"/>, so naming IPv4 keeps the reservation and the
-    /// connect on one stack — a dual-stack "localhost" could try ::1 first, a port nothing
-    /// reserved.
-    /// </para>
-    /// <para>
-    /// Scope: this covers the four connect-refused rows in this file.  Other suites still
-    /// name a dead port; consolidating them is tracked separately, as commit f89f07e
-    /// (#431/#377) recorded when it verified the listener binds under <c>tests/</c> were
-    /// OS-allocated and left the rest on #461.
-    /// </para>
+    /// MEASURED on Windows 10.0.26200 (2026-09-18).  Cross-platform by construction rather
+    /// than by measurement: a plain bind of a port already bound without
+    /// <c>SO_REUSEADDR</c> is EADDRINUSE on Linux too, which .NET surfaces as the same
+    /// <see cref="SocketError.AddressAlreadyInUse"/>.  The Linux lane is what CI proves.
+    /// The two halves are asymmetric on purpose: the HOLD half must succeed on the first
+    /// attempt (nothing can legitimately take a held port), whereas the RELEASE half is
+    /// retried — see the comment at the loop for why one attempt would be a race.
     /// </remarks>
-    private sealed class DeadLoopbackEndpoint : IDisposable
+    [Fact]
+    public void DeadLoopbackEndpoint_HoldsThePortUntilDisposed()
     {
-        private readonly Socket _reservation;
-
-        private DeadLoopbackEndpoint(Socket reservation, IPEndPoint bound)
+        var dead = DeadLoopbackEndpoint.Reserve();
+        // One spelling of the address for both halves, read back off the reservation.
+        var endpoint = new IPEndPoint(IPAddress.Parse(dead.Host), dead.Port);
+        try
         {
-            _reservation = reservation;
-            Host = bound.Address.ToString();
-            Port = bound.Port;
-        }
-
-        /// <summary>
-        /// The address the reservation is bound to, read back off the socket rather than
-        /// restated — so the row that asserts the host is absent from an observation is
-        /// checking the host this run really used.
-        /// </summary>
-        public string Host { get; }
-
-        /// <summary>The OS-allocated port the reservation holds.</summary>
-        public int Port { get; }
-
-        /// <summary>The base URL to point a step at.</summary>
-        public string BaseUrl => $"http://{Host}:{Port}";
-
-        /// <summary>Binds — but does not listen on — an OS-allocated loopback port.</summary>
-        public static DeadLoopbackEndpoint Reserve()
-        {
-            var reservation = new Socket(
+            var intruder = new Socket(
                 AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
             try
             {
-                // Port 0: the OS picks a port it considers unused. The successful bind is
-                // the evidence it was free; holding it is what keeps it that way.
-                reservation.Bind(new IPEndPoint(IPAddress.Loopback, 0));
-                return new DeadLoopbackEndpoint(
-                    reservation, (IPEndPoint)reservation.LocalEndPoint!);
+                var ex = Assert.Throws<SocketException>(() => intruder.Bind(endpoint));
+                Assert.Equal(SocketError.AddressAlreadyInUse, ex.SocketErrorCode);
             }
-            catch
+            finally
             {
-                reservation.Dispose();
-                throw;
+                intruder.Dispose();
+            }
+        }
+        finally
+        {
+            dead.Dispose();
+        }
+
+        // Released, not leaked: the same bind now succeeds.  Bounded retry rather than one
+        // attempt, because the released port re-enters the ephemeral pool and another test
+        // collection — or another test process on this host — can be handed it in the gap.
+        // That race is the only reason a single attempt would fail spuriously; a socket the
+        // reservation genuinely leaked fails EVERY attempt, so the release half keeps its
+        // teeth.  The loop is the smallest thing that separates the two.
+        const int attempts = 10;
+        SocketException? last = null;
+        for (var i = 0; i < attempts; i++)
+        {
+            var after = new Socket(
+                AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+            try
+            {
+                after.Bind(endpoint);
+                return;
+            }
+            catch (SocketException ex)
+            {
+                last = ex;
+                Thread.Sleep(50);
+            }
+            finally
+            {
+                after.Dispose();
             }
         }
 
-        /// <summary>Releases the port. Nothing else may use it before this runs.</summary>
-        public void Dispose() => _reservation.Dispose();
+        Assert.Fail(
+            $"the port was never rebindable in {attempts} attempts " +
+            $"(last: {last?.SocketErrorCode}) — either Dispose leaked the reservation, " +
+            "or this host lost the ephemeral-allocation race every time");
     }
 
-    /// <summary>Finds a free loopback TCP port by binding temporarily to port 0.</summary>
+    // ── Private helpers ───────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Finds a free loopback TCP port by binding temporarily to port 0, for the stub-server
+    /// rows — which need a port they can actually LISTEN on, so the reservation cannot be
+    /// held.  Never use this for a row that wants the connect REFUSED: from the moment
+    /// <c>Stop()</c> returns, the port is dead only by assumption.  Use
+    /// <see cref="DeadLoopbackEndpoint"/> there instead.
+    /// </summary>
     private static int FindFreePort()
     {
         var tl = new TcpListener(IPAddress.Loopback, 0);

@@ -18,6 +18,7 @@ using Vouchfx.Engine.Abstractions.Secrets;
 using Vouchfx.Engine.Compilation;
 using Vouchfx.Sdk;
 using Vouchfx.Steps.MqExpect.Rabbitmq;
+using Vouchfx.TestSupport;
 using Xunit;
 
 namespace Vouchfx.Steps.MqExpect.Rabbitmq.Tests;
@@ -160,10 +161,12 @@ public sealed class MqExpectRabbitmqEmitTests
     {
         var model = GetModel();
 
-        // Use an unreachable endpoint — nothing listens on 57902.
+        // An unreachable endpoint: this process holds the port for the row's lifetime, so
+        // the connect is refused as a fact of the run rather than an assumption (#527).
+        using var dead = DeadLoopbackEndpoint.Reserve();
         var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
         {
-            [VarKeys.Connection("rmq")] = "amqp://guest:guest@localhost:57902/",
+            [VarKeys.Connection("rmq")] = $"amqp://guest:guest@{dead.Authority}/",
         };
 
         var outcome = await RunStepAsync(model, "expect-dead", vars);
@@ -173,21 +176,60 @@ public sealed class MqExpectRabbitmqEmitTests
     }
 
     // ── 8. Full compile-and-run: AMQP credentials are redacted ───────────────
+    //
+    // The observation is RedactAmqpUri(amqpUri, ex.Message) — the REDACTED CLIENT MESSAGE
+    // (MqExpectRabbitmqProvider.cs, the generic catch and the RedactAmqpUri body it calls),
+    // not a provider-built constant, so this row asserts the leak shapes that function
+    // exists to close rather than an exact JSON.  MEASURED on this host (2026-09-18) the
+    // observation is {"error":"None of the specified endpoints were reachable"} — it names
+    // neither credential nor endpoint.  Endpoint absence is deliberately NOT asserted:
+    // RedactAmqpUri strips userinfo, not hosts, so that absence is the client's wording
+    // rather than anything this provider promises, and pinning it would redden a
+    // RabbitMQ.Client upgrade that starts naming the endpoint — which is not a §17 fault.
+    // No percent-encoded row is added, and the reason is a property of THIS LITERAL, not of
+    // the encoding or of the provider: "t0ps3cr3t" contains no character EscapeDataString
+    // touches, so every percent-encoded spelling of this credential still contains the
+    // password verbatim and the password row below would catch it.  That says nothing about
+    // whether the provider redacts a percent-encoded password — it does not follow, and is
+    // not claimed here.  A password containing a character that DOES encode would need its
+    // own row, the way the Elasticsearch twin's base64 pair does: that form shares no
+    // substring with either half of the credential.
+    // Each assertion uses the boolean form: xunit prints the ACTUAL on a failed
+    // Assert.DoesNotContain, and the actual here is the string under suspicion.
 
     [Fact]
     public async Task Emit_CompileAndRun_CredentialedConnFails_CredentialAbsentFromObservation()
     {
         var model = GetModel();
+        using var dead = DeadLoopbackEndpoint.Reserve();
+        var amqpUri = $"amqp://admin:t0ps3cr3t@{dead.Authority}/";
         var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
         {
-            [VarKeys.Connection("rmq")] = "amqp://admin:t0ps3cr3t@localhost:57902/",
+            [VarKeys.Connection("rmq")] = amqpUri,
         };
 
         var outcome = await RunStepAsync(model, "expect-cred-leak-check", vars);
 
         Assert.Equal(Verdict.EnvironmentError, outcome.Verdict);
-        Assert.DoesNotContain("t0ps3cr3t", outcome.Observation, StringComparison.Ordinal);
-        Assert.DoesNotContain("admin:t0ps3cr3t", outcome.Observation, StringComparison.Ordinal);
+        Assert.NotNull(outcome.Observation);
+        var obs = outcome.Observation!;
+
+        // §17: the password must never appear, alone or inside a larger token.
+        Assert.True(
+            !obs.Contains("t0ps3cr3t", StringComparison.Ordinal),
+            "observation leaked the AMQP password");
+
+        // The two rows below are SUBSUMED by the one above: the userinfo pair and the URI
+        // both CONTAIN the password, so neither can fail while the first passes, and
+        // disabling one redaction layer would not redden one of them alone.  They are
+        // kept for their failure messages — a failure names the leak SHAPE rather than
+        // only reporting that a secret appeared somewhere.
+        Assert.True(
+            !obs.Contains("admin:t0ps3cr3t", StringComparison.Ordinal),
+            "observation leaked the AMQP userinfo pair");
+        Assert.True(
+            !obs.Contains(amqpUri, StringComparison.Ordinal),
+            "observation echoed the AMQP URI verbatim");
     }
 
     // ── 9. RequiredHelpers includes Substitute_Helpers and Secret_Helpers ─────────
@@ -251,11 +293,17 @@ public sealed class MqExpectRabbitmqEmitTests
                 assembled.CsxSource, additionalReferencePaths: s_additionalRefs);
 
             // Stage a connection value so the helper proceeds past the connection check
-            // and INTO secret resolution; no real broker is needed — resolution throws
-            // SecretResolutionException before any IConnection is built.
+            // and INTO secret resolution; no real broker is needed — the emitted helper
+            // calls Secret_Helpers.ResolveTemplate for payloadContains / header values /
+            // json values BEFORE it constructs the ConnectionFactory, so resolution throws
+            // SecretResolutionException before any IConnection exists
+            // (MqExpectRabbitmqProvider.cs, the ResolveTemplate lines preceding the
+            // `new RabbitMQ.Client.ConnectionFactory`).  The endpoint is a held reservation
+            // anyway, so this file names no port it merely assumes is dead (#527).
+            using var dead = DeadLoopbackEndpoint.Reserve();
             var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
             {
-                [VarKeys.Connection(target)] = "amqp://guest:guest@localhost:57904/",
+                [VarKeys.Connection(target)] = $"amqp://guest:guest@{dead.Authority}/",
             };
 
             // Real env-backed accessor — envName is unset, so resolution genuinely fails.

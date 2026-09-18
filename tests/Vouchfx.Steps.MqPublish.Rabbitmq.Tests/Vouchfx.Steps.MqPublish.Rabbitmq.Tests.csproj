@@ -22,6 +22,10 @@
     <ProjectReference Include="..\..\src\Engine\Vouchfx.Engine.Compilation\Vouchfx.Engine.Compilation.csproj" />
     <ProjectReference Include="..\..\src\Providers\Core\Vouchfx.Steps.MqPublish.Rabbitmq\Vouchfx.Steps.MqPublish.Rabbitmq.csproj" />
     <ProjectReference Include="..\..\src\Sdk\Vouchfx.Sdk\Vouchfx.Sdk.csproj" />
+    <!-- #527: DeadLoopbackEndpoint, the held loopback reservation the connect-refused rows
+         point at. Vouchfx.TestSupport carries no ProjectReferences of its own (see its
+         csproj), so this drags in nothing. -->
+    <ProjectReference Include="..\Vouchfx.TestSupport\Vouchfx.TestSupport.csproj" />
   </ItemGroup>
 
 </Project>
