@@ -442,7 +442,7 @@ public sealed class KafkaAuthorisationDrillDockerTests
     [Trait("requires", "docker")]
     public async Task UnauthorisedIdentity_ExitsZeroFlaglessAndThreeWhenEnvironmentErrorsGateCi()
     {
-        var cli = ResolveCliAssembly();
+        var cli = BuiltCli.Resolve();
         var suite = MaterialiseSuite("acl-unauthorised-cli", unauthorised: true);
 
         // A BUDGET EACH, not one shared across both. A single CTS spanning the pair makes the
@@ -1148,23 +1148,6 @@ public sealed class KafkaAuthorisationDrillDockerTests
         var port = ((IPEndPoint)probe.LocalEndpoint).Port;
         probe.Stop();
         return port;
-    }
-
-    private static string ResolveCliAssembly()
-    {
-        var assemblyDirectory = Path.GetDirectoryName(
-            typeof(KafkaAuthorisationDrillDockerTests).Assembly.Location)!;
-        var configuration = Path.GetFileName(Path.GetDirectoryName(assemblyDirectory))!;
-        var repoRoot = Path.GetFullPath(Path.Combine(assemblyDirectory, "..", "..", "..", "..", ".."));
-        var cli = Path.Combine(
-            repoRoot, "src", "Cli", "Vouchfx.Cli", "bin", configuration, "net8.0", "vouchfx.dll");
-
-        Assert.True(
-            File.Exists(cli),
-            $"The built CLI was not found at '{cli}'. Build the solution first: "
-            + $"dotnet build vouchfx.sln -c {configuration}");
-
-        return cli;
     }
 
     private static async Task<(int ExitCode, string Output)> RunCliAsync(

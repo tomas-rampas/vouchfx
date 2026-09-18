@@ -534,7 +534,7 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
     [Trait("requires", "docker")]
     public async Task ForeignClientIdentity_PlainVouchfxRunWithNoGatingFlags_ExitsWithTheSecurityConfirmationCode()
     {
-        var cli = ResolveCliAssembly();
+        var cli = BuiltCli.Resolve();
         var suiteDirectory = MaterialiseSuiteDirectory(
             "foreign-client-identity-cli",
             securedEndpoint: "9093",
@@ -867,7 +867,7 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
     [Trait("requires", "docker")]
     public async Task PositiveControl_PlainVouchfxRunWithNoGatingFlags_ExitsZero()
     {
-        var cli = ResolveCliAssembly();
+        var cli = BuiltCli.Resolve();
         var suiteDirectory = MaterialiseSuiteDirectory(
             "positive-control-cli", securedEndpoint: "9093", keystoreTarget: CheckedKeystorePath);
         var suite = Path.Combine(suiteDirectory, "drill.e2e.yaml");
@@ -965,7 +965,7 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
     [Trait("requires", "docker")]
     public async Task SecuredUnbuiltSiblingBesideAConfirmedProbe_ExitsNonZeroOnBothRunPaths()
     {
-        var cli = ResolveCliAssembly();
+        var cli = BuiltCli.Resolve();
         var suiteDirectory = MaterialiseSuiteDirectoryWithUnbuiltSecuredSibling(
             "unbuilt-secured-sibling-cli");
 
@@ -1329,7 +1329,7 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
     private async Task<(int ExitCode, string Output)> RunSchemaRejectedSiblingRowAsync(
         string row, SiblingShape shape)
     {
-        var cli = ResolveCliAssembly();
+        var cli = BuiltCli.Resolve();
         var suiteDirectory = MaterialiseSuiteDirectoryWithSchemaRejectedSibling(row, shape);
 
         _output.WriteLine($"{cli} run {suiteDirectory}  [sibling shape: {shape}]");
@@ -1583,13 +1583,13 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
     /// test — so there is no build to contend with the test host, no <c>-c</c> to keep in step with
     /// the configuration the test itself was built in, and no reason to reach for
     /// <c>MSBUILDDISABLENODEREUSE</c>. The cost is that the artefact must already exist, which
-    /// <see cref="ResolveCliAssembly"/> turns into a named failure rather than a skip.
+    /// <see cref="BuiltCli.Resolve"/> turns into a named failure rather than a skip.
     /// </para>
     /// </remarks>
     private async Task AssertFlaglessCliRunAbortsWithExitCodeThreeAsync(
         string row, string securedEndpoint, string keystoreTarget)
     {
-        var cli = ResolveCliAssembly();
+        var cli = BuiltCli.Resolve();
         var suiteDirectory = MaterialiseSuiteDirectory(row, securedEndpoint, keystoreTarget);
         var suite = Path.Combine(suiteDirectory, "drill.e2e.yaml");
         _output.WriteLine($"row '{row}': {cli} run {suite}");
@@ -1625,42 +1625,6 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
         // an unrelated health-check diagnostic — measured, three occurrences per run, and a naive
         // substring search reads them as steps.
         Assert.DoesNotContain($"step '{StepId}'", output, StringComparison.Ordinal);
-    }
-
-    /// <summary>
-    /// Locates the built CLI assembly beside this test assembly's own configuration.
-    /// </summary>
-    /// <remarks>
-    /// The configuration is read from this assembly's own output path rather than assumed, so a
-    /// Debug test run drives the Debug CLI. A missing artefact FAILS with the command that
-    /// produces it — never skips: a silently-skipped drill is indistinguishable from a passing one,
-    /// and this is the only test that measures REQ-018's stated criterion. CI cannot reach that
-    /// failure (the integration job runs `dotnet build vouchfx.sln -c Release` before any
-    /// docker-gated test), so it is a local-run guard.
-    /// </remarks>
-    internal static string ResolveCliAssembly()
-    {
-        var assemblyDirectory = Path.GetDirectoryName(
-            typeof(KafkaSecurityConfirmationDrillDockerTests).Assembly.Location)!;
-
-        // …/tests/<project>/bin/<configuration>/net8.0 — the configuration is the grandparent's name.
-        var configuration = Path.GetFileName(Path.GetDirectoryName(assemblyDirectory))!;
-
-        // Walk up: net8.0 → <configuration> → bin → <project> → tests → repo root. The same shape
-        // ExamplesCompileTests.ResolveRepoRoot and Sprint11ReferenceCompileTests use.
-        var repoRoot = Path.GetFullPath(
-            Path.Combine(assemblyDirectory, "..", "..", "..", "..", ".."));
-
-        var cli = Path.Combine(
-            repoRoot, "src", "Cli", "Vouchfx.Cli", "bin", configuration, "net8.0", "vouchfx.dll");
-
-        Assert.True(
-            File.Exists(cli),
-            $"The built CLI was not found at '{cli}'. This drill runs the CLI as a subprocess "
-            + "because REQ-018's acceptance is about a process exit code. Build the solution first: "
-            + $"dotnet build vouchfx.sln -c {configuration}");
-
-        return cli;
     }
 
     /// <summary>

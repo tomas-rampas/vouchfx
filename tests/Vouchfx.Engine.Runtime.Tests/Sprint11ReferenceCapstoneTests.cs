@@ -95,7 +95,7 @@ public sealed class Sprint11ReferenceCapstoneTests
     {
         var assemblyDir = Path.GetDirectoryName(
             typeof(Sprint11ReferenceCapstoneTests).Assembly.Location)!;
-        // Walk up: net8.0 → Release → bin → Vouchfx.Engine.Runtime.Tests → tests → repo root
+        // Walk up: net8.0 → <configuration> → bin → Vouchfx.Engine.Runtime.Tests → tests → repo root
         return Path.GetFullPath(Path.Combine(assemblyDir, "..", "..", "..", "..", ".."));
     }
 
@@ -104,14 +104,6 @@ public sealed class Sprint11ReferenceCapstoneTests
 
     private static string ReferenceSeedBaseDir =>
         Path.Combine(ResolveRepoRoot(), "examples", "reference");
-
-    /// <summary>
-    /// The built CLI DLL path: src/Cli/Vouchfx.Cli/bin/Release/net8.0/vouchfx.dll.
-    /// </summary>
-    private static string CliDllPath =>
-        Path.Combine(
-            ResolveRepoRoot(),
-            "src", "Cli", "Vouchfx.Cli", "bin", "Release", "net8.0", "vouchfx.dll");
 
     // ── Test A: engine API ─────────────────────────────────────────────────────────
 
@@ -206,10 +198,7 @@ public sealed class Sprint11ReferenceCapstoneTests
             File.Exists(ReferenceYamlPath),
             $"Reference YAML not found: {ReferenceYamlPath}");
 
-        Assert.True(
-            File.Exists(CliDllPath),
-            $"CLI DLL not found: {CliDllPath}\n" +
-            "Build the solution in Release mode first: dotnet build vouchfx.sln -c Release");
+        var cliDllPath = BuiltCli.Resolve();
 
         var tmpDir = Path.Combine(
             Path.GetTempPath(), "vouchfx-s11-cli-" + Guid.NewGuid().ToString("N"));
@@ -233,7 +222,7 @@ public sealed class Sprint11ReferenceCapstoneTests
             {
                 FileName = "dotnet",
                 Arguments =
-                    $"\"{CliDllPath}\" run \"{ReferenceSeedBaseDir}\"" +
+                    $"\"{cliDllPath}\" run \"{ReferenceSeedBaseDir}\"" +
                     $" --events \"{eventsPath}\"" +
                     $" --junit \"{junitPath}\"" +
                     $" --html \"{htmlPath}\"",

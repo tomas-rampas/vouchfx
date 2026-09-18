@@ -409,7 +409,7 @@ public sealed class ThreeRequirementsSuiteDockerTests
         {
             var suiteDirectory = Materialise(out _);
             var suite = Path.Combine(suiteDirectory, "deployment.e2e.yaml");
-            var cli = ResolveCliAssembly();
+            var cli = BuiltCli.Resolve();
 
             using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(8));
             var (exitCode, output) = await RunCliAsync(cli, suite, cts.Token);
@@ -432,23 +432,6 @@ public sealed class ThreeRequirementsSuiteDockerTests
         {
             Environment.SetEnvironmentVariable(EnvGreetingVariable, null);
         }
-    }
-
-    private static string ResolveCliAssembly()
-    {
-        var assemblyDirectory = Path.GetDirectoryName(
-            typeof(ThreeRequirementsSuiteDockerTests).Assembly.Location)!;
-        var configuration = Path.GetFileName(Path.GetDirectoryName(assemblyDirectory))!;
-        var repoRoot = Path.GetFullPath(Path.Combine(assemblyDirectory, "..", "..", "..", "..", ".."));
-        var cli = Path.Combine(
-            repoRoot, "src", "Cli", "Vouchfx.Cli", "bin", configuration, "net8.0", "vouchfx.dll");
-
-        Assert.True(
-            File.Exists(cli),
-            $"The built CLI was not found at '{cli}'. Build the solution first: "
-            + $"dotnet build vouchfx.sln -c {configuration}");
-
-        return cli;
     }
 
     private static async Task<(int ExitCode, string Output)> RunCliAsync(
