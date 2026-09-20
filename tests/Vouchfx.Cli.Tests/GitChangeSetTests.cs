@@ -1325,8 +1325,14 @@ public sealed class GitChangeSetTests
     /// is compared at all. A quadratic weaker than the memo removal is what the floor decides
     /// (derived from the figures below, scaling both of its measurements by k): the row stays
     /// green while 5,894k stays under the floor, so a quadratic 59x weaker slipped under the old
-    /// 100 ms, 24x weaker would under 250 ms and 12x weaker does under 500 ms. This row is a
-    /// linear-versus-quadratic gate for the memo class of regression, not an absolute-cost bound.
+    /// 100 ms, 24x weaker would under 250 ms and 12x weaker does under 500 ms. So this row is a
+    /// linear-versus-quadratic gate for the memo class of regression rather than a cost bound —
+    /// and on the LANE THAT GATES MERGES it is, in practice, neither: the floor dominates there.
+    /// Derived from the one healthy CI sample on record: a 102.0 ms ceiling implies
+    /// <c>small</c> ≈ 12.75 ms, so <c>8 x small</c> ≈ 102 ms sits below the 500 ms floor and the
+    /// ratio clause never binds. What ubuntu-latest asserts is the flat 500 ms — an absolute
+    /// bound after all, just not the one the clause above describes. The ratio is what this row
+    /// means; the floor is what it usually enforces.
     /// </para>
     /// <para>
     /// THE DETECTION MARGIN IS THE SMALLER NUMBER, NOT THE LOUDER ONE: against those inflated
@@ -1344,10 +1350,13 @@ public sealed class GitChangeSetTests
     /// (<see cref="FastestSubstitutions"/>, which argues for that shape and bounds the claim): a
     /// scheduling hiccup can only inflate a timing, so the minimum is the least noisy estimator
     /// available, and more samples tighten it. The cost is wall-clock time in the lane, and it is
-    /// per CASE that this compares with #544's: MEASURED here over 10 filtered runs, the U+00AB
-    /// case takes 16.5 to 23.4 ms, against the 553 ms CI-cited for that same case under the
-    /// three-attempt shape. All four cases together cost 75 to 97 ms over 30 runs of this row on
-    /// its own, against 53 to 61 ms for the three-attempt shape measured the same way.
+    /// per CASE that this compares with #544's. The like-for-like pair is the one to read, both
+    /// halves measured the same way on the same host: all four cases together cost 75 to 97 ms
+    /// over 30 runs of this row on its own, against 53 to 61 ms for the three-attempt shape — the
+    /// five-attempt shape is somewhat dearer, not an order cheaper. MEASURED here over 10
+    /// filtered runs, the U+00AB case alone takes 16.5 to 23.4 ms on this host; the 553 ms
+    /// CI-cited for that same case is a SHARED-RUNNER figure under the old shape and belongs
+    /// beside the other CI numbers above, not beside a local one.
     /// </para>
     /// <para>
     /// The equality assertion comes first and is not incidental: it warms the JIT before anything

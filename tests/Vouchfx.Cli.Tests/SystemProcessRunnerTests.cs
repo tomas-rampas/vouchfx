@@ -628,24 +628,44 @@ public sealed class SystemProcessRunnerTests
     /// sample rather than to confirm the probe.
     /// </para>
     /// <para>
-    /// <strong>The filesystem is named because the arithmetic turns on it, and FAT is worse than
-    /// "coarse".</strong> NTFS carries a write time fine enough for the figures above to mean
-    /// something. FAT and exFAT truncate mtime DOWNWARD to even seconds, so <c>announcedUtc</c>
-    /// can read up to 2s EARLIER than the true write — which adds up to 2s to the computed skew.
+    /// <strong>The filesystem is named because the arithmetic turns on it, and FAT12/16/32 is
+    /// worse than "coarse".</strong> NTFS carries a write time fine enough for the figures above
+    /// to mean something, and so does exFAT — which is NOT one of the coarse ones, whatever the
+    /// shared name suggests: its file directory entry carries a
+    /// <c>LastModified10msIncrement</c> field beside the timestamp, giving 10ms resolution
+    /// against FAT's two seconds. INFERRED from the exFAT specification's directory-entry
+    /// layout; no exFAT volume was available to confirm what the .NET API surfaces from it. What
+    /// does truncate is FAT12/16/32, whose <c>DIR_WrtTime</c> stores seconds halved — so
+    /// <c>announcedUtc</c> can read up to 2s EARLIER than the true write, adding up to 2s to the
+    /// computed skew.
     /// Against the tightest real skew measured here, the grandchild shape's -25.2ms, that is up
     /// to +1.975s against a 2s tolerance: about 25ms of margin left. The error direction is
     /// toward REFUSING the real child, so nothing a stranger could exploit — but a refusal is
     /// the expensive mistake here, for the reason <see cref="TryOpen"/>'s remarks give.
     /// </para>
     /// <para>
-    /// <strong>And the truncation is PER WRITE, which is what makes this the vacuous-pass
-    /// residual rather than a tail of it.</strong>
-    /// <see cref="TheGuardsAnchors_StayInTheOrderARealChildProduces"/> cannot miss its OWN child:
-    /// it asserts <c>skew &lt;= PidStartTimeTolerance</c> and <see cref="TryOpen"/> refuses on
-    /// <c>start &gt; write + PidStartTimeTolerance</c> — the same inequality over the same two
-    /// readings of the same process and the same file, so for that child the row is red exactly
-    /// when the guard refuses. What it cannot see is ANOTHER child. Each write is truncated
+    /// <strong>And the truncation is PER WRITE, which used to make this the vacuous-pass residual
+    /// rather than a tail of it — until the canary stopped asserting against the
+    /// tolerance.</strong> <see cref="TheGuardsAnchors_StayInTheOrderARealChildProduces"/> cannot
+    /// miss its OWN child: it and <see cref="TryOpen"/> read the same two clocks over the same
+    /// file, so what the guard sees, it sees. It used to see it at the same instant, asserting
+    /// <c>skew &lt;= PidStartTimeTolerance</c> against a guard refusing on the same figure; since
+    /// <see cref="CanarySkewCeiling"/> it is STRICTLY STRICTER, red at 1200ms where the guard
+    /// waits for 2000ms. What it cannot see is ANOTHER child — each write is truncated
     /// independently into its own two-second bucket, so the offset is a fresh draw per file.
+    /// </para>
+    /// <para>
+    /// <strong>And that lower ceiling turns the canary into a detector of the FILESYSTEM, which
+    /// is a better outcome than the paragraph below used to claim for it.</strong> The draw is
+    /// uniform in [0, 2000)ms, so it reddens this row whenever it exceeds
+    /// <c>ceiling - skew</c>: 1225.2ms for the grandchild shape at its tightest measured skew,
+    /// leaving 774.8 of the 2000ms range — about 39% of draws. The child shape, whose skew is
+    /// around -160ms, needs 1360ms and reddens on about 32%. Both parametrisations draw
+    /// separately on every run, so a FAT volume is not something this row would plausibly miss
+    /// for long; what it cannot do is catch the specific OTHER child that drew badly on the run
+    /// where its own drew well. DERIVED from the uniform-truncation model and the measured skews,
+    /// not observed — and the compound "at least one of the two" figure is left unstated, since
+    /// it needs an independence assumption nothing here establishes.
     /// </para>
     /// <para>
     /// <strong>And the draw refuses nothing by itself: what it removes is the HEADROOM.</strong>
@@ -657,12 +677,15 @@ public sealed class SystemProcessRunnerTests
     /// nothing in reserve against anything else: a further adverse skew larger than that child's
     /// own — a boot-time rounding on Linux, two clocks disagreeing, load — tips THAT child into
     /// refusal, while the canary's child, holding a smaller draw, stays green and prints a
-    /// comfortable figure. Which is the per-child half of the residual <see cref="TryOpen"/>'s
+    /// comfortable figure. That is the per-child half of the residual <see cref="TryOpen"/>'s
     /// remarks name rather than the systematic half the canary exists to catch, and a stronger
     /// argument for a three-way answer than FAT alone would be: the filesystem does not have to
-    /// cause the fault, only to leave nothing absorbing one. INFERRED from the filesystems'
+    /// cause the fault, only to leave nothing absorbing one. It is a NARROWER case than it was,
+    /// though, and the paragraph above says why: at the canary's ceiling the run in which one
+    /// child draws badly is likely to be a run in which this row has drawn badly too and gone
+    /// red. INFERRED from the filesystems'
     /// documented resolution, not measured: every lane this runs on is NTFS, ext4, overlayfs or
-    /// tmpfs, and no FAT host was available to try.
+    /// tmpfs, and no FAT12/16/32 volume was available to try.
     /// </para>
     /// <para>
     /// <strong>TWO SECONDS, and the Windows measurement is not what sizes it — the Linux lane
@@ -678,30 +701,31 @@ public sealed class SystemProcessRunnerTests
     /// on whatever host runs it rather than leaving this paragraph as the last word.
     /// </para>
     /// <para>
-    /// <strong>TOO TIGHT IS WORSE THAN A LEAK, AND THIS IS THE SENTENCE THAT USED TO STOP AT
-    /// "it leaks".</strong> A refusal makes <see cref="KillTreeQuietly"/> kill nothing, so the
-    /// process lives out <see cref="ChildLifetime"/> — and the same refusal makes
-    /// <see cref="IsAlive"/> answer <see langword="false"/>, because that method reads
-    /// <see cref="TryOpen"/> returning <see langword="null"/> as "gone" and cannot tell it from
-    /// "refused". <see cref="WaitForDeath"/> then answers <see langword="true"/> at its first
-    /// sample, and rows 1 and 5's <c>dead</c> assertion — the whole point of the #481 leak cover
-    /// — passes over a child that is still running. <see cref="ReadPid"/>'s remarks record that
-    /// happening once already, with a boot-time pid the old lower bound discarded; what this
-    /// constant adds is a second, far more reachable way in, since the refusal now turns on two
-    /// clocks agreeing and on Linux the figure is INFERRED. MEASURED, by the fourth drill at
-    /// <see cref="TryOpen_RefusesAProcessOutsideTheWindowTheChildMustHaveStartedIn"/>: a guard
-    /// tightened until it opens nothing reddens five rows and rows 1 and 5 are NOT among them.
+    /// <strong>TOO TIGHT COSTS A LEAK, AND THE PATH BY WHICH IT USED TO COST MORE IS NOW
+    /// CLOSED.</strong> A refusal makes <see cref="KillTreeQuietly"/> kill nothing, so the
+    /// process lives out <see cref="ChildLifetime"/>. It used to do worse: the same refusal
+    /// reached <see cref="WaitForDeath"/>, which reads <see cref="TryOpen"/>'s
+    /// <see langword="null"/> as "gone" and cannot tell it from "refused", so an uncorroborated
+    /// but LIVE pid was reported dead. <see cref="PidBounds"/> took this bound off that path —
+    /// the liveness poll now asks the lower bound alone — and
+    /// <see cref="WaitForDeath_AsksWhetherThePidIsGone_NotWhetherItCorroborates"/> reddens if it
+    /// comes back. So the cost of a figure too tight is bounded at the leak.
     /// </para>
     /// <para>
-    /// What still reddens is the systematic case, which is the one a wrong figure produces:
-    /// <see cref="TheGuardsAnchors_StayInTheOrderARealChildProduces"/> fails on any platform
-    /// where a real child's skew exceeds this, and it runs on the gating lane. What does NOT is
-    /// the per-child case — one child on one run skewing past this while the rest do not — and
-    /// closing that needs <see cref="TryOpen"/> to answer three ways rather than two, so
-    /// <see cref="WaitForDeath"/> can tell a refusal from a death. That is a design change
-    /// reaching the three helpers that read its answer — <see cref="IsAlive"/>,
-    /// <see cref="WaitForDeath"/> and <see cref="KillTreeQuietly"/> — and every row that calls
-    /// them, so it is tracked rather than done here.
+    /// <strong>The collapse itself is older and is NOT closed, and measuring it corrected two
+    /// claims worth keeping straight.</strong> The lower bound, an unreadable
+    /// <see cref="Process.StartTime"/> and a throwing <see cref="Process.GetProcessById(int)"/>
+    /// all still answer <see langword="null"/> on the liveness path, so "refused" and "gone"
+    /// remain one word there; only the three-way <see cref="TryOpen"/> the follow-up describes
+    /// fixes that. But the route by which it would reach rows 1 and 5 is narrower than this
+    /// paragraph used to say. Their <c>dead</c> assertion is about the RUNNER's own tree-kill,
+    /// which no guard here gates: by the time they ask, <c>Run</c> has returned and the child is
+    /// genuinely dead, so they pass on the merits. A vacuous pass needs the runner's kill to have
+    /// FAILED as well — the #532-review scenario this file records as having no portable
+    /// reproduction. MEASURED on both drills: with the lower bound tightened until it opens
+    /// nothing, six rows redden; with the upper bound made always-refusing, four do; rows 1 and 5
+    /// are absent from both, and their absence is that compound precondition rather than a
+    /// vacuous pass.
     /// </para>
     /// <para>
     /// <strong>Too loose, and what the second bound actually buys.</strong> A recycled pid's
@@ -746,6 +770,68 @@ public sealed class SystemProcessRunnerTests
     /// </para>
     /// </remarks>
     private static readonly TimeSpan PidStartTimeTolerance = TimeSpan.FromSeconds(2);
+
+    /// <summary>
+    /// The skew at which <see cref="TheGuardsAnchors_StayInTheOrderARealChildProduces"/> stops
+    /// reporting and starts failing — an early warning, deliberately far below
+    /// <see cref="PidStartTimeTolerance"/> (#529).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>INDEPENDENT OF THE TOLERANCE, AND NOT DERIVED FROM IT.</strong> It is a separate
+    /// constant with its own argument, so the canary still does not pin the tolerance's size —
+    /// which is the property that lets the tolerance be tuned against a real host's figures
+    /// without a row reddening over the tuning. Writing this as a fraction of the tolerance
+    /// would have quietly restored that coupling.
+    /// </para>
+    /// <para>
+    /// <strong>The canary asserted against the tolerance before, and that made its warning
+    /// window empty.</strong> The invariant the row NAMES is that a real child's skew is
+    /// negative; the worst ever observed is -25.2ms. Asserting only
+    /// <c>skew &lt;= 2000ms</c> meant the row could not redden until the guard was already at
+    /// the point of refusing real children — an alarm wired to sound after the fire.
+    /// </para>
+    /// <para>
+    /// <strong>THE FLOOR IS THE INFERRED LINUX ACCOUNT, NOT THE WINDOWS FIGURES, AND THAT IS
+    /// WHAT AN EARLIER DRAFT GOT BACKWARDS.</strong> <see cref="PidStartTimeTolerance"/>'s
+    /// remarks already argue that a sub-second figure on Linux risks refusing a real child over a
+    /// rounding artefact; the same argument governs an ASSERTION over the same quantity, and the
+    /// first version of this constant — 250ms, sized against the Windows samples alone — did not
+    /// carry it across. <c>btime</c> is <c>real_seconds - uptime_seconds</c>, two independently
+    /// truncated integers, so its error lies within a second either way. Where it errs POSITIVE a
+    /// perfectly healthy child reads a skew of half a second to a second, and a 250ms ceiling
+    /// would have reddened a blocking row on the gating lane over roughly half the error space
+    /// while nothing at all was wrong.
+    /// </para>
+    /// <para>
+    /// <strong>1200ms, with both directions derived from the new value rather than carried over
+    /// from the old.</strong> Downward it clears every healthy reading on record by a wide
+    /// margin: against the tightest real margin measured, 25.2ms, it is about 48 times; against
+    /// one system-clock tick, about 16ms, it is about 75 ticks; and it is 200ms clear of the
+    /// whole INFERRED <c>btime</c> error range, which is bounded by a second rather than centred
+    /// on one. Upward it leaves the guard untroubled: 800ms separate it from
+    /// <see cref="PidStartTimeTolerance"/>, so a host has to drift 800ms further after this row
+    /// has already gone red before <see cref="TryOpen"/> refuses its first child. A host inside
+    /// the predicted rounding stays green; a host outside it reddens here while every child it
+    /// has is still being opened and killed normally, which is the whole of the early warning.
+    /// </para>
+    /// <para>
+    /// <strong>PROVISIONAL, and sized by an argument rather than by a measurement.</strong> The
+    /// <c>btime</c> account is INFERRED — no Linux host was available — so 1200ms is set against
+    /// a prediction, not against data. The first CI run supplies the first real Linux figure, and
+    /// the right move then is to tighten this toward what is MEASURED there: on a lane whose
+    /// healthy skew turns out to be negative, as it is on Windows, a ceiling of a second and a
+    /// fifth is far looser than it needs to be, and every millisecond of that looseness is
+    /// warning this row declines to give.
+    /// </para>
+    /// <para>
+    /// It is a CEILING on a quantity that should be negative, so the whole gap between 0 and here
+    /// is slack the row declines to police rather than behaviour it endorses: a host reading
+    /// +10ms has already inverted the order a real child produces, and the printed figure says so
+    /// on every run even while the row stays green.
+    /// </para>
+    /// </remarks>
+    private static readonly TimeSpan CanarySkewCeiling = TimeSpan.FromMilliseconds(1200);
 
     /// <summary>How often the pid file is polled.</summary>
     private const int PollIntervalMs = 100;
@@ -1650,7 +1736,18 @@ public sealed class SystemProcessRunnerTests
     /// fail blaming the host ("a host that did not start a shell inside 30s", "a host that still
     /// cannot start a shell inside the largest budget"), which is the #512 mislabel shape
     /// <see cref="PidFileName"/>'s remarks warn against, and a reader sent to look at the CI agent
-    /// will not find the two-character edit that caused it.
+    /// will not find the two-character edit that caused it. What #541 added is a red that names
+    /// the contract instead, landing in the same run as theirs: <see cref="ReadPid"/> accepts
+    /// ONLY a complete, newline-terminated ASCII digit line (#528), and every child writer in
+    /// this file appends that terminator — <c>Set-Content</c> on Windows, <c>echo</c> on POSIX.
+    /// </para>
+    /// <para>
+    /// <strong>The failure message states the three readings and stops.</strong> It reports the
+    /// exit state, the file's first bytes and the elapsed wait, in the order a reader should take
+    /// them, and one sentence of what they mean; the argument for WHY that order — worked through
+    /// in the paragraphs below — stays here. A message is read in a CI log by somebody who wants
+    /// to know what was observed and where to look next, and an argument pasted into it is an
+    /// argument nobody finishes.
     /// </para>
     /// <para>
     /// <strong>SO THIS ROW REMOVES THE OTHER EXPLANATIONS RATHER THAN ADDING AN
@@ -1703,7 +1800,7 @@ public sealed class SystemProcessRunnerTests
     /// WRITER half — reddens both rows here, each on the labelled message, over a file holding a
     /// pid's digits and nothing after them; row 2 under that same mutation reddened too, with its
     /// host label word for word. Deleting <see cref="ReadPid"/>'s carriage-return strip — the
-    /// READER half — was run over the whole class and reddens eight of its twenty-one rows: these
+    /// READER half — was run over the whole class and reddens eight of its twenty-two rows: these
     /// two, rows 1, 2 and 5, the #528 fact, and both parametrisations of the #529 row that joined
     /// this file afterwards — six of fifteen when the figure was first taken here, before #529
     /// added six rows. Rows 1, 2 and 5 failed there with their host labels unchanged, word for
@@ -1811,7 +1908,7 @@ public sealed class SystemProcessRunnerTests
                     Assert.True(
                         pid is not null,
                         FormattableString.Invariant(
-                            $"The writer of '{pidFileName}' published nothing ReadPid would accept in {clock.Elapsed.TotalSeconds:F1}s; the file's first bytes are {PidFileBytes(pidFile)} and the shell this row started is {ProcessExitState(process)}. READ THE EXIT STATE FIRST, because this row holds the handle that settles it. A non-zero code means the shell DIED rather than wrote — a quoting change, a renamed cmdlet, an absent ping.exe — which is the mislabel PidFileName's remarks measure (#512) and not a newline defect at all; so is ANY exit on '{PidFileName}', whose shell should still be sleeping out the {ChildLifetimeSeconds}s it was given (Start-Sleep on Windows, sleep on POSIX). 'exited 0' is expected on '{GrandchildPidFileName}' alone, whose shell exits the moment it has spawned the grandchild (#392) — and 'still running' THERE inverts this ranking rather than continuing it: that shell's write is its LAST act, so one still alive after {UnracedPidCeiling.TotalSeconds:F0}s never reached the write, which is neither a writer nor a reader breach but the fourth reading below, leading instead of distant. With the shell accounted for, what is left is the newline contract: ReadPid accepts ONLY a complete, newline-terminated ASCII digit line (#528) and every child writer in this file appends that terminator — Set-Content on Windows, echo on POSIX — so this red names a writer that stopped appending it, or a reader that stopped accepting it. It is NOT 'a host that cannot start a shell' — that is the label rows 1, 2 and 5 produce for this same breach, and they go on producing it; what #541 added is this red, which names the contract, landing in the same run as theirs. A host that started the shell and then did not schedule its first statement inside {UnracedPidCeiling.TotalSeconds:F0}s is the fourth reading — distant, except on the one pair named above that puts it first."));
+                            $"No pid line ReadPid accepts, for '{pidFileName}'. OBSERVED: shell {ProcessExitState(process)}; file bytes {PidFileBytes(pidFile)}; waited {clock.Elapsed.TotalSeconds:F1}s. Read them in that order — the exit state first, because this row holds the handle and the bytes cannot explain a shell that never ran. A non-zero code, or any exit at all on '{PidFileName}', means the shell died instead of writing (#512, not a newline defect); 'exited 0' is normal on '{GrandchildPidFileName}' but 'still running' there means it never reached its write, which is its last act. With the shell accounted for, the bytes name the fault: digits and no terminator is a writer that stopped appending one, a complete line refused is a reader that stopped accepting one (#528). This row's remarks set out why that ranking, and why 'a host that cannot start a shell' — the label rows 1, 2 and 5 produce for this same breach — is not the reading here."));
 
                     if (announcesTheShellItself)
                     {
@@ -1827,8 +1924,12 @@ public sealed class SystemProcessRunnerTests
                             FormattableString.Invariant(
                                 $"'{pidFileName}' holds pid {pid}, which is the shell this row started rather than its grandchild. GrandchildHoldingPipesChild announces (Start-Process -PassThru).Id on Windows and $! on POSIX deliberately: the shell exits at once, and the GRANDCHILD is what keeps the runner's inherited pipes open (#392). A writer that announced the shell instead would satisfy the newline contract unchanged, leave row 2's teardown killing a process that had already exited, and leave the grandchild running for the whole {ChildLifetime.TotalSeconds:F0}s."));
 
+                        // Both bounds, deliberately: this row claims CORROBORATED liveness — the
+                        // announced process is alive AND is the one that wrote the file — and a
+                        // refusal here reddens rather than converting into a pass, which is the
+                        // safe direction the liveness poll cannot have. See PidBounds.
                         Assert.True(
-                            IsAlive(pid, startedUtc, pidFile),
+                            IsAlive(pid, startedUtc, pidFile, PidBounds.Both),
                             FormattableString.Invariant(
                                 $"'{pidFileName}' holds pid {pid}, which TryOpen will not open as a live process started no earlier than this row. The grandchild is given {ChildLifetime.TotalSeconds:F0}s and this row spent {clock.Elapsed.TotalSeconds:F1}s of it waiting for the pid, so either it died early — in which case row 2's #392 shape no longer holds the pipes it is built on — or the number names something else, and that is the pid row 2's teardown tree-kills."));
                     }
@@ -1862,15 +1963,31 @@ public sealed class SystemProcessRunnerTests
                     //
                     // That is why the answer is dropped. What makes the CALL safe here is a
                     // separate property, and it is the one the move from a body to a `finally`
-                    // needs: WaitForDeath cannot throw. Every fault on the path is already
-                    // filtered, and the list is THREE sources rather than two since #529 —
-                    // TryOpen catches the GetProcessById and StartTime ones, PidFileWrittenUtc
-                    // catches the GetLastWriteTimeUtc ones (IOException, UnauthorizedAccess,
-                    // Argument, NotSupported; SecurityException is the only documented arrival
-                    // outside that filter and .NET 8 does not raise it on this path), and IsAlive
-                    // catches the HasExited one. The Win32Exception HasExited could raise in
-                    // principle is unreachable from here, TryOpen having just read StartTime on
-                    // the same handle, which needs the same access.
+                    // needs: WaitForDeath cannot throw. The faults are listed PER PATH, because
+                    // the two paths through TryOpen stopped being the same list at #529 and a
+                    // single count went stale twice while nobody noticed.
+                    //
+                    // This line passes LowerOnly, so `applyUpperBound` is false and the `&&`
+                    // short-circuits before PidFileWrittenUtc is ever called. Two sources reach
+                    // it: TryOpen's own catches (GetProcessById, StartTime) and IsAlive's
+                    // (HasExited). The Win32Exception HasExited could raise in principle is
+                    // unreachable, TryOpen having just read StartTime on the same handle, which
+                    // needs the same access.
+                    //
+                    // The KillTreeQuietly line above passes Both, so a THIRD source is live
+                    // there: PidFileWrittenUtc's catch over GetLastWriteTimeUtc (IOException,
+                    // UnauthorizedAccess, Argument, NotSupported; SecurityException is the only
+                    // documented arrival outside that filter and .NET 8 does not raise it here).
+                    // That filter is why this `finally` can call a stat at all.
+                    //
+                    // A FOURTH sits on both paths and is deliberately unfiltered: the switch in
+                    // TryOpen throws on an unrecognised PidBounds. Unreachable as written — the
+                    // enum is private with two members and every call site passes a literal — and
+                    // it is decided before any handle is opened, so nothing leaks if it ever
+                    // fires. What it would cost is exactly what this paragraph is about: an
+                    // exception out of a `finally`, replacing the row's own finding. It is left
+                    // loud because a bounds value nobody has decided is not a thing to guess at
+                    // in teardown.
                     //
                     // It covers the paths where a kill HAD a target. Where no pid ever landed,
                     // `pid` is null, KillTreeQuietly killed nothing, the poll's first sample is
@@ -1916,7 +2033,8 @@ public sealed class SystemProcessRunnerTests
     /// <para>
     /// <strong>Nothing backstops that, and the census is the wrong shape to.</strong>
     /// <see cref="EveryFinallyThatKills_ReclaimsAPidFirst"/> counts killing <c>finally</c> blocks,
-    /// so a kill added to THIS row's <c>finally</c> would redden it at five-not-six — but a kill
+    /// so a kill added to THIS row's <c>finally</c> would redden it, the census finding six where
+    /// it covers five — but a kill
     /// added to its BODY is invisible to a rule about <c>finally</c> clauses. That matters more
     /// here than anywhere else in the file: the pid this row hands to
     /// <see cref="TryOpen"/> is the test runner's own, and
@@ -1957,26 +2075,36 @@ public sealed class SystemProcessRunnerTests
     /// </list>
     /// </para>
     /// <para>
-    /// <strong>DRILLED, each comparison separately, on the maintainer's Windows host
-    /// 2026-09-20 — 21 rows in the class, and the figure after each mutation is how many went
-    /// red.</strong> Removing the lower bound: 1, <c>older-than-the-attempt</c>. Removing the
-    /// upper bound: 1, <c>younger-than-the-announcement</c>. Making the missing-file fallback
+    /// <strong>DRILLED, each comparison separately, on the maintainer's Windows host — 22 rows
+    /// in the class, and the figure after each mutation is how many went red.</strong> Removing
+    /// the lower bound: 1, <c>older-than-the-attempt</c>. Removing the
+    /// upper bound: 2, <c>younger-than-the-announcement</c> here and
+    /// <see cref="WaitForDeath_AsksWhetherThePidIsGone_NotWhetherItCorroborates"/>, whose opening
+    /// premise assertion requires that same refusal before it can ask its own question — it was 1
+    /// until that row existed. Making the missing-file fallback
     /// refuse instead of accept: 1, <c>no-pid-file</c>. Tightening the lower bound from minus
-    /// five seconds to plus five: 5 — <c>inside-both-bounds</c> and <c>no-pid-file</c> here, both
-    /// parametrisations of <see cref="TheGuardsAnchors_StayInTheOrderARealChildProduces"/>, and
-    /// the grandchild parametrisation of
-    /// <see cref="PidFileWriters_PublishAPidTheReaderAccepts"/>, whose liveness assertion runs
-    /// through this guard. Each mutation was reverted, and the fourth was re-run after this row
-    /// grew its guarded reader and explicit cases: the same five, unchanged.
+    /// five seconds to plus five: 6 — <c>inside-both-bounds</c> and <c>no-pid-file</c> here, both
+    /// parametrisations of <see cref="TheGuardsAnchors_StayInTheOrderARealChildProduces"/>, the
+    /// grandchild parametrisation of
+    /// <see cref="PidFileWriters_PublishAPidTheReaderAccepts"/> whose liveness assertion runs
+    /// through this guard, and
+    /// <see cref="WaitForDeath_AsksWhetherThePidIsGone_NotWhetherItCorroborates"/>, which needs
+    /// the lower bound to accept in order to ask its own question. Making the UPPER bound
+    /// always-refusing instead: 4 — the same set minus the two that turn on the lower bound
+    /// alone. Every mutation reverted.
     /// </para>
     /// <para>
-    /// <strong>READ THAT FOURTH FIGURE FOR WHO IS MISSING FROM IT.</strong> Rows 1 and 5 are
-    /// not among the five, under a guard that opened NOTHING — because a refusal reaches them as
-    /// <see cref="IsAlive"/> answering <see langword="false"/>, which
-    /// <see cref="WaitForDeath"/> reports as a death, which is what their <c>dead</c> assertion
-    /// wants to hear. The #481 leak cover passes vacuously over a live child in exactly the case
-    /// a mis-sized tolerance produces. That is the finding those five red rows are standing in
-    /// for, and <see cref="TryOpen"/>'s remarks carry the mechanism.
+    /// <strong>AND THE ROWS THOSE FIGURES DO NOT CONTAIN ARE WORTH MORE THAN THE ROWS THEY
+    /// DO.</strong> Rows 1 and 5 are absent from both, under guards that opened NOTHING. An
+    /// earlier draft of this paragraph read that as the #481 leak cover passing vacuously over a
+    /// live child; measuring the second drill is what showed it is not. Their <c>dead</c>
+    /// assertion is about the RUNNER's tree-kill, which no bound here gates — <c>Run</c> has
+    /// returned having ISSUED that kill before they ask, and the poll they then run is what
+    /// observes it land — so they pass because the child is dead.
+    /// Reaching a vacuous pass needs the runner's kill to have failed FIRST, and only then does
+    /// the guard's answer decide anything. That compound case has no portable reproduction, which
+    /// is why the liveness path is now defended by construction (<see cref="PidBounds"/>) rather
+    /// than by a drill.
     /// </para>
     /// <para>
     /// <strong>What it does NOT pin is the SIZE of the tolerance.</strong> Every case here is
@@ -2041,7 +2169,7 @@ public sealed class SystemProcessRunnerTests
                             $"'{relation}' is not a relation this row sets up. Each InlineData names one arrangement of a process start, an attempt date and a pid file's write time, and the arrangement is what decides whether TryOpen must refuse — so an unrecognised name has no expected answer and must not borrow another case's."));
             }
 
-            var opened = TryOpen(host.Id, startedUtc, pidFile);
+            var opened = TryOpen(host.Id, startedUtc, pidFile, PidBounds.Both);
             using (opened)
             {
                 Assert.True(
@@ -2057,43 +2185,146 @@ public sealed class SystemProcessRunnerTests
     }
 
     /// <summary>
+    /// The liveness poll refuses to call an uncorroborated pid dead: it applies the lower bound
+    /// and not the upper one (#529).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>THE SPLIT IS THE POINT, AND WITHOUT A ROW IT IS A COMMENT.</strong>
+    /// <see cref="PidBounds"/> argues that a caller asking "is this pid gone?" must not be handed
+    /// a bound that answers "I cannot corroborate it" — because
+    /// <see cref="TryOpen"/> says both with the same <see langword="null"/>, and rows 1 and 5
+    /// turn that into a verdict. This row arranges exactly that input and requires the honest
+    /// answer.
+    /// </para>
+    /// <para>
+    /// <strong>The arrangement is the <c>younger-than-the-announcement</c> case reused against a
+    /// different question.</strong> The pid is this test host's, alive by construction; the pid
+    /// file is backdated ten seconds, so the upper bound would refuse it while the lower bound
+    /// accepts. <see cref="TryOpen"/> with <see cref="PidBounds.Both"/> therefore returns
+    /// <see langword="null"/> — the sibling theory pins that — and the question here is what
+    /// <see cref="WaitForDeath"/> makes of the same pid: it must answer NOT DEAD, because the
+    /// host is plainly running.
+    /// </para>
+    /// <para>
+    /// <strong>A window of milliseconds, not <see cref="DeathWindow"/>.</strong> The expected
+    /// answer is <see langword="false"/>, which costs the whole window by construction — so the
+    /// window is passed small. The row is about which bound is consulted, not about how long a
+    /// kill is given to land, and borrowing the real constant would buy two seconds of wall clock
+    /// and nothing else.
+    /// </para>
+    /// <para>
+    /// If this reddens, read it as: <see cref="WaitForDeath"/> has started honouring the upper
+    /// bound, every refusal it meets is now reported as a death, and rows 1 and 5 can pass over a
+    /// live child. That is the defect #529 was filed against, reintroduced one level up.
+    /// </para>
+    /// <para>
+    /// <strong>The same host-safety hazard applies here as at the sibling theory, and the census
+    /// backstops neither.</strong> This row hands the test runner's OWN pid to the same helpers,
+    /// and <see cref="KillTreeQuietly"/> goes through <c>ChildProcess.KillTreeQuietly</c> with
+    /// <c>entireProcessTree: true</c>. <see cref="EveryFinallyThatKills_ReclaimsAPidFirst"/>
+    /// counts killing <c>finally</c> blocks, so a kill added to a BODY — here or there — is
+    /// invisible to it. Open, read, dispose; never kill. The reasoning is written out once, at
+    /// <see cref="TryOpen_RefusesAProcessOutsideTheWindowTheChildMustHaveStartedIn"/>.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void WaitForDeath_AsksWhetherThePidIsGone_NotWhetherItCorroborates()
+    {
+        using var host = Process.GetCurrentProcess();
+        var hostStartedUtc = host.StartTime.ToUniversalTime();
+        var directory = CreateScratchDirectory();
+        var pidFile = Path.Combine(directory, PidFileName);
+
+        try
+        {
+            File.WriteAllText(pidFile, "1\n");
+            File.SetLastWriteTimeUtc(pidFile, hostStartedUtc.AddSeconds(-10));
+
+            using (var refused = TryOpen(host.Id, hostStartedUtc, pidFile, PidBounds.Both))
+            {
+                Assert.True(
+                    refused is null,
+                    FormattableString.Invariant(
+                        $"This row's premise is gone: TryOpen ACCEPTED pid {host.Id} against a pid file backdated ten seconds, so the upper bound is not refusing the arrangement this row is built on and what it asserts below proves nothing. Fix the sibling theory's `younger-than-the-announcement` case first — it pins the same refusal — and come back to this one."));
+            }
+
+            var reportedDead = WaitForDeath(
+                host.Id, hostStartedUtc, TimeSpan.FromMilliseconds(50), pidFile);
+
+            Assert.False(
+                reportedDead,
+                FormattableString.Invariant(
+                    $"WaitForDeath reported pid {host.Id} DEAD — and that pid is this test host, which is running this assertion. The pid file was backdated so that TryOpen's upper bound refuses it while the lower bound accepts, so the only way to answer 'dead' here is to have consulted the upper bound (PidBounds.Both) on a question it must not be asked. Every refusal then reads as a death: rows 1 and 5 kill a child, ask this method whether it went, and pass over a live one. That is #529's own defect arriving through its own fix — restore PidBounds.LowerOnly in WaitForDeath."));
+        }
+        finally
+        {
+            TryDeleteDirectory(directory);
+        }
+    }
+
+    /// <summary>
     /// A real child's start time precedes its own pid file's write time, by enough that
     /// <see cref="PidStartTimeTolerance"/> is never what admits it (#529).
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <strong>A CANARY FOR THE TOLERANCE, NOT A PIN ON IT.</strong> It asserts the guard's upper
-    /// comparison holds for a child this file actually launches, and reports the margin by which
-    /// it holds. Shrinking <see cref="PidStartTimeTolerance"/> would not redden it on a host
-    /// where the skew is negative — the measured Windows case, where it is negative by 25ms at
-    /// its tightest — so this row cannot stand in for choosing the figure. What it catches is the
-    /// case that figure exists for: a host where the two clocks disagree in the other direction
-    /// far enough to make a real child look younger than its own announcement.
+    /// <strong>A CANARY FOR THE TOLERANCE, NOT A PIN ON IT — AND IT ASSERTS AGAINST ITS OWN
+    /// CEILING SO THAT THE TWO STAY APART.</strong> The quantity is the skew between a real
+    /// child's start and its own pid file's write time; the invariant is that it is NEGATIVE,
+    /// the child starting before it writes. The row requires it under
+    /// <see cref="CanarySkewCeiling"/>, which is an independent constant, not a fraction of
+    /// <see cref="PidStartTimeTolerance"/> — so shrinking or raising the tolerance still cannot
+    /// redden this row, and the row still cannot stand in for choosing that figure.
+    /// </para>
+    /// <para>
+    /// <strong>Asserting against the TOLERANCE, as this row first did, left no warning window at
+    /// all.</strong> The worst skew ever observed is -25.2ms and the tolerance is 2000ms, so the
+    /// row could only fail once the guard was already refusing real children — after the damage
+    /// rather than before it. At <see cref="CanarySkewCeiling"/> the order reverses, with 800ms
+    /// between this row going red and the guard refusing its first child: a host whose clocks
+    /// have begun to disagree reddens here while every child it has is still being opened and
+    /// killed normally, which is the whole of what an early warning is. That constant's remarks
+    /// carry why the figure is where it is, and why it is provisional.
     /// </para>
     /// <para>
     /// <strong>THE LANE THAT GATES MERGES IS THE ONE NOBODY HAS MEASURED.</strong>
     /// <see cref="PidStartTimeTolerance"/>'s remarks record Windows figures and an INFERRED
     /// account of Linux, where .NET derives <see cref="Process.StartTime"/> from
     /// <c>/proc</c> and a boot-time estimate rather than from a per-process timestamp. This row
-    /// turns that into data by writing the observed skew to the test output on every run, pass or
-    /// fail — which is why this class takes an <see cref="ITestOutputHelper"/> at all, an
-    /// assertion message saying nothing on the green run that carries the number.
+    /// turns that into data, and delivers it two ways with different jobs.
     /// </para>
     /// <para>
-    /// <strong>AND THE GREEN HALF OF THAT NEEDED A WORKFLOW CHANGE, WHICH IS WORTH KNOWING
-    /// BEFORE TRUSTING IT.</strong> VSTest's console logger prints captured output for FAILED
-    /// tests only, so on a lane running <c>dotnet test</c> with no logger the green line goes
-    /// nowhere at all — written, captured, discarded. <c>build.yml</c>'s unit-test step therefore
-    /// carries <c>--logger "trx;LogFilePrefix=unit"</c>, and the trx lands in
-    /// <c>TestResults/</c>, inside the coverage artifact that step's neighbour already uploads
-    /// with <c>if: always()</c>. A PREFIX rather than a fixed name because that step runs the
-    /// whole solution and one test host per project writes one trx — a fixed name is a single
-    /// path they overwrite in turn, MEASURED, and the reasoning is kept at the workflow. What
-    /// this buys is precise and limited: the figure is retrievable from a build artefact by
-    /// someone who goes looking, not visible in the job log. What IS visible without going
-    /// looking is the RED path — a skew above <see cref="PidStartTimeTolerance"/> fails this row,
-    /// and a failed test's output the console logger does print. Delete that flag and the green
-    /// figure is silently lost again.
+    /// <strong>The RED path is the primary one, and it is the reason for
+    /// <see cref="CanarySkewCeiling"/>.</strong> A Linux host drifting positive past that ceiling
+    /// fails this row, and the message carries the observed skew, the ceiling and the tolerance —
+    /// into the job log, because VSTest's console logger prints captured output for FAILED tests.
+    /// Nobody has to go looking, and the figure arrives while the guard is still healthy.
+    /// </para>
+    /// <para>
+    /// <strong>What to EXPECT of the first CI run, stated so that the outcome can be read against
+    /// it.</strong> Green is the prediction: the ceiling sits above the whole INFERRED
+    /// <c>btime</c> error range, so a Linux host behaving as that account describes — healthy
+    /// skew anywhere from negative to about +1s — passes and writes its figure to the trx. A RED
+    /// on the first run therefore means the account is wrong in the direction that matters, and
+    /// the printed skew is the datum that says how. An earlier draft set the ceiling at 250ms,
+    /// where a red on the first run would have been the likely outcome and would have said
+    /// nothing except that the ceiling was too low; the figure moved precisely so that a red
+    /// carries information.
+    /// </para>
+    /// <para>
+    /// <strong>The GREEN path is the secondary one: a record, not an alarm.</strong> The skew is
+    /// written to <see cref="ITestOutputHelper"/> on every run, which is why this class takes one
+    /// at all — an assertion message says nothing on a passing row. That output reaches a trx
+    /// rather than the log, so <c>build.yml</c>'s unit-test step carries
+    /// <c>--logger "trx;LogFilePrefix=unit"</c> and the file lands in <c>TestResults/</c>, inside
+    /// the coverage artifact its neighbour already uploads with <c>if: always()</c>. A PREFIX
+    /// rather than a fixed name because that step runs the whole solution and one test host per
+    /// project writes one trx — a fixed name is a single path they overwrite in turn, MEASURED,
+    /// with the reasoning kept at the workflow. What it buys is a figure retrievable by someone
+    /// who goes looking: useful for watching a trend, no longer what the early warning depends
+    /// on. Delete the flag and this row still reddens on a drifting host; only the green-run
+    /// record is lost.
     /// </para>
     /// <para>
     /// <strong>Both shapes, because they bracket the quantity.</strong>
@@ -2167,16 +2398,17 @@ public sealed class SystemProcessRunnerTests
                     var skew = announcedStartUtc!.Value - writtenUtc!.Value;
 
                     _output.WriteLine(FormattableString.Invariant(
-                        $"#529 skew for '{pidFileName}' on {RuntimeInformation.OSDescription}: StartTime - LastWriteTimeUtc = {skew.TotalMilliseconds:F1}ms (tolerance {PidStartTimeTolerance.TotalMilliseconds:F0}ms). Negative is the order a real child produces."));
+                        $"#529 skew for '{pidFileName}' on {RuntimeInformation.OSDescription}: StartTime - LastWriteTimeUtc = {skew.TotalMilliseconds:F1}ms (canary ceiling {CanarySkewCeiling.TotalMilliseconds:F0}ms, guard tolerance {PidStartTimeTolerance.TotalMilliseconds:F0}ms). Negative is the order a real child produces. The ceiling is provisional and sized against an INFERRED account of Linux boot-time rounding; a figure measured here is what should tighten it."));
 
                     Assert.True(
-                        skew <= PidStartTimeTolerance,
+                        skew <= CanarySkewCeiling,
                         FormattableString.Invariant(
-                            $"A child this file launched itself started {skew.TotalMilliseconds:F1}ms AFTER its own pid file was written, which is more than the {PidStartTimeTolerance.TotalMilliseconds:F0}ms TryOpen tolerates — so teardown would refuse the real child, kill nothing, and leave it running for {ChildLifetime.TotalSeconds:F0}s. The child cannot really have started after announcing itself, so this is the two clocks disagreeing: Process.StartTime comes from the OS process table and the write time from the filesystem, and on this platform they are further apart than PidStartTimeTolerance allows. Raise the tolerance against the figure this row printed rather than removing the bound."));
+                            $"EARLY WARNING, not a failure of the guard yet. A child this file launched itself reads as having started {skew.TotalMilliseconds:F1}ms AFTER its own pid file was written, against a canary ceiling of {CanarySkewCeiling.TotalMilliseconds:F0}ms and a guard tolerance of {PidStartTimeTolerance.TotalMilliseconds:F0}ms. A real child starts and then writes, so this figure should be NEGATIVE; the worst on record is -25.2ms. What it measures when positive is the two clocks disagreeing — Process.StartTime out of the OS process table, the write time out of the filesystem — and on Linux StartTime is derived from /proc plus a boot-time estimate rather than read as a timestamp. The ceiling already allows for that estimate's rounding, so a figure past it is more than rounding. Nothing is broken yet: every child is still being opened and killed normally, and only past the tolerance does TryOpen begin refusing real children, killing nothing and leaving each to live out {ChildLifetime.TotalSeconds:F0}s. Act on the printed figure — raise PidStartTimeTolerance against measurements from this host and move the ceiling with it, never the other way round."));
 
                     // End to end, and disposed rather than leaked: the guard that will be asked
                     // to open this pid in the `finally` below accepts it now.
-                    using var openedForTeardown = TryOpen(pid, startedUtc, pidFile);
+                    using var openedForTeardown =
+                        TryOpen(pid, startedUtc, pidFile, PidBounds.Both);
                     Assert.True(
                         openedForTeardown is not null,
                         FormattableString.Invariant(
@@ -4046,6 +4278,55 @@ public sealed class SystemProcessRunnerTests
     }
 
     /// <summary>
+    /// Which of <see cref="TryOpen"/>'s two bounds a caller is asking for (#529).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>THE UPPER BOUND IS FOR CALLERS ABOUT TO KILL, AND FOR NOBODY ELSE.</strong> What
+    /// #529 defends against is blast radius: <c>ChildProcess.KillTreeQuietly</c> runs with
+    /// <c>entireProcessTree: true</c>, so a pid recycled onto a stranger costs that stranger's
+    /// whole tree. That threat exists only where a kill follows. Opening a handle to read
+    /// <see cref="Process.HasExited"/> costs nothing and endangers nobody.
+    /// </para>
+    /// <para>
+    /// <strong>And giving it to a liveness caller is not merely useless, it is harmful.</strong>
+    /// <see cref="TryOpen"/> answers with a handle or <see langword="null"/>, so
+    /// <see cref="IsAlive"/> reads every refusal as "gone" and <see cref="WaitForDeath"/> reads
+    /// "gone" as the death it was waiting for. A bound that refuses a LIVE child therefore
+    /// reports it dead, and rows 1 and 5's <c>dead</c> assertion — the #481 leak cover — passes
+    /// over a running process. Asking the question narrowly is what keeps the answer honest:
+    /// <see cref="WaitForDeath"/> wants to know whether the pid is GONE, and a pid whose
+    /// corroboration failed is not gone.
+    /// </para>
+    /// <para>
+    /// <strong>The split is by QUESTION, not by caller.</strong>
+    /// <see cref="PidFileWriters_PublishAPidTheReaderAccepts"/> asserts its grandchild IS alive
+    /// and asks with <see cref="Both"/> deliberately: there a refusal reddens the row, which is
+    /// the loud direction, and the row is claiming corroborated liveness rather than mere
+    /// liveness. The rule is that a refusal must never be silently convertible into a pass, and
+    /// it is pinned by
+    /// <see cref="WaitForDeath_AsksWhetherThePidIsGone_NotWhetherItCorroborates"/>.
+    /// </para>
+    /// <para>
+    /// What this does NOT close: the lower bound, an unreadable
+    /// <see cref="Process.StartTime"/> and a <see cref="Process.GetProcessById(int)"/> that
+    /// throws all still collapse into the same <see langword="null"/> on the liveness path. Those
+    /// are older than #529 and are the tri-state follow-up's business;
+    /// <see cref="TryOpen"/>'s remarks carry that residual.
+    /// </para>
+    /// </remarks>
+    private enum PidBounds
+    {
+        /// <summary>
+        /// Start-time lower bound only — the caller is asking whether the pid is gone.
+        /// </summary>
+        LowerOnly,
+
+        /// <summary>Both bounds — the caller is about to kill what it opens.</summary>
+        Both,
+    }
+
+    /// <summary>
     /// Opens <paramref name="pid"/> if it is still a live process that this row could plausibly
     /// have started.
     /// </summary>
@@ -4082,25 +4363,34 @@ public sealed class SystemProcessRunnerTests
     /// chosen rather than inherited: refusing to open a pid this row cannot corroborate would
     /// leak whatever it names for <see cref="ChildLifetime"/>, and a teardown that kills nothing
     /// is the leak #481 exists to prevent. Every caller therefore ends up no worse off than it
-    /// was before #529, and better off whenever the file is there — which on every path in this
-    /// file it is, all five teardown blocks and every body look running strictly before the
-    /// <see cref="TryDeleteDirectory"/> that removes it.
+    /// was before #529, and better off whenever the file is there — which on every TEARDOWN path
+    /// in this file it is, all five of those blocks running strictly before the
+    /// <see cref="TryDeleteDirectory"/> that removes it. The guard rows are the deliberate
+    /// exception: <c>no-pid-file</c> hands this method a path with nothing at it precisely to
+    /// exercise the fallback, so "the file is there" is a property of the teardown blocks rather
+    /// than of every caller.
     /// </para>
     /// <para>
     /// <strong>AND THE DIRECTION IS CHOSEN FOR A SHARPER REASON THAN "a leak is the cheaper
     /// mistake": A REFUSAL HERE IS INDISTINGUISHABLE FROM A DEATH UPSTREAM.</strong>
     /// <see cref="IsAlive"/> answers <see langword="false"/> on <see langword="null"/> whatever
     /// the reason, and <see cref="WaitForDeath"/> answers <see langword="true"/> on the first
-    /// <see langword="false"/> — so a wrongly refused pid does not merely go unkilled, it is
-    /// REPORTED DEAD, and rows 1 and 5's <c>dead</c> assertion passes over a child that is still
-    /// running. Two returns carrying one meaning is the whole of it; the same collapse cost this
-    /// file a vacuous pass once before, over a boot-time pid, as <see cref="ReadPid"/>'s remarks
-    /// record. The upper bound widens the set of inputs that reach it, so the tolerance is sized
-    /// to make a wrong refusal rare (see <see cref="PidStartTimeTolerance"/>) and the missing
-    /// file is answered with the lower bound rather than with a refusal. Making
-    /// <see cref="TryOpen"/> answer three ways — open, gone, refused — is what would close it,
-    /// and that reaches every helper reading this answer (<see cref="IsAlive"/>,
-    /// <see cref="WaitForDeath"/>, <see cref="KillTreeQuietly"/>) rather than a line here.
+    /// <see langword="false"/> — so a wrongly refused pid is not merely left unkilled, it is
+    /// REPORTED DEAD. Two returns carrying one meaning is the whole of it, and the same collapse
+    /// cost this file a real vacuous pass once, over a boot-time pid, as
+    /// <see cref="ReadPid"/>'s remarks record.
+    /// </para>
+    /// <para>
+    /// The upper bound would have widened the set of inputs reaching that, so since #529 it is
+    /// not on the liveness path at all: <see cref="PidBounds"/> splits the question, this method
+    /// applies the second comparison only when asked, and only the caller about to KILL asks.
+    /// What is left of the collapse is the arms that predate #529 — the lower bound, an
+    /// unreadable <see cref="Process.StartTime"/>, a throwing
+    /// <see cref="Process.GetProcessById(int)"/> — and closing THOSE is the three-way answer
+    /// (open, gone, refused) the follow-up describes, reaching every helper that reads this one
+    /// (<see cref="IsAlive"/>, <see cref="WaitForDeath"/>, <see cref="KillTreeQuietly"/>) rather
+    /// than a line here. The fail-toward-today missing-file answer is part of the same posture:
+    /// a file that cannot be stat'd produces the old guard, never a refusal.
     /// </para>
     /// <para>
     /// <strong>THE LEDGER THIS PARAGRAPH USED TO KEEP.</strong> #524 multiplied the number of
@@ -4122,12 +4412,36 @@ public sealed class SystemProcessRunnerTests
     /// <see cref="TheGuardsAnchors_StayInTheOrderARealChildProduces"/>.
     /// </para>
     /// </remarks>
-    private static Process? TryOpen(int? pid, DateTime startedUtc, string pidFile)
+    private static Process? TryOpen(
+        int? pid, DateTime startedUtc, string pidFile, PidBounds bounds)
     {
         if (pid is not int id)
         {
             return null;
         }
+
+        // The upper bound is asked for, never assumed. A caller that is about to KILL needs it;
+        // a caller only asking whether the pid is still running must not have it, because a
+        // refusal reaching that question is indistinguishable from a death — see PidBounds.
+        //
+        // Exhaustive rather than `is PidBounds.Both`: a positive test for the enabling value
+        // would let a third member inherit "no upper bound" by default, which is the same
+        // silent-inheritance the undefaulted parameter exists to prevent one level up. A new
+        // member throws here until somebody says which bounds it means.
+        //
+        // AND IT IS DECIDED BEFORE ANYTHING IS OPENED, which is the whole reason it sits here
+        // rather than beside the comparison it governs. The default throws, and a throw from
+        // below the line would escape TryOpen with a Process handle already in hand — leaked,
+        // and leaked into whichever of the five killing `finally` blocks called in. Deciding
+        // first means the only thing that escapes is the exception.
+        var applyUpperBound = bounds switch
+        {
+            PidBounds.Both => true,
+            PidBounds.LowerOnly => false,
+            _ => throw new InvalidOperationException(
+                FormattableString.Invariant(
+                    $"TryOpen does not know which bounds '{bounds}' asks for. Every member of PidBounds names a question — is this pid GONE, or is it the one that wrote this file — and the answer decides whether a refusal can be read as a death. Say which, here and at PidBounds, rather than inheriting one.")),
+        };
 
         Process process;
         try
@@ -4161,7 +4475,8 @@ public sealed class SystemProcessRunnerTests
             return null;
         }
 
-        if (PidFileWrittenUtc(pidFile) is DateTime announcedUtc
+        if (applyUpperBound
+            && PidFileWrittenUtc(pidFile) is DateTime announcedUtc
             && startedByProcessUtc > announcedUtc + PidStartTimeTolerance)
         {
             // Younger than the announcement: whatever wrote that pid, this process is not it.
@@ -4240,11 +4555,13 @@ public sealed class SystemProcessRunnerTests
     /// <remarks>
     /// <paramref name="pidFile"/> is carried for <see cref="TryOpen"/>'s upper bound alone —
     /// nothing here reads it, and the file still being on disk at this point is a property of
-    /// every call site rather than of this method.
+    /// every call site rather than of this method. <paramref name="bounds"/> is NOT defaulted,
+    /// deliberately: which question is being asked is the whole of #529's split, and a default
+    /// would let a new caller inherit one without choosing it. See <see cref="PidBounds"/>.
     /// </remarks>
-    private static bool IsAlive(int? pid, DateTime startedUtc, string pidFile)
+    private static bool IsAlive(int? pid, DateTime startedUtc, string pidFile, PidBounds bounds)
     {
-        var process = TryOpen(pid, startedUtc, pidFile);
+        var process = TryOpen(pid, startedUtc, pidFile, bounds);
         if (process is null)
         {
             return false;
@@ -4268,15 +4585,26 @@ public sealed class SystemProcessRunnerTests
     /// expires; returns whether it went.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Synchronous on purpose, for the reason <see cref="WaitForPid"/> gives — callers wrap it in
     /// <c>Task.Run</c> rather than sleeping inside an async method.
+    /// </para>
+    /// <para>
+    /// <strong><see cref="PidBounds.LowerOnly"/>, and that is load-bearing rather than a
+    /// saving.</strong> This method asks one question — is the pid GONE — and turns the answer
+    /// into a verdict on rows 1 and 5. A pid the upper bound refuses is not gone; it is
+    /// unconfirmed, and reporting it as gone is how a leak cover passes over a live child.
+    /// <see cref="PidBounds"/> carries the argument, and
+    /// <see cref="WaitForDeath_AsksWhetherThePidIsGone_NotWhetherItCorroborates"/> reddens if
+    /// this line ever asks for both.
+    /// </para>
     /// </remarks>
     private static bool WaitForDeath(int? pid, DateTime startedUtc, TimeSpan window, string pidFile)
     {
         var deadline = DateTime.UtcNow + window;
         while (true)
         {
-            if (!IsAlive(pid, startedUtc, pidFile))
+            if (!IsAlive(pid, startedUtc, pidFile, PidBounds.LowerOnly))
             {
                 return true;
             }
@@ -4294,9 +4622,14 @@ public sealed class SystemProcessRunnerTests
     /// Kills the recorded pid and everything beneath it. Called from every <c>finally</c> so that
     /// a red run leaves nothing behind.
     /// </summary>
+    /// <remarks>
+    /// <see cref="PidBounds.Both"/>: this is the caller the upper bound exists for, and the only
+    /// kind of caller it is safe to give it to. A refusal here costs a leak; a missing refusal
+    /// here costs a stranger's whole process tree.
+    /// </remarks>
     private static void KillTreeQuietly(int? pid, DateTime startedUtc, string pidFile)
     {
-        var process = TryOpen(pid, startedUtc, pidFile);
+        var process = TryOpen(pid, startedUtc, pidFile, PidBounds.Both);
         if (process is null)
         {
             return;

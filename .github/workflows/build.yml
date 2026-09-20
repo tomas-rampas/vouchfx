@@ -138,6 +138,26 @@ jobs:
       # loss that would cost anything is the Cli assembly's, which is the only one
       # carrying a figure (#529's skew) that exists nowhere else; every other trx here
       # duplicates what the job log already shows.
+      #
+      # AND IT DOES NOT CONTRADICT #498, WHICH THIS BRANCH APPLIES TWO COMMITS EARLIER.
+      # BuiltCli.cs declines to print an absolute path into an assertion because CI logs
+      # are public; a trx carries runUser and computerName, so the question is fair.  The
+      # answer is that they are different values.  #498 is about the MAINTAINER's host
+      # layout — a developer's account name and directory tree, reached through
+      # Path.GetTempPath() on a machine that is not disposable.  Every `runs-on` in this
+      # file is ubuntu-latest (seven of seven; the "self-hosted" strings here are about
+      # the coverage badge having no third-party service, and one is about a hypothetical
+      # minimal image), so on this lane those attributes are the ephemeral GitHub runner
+      # identity — `runner` on an `fv-az…` host that ceases to exist when the job ends.
+      # A green run's TRX carries no repository paths; a failing one can carry source
+      # paths in PDB-resolved stack traces, which is the same exposure the job log
+      # already has and is not what #498 restricts.  The ARTIFACT is not path-free
+      # either way and never was: the Cobertura XML this step already collected carries
+      # a <sources> element with an absolute base path on every run, green included.
+      # That is `/home/runner/work/...` on a hosted runner — the same non-identifying
+      # ephemeral tree — so the conclusion holds, but the trx is not what introduced
+      # paths to this artifact and removing it would not make the artifact path-free.  If a self-hosted runner is ever added here, this
+      # paragraph stops being true and the flag should be reconsidered with it.
       - name: Unit tests (requires!=docker)
         run: >
           dotnet test vouchfx.sln
