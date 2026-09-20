@@ -32,15 +32,21 @@
 //
 // EVERY ROW THAT CAN REACH THAT GAP TAKES ONE LATE LOOK BEFORE ITS CHILD BECOMES UNREACHABLE — rows
 // 1 and 2 in their `finally`, row 5 in front of its pid assertion and, on the paths that end it
-// before that, in its `finally` too — so the slice of the gap where the write was merely LATE is
-// closed, because a late write becomes observable and therefore killable. See
+// before that, in its `finally` too, and PidFileWriters_PublishAPidTheReaderAccepts in its own —
+// so the slice of the gap where the write was merely LATE is closed, because a late write becomes
+// observable and therefore killable. See
 // ReclaimPidForTeardownAsync. What remains of the gap is a child that never writes a pid AT ALL, and
 // ChildLifetimeSeconds is still its only backstop.
 //
 // SINCE #524 THAT GAP IS WIDER BY A FACTOR OF BudgetAttempts, and both escalating rows sit in it,
 // not just the one whose remarks mention it. An attempt that ends without a pid is retried, so rows
 // 1 and 2 can each leave up to BudgetAttempts unannounced children behind — worst case four per
-// row, eight per run of this file.
+// row, eight per run of this file. PidFileWriters_PublishAPidTheReaderAccepts adds at most one
+// more, and only on its GRANDCHILD row: a `ping` whose pid never landed is named by this file
+// alone, so KillTreeQuietly(null) kills nothing and ChildLifetime is again the only backstop. Its
+// CHILD row carries no such residual, and that asymmetry is what launching directly buys — the
+// handle reaches the shell whatever the file says, so the one shape that can strand a process is
+// the one whose survivor is a GRANDCHILD.
 //
 // THOSE CHILDREN WERE ALL DESCRIBED ABOVE AS "a child SystemProcessRunner tree-killed" UNTIL PR
 // #532, AND THAT WAS AN ASSUMPTION WEARING A FACT'S CLOTHES. Run only ever ISSUES the kill, and
@@ -70,7 +76,7 @@
 // THAT PLACEMENT IS PINNED BY THREE ROWS RATHER THAN ASSERTED HERE, AND BETWEEN THEM THEY LEAVE
 // ONE HALF OPEN. EveryFinallyThatKills_ReclaimsAPidFirst is a Roslyn census over this file's own
 // source: each killing `finally` must carry a `pid is null`-guarded reclaim ahead of its kill, and
-// there must be exactly three of them. TheLateLookFlag_IsArmedOnlyAfterTheLookCompletes is its
+// there must be exactly four of them. TheLateLookFlag_IsArmedOnlyAfterTheLookCompletes is its
 // counterpart in the BODY: row 5's `lateLookTaken = true` must sit after the loud look it records,
 // because a flag armed first suppresses the `finally`'s only look on the path where that look
 // throws. The third row pins the quiet wrapper the placement census names — a pid
@@ -90,6 +96,25 @@
 // directories per escalating row — eight, where before the escalation it was two. Each is a few
 // bytes holding at most a pid file. It is named here because this repository sweeps after a run as
 // a standing rule, and a sweep is only reliable if the thing being swept has been written down.
+//
+// PidFileWriters_PublishAPidTheReaderAccepts can leave one more directory per row, so these two
+// rows add as many as two to the eight above. Its `finally` attempts the delete on EVERY path, and
+// what decides the outcome is whether the process holding the directory has gone by then. Two
+// mechanisms sit in front of that delete and they cover different paths. A kill only ISSUES a
+// termination (see DeathWindow), so after killing the row polls until the target is gone, for at
+// most DeathWindow — which covers a path where the kill HAD a target, and is the green one. The
+// poll samples before it sleeps, so a target already gone ends it without a sleep; DeathWindow is
+// the ceiling on that wait and not its cost. Where no pid ever landed there is no
+// target: KillTreeQuietly(null) kills nothing, the wait returns on its first sample, and on the
+// grandchild shape the `ping` still holding that directory is precisely what nothing here can
+// name.
+//
+// MEASURED on the maintainer's Windows host, 2026-09-20, before and after that wait was added, and
+// it moved NONE of these figures because every path that leaks is a no-pid path: the green run of
+// the whole class left none, the writer-mutation drill left one — the grandchild row's, that row
+// alone leaving one and the child row alone none — and the reader-mutation drill over the whole
+// class left six. What the wait closes is the kill-then-delete race on the paths that DO have a
+// target, which has not been observed to fire.
 //
 // WHAT IS NOT COVERED HERE, STATED RATHER THAN IMPLIED
 // ───────────────────────────────────────────────────
@@ -190,9 +215,10 @@
 // escalation above is affordable; the one path that deliberately keeps waiting after that is the
 // late look, and only once the attempt is over — on rows 1 and 2 in the `finally`, whether the
 // attempt gave its premise up or an assertion ended it. Row 5's Run does not
-// settle on its own — its budget is unreachable and it is the row that cancels — so that row alone
-// still carries an absolute ceiling; UnracedPidCeiling records why an absolute figure is defensible
-// there and was not here.
+// settle on its own — its budget is unreachable and it is the row that cancels — so that row still
+// carries an absolute ceiling, and since #541 it is not alone in carrying one:
+// PidFileWriters_PublishAPidTheReaderAccepts has no Run to settle at all, having launched its shape
+// itself. UnracedPidCeiling records why an absolute figure is defensible for both and was not here.
 //
 // ROW 6 IS NOT ABOUT #481 AT ALL
 // ──────────────────────────────
@@ -367,7 +393,10 @@ public sealed class SystemProcessRunnerTests
     /// uses the loud reader, so an ACL fault escapes it, and on that path the <c>finally</c> is
     /// meant to look. "At most once" survives that anyway, because the quiet wrapper meets the
     /// same fault on its own first read and answers at once rather than sitting out a window. No
-    /// green path on any row reaches it.
+    /// green path on any row reaches it. The fourth payer, added by #541, is the cheapest to
+    /// account for: <see cref="PidFileWriters_PublishAPidTheReaderAccepts"/> pays it once, in its
+    /// <c>finally</c>, only when no pid arrived — which is that row failing — so it delays a
+    /// report by five seconds and buys a grandchild that wrote late a teardown that can name it.
     /// </para>
     /// <para>
     /// It is on no assertion's critical path within its own attempt: on rows 1 and 2 it runs in the
@@ -413,26 +442,79 @@ public sealed class SystemProcessRunnerTests
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Row 5 only. Its runner carries <see cref="UnreachableBudget"/> and the row is what ends the
-    /// call, so "wait until Run settles" would wait for something the row has not done yet, and the
-    /// wait needs a figure.
+    /// <strong>TWO consumers since #541, and both need a figure for the same reason: there is no
+    /// <c>Run</c> whose settling could end the wait.</strong> Row 5's runner carries
+    /// <see cref="UnreachableBudget"/> and the row itself is what ends the call, so "wait until
+    /// Run settles" would wait for something the row has not done yet.
+    /// <see cref="PidFileWriters_PublishAPidTheReaderAccepts"/> has no <c>Run</c> at all — it
+    /// launches its shape directly — and passes this as BOTH of <see cref="WaitForPid"/>'s
+    /// windows, then quotes it in the failure it produces.
     /// </para>
     /// <para>
     /// <strong>An absolute figure is defensible HERE for the reason it was not defensible on rows 1
     /// and 2: nothing is racing to destroy the child.</strong> On those rows the constant had to
     /// beat a competing deadline that was already killing the thing being waited for, so any host
-    /// slow enough to lose the race produced an empty directory and a red row. Row 5's child has
-    /// five minutes of budget and no killer; this ceiling has only to exceed a shell start-up, and a
-    /// host that cannot manage one in thirty seconds — against a worst case of 13.6s across every
-    /// load measured in <see cref="StartingBudget"/>'s figures — has a problem this row should
-    /// report rather than absorb. It must stay below <see cref="ChildLifetime"/> so that a wait
-    /// which ran to the ceiling is known to have been waiting on a live child rather than on one
-    /// that had already exited — asserted at the top of row 5 itself, because that is the only row
-    /// this ceiling governs and a doc-comment does not fail a build. That guard weighs this ceiling
-    /// PLUS <see cref="LateReadWindow"/>, because the failing path spends both looking; the bound on
-    /// this constant alone follows from the sum and is not separately asserted. Stated rather than
-    /// left to the reader, since the sentence before it is an argument that the build enforces this
-    /// and a pointer to a guard over a different quantity would quietly stop being one.
+    /// slow enough to lose the race produced an empty directory and a red row. Neither consumer
+    /// here has a killer — row 5's child has five minutes of budget, the theory's has none at all
+    /// — so a slow host merely DELAYS the write being waited for. What this ceiling has to clear
+    /// is therefore a start-up TAIL, not a race.
+    /// </para>
+    /// <para>
+    /// <strong>MEASURED against that tail rather than argued from "a shell start-up", because
+    /// #541 gave it a second shape to cover.</strong> Process.Start to an accepted pid line, on
+    /// the maintainer's 20-core Windows 11 host, 2026-09-20, polled at 5ms so the figure is the
+    /// writer's and not the poll's; <see cref="NeverExitingChild"/> first,
+    /// <see cref="GrandchildHoldingPipesChild"/> second, and each median the mean of the two
+    /// middle samples, rounded at the half, so that every delta below is re-derivable from the
+    /// line above it:
+    /// </para>
+    /// <list type="bullet">
+    ///   <item><description>
+    ///     unloaded, 8 samples per shape — 154-292ms (median 164) against 185-214ms (median 199);
+    ///   </description></item>
+    ///   <item><description>
+    ///     32 CPU burners, 8 per shape — 713-838ms (median 770) against 743-903ms (median 829);
+    ///   </description></item>
+    ///   <item><description>
+    ///     64 burners, 8 per shape — 1218-1366ms (median 1323) against 1395-7542ms (median 1490),
+    ///     where the second shape's tail opens;
+    ///   </description></item>
+    ///   <item><description>
+    ///     128 burners, 24 per shape — 2495-4822ms (median 2886) against 2680-12232ms
+    ///     (median 3265), five of those twenty-four past 6s and no child sample past 4.9s.
+    ///   </description></item>
+    /// </list>
+    /// <para>
+    /// The MEDIANS answer the question row 2's remarks left open: the grandchild shape costs
+    /// 35ms more unloaded, 59ms more at 32 burners, 167ms at 64 and 379ms at 128 — more, at
+    /// every load, and never a different order. The
+    /// TAIL is where the two shapes part, and the reason is structural — a SECOND process
+    /// creation has to be scheduled before that shape's first write, so it is exposed twice to
+    /// whatever stalls one. Worst sample anywhere, across both shapes and every load: 12.2s,
+    /// beside the 13.6s already on record for the child shape in
+    /// <see cref="StartingBudget"/>'s figures.
+    /// </para>
+    /// <para>
+    /// <strong>THIRTY STAYS, and the headroom is the argument: 2.5x the worst sample measured
+    /// here and 2.2x the worst on record.</strong> Raising it buys only a host thrashing harder
+    /// than 128 burners on 20 cores, whose whole lane is failing for other reasons — and it is
+    /// not free, since the failing path costs this ceiling PLUS <see cref="LateReadWindow"/>:
+    /// every second added is paid three times on a fully red run (the theory's two rows and row
+    /// 5), and comes out of the margin under <see cref="ChildLifetime"/> that row 5's guard
+    /// defends. A measured case for a change would be a sample inside 2x of thirty; none of the
+    /// 96 taken here is — and 96 samples no more bound this tail than eight bounded the one the
+    /// file header reads as a LOWER BOUND ON THE SPREAD AND NOTHING ELSE, the probe that missed
+    /// the load #524 was filed from. What carries the decision is not the sample count but the
+    /// paragraph above it: with no killer in the race, a host slower than anything sampled here
+    /// merely delays the write, and the row that reports it is telling the truth about the host.
+    /// It must stay below <see cref="ChildLifetime"/> so that a wait which ran
+    /// to the ceiling is known to have been waiting on a live child rather than on one that had
+    /// already exited — asserted at the top of row 5, which is no longer the only row this
+    /// ceiling governs but is the one whose guard weighs the same sum the theory spends, this
+    /// ceiling PLUS <see cref="LateReadWindow"/>. The theory adds no second copy of that
+    /// assertion because there would be nothing new in it; the build already fails on the sum,
+    /// and a doc-comment does not. The bound on this constant alone follows from the sum and is
+    /// not separately asserted.
     /// </para>
     /// </remarks>
     private static readonly TimeSpan UnracedPidCeiling = TimeSpan.FromSeconds(30);
@@ -443,7 +525,7 @@ public sealed class SystemProcessRunnerTests
     private static readonly TimeSpan DrainWindow = TimeSpan.FromSeconds(10);
 
     /// <summary>
-    /// How long row 1 waits for the killed child to actually disappear before failing.
+    /// How long a row waits for a killed child to actually disappear.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -457,8 +539,21 @@ public sealed class SystemProcessRunnerTests
     /// the window closes the class rather than resting on the host that happened to be green.
     /// </para>
     /// <para>
-    /// Costs nothing on the green path: the poll ends at the first dead sample. Two seconds is the
-    /// budget for the failure to be believed, not a latency the healthy case pays.
+    /// <strong>THREE CONSUMERS, AND THE THIRD WANTS A DIFFERENT THING FROM THE ANSWER.</strong>
+    /// Rows 1 and 5 assert on it: the window is the budget for "the runner abandoned its child"
+    /// to be believed, and a dead sample inside it is the verdict. Since #541
+    /// <see cref="PidFileWriters_PublishAPidTheReaderAccepts"/> takes the same wait in its
+    /// <c>finally</c> and DISCARDS the answer — nothing there fails on it — because what it wants
+    /// is the directory released before the delete a line later, not a verdict. Two seconds suits
+    /// both: it is the same asynchronous kill being waited out either way.
+    /// </para>
+    /// <para>
+    /// Costs nothing measurable on the green path, and the reason is the sampling ORDER: the poll
+    /// samples before it sleeps, so a target already gone ends it in one sample. #541's caller is
+    /// the sharpest test of that, since it kills immediately before waiting rather than with work
+    /// in between — MEASURED on the maintainer's Windows host, 2026-09-20, ten green samples per
+    /// shape: one poll every time, 20 of 20, the whole wait taking 0-10ms. Two seconds is the
+    /// ceiling on a failure being believed, not a latency the healthy case pays.
     /// </para>
     /// </remarks>
     private static readonly TimeSpan DeathWindow = TimeSpan.FromSeconds(2);
@@ -489,7 +584,11 @@ public sealed class SystemProcessRunnerTests
     /// <see cref="WithEscalatingBudget"/> checks; asserting only the budget would have left the
     /// other twelve seconds unpinned. Row 5 needs <see cref="UnracedPidCeiling"/> to fit, and
     /// asserts that itself. Neither is currently near its limit; the assertions exist so that the
-    /// next edit to any of these numbers is caught by a red row rather than by a reader.
+    /// next edit to any of these numbers is caught by a red row rather than by a reader. A THIRD
+    /// consumer arrived with #541 and adds no assertion of its own:
+    /// <see cref="PidFileWriters_PublishAPidTheReaderAccepts"/> spends the same
+    /// <see cref="UnracedPidCeiling"/> plus <see cref="LateReadWindow"/> row 5 does, so row 5's
+    /// guard already pins the sum both of them depend on and a second copy would pin nothing new.
     /// </para>
     /// </remarks>
     private static readonly TimeSpan ChildLifetime = TimeSpan.FromSeconds(60);
@@ -1264,7 +1363,11 @@ public sealed class SystemProcessRunnerTests
     /// it happened to catch fails here rather than in a teardown that kills a stranger. The newline
     /// is the delimiter because every child writer appends one — <c>Set-Content</c> and <c>echo</c>
     /// in <see cref="NeverExitingChild"/> and <see cref="GrandchildHoldingPipesChild"/> — so a file
-    /// without one is a write still in flight. <c>51234\r</c> is a torn CRLF: reachable by
+    /// without one is a write still in flight. That those two writers DO append it is the other
+    /// half of the same contract and is pinned separately, by
+    /// <see cref="PidFileWriters_PublishAPidTheReaderAccepts"/> (#541), which runs them both for
+    /// real; this row pins the READER alone and would stay green over a writer that stopped
+    /// appending. <c>51234\r</c> is a torn CRLF: reachable by
     /// construction at a byte boundary inside the writer's seven-byte write, not something observed
     /// here. <c>51234\n999\n</c> pins the WHOLE-LINE half of the guard, which the four shapes above
     /// it leave free — none of them holds an interior non-digit, so a reader that went back to
@@ -1282,8 +1385,11 @@ public sealed class SystemProcessRunnerTests
     /// literals remove that blind spot rather than narrowing it:
     /// <see cref="File.WriteAllText(string,string)"/> writes these bytes verbatim and
     /// <see cref="File.ReadAllText(string)"/> translates none of them, so the CRLF member is a CRLF
-    /// member on every platform. MEASURED on Windows with that strip deleted: four rows red — this
-    /// one and the three that read a pid.
+    /// member on every platform. MEASURED on Windows with that strip deleted: six rows red — this
+    /// one, the three that read a pid through <see cref="SystemProcessRunner"/>, and the two
+    /// <see cref="PidFileWriters_PublishAPidTheReaderAccepts"/> added in #541. It was four before
+    /// those two, which is the same drill and not a stronger one; only the reddening population
+    /// grew.
     /// </para>
     /// </remarks>
     [Fact]
@@ -1338,6 +1444,251 @@ public sealed class SystemProcessRunnerTests
         }
     }
 
+    /// <summary>
+    /// Both pid-file writers publish a line <see cref="ReadPid"/> accepts, and publish the pid
+    /// teardown has to kill (#541).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>THE CONTRACT WAS ALREADY EXERCISED END TO END; WHAT IT LACKED WAS A LABEL.</strong>
+    /// Rows 1, 2 and 5 run these same two writers through <see cref="SystemProcessRunner"/> and
+    /// read them back with <see cref="ReadPid"/>, so a writer that stopped terminating its line
+    /// already reddens them — that reader's own remarks set out why a broken writer contract costs
+    /// a red row rather than a green one. It is a red row wearing the wrong label: those three
+    /// fail blaming the host ("a host that did not start a shell inside 30s", "a host that still
+    /// cannot start a shell inside the largest budget"), which is the #512 mislabel shape
+    /// <see cref="PidFileName"/>'s remarks warn against, and a reader sent to look at the CI agent
+    /// will not find the two-character edit that caused it.
+    /// </para>
+    /// <para>
+    /// <strong>SO THIS ROW REMOVES THE OTHER EXPLANATIONS RATHER THAN ADDING AN
+    /// ASSERTION.</strong> It launches the shape with
+    /// <see cref="Process.Start(ProcessStartInfo)"/> directly instead of through the runner, so
+    /// there is no budget and nothing racing to kill the child — and, the part that carries the
+    /// message, a live handle in hand. A launch that returned is proof the shell started, which is
+    /// exactly what rows 1, 2 and 5 cannot establish when their pid never arrives — and the same
+    /// handle settles the question immediately behind it, because a shell that STARTED can still
+    /// have DIED before writing. That is not hypothetical: <see cref="PidFileName"/>'s remarks
+    /// measure it, a splice that leaves PowerShell exiting 1 on an unterminated string literal
+    /// and writing nothing, wearing the label of a host that cannot start a shell. Refusing that
+    /// mislabel is what this row is for, so the message reads the EXIT STATE first and ranks the
+    /// rest behind it: the writer, then the reader, then a host that started a shell and did not
+    /// schedule its first statement inside <see cref="UnracedPidCeiling"/>. The file's raw bytes
+    /// are printed alongside, so a torn or unterminated write is read off the log rather than
+    /// reproduced.
+    /// </para>
+    /// <para>
+    /// <strong>THE EXIT STATE IS READ, NOT ACTED ON.</strong> The wait does not end early on
+    /// <see cref="Process.HasExited"/>, because on <see cref="GrandchildHoldingPipesChild"/> the
+    /// shell exits at once BY DESIGN (#392) and exiting is therefore no signal at all there. What
+    /// carries the reading is the CODE: non-zero on either shape, and on
+    /// <see cref="NeverExitingChild"/> any exit whatever, that shell being asleep for
+    /// <see cref="ChildLifetime"/> — <c>Start-Sleep</c> on Windows, <c>sleep</c> on POSIX —
+    /// across the whole of the ceiling. The remaining pair runs the ranking BACKWARDS: "still
+    /// running" on <see cref="GrandchildHoldingPipesChild"/> means a shell that never reached its
+    /// write, that write being its last act, so the host reading leads there and the contract
+    /// readings are the distant ones. The message says so at the line rather than leaving it to
+    /// be worked out. <see cref="ProcessExitState"/> is the guarded read —
+    /// <see cref="Process.ExitCode"/> throws on a process that has not exited, and this argument
+    /// is evaluated on the green path too.
+    /// </para>
+    /// <para>
+    /// <strong>THE PID ITSELF IS THE SECOND ASSERTION, AND IT DIFFERS BY SHAPE.</strong>
+    /// <see cref="NeverExitingChild"/> writes <c>$PID</c>/<c>$$</c> — the shell's own pid, which
+    /// is the process this row started, so the pin is an equality against
+    /// <see cref="Process.Id"/>. <see cref="GrandchildHoldingPipesChild"/> writes
+    /// <c>(Start-Process -PassThru).Id</c>/<c>$!</c> — the GRANDCHILD, deliberately, because the
+    /// shell exits at once and the grandchild is what keeps the inherited pipes open (#392); so
+    /// the pin there is the inequality plus <see cref="IsAlive"/>, which is the same
+    /// <see cref="TryOpen"/> guard row 2's teardown kills through. A writer that published the
+    /// shell's pid into <see cref="GrandchildPidFileName"/> would satisfy the newline contract
+    /// unchanged, leave row 2's teardown killing a process that had already exited, and leave the
+    /// grandchild running for <see cref="ChildLifetime"/>.
+    /// </para>
+    /// <para>
+    /// <strong>MEASURED on the maintainer's Windows 11 host, 2026-09-20, as three drills each
+    /// reverted.</strong> Adding <c>-NoNewline</c> to both writers' <c>Set-Content</c> — the
+    /// WRITER half — reddens both rows here, each on the labelled message, over a file holding a
+    /// pid's digits and nothing after them; row 2 under that same mutation reddened too, with its
+    /// host label word for word. Deleting <see cref="ReadPid"/>'s carriage-return strip — the
+    /// READER half — was run over the whole class and reddens six of its fifteen rows: these two,
+    /// rows 1, 2 and 5, and the #528 fact, whose own remarks recorded four before these two
+    /// existed. Rows 1, 2 and 5 failed there with their host labels unchanged, word for word,
+    /// which is the difference this row exists for. The two halves are told apart by the BYTES
+    /// rather than by the count: the reader drill printed a complete line the reader refused,
+    /// digits then <c>0D 0A</c>, where the writer drill printed the digits and stopped. The digits
+    /// themselves are whichever pid the run was given and reproduce on no second run; what
+    /// reproduces is the terminator's presence or absence. The exit state separates both of them
+    /// from the shell: "still running" on the child rows, "exited 0" on the grandchild rows, on
+    /// every drill above.
+    /// </para>
+    /// <para>
+    /// <strong>The third drill is the exit state's own case.</strong> Dropping the closing quote
+    /// from <see cref="NeverExitingChild"/>'s <c>-LiteralPath</c> — the #512 splice
+    /// <see cref="PidFileName"/>'s remarks measure — reddens the child row ALONE, at the same
+    /// full ceiling the other drills cost, reading "the file's first bytes are absent and the
+    /// shell this row started is exited 1". Nothing about a newline is true of that failure, and
+    /// nothing in the message claims it is. The grandchild row stayed green throughout, which is
+    /// what makes the exit state a per-row reading rather than a run-wide one.
+    /// </para>
+    /// <para>
+    /// <strong>TEARDOWN OWNS TWO PROCESSES AND NAMES THEM DIFFERENTLY, which is why the
+    /// <c>finally</c> below carries both spellings of the kill.</strong> The shell is killed
+    /// through the handle this row holds, from the inner <c>finally</c> of a <c>using</c> — the
+    /// shape <see cref="ChildProcess"/>'s remarks prescribe, where the compiler puts the dispose
+    /// in the enclosing <c>finally</c> and the dangerous order cannot be written. The grandchild
+    /// has no handle here and is reachable only through the pid file, so it is killed through
+    /// this file's own <see cref="KillTreeQuietly"/> under <see cref="TryOpen"/>'s guard, and the
+    /// guarded <see cref="ReclaimPidForTeardownQuietlyAsync"/> ahead of it is the #539 late look:
+    /// a grandchild whose write landed after this row gave up is otherwise unnameable. How long
+    /// such a grandchild would outlive the row turns on when it STARTED, and the two cases this
+    /// file can produce are most of a minute apart: one spawned late enough for its write to miss
+    /// a 30s wait still has nearly the whole of <see cref="ChildLifetime"/> ahead of it when the
+    /// row ends at 35s, while in the drills below — where it starts within a second and its write
+    /// is simply never ACCEPTED — about 25 of the 60 seconds remain. That look is not conditioned
+    /// on the shape.
+    /// It buys the child shape nothing — that process is reachable through the handle whatever the
+    /// file says — but it is paid only where the row has already failed, and a branch nothing pins
+    /// is a worse thing to carry than one <see cref="LateReadWindow"/> on a red path.
+    /// </para>
+    /// <para>
+    /// No runner, no budget, no Docker. The green path pays three things and one of them
+    /// dominates: a shell start-up; up to one <see cref="PollIntervalMs"/> of pid-poll
+    /// granularity, which is when the wait NOTICES a write rather than when the write happens;
+    /// and the <see cref="DeathWindow"/> poll this row's <c>finally</c> takes after killing.
+    /// MEASURED 2026-09-20, six green runs since that wait was added: 0.24s to 0.36s per row. The
+    /// wait is not what varies in that — ten green samples per shape found the kill already
+    /// landed at the FIRST liveness sample, 20 of 20, the whole wait costing 0-10ms, because
+    /// <see cref="WaitForDeath"/> samples before it sleeps. A control run with the poll replaced
+    /// by a single sample was indistinguishable.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [InlineData(PidFileName)]
+    [InlineData(GrandchildPidFileName)]
+    public async Task PidFileWriters_PublishAPidTheReaderAccepts(string pidFileName)
+    {
+        var announcesTheShellItself =
+            string.Equals(pidFileName, PidFileName, StringComparison.Ordinal);
+        var shape = announcesTheShellItself ? NeverExitingChild() : GrandchildHoldingPipesChild();
+        var startedUtc = DateTime.UtcNow;
+        var directory = CreateScratchDirectory();
+        var pidFile = Path.Combine(directory, pidFileName);
+
+        // No redirection, and nothing here reads: that is what keeps this launch clear of the
+        // pending-read machinery the runner rows exist for. The streams are the test host's, and
+        // what reaches them differs by platform — on Windows the grandchild shape's `ping -n 60`
+        // puts a reply line a second on them (they surface on the launching console), while the
+        // POSIX `sleep 60 &` writes nothing. Neither can wedge this row the way #392 wedges a
+        // runner, because no pipe of this row's is waiting to be drained.
+        var startInfo = new ProcessStartInfo(shape.FileName)
+        {
+            UseShellExecute = false,
+            WorkingDirectory = directory,
+        };
+
+        foreach (var argument in shape.Arguments)
+        {
+            startInfo.ArgumentList.Add(argument);
+        }
+
+        try
+        {
+            var process = Process.Start(startInfo)
+                ?? throw new InvalidOperationException(
+                    "Process.Start returned no Process for a child shape this file launches "
+                    + "directly, so there is nothing to wait for and nothing to kill.");
+
+            using (process)
+            {
+                int? pid = null;
+                try
+                {
+                    // WaitForPid rather than a second polling loop, for the reason
+                    // ReclaimPidForTeardownAsync gives. `work` is Task.CompletedTask because there
+                    // is no Run here at all: with both windows equal it is the CEILING that ends
+                    // the wait — that method's remarks derive it — so the settle arm cannot
+                    // shorten the window this row's message quotes.
+                    var clock = Stopwatch.StartNew();
+                    pid = await Task.Run(() => WaitForPid(
+                        pidFile, Task.CompletedTask, UnracedPidCeiling, UnracedPidCeiling));
+                    clock.Stop();
+
+                    Assert.True(
+                        pid is not null,
+                        FormattableString.Invariant(
+                            $"The writer of '{pidFileName}' published nothing ReadPid would accept in {clock.Elapsed.TotalSeconds:F1}s; the file's first bytes are {PidFileBytes(pidFile)} and the shell this row started is {ProcessExitState(process)}. READ THE EXIT STATE FIRST, because this row holds the handle that settles it. A non-zero code means the shell DIED rather than wrote — a quoting change, a renamed cmdlet, an absent ping.exe — which is the mislabel PidFileName's remarks measure (#512) and not a newline defect at all; so is ANY exit on '{PidFileName}', whose shell should still be sleeping out the {ChildLifetimeSeconds}s it was given (Start-Sleep on Windows, sleep on POSIX). 'exited 0' is expected on '{GrandchildPidFileName}' alone, whose shell exits the moment it has spawned the grandchild (#392) — and 'still running' THERE inverts this ranking rather than continuing it: that shell's write is its LAST act, so one still alive after {UnracedPidCeiling.TotalSeconds:F0}s never reached the write, which is neither a writer nor a reader breach but the fourth reading below, leading instead of distant. With the shell accounted for, what is left is the newline contract: ReadPid accepts ONLY a complete, newline-terminated ASCII digit line (#528) and every child writer in this file appends that terminator — Set-Content on Windows, echo on POSIX — so this red names a writer that stopped appending it, or a reader that stopped accepting it. It is NOT 'a host that cannot start a shell' — that is the label rows 1, 2 and 5 produce for this same breach, and they go on producing it; what #541 added is this red, which names the contract, landing in the same run as theirs. A host that started the shell and then did not schedule its first statement inside {UnracedPidCeiling.TotalSeconds:F0}s is the fourth reading — distant, except on the one pair named above that puts it first."));
+
+                    if (announcesTheShellItself)
+                    {
+                        Assert.True(
+                            pid == process.Id,
+                            FormattableString.Invariant(
+                                $"'{pidFileName}' holds pid {pid}, but the shell this row started is pid {process.Id}. NeverExitingChild publishes $PID on Windows and $$ on POSIX — the shell's OWN pid, which is the process Process.Start handed back — so either these are the same number or the writer has changed what it announces. Rows 1, 2 and 5 kill whatever this file holds, so a writer announcing anything else aims their teardown at a process they did not start."));
+                    }
+                    else
+                    {
+                        Assert.True(
+                            pid != process.Id,
+                            FormattableString.Invariant(
+                                $"'{pidFileName}' holds pid {pid}, which is the shell this row started rather than its grandchild. GrandchildHoldingPipesChild announces (Start-Process -PassThru).Id on Windows and $! on POSIX deliberately: the shell exits at once, and the GRANDCHILD is what keeps the runner's inherited pipes open (#392). A writer that announced the shell instead would satisfy the newline contract unchanged, leave row 2's teardown killing a process that had already exited, and leave the grandchild running for the whole {ChildLifetime.TotalSeconds:F0}s."));
+
+                        Assert.True(
+                            IsAlive(pid, startedUtc),
+                            FormattableString.Invariant(
+                                $"'{pidFileName}' holds pid {pid}, which TryOpen will not open as a live process started no earlier than this row. The grandchild is given {ChildLifetime.TotalSeconds:F0}s and this row spent {clock.Elapsed.TotalSeconds:F1}s of it waiting for the pid, so either it died early — in which case row 2's #392 shape no longer holds the pipes it is built on — or the number names something else, and that is the pid row 2's teardown tree-kills."));
+                    }
+                }
+                finally
+                {
+                    // The same guarded late look rows 1, 2 and 5 carry (#539), and load-bearing
+                    // here for the grandchild alone: it is named by this file only, so a write
+                    // that landed after the wait above gave up leaves it unkillable for
+                    // ChildLifetime. `work` is completed for the reason the body gives.
+                    if (pid is null)
+                    {
+                        pid = await ReclaimPidForTeardownQuietlyAsync(pidFile, Task.CompletedTask);
+                    }
+
+                    // Pid first, then the handle: on the grandchild shape the pid IS the only
+                    // name for the survivor, and on the child shape the two reach one process
+                    // and the second call finds it already gone, or issues a kill the filter
+                    // absorbs. Both under a guard — TryOpen's lower bound here (#529),
+                    // ChildProcess's own exit race below.
+                    KillTreeQuietly(pid, startedUtc);
+                    ChildProcess.KillTreeQuietly(process);
+
+                    // THEN WAIT FOR THE KILL TO LAND, because the outer `finally` deletes the
+                    // directory the killed process is standing in. Both kills only ISSUE a
+                    // termination (see DeathWindow), and on Windows a process still holding that
+                    // directory as its working directory makes Directory.Delete throw. Rows 1
+                    // and 5 already interpose this wait; theirs ASSERTS on the answer, and this
+                    // one discards it, because a `finally` that throws replaces the finding being
+                    // propagated.
+                    //
+                    // That is why the answer is dropped. What makes the CALL safe here is a
+                    // separate property, and it is the one the move from a body to a `finally`
+                    // needs: WaitForDeath cannot throw. Every fault on the path is already
+                    // filtered — TryOpen catches the GetProcessById and StartTime ones, IsAlive
+                    // catches the HasExited one — and the Win32Exception HasExited could raise in
+                    // principle is unreachable from here, TryOpen having just read StartTime on
+                    // the same handle, which needs the same access.
+                    //
+                    // It covers the paths where a kill HAD a target. Where no pid ever landed,
+                    // `pid` is null, KillTreeQuietly killed nothing, the poll's first sample is
+                    // not-alive and it returns at once — and on the grandchild shape the process
+                    // still holding the directory is exactly the one nothing here can name. That
+                    // residual is the header's, and this wait does not close it.
+                    await Task.Run(() => WaitForDeath(pid, startedUtc, DeathWindow));
+                }
+            }
+        }
+        finally
+        {
+            TryDeleteDirectory(directory);
+        }
+    }
+
     // ── #539's halves, pinned (see each row for what it does NOT pin) ────────────────────────
 
     /// <summary>
@@ -1348,7 +1699,7 @@ public sealed class SystemProcessRunnerTests
     /// <remarks>
     /// <para>
     /// <strong>NOT A <c>Run</c> ROW.</strong> It launches no child and never calls
-    /// <see cref="SystemProcessRunner"/>. What it pins is the SEMANTICS the three <c>finally</c>
+    /// <see cref="SystemProcessRunner"/>. What it pins is the SEMANTICS the four <c>finally</c>
     /// blocks depend on: that a write COMPLETING after the caller's original wait gave up is still
     /// picked up — which requires the reader to look again after refusing an incomplete one, the
     /// entire mechanism <see cref="ReclaimPidForTeardownAsync"/>'s first paragraph describes — and
@@ -1529,9 +1880,10 @@ public sealed class SystemProcessRunnerTests
     /// behaviour, and until this row nothing exercised it.</strong> Everything else that method
     /// does is delegate. Its <c>catch</c> exists because a <c>finally</c> that throws REPLACES the
     /// finding being propagated — the wedged runner, the undead child — with a permission detail,
-    /// and the three teardown blocks that call it are all <c>finally</c> blocks. A deleted catch
-    /// changes no other row in this file: rows 1, 2 and 5 never meet an ACL fault on a scratch
-    /// directory they created themselves, so the suite would stay green over it.
+    /// and the four teardown blocks that call it are all <c>finally</c> blocks. A deleted catch
+    /// changes no other row in this file: rows 1, 2 and 5, and the writer-contract theory that
+    /// joined them as the fourth caller (#541), never meet an ACL fault on a scratch directory
+    /// they created themselves, so the suite would stay green over it.
     /// </para>
     /// <para>
     /// <strong>Three things are pinned, and the middle one is what makes the first mean
@@ -1645,7 +1997,7 @@ public sealed class SystemProcessRunnerTests
             Assert.True(
                 elapsed < promptCeiling,
                 FormattableString.Invariant(
-                    $"ReclaimPidForTeardownQuietlyAsync answered null after {elapsed.TotalSeconds:F1}s against a pid file whose very first read faults, which is not the prompt answer the three finally blocks are costed against. A catch that swallows the fault and then keeps polling spends the whole {LateReadWindow.TotalSeconds:F0}s window on a file that will never become readable, and every 'at most one LateReadWindow per row' claim in this file is written against the prompt answer."));
+                    $"ReclaimPidForTeardownQuietlyAsync answered null after {elapsed.TotalSeconds:F1}s against a pid file whose very first read faults, which is not the prompt answer the four finally blocks are costed against. A catch that swallows the fault and then keeps polling spends the whole {LateReadWindow.TotalSeconds:F0}s window on a file that will never become readable, and every 'at most one LateReadWindow per row' claim in this file is written against the prompt answer."));
         }
         finally
         {
@@ -1730,7 +2082,7 @@ public sealed class SystemProcessRunnerTests
 
     /// <summary>
     /// Every <c>finally</c> in THIS file that tree-kills is preceded, in the same block, by a
-    /// <c>pid is null</c>-guarded reclaim — and there are exactly three of them.
+    /// <c>pid is null</c>-guarded reclaim — and there are exactly four of them.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -1750,7 +2102,7 @@ public sealed class SystemProcessRunnerTests
     /// (<see cref="ReclaimPidForTeardownQuietly_TakesALateWholeLinePid_AndNullWhenNoneArrives"/>),
     /// this row's PLACEMENT, and the ARMING POINT of the flag this row's guard consults
     /// (<see cref="TheLateLookFlag_IsArmedOnlyAfterTheLookCompletes"/>). Between them, a reclaim
-    /// deleted from any of the three <c>finally</c> blocks reddens here, a reclaim that stopped
+    /// deleted from any of the four <c>finally</c> blocks reddens here, a reclaim that stopped
     /// picking up late writes reddens in the first, and a flag armed too early reddens in the
     /// third — a defect THIS row structurally cannot see, since it changes no <c>finally</c>.
     /// </para>
@@ -1805,8 +2157,9 @@ public sealed class SystemProcessRunnerTests
     /// </para>
     /// <para>
     /// <strong>Applied only where it can apply, by looking for the flag's DECLARATION.</strong>
-    /// Rows 1 and 2 take no body look, so they have nothing to repeat and carry no flag; requiring
-    /// the conjunct of them would be requiring a test of a local that does not exist. The rule
+    /// Rows 1 and 2 and the writer-contract theory take no body look, so they have nothing to
+    /// repeat and carry no flag; requiring the conjunct of them would be requiring a test of a
+    /// local that does not exist. The rule
     /// therefore asks which killing <c>finally</c> sits in a method declaring a
     /// <c>lateLookTaken</c> local, requires EXACTLY ONE to (row 5), and requires that one's guard
     /// to carry the negation. Both halves are counted: a second flagged method means another row
@@ -1819,11 +2172,20 @@ public sealed class SystemProcessRunnerTests
     /// at the line, which is the safe direction for a rule that must never go quiet.
     /// </para>
     /// <para>
-    /// <strong>Exactly three, because a count is what turns this from a check into a
-    /// census.</strong> Rows 1, 2 and 5 each carry one. Without the count, a FOURTH killing
-    /// <c>finally</c> added without a reclaim would simply not be looked at — the same
-    /// "enumeration standing in for a property" failure this repository's census remarks warn
-    /// about. <see cref="KillTreeQuietly"/>'s own body is not one: its
+    /// <strong>Exactly four, because a count is what turns this from a check into a
+    /// census.</strong> Rows 1, 2 and 5 carry one each, and so does
+    /// <see cref="PidFileWriters_PublishAPidTheReaderAccepts"/> (#541). That fourth one holds two
+    /// kills rather than one: a pid — its grandchild on one row, its own shell on the other — and
+    /// then the shell through the handle it holds, spelled <c>ChildProcess.KillTreeQuietly</c>.
+    /// Both are covered, because the match below is on the BARE NAME and a member access carries
+    /// the same one. What the count adds is NOT that an unreclaimed newcomer would go unnoticed —
+    /// the offenders loop walks every clause it finds, so a FIFTH killing <c>finally</c> without
+    /// a reclaim reddens with or without it. It is what that loop structurally cannot see: a
+    /// well-formed newcomer, and a teardown path that has GONE. Both are changes to the set this
+    /// file's residual-child arithmetic is stated over, which is the "enumeration standing in for
+    /// a property" failure this repository's census remarks warn about, and the count is what
+    /// makes either one arrive at a line rather than in a reader's head.
+    /// <see cref="KillTreeQuietly"/>'s own body is not one: its
     /// <c>ChildProcess.KillTreeQuietly</c> call sits inside a <c>using</c> statement, which is not
     /// a <c>finally</c> clause in syntax however the compiler lowers it.
     /// </para>
@@ -1856,7 +2218,7 @@ public sealed class SystemProcessRunnerTests
         const string KillMethod = "KillTreeQuietly";
         const string ReclaimMethod = "ReclaimPidForTeardownQuietlyAsync";
         const string FlagName = "lateLookTaken";
-        const int ExpectedKillingFinallies = 3;
+        const int ExpectedKillingFinallies = 4;
 
         var killing = SelfSource()
             .DescendantNodes(descendIntoTrivia: false)
@@ -1867,7 +2229,7 @@ public sealed class SystemProcessRunnerTests
         Assert.True(
             killing.Count == ExpectedKillingFinallies,
             FormattableString.Invariant(
-                $"This file holds {killing.Count} `finally` block(s) calling `{KillMethod}`, not the {ExpectedKillingFinallies} this census covers (rows 1, 2 and 5). A new one needs the same guarded `{ReclaimMethod}` ahead of its kill — see #539 — and one that has gone means a teardown path was removed. Re-aim this count rather than deleting it."));
+                $"This file holds {killing.Count} `finally` block(s) calling `{KillMethod}`, not the {ExpectedKillingFinallies} this census covers (rows 1, 2 and 5, and the writer-contract theory #541 added). A new one needs the same guarded `{ReclaimMethod}` ahead of its kill — see #539 — and one that has gone means a teardown path was removed. Re-aim this count rather than deleting it."));
 
         var offenders = new List<string>();
         foreach (var clause in killing)
@@ -1897,7 +2259,7 @@ public sealed class SystemProcessRunnerTests
         Assert.True(
             flagged.Count == 1,
             FormattableString.Invariant(
-                $"{flagged.Count} of the {ExpectedKillingFinallies} killing `finally` blocks sit in a method declaring a `{FlagName}` local, not the 1 this rule covers (row 5). Rows 1 and 2 have no body look to repeat, so they carry no flag; row 5 does. A second flagged method means another row grew a body look — it needs the same `&& !{FlagName}` conjunct — and none means row 5's has gone."));
+                $"{flagged.Count} of the {ExpectedKillingFinallies} killing `finally` blocks sit in a method declaring a `{FlagName}` local, not the 1 this rule covers (row 5). Rows 1 and 2 and the writer-contract theory have no body look to repeat, so they carry no flag; row 5 does. A second flagged method means another row grew a body look — it needs the same `&& !{FlagName}` conjunct — and none means row 5's has gone."));
 
         var unflagged = flagged
             .Where(clause => !GuardAlsoTestsTheFlag(clause, ReclaimMethod, FlagName))
@@ -2183,7 +2545,7 @@ public sealed class SystemProcessRunnerTests
     /// <c>pid ??= …</c> with no <c>if</c> around it are all refused even though each guards the
     /// look perfectly well. The census reddens on them, loudly and at the line, and the fix is to
     /// spell the pattern; pinning one spelling is what keeps this decidable without a symbol
-    /// table, and the call sites it governs are three lines in one file.
+    /// table, and the call sites it governs are four lines in one file.
     /// </para>
     /// </remarks>
     private static bool GuardedOnANullPid(SyntaxNode node) =>
@@ -2464,6 +2826,15 @@ public sealed class SystemProcessRunnerTests
     /// mode #512 is about, and #524 must not reintroduce it one file over.
     /// </para>
     /// <para>
+    /// <strong>THE OTHER HALF OF THAT MISLABEL — a writer whose LINE, rather than whose path,
+    /// stops being what the reader accepts — has a pin of its own since #541.</strong>
+    /// <see cref="PidFileWriters_PublishAPidTheReaderAccepts"/> launches both shapes directly,
+    /// with no runner and nothing racing to kill them, so it can say what the escalating rows
+    /// cannot: a process started, and what did not arrive is a terminated digit line. A breach of
+    /// the writer contract reddens there naming the contract, and only incidentally reddens rows
+    /// 1, 2 and 5 blaming the host.
+    /// </para>
+    /// <para>
     /// Passing a bare name removes the character class rather than escaping it: the runner already
     /// hands the child <c>directory</c> as its working directory, and a relative path resolves
     /// against it. Verified rather than assumed, precisely because PowerShell's current LOCATION is
@@ -2622,7 +2993,14 @@ public sealed class SystemProcessRunnerTests
     /// whichever comes first.
     /// </summary>
     /// <param name="pidFile">Where the child announces itself.</param>
-    /// <param name="work">The <c>Run</c> whose child is being waited for.</param>
+    /// <param name="work">
+    /// The <c>Run</c> whose child is being waited for, or
+    /// <see cref="Task.CompletedTask"/> where there is no <c>Run</c> at all — the case
+    /// <see cref="PidFileWriters_PublishAPidTheReaderAccepts"/> introduced by launching its shape
+    /// itself. A completed task arms the settle clock on the first pass, so that caller passes
+    /// equal windows and lets the ceiling decide, by the derivation at
+    /// <see cref="ReclaimPidForTeardownAsync"/>.
+    /// </param>
     /// <param name="settle">How long to keep looking after <paramref name="work"/> has settled.</param>
     /// <param name="ceiling">The backstop for a <paramref name="work"/> that will not settle.</param>
     /// <remarks>
@@ -2692,7 +3070,10 @@ public sealed class SystemProcessRunnerTests
     /// reaches this method directly. Rows 1 and 2 arrive through
     /// <see cref="ReclaimPidForTeardownQuietlyAsync"/> and may be either: settled when the attempt
     /// gave its premise up or when an assertion after the grace check threw, NOT settled when a
-    /// wedged runner ended it.
+    /// wedged runner ended it. Since #541 a third indirect caller arrives the same way and is
+    /// ALWAYS settled — <see cref="PidFileWriters_PublishAPidTheReaderAccepts"/> has no
+    /// <c>Run</c> to name and passes <see cref="Task.CompletedTask"/>; the windows are equal on
+    /// every caller here, so that changes which arm is armed and not which one ends the look.
     /// </param>
     /// <remarks>
     /// <para>
@@ -2804,7 +3185,11 @@ public sealed class SystemProcessRunnerTests
     /// The <c>Run</c> whose child is being reclaimed. Either state, and which one says how the row
     /// ended: settled when an escalating attempt gave its premise up, when an assertion after its
     /// grace check threw, or when row 5's <c>work.IsCompleted</c> block fired; NOT settled when a
-    /// wedged runner or a throwing <see cref="WaitForPid"/> is what ended it.
+    /// wedged runner or a throwing <see cref="WaitForPid"/> is what ended it. Since #541 there is
+    /// also a caller with no <c>Run</c> to name —
+    /// <see cref="PidFileWriters_PublishAPidTheReaderAccepts"/> launches its shape itself and
+    /// passes <see cref="Task.CompletedTask"/>; the windows are equal here, so that changes which
+    /// arm is armed and not which one ends the look.
     /// </param>
     /// <remarks>
     /// <para>
@@ -2888,7 +3273,12 @@ public sealed class SystemProcessRunnerTests
     /// number with no terminator, a trailing <c>\r</c> whose <c>\n</c> has not landed, a second line
     /// that the first one's newline would otherwise make look complete, a second terminator that a
     /// greedier trim would have swallowed. The newline is what makes the line observable as WHOLE,
-    /// and every child writer in this file appends one. MEASURED by running the shapes' own commands
+    /// and every child writer in this file appends one — pinned writer by writer since #541 by
+    /// <see cref="PidFileWriters_PublishAPidTheReaderAccepts"/>, which makes that claim a
+    /// permanent row rather than a measurement somebody took once. What it pins is the
+    /// ACCEPTANCE, not the byte reading below: this reader takes either terminator, so a writer
+    /// that swapped one for the other would stay green there.
+    /// MEASURED by running the shapes' own commands
     /// on the maintainer's host: <see cref="NeverExitingChild"/> left the digits then <c>0D 0A</c>
     /// under <c>Set-Content</c> (seven bytes for a five-digit pid, one byte per character, no mark)
     /// and the digits then <c>0A</c> under <c>/bin/sh</c>'s <c>echo</c>, which the shell
@@ -2941,9 +3331,11 @@ public sealed class SystemProcessRunnerTests
     /// replaces the one being propagated, so a loud reader would erase the row's own finding — the
     /// opposite of what "better loud" argues for, since what makes loudness right everywhere else
     /// is that the fault is then the most informative thing the row can say. The sites where it is —
-    /// rows 1 and 2's body wait, and row 5's body wait and body late look — remain loud. Row 5's
+    /// rows 1 and 2's body wait, row 5's body wait and body late look, and the body wait
+    /// <see cref="PidFileWriters_PublishAPidTheReaderAccepts"/> added (#541) — remain loud. Row
+    /// 5's
     /// third read, the guarded one #539 put in its <c>finally</c>, is quiet for the same reason
-    /// rows 1 and 2's are: it is a <c>finally</c>.
+    /// rows 1 and 2's are: it is a <c>finally</c>, and so is the writer-contract theory's.
     /// </para>
     /// <para>
     /// <strong>THE STRICTNESS IS A CONTRACT WITH THE WRITERS, AND BREAKING IT REDDENS RATHER THAN
@@ -2957,7 +3349,13 @@ public sealed class SystemProcessRunnerTests
     /// red row, not a green one. It is a red row wearing the wrong label, though: those failures
     /// blame the HOST ("a host that did not start a shell inside 30s", "a host that still cannot
     /// start a shell inside the largest budget") and name nothing about this contract — the same
-    /// #512 mislabel shape <see cref="PidFileName"/>'s remarks warn against.
+    /// #512 mislabel shape <see cref="PidFileName"/>'s remarks warn against. Which is why the
+    /// contract is pinned since #541 by
+    /// <see cref="PidFileWriters_PublishAPidTheReaderAccepts"/>: it runs the same two writers
+    /// against this same reader with the runner taken out of the way, so a breach reddens there
+    /// FIRST and names the newline, the writers that append it and the reader that requires it.
+    /// The three rows above still go red, still with the wrong label; what changes is that the
+    /// red naming the cause is now in the same run.
     /// </para>
     /// </remarks>
     private static int? ReadPid(string pidFile)
@@ -3008,6 +3406,125 @@ public sealed class SystemProcessRunnerTests
         return null;
     }
 
+    /// <summary>The most bytes of a pid file a failure message reads, and prints.</summary>
+    /// <remarks>
+    /// Sixteen is comfortably past the longest complete line these writers can produce — a
+    /// seven-digit pid, a carriage return and a newline is nine bytes — so every shape
+    /// <see cref="ReadPid"/> refuses is shown whole, while a file that has somehow become large
+    /// is elided rather than pasted into a public job log. It bounds the READ as well as the
+    /// print: <see cref="PidFileBytes"/> takes these bytes off a stream rather than slicing them
+    /// out of a whole file, so a pid file that is not one cannot be materialised into an
+    /// <see cref="OutOfMemoryException"/> that no filter below catches — and that argument has to
+    /// hold on the GREEN path, the call being a positional message argument.
+    /// </remarks>
+    private const int PidFileBytePreview = 16;
+
+    /// <summary>
+    /// The leading bytes of <paramref name="pidFile"/>, as a failure message prints them.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Hex rather than text, because the whole class of breach this diagnoses is invisible as
+    /// text: a missing terminator, a lone carriage return, a second line and a UTF-16 pid all
+    /// render as digits or as nothing at all. Absent, empty and unreadable are reported apart
+    /// from each other and from a byte string, since they are four different conditions.
+    /// </para>
+    /// <para>
+    /// <strong>The cap is on the READ, not only on the print.</strong> The length is taken from
+    /// the stream and the bytes come through a buffer of exactly
+    /// <see cref="PidFileBytePreview"/>, so nothing allocated here is a function of the file's
+    /// SIZE and one that has stopped being the small thing this name implies is elided rather
+    /// than materialised. (The <see cref="FileStream"/>'s own internal buffer is the runtime's
+    /// default and is likewise a constant, not the file.) <see cref="FileShare.Read"/> matches
+    /// what <see cref="File.ReadAllBytes(string)"/> took before, so a concurrent writer still
+    /// lands in the <c>unreadable</c> branch rather than being newly tolerated, and the filter
+    /// still names the two types that branch existed for — <see cref="IOException"/> covers the
+    /// file-disappeared, directory-gone and path-too-long arrivals. One branch is not bit-for-bit
+    /// what it was: <c>length</c> is sampled before the read, so a file appended between the two
+    /// calls can report <c>present and empty</c> over bytes the read did return — strictly more
+    /// conservative than the old whole-file read, and unreachable against a writer that writes
+    /// once.
+    /// </para>
+    /// <para>
+    /// The path is never in the answer — only bytes, and the bare file name the caller already
+    /// holds. The scratch directory sits under <see cref="Path.GetTempPath"/>, which on Windows
+    /// contains the account name, and an absolute path in a new assertion message is the #498
+    /// class this repository refuses.
+    /// </para>
+    /// </remarks>
+    private static string PidFileBytes(string pidFile)
+    {
+        if (!File.Exists(pidFile))
+        {
+            return "absent";
+        }
+
+        var buffer = new byte[PidFileBytePreview];
+        long length;
+        int read;
+        try
+        {
+            using var stream = new FileStream(
+                pidFile, FileMode.Open, FileAccess.Read, FileShare.Read);
+            length = stream.Length;
+            read = stream.ReadAtLeast(buffer, buffer.Length, throwOnEndOfStream: false);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return "unreadable";
+        }
+
+        if (length == 0 || read == 0)
+        {
+            return "present and empty";
+        }
+
+        var hex = string.Join(
+            ' ',
+            buffer.Take(read).Select(b => b.ToString("X2", CultureInfo.InvariantCulture)));
+
+        return length <= PidFileBytePreview
+            ? hex
+            : FormattableString.Invariant($"{hex} (first {PidFileBytePreview} of {length})");
+    }
+
+    /// <summary>
+    /// The exit state of <paramref name="process"/>, as a failure message prints it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Guarded rather than conditioned on the caller, for the reason
+    /// <see cref="PidFileBytes"/> is: it is a POSITIONAL argument to <c>Assert.True</c> and is
+    /// therefore evaluated on the green path too.
+    /// <see cref="Process.ExitCode"/> throws on a process that has not exited,
+    /// <see cref="Process.HasExited"/> throws when no process is associated with the object, and
+    /// on Windows a refused query arrives as
+    /// <see cref="System.ComponentModel.Win32Exception"/> — the same three
+    /// <see cref="TryOpen"/> already filters, for the same reason.
+    /// </para>
+    /// <para>
+    /// A READING rather than a verdict: nothing here ends a wait early. On
+    /// <see cref="GrandchildHoldingPipesChild"/> the shell exits the moment it has spawned the
+    /// grandchild (#392), so "exited" alone is no signal at all there — a non-zero CODE is what
+    /// names a shell that died instead of writing.
+    /// </para>
+    /// </remarks>
+    private static string ProcessExitState(Process process)
+    {
+        try
+        {
+            return process.HasExited
+                ? FormattableString.Invariant($"exited {process.ExitCode}")
+                : "still running";
+        }
+        catch (Exception ex) when (ex is InvalidOperationException
+                                       or System.ComponentModel.Win32Exception
+                                       or NotSupportedException)
+        {
+            return "unreadable";
+        }
+    }
+
     /// <summary>
     /// Opens <paramref name="pid"/> if it is still a live process that this row could plausibly
     /// have started.
@@ -3027,7 +3544,13 @@ public sealed class SystemProcessRunnerTests
     /// multiplied it again, by one reclaiming read per attempt that ends without a pid
     /// (<see cref="ReclaimPidForTeardownAsync"/>), still without changing this guard. #539 moved
     /// that read into the <c>finally</c>, which leaves the count per attempt where it was and
-    /// widens the set of attempts that take it to include those an assertion ended.
+    /// widens the set of attempts that take it to include those an assertion ended. #541
+    /// multiplies it once more — two further body reads per run and, on the failing path, up to
+    /// two further late looks — and one of those pids, the one from
+    /// <see cref="GrandchildPidFileName"/>, names a process the row holds NO handle to, so this
+    /// lower bound is the only thing standing between it and a stranger. Still without changing
+    /// the guard — three multiplications and one widening, and the bound has not moved for any of
+    /// them.
     /// </para>
     /// </remarks>
     private static Process? TryOpen(int? pid, DateTime startedUtc)
