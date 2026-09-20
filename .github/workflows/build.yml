@@ -113,6 +113,31 @@ jobs:
       # Aspire integration tests carry that trait; they run in the `integration`
       # job instead.  Plain unit tests have no trait and run here.
       # --collect:"XPlat Code Coverage" writes Cobertura XML via coverlet.
+      #
+      # --logger trx is here for a test that has something to say when it PASSES
+      # (#529).  SystemProcessRunnerTests.TheGuardsAnchors_StayInTheOrderARealChildProduces
+      # measures the skew between Process.StartTime and a pid file's write time and
+      # writes it to ITestOutputHelper; the console logger prints captured output for
+      # FAILED tests only, so without a trx that figure existed nowhere on this lane —
+      # which is the only lane that can report it, the maintainer developing on Windows.
+      # The trx lands in TestResults/ and therefore inside the coverage artifact the
+      # step below already uploads with if: always().  Not console;verbosity=detailed,
+      # which would print a line for every test in the solution.
+      #
+      # LogFilePrefix, NOT LogFileName, and the difference is load-bearing here.  A
+      # fixed LogFileName is one path per RUN, while `dotnet test <solution>` starts one
+      # test host per project — 37 of them overlapping on run 33904509538, per the note
+      # in the integration job below — so every assembly would write the same file and
+      # the last to finish would win.  MEASURED locally over two projects: with
+      # LogFileName=unit.trx the results directory held ONE trx carrying only the second
+      # project's 57 tests, the first project's 250 gone; with LogFilePrefix=unit it held
+      # two, unit_net8.0_<timestamp>.trx apiece, 250 and 57.  The timestamp is
+      # second-resolution and the name carries no project component, so two hosts
+      # starting in the same second would still collide and one trx would be dropped —
+      # inferred, not measured, and strictly better than a name that always does.  The
+      # loss that would cost anything is the Cli assembly's, which is the only one
+      # carrying a figure (#529's skew) that exists nowhere else; every other trx here
+      # duplicates what the job log already shows.
       - name: Unit tests (requires!=docker)
         run: >
           dotnet test vouchfx.sln
@@ -120,6 +145,7 @@ jobs:
           --no-build
           --filter "requires!=docker"
           --collect:"XPlat Code Coverage"
+          --logger "trx;LogFilePrefix=unit"
           --results-directory TestResults
 
       # Upload coverage artefacts.  On main pushes and the weekly schedule the
