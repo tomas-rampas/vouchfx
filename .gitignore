@@ -131,7 +131,15 @@ desktop.ini
 *~
 
 # Custom
-.claude/
+# Everything under .claude/ stays local (the harness's agent worktrees, personal
+# settings, scratch) EXCEPT the SessionStart bootstrap for Claude Code on the web.
+# Git cannot re-include a file below an ignored directory, so the directory's
+# CONTENTS are ignored rather than the directory itself.
+.claude/*
+!.claude/settings.json
+!.claude/hooks/
+.claude/hooks/*
+!.claude/hooks/session-start.sh
 .serena/
 .vscode/
 .rider/
