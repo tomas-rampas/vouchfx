@@ -187,7 +187,7 @@ Set `type: db-assert.sqlserver` to use this step.
 
 ### `http.rest`
 
-Issues an HTTP request to a logically-named service and optionally asserts on the response status.
+Issues an HTTP request to a logically-named service and optionally asserts on the response status and body.
 
 Set `type: http.rest` to use this step.
 
@@ -204,7 +204,7 @@ Set `type: http.rest` to use this step.
 | Field | Type | Description |
 | --- | --- | --- |
 | `body` | `any` | Optional request body, given inline as YAML and serialised to JSON. |
-| `expect` | `object` | Optional assertion block applied to the HTTP response. |
+| `expect` | `object` | Optional assertion block applied to the HTTP response: status, json (JSONPath assertions over a JSON body) and bodyContains (a body substring). Body assertions are evaluated only once the status check has passed. |
 | `headers` | `object` | Optional map of request header names to values. |
 
 ### `http.soap`

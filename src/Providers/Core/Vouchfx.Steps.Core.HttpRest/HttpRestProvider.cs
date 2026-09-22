@@ -19,6 +19,18 @@
 // S04-B-03 additions: {placeholder} substitution — the 'path' field (and header
 //   values if present) are wrapped in Substitute_Helpers.Resolve(Vars, …) so that
 //   {name} tokens are resolved at runtime against Vars.
+//
+// Response-body assertions (#558): 'expect.json' (a map of JSONPath → expected value,
+//   or → { exists: true|false }) and 'expect.bodyContains' (an ordinal substring) are
+//   evaluated after the status check passes and before any capture runs. The vocabulary
+//   is borrowed, not invented: 'json' is mq-expect's match.json key and shape, compared
+//   against the same canonical text 'capture' already writes; 'exists' is the word
+//   cache-assert.redis / db-assert.dynamodb / storage-assert.s3 use; 'bodyContains' is
+//   webhook-listen.http's. The evaluation lives in a SECOND helper class,
+//   HttpRest_BodyAssertions, so its C# stays readable as a raw string. A failing
+//   assertion is Fail; its observation names the path, the reason, the author's expected
+//   TEMPLATE and the observed node's JSON kind — never text taken from the response body
+//   (the SUT may echo a secret; webhook-listen.http's observation rule, §17).
 using System.Globalization;
 using System.Text.Json;
 using Vouchfx.Engine.Abstractions;
@@ -59,6 +71,13 @@ namespace Vouchfx.Steps.HttpRest;
 /// at emit time in <c>Substitute_Helpers.Resolve(Vars, …)</c> so that
 /// <c>{placeholder}</c> tokens resolve against <c>Vars</c> at runtime.
 /// </para>
+/// <para>
+/// Response-body assertions (#558): <c>expect.json</c> maps a JSONPath to an expected
+/// value or to <c>{ exists: true|false }</c>, and <c>expect.bodyContains</c> names an
+/// ordinal substring. Both are evaluated once the status check has held and before any
+/// capture runs; one that does not hold is <see cref="Verdict.Fail"/>, rendered by this
+/// provider's <see cref="IStepDiffRenderer"/> implementation.
+/// </para>
 /// </remarks>
 [StepProvider]
 public sealed class HttpRestProvider
@@ -67,7 +86,8 @@ public sealed class HttpRestProvider
       IStepValidator<HttpRestModel>,
       IStepCompiler<HttpRestModel>,
       IResourceContributor<HttpRestModel>,
-      ICompileReferenceContributor
+      ICompileReferenceContributor,
+      IStepDiffRenderer
 {
     // ── Allowed HTTP verbs ────────────────────────────────────────────────────
 
@@ -246,8 +266,18 @@ public sealed class HttpRestProvider
     /// written under captureStatusKey for the G-01 provenance event.
     /// </para>
     /// <para>
-    /// The helper must be byte-identical across every instance of the same
-    /// provider within a suite (§13.3.1 dedup rule); it contains no
+    /// Response-body assertions (#558) live in a SECOND entry, the
+    /// <c>HttpRest_BodyAssertions</c> class, which <c>HttpRest_Helpers</c> calls: the
+    /// unset-placeholder check that runs before anything is sent, the single JSON parse
+    /// (which the JSONPath captures then reuse), and the evaluation of the <c>json</c> entries
+    /// and <c>bodyContains</c> into the <c>body</c> member of a Fail observation. It is kept
+    /// as a raw string so it reads as ordinary C#, and it names nothing from the response
+    /// body in any string it returns — only paths, expected templates, reasons, JSON kinds
+    /// and node counts (§17).
+    /// </para>
+    /// <para>
+    /// Both helpers must be byte-identical across every instance of the same
+    /// provider within a suite (§13.3.1 dedup rule); neither contains any
     /// per-step interpolation.
     /// </para>
     /// </summary>
@@ -280,6 +310,10 @@ public sealed class HttpRestProvider
         "        string[] headerNames,\n" +
         "        string[] headerValueTemplates,\n" +
         "        int? expectedStatus,\n" +
+        "        string[] jsonPaths,\n" +
+        "        string[] jsonExpectedTemplates,\n" +
+        "        string[] jsonModes,\n" +
+        "        string? bodyContainsTemplate,\n" +
         "        string[] captureVarNames,\n" +
         "        string[] captureExprs,\n" +
         "        string[] captureKinds,\n" +
@@ -287,6 +321,23 @@ public sealed class HttpRestProvider
         "        bool budgetGoverned)\n" +
         "    {\n" +
         "        var sw = System.Diagnostics.Stopwatch.StartNew();\n" +
+        "        // Response-body assertions (#558): an expected value naming a {placeholder} that\n" +
+        "        // is absent from Vars (or null) would resolve to the empty string, which makes a\n" +
+        "        // bodyContains pass vacuously or blames the service for a value that was never\n" +
+        "        // captured. The input this step's assertion needs does not exist, so the step is\n" +
+        "        // Inconclusive (§12.1, upstream capture unmet) and NOTHING is resolved or sent.\n" +
+        "        // The observation carries the placeholder NAME — author text, never a value.\n" +
+        "        var unsetPlaceholder = HttpRest_BodyAssertions.FindUnsetPlaceholder(\n" +
+        "            vars, jsonModes, jsonExpectedTemplates, bodyContainsTemplate);\n" +
+        "        if (unsetPlaceholder != null)\n" +
+        "        {\n" +
+        "            sw.Stop();\n" +
+        "            vars[outcomeKey] = new Vouchfx.Engine.Abstractions.StepOutcome(\n" +
+        "                Vouchfx.Engine.Abstractions.Verdict.Inconclusive,\n" +
+        "                sw.ElapsedMilliseconds,\n" +
+        "                \"{\\\"placeholderUnmet\\\":\" + System.Text.Json.JsonSerializer.Serialize(unsetPlaceholder) + \"}\");\n" +
+        "            return;\n" +
+        "        }\n" +
         "        Vouchfx.Engine.Abstractions.Verdict verdict;\n" +
         "        string observation;\n" +
         "        // AllowAutoRedirect=false: a 3xx from the target must not silently\n" +
@@ -377,6 +428,22 @@ public sealed class HttpRestProvider
         "                    req.Content = new System.Net.Http.StringContent(\n" +
         "                        body, System.Text.Encoding.UTF8, \"application/json\");\n" +
         "                }\n" +
+        "                // Resolve the EXPECTED values of the response-body assertions (#558) here,\n" +
+        "                // INSIDE the guarded region and BEFORE the request is sent — the same single\n" +
+        "                // ResolveTemplate pass as the path, headers and body. A missing secret throws\n" +
+        "                // SecretResolutionException → caught below → EnvironmentError, nothing sent.\n" +
+        "                // A revealed value is only a comparison operand: it is never written to Vars\n" +
+        "                // and never placed in an observation, which carries the TEMPLATE text (§17).\n" +
+        "                var jsonExpected = new string[jsonExpectedTemplates.Length];\n" +
+        "                for (int ji = 0; ji < jsonExpectedTemplates.Length; ji++)\n" +
+        "                {\n" +
+        "                    jsonExpected[ji] = string.Equals(jsonModes[ji], \"equals\", System.StringComparison.Ordinal)\n" +
+        "                        ? Secret_Helpers.ResolveTemplate(secrets, vars, jsonExpectedTemplates[ji])\n" +
+        "                        : string.Empty;\n" +
+        "                }\n" +
+        "                var bodyContains = bodyContainsTemplate == null\n" +
+        "                    ? null\n" +
+        "                    : Secret_Helpers.ResolveTemplate(secrets, vars, bodyContainsTemplate);\n" +
         "                var resp = await client.SendAsync(req, ct).ConfigureAwait(false);\n" +
         "                var actual = (int)resp.StatusCode;\n" +
         "                bool ok = expectedStatus.HasValue\n" +
@@ -385,22 +452,57 @@ public sealed class HttpRestProvider
         "                verdict = ok\n" +
         "                    ? Vouchfx.Engine.Abstractions.Verdict.Pass\n" +
         "                    : Vouchfx.Engine.Abstractions.Verdict.Fail;\n" +
-        "                observation = \"{\\\"status\\\":\" + actual +\n" +
+        "                var statusFields = \"\\\"status\\\":\" + actual +\n" +
         "                    \",\\\"expected\\\":\" +\n" +
         "                    (expectedStatus.HasValue\n" +
         "                        ? expectedStatus.Value.ToString(\n" +
         "                              System.Globalization.CultureInfo.InvariantCulture)\n" +
-        "                        : \"null\") + \"}\";\n" +
+        "                        : \"null\");\n" +
+        "                observation = \"{\" + statusFields + \"}\";\n" +
+        "\n" +
+        "                // ONE body read, shared by the response-body assertions and the captures, and\n" +
+        "                // only once the status check has held — a status mismatch keeps today's\n" +
+        "                // observation and evaluates nothing else.\n" +
+        "                bool hasBodyAssertions = jsonPaths.Length > 0 || bodyContains != null;\n" +
+        "                string bodyStr = string.Empty;\n" +
+        "                if (verdict != Vouchfx.Engine.Abstractions.Verdict.Fail\n" +
+        "                    && (hasBodyAssertions || captureVarNames.Length > 0))\n" +
+        "                {\n" +
+        "                    bodyStr = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);\n" +
+        "                }\n" +
+        "                // ONE JSON parse, shared the same way. jsonParsed records that a parse was\n" +
+        "                // attempted; jsonNode is null when it failed OR when the body is the literal\n" +
+        "                // `null` — the captures below treat both as unmatched, exactly as before.\n" +
+        "                System.Text.Json.Nodes.JsonNode? jsonNode = null;\n" +
+        "                bool jsonParsed = false;\n" +
+        "\n" +
+        "                // ── Response-body assertions (#558): json entries in declaration order,\n" +
+        "                // then bodyContains. Any failure is Fail and skips the captures. ──\n" +
+        "                if (hasBodyAssertions && verdict != Vouchfx.Engine.Abstractions.Verdict.Fail)\n" +
+        "                {\n" +
+        "                    bool jsonOk = false;\n" +
+        "                    if (jsonPaths.Length > 0)\n" +
+        "                    {\n" +
+        "                        jsonParsed = true;\n" +
+        "                        jsonOk = HttpRest_BodyAssertions.TryParseJson(bodyStr, out jsonNode);\n" +
+        "                    }\n" +
+        "                    var bodyFailure = HttpRest_BodyAssertions.Evaluate(\n" +
+        "                        bodyStr, jsonOk, jsonNode, jsonPaths, jsonExpected, jsonModes,\n" +
+        "                        jsonExpectedTemplates, bodyContains, bodyContainsTemplate);\n" +
+        "                    if (bodyFailure != null)\n" +
+        "                    {\n" +
+        "                        verdict = Vouchfx.Engine.Abstractions.Verdict.Fail;\n" +
+        "                        observation = \"{\" + statusFields + \",\\\"body\\\":\" + bodyFailure + \"}\";\n" +
+        "                    }\n" +
+        "                }\n" +
         "\n" +
         "                // ── S04-B-02 + S07-B-01b: format-aware capture (JSONPath / XPath) ──\n" +
         "                if (captureVarNames.Length > 0 && verdict != Vouchfx.Engine.Abstractions.Verdict.Fail)\n" +
         "                {\n" +
-        "                    var bodyStr = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);\n" +
-        "                    // Parse the JSON body ONCE before the per-capture loop (lazily — only\n" +
-        "                    // when the first JSONPath capture is hit). A malformed body sets the\n" +
-        "                    // cached node to null, which marks every JSONPath capture unmet.\n" +
-        "                    System.Text.Json.Nodes.JsonNode? jsonNode = null;\n" +
-        "                    bool jsonParsed = false;\n" +
+        "                    // The body was read once above. The JSON body is parsed ONCE (lazily —\n" +
+        "                    // only when the first JSONPath capture is hit, unless the assertions\n" +
+        "                    // already parsed it). A malformed body leaves the cached node null,\n" +
+        "                    // which marks every JSONPath capture unmet.\n" +
         "                    // Parse the XML body ONCE (lazily — only when the first XPath capture\n" +
         "                    // is hit). A parse failure / non-XML body sets the navigator to null,\n" +
         "                    // which marks every XPath capture unmet (NOT a crash).\n" +
@@ -587,6 +689,270 @@ public sealed class HttpRestProvider
         "            verdict, sw.ElapsedMilliseconds, observation);\n" +
         "    }\n" +
         "}",
+        """
+        static class HttpRest_BodyAssertions
+        {
+            // Response-body assertions for http.rest (#558): expect.json and expect.bodyContains.
+            // A SECOND provider-prefixed helper class, so this logic reads as ordinary C#. Like
+            // HttpRest_Helpers it is provider-private — not an SDK `const Source`, so it is outside
+            // the frozen helper-source golden — and byte-identical across every http.rest step of
+            // one provider build, which is what CsxAssembler's helper dedupe requires (§13.3.1).
+            //
+            // OBSERVATION RULE (§17): nothing read from the response body reaches a string this
+            // class returns — no value, no excerpt, no member name. A failure names the entry's
+            // path and the author's expected TEMPLATE (a ${secret:...} reference stays a reference,
+            // a {placeholder} stays a name), a reason, and at most the JSON KIND of the node found
+            // or a node COUNT. The system under test may echo a secret back in its response.
+
+            // Secret_Helpers' own combined pattern, copied byte for byte: the placeholder check
+            // below must see exactly the {placeholder} tokens ResolveTemplate substitutes and —
+            // because the secret alternative is tried first — never a {name}-shaped run inside a
+            // ${secret:...} token. HttpRestBodyAssertionTests reads the pattern out of
+            // SecretHelper.Source at run time and fails if the two ever differ.
+            private static readonly System.Text.RegularExpressions.Regex s_combined =
+                new System.Text.RegularExpressions.Regex(
+                    @"(?<secret>\$\{secret:[A-Za-z0-9_-]+/[^}]+\})|(?<ph>\{(?<phName>[A-Za-z_][A-Za-z0-9_]*)\})",
+                    System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+            // Bound on author text (a path or an expected template) echoed into an observation.
+            private const int MaxEchoChars = 256;
+
+            /// <summary>
+            /// Returns the name of the first {placeholder} an expected value names that is absent
+            /// from vars or bound to null, or null when every one is set. Only the equality form of
+            /// a json entry and bodyContains carry a template; exists entries carry none.
+            /// </summary>
+            internal static string? FindUnsetPlaceholder(
+                System.Collections.Generic.IDictionary<string, object?> vars,
+                string[] jsonModes,
+                string[] jsonExpectedTemplates,
+                string? bodyContainsTemplate)
+            {
+                for (int i = 0; i < jsonExpectedTemplates.Length; i++)
+                {
+                    if (!string.Equals(jsonModes[i], "equals", System.StringComparison.Ordinal))
+                        continue;
+                    var name = FirstUnsetPlaceholder(vars, jsonExpectedTemplates[i]);
+                    if (name != null)
+                        return name;
+                }
+                return bodyContainsTemplate == null
+                    ? null
+                    : FirstUnsetPlaceholder(vars, bodyContainsTemplate);
+            }
+
+            private static string? FirstUnsetPlaceholder(
+                System.Collections.Generic.IDictionary<string, object?> vars,
+                string template)
+            {
+                for (var m = s_combined.Match(template); m.Success; m = m.NextMatch())
+                {
+                    // A ${secret:...} token is ResolveTemplate's business: it resolves, or it
+                    // throws and the step is an EnvironmentError before anything is sent.
+                    if (!m.Groups["ph"].Success)
+                        continue;
+                    var name = m.Groups["phName"].Value;
+                    if (!vars.TryGetValue(name, out var value) || value is null)
+                        return name;
+                }
+                return null;
+            }
+
+            /// <summary>
+            /// Parses the body once for the json entries. False when the body is not a JSON
+            /// document: empty, whitespace, HTML, trailing text, nested deeper than the parser's
+            /// default of 64, or holding an object with a duplicate member name. The JSON literal
+            /// null parses, as a null node.
+            /// </summary>
+            internal static bool TryParseJson(string body, out System.Text.Json.Nodes.JsonNode? node)
+            {
+                node = null;
+                System.Text.Json.Nodes.JsonNode? parsed;
+                try
+                {
+                    parsed = System.Text.Json.Nodes.JsonNode.Parse(body);
+                }
+                catch (System.Text.Json.JsonException)
+                {
+                    return false;
+                }
+                // JsonNode builds an object's member table lazily, so a duplicate member name would
+                // otherwise surface as an ArgumentException from inside whichever JSONPath evaluation
+                // first reads that object (measured). Materialise the whole tree once, here, so such
+                // a body is "not JSON" for every entry alike.
+                try
+                {
+                    var pending = new System.Collections.Generic.Stack<System.Text.Json.Nodes.JsonNode>();
+                    if (parsed != null)
+                        pending.Push(parsed);
+                    while (pending.Count > 0)
+                    {
+                        var current = pending.Pop();
+                        if (current is System.Text.Json.Nodes.JsonObject obj)
+                        {
+                            foreach (var member in obj)
+                            {
+                                if (member.Value != null)
+                                    pending.Push(member.Value);
+                            }
+                        }
+                        else if (current is System.Text.Json.Nodes.JsonArray arr)
+                        {
+                            foreach (var item in arr)
+                            {
+                                if (item != null)
+                                    pending.Push(item);
+                            }
+                        }
+                    }
+                }
+                catch (System.ArgumentException)
+                {
+                    return false;
+                }
+                node = parsed;
+                return true;
+            }
+
+            /// <summary>
+            /// Evaluates the json entries in declaration order, then bodyContains. Returns null when
+            /// every one holds; otherwise the observation's body member,
+            /// {"failed":k,"of":n,"first":{...}}, where first describes the first that did not.
+            /// </summary>
+            internal static string? Evaluate(
+                string body,
+                bool jsonOk,
+                System.Text.Json.Nodes.JsonNode? json,
+                string[] jsonPaths,
+                string[] jsonExpected,
+                string[] jsonModes,
+                string[] jsonExpectedTemplates,
+                string? bodyContains,
+                string? bodyContainsTemplate)
+            {
+                int total = jsonPaths.Length + (bodyContains == null ? 0 : 1);
+                int failed = 0;
+                string? first = null;
+                for (int i = 0; i < jsonPaths.Length; i++)
+                {
+                    var failure = EvaluateJson(
+                        jsonOk, json, jsonPaths[i], jsonExpected[i], jsonModes[i], jsonExpectedTemplates[i]);
+                    if (failure != null)
+                    {
+                        failed++;
+                        first ??= failure;
+                    }
+                }
+                if (bodyContains != null
+                    && body.IndexOf(bodyContains, System.StringComparison.Ordinal) < 0)
+                {
+                    failed++;
+                    first ??= "{\"assertion\":\"bodyContains\",\"reason\":\"notFound\",\"expected\":"
+                        + Bounded(bodyContainsTemplate ?? string.Empty) + "}";
+                }
+                return failed == 0
+                    ? null
+                    : "{\"failed\":" + failed + ",\"of\":" + total + ",\"first\":" + first + "}";
+            }
+
+            private static string? EvaluateJson(
+                bool jsonOk,
+                System.Text.Json.Nodes.JsonNode? json,
+                string path,
+                string expected,
+                string mode,
+                string expectedTemplate)
+            {
+                bool exists = string.Equals(mode, "exists", System.StringComparison.Ordinal);
+                bool absent = string.Equals(mode, "absent", System.StringComparison.Ordinal);
+                // The author's claim, echoed the way it was written: the expected TEMPLATE for the
+                // equality form, the exists flag for the other two.
+                var head = "{\"assertion\":\"json\",\"path\":" + Bounded(path);
+                var claim = exists
+                    ? ",\"exists\":true"
+                    : absent
+                        ? ",\"exists\":false"
+                        : ",\"expected\":" + Bounded(expectedTemplate);
+                if (!jsonOk)
+                    return head + ",\"reason\":\"notJson\"" + claim + "}";
+                int count;
+                System.Text.Json.Nodes.JsonNode? single = null;
+                try
+                {
+                    var matches = Json.Path.JsonPath.Parse(path).Evaluate(json).Matches;
+                    count = matches == null ? 0 : matches.Count;
+                    if (count == 1)
+                        single = matches![0].Value;
+                }
+                catch (System.Exception)
+                {
+                    // Measured on JsonPath.Net 3.0.2: a filter comparing a number beyond the
+                    // library's numeric range throws FormatException over a valid body. The claim
+                    // cannot be checked against this body. The exception's own text is not
+                    // guaranteed free of body content, so it is not reported.
+                    return head + ",\"reason\":\"unevaluable\"" + claim + "}";
+                }
+                if (exists)
+                    return count > 0 ? null : head + ",\"reason\":\"missing\"" + claim + "}";
+                if (absent)
+                    return count == 0 ? null : head + ",\"reason\":\"present\"" + claim + ",\"count\":" + count + "}";
+                if (count == 0)
+                    return head + ",\"reason\":\"missing\"" + claim + "}";
+                if (count > 1)
+                    return head + ",\"reason\":\"multipleNodes\"" + claim + ",\"count\":" + count + "}";
+                if (string.Equals(CanonicalText(single), expected, System.StringComparison.Ordinal))
+                    return null;
+                return head + ",\"reason\":\"mismatch\"" + claim + ",\"actualKind\":\"" + KindOf(single) + "\"}";
+            }
+
+            // The text `capture` stores for a node — a string by its unescaped value, a number or
+            // boolean by its JSON spelling, an object or array as compact JSON — plus the one case
+            // capture never stores: a present JSON null, compared as the text null.
+            private static string CanonicalText(System.Text.Json.Nodes.JsonNode? node)
+            {
+                if (node is null)
+                    return "null";
+                if (node is System.Text.Json.Nodes.JsonValue value)
+                {
+                    var raw = value.GetValue<System.Text.Json.JsonElement>();
+                    return raw.ValueKind == System.Text.Json.JsonValueKind.String
+                        ? raw.GetString() ?? string.Empty
+                        : raw.GetRawText();
+                }
+                return node.ToJsonString();
+            }
+
+            private static string KindOf(System.Text.Json.Nodes.JsonNode? node)
+            {
+                if (node is null)
+                    return "null";
+                switch (node.GetValueKind())
+                {
+                    case System.Text.Json.JsonValueKind.Object: return "object";
+                    case System.Text.Json.JsonValueKind.Array: return "array";
+                    case System.Text.Json.JsonValueKind.String: return "string";
+                    case System.Text.Json.JsonValueKind.Number: return "number";
+                    case System.Text.Json.JsonValueKind.True:
+                    case System.Text.Json.JsonValueKind.False: return "boolean";
+                    default: return "null";
+                }
+            }
+
+            // Author text as a JSON string literal, cut at MaxEchoChars on a code-point boundary
+            // and marked with a trailing ellipsis when cut.
+            private static string Bounded(string text)
+            {
+                if (text.Length > MaxEchoChars)
+                {
+                    int cut = MaxEchoChars;
+                    if (char.IsHighSurrogate(text[cut - 1]))
+                        cut--;
+                    text = text.Substring(0, cut) + (char)0x2026;
+                }
+                return System.Text.Json.JsonSerializer.Serialize(text);
+            }
+        }
+        """,
     };
 
     // ── IStepProvider ─────────────────────────────────────────────────────────
@@ -617,7 +983,7 @@ public sealed class HttpRestProvider
     public JsonSchemaFragment SchemaFragment { get; } = new JsonSchemaFragment(
         """
         {
-          "description": "Issues an HTTP request to a logically-named service and optionally asserts on the response status.",
+          "description": "Issues an HTTP request to a logically-named service and optionally asserts on the response status and body.",
           "type": "object",
           "required": ["target", "method", "path"],
           "properties": {
@@ -645,13 +1011,36 @@ public sealed class HttpRestProvider
               "description": "Optional request body, given inline as YAML and serialised to JSON."
             },
             "expect": {
-              "description": "Optional assertion block applied to the HTTP response.",
+              "description": "Optional assertion block applied to the HTTP response: status, json (JSONPath assertions over a JSON body) and bodyContains (a body substring). Body assertions are evaluated only once the status check has passed.",
               "type": "object",
               "properties": {
                 "status": {
                   "description": "Expected HTTP status code. When written as a string it must be all digits (e.g. \"200\"); a non-digit string is always a mistake, since the value is never {placeholder}-substituted.",
                   "type": ["integer", "string"],
                   "pattern": "^[0-9]+$"
+                },
+                "json": {
+                  "description": "Optional map of JSONPath expressions (RFC 9535, used verbatim) to expectations over the response body parsed as JSON. A scalar asserts that the path selects exactly one node whose value, compared as text, equals it (a string by its unescaped value, a number or boolean by its JSON spelling, null as the text null, an object or array as compact JSON); a bare numeric or boolean scalar is read as its literal text. { exists: true } / { exists: false } asserts that the path selects at least one node / none. Values may contain {placeholder} and ${secret:source/path} tokens.",
+                  "type": "object",
+                  "minProperties": 1,
+                  "propertyNames": { "pattern": "^\\$" },
+                  "additionalProperties": {
+                    "type": ["string", "integer", "number", "boolean", "object"],
+                    "properties": {
+                      "exists": {
+                        "description": "true: the path must select at least one node; false: none.",
+                        "type": "boolean"
+                      }
+                    },
+                    "minProperties": 1,
+                    "maxProperties": 1,
+                    "additionalProperties": false
+                  }
+                },
+                "bodyContains": {
+                  "description": "Optional substring the response body, decoded as text, must contain (ordinal). May contain {placeholder} and ${secret:source/path} tokens. May be written as a bare number/boolean scalar; it is matched as text either way.",
+                  "type": ["string", "integer", "number", "boolean"],
+                  "minLength": 1
                 }
               },
               "additionalProperties": false
@@ -729,7 +1118,27 @@ public sealed class HttpRestProvider
             {
                 status = statusCode;
             }
-            expect = new HttpExpect(status);
+
+            // Response-body assertions (#558). Both are bound as RAW author text — a
+            // {placeholder} / ${secret:source/path} token survives verbatim and is resolved only
+            // at step-execution time, inside the emitted helper's guarded region (§17). Bind
+            // never throws: a malformed shape binds to something Validate refuses by name.
+            IReadOnlyList<HttpJsonAssertion>? json = null;
+            if (expectMap.Children.TryGetValue(new YamlScalarNode("json"), out var jsonNode))
+            {
+                json = BindJsonAssertions(jsonNode);
+            }
+
+            string? bodyContains = null;
+            if (expectMap.Children.TryGetValue(new YamlScalarNode("bodyContains"), out var containsNode))
+            {
+                // A YAML null or a non-scalar binds to the empty string, which Validate refuses.
+                bodyContains = containsNode is YamlScalarNode containsScalar && !IsYamlNull(containsScalar)
+                    ? containsScalar.Value ?? string.Empty
+                    : string.Empty;
+            }
+
+            expect = new HttpExpect(status, json, bodyContains);
         }
 
         return new HttpRestModel(
@@ -833,9 +1242,103 @@ public sealed class HttpRestProvider
             }
         }
 
+        // Response-body assertions (#558). Every refusal is a ValidationResult failure, never a
+        // throw (#480: a throw from Validate is a provider fault), so `vouchfx validate` names
+        // the problem before any container starts.
+        if (model.Expect is { } expect)
+        {
+            ValidateBodyAssertions(model.Method, expect, errors);
+        }
+
         return errors.Count == 0
             ? ValidationResult.Success
             : ValidationResult.Failure(errors.ToArray());
+    }
+
+    /// <summary>
+    /// Adds the refusals for <c>expect.json</c> and <c>expect.bodyContains</c> (#558) to
+    /// <paramref name="errors"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// On the engine's own path the composed schema has already refused an empty map, a
+    /// key that does not start with <c>$</c>, a YAML-null or malformed value and an empty
+    /// <c>bodyContains</c>; those rows here are the backstop for a caller that binds without
+    /// validating. The two rules the schema cannot express live only here: a key that starts
+    /// with <c>$</c> but is not a JSONPath, and a body assertion on a request or status whose
+    /// response carries no content.
+    /// </para>
+    /// <para>
+    /// The JSONPath check uses <c>TryParse</c>, never <c>Parse</c>, so a malformed path is
+    /// reported by name and never escapes as an exception. MEASURED on JsonPath.Net 3.0.2:
+    /// the parse time of nested filter selectors (<c>[?@[?@…]]</c>) roughly quadruples every
+    /// two levels — about 0.4 s at twenty levels. That is author text, the same parse
+    /// <c>capture</c> already pays at run time, and far beyond any path a suite needs, so it
+    /// is recorded here rather than bounded.
+    /// </para>
+    /// </remarks>
+    private static void ValidateBodyAssertions(string method, HttpExpect expect, List<string> errors)
+    {
+        if (expect.Json is { } entries)
+        {
+            if (entries.Count == 0)
+            {
+                errors.Add(
+                    "http.rest: 'expect.json' must be a non-empty map of JSONPath expressions to " +
+                    "expected values.");
+            }
+
+            foreach (var entry in entries)
+            {
+                // RFC 9535 refuses, for instance, "$.a[" (unterminated), "a.b" (no root),
+                // "$.a.length()" (not a JSONPath function) and "{orderId}" — the key is used
+                // verbatim and is never {placeholder}-substituted.
+                if (!Json.Path.JsonPath.TryParse(entry.Path, out _))
+                {
+                    errors.Add(
+                        $"http.rest: 'expect.json' key '{entry.Path}' is not a valid JSONPath " +
+                        "(RFC 9535). A path starts at the root '$', for example '$.id' or " +
+                        "'$.lines[0].sku', and is used verbatim: it is never " +
+                        "{placeholder}-substituted.");
+                }
+
+                if ((entry.Expected is null) == (entry.Exists is null))
+                {
+                    errors.Add(
+                        $"http.rest: 'expect.json' entry '{entry.Path}' must be either a scalar " +
+                        "expected value or { exists: true } / { exists: false }. A JSON null is " +
+                        "written as the quoted text \"null\"; an unquoted null or an empty value " +
+                        "is refused as a forgotten value.");
+                }
+            }
+        }
+
+        if (expect.BodyContains is { Length: 0 })
+        {
+            errors.Add(
+                "http.rest: 'expect.bodyContains' must not be empty: every body contains the " +
+                "empty string, so the assertion could never fail.");
+        }
+
+        if (expect.Json is not { Count: > 0 } && expect.BodyContains is null)
+            return;
+
+        if (string.Equals(method, "HEAD", StringComparison.OrdinalIgnoreCase))
+        {
+            errors.Add(
+                "http.rest: 'expect.json' and 'expect.bodyContains' cannot be used with method " +
+                "HEAD: a HEAD response carries no content (RFC 9110), so a body assertion could " +
+                "never hold. Assert on the body of a GET instead.");
+        }
+
+        if (expect.Status is 204 or 304)
+        {
+            var code = expect.Status.Value.ToString(CultureInfo.InvariantCulture);
+            errors.Add(
+                "http.rest: 'expect.json' and 'expect.bodyContains' cannot be used with " +
+                "'expect.status: " + code + "': a " + code + " response carries no content " +
+                "(RFC 9110), so a body assertion could never hold.");
+        }
     }
 
     // ── IStepCompiler<HttpRestModel> ──────────────────────────────────────────
@@ -849,6 +1352,11 @@ public sealed class HttpRestProvider
     ///   <item>Resolves <c>{placeholder}</c> tokens in the <c>path</c> via
     ///   <c>Substitute_Helpers.Resolve</c> (B-03).</item>
     ///   <item>Issues the HTTP request.</item>
+    ///   <item>When <c>expect.json</c> or <c>expect.bodyContains</c> is declared (#558),
+    ///   evaluates them against the response body once the status check has held: any
+    ///   that does not hold → <see cref="Verdict.Fail"/>, and the captures do not run.  An
+    ///   expected value naming an unset <c>{placeholder}</c> →
+    ///   <see cref="Verdict.Inconclusive"/> before anything is sent.</item>
     ///   <item>When <see cref="ICompileContext.Captures"/> is non-empty, reads the
     ///   response body and evaluates each JSONPath via JsonPath.Net.  A miss →
     ///   <see cref="Verdict.Inconclusive"/> (upstream-capture-unmet, §12.1).</item>
@@ -960,6 +1468,37 @@ public sealed class HttpRestProvider
         var captureExprsLiteral = BuildStringArrayLiteral(captureExprs);
         var captureKindsLiteral = BuildStringArrayLiteral(captureKinds);
 
+        // Response-body assertions (#558): expect.json expands into THREE parallel arrays in
+        // declaration order — the JSONPath (verbatim), the expected-value TEMPLATE ("" for the
+        // exists forms) and a mode token — plus the bodyContains template or the bare literal
+        // null. Mode tokens are a FIXED closed vocabulary (equals / exists / absent), never
+        // author text. Templates are emitted RAW, exactly like the path, headers and body: the
+        // helper resolves them at step-execution time inside its guarded region, so no secret
+        // value is ever baked into the emitted IL — only the reference text is (§17).
+        var jsonEntries = model.Expect?.Json ?? Array.Empty<HttpJsonAssertion>();
+        var jsonPaths = new string[jsonEntries.Count];
+        var jsonExpectedTemplates = new string[jsonEntries.Count];
+        var jsonModes = new string[jsonEntries.Count];
+        for (var ji = 0; ji < jsonEntries.Count; ji++)
+        {
+            var entry = jsonEntries[ji];
+            jsonPaths[ji] = entry.Path;
+            jsonExpectedTemplates[ji] = entry.Expected ?? string.Empty;
+            jsonModes[ji] = entry.Exists switch
+            {
+                true => "exists",
+                false => "absent",
+                null => "equals",
+            };
+        }
+
+        var jsonPathsLiteral = BuildStringArrayLiteral(jsonPaths);
+        var jsonExpectedTemplatesLiteral = BuildStringArrayLiteral(jsonExpectedTemplates);
+        var jsonModesLiteral = BuildStringArrayLiteral(jsonModes);
+        var bodyContainsLiteral = model.Expect?.BodyContains is { } bodyContains
+            ? JsonSerializer.Serialize(bodyContains)
+            : "null";
+
         // StatementBlock is a C# 11 double-dollar raw string ($$"""…"""):
         //   { }       → literal brace in the emitted CSX (the block's own braces)
         //   {{expr}}  → interpolation hole filled here at emit time.
@@ -985,6 +1524,10 @@ public sealed class HttpRestProvider
                     {{headerNamesLiteral}},
                     {{headerValueTemplatesLiteral}},
                     {{expectedLiteral}},
+                    {{jsonPathsLiteral}},
+                    {{jsonExpectedTemplatesLiteral}},
+                    {{jsonModesLiteral}},
+                    {{bodyContainsLiteral}},
                     {{captureVarNamesLiteral}},
                     {{captureExprsLiteral}},
                     {{captureKindsLiteral}},
@@ -1045,6 +1588,207 @@ public sealed class HttpRestProvider
         }
     }
 
+    // ── IStepDiffRenderer ─────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Determines whether <paramref name="observation"/> is the response-body Fail shape
+    /// (#558) that this provider renders as an expected-vs-observed row.
+    /// </summary>
+    /// <remarks>
+    /// Recognised: <c>{"status":…,"expected":…,"body":{"failed":k,"of":n,"first":{…}}}</c>,
+    /// whose <c>first</c> names an <c>assertion</c> and a <c>reason</c>. Every other shape
+    /// this provider emits — pass, status mismatch, capture miss, unset placeholder, timeout,
+    /// secret and transport errors — returns <see langword="false"/>, so each renders exactly
+    /// as it did before the body assertions existed: with no diff.
+    /// </remarks>
+    /// <inheritdoc cref="IStepDiffRenderer.CanRender" />
+    public bool CanRender(JsonElement observation) => TryReadBodyFailure(observation, out _);
+
+    /// <summary>
+    /// Renders the first failing response-body assertion as a one-row
+    /// <c>assertion │ expected │ actual</c> table, or returns <see langword="null"/> when
+    /// <paramref name="observation"/> is not that shape (see <see cref="CanRender"/>).
+    /// </summary>
+    /// <remarks>
+    /// The actual column is never text from the response body, because the observation
+    /// carries none (§17). It says what was found instead: the JSON kind of a node whose
+    /// value differed, a node count, or that the body is not JSON. A line under the table
+    /// counts any further failing assertions, and a mismatch on a number or a boolean adds a
+    /// fixed note that values compare by their exact JSON spelling — the one trap a
+    /// kind-only diff would otherwise hide.
+    /// </remarks>
+    /// <inheritdoc cref="IStepDiffRenderer.RenderDiff" />
+    public string? RenderDiff(JsonElement observation)
+    {
+        if (!TryReadBodyFailure(observation, out var row))
+            return null;
+
+        var sb = new System.Text.StringBuilder(RenderTable(
+            s_diffHeaders,
+            new[] { row.Assertion, row.Expected, row.Actual }));
+
+        if (row.Failed > 1)
+        {
+            var more = row.Failed - 1;
+            sb.Append("(+")
+              .Append(more.ToString(CultureInfo.InvariantCulture))
+              .Append(more == 1 ? " more failing body assertion)" : " more failing body assertions)")
+              .Append('\n');
+        }
+
+        if (row.SpellingNote)
+        {
+            sb.Append(
+                "note: numbers and booleans compare by their exact JSON spelling " +
+                "(2 is not 2.0, true is not True)\n");
+        }
+
+        return sb.ToString();
+    }
+
+    /// <summary>The diff table's column headers.</summary>
+    private static readonly string[] s_diffHeaders = { "assertion", "expected", "actual" };
+
+    /// <summary>One rendered row of a response-body Fail observation.</summary>
+    private readonly record struct BodyFailureRow(
+        string Assertion,
+        string Expected,
+        string Actual,
+        int Failed,
+        bool SpellingNote);
+
+    /// <summary>
+    /// Reads the <c>body</c> member of a response-body Fail observation into the cells of
+    /// the diff row. Tolerant of fields it does not know; false for any other shape.
+    /// </summary>
+    private static bool TryReadBodyFailure(JsonElement observation, out BodyFailureRow row)
+    {
+        row = default;
+        if (observation.ValueKind != JsonValueKind.Object
+            || !observation.TryGetProperty("body", out var body)
+            || body.ValueKind != JsonValueKind.Object
+            || !body.TryGetProperty("first", out var first)
+            || first.ValueKind != JsonValueKind.Object
+            || !TryGetString(first, "assertion", out var assertion)
+            || !TryGetString(first, "reason", out var reason))
+        {
+            return false;
+        }
+
+        var failed = TryGetInt(body, "failed", out var f) ? f : 1;
+        var count = TryGetInt(first, "count", out var c) ? c : 0;
+        TryGetString(first, "actualKind", out var actualKind);
+
+        var label = assertion == "json" && TryGetString(first, "path", out var path)
+            ? "json " + path
+            : assertion;
+
+        string expected;
+        if (first.TryGetProperty("exists", out var existsEl)
+            && existsEl.ValueKind is (JsonValueKind.True or JsonValueKind.False))
+        {
+            expected = existsEl.ValueKind == JsonValueKind.True ? "(present)" : "(absent)";
+        }
+        else
+        {
+            expected = TryGetString(first, "expected", out var e) ? e : string.Empty;
+        }
+
+        var countText = count.ToString(CultureInfo.InvariantCulture);
+        var actual = reason switch
+        {
+            "mismatch" => actualKind.Length > 0 ? "(" + actualKind + ")" : "(a different value)",
+            "missing" => "(no node)",
+            "multipleNodes" or "present" => count == 1 ? "(1 node)" : "(" + countText + " nodes)",
+            "notJson" => "(body is not JSON)",
+            "unevaluable" => "(path could not be evaluated)",
+            "notFound" => "(not found)",
+            _ => "(" + reason + ")",
+        };
+
+        row = new BodyFailureRow(
+            Assertion: Cell(label),
+            Expected: Cell(expected),
+            Actual: Cell(actual),
+            Failed: failed,
+            SpellingNote: reason == "mismatch" && actualKind is ("number" or "boolean"));
+        return true;
+    }
+
+    /// <summary>Reads a string property, or yields the empty string and false.</summary>
+    private static bool TryGetString(JsonElement element, string name, out string value)
+    {
+        if (element.TryGetProperty(name, out var el) && el.ValueKind == JsonValueKind.String)
+        {
+            value = el.GetString() ?? string.Empty;
+            return true;
+        }
+
+        value = string.Empty;
+        return false;
+    }
+
+    /// <summary>Reads an Int32 property, or yields zero and false.</summary>
+    private static bool TryGetInt(JsonElement element, string name, out int value)
+    {
+        value = 0;
+        return element.TryGetProperty(name, out var el)
+            && el.ValueKind == JsonValueKind.Number
+            && el.TryGetInt32(out value);
+    }
+
+    /// <summary>
+    /// Keeps a table cell on one line: a line break or tab in author text would otherwise
+    /// split the row.
+    /// </summary>
+    private static string Cell(string text) =>
+        text.Replace("\r", "\\r", StringComparison.Ordinal)
+            .Replace("\n", "\\n", StringComparison.Ordinal)
+            .Replace("\t", "\\t", StringComparison.Ordinal);
+
+    /// <summary>
+    /// Renders a single-row, fixed-column box-drawing table: a header row, a separator
+    /// rule, then one value row — the style the relational diff renderers use.
+    /// </summary>
+    private static string RenderTable(string[] headers, string[] values)
+    {
+        var widths = new int[headers.Length];
+        for (var i = 0; i < headers.Length; i++)
+        {
+            widths[i] = Math.Max(headers[i].Length, values[i].Length);
+        }
+
+        var sb = new System.Text.StringBuilder();
+        AppendRow(sb, headers, widths);
+        for (var i = 0; i < widths.Length; i++)
+        {
+            if (i > 0)
+                sb.Append('┼');
+            sb.Append(new string('─', widths[i] + 2));
+        }
+
+        sb.Append('\n');
+        AppendRow(sb, values, widths);
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Appends one padded, '│'-separated table row terminated by a newline.
+    /// </summary>
+    private static void AppendRow(System.Text.StringBuilder sb, string[] cells, int[] widths)
+    {
+        for (var i = 0; i < cells.Length; i++)
+        {
+            if (i > 0)
+                sb.Append('│');
+            sb.Append(' ');
+            sb.Append(cells[i].PadRight(widths[i]));
+            sb.Append(' ');
+        }
+
+        sb.Append('\n');
+    }
+
     // ── Private helpers ───────────────────────────────────────────────────────
 
     /// <summary>
@@ -1081,6 +1825,64 @@ public sealed class HttpRestProvider
             && node is YamlScalarNode scalar
             ? scalar.Value ?? string.Empty
             : string.Empty;
+    }
+
+    /// <summary>
+    /// Binds <c>expect.json</c> into its entries, in declaration order (#558).
+    /// </summary>
+    /// <remarks>
+    /// A scalar value is the equality form and keeps its literal text, so a bare <c>2</c>
+    /// is the text <c>2</c> and a bare <c>True</c> the text <c>True</c>.
+    /// <c>{ exists: true|false }</c> is the existence form. Every other value — a YAML null,
+    /// a sequence, a mapping with any other key or a non-boolean <c>exists</c> — binds with
+    /// neither member set, and a <c>json</c> that is not a mapping binds to no entries;
+    /// <see cref="Validate"/> refuses both. On the engine's own path the schema has already
+    /// refused every one of those shapes.
+    /// </remarks>
+    private static IReadOnlyList<HttpJsonAssertion> BindJsonAssertions(YamlNode node)
+    {
+        if (node is not YamlMappingNode map)
+            return Array.Empty<HttpJsonAssertion>();
+
+        var entries = new List<HttpJsonAssertion>(map.Children.Count);
+        foreach (var (k, v) in map.Children)
+        {
+            var path = k is YamlScalarNode ks ? ks.Value ?? string.Empty : string.Empty;
+            switch (v)
+            {
+                case YamlScalarNode vs when !IsYamlNull(vs):
+                    entries.Add(new HttpJsonAssertion(path, vs.Value ?? string.Empty, null));
+                    break;
+                case YamlMappingNode vm
+                    when vm.Children.Count == 1
+                         && vm.Children.TryGetValue(new YamlScalarNode("exists"), out var existsNode)
+                         && existsNode is YamlScalarNode existsScalar
+                         && bool.TryParse(existsScalar.Value, out var exists):
+                    entries.Add(new HttpJsonAssertion(path, null, exists));
+                    break;
+                default:
+                    entries.Add(new HttpJsonAssertion(path, null, null));
+                    break;
+            }
+        }
+
+        return entries;
+    }
+
+    /// <summary>
+    /// True for a plain (unquoted) YAML scalar that is a null token: empty, <c>~</c>, or
+    /// <c>null</c> in any of its three spellings.
+    /// </summary>
+    /// <remarks>
+    /// A quoted scalar is never null — quoting is how an author writes the TEXT <c>null</c>
+    /// (which is how a JSON null is asserted) or an empty string.
+    /// </remarks>
+    private static bool IsYamlNull(YamlScalarNode scalar)
+    {
+        if (scalar.Style is not (YamlDotNet.Core.ScalarStyle.Plain or YamlDotNet.Core.ScalarStyle.Any))
+            return false;
+
+        return scalar.Value is null or "" or "~" or "null" or "Null" or "NULL";
     }
 
     /// <summary>

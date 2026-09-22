@@ -1,0 +1,14 @@
+# expected-instance-location: /steps/0/expect/json
+# expected-keyword: minProperties
+#
+# Response-body assertions (#558): an empty 'expect.json' map asserts nothing and is refused.
+metadata:
+  name: rejected-expect-json-empty-map-http-rest
+steps:
+  - id: get-order
+    type: http.rest
+    target: orders-api
+    method: GET
+    path: /orders/1
+    expect:
+      json: {}
