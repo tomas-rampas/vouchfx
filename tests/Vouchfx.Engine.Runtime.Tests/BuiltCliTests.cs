@@ -53,7 +53,11 @@ public sealed class BuiltCliTests
     {
         var inside = Path.Combine(BuiltCli.ResolveRepoRoot(), "tests");
 
-        Assert.Equal("tests", BuiltCli.RelativeToRepoRoot(inside));
+        // Fixed diagnostic, not Assert.Equal: on failure xUnit prints the actual value, which here
+        // would be the absolute repository path this helper exists to keep out of a public log.
+        Assert.True(
+            string.Equals("tests", BuiltCli.RelativeToRepoRoot(inside), StringComparison.Ordinal),
+            "a path inside the repository did not render as its repository-relative form");
     }
 
     [Fact]
@@ -63,11 +67,15 @@ public sealed class BuiltCliTests
 
         var rendered = BuiltCli.RelativeToRepoRoot(outside);
 
-        Assert.False(Path.IsPathRooted(rendered), rendered);
-        Assert.DoesNotContain(
-            BuiltCli.ResolveRepoRoot().Replace('\\', '/'),
-            rendered,
-            StringComparison.Ordinal);
-        Assert.EndsWith("vouchfx-drill-4711/deployment.e2e.yaml", rendered, StringComparison.Ordinal);
+        // Fixed diagnostics throughout: every value in play here is a real host path, and the
+        // failure mode being guarded is exactly "the rendered text is one", so no assertion may
+        // print it.
+        Assert.True(!Path.IsPathRooted(rendered), "a path outside the repository rendered as a rooted path");
+        Assert.True(
+            !rendered.Contains(BuiltCli.ResolveRepoRoot().Replace('\\', '/'), StringComparison.Ordinal),
+            "a path outside the repository spelled the repository root");
+        Assert.True(
+            rendered.EndsWith("vouchfx-drill-4711/deployment.e2e.yaml", StringComparison.Ordinal),
+            "the rendered path lost the probed path's own tail");
     }
 }

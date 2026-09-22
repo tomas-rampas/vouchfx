@@ -1174,10 +1174,16 @@ def test_unreadable_changelog_names_the_error_type_not_the_path(
     with pytest.raises(check_site.CheckFailed) as excinfo:
         check_site.check_changelog_single_unreleased_heading(site_dir)
 
+    # Fixed diagnostics, never a bare assert over `message` or `tmp_path`: pytest's assertion
+    # introspection would print both into the public test log, which is the boundary this row
+    # exists to protect.
     message = str(excinfo.value)
-    assert "FileNotFoundError" in message
-    assert "CHANGELOG.md" in message
-    assert str(tmp_path) not in message
+    if "FileNotFoundError" not in message:
+        pytest.fail("read-error message does not name the exception type")
+    if "CHANGELOG.md" not in message:
+        pytest.fail("read-error message does not name CHANGELOG.md")
+    if str(tmp_path) in message:
+        pytest.fail("read-error message leaked the absolute path")
 
 
 def test_real_repository_changelog_passes(check_site, site_dir: Path) -> None:
