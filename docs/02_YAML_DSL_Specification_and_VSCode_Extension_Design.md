@@ -670,6 +670,8 @@ Publishes one UTF-8 message to a Redis Stream via `XADD`, carried under the fami
 
 **The `payload`-field convention (fixed in v1, not configurable).** The message is written as a single stream field literally named `payload` — this is the field name `mq-expect.redis` reads back. A field name mismatch is only possible if you hand-write a different producer against the same stream; a configurable field name is a possible additive v1.x extension.
 
+**Latency contract (#492).** A declared `timeout:` is still honoured as a verdict — a step that overruns it resolves to `Inconclusive`, never `Fail` — but StackExchange.Redis exposes no `CancellationToken` overload on the calls this step makes, so the step is not cut early on the token; it can take up to the client's own `ConnectTimeout`/`SyncTimeout` defaults (5 seconds each, pinned StackExchange.Redis 2.13.1) to actually conclude.
+
 | Field | Required | Meaning |
 |---|---|---|
 | target | Yes | Logical name of the redis dependency to publish to, as declared under environment.dependencies. |
@@ -767,6 +769,8 @@ Asserts that a message matching the declared criteria is present on a Redis Stre
 **Scan bound.** If a stream retains more than 10 000 entries, only the first 10 000 (oldest first, from the start of the stream) are inspected on a given attempt — an entry beyond that offset is not found. MAXLEN-trim the stream, or keep the asserted entry within the first 10 000, if this matters for your scenario.
 
 **The `payload`-field convention (fixed in v1, not configurable).** Only entries carrying a field literally named `payload` are matched — the exact convention `mq-publish.redis` writes. An entry produced under any other field name is silently excluded from matching; on a Fail, the observation reports `scanned` (total entries inspected) and `lackingPayloadField` (how many of those lacked the field), so a SUT that writes under a different field name has a concrete diagnostic rather than a bare `matched:false`.
+
+**Latency contract (#492).** A declared `timeout:` is still honoured as a verdict — a step that overruns it resolves to `Inconclusive`, never `Fail` — but StackExchange.Redis exposes no `CancellationToken` overload on the calls this step makes, so a single scan attempt is not cut early on the token; it can take up to the client's own `ConnectTimeout`/`SyncTimeout` defaults (5 seconds each, pinned StackExchange.Redis 2.13.1) to actually conclude, independent of the `verifyMode: RETRY` polling interval.
 
 | Field | Required | Meaning |
 |---|---|---|
