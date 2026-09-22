@@ -4,11 +4,10 @@
 // directory is not a repository, the --changed-since ref is bad, a git call outlasts the
 // runner's per-call process budget, or its output capture fails. The CLI catches this at the
 // `run` boundary and maps it to a usage error (exit 2) with the message printed. Exit 2 is
-// retained for every one of those causes, and that is deliberate rather than a claim that a
-// wedged git or a broken capture pipe is the user's input mistake: whether a failure of the
-// selection infrastructure deserves an exit code of its own is an open question, filed as #521. It
-// used to be attributed here to issues #480 and #466-B, and neither reaches it — see the remarks on
-// GitChangeSet.RunGit, which carry that argument in full.
+// retained for every one of those causes — including a wedged git or a broken capture pipe,
+// neither of which is the user's input mistake in the ordinary sense. That is a decision, not an
+// oversight: blueprint §16.4 records the reasoning (issue #521) and the boundary against the
+// graceful --shutdown-on-stdin-eof stop during selection, which exits 4 instead (issue #502).
 
 namespace Vouchfx.Cli.Selection;
 
