@@ -70,5 +70,37 @@
          (Vouchfx.Sdk, Vouchfx.Sdk.Testing) keep theirs, because for a library the XML is
          part of the package contract. Do not "tidy" that opt-out away. -->
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
+
+    <!-- #550: build.yml's unit-test step starts one test host per project (`dotnet test
+         vouchfx.sln`), and each host's trx name must carry the PROJECT, not just a prefix
+         and a second-resolution timestamp, so two hosts finishing in the same second
+         cannot silently drop one host's results. See that workflow's own comment on the
+         `Unit tests` step for the measured collision mode this replaces and the run that
+         confirmed the gap was still theoretical, not yet triggered.
+
+         Set HERE, once, rather than as a `dotnet test` logger argument on the command line
+         in the workflow: `dotnet test <solution>` forwards a CLI logger argument to every
+         project as an MSBuild GLOBAL property (effectively `-p:VSTestLogger=…`), and a
+         global property set on the command line always wins over a PropertyGroup value a
+         project — or anything it imports — sets, so a CLI flag would apply the identical
+         literal prefix to every host again and undo the whole point. A PropertyGroup value
+         set here is exactly what a CLI flag cannot express: one that expands
+         $(MSBuildProjectName) DIFFERENTLY per project.
+
+         Set at the REPO ROOT, not only in tests/Directory.Build.props, for the same
+         reason GenerateDocumentationFile is set here rather than per project above: it is
+         what reaches examples/*.Tests as well as tests/*.Tests with no second copy to
+         fall out of step — examples/Directory.Build.props already imports this file. It
+         is inert on every non-test project (the VSTest target that reads it never runs
+         there), so setting it once for the whole tree costs nothing.
+
+         %3b is the MSBuild-property-safe encoding of the literal `;` the trx logger's own
+         `trx;Param=value` argument syntax needs: an unescaped `;` here would instead be
+         read as a second, separate list entry by the MSBuild item evaluation the SDK's
+         test targets pass this property through, splitting "trx" and "LogFilePrefix=…"
+         apart. LogFilePrefix, not LogFileName, keeps the per-run timestamp the original
+         #529 choice measured as load-bearing (see build.yml) — this only adds the project
+         component that timestamp never carried. -->
+    <VSTestLogger>trx%3bLogFilePrefix=unit_$(MSBuildProjectName)</VSTestLogger>
   </PropertyGroup>
 </Project>

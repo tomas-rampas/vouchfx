@@ -179,7 +179,7 @@ public sealed class KafkaSecurityConfirmationPreflightTests
     [Fact]
     public async Task AbsentClientCertificate_PlainVouchfxRunAndValidate_BothRefuseWithTheInconclusiveCode()
     {
-        var cli = Drill.ResolveCliAssembly();
+        var cli = BuiltCli.Resolve();
         var suiteDirectory = Drill.MaterialiseSuiteDirectory(
             "absent-client-cert-cli", securedEndpoint: "9093", keystoreTarget: Drill.CheckedKeystorePath);
         File.Delete(Path.Combine(suiteDirectory, TestCertificateAuthority.ClientCertFileName));

@@ -141,8 +141,8 @@ public sealed class CacheAssertRedisRedactionTests
 
     /// <summary>
     /// A <c>password=</c> value that CONTAINS A SPACE is scrubbed in full; the regex
-    /// value-class is whitespace-tolerant (<c>[^,;]+</c>) and stops only at a comma or
-    /// semicolon delimiter, not at the first space inside the secret.
+    /// value-class is whitespace-tolerant (<c>[^,]+</c>) and stops only at a comma
+    /// delimiter, not at the first space inside the secret.
     /// </summary>
     [Fact]
     public async Task RedactCredentials_PasswordWithSpaces_IsFullyScrubbed()
@@ -244,5 +244,71 @@ public sealed class CacheAssertRedisRedactionTests
         // Must emit "user=***" — not "password=***" — so the key label is preserved.
         Assert.Contains("user=***", result, StringComparison.Ordinal);
         Assert.DoesNotContain("password=***", result, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A <c>password=</c> value CONTAINING A LITERAL ';' is redacted in full (#553).
+    /// StackExchange.Redis's <c>ConfigurationOptions</c> parser delimits options on ','
+    /// only, so ';' is not special to it and can legally appear inside a password value.
+    /// The old value-class <c>[^,;]+</c> wrongly treated ';' as a second delimiter and
+    /// stopped the match at the first one, leaving the remainder of the password visible.
+    /// </summary>
+    [Fact]
+    public async Task RedactCredentials_PasswordContainingSemicolon_IsFullyScrubbed()
+    {
+        const string connStr = "not-the-message";
+        const string craftedMessage = "auth error: password=sup3r;secret;pw was rejected";
+
+        var provider = new CacheAssertRedisProvider();
+        var model = new CacheAssertRedisModel(
+            Target: "cache",
+            Key: "k",
+            Operation: RedisOp.Get,
+            Field: null,
+            Expect: new RedisExpectation(Value: "v", Exists: null, Length: null));
+        var fragment = provider.Emit(model, new StubCompileContext("redact-semicolon"));
+
+        var usings = string.Join("\n", fragment.RequiredUsings.Select(u => $"using {u};"));
+        var helpers = string.Join("\n", fragment.RequiredHelpers);
+        const string scriptBody =
+            "Vars[\"__redact_result__\"] = CacheAssertRedis_Helpers.RedactCredentials(" +
+            "Vars[\"__conn_str__\"] as string ?? string.Empty, " +
+            "Vars[\"__crafted_msg__\"] as string ?? string.Empty);";
+        var csx = $"{usings}\n{helpers}\n{scriptBody}";
+
+        var compiled = RoslynScriptCompiler.CompileOnce(
+            csx,
+            additionalReferencePaths: new[]
+            {
+                typeof(StackExchange.Redis.ConnectionMultiplexer).Assembly.Location,
+                typeof(System.Text.Json.JsonSerializer).Assembly.Location,
+                typeof(System.Globalization.CultureInfo).Assembly.Location,
+                typeof(System.Text.RegularExpressions.Regex).Assembly.Location,
+            });
+
+        var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["__conn_str__"] = connStr,
+            ["__crafted_msg__"] = craftedMessage,
+        };
+        var globals = new ScriptGlobalVariables(vars);
+
+        await RoslynScriptCompiler.RunIsolatedAsync(compiled, globals);
+
+        var result = Assert.IsType<string>(vars["__redact_result__"]);
+        // The FULL secret — including the embedded semicolons — must be absent from the
+        // output; the old ';'-bounded regex would leave "secret;pw" exposed.
+        // Boolean assertions with fixed diagnostics, never Assert.Contains/DoesNotContain on
+        // `result`: xUnit prints the actual string on failure, which here would publish the
+        // very password this test exists to keep out of a log.
+        Assert.True(
+            !result.Contains("sup3r;secret;pw", StringComparison.Ordinal),
+            "result leaked the full password");
+        Assert.True(
+            !result.Contains("secret;pw", StringComparison.Ordinal),
+            "result leaked the password's remainder past the first ';'");
+        Assert.True(
+            result.Contains("password=***", StringComparison.Ordinal),
+            "result does not carry the redaction marker");
     }
 }

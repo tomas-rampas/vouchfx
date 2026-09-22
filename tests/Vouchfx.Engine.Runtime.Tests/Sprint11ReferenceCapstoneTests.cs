@@ -95,7 +95,7 @@ public sealed class Sprint11ReferenceCapstoneTests
     {
         var assemblyDir = Path.GetDirectoryName(
             typeof(Sprint11ReferenceCapstoneTests).Assembly.Location)!;
-        // Walk up: net8.0 → Release → bin → Vouchfx.Engine.Runtime.Tests → tests → repo root
+        // Walk up: net8.0 → <configuration> → bin → Vouchfx.Engine.Runtime.Tests → tests → repo root
         return Path.GetFullPath(Path.Combine(assemblyDir, "..", "..", "..", "..", ".."));
     }
 
@@ -104,14 +104,6 @@ public sealed class Sprint11ReferenceCapstoneTests
 
     private static string ReferenceSeedBaseDir =>
         Path.Combine(ResolveRepoRoot(), "examples", "reference");
-
-    /// <summary>
-    /// The built CLI DLL path: src/Cli/Vouchfx.Cli/bin/Release/net8.0/vouchfx.dll.
-    /// </summary>
-    private static string CliDllPath =>
-        Path.Combine(
-            ResolveRepoRoot(),
-            "src", "Cli", "Vouchfx.Cli", "bin", "Release", "net8.0", "vouchfx.dll");
 
     // ── Test A: engine API ─────────────────────────────────────────────────────────
 
@@ -127,7 +119,10 @@ public sealed class Sprint11ReferenceCapstoneTests
     {
         Assert.True(
             File.Exists(ReferenceYamlPath),
-            $"Reference YAML not found: {ReferenceYamlPath}");
+            // Relative to the repository root (BuiltCli.RelativeToRepoRoot, #552): this capstone
+            // runs on the docker lane, whose CI job logs are public, and an absolute path here
+            // would publish the layout of whatever host ran the job (#498 class).
+            $"Reference YAML not found: {BuiltCli.RelativeToRepoRoot(ReferenceYamlPath)}");
 
         var yaml = await File.ReadAllTextAsync(ReferenceYamlPath);
 
@@ -204,12 +199,12 @@ public sealed class Sprint11ReferenceCapstoneTests
     {
         Assert.True(
             File.Exists(ReferenceYamlPath),
-            $"Reference YAML not found: {ReferenceYamlPath}");
+            // Relative to the repository root (BuiltCli.RelativeToRepoRoot, #552): this capstone
+            // runs on the docker lane, whose CI job logs are public, and an absolute path here
+            // would publish the layout of whatever host ran the job (#498 class).
+            $"Reference YAML not found: {BuiltCli.RelativeToRepoRoot(ReferenceYamlPath)}");
 
-        Assert.True(
-            File.Exists(CliDllPath),
-            $"CLI DLL not found: {CliDllPath}\n" +
-            "Build the solution in Release mode first: dotnet build vouchfx.sln -c Release");
+        var cliDllPath = BuiltCli.Resolve();
 
         var tmpDir = Path.Combine(
             Path.GetTempPath(), "vouchfx-s11-cli-" + Guid.NewGuid().ToString("N"));
@@ -232,11 +227,6 @@ public sealed class Sprint11ReferenceCapstoneTests
             var psi = new ProcessStartInfo
             {
                 FileName = "dotnet",
-                Arguments =
-                    $"\"{CliDllPath}\" run \"{ReferenceSeedBaseDir}\"" +
-                    $" --events \"{eventsPath}\"" +
-                    $" --junit \"{junitPath}\"" +
-                    $" --html \"{htmlPath}\"",
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
@@ -245,6 +235,22 @@ public sealed class Sprint11ReferenceCapstoneTests
                 // resolve relative to the scenario file's location.
                 WorkingDirectory = ReferenceSeedBaseDir,
             };
+
+            // ArgumentList, not a spliced Arguments string (#554): matches every other caller of
+            // the built CLI in this project (KafkaSecurityConfirmationDrillDockerTests.RunCliAsync,
+            // KafkaAuthorisationDrillDockerTests.RunCliAsync and
+            // ThreeRequirementsSuiteDockerTests.RunCliAsync) and lets the platform quote each
+            // element itself, which removes the class of bug where a path containing a space or a
+            // quote changes the argument count.
+            psi.ArgumentList.Add(cliDllPath);
+            psi.ArgumentList.Add("run");
+            psi.ArgumentList.Add(ReferenceSeedBaseDir);
+            psi.ArgumentList.Add("--events");
+            psi.ArgumentList.Add(eventsPath);
+            psi.ArgumentList.Add("--junit");
+            psi.ArgumentList.Add(junitPath);
+            psi.ArgumentList.Add("--html");
+            psi.ArgumentList.Add(htmlPath);
 
             // Pass the secret env var into the child process.
             psi.Environment[SecretEnvVarName] = SecretValue;
@@ -302,9 +308,19 @@ public sealed class Sprint11ReferenceCapstoneTests
             Assert.Equal(0, proc.ExitCode);
 
             // ── 2. All three artifact files created and non-empty ─────────────────
-            Assert.True(File.Exists(eventsPath), $"Events file not created: {eventsPath}");
-            Assert.True(File.Exists(junitPath), $"JUnit file not created: {junitPath}");
-            Assert.True(File.Exists(htmlPath), $"HTML file not created: {htmlPath}");
+            // Each path is printed relative to the repository root (BuiltCli.RelativeToRepoRoot,
+            // #552), same reason as ReferenceYamlPath above: these fall under the system temp
+            // directory, not the repository, but the helper renders that just as safely (see its
+            // remarks) — never the host's own absolute prefix.
+            Assert.True(
+                File.Exists(eventsPath),
+                $"Events file not created: {BuiltCli.RelativeToRepoRoot(eventsPath)}");
+            Assert.True(
+                File.Exists(junitPath),
+                $"JUnit file not created: {BuiltCli.RelativeToRepoRoot(junitPath)}");
+            Assert.True(
+                File.Exists(htmlPath),
+                $"HTML file not created: {BuiltCli.RelativeToRepoRoot(htmlPath)}");
 
             var eventsContent = await File.ReadAllTextAsync(eventsPath);
             var junitContent = await File.ReadAllTextAsync(junitPath);

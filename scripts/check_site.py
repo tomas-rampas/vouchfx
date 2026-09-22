@@ -100,6 +100,19 @@ diagram rendering fix (issue #311 / PR #320):
 The landing page's `<title>` is also asserted ≤70 characters, folded into
 `check_landing_page` alongside its pre-existing landing-marker check.
 
+One further check, unrelated to REQ-007 and the mermaid fix, guards a
+structural regression in CHANGELOG.md itself (issue #536):
+
+  (q) CHANGELOG.md contains exactly one `## [Unreleased]` heading — see
+      `check_changelog_single_unreleased_heading`. A shipped pre-release's
+      own delivered-capability section, left titled `## [Unreleased]`
+      instead of retitled to that release's `## [x.y.z] — YYYY-MM-DD`
+      heading when it actually shipped, silently reopens "released" work
+      as if it were still unreleased. This reads CHANGELOG.md's own source
+      text directly (it is a Markdown-source property, not something the
+      built HTML preserves legibly), so it runs regardless of whether
+      `site_dir` is even a real build.
+
 Exit 0: the build is safe to publish. Exit 1: a check failed; the printed
 message says which one and why it matters, so a CI failure is actionable
 without re-deriving the reasoning here.
@@ -179,6 +192,7 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent
 DOCS_DIR = REPO_ROOT / "docs"
+CHANGELOG_PATH = REPO_ROOT / "CHANGELOG.md"
 
 # Shared, first-party helpers under scripts/site_hooks/ — not third-party
 # dependencies, just internal code reuse so the two things that must never
@@ -1987,6 +2001,53 @@ def check_pinned_mermaid_url_present(site_dir: Path) -> None:
         )
 
 
+# --- CHANGELOG.md structural guard (issue #536) -----------------------------
+
+_RE_UNRELEASED_HEADING = re.compile(r"^## \[Unreleased\]\s*$", re.MULTILINE)
+
+
+def check_changelog_single_unreleased_heading(_site_dir: Path) -> None:
+    """CHANGELOG.md must contain exactly one `## [Unreleased]` heading.
+
+    Issue #536: an earlier edit left the file with a SECOND, trailing
+    `## [Unreleased]` heading — a shipped pre-release's own
+    delivered-capability section, never retitled to that release's own
+    `## [x.y.z] — YYYY-MM-DD` heading when the pre-release actually
+    shipped. A second `## [Unreleased]` heading is not merely untidy: it
+    silently reopens already-released work as if it were still
+    unreleased, and anything that walks the file by `##` boundaries (a
+    changelog reader, a future edit inserting a genuine new entry above
+    the live one) can no longer tell which "Unreleased" is live.
+
+    Reads CHANGELOG.md's own source text directly, not the built site —
+    the heading is a Markdown-source property the build pipeline is free
+    to render however it likes (an `<h2>`, a slug, ...), so this check
+    runs regardless of whether `_site_dir` is even a real build.
+    """
+    try:
+        text = CHANGELOG_PATH.read_text(encoding="utf-8")
+    except OSError as exc:
+        # Type and errno only: str(exc) for FileNotFoundError/PermissionError carries the
+        # absolute filename, and main() prints CheckFailed into the public publication log.
+        errno_label = exc.errno if exc.errno is not None else "n/a"
+        raise CheckFailed(
+            f"could not read {CHANGELOG_PATH.name} ({type(exc).__name__}, errno {errno_label})"
+        ) from exc
+
+    lines_matched = [i + 1 for i, line in enumerate(text.splitlines()) if _RE_UNRELEASED_HEADING.match(line)]
+    if len(lines_matched) != 1:
+        raise CheckFailed(
+            f"{CHANGELOG_PATH.name} contains {len(lines_matched)} "
+            f"'## [Unreleased]' heading(s) (line(s): {lines_matched or 'none'}); expected "
+            "exactly one. More than one usually means a shipped pre-release's own "
+            "delivered-capability section was never retitled to that release's own "
+            "'## [x.y.z] — YYYY-MM-DD' heading when it shipped (issue #536) — fold its "
+            "'###' subsections into that heading instead of leaving a second "
+            "'Unreleased' behind. Zero means the live 'Unreleased' section itself is "
+            "missing or was misspelled/reformatted."
+        )
+
+
 CHECKS = (
     check_snippet_allowlist,
     check_landing_page,
@@ -2006,6 +2067,7 @@ CHECKS = (
     check_mermaid_diagram_rendered,
     check_no_unpkg_mermaid_reference,
     check_pinned_mermaid_url_present,
+    check_changelog_single_unreleased_heading,
 )
 
 

@@ -71,13 +71,13 @@ public sealed class Sprint11ReferenceCompileTests
     // ── Resolve the example file path from the test assembly location ──────────────
     // The example file lives at examples/reference/reference.e2e.yaml relative to the
     // repo root.  We locate the repo root by walking up from the test assembly's output
-    // directory (bin/Release/net8.0 under tests/Vouchfx.Engine.Runtime.Tests/).
+    // directory (bin/<configuration>/net8.0 under tests/Vouchfx.Engine.Runtime.Tests/).
     // This mirrors the pattern used by M2EndToEndTests and the Sprint 7 capstone.
     private static string ResolveRepoRoot()
     {
         var assemblyDir = Path.GetDirectoryName(
             typeof(Sprint11ReferenceCompileTests).Assembly.Location)!;
-        // Walk up: net8.0 → Release → bin → Vouchfx.Engine.Runtime.Tests → tests → repo root
+        // Walk up: net8.0 → <configuration> → bin → Vouchfx.Engine.Runtime.Tests → tests → repo root
         return Path.GetFullPath(Path.Combine(assemblyDir, "..", "..", "..", "..", ".."));
     }
 

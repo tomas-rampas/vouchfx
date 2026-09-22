@@ -113,6 +113,66 @@ jobs:
       # Aspire integration tests carry that trait; they run in the `integration`
       # job instead.  Plain unit tests have no trait and run here.
       # --collect:"XPlat Code Coverage" writes Cobertura XML via coverlet.
+      #
+      # A trx logger is configured (VSTestLogger, repo-root Directory.Build.props — see
+      # #550 below for why it lives there and not on this command line) for a test that
+      # has something to say when it PASSES (#529).
+      # SystemProcessRunnerTests.TheGuardsAnchors_StayInTheOrderARealChildProduces
+      # measures the skew between Process.StartTime and a pid file's write time and
+      # writes it to ITestOutputHelper; the console logger prints captured output for
+      # FAILED tests only, so without a trx that figure existed nowhere on this lane —
+      # which is the only lane that can report it, the maintainer developing on Windows.
+      # The trx lands in TestResults/ and therefore inside the coverage artifact the
+      # step below already uploads with if: always().  Not console;verbosity=detailed,
+      # which would print a line for every test in the solution.
+      #
+      # LogFilePrefix, NOT LogFileName, and the difference is load-bearing here.  A
+      # fixed LogFileName is one path per RUN, while `dotnet test <solution>` starts one
+      # test host per project — 37 of them overlapping on run 33904509538, per the note
+      # in the integration job below — so every assembly would write the same file and
+      # the last to finish would win.  MEASURED locally over two projects: with
+      # LogFileName=unit.trx the results directory held ONE trx carrying only the second
+      # project's 57 tests, the first project's 250 gone; with LogFilePrefix=unit it held
+      # two, unit_net8.0_<timestamp>.trx apiece, 250 and 57.
+      #
+      # #550: LogFilePrefix alone still carried no PROJECT component, only a
+      # second-resolution timestamp, so two hosts starting in the same second could still
+      # collide — inferred, not measured, at the time this comment first shipped. Checked
+      # rather than assumed on PR #546's own first CI run (job 106123840813): all 37
+      # `Results File:` lines it printed name 37 DISTINCT paths, so the gap stayed
+      # theoretical there too — including for Vouchfx.Cli.Tests, whose own line
+      # (unit_net8.0_20260920181339.trx, identified by the Passed! summary naming
+      # Vouchfx.Cli.Tests.dll seven milliseconds later in the same host's output) is the
+      # one loss that would have cost anything: the only trx carrying a figure (#529's
+      # skew) that exists nowhere else, every other trx here duplicating what the job log
+      # already shows. Theoretical is still a live bug, so the trx name now carries the
+      # PROJECT too — see VSTestLogger in the repo-root Directory.Build.props, which is
+      # also why this step no longer passes --logger itself (below): a CLI --logger flag
+      # is forwarded to every project as an MSBuild GLOBAL property, which always beats a
+      # PropertyGroup value, so it would apply the same literal prefix to every host again
+      # and undo the fix. $(MSBuildProjectName) is unique per project by construction,
+      # which turns "still theoretical" into "cannot happen" rather than merely extending
+      # how long it stays unseen.
+      #
+      # AND IT DOES NOT CONTRADICT #498, WHICH THIS BRANCH APPLIES TWO COMMITS EARLIER.
+      # BuiltCli.cs declines to print an absolute path into an assertion because CI logs
+      # are public; a trx carries runUser and computerName, so the question is fair.  The
+      # answer is that they are different values.  #498 is about the MAINTAINER's host
+      # layout — a developer's account name and directory tree, reached through
+      # Path.GetTempPath() on a machine that is not disposable.  Every `runs-on` in this
+      # file is ubuntu-latest (seven of seven; the "self-hosted" strings here are about
+      # the coverage badge having no third-party service, and one is about a hypothetical
+      # minimal image), so on this lane those attributes are the ephemeral GitHub runner
+      # identity — `runner` on an `fv-az…` host that ceases to exist when the job ends.
+      # A green run's TRX carries no repository paths; a failing one can carry source
+      # paths in PDB-resolved stack traces, which is the same exposure the job log
+      # already has and is not what #498 restricts.  The ARTIFACT is not path-free
+      # either way and never was: the Cobertura XML this step already collected carries
+      # a <sources> element with an absolute base path on every run, green included.
+      # That is `/home/runner/work/...` on a hosted runner — the same non-identifying
+      # ephemeral tree — so the conclusion holds, but the trx is not what introduced
+      # paths to this artifact and removing it would not make the artifact path-free.  If a self-hosted runner is ever added here, this
+      # paragraph stops being true and the flag should be reconsidered with it.
       - name: Unit tests (requires!=docker)
         run: >
           dotnet test vouchfx.sln

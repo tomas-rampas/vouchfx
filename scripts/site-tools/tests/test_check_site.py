@@ -130,6 +130,18 @@ proves absence but never presence)
     failing; and more than one bundle file failing — the last two mirror
     pin_mermaid.py's own two build-time fail-closed branches.
 
+check_changelog_single_unreleased_heading (issue #536)
+    Covers exactly one `## [Unreleased]` heading passing; a second,
+    trailing one (the exact regression #536 reported — a shipped
+    pre-release's own delivered-capability section never retitled to a
+    version heading) failing and naming the issue; zero headings (the live
+    section itself missing, misspelled or reformatted) also failing rather
+    than trivially satisfying "at most one"; and, unlike every other test
+    in this file, one test drives the real function against this
+    repository's own real, unmocked CHANGELOG.md — the file #536 was
+    actually filed against — via the `changelog_path` fixture's sibling
+    that leaves check_site.CHANGELOG_PATH at its real default.
+
 Run (from the repo root):
     python -m pytest scripts/site-tools/tests -q
 or (cwd scripts/site-tools, where [tool.pytest.ini_options] pins testpaths):
@@ -1094,3 +1106,90 @@ def test_multiple_bundle_files_fails(check_site, site_dir: Path) -> None:
 
     with pytest.raises(check_site.CheckFailed, match=r"found 2"):
         check_site.check_pinned_mermaid_url_present(site_dir)
+
+
+# ---------------------------------------------------------------------------
+# check_changelog_single_unreleased_heading — issue #536
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def changelog_path(monkeypatch: pytest.MonkeyPatch, check_site, tmp_path: Path) -> Path:
+    """Point check_site.CHANGELOG_PATH at a throwaway file for this test,
+    the same monkeypatch-the-module-constant approach `site_url_prefix`
+    uses for `_read_site_url_prefix` above — the real function/constant is
+    exercised unchanged, only its source of truth moves out of the real
+    repository root and into an isolated tmp_path file per test."""
+    path = tmp_path / "CHANGELOG.md"
+    monkeypatch.setattr(check_site, "CHANGELOG_PATH", path)
+    return path
+
+
+def test_single_unreleased_heading_passes(check_site, changelog_path: Path, site_dir: Path) -> None:
+    changelog_path.write_text(
+        "# Changelog\n\n## [Unreleased]\n\n### Added\n\n- a thing\n\n"
+        "## [1.0.0-alpha.1] — 2026-07-08\n\nFirst release.\n\n### Added\n\n- b thing\n",
+        encoding="utf-8",
+    )
+
+    check_site.check_changelog_single_unreleased_heading(site_dir)  # must not raise
+
+
+def test_duplicate_unreleased_heading_fails(check_site, changelog_path: Path, site_dir: Path) -> None:
+    """The exact regression issue #536 reported: a shipped pre-release's
+    own delivered-capability section left titled `## [Unreleased]` instead
+    of being retitled to that release's own version heading."""
+    changelog_path.write_text(
+        "# Changelog\n\n## [Unreleased]\n\n### Added\n\n- a thing\n\n"
+        "## [1.0.0-alpha.1] — 2026-07-08\n\nFirst release.\n\n"
+        "## [Unreleased]\n\n### Added\n\n- b thing\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(check_site.CheckFailed, match=r"2 '## \[Unreleased\]' heading") as excinfo:
+        check_site.check_changelog_single_unreleased_heading(site_dir)
+    assert "#536" in str(excinfo.value)
+
+
+def test_zero_unreleased_headings_fails(check_site, changelog_path: Path, site_dir: Path) -> None:
+    """The live `Unreleased` heading itself missing, misspelled, or
+    reformatted (e.g. a stray extra space, wrong bracket) is just as much
+    a structural regression as a duplicate — this must fail too, not
+    silently pass because "at most one" was satisfied."""
+    changelog_path.write_text(
+        "# Changelog\n\n## [1.0.0-alpha.1] — 2026-07-08\n\nFirst release.\n\n### Added\n\n- a thing\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(check_site.CheckFailed, match=r"0 '## \[Unreleased\]' heading"):
+        check_site.check_changelog_single_unreleased_heading(site_dir)
+
+
+def test_unreadable_changelog_names_the_error_type_not_the_path(
+    check_site, changelog_path: Path, site_dir: Path, tmp_path: Path
+) -> None:
+    """The read-error branch must not carry the absolute path either: str(exc) for a
+    FileNotFoundError names the full filename, and main() prints CheckFailed into the
+    public publication log. `changelog_path` points at a file that was never written."""
+    with pytest.raises(check_site.CheckFailed) as excinfo:
+        check_site.check_changelog_single_unreleased_heading(site_dir)
+
+    # Fixed diagnostics, never a bare assert over `message` or `tmp_path`: pytest's assertion
+    # introspection would print both into the public test log, which is the boundary this row
+    # exists to protect.
+    message = str(excinfo.value)
+    if "FileNotFoundError" not in message:
+        pytest.fail("read-error message does not name the exception type")
+    if "CHANGELOG.md" not in message:
+        pytest.fail("read-error message does not name CHANGELOG.md")
+    if str(tmp_path) in message:
+        pytest.fail("read-error message leaked the absolute path")
+
+
+def test_real_repository_changelog_passes(check_site, site_dir: Path) -> None:
+    """Drives the real function against THIS repository's real, unmocked
+    CHANGELOG.md (check_site.CHANGELOG_PATH left at its real default,
+    unlike every other test in this class) — the same file issue #536 was
+    filed against, so this is the test that would have caught the original
+    regression directly."""
+    check_site.check_changelog_single_unreleased_heading(site_dir)  # must not raise
