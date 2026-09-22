@@ -2027,12 +2027,12 @@ def check_changelog_single_unreleased_heading(_site_dir: Path) -> None:
     try:
         text = CHANGELOG_PATH.read_text(encoding="utf-8")
     except OSError as exc:
-        raise CheckFailed(f"could not read {CHANGELOG_PATH} ({exc})") from exc
+        raise CheckFailed(f"could not read {CHANGELOG_PATH.name} ({exc})") from exc
 
     lines_matched = [i + 1 for i, line in enumerate(text.splitlines()) if _RE_UNRELEASED_HEADING.match(line)]
     if len(lines_matched) != 1:
         raise CheckFailed(
-            f"{CHANGELOG_PATH} contains {len(lines_matched)} "
+            f"{CHANGELOG_PATH.name} contains {len(lines_matched)} "
             f"'## [Unreleased]' heading(s) (line(s): {lines_matched or 'none'}); expected "
             "exactly one. More than one usually means a shipped pre-release's own "
             "delivered-capability section was never retitled to that release's own "

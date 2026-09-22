@@ -240,7 +240,14 @@ public sealed class MqExpectRabbitmqConnAwareRedactionTests
 
         // The DECODED password must be absent — Uri.UserInfo alone (escaped "p%40ss")
         // would never match this message.
-        Assert.DoesNotContain("p@ss", result, StringComparison.Ordinal);
-        Assert.Contains("***", result, StringComparison.Ordinal);
+        // Boolean assertions with fixed diagnostics, never Assert.Contains/DoesNotContain on
+        // `result`: xUnit prints the actual string on failure, which here would publish the
+        // very password this test exists to keep out of a log.
+        Assert.True(
+            !result.Contains("p@ss", StringComparison.Ordinal),
+            "result leaked the decoded password");
+        Assert.True(
+            result.Contains("***", StringComparison.Ordinal),
+            "result does not carry the redaction marker");
     }
 }

@@ -144,7 +144,11 @@ public sealed class ThreeRequirementsSuiteDockerTests
         {
             var suiteDirectory = Materialise(out var brokerHostPort);
             var yaml = File.ReadAllText(Path.Combine(suiteDirectory, "deployment.e2e.yaml"));
-            _output.WriteLine($"suite: {suiteDirectory} (broker host port {brokerHostPort})");
+            // Relative to the repository root (BuiltCli.RelativeToRepoRoot, #552): this suite runs
+            // on the docker lane, whose CI job logs are public, and an absolute path here would
+            // publish the layout of whatever host ran the job (#498 class).
+            _output.WriteLine(
+                $"suite: {BuiltCli.RelativeToRepoRoot(suiteDirectory)} (broker host port {brokerHostPort})");
 
             using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(8));
 

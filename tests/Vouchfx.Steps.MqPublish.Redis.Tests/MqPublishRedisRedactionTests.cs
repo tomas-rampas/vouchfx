@@ -137,9 +137,20 @@ public sealed class MqPublishRedisRedactionTests
 
         // The FULL secret, including the embedded semicolons, must be absent; the old
         // ';'-bounded regex left "secret;pw" exposed.
-        Assert.DoesNotContain("sup3r;secret;pw", result, StringComparison.Ordinal);
-        Assert.DoesNotContain("secret;pw", result, StringComparison.Ordinal);
-        Assert.DoesNotContain("sup3r", result, StringComparison.Ordinal);
-        Assert.Contains("password=***", result, StringComparison.Ordinal);
+        // Boolean assertions with fixed diagnostics, never Assert.Contains/DoesNotContain on
+        // `result`: xUnit prints the actual string on failure, which here would publish the
+        // very password this test exists to keep out of a log.
+        Assert.True(
+            !result.Contains("sup3r;secret;pw", StringComparison.Ordinal),
+            "result leaked the full password");
+        Assert.True(
+            !result.Contains("secret;pw", StringComparison.Ordinal),
+            "result leaked the password's remainder past the first ';'");
+        Assert.True(
+            !result.Contains("sup3r", StringComparison.Ordinal),
+            "result leaked the password's first segment");
+        Assert.True(
+            result.Contains("password=***", StringComparison.Ordinal),
+            "result does not carry the redaction marker");
     }
 }

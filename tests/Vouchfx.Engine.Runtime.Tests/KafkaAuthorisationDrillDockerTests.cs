@@ -690,7 +690,10 @@ public sealed class KafkaAuthorisationDrillDockerTests
         var suite = MaterialiseSuite(row, unauthorised);
         var suiteDirectory = Path.GetDirectoryName(suite)!;
         var yaml = File.ReadAllText(suite);
-        _output.WriteLine($"row '{row}': {suiteDirectory}");
+        // Relative to the repository root (BuiltCli.RelativeToRepoRoot, #552): this drill runs on
+        // the docker lane, whose CI job logs are public, and an absolute path here would publish
+        // the layout of whatever host ran the job (#498 class).
+        _output.WriteLine($"row '{row}': {BuiltCli.RelativeToRepoRoot(suiteDirectory)}");
 
         using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(6));
 
