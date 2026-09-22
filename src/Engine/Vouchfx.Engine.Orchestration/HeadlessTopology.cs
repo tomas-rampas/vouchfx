@@ -60,18 +60,68 @@ public sealed class HeadlessTopology : IAsyncDisposable
     // Config.json directory) — generic here deliberately, so HeadlessTopology stays unaware of
     // what a directory holds or which dependency type created it. Removed in DisposeAsync, AFTER
     // StopAsync returns, so deletion never races a container that still holds the mount.
-    private readonly IReadOnlyList<string> _tempDirectoriesToClean;
+    private IReadOnlyList<string> _tempDirectoriesToClean = Array.Empty<string>();
 
     private bool _disposed;
 
-    private HeadlessTopology(
-        DistributedApplication app,
-        DcpFlightRecorder? recorder,
-        IReadOnlyList<string> tempDirectoriesToClean)
+    private HeadlessTopology(DistributedApplication app, DcpFlightRecorder? recorder)
     {
         _app = app;
         _recorder = recorder;
+    }
+
+    /// <summary>
+    /// Hands this topology the LIVE list of host-filesystem directories a resource creates as a
+    /// bind-mount source once its container starts (#438) — today, EnvironmentMapper's
+    /// <c>MappedTopology.AsbTempDirectoriesCreated</c> — so <see cref="DisposeAsync"/> can remove
+    /// them after <c>StopAsync</c> returns.
+    /// </summary>
+    /// <param name="tempDirectoriesToClean">
+    /// The list itself, not a snapshot: an entry a start hook appends later is still seen.
+    /// <see cref="DisposeAsync"/> deletes only the entries <see cref="IsEngineOwnedTempDirectory"/>
+    /// accepts, whatever else the list holds.
+    /// </param>
+    /// <remarks>
+    /// Internal and separate from <see cref="StartAsync"/> deliberately: <see cref="StartAsync"/>
+    /// keeps its public signature exactly, and a public input naming directories that disposal
+    /// deletes would let an external caller aim that delete anywhere. <c>SuiteTopology</c> calls
+    /// this in the same synchronous statement sequence that receives the started topology, with
+    /// no await in between, so no teardown path can run before the list is attached.
+    /// </remarks>
+    internal void TrackTempDirectories(IReadOnlyList<string> tempDirectoriesToClean)
+    {
+        ArgumentNullException.ThrowIfNull(tempDirectoriesToClean);
         _tempDirectoriesToClean = tempDirectoriesToClean;
+    }
+
+    /// <summary>The name prefix of every temp directory the engine creates for itself (#438).</summary>
+    internal const string EngineTempDirectoryPrefix = "vouchfx-";
+
+    /// <summary>
+    /// Whether <paramref name="path"/> is a directory the engine could have created for itself: a
+    /// direct child of the system temp directory whose name starts with
+    /// <see cref="EngineTempDirectoryPrefix"/>. <see cref="DisposeAsync"/> deletes nothing else,
+    /// whatever its temp-directory list holds (#438).
+    /// </summary>
+    internal static bool IsEngineOwnedTempDirectory(string path)
+    {
+        var comparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+
+        try
+        {
+            var full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+            var tempRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(Path.GetTempPath()));
+
+            return string.Equals(Path.GetDirectoryName(full), tempRoot, comparison)
+                && Path.GetFileName(full).StartsWith(EngineTempDirectoryPrefix, StringComparison.Ordinal);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            // A path that cannot even be normalised is certainly not one the engine created.
+            return false;
+        }
     }
 
     /// <summary>
@@ -92,8 +142,16 @@ public sealed class HeadlessTopology : IAsyncDisposable
     /// </remarks>
     internal static HeadlessTopology ForTestingDisposal(
         DistributedApplication app,
-        IReadOnlyList<string>? tempDirectoriesToClean = null) =>
-        new(app, recorder: null, tempDirectoriesToClean ?? Array.Empty<string>());
+        IReadOnlyList<string>? tempDirectoriesToClean = null)
+    {
+        var topology = new HeadlessTopology(app, recorder: null);
+        if (tempDirectoriesToClean is not null)
+        {
+            topology.TrackTempDirectories(tempDirectoriesToClean);
+        }
+
+        return topology;
+    }
 
     /// <summary>
     /// Gets the underlying <see cref="DistributedApplication"/> instance.
@@ -118,20 +176,11 @@ public sealed class HeadlessTopology : IAsyncDisposable
     /// but before <see cref="DistributedApplication.StartAsync"/> is called.
     /// Use this to add containers, projects and dependencies.
     /// </param>
-    /// <param name="tempDirectoriesToClean">
-    /// Optional, and a LIVE reference, not a snapshot (#438): host-filesystem directories a
-    /// resource <paramref name="configureResources"/> adds may create as a bind-mount source once
-    /// its container actually starts — e.g. <c>EnvironmentMapper</c>'s <c>MappedTopology.AsbTempDirectoriesCreated</c>.
-    /// Passed here BEFORE anything has been created, and read back in <see cref="DisposeAsync"/>
-    /// once whatever this run started has actually populated it. <see langword="null"/> is treated
-    /// as empty.
-    /// </param>
     /// <param name="cancellationToken">Propagated to <see cref="DistributedApplication.StartAsync"/>.</param>
     /// <returns>A started <see cref="HeadlessTopology"/> that must be disposed when the test ends.</returns>
     public static async Task<HeadlessTopology> StartAsync(
         string? appHostAssemblyName = null,
         Action<IDistributedApplicationBuilder>? configureResources = null,
-        IReadOnlyList<string>? tempDirectoriesToClean = null,
         CancellationToken cancellationToken = default)
     {
         var options = new DistributedApplicationOptions
@@ -288,7 +337,7 @@ public sealed class HeadlessTopology : IAsyncDisposable
         // golden evidence and then discard it on exactly the fault this exists to capture.
         // SuiteTopology and StubTopology own the far end of the window; a caller that uses
         // HeadlessTopology directly drops it at DisposeAsync.
-        return new HeadlessTopology(app, recorder, tempDirectoriesToClean ?? Array.Empty<string>());
+        return new HeadlessTopology(app, recorder);
     }
 
     /// <summary>
@@ -499,6 +548,14 @@ public sealed class HeadlessTopology : IAsyncDisposable
 
         foreach (var dir in tempDirectories)
         {
+            // Defence in depth: the list is engine-internal and today holds only
+            // EnvironmentMapper's vouchfx-asb-<guid> directories, but a recursive delete is not
+            // something a future entry should be able to aim anywhere else.
+            if (!IsEngineOwnedTempDirectory(dir))
+            {
+                continue;
+            }
+
             try
             {
                 Directory.Delete(dir, recursive: true);

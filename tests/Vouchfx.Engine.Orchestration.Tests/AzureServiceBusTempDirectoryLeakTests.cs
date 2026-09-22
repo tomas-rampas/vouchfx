@@ -119,6 +119,78 @@ public sealed class AzureServiceBusTempDirectoryLeakTests
     /// topology) must still dispose cleanly — the parameter is optional and <see langword="null"/>
     /// is treated as empty, not as a null-reference fault in the cleanup loop.
     /// </summary>
+    /// <summary>
+    /// <see cref="HeadlessTopology.DisposeAsync"/> deletes only engine-owned temp directories
+    /// (#438 review): a list entry that is not a direct child of the system temp directory named
+    /// with the engine prefix survives disposal, whatever the list holds. Two such entries, both of
+    /// which a careless future caller could plausibly pass: a temp-root child without the prefix,
+    /// and a prefixed directory one level down.
+    /// </summary>
+    [Fact]
+    public async Task DisposeAsync_LeavesAnyDirectoryThatIsNotEngineOwnedInPlace()
+    {
+        var unprefixed = Path.Combine(Path.GetTempPath(), $"not-engine-owned-{Guid.NewGuid():N}");
+        var nestedParent = Path.Combine(Path.GetTempPath(), $"not-engine-owned-{Guid.NewGuid():N}");
+        var nested = Path.Combine(nestedParent, $"vouchfx-asb-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(unprefixed);
+        Directory.CreateDirectory(nested);
+
+        try
+        {
+            var app = CreateBuilder().Build();
+            var topology = HeadlessTopology.ForTestingDisposal(app, new[] { unprefixed, nested });
+
+            await topology.DisposeAsync();
+
+            // Existence-only, with fixed messages: never print the path value itself.
+            Assert.True(
+                Directory.Exists(unprefixed),
+                "DisposeAsync deleted a temp-root directory that does not carry the engine prefix.");
+            Assert.True(
+                Directory.Exists(nested),
+                "DisposeAsync deleted an engine-prefixed directory that is not a direct child of the temp root.");
+        }
+        finally
+        {
+            if (Directory.Exists(unprefixed))
+            {
+                Directory.Delete(unprefixed, recursive: true);
+            }
+
+            if (Directory.Exists(nestedParent))
+            {
+                Directory.Delete(nestedParent, recursive: true);
+            }
+        }
+    }
+
+    /// <summary>The ownership rule itself, one row per shape (#438 review).</summary>
+    [Fact]
+    public void IsEngineOwnedTempDirectory_AcceptsOnlyAPrefixedDirectChildOfTheTempRoot()
+    {
+        var tempRoot = Path.GetTempPath();
+
+        Assert.True(
+            HeadlessTopology.IsEngineOwnedTempDirectory(Path.Combine(tempRoot, "vouchfx-asb-0123")),
+            "A prefixed direct child of the temp root must count as engine-owned.");
+        Assert.True(
+            HeadlessTopology.IsEngineOwnedTempDirectory(
+                Path.Combine(tempRoot, "vouchfx-asb-0123") + Path.DirectorySeparatorChar),
+            "A trailing separator must not change the answer.");
+        Assert.False(
+            HeadlessTopology.IsEngineOwnedTempDirectory(Path.Combine(tempRoot, "other-0123")),
+            "An unprefixed temp-root child must not count as engine-owned.");
+        Assert.False(
+            HeadlessTopology.IsEngineOwnedTempDirectory(Path.Combine(tempRoot, "other", "vouchfx-asb-0123")),
+            "A prefixed directory below a non-engine directory must not count as engine-owned.");
+        Assert.False(
+            HeadlessTopology.IsEngineOwnedTempDirectory(Path.Combine(tempRoot, "vouchfx-asb-0123", "..", "..")),
+            "A path that normalises outside the temp root must not count as engine-owned.");
+        Assert.False(
+            HeadlessTopology.IsEngineOwnedTempDirectory(tempRoot),
+            "The temp root itself must never count as engine-owned.");
+    }
+
     [Fact]
     public async Task DisposeAsync_WithNoTempDirectoriesToClean_DisposesCleanly()
     {

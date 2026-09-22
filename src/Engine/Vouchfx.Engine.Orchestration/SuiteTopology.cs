@@ -493,11 +493,13 @@ public sealed class SuiteTopology : IAsyncDisposable, IKeptTopology
             topology = await HeadlessTopology.StartAsync(
                 appHostAssemblyName: appHostAssemblyName,
                 configureResources: mapped.Configure,
-                // #438: the SAME list mapped.Configure's azureservicebus entry (if any)
-                // appends to once its container actually starts — HeadlessTopology.DisposeAsync
-                // reads it back after teardown to remove whatever this run actually created.
-                tempDirectoriesToClean: mapped.AsbTempDirectoriesCreated,
                 cancellationToken: cancellationToken).ConfigureAwait(false);
+
+            // #438: the SAME list mapped.Configure's azureservicebus entry (if any) appends to
+            // once its container actually starts. HeadlessTopology.DisposeAsync reads it back
+            // after teardown to remove whatever this run created. Attached here, with no await
+            // since StartAsync returned, so no teardown path can run before it is in place.
+            topology.TrackTempDirectories(mapped.AsbTempDirectoriesCreated);
         }
         catch (OrchestrationException)
         {
