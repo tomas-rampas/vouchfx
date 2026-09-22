@@ -316,6 +316,12 @@ public sealed class MqPublishRabbitmqProvider
         "    ///       echo only the userinfo, e.g. 'Bad user info in AMQP URI: user:pass').\n" +
         "    ///       Also replaces just the password portion, handling passwords that\n" +
         "    ///       contain colons (user:p:ass → 'p:ass' is extracted and replaced).\n" +
+        "    ///       Uri.UserInfo and the password extracted from it are percent-ESCAPED;\n" +
+        "    ///       RabbitMQ.Client 7.2.1 stores and may echo the DECODED password, so the\n" +
+        "    ///       decoded form (Uri.UnescapeDataString of the password portion) is ALSO\n" +
+        "    ///       replaced — a password whose decoded form differs from its escaped form\n" +
+        "    ///       (e.g. contains '%', '@', ':' or '/' once encoded) would otherwise evade\n" +
+        "    ///       this layer (#553).\n" +
         "    ///   (c) Regex fallback with greedy [^/\\s]* that matches past interior '@'\n" +
         "    ///       characters to the LAST '@' before the host, so a password\n" +
         "    ///       containing '@' (user:p@ss) is fully redacted.\n" +
@@ -339,7 +345,15 @@ public sealed class MqPublishRabbitmqProvider
         "                {\n" +
         "                    var __password = __userInfo.Substring(__colonIdx + 1);\n" +
         "                    if (!string.IsNullOrEmpty(__password))\n" +
+        "                    {\n" +
         "                        redacted = redacted.Replace(__password, \"***\", System.StringComparison.Ordinal);\n" +
+        "                        // (#553) Uri.UserInfo is percent-escaped; RabbitMQ.Client 7.2.1\n" +
+        "                        // stores and may echo the DECODED password, which evades the\n" +
+        "                        // escaped-form replacement above whenever it differs from it.\n" +
+        "                        var __decodedPassword = System.Uri.UnescapeDataString(__password);\n" +
+        "                        if (!string.IsNullOrEmpty(__decodedPassword))\n" +
+        "                            redacted = redacted.Replace(__decodedPassword, \"***\", System.StringComparison.Ordinal);\n" +
+        "                    }\n" +
         "                }\n" +
         "            }\n" +
         "        }\n" +
