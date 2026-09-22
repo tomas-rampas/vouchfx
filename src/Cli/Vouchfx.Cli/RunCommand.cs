@@ -1700,7 +1700,7 @@ internal static class RunCommand
         // Fold the parse-failures into the suite verdict and map the result to a process exit
         // code — see ComputeExitCode for the issue #278 special case (an entirely-unparseable
         // set is unconditionally Inconclusive, never gated behind --fail-on-inconclusive).
-        return ComputeExitCode(
+        var code = ComputeExitCode(
             parsed.Count, failures.Count, suiteVerdict, failOnEnvironmentError, failOnInconclusive,
             securityAssurance,
             // #369: false when no STEP ran — the shared-topology path returns through its
@@ -1713,6 +1713,23 @@ internal static class RunCommand
             // #480: true when any scenario was refused at a provider- or engine-surface guard,
             // whatever its siblings did.
             providerOrEngineFaultObserved: providerOrEngineFaultObserved);
+
+        // #515: the sibling of the REQ-018 print above, for #480's rule. Printed EXACTLY when that
+        // rule is what took `code` off Success — never when an earlier rule already chose the
+        // non-zero code, and never for a run the REQ-018 print above already explained. See
+        // ShouldPrintProviderOrEngineFaultNotice and ProviderOrEngineFaultNotice's own remarks for
+        // why the decision is its own testable predicate rather than re-derived inline here or
+        // returned as a second value from ComputeExitCode: this keeps the print mutually exclusive
+        // with the REQ-018 print by construction, and keeps ComputeExitCode itself at the one
+        // production call site MixedSuiteEngineFaultHopCensusTests pins.
+        if (ShouldPrintProviderOrEngineFaultNotice(
+            parsed.Count, failures.Count, suiteVerdict, failOnEnvironmentError, failOnInconclusive,
+            securityAssurance, executedAnyScenario, providerOrEngineFaultObserved))
+        {
+            await output.WriteLineAsync(ProviderOrEngineFaultNotice).ConfigureAwait(false);
+        }
+
+        return code;
     }
 
     /// <summary>
@@ -1778,6 +1795,66 @@ internal static class RunCommand
         + "security assertion cannot vouch for it. Each door reports only the faults it reached, so "
         + "what is reported above need not be the last fix before a run can confirm this suite's "
         + "security block.";
+
+    /// <summary>
+    /// The line printed when a scenario was refused at one of <c>ProviderPipeline</c>'s provider- or
+    /// engine-surface guards and THAT is what took the run's exit code off
+    /// <see cref="ExitCodes.Success"/> (issue #480's rule; this notice is issue #515) — the sibling of
+    /// <see cref="SecurityUnconfirmableNotice"/> for the fourth of <see cref="ComputeExitCode"/>'s
+    /// unconditional-non-zero rules.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// SAME OPENING REASONING AS <see cref="SecurityUnconfirmableNotice"/>'S, restated for this
+    /// door: several distinct rules all produce a non-zero exit, so a bare non-zero exit leaves an
+    /// author guessing which one fired. #480's rule needs this more than the two rules beside it in
+    /// <see cref="ComputeExitCode"/> do — #425's parse-failure rule and #369's nothing-executed rule
+    /// both fire on a run that is VISIBLY broken: nothing executed, or a file could not even be
+    /// read. #480's rule can fire on a run whose terminal shows a PASSING scenario, with the
+    /// refused sibling's own diagnostic one line among many — the author sees a green-looking run
+    /// and a non-zero exit, and nothing connects the two without this line.
+    /// </para>
+    /// <para>
+    /// <strong>PRINTED EXACTLY WHEN #480's RULE IS WHAT TOOK THE CODE OFF SUCCESS, NEVER WHEN
+    /// ANOTHER RULE ALREADY CHOSE THE NON-ZERO CODE.</strong> <see cref="ShouldPrintProviderOrEngineFaultNotice"/>
+    /// decides it, by calling <see cref="ComputeExitCodeBeforeProviderOrEngineFaultRule"/> — which
+    /// applies REQ-018's carve-out (decided inside <see cref="ExitCodes.FromVerdict"/>), #425's rule
+    /// and #369's rule, but not #480's — and answering true only when THAT still comes back
+    /// <see cref="ExitCodes.Success"/>. That makes "no earlier rule already moved the code" the
+    /// whole condition, which is what makes this mutually exclusive with
+    /// <see cref="SecurityUnconfirmableNotice"/> BY CONSTRUCTION rather than by a second, separate
+    /// check: whenever REQ-018 is why the code is not <see cref="ExitCodes.Success"/>,
+    /// <c>FromVerdict</c> has already forced it non-Success before #480's rule is ever consulted, so
+    /// the probe reproduces that SAME non-Success code and this line stays silent — including for
+    /// the one <see cref="SecurityUnconfirmableNotice"/> itself suppresses (a failed PROBE), since
+    /// what silences the notice there is not what forces the code non-Success. A Fail verdict, and
+    /// <c>--fail-on-env-error</c> / <c>--fail-on-inconclusive</c> taking the code off Success first,
+    /// are silent for the identical reason: none of the three depends on
+    /// <c>providerOrEngineFaultObserved</c>, so forcing it away in the probe changes nothing when it
+    /// was never what decided the code.
+    /// </para>
+    /// <para>
+    /// <strong>NAMES NO STEP, deliberately.</strong> The diagnostic
+    /// <c>ProviderPipeline.DescribeProviderFault</c> composes DOES name the offending step and its
+    /// provider type; the sibling <c>DescribeAssemblyFault</c> arm cannot, because
+    /// <c>CsxAssemblyException</c> records no fragment (see that method's own remarks). One wording
+    /// that asserts nothing a step-naming diagnostic could contradict serves both arms truthfully;
+    /// naming a step here would either repeat what the diagnostic above already said or be silently
+    /// absent for the one arm that has none to give.
+    /// </para>
+    /// <para>
+    /// <strong>Reach, measured the same way as <see cref="SecurityUnconfirmableNotice"/>'s:</strong>
+    /// this line goes to stdout only. It is absent from <c>--junit</c> and <c>--events</c> on both
+    /// run paths, so a CI job reading only machine-readable artefacts still sees a bare non-zero
+    /// exit for this rule too.
+    /// </para>
+    /// </remarks>
+    internal const string ProviderOrEngineFaultNotice =
+        "This run exits non-zero because a scenario was refused at a provider- or engine-surface "
+        + "guard before it could run, not because of any verdict reported above: that alone makes "
+        + "a run non-zero whatever its siblings did, including a scenario that ran and passed. The "
+        + "diagnostic naming what failed is printed above; this line exists only to connect it to "
+        + "the exit code.";
 
     /// <summary>
     /// Maps the suite's outcome to a process exit code (§12.1), applying the issue #278
@@ -1863,80 +1940,9 @@ internal static class RunCommand
         bool executedAnyScenario = true,
         bool providerOrEngineFaultObserved = false)
     {
-        var aggregate = AggregateVerdict(suiteVerdict, parseFailureCount);
-        var code = ExitCodes.FromVerdict(
-            aggregate, failOnEnvironmentError, failOnInconclusive, securityAssurance);
-
-        // A document the engine could not read is NEVER a clean Success (#425).
-        //
-        // This is one rule where there were two, and the second was #278's: an entirely
-        // unparseable set returned ExitCodes.Inconclusive from its own early branch, on the
-        // reasoning quoted in this method's remarks — a CI pipeline keying on `run`'s exit code
-        // must never see an unparseable suite reported as clean. That reasoning never depended on
-        // whether a SIBLING happened to parse; the file was unread either way. But the branch it
-        // lived in tested `parsedCount == 0`, so adding one working file beside a malformed one
-        // folded the malformed one into the ordinary opt-in-gated Inconclusive path and the run
-        // exited 0. Same fault, same verdict, two exit codes, and the deciding factor was
-        // unrelated to the fault.
-        //
-        // Stating it once subsumes #278 rather than competing with it: with parsedCount == 0 the
-        // aggregate is Inconclusive, FromVerdict maps that to Success when ungated, and this
-        // returns Inconclusive — #278's own answer, reached by the general rule.
-        //
-        // THE PROPERTY THIS GUARD ENFORCES IS "A PARSE FAILURE NEVER EXITS 0", NOT "A PARSE
-        // FAILURE EXITS 4". The narrower reading is what the retracted trailing clause here ("the
-        // same 4, still regardless of failOnInconclusive") invited: it was true in its own scope
-        // — with parsedCount == 0 the aggregate can only be Inconclusive, so all four
-        // gate/assurance combinations do land on 4 — and false the moment it is read as a
-        // statement about parse failures generally, which is how it was in fact read. The guard
-        // is conditioned on `code == ExitCodes.Success`, so it never overrides a code some other
-        // rule already chose: with one parsed sibling that Fails the run still exits 1, and with
-        // one whose topology fails under --fail-on-env-error it still exits 3.
-        //
-        // It deliberately does NOT touch a genuine execution-time Inconclusive from a scenario
-        // that DID run (timeout / partition outlasted grace / upstream capture unmet). Those stay
-        // opt-in-gated, which is the §12.1 distinction this method's remarks already draw: a file
-        // that could not be read is an authoring fault, deterministic and reproducible, not an
-        // undetermined outcome.
-        //
-        // Every other code stands as-is: a Fail outranks a parse failure by precedence
-        // (ScenarioRunner.VerdictPrecedence: Fail 2 > Inconclusive 1) and still exits 1, and an
-        // EnvironmentError still exits by its own gate. Only Success is unreachable here.
-        //
-        // This ALSO closes #425 without a security-specific exit policy. A malformed document
-        // declaring mTLS now exits non-zero because it was unreadable, not because of anything
-        // it declared — so no raw-YAML scan for a `security:` key is needed (DiscoveredScenario.
-        // RecoveredDocument refuses one, twice, with reasons) and SecurityAssurance is untouched.
-        if (parseFailureCount > 0 && code == ExitCodes.Success)
-        {
-            return ExitCodes.Inconclusive;
-        }
-
-        // A run in which NOTHING EXECUTED is never a clean Success either (#369).
-        //
-        // The rule above closed "did the YAML parse". This closes the category the design never
-        // named: a suite that parsed FINE and was then refused before any topology was built — a
-        // schema rejection, a secret-reference failure, a malformed `env:`, the both-families
-        // protocol conflict. Every one starts no container and runs no step, and every one exited
-        // 0 by default. As #369 puts it: the distinction the code drew was "did the YAML parse",
-        // but the distinction its own remarks argued for was "did anything execute".
-        //
-        // SCOPED TO Inconclusive, AND THAT SCOPE IS THE WHOLE CARE OF THIS CHANGE. A topology
-        // that fails to START also executes nothing and reaches the same completion path since
-        // #407 — but it carries EnvironmentError, which keeps its own `--fail-on-env-error` gate
-        // and is untouched here. Widening this to every verdict would silently close #390, which
-        // is deliberately open precisely because it would redden every suite whose UNRELATED
-        // container was slow to come up. An authoring fault the engine refused is not the same
-        // event as an environment that did not come up, and this line is where that stays true.
-        //
-        // A scenario that DID run and could not conclude — timeout, partition outlasted grace,
-        // upstream capture unmet — still exits 0 by default, because it executed.
-        if (!executedAnyScenario
-            && aggregate == Verdict.Inconclusive
-            && code == ExitCodes.Success)
-        {
-            return ExitCodes.Inconclusive;
-        }
+        var code = ComputeExitCodeBeforeProviderOrEngineFaultRule(
+            parsedCount, parseFailureCount, suiteVerdict, failOnEnvironmentError,
+            failOnInconclusive, securityAssurance, executedAnyScenario);
 
         // A PROVIDER OR ENGINE DEFECT NEVER EXITS 0 (#480).
         //
@@ -2009,7 +2015,159 @@ internal static class RunCommand
         // states "never 0" and never "exits 4": a Failing sibling still takes the run to 1 by
         // precedence, and a gated environment error still takes it to 3. It cannot override a code
         // another rule already chose.
+        //
+        // #515: whether THIS application of the rule is what took the code off Success is decided
+        // separately, by ShouldPrintProviderOrEngineFaultNotice, rather than as a second return
+        // value from this method — see that method's and ProviderOrEngineFaultNotice's own remarks
+        // for why.
         if (providerOrEngineFaultObserved && code == ExitCodes.Success)
+        {
+            return ExitCodes.Inconclusive;
+        }
+
+        return code;
+    }
+
+    /// <summary>
+    /// Whether issue #515's <see cref="ProviderOrEngineFaultNotice"/> should print for this run:
+    /// <see langword="true"/> exactly when issue #480's rule is what took the exit code off
+    /// <see cref="ExitCodes.Success"/>.
+    /// </summary>
+    /// <remarks>
+    /// A separate, directly testable predicate rather than an inline condition at the print site,
+    /// for the same reason <see cref="ComputeExitCode"/> itself is <see langword="internal"/> and
+    /// tested directly: the boundary this notice's remarks describe — never printing when an
+    /// earlier rule, or REQ-018, already chose the non-zero code — is exactly what a caller must be
+    /// able to drive without standing up a real run. Delegates to
+    /// <see cref="ComputeExitCodeBeforeProviderOrEngineFaultRule"/> rather than to
+    /// <see cref="ComputeExitCode"/> itself so this stays a SEPARATE call, and
+    /// <see cref="ComputeExitCode"/>'s own production call count — the one
+    /// <c>MixedSuiteEngineFaultHopCensusTests</c> pins at exactly one — is unaffected by this method
+    /// existing at all.
+    /// </remarks>
+    internal static bool ShouldPrintProviderOrEngineFaultNotice(
+        int parsedCount,
+        int parseFailureCount,
+        Verdict suiteVerdict,
+        bool failOnEnvironmentError,
+        bool failOnInconclusive,
+        SecurityAssurance? securityAssurance,
+        bool executedAnyScenario,
+        bool providerOrEngineFaultObserved)
+    {
+        return providerOrEngineFaultObserved
+            && ComputeExitCodeBeforeProviderOrEngineFaultRule(
+                parsedCount, parseFailureCount, suiteVerdict, failOnEnvironmentError,
+                failOnInconclusive, securityAssurance, executedAnyScenario) == ExitCodes.Success;
+    }
+
+    /// <summary>
+    /// The exit code <see cref="ComputeExitCode"/> would return with <c>providerOrEngineFaultObserved</c>
+    /// forced <see langword="false"/> — REQ-018's carve-out plus issue #425's parse-failure rule and
+    /// issue #369's nothing-executed rule applied, but #480's rule not yet consulted.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Extracted from <see cref="ComputeExitCode"/> so <see cref="ExecuteAsync"/> can ask "is #480's
+    /// rule the ONLY reason this run is not exiting 0" for issue #515's notice, without adding a
+    /// second call to <see cref="ComputeExitCode"/> itself — <c>MixedSuiteEngineFaultHopCensusTests</c>
+    /// pins that method's production call count at exactly one in <c>RunCommand.cs</c>, and a second
+    /// textual call site (even one forcing the flag false) would still be a second call site by that
+    /// census's own count. This method's NAME does not match what it scans for, so it is invisible to
+    /// that guard, and it changes no exit code: every line below is copied unchanged from
+    /// <see cref="ComputeExitCode"/>, not re-derived.
+    /// </para>
+    /// <para>
+    /// If this returns <see cref="ExitCodes.Success"/> for the SAME arguments
+    /// <see cref="ComputeExitCode"/> was called with, and <c>providerOrEngineFaultObserved</c> was
+    /// <see langword="true"/>, then #480's rule is exactly what turns that Success into
+    /// <see cref="ExitCodes.Inconclusive"/> — the two conditions together are the rule's own guard
+    /// clause, read from outside it. If this returns anything else, an earlier rule (REQ-018, #425 or
+    /// #369) already moved the code, and #480's rule — reached with `code == ExitCodes.Success`
+    /// already false — cannot have been consulted at all, whatever <c>providerOrEngineFaultObserved</c>
+    /// says.
+    /// </para>
+    /// </remarks>
+    private static int ComputeExitCodeBeforeProviderOrEngineFaultRule(
+        int parsedCount,
+        int parseFailureCount,
+        Verdict suiteVerdict,
+        bool failOnEnvironmentError,
+        bool failOnInconclusive,
+        SecurityAssurance? securityAssurance,
+        bool executedAnyScenario)
+    {
+        var aggregate = AggregateVerdict(suiteVerdict, parseFailureCount);
+        var code = ExitCodes.FromVerdict(
+            aggregate, failOnEnvironmentError, failOnInconclusive, securityAssurance);
+
+        // A document the engine could not read is NEVER a clean Success (#425).
+        //
+        // This is one rule where there were two, and the second was #278's: an entirely
+        // unparseable set returned ExitCodes.Inconclusive from its own early branch, on the
+        // reasoning quoted in this method's remarks — a CI pipeline keying on `run`'s exit code
+        // must never see an unparseable suite reported as clean. That reasoning never depended on
+        // whether a SIBLING happened to parse; the file was unread either way. But the branch it
+        // lived in tested `parsedCount == 0`, so adding one working file beside a malformed one
+        // folded the malformed one into the ordinary opt-in-gated Inconclusive path and the run
+        // exited 0. Same fault, same verdict, two exit codes, and the deciding factor was
+        // unrelated to the fault.
+        //
+        // Stating it once subsumes #278 rather than competing with it: with parsedCount == 0 the
+        // aggregate is Inconclusive, FromVerdict maps that to Success when ungated, and this
+        // returns Inconclusive — #278's own answer, reached by the general rule.
+        //
+        // THE PROPERTY THIS GUARD ENFORCES IS "A PARSE FAILURE NEVER EXITS 0", NOT "A PARSE
+        // FAILURE EXITS 4". The narrower reading is what the retracted trailing clause here ("the
+        // same 4, still regardless of failOnInconclusive") invited: it was true in its own scope
+        // — with parsedCount == 0 the aggregate can only be Inconclusive, so all four
+        // gate/assurance combinations do land on 4 — and false the moment it is read as a
+        // statement about parse failures generally, which is how it was in fact read. The guard
+        // is conditioned on `code == ExitCodes.Success`, so it never overrides a code some other
+        // rule already chose: with one parsed sibling that Fails the run still exits 1, and with
+        // one whose topology fails under --fail-on-env-error it still exits 3.
+        //
+        // It deliberately does NOT touch a genuine execution-time Inconclusive from a scenario
+        // that DID run (timeout / partition outlasted grace / upstream capture unmet). Those stay
+        // opt-in-gated, which is the §12.1 distinction this method's remarks already draw: a file
+        // that could not be read is an authoring fault, deterministic and reproducible, not an
+        // undetermined outcome.
+        //
+        // Every other code stands as-is: a Fail outranks a parse failure by precedence
+        // (ScenarioRunner.VerdictPrecedence: Fail 2 > Inconclusive 1) and still exits 1, and an
+        // EnvironmentError still exits by its own gate. Only Success is unreachable here.
+        //
+        // This ALSO closes #425 without a security-specific exit policy. A malformed document
+        // declaring mTLS now exits non-zero because it was unreadable, not because of anything
+        // it declared — so no raw-YAML scan for a `security:` key is needed (DiscoveredScenario.
+        // RecoveredDocument refuses one, twice, with reasons) and SecurityAssurance is untouched.
+        if (parseFailureCount > 0 && code == ExitCodes.Success)
+        {
+            return ExitCodes.Inconclusive;
+        }
+
+        // A run in which NOTHING EXECUTED is never a clean Success either (#369).
+        //
+        // The rule above closed "did the YAML parse". This closes the category the design never
+        // named: a suite that parsed FINE and was then refused before any topology was built — a
+        // schema rejection, a secret-reference failure, a malformed `env:`, the both-families
+        // protocol conflict. Every one starts no container and runs no step, and every one exited
+        // 0 by default. As #369 puts it: the distinction the code drew was "did the YAML parse",
+        // but the distinction its own remarks argued for was "did anything execute".
+        //
+        // SCOPED TO Inconclusive, AND THAT SCOPE IS THE WHOLE CARE OF THIS CHANGE. A topology
+        // that fails to START also executes nothing and reaches the same completion path since
+        // #407 — but it carries EnvironmentError, which keeps its own `--fail-on-env-error` gate
+        // and is untouched here. Widening this to every verdict would silently close #390, which
+        // is deliberately open precisely because it would redden every suite whose UNRELATED
+        // container was slow to come up. An authoring fault the engine refused is not the same
+        // event as an environment that did not come up, and this line is where that stays true.
+        //
+        // A scenario that DID run and could not conclude — timeout, partition outlasted grace,
+        // upstream capture unmet — still exits 0 by default, because it executed.
+        if (!executedAnyScenario
+            && aggregate == Verdict.Inconclusive
+            && code == ExitCodes.Success)
         {
             return ExitCodes.Inconclusive;
         }
