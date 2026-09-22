@@ -88,7 +88,7 @@ Recognition is deliberately permissive. An over-match, such as a `MapGet` or `Pr
 
 ### 3. Output shape (`--json`)
 
-The output follows `plan`'s convention. With `--json`, the command writes one indented JSON document to stdout, serialised with the CLI's shared `--json` options; without it, stdout carries a short human-readable summary instead. `--output <file>` always writes the same JSON document to that file, byte-identical to what `--json` prints, whether or not `--json` is passed. The MCP runs `topology --json`. A golden test pins it from its first release. The expected output for `samples/orders-dotnet` looks like this (abridged to two of its four entries):
+The output follows `plan`'s convention. With `--json`, the command writes one indented JSON document to stdout, serialised with the CLI's shared `--json` options; without it, stdout carries a short human-readable summary instead. `--output <file>` always writes the same JSON document to that file, whether or not `--json` is passed. The file holds exactly the document's bytes, and stdout adds one trailing newline after them, as `plan` does (`File.WriteAllText` for the file, `WriteLine` for stdout). The MCP runs `topology --json`. A golden test pins it from its first release. The expected output for `samples/orders-dotnet` looks like this (abridged to two of its four entries):
 
 ```json
 {
