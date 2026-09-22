@@ -582,6 +582,10 @@ If cleanup-1 fails, cleanup-2 and verify-cleaned still run. The scenario verdict
   path: /users
   expect:
     status: 200
+    json:
+      "$.count": 3
+      "$.users[0].id": { exists: true }
+      "$..password": { exists: false }
   capture:
     user_count: "$.count"
 ```
@@ -592,10 +596,10 @@ If cleanup-1 fails, cleanup-2 and verify-cleaned still run. The scenario verdict
 - **`path`** — URL path (may contain `{placeholder}` and `${secret:…}`).
 - **`headers`** (optional) — Request headers.
 - **`body`** (optional) — Request body (YAML scalar or mapping, serialised to JSON).
-- **`expect`** (optional) — Assertions on response status code only (`status: <int>`).
-- **`capture`** (optional) — JSONPath expressions extracting response fields for inspection in later steps.
+- **`expect`** (optional) — Assertions on the response: `status` (any 2xx when omitted); `json`, a map of JSONPath to an expected value or to `{ exists: true|false }`; and `bodyContains`, a substring of the body. Body assertions run only once the status has held, and a failing one makes the step Fail.
+- **`capture`** (optional) — JSONPath expressions extracting response fields for inspection in later steps. Captures run only after every assertion has held.
 
-For richer response validation (body structure, headers, etc.), use a `script.csharp` step to inspect captured values and decide Pass/Fail, or use a database assertion on the result of the call. See [Language Reference § http.rest](language-reference.md#httprest) for full details.
+`expect.json` compares the selected node as text, so `3` matches the number 3 but not `3.0`, and a JSON null is written as the quoted text `"null"`. A path used for equality must select exactly one node. Headers are not asserted on; for a check the `expect` block cannot express, capture the values and decide Pass/Fail in a `script.csharp` step. See [DSL §5.1](02_YAML_DSL_Specification_and_VSCode_Extension_Design.md#51-the-http-family) and [Language Reference § http.rest](language-reference.md#httprest) for full details.
 
 ### Database assertion
 
