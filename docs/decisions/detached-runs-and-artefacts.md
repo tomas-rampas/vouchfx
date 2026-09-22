@@ -1,0 +1,188 @@
+# Decision record: detached runs and run artefacts (upstream ask U4)
+
+**Status:** Proposed  
+**Date:** 2026-09-22
+
+## Context
+
+vouchfx-mcp, the MCP server that drives the published `vouchfx` CLI as a subprocess, names one upstream ask, U4, behind every run-lifecycle capability it refuses today. `run_suite` rejects `wait: false` and `keepEnvironment: true` with `VFX-E-1504`. `cancel_run` refuses a run held by another server process (`VFX-E-1507`) because no channel exists to reach it. `get_run_artifacts` answers `partial: true`, with `gaps[]` entries marked `awaits: "U4"` for the HTML and JUnit reports, container logs and the service/dependency inventory. The server also mints its own run id (`run-` followed by 32 hex characters) because the engine offers none, and keeps labels in its own registry because the event stream cannot carry them.
+
+Seven facts about the engine at this commit shape the answer:
+
+1. **There is no id for the invocation as a whole.** Every event's `runId` is minted per scenario (`Guid.NewGuid().ToString("n")` in `ScenarioRunner` and `ParallelSuiteRunner`; blueprint §14.4.2 says "each scenario has a distinct `runId`"). The topology-level `transport-notice` records carry a minted id that belongs to no scenario. `suite-started` and `suite-completed` are reserved in `EventTypes`, and every in-tree renderer ignores them in its default arm, but nothing emits them. So a multi-scenario invocation carries several `runId` values, and none of them names the invocation.
+2. **A run lives exactly as long as its process.** The Aspire host runs inside `vouchfx`. Aspire starts DCP, and DCP monitors the `vouchfx` process. Teardown is `HeadlessTopology.DisposeAsync`, the single chokepoint (§4.5). The only ways to stop a run are Ctrl-C or SIGTERM, which get a 30-second `ProcessTerminationTimeout`, and `--shutdown-on-stdin-eof`. That flag cancels a linked token and arms `ShutdownBackstop`, which forces exit 4 after `TeardownBudgetSeconds`.
+3. **Reports go only where flags point.** `--events`, `--events-stream`, `--junit` and `--html` each take a path from the caller; the engine keeps no directory of run reports of its own. `--events-stream` already appends each step and each attempt record as it happens (per step since 1.0.0-rc.1).
+4. **The exit code is decided once**, in `RunCommand.ComputeExitCode`, from the aggregate verdict, the two opt-in gates and three provenance facts (§16.4). The stream alone cannot reproduce that decision. A discovery parse failure, for instance, is printed and counted in the exit code but written to no report.
+5. **The shared-topology runner resets state after every scenario, including the last.** `IScenarioIsolation.EndScenarioAsync` runs Respawn, `FLUSHDB` and the other resets after each scenario. If the engine merely skipped teardown, the kept environment's stores would be empty.
+6. **DCP labels what it creates; the engine adds no labels.** Every container and network DCP creates carries `com.microsoft.developer.usvc-dev.creatorProcessId` (`TopologyTeardownLeakTests` measures this). The engine adds nothing of its own, although `EnvironmentMapper` already calls `WithContainerRuntimeArgs`, which is the hook a label needs.
+7. **Container output can be read in-process** through Aspire's `ResourceLoggerService`. No engine code calls it yet, but `ResourceCreationEvidence` records a measurement against it: zero lines for a container that was never created.
+
+## Decision
+
+### 1. Run ids
+
+- **A run id names one `vouchfx run` invocation.** The engine mints it unless the caller passes `--run-id <id>`. A minted id is the UTC start second plus 64 random bits, in lower case: `20260922t101530z-3f9a1c07be42d9e1`. Consumers must treat every id as opaque; the timestamp is there for people reading it.
+- **An id the caller supplies must match `^[a-z0-9][a-z0-9_-]{7,63}$`.** That is 8–64 characters of lower-case ASCII letters, digits, `-` and `_`, beginning with a letter or digit. The rule excludes path separators and `.`, so there is no `..`, no hidden name and no trailing dot for Windows to strip. It also excludes `:` (drive letters and alternate data streams), whitespace, control characters and non-ASCII characters. A leading `-` cannot be mistaken for an option, and two valid ids never differ only in case on a case-insensitive file system. The 8-character minimum and the absent `$` together rule out every Windows device name (`CON`, `NUL`, `COM1`, `CONIN$` and the rest). A bad id is refused, never normalised, because the caller will look it up later by the exact text it sent. The refusal is a usage error (exit 2) raised before anything is created. vouchfx-mcp's `run-<32 hex>` ids pass unchanged.
+- **Uniqueness is enforced within each artefacts root** by exclusive creation (§3): a second run with the same id is a usage error. A minted id is also globally unique with overwhelming probability. Beyond one root, a supplied id is the caller's responsibility, and the container labels (§5) carry a root discriminator so that a clash cannot cross roots.
+- **The existing `runId` field does not change.** Scenario, step, envelope, error and transport-notice records keep their current ids and 32-hex format (§14.4.2). The new run id appears in four places: as the `runId` of the two suite records below, in a container label, as the artefacts directory name, and in `run.json`. A scenario's `runId` is not a run handle, and no consumer should read it as one.
+- **`--label key=value`** can be repeated. The bounds are vouchfx-mcp's own plus one rule: at most 20 labels, keys of at most 64 characters with no `=`, values of at most 256 characters, and no control characters. Labels are opaque caller text. The engine records them but never interprets them or scans them for secrets.
+
+### 2. Event-stream additions
+
+Every addition goes in as a new record, the way `TransportNoticeEvent` did: added to `s_eventRecords` and to the golden file in one reviewed change. No existing record, property or wire name changes, and `v` and `schemaVersion` stay `1` and `"v1"`.
+
+| Record | When it is written | Fields beyond the envelope |
+|---|---|---|
+| `suite-started` | The first line of every invocation's stream, in both event files | `engineVersion`; `labels` (omitted when empty) |
+| `suite-completed` | The last line | `verdict`: the aggregate that `ComputeExitCode` used, with discovery parse failures folded in as Inconclusive. The CLI passes their count to the runner, as it already passes `unbuiltDocuments`. |
+| `topology-ready` (stage 3) | Once per topology, after its health gate, from the site that emits `transport-notice` and with the same `runId` convention | `resources[]`, each with `name`, `role` (`service`, `dependency` or `sidecar`), `kind`, `image` (the resolved reference; omitted for `project:`, which never carries a path) and `endpoints[]` of `{name, port}`, where `port` is the host port a local client connects to |
+
+Both suite records carry the run id as their `runId`, and both runners emit them on every run, with or without `--run-id`, so the stream's shape never depends on a flag. A test pins the invariant that `suite-completed.verdict` equals `run.json.verdict`. With these records, several invocations' streams concatenated into one file stay separable. The only health statement `topology-ready` makes is its own existence: every listed resource passed its health gate at `ts`. It carries no connection string, no environment value and no live state.
+
+### 3. Artefacts directory
+
+`--artifacts-dir <root>` writes one directory per run, and `--detach` implies it. The flag keeps the engine's existing `artifact` spelling, as in `serverArtifacts`. The default root is `<LocalApplicationData>/vouchfx/runs`, the per-user location the DCP flight recorder already uses: `%LOCALAPPDATA%\vouchfx\runs` on Windows and `${XDG_DATA_HOME:-$HOME/.local/share}/vouchfx/runs` elsewhere. `VOUCHFX_ARTIFACTS_DIR` overrides it.
+
+```
+<root>/<run-id>/
+  run.lock             held exclusively by the supervisor for its whole life (proof it is alive)
+  run.json             the manifest: one writer, replaced atomically
+  events.jsonl         the --events archive (declaration order, written at the end)
+  events.live.jsonl    the --events-stream file (arrival order, appended as the run goes)
+  results.xml          JUnit
+  report.html          HTML
+  cancel.request       empty; created by `vouchfx runs cancel`
+  teardown.request     empty; created by `vouchfx runs teardown`
+  local/               never for publication
+    console.log        the supervisor's stdout and stderr (detached runs)
+    logs/NN-<name>.log captured container output (opt-in, §7)
+```
+
+- The four report-path flags (`--events`, `--events-stream`, `--junit`, `--html`) are refused beside `--artifacts-dir` or `--detach`, so each run's reports have one location.
+- The reproducibility envelope gets no file of its own. The stream already carries one envelope per scenario, and a copy would be a second source that could disagree with it.
+- **`run.json`** follows the conventions of the CLI's `--json` documents: `schemaVersion: 1`, camelCase property names, a golden-file freeze, additive evolution only, and readers that tolerate unknown fields.
+
+```json
+{ "schemaVersion": 1, "runId": "20260922t101530z-3f9a1c07be42d9e1", "engineVersion": "1.1.0+3f9a1c0",
+  "seq": 4, "state": "completed", "createdAt": "2026-09-22T10:15:30.412Z", "finishedAt": "2026-09-22T10:17:02.955Z",
+  "supervisor": { "pid": 48213, "processStartedAt": "2026-09-22T10:15:30.101Z", "detached": true },
+  "containerRuntime": "docker",
+  "request": { "path": "e2e/checkout", "failOnEnvError": false, "failOnInconclusive": false, "parallel": null,
+               "keepEnvironment": null, "captureLogs": "off", "labels": { "trigger": "agent" } },
+  "verdict": "FAIL", "exitCode": 1, "stopReason": "finished", "teardown": "confirmed", "keptUntil": null,
+  "files": { "events": "events.jsonl", "eventsLive": "events.live.jsonl", "junit": "results.xml",
+             "html": "report.html", "console": "local/console.log", "logs": [] } }
+```
+
+- **States.** A run moves from `running`, optionally through `kept`, to `completed`. Only a reaper writes `abandoned` (§5). Readers can also report `crashed`, which nothing writes: it means the state is not terminal, yet the reader can acquire `run.lock`. `verdict` uses the stream's wire tokens and is `null` when the run selected nothing to execute; the manifest never invents a verdict. `teardown` reads `pending` until the chokepoint has returned, then `confirmed`; a reaper may later record `reaped`.
+- **Atomic writes.** Each write goes to a temporary file in the same directory, is flushed with `Flush(flushToDisk: true)`, and replaces the manifest with `File.Move(overwrite: true)`, the pattern `TelemetryConsentStore` uses. `seq` increases with every write. Only the process holding the lock writes, so there is never a second writer. The verdict and exit code are written in the same replacement that follows the last report write, so a reader who sees them can rely on every file the manifest lists.
+- **Concurrency.** Runs never share a directory. The supervisor creates `<root>/<id>/`, then creates `run.lock` with `FileMode.CreateNew` and `FileShare.None`; losing that race is how a duplicate id is refused. Listings skip every dot-prefixed name and any entry without a readable `run.json`.
+- **Retention.** In the default root only, each launch prunes terminal runs older than 14 days and keeps at most the newest 50. A root the caller names is never pruned automatically; the DCP flight recorder likewise never touches the permissions of a directory the caller named. `vouchfx runs prune [--older-than] [--keep]` prunes on request. Pruning skips any run whose lock is held. It deletes a run by first renaming its directory to `.trash-<id>-<random>`, so no reader ever sees a half-deleted run under its real name.
+
+### 4. Detached lifecycle
+
+- **Start.** `vouchfx run <path> --detach [--run-id] [--artifacts-dir] [flags]` validates its arguments and mints or checks the id. It then re-executes its own entry point with the same arguments, the id and a hidden flag that makes the new process the supervisor. The supervisor is the same executable, so DCP metadata and `DcpPathResolver`'s self-healing resolve exactly as they do in a foreground run. It inherits the launcher's environment unchanged, because the `env` secret source reads from it, and its working directory.
+- **Detaching.** The supervisor detaches from the launcher (`setsid` on Unix; no console on Windows). Before any child process exists, it re-points its operating-system standard handles, not merely `Console.SetOut`, at `local/console.log` and the null device. Otherwise a descendant such as DCP could inherit a pipe that the launcher is about to close. It then takes `run.lock` and writes `run.json`.
+- **Handing back.** The launcher returns once `run.json` exists. It prints only the run id on stdout, because `--json` is already an alias of `--events` on `run`. If the supervisor neither confirms nor exits within 30 seconds, the launcher exits 2 but names the id, so the caller can still find the run. The launcher's own exit code never carries a verdict: 0 means launched, 2 means refused. `--detach` is refused with `--watch` and with `--shutdown-on-stdin-eof`, because the supervisor's stdin is the null device, which that flag would read as an immediate stop.
+- **What owns the topology while the caller is gone:** the supervisor, running the ordinary `run` pipeline. There is no daemon, socket or IPC server, and teardown takes the same `await using` path into `HeadlessTopology.DisposeAsync`.
+- **Status.** `vouchfx runs list [--json]` and `vouchfx runs status <id> [--json]` read `run.json` and add `crashed` where the lock shows it. For progress, tail `events.live.jsonl`, the existing live stream.
+- **Waiting.** `vouchfx runs wait <id> [--timeout <duration>]` blocks until the verdict is final (`kept`, `completed`, `abandoned`, or `crashed` as derived by the reader). It then exits with the recorded exit code; §6 covers the exceptions.
+- **Cancelling.** `vouchfx runs cancel <id>` creates `cancel.request` with `CreateNew` and returns at once; a second call finds the file already there and says so. The supervisor checks for the file every second. It treats the file as a second trigger for the stop mechanism `--shutdown-on-stdin-eof` already uses: arm `ShutdownBackstop`, then cancel the linked source. Unwinding, teardown and the forced exit 4 are therefore identical, and `stopReason` records `cancel-requested`. `--force` acts only if the supervisor still holds the lock `TeardownBudgetSeconds` plus 15 seconds after the request. Even then it kills the process tree only after checking that both the pid and `processStartedAt` in `run.json` match the live process, so a reused pid is never killed; then it reaps the run (§5). Cancelling a run that has already finished reports that and exits 0.
+- **Completion.** The supervisor writes the terminal manifest and exits with the code it recorded. If `ShutdownBackstop` fires, it records `stopReason: backstop` with `teardown: pending` before exiting, so the reaper removes whatever the stuck teardown left behind.
+
+### 5. Crash semantics and reclamation
+
+A supervisor can die without unwinding: SIGKILL, running out of memory, power loss, or a host that kills its process tree or job, as CI runners do at the end of a job and as a Windows kill-on-close job object does. The operating system then releases the lock, and `run.json` stays in a non-terminal state. DCP, which monitors the supervisor's pid, may remove what it created, but nobody has measured that after a hard kill, and this design does not rely on it.
+
+- **Labels.** `HeadlessTopology.StartAsync` labels every container resource at one site, after `configureResources` has run, through `WithContainerRuntimeArgs`: `--label io.vouchfx.run=<run-id>` and `--label io.vouchfx.owner=<the first 16 hex characters of SHA-256(machine name + canonical root)>`. The owner hash is one-way, so it discloses no path.
+- **Reaping.** `vouchfx runs reap [--dry-run]` selects runs whose lock it can acquire and whose `teardown` is not `confirmed`. That covers a crash, a backstop exit and a Ctrl-C that outlasted its budget. Holding the lock, it removes containers that carry both labels, together with their anonymous volumes. It then removes `aspire-session-network-*` networks that carry a `creatorProcessId` seen on those containers and have nothing left attached. It records `teardown: reaped`, and if the run recorded no verdict it also records `state: abandoned`, `verdict: INCONCLUSIVE`, `exitCode: 4` and `stopReason: crashed`. It uses the container runtime recorded in `run.json` and runs it under the bounded process-runner rules `--changed-since` already follows. Finding no labelled containers is reported rather than treated as success, because a container that has already gone looks the same as one on a different daemon.
+- **Opportunistic reaping** runs at each launch, in the same root only, and only for runs whose lock proves the supervisor dead. It never crosses roots.
+- **What can remain:** a daemon the reaper cannot reach keeps its containers until the reaper can reach it. A `project:` service is a process that DCP runs, so it dies with DCP rather than being reaped. Leftover `.request` files do nothing without a supervisor. The root must be on a local file system, because the lock rule does not hold over a network file system.
+
+### 6. Exit codes and the taxonomy
+
+- The supervisor calls `ComputeExitCode` exactly as a foreground run does, with the gates it was started with, and records `verdict`, `exitCode` and those gates in `run.json`. `runs wait` returns that number. No reader recomputes it, and nothing can change the gates at wait time, so §16.4 keeps its single decision site and its four exceptions. A waiter that wants a different policy reads `verdict`.
+- If a supervisor died before recording a verdict, `runs wait` exits 4 whatever `--fail-on-inconclusive` says: the engine could not decide, and no process returned a code. This follows the `ShutdownBackstop` precedent, is stated as "never exits 0", and joins the existing exceptions in §16.4.
+- When its `--timeout` runs out, `runs wait` exits 6, meaning "not concluded yet". Like 5 for `plan`, the code belongs to one command and sits outside the taxonomy. `runs reap` exits 3 when it cannot reach the container runtime, which is an infrastructure fault. The four verdicts stay four everywhere: a crash is Inconclusive, never Fail and never an Environment error.
+- A kept run's code is final at the handover (§8). Later teardown faults cannot change it, because teardown must never throw into the verdict path.
+
+### 7. Container logs
+
+- **Opt-in.** `--capture-logs off|on-failure|always` defaults to `off`. `on-failure` writes the logs only when the verdict is not `PASS`.
+- **Which resources.** Every resource in the topology: `image:` and `project:` services, dependencies, and the sidecars the engine adds. The engine's own in-process host resources are not captured.
+- **When.** Capture runs from the moment the resources exist until the verdict is final. Starting that early matters: it covers a container that crashes during its health gate, which is when logs matter most. Output is held in a bounded in-memory tail for each resource, read through `ResourceLoggerService`. The tail is written to `local/logs/` at two points: at the keep handover, and as the first act of `HeadlessTopology.DisposeAsync`, before `StopAsync`. The teardown write is limited to 2 seconds and cannot throw. Two seconds fits inside the existing headroom of the 30-second budget, so neither `TeardownBudgetSeconds` nor vouchfx-mcp's 35-second grace needs to change. A crash loses whatever tail has not been written, and a container that was never created has no output (as measured). Capture stops at the verdict: in a kept environment, later output is the operator's to read through the container runtime.
+- **Bounds.** For each resource, the newest 5,000 lines or 1 MiB, whichever limit is reached first, so vouchfx-mcp's maximum `tailLines` can always be served. Lines longer than 8 KiB are truncated with a marker, and a run keeps at most 32 MiB of logs. File names are reduced to `[a-z0-9-]` and prefixed with an ordinal, with the mapping recorded in `run.json`. Every truncation is recorded per file.
+- **Redaction: what the engine can and cannot promise.**
+  - **What the engine scrubs.** Each line is scrubbed when it is written to disk, which is when the ledgers hold the most. The scrub removes exact matches of every value in the run's `ResolvedSecretLedger` (every `${secret:…}` the run resolved, including `security.clientKeyPassword`), of the substitutions in `SecurityPathDisclosureLedger`, and of the values of Aspire's parameter resources that are flagged secret (the generated database passwords).
+  - **What it cannot see.** The promise ends at "no value this run resolved or generated appears verbatim". The engine cannot see encoded or transformed forms (base64, URL or JSON escaping, hashes, HMAC signatures), partial prints, a value split across lines, secrets the system under test holds or derives itself, or anything printed by a process the engine does not control. Blueprint §11.6's case against string matching at the sink applies in full here, and container logs have no typed wrapper to fall back on.
+  - **What follows.** Capture is off by default. The files live under `local/`, are readable only by their owner, are never embedded in the stream, JUnit or HTML, and are never read by telemetry. `run.json` marks them `"redaction": "best-effort"`. The files keep the text as received after the scrub, and every engine surface that displays it passes it through `DisplaySanitiser`; the one such surface is `vouchfx runs logs <id> [--resource] [--tail]`.
+
+### 8. keepEnvironment
+
+- **The flag.** `--keep-environment[=<duration>]` defaults to 30 minutes, with a ceiling of 8 hours. It is refused with `--parallel`, where each scenario has its own topology, and with `--watch`, which already keeps one; so it always applies to the single shared topology.
+- **The final reset is skipped.** The engine skips the last scenario's `EndScenarioAsync` reset, so the kept stores hold what that scenario left. Every earlier reset runs as it does today.
+- **Handover.** The runner writes its reports and returns its `SuiteResult` together with ownership of the topology, as an `IKeptTopology`. That is the interface `--watch` already uses for a topology whose lifetime someone else owns. The CLI then computes the exit code and writes `state: kept`, `keptUntil`, the verdict and the code. It also releases the run's secret ledger, because nothing after the handover emits scrubbed text. `runs wait` returns at this point.
+- **Lifetime.** The topology stays up until the first of these: `keptUntil`; `vouchfx runs teardown <id>`; `runs cancel`; SIGTERM or Ctrl-C in the foreground; or stdin EOF under `--shutdown-on-stdin-eof`. The CLI then disposes it through `HeadlessTopology.DisposeAsync`, the same chokepoint, writes `completed` with a `stopReason` (such as `kept-expired` or `teardown-requested`), and exits with the code it already recorded. A crash while the environment is kept orphans the environment but not the verdict: `runs wait` returns the recorded code, and the reaper reclaims the containers.
+- **Inspection.** `runs status` lists the kept resources' host ports, taken from the run's own `topology-ready` record. Connection strings and generated credentials are never written or printed (§11.5). An operator who needs a password can read it through the container runtime, and access to the runtime is a privilege they already hold. A kept topology keeps its pinned host ports, so a second run of a suite that pins ports fails to start with an environment error until the first is torn down. Nothing queues behind the kept topology.
+
+### 9. Security and hygiene
+
+- **Containment.** The root is resolved once with `Path.GetFullPath`, and UNC and device paths (`\\server\share`, `\\?\`) are refused. On Unix, a root that is world-writable or owned by another user is also refused, which closes the attack where someone plants a symbolic link in a shared directory. Every file name under a run is an engine constant or a sanitised form of one; beyond the validated id, nothing the caller supplies becomes a path segment. If `<root>/<id>` already exists, even as a link, the run is refused.
+- **Permissions.** Directories the engine creates are `0700` and its files `0600`. As the DCP flight recorder does, the engine never changes the mode of anything it did not create. On Windows, files inherit their parent's ACL, which for the default root is the per-user profile's.
+- **No absolute host paths.** `run.json` holds only file names relative to the run directory. `request.path` is recorded relative to the working directory, or as its last segment when it lies outside it. Human-readable output names the default root by its token, as the DCP flight recorder does, and echoes a root the caller named exactly as typed. The new files that can hold host paths, `console.log` and the container logs, live under `local/`, and a CI job should exclude that directory from any upload. The existing gap, where Aspire's tail lines inside `environment-error` details can carry host paths, is unchanged and stays documented where it already is.
+- **The manifest is data, not authority.** Request files are empty and never parsed, and `--force` checks both the pid and the process start time before it kills anything.
+
+### 10. vouchfx-mcp integration contract
+
+| vouchfx-mcp surface | Today | Closed by | What vouchfx-mcp changes |
+|---|---|---|---|
+| `run_suite wait: false` | `VFX-E-1504` | Stage 2 | Spawn `run --detach --run-id <its runId> --artifacts-dir <its output dir>/engine-runs`, return a `running` result at once, and poll `runs status --json`. The engine owns the rule for deciding whether a run is alive, so the server does not re-implement it. |
+| `run_suite keepEnvironment: true` | `VFX-E-1504` | Stage 3 | Forward `--keep-environment`; the 30-minute default belongs to the engine. Use `--detach` so the call can return at the verdict. |
+| `cancel_run` on another process's run | `VFX-E-1507` | Stage 2 | Call `vouchfx runs cancel <id>`: that is the engine's one stop path for a detached run, not a side channel. The phantom `running` entry behind `VFX-E-1508` becomes the engine's derived `crashed`. |
+| Verdict and exit code in `get_run_status` | derived from scenario records, with the exit code (both `--fail-on-*` flags passed) as a fallback | Stage 1 | Read `verdict`, `exitCode` and `state` from the manifest; the manifest's verdict also folds in discovery parse failures, which appear in no scenario record. |
+| Labels in the stream | recorded in the registry only | Stage 1 | Pass `--label`, adopting the rule that a key contains no `=`. The labels arrive in `suite-started`. |
+| `reports.html`, `reports.junit` | omitted | **Available today** through `--html` and `--junit`; stage 1 fixes the file names | List them from `run.json.files`. |
+| `logs` (`container`, `tailLines`) | always `[]` | Stage 3 | Pass `--capture-logs` and serve `local/logs/` through a bounded, sanitised relay, as the server relays every other piece of engine text. |
+| `environment.services`, `environment.dependencies`, `health` | `[]` and `null` | Stage 3 | Classify resources from `topology-ready`. `health` means the resource passed its gate at `ts`; it is never a live reading. |
+
+vouchfx-mcp can keep minting its own id and pass it down, so the registry id and the engine's run id are one value. Its own registry remarks anticipate that swap, and it costs nothing. A multi-suite call maps to one engine run per suite: `<runId>-<nn>` satisfies the id rule. `wait: true` keeps its existing path (close stdin, allow a 35-second grace, then kill the process tree), because the engine's budget does not change.
+
+### Alternatives considered
+
+- **A resident daemon that owns every topology.** Rejected. It adds an IPC and authentication surface and one more lifecycle, and its crash would orphan every run at once. A supervisor per run keeps today's model of one process per topology.
+- **Promoting the scenario `runId` to the run handle.** Rejected. An invocation has several of them, and changing their format would break the consumers of §14.4.2.
+- **Status that vouchfx-mcp maintains itself.** Rejected. Verdicts and exit codes must come from `ComputeExitCode`, and the CLI and the server must not drift.
+- **Reading container logs only at teardown, through `GetAllAsync`.** Rejected. Its cost grows with log volume, and it would have to fit inside the fixed teardown budget.
+
+## Consequences
+
+- **The stream.** Two records, three with stage 3, join the frozen v1 surface, and every stream gains two lines. §14 already requires every consumer to tolerate them, and the in-tree renderers, the VS Code extension and vouchfx-mcp's parser already do. Blueprint §14.4 and vouchfx-mcp's documentation should both state that a scenario's `runId` is not a run handle.
+- **The CLI.** `vouchfx` gains a `runs` command group, a rule that decides from the lock whether a run is alive, a production dependency on the container runtime's CLI (for reaping only) and exit code 6. Blueprint §4.5, §14.4 and §16.4, and the getting-started guide, change with the stage that introduces each piece.
+- **Where detached runs fit.** Detached runs are for interactive and agent hosts. A CI step should stay in the foreground: runners kill leftover processes at the end of a job, which counts as a crash by this design's definition.
+
+### Staged plan and effort
+
+The estimates are in engineer-weeks and include this repository's usual golden-gate updates, Docker drills and review rounds.
+
+1. **Stage 1: a stable handle and a place to put things (2–3 weeks).** Adds `--run-id`, `--label` and `--artifacts-dir`; the run directory, `run.lock` and `run.json`; the suite records; container labels, with a Docker-gated test that every container of a full topology carries both; and `runs list` and `runs status`. It covers foreground runs only. This is the smallest stage worth shipping by itself. CLI users get a run history with verdicts; vouchfx-mcp's ids line up with the engine's; labels, verdicts and exit codes become machine-readable; and every run from then on can be reclaimed by the stage 2 reaper.
+2. **Stage 2: the detached lifecycle (3–4 weeks).** Adds `--detach`, with the detaching mechanics for Unix and Windows; `runs wait`, `runs cancel [--force]` and `runs reap`; teardown tracking; and SIGKILL and forced-exit drills that prove nothing remains after reaping. This is the smallest stage that lifts a `VFX-E-1504` refusal, the one for `wait: false`.
+3. **Stage 3: inspection (3–4 weeks).** Adds `--keep-environment`, with the skipped final reset and the `IKeptTopology` handover; `runs teardown`; the `topology-ready` record; `--capture-logs`, with its scrub, and `runs logs`; and `runs prune`. The stage starts with a spike that measures `ResourceLoggerService` against the pinned Aspire 13.4.2: whether a late subscriber gets the backlog, how `project:` resources behave, and what happens when a container restarts.
+
+The total is 8–11 engineer-weeks for the engine. vouchfx-mcp's side adds roughly 2–3 more, spread across three pin advances.
+
+### Open questions for the maintainer
+
+1. **Default root:** the per-user data directory, or a `.vouchfx/runs` directory in the workspace? *Recommended:* per-user. It matches the DCP flight recorder and can be found from any directory. vouchfx-mcp and CI pass `--artifacts-dir` anyway.
+2. **Exit code for a dead supervisor:** should `runs wait` exit 4 whatever the gates say? *Recommended:* yes, stated as "never exits 0", like the backstop.
+3. **Log capture default:** `off` or `on-failure`? *Recommended:* `off` until the scrub's coverage has been measured against the Core dependency images.
+4. **Keep limits:** 30 minutes by default, a ceiling of 8 hours, and the sequential path only? *Recommended:* yes.
+5. **`runs wait --timeout`:** exit code 6, or no timeout option at all? *Recommended:* 6, reserved to one command as 5 is.
+6. **When to emit the suite records:** on every run, or only with `--run-id`? *Recommended:* every run, so that no stream's shape depends on a flag.
+7. **Several suites in one detached invocation, for vouchfx-mcp.** *Recommended:* not in U4. vouchfx-mcp limits `wait: false` to one suite at first, and a `run` that accepts several paths becomes its own proposal.
+
+## Related documents
+
+- [Architecture Blueprint](../01_Technical_Architecture_and_Engineering_Blueprint.md): §4.5 (teardown), §11.5–§11.6 (credentials and redaction), §12.1 and §16.4 (verdicts and exit codes), §14.4 (the event stream and its v1 freeze), §17 (secrets).
+- `src/Cli/Vouchfx.Cli/RunCommand.cs`, `ExitCodes.cs` and `ShutdownBackstop.cs`; `src/Engine/Vouchfx.Engine.Orchestration/HeadlessTopology.cs`, `IKeptTopology.cs` and `DcpCapture.cs`; `src/Engine/Vouchfx.Engine.Abstractions/Events/`.
+- [Decision: dotnet tool packaging](dotnet-tool-packaging.md), on why the supervisor must be the same executable, for the DCP metadata.
+- vouchfx-mcp's tool reference (`run_suite`, `get_run_status`, `cancel_run`, `get_run_artifacts`) and its `VFX-E-1504` page, published at vouchfx-mcp.vouchfx.io.
