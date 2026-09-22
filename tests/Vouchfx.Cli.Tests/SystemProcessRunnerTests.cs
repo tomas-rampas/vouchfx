@@ -3030,6 +3030,21 @@ public sealed class SystemProcessRunnerTests
     /// offenders loop pass vacuously over an empty list rather than saying so.
     /// </para>
     /// <para>
+    /// <strong>"BY RECEIVER SHAPE" MEANS THE RECEIVER, NOT MERELY "HAS ONE" — a review round
+    /// caught the difference before it shipped.</strong> An earlier version of
+    /// <see cref="MemberInvocationsNamed"/> matched ANY member access naming the method, which
+    /// would have read a self-qualified pid kill —
+    /// <c>SystemProcessRunnerTests.KillTreeQuietly(pid, startedUtc, pidFile)</c> — as a handle
+    /// kill purely because it is spelled with a receiver, exempting it from the reclaim rule it
+    /// actually needs; only the exact count would have caught the substitution, and a reviewer
+    /// re-aiming that count would have let it through unnoticed.
+    /// <see cref="IsChildProcessReceiver"/> is the fix: the receiver itself must name
+    /// <c>ChildProcess</c>. What that narrowing excludes, and <see cref="InvocationsNamed"/>
+    /// still finds, is not folded back into either recognised shape —
+    /// <see cref="UnclassifiedInvocationsNamed"/> names it as its OWN set, and the census fails
+    /// loudly on anything there rather than guessing which rule it should follow.
+    /// </para>
+    /// <para>
     /// <strong>Roslyn over this file's own source, and the self-reference is safe by NODE
     /// KIND.</strong> The method names below are string constants, and this row's messages spell
     /// them too, but the scan switches on <see cref="InvocationExpressionSyntax"/> — a string
@@ -3098,6 +3113,24 @@ public sealed class SystemProcessRunnerTests
             handleKills.Count == ExpectedHandleKills,
             FormattableString.Invariant(
                 $"Found {handleKills.Count} `ChildProcess.{KillMethod}` (handle) call(s), not the {ExpectedHandleKills} this census covers — one each in the two rows that launch a shape directly and hold a Process handle of their own. A handle kill has no pid to reopen, so it is deliberately NOT required to carry a reclaim ahead of it (#549); a count that has moved means one was added or removed."));
+
+        // A member access naming `KillMethod` on some receiver OTHER than `ChildProcess` — a
+        // self-qualified `SystemProcessRunnerTests.{KillMethod}(...)` pid kill, for instance — is
+        // exactly as reclaim-needing as the bareword form, but is a member access syntactically
+        // and so is invisible to `pidKills` above. Requiring the RECEIVER rather than merely the
+        // shape is what stops it being silently swept into `handleKills` and exempted; anything
+        // this finds fails the census on its own, rather than passing as a handle kill nobody
+        // checked.
+        var unclassified = killing
+            .SelectMany(clause => UnclassifiedInvocationsNamed(clause, KillMethod)
+                .Select(kill => (Clause: clause, Kill: kill)))
+            .ToList();
+
+        Assert.True(
+            unclassified.Count == 0,
+            FormattableString.Invariant(
+                $"{unclassified.Count} `{KillMethod}` call(s) inside a killing `finally` are neither a bareword pid kill nor a `ChildProcess.{KillMethod}` handle kill. This census recognises exactly those two spellings — a member access on any OTHER receiver is not assumed to be either, because a self-qualified pid kill is a member access too and would otherwise be exempted from the reclaim rule it actually needs (#539) just by being spelled with a receiver. Rename it to one of the two recognised forms, or extend this census deliberately if a third is now real:\n  ")
+            + string.Join("\n  ", unclassified.Select(pair => Describe(pair.Kill))));
 
         var offenders = pidKills
             .Where(pair => !GuardedReclaimPrecedes(pair.Clause, pair.Kill, ReclaimMethod))
@@ -3454,15 +3487,31 @@ public sealed class SystemProcessRunnerTests
                 && name.Identifier.ValueText == methodName);
 
     /// <summary>
-    /// Every invocation of a method with this name reached through a member access —
-    /// <c>Receiver.MethodName(...)</c> — at any depth (#549).
+    /// Every invocation of a method with this name reached through a member access on
+    /// <c>ChildProcess</c> SPECIFICALLY — <c>ChildProcess.MethodName(...)</c> — at any depth
+    /// (#549).
     /// </summary>
     /// <remarks>
+    /// <para>
     /// The HANDLE-kill half of <see cref="InvocationsNamed"/>'s match: today this file's only
     /// member-access kill is <c>ChildProcess.KillTreeQuietly(process)</c>, which kills through a
     /// <see cref="Process"/> handle a row already holds from its own launch rather than a pid it
     /// has to reopen. <see cref="EveryFinallyThatKills_ReclaimsAPidFirst"/> deliberately does not
     /// require a reclaim ahead of anything this matches.
+    /// </para>
+    /// <para>
+    /// <strong>NARROWED TO THAT ONE RECEIVER, not "any member access", which is what closes the
+    /// gap the review round after #549 landed found.</strong> A self-qualified pid kill —
+    /// <c>SystemProcessRunnerTests.KillTreeQuietly(pid, startedUtc, pidFile)</c> — is a member
+    /// access syntactically, exactly like the handle kill, but reaches the SAME
+    /// reclaim-needing pid path as the bareword form: matching it here would have exempted it
+    /// from the reclaim rule by nothing more than how it happened to be spelled, and only the
+    /// exact count would have caught it — a re-aimed expectation would have let it straight
+    /// through. <see cref="IsChildProcessReceiver"/> is the narrowing;
+    /// <see cref="UnclassifiedInvocationsNamed"/> is where anything it excludes, that
+    /// <see cref="InvocationsNamed"/> still finds, ends up instead of being silently read as a
+    /// handle kill.
+    /// </para>
     /// </remarks>
     private static IEnumerable<InvocationExpressionSyntax> MemberInvocationsNamed(
         SyntaxNode node, string methodName) =>
@@ -3470,7 +3519,61 @@ public sealed class SystemProcessRunnerTests
             .OfType<InvocationExpressionSyntax>()
             .Where(invocation =>
                 invocation.Expression is MemberAccessExpressionSyntax access
-                && access.Name.Identifier.ValueText == methodName);
+                && access.Name.Identifier.ValueText == methodName
+                && IsChildProcessReceiver(access.Expression));
+
+    /// <summary>
+    /// Every invocation of a method with this name reached through a member access whose
+    /// receiver is <see cref="IsChildProcessReceiver"/> REFUSES — a member access
+    /// <see cref="MemberInvocationsNamed"/> excludes, that <see cref="InvocationsNamed"/> still
+    /// finds — at any depth (#549).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Structurally the only third case there is.</strong> <see cref="InvocationsNamed"/>'s
+    /// own <c>switch</c> matches nothing besides a bareword identifier and a member access, so
+    /// subtracting <see cref="BarewordInvocationsNamed"/> and <see cref="MemberInvocationsNamed"/>
+    /// from it leaves exactly this: a member access naming the method, on some receiver other
+    /// than <c>ChildProcess</c>. <see cref="EveryFinallyThatKills_ReclaimsAPidFirst"/> reddens on
+    /// anything here rather than silently counting it as either recognised shape — a call it
+    /// cannot classify is not evidence it needs no reclaim.
+    /// </para>
+    /// <para>
+    /// Named as its OWN positive set — the same shape as its two siblings, not "whatever the
+    /// other two do not explain" computed by set subtraction — so a census failure can point at
+    /// the offending line directly rather than at an inferred remainder.
+    /// </para>
+    /// </remarks>
+    private static IEnumerable<InvocationExpressionSyntax> UnclassifiedInvocationsNamed(
+        SyntaxNode node, string methodName) =>
+        node.DescendantNodes(descendIntoTrivia: false)
+            .OfType<InvocationExpressionSyntax>()
+            .Where(invocation =>
+                invocation.Expression is MemberAccessExpressionSyntax access
+                && access.Name.Identifier.ValueText == methodName
+                && !IsChildProcessReceiver(access.Expression));
+
+    /// <summary>
+    /// Whether <paramref name="receiver"/> names <c>ChildProcess</c> — bare, as this file's own
+    /// handle kill spells it, or as the final segment of a qualified name (#549).
+    /// </summary>
+    /// <remarks>
+    /// Pattern-matched on the two shapes a receiver can take, the same discipline
+    /// <see cref="GuardedOnANullPid"/>'s remarks argue for elsewhere in this file: a bare
+    /// <see cref="IdentifierNameSyntax"/> reads its own identifier, and a qualified receiver —
+    /// <c>Vouchfx.TestSupport.ChildProcess</c>, say — is itself a
+    /// <see cref="MemberAccessExpressionSyntax"/> whose OWN <c>Name</c> is read the same way,
+    /// recursing no further because nothing in this file spells it more deeply than that. Any
+    /// other receiver shape (an invocation, a cast, a generic name) answers
+    /// <see langword="false"/> and therefore refuses to match here.
+    /// </remarks>
+    private static bool IsChildProcessReceiver(ExpressionSyntax receiver) =>
+        receiver switch
+        {
+            IdentifierNameSyntax name => name.Identifier.ValueText == "ChildProcess",
+            MemberAccessExpressionSyntax access => access.Name.Identifier.ValueText == "ChildProcess",
+            _ => false,
+        };
 
     /// <summary>
     /// A census offender as its failure message names it: line, then first line of text.
