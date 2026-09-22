@@ -92,22 +92,22 @@ backoff (Polly v8) — authors never write `Thread.Sleep`.
 - **Four verdicts, never three.** **Pass**, **Fail**, **Environment error** (unhealthy container,
   image-pull or seed failure) and **Inconclusive** (timeout, unmet capture) stay distinct through the
   taxonomy, the reports and the exit codes. **Only `Fail` breaks CI by default** — conflating an
-  environment error with a defect destroys trust in the tool. Three deliberate exceptions serve that
+  environment error with a defect destroys trust in the tool. Four deliberate exceptions serve that
   same argument rather than retracting it. A suite that declares a `security:` block the engine cannot
   confirm exits non-zero whatever the flags say, because that is an assertion the author wrote, not an
   infrastructure flake, and treating it as opt-in-only would hand a team who forgot a flag a green
-  pipeline on a security suite that verified nothing. Any parse failure, and an Inconclusive suite
-  refused before any scenario ran, do the same, for the same reason: a document the engine could not
-  read, or a suite it refused outright, verified nothing either. So does a scenario refused because a
-  provider threw at one of the engine's SDK surfaces — a fault in the testing machinery rather than
-  in the system under test, which verified nothing whatever its siblings managed. The rule is keyed
-  on *where* the fault arose, not on whose it is: usually a provider defect, sometimes a dispatch
-  failure before the provider's own body ran, or a filesystem or memory condition that may be the
-  host's. The diagnostic says which. A run that executed nothing because its topology never came
-  up is an environment error, keeps that verdict's own gate, and still exits 0 by default — the
-  distinction the taxonomy exists to protect. That holds while the topology is the run's only fault:
-  these rules are conditioned on the code so far rather than on the aggregate verdict, so a run that
-  also saw a provider throw exits non-zero on that.
+  pipeline on a security suite that verified nothing. Any parse failure does the same, for the same
+  reason: a document the engine could not read verified nothing. So does an Inconclusive suite refused
+  before any scenario ran, for the same reason: a suite it refused outright verified nothing either.
+  So does a scenario refused because a provider threw at one of the engine's SDK surfaces — a fault in
+  the testing machinery rather than in the system under test, which verified nothing whatever its
+  siblings managed. The rule is keyed on *where* the fault arose, not on whose it is: usually a
+  provider defect, sometimes a dispatch failure before the provider's own body ran, or a filesystem or
+  memory condition that may be the host's. The diagnostic says which. A run that executed nothing
+  because its topology never came up is an environment error, keeps that verdict's own gate, and still
+  exits 0 by default — the distinction the taxonomy exists to protect. That holds while the topology
+  is the run's only fault: these rules are conditioned on the code so far rather than on the aggregate
+  verdict, so a run that also saw a provider throw exits non-zero on that.
 - **One event stream, many renderers.** A schema-versioned JSON Lines stream is the single substrate;
   the terminal, HTML, JUnit XML and `--events` outputs are all renderings of it, so they can never
   disagree. Each retry attempt is recorded individually, making a polling timeline renderable without
