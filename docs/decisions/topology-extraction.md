@@ -133,16 +133,25 @@ The command writes one indented JSON document to stdout, serialised with the CLI
 
 `rawRoute` keeps the declared text.
 
-Matching is defined here so that both repositories implement one rule. Strip the suite path's query string, fragment and any trailing `/`, then compare segment by segment:
+**Matching** is defined here so that both repositories implement one rule. Both sides can be templates: an extracted route has parameters, and a suite path has `{placeholder}`s that are substituted at run time. So matching is symmetric. A suite path matches a route when at least one concrete request path satisfies both. First strip the suite path's query string, fragment and any trailing `/`. Then split each side into segments and read each segment as one of these tokens:
 
-- a suite segment that contains a `{placeholder}` matches any one segment;
-- `{name}` matches one non-empty segment;
-- `{name?}` matches zero or one final segment;
-- `{*name}` matches zero or more final segments;
-- `{?}` matches one or more segments;
-- literal segments compare case-insensitively, which is ASP.NET Core's own rule.
+| Segment | Side | Stands for |
+|---|---|---|
+| literal text | either | that segment, compared case-insensitively, which is ASP.NET Core's own rule |
+| `{name}`, or any segment mixing literal text and parameters, such as `{name}.{ext}` | route | exactly one non-empty segment |
+| `{name?}` | route | zero or one segment, final position only |
+| `{*name}` | route | zero or more segments, final position only |
+| any segment containing `{?}` | route | one or more segments |
+| any segment containing a `{placeholder}` | suite | one or more segments, because a substituted value can itself contain `/` |
 
-So `/orders/{orderId}` in a suite matches the route `/orders/{id}`.
+Each side is then a sequence of tokens, and the check asks whether the two sequences accept a common path. That is a reachability search over pairs of positions, one in each sequence, so its cost is linear in the product of their lengths. A route segment that mixes literal text with a parameter or `{?}` is read as a wildcard, which over-matches: an over-match can only silence VFX-D-1210, never make it fire, as in §2. The one under-match is a placeholder whose run-time value is empty, which the rule assumes away because a path segment written as a placeholder is meant to carry a value.
+
+For example:
+
+- the suite path `/orders/123` matches the route `/orders/{id}`, and so does `/orders/{orderId}`;
+- `/orders/{orderId}/cancel` does not match `/orders/{id}`, because the route has no third segment;
+- `/files/{name}` matches `/files/{*path}`, and so does `/files/a/b.txt`;
+- `/{basePath}/orders` matches `/api/v1/orders`, because `{basePath}` may stand for `api/v1`.
 
 ### 4. Command surface
 
