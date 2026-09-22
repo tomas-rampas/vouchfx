@@ -174,6 +174,29 @@ public sealed class HttpRestDiffRendererTests
     }
 
     /// <summary>
+    /// The column delimiter and the Unicode line terminators in author text are escaped too, so
+    /// the value row keeps exactly three cells and stays one line.
+    /// </summary>
+    [Fact]
+    public void RenderDiff_DelimiterOrLineSeparatorInAuthorText_KeepsTheRowShape()
+    {
+        var diff = s_renderer.RenderDiff(Parse(
+            "{\"status\":200,\"expected\":200,\"body\":{\"failed\":1,\"of\":1,\"first\":" +
+            "{\"assertion\":\"json\",\"path\":\"$.a\u2502b\",\"reason\":\"missing\"," +
+            "\"expected\":\"x\u2502y\u2028z\u0085w\"}}}"));
+
+        var lines = diff!.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        Assert.Equal(3, lines.Length);
+
+        var row = lines[2];
+        Assert.Equal(2, row.Count(c => c == '│'));
+        Assert.DoesNotContain('\u2028', row);
+        Assert.DoesNotContain('\u0085', row);
+        Assert.Contains("json $.a\\u2502b", row, StringComparison.Ordinal);
+        Assert.Contains("x\\u2502y\\u2028z\\u0085w", row, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// Fields the renderer does not know are tolerated (§14: renderers tolerate unknown
     /// fields), and a <c>body</c> without the counters still renders its row.
     /// </summary>

@@ -1738,13 +1738,44 @@ public sealed class HttpRestProvider
     }
 
     /// <summary>
-    /// Keeps a table cell on one line: a line break or tab in author text would otherwise
-    /// split the row.
+    /// Keeps a table cell on one line and in one column. Author text can hold a line break,
+    /// which would split the row, or the <c>│</c> column delimiter, which would add a column;
+    /// each is written as an escape sequence instead: <c>\r</c>, <c>\n</c> and <c>\t</c> by
+    /// name, and the delimiter and the other line terminators (vertical tab, form feed, NEL,
+    /// and the Unicode line and paragraph separators) as <c>\uXXXX</c>.
     /// </summary>
-    private static string Cell(string text) =>
-        text.Replace("\r", "\\r", StringComparison.Ordinal)
-            .Replace("\n", "\\n", StringComparison.Ordinal)
-            .Replace("\t", "\\t", StringComparison.Ordinal);
+    private static string Cell(string text)
+    {
+        var sb = new System.Text.StringBuilder(text.Length);
+        foreach (var ch in text)
+        {
+            switch (ch)
+            {
+                case '\r':
+                    sb.Append("\\r");
+                    break;
+                case '\n':
+                    sb.Append("\\n");
+                    break;
+                case '\t':
+                    sb.Append("\\t");
+                    break;
+                case '│':
+                case '\v':
+                case '\f':
+                case '\u0085':
+                case '\u2028':
+                case '\u2029':
+                    sb.Append("\\u").Append(((int)ch).ToString("x4", CultureInfo.InvariantCulture));
+                    break;
+                default:
+                    sb.Append(ch);
+                    break;
+            }
+        }
+
+        return sb.ToString();
+    }
 
     /// <summary>
     /// Renders a single-row, fixed-column box-drawing table: a header row, a separator
@@ -1833,9 +1864,12 @@ public sealed class HttpRestProvider
     /// <remarks>
     /// A scalar value is the equality form and keeps its literal text, so a bare <c>2</c>
     /// is the text <c>2</c> and a bare <c>True</c> the text <c>True</c>.
-    /// <c>{ exists: true|false }</c> is the existence form. Every other value — a YAML null,
-    /// a sequence, a mapping with any other key or a non-boolean <c>exists</c> — binds with
-    /// neither member set, and a <c>json</c> that is not a mapping binds to no entries;
+    /// <c>{ exists: true|false }</c> is the existence form, and only with a PLAIN boolean: the
+    /// rule the schema bridge (<c>SchemaResources</c>' scalar type resolver) uses to type a
+    /// scalar as a JSON boolean, so a quoted <c>"true"</c> is a string here exactly as it is
+    /// there. Every other value — a YAML null, a sequence, a mapping with any other key or a
+    /// non-boolean <c>exists</c>, quoted or not — binds with neither member set, and a
+    /// <c>json</c> that is not a mapping binds to no entries;
     /// <see cref="Validate"/> refuses both. On the engine's own path the schema has already
     /// refused every one of those shapes.
     /// </remarks>
@@ -1857,6 +1891,7 @@ public sealed class HttpRestProvider
                     when vm.Children.Count == 1
                          && vm.Children.TryGetValue(new YamlScalarNode("exists"), out var existsNode)
                          && existsNode is YamlScalarNode existsScalar
+                         && IsPlain(existsScalar)
                          && bool.TryParse(existsScalar.Value, out var exists):
                     entries.Add(new HttpJsonAssertion(path, null, exists));
                     break;
@@ -1870,6 +1905,13 @@ public sealed class HttpRestProvider
     }
 
     /// <summary>
+    /// True for a plain (unquoted) YAML scalar. <see cref="YamlDotNet.Core.ScalarStyle.Any"/>
+    /// counts as plain because a node built in code, rather than parsed, carries no style.
+    /// </summary>
+    private static bool IsPlain(YamlScalarNode scalar) =>
+        scalar.Style is YamlDotNet.Core.ScalarStyle.Plain or YamlDotNet.Core.ScalarStyle.Any;
+
+    /// <summary>
     /// True for a plain (unquoted) YAML scalar that is a null token: empty, <c>~</c>, or
     /// <c>null</c> in any of its three spellings.
     /// </summary>
@@ -1879,7 +1921,7 @@ public sealed class HttpRestProvider
     /// </remarks>
     private static bool IsYamlNull(YamlScalarNode scalar)
     {
-        if (scalar.Style is not (YamlDotNet.Core.ScalarStyle.Plain or YamlDotNet.Core.ScalarStyle.Any))
+        if (!IsPlain(scalar))
             return false;
 
         return scalar.Value is null or "" or "~" or "null" or "Null" or "NULL";

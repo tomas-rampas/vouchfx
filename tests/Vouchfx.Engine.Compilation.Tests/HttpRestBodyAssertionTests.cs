@@ -111,9 +111,9 @@ public sealed class HttpRestBodyAssertionTests
 
     /// <summary>
     /// A value that is neither a scalar nor exactly <c>{ exists: true|false }</c> — a YAML
-    /// null, a sequence, a mapping with another key or a non-boolean <c>exists</c> — binds with
-    /// NEITHER member set, which <see cref="HttpRestProvider.Validate"/> refuses. Bind never
-    /// throws on it.
+    /// null, a sequence, a mapping with another key or a non-boolean <c>exists</c>, including a
+    /// QUOTED <c>"true"</c>, which the schema types as a string — binds with NEITHER member set,
+    /// which <see cref="HttpRestProvider.Validate"/> refuses. Bind never throws on it.
     /// </summary>
     [Theory]
     [InlineData("\"$.a\": ~")]
@@ -123,6 +123,8 @@ public sealed class HttpRestBodyAssertionTests
     [InlineData("\"$.a\": [1, 2]")]
     [InlineData("\"$.a\": { exists: true, extra: 1 }")]
     [InlineData("\"$.a\": { exists: maybe }")]
+    [InlineData("\"$.a\": { exists: \"true\" }")]
+    [InlineData("\"$.a\": { exists: 'false' }")]
     [InlineData("\"$.a\": { value: 1 }")]
     public void Bind_Json_MalformedValue_BindsWithNeitherMemberSet(string entry)
     {
