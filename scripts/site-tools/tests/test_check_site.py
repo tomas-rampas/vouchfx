@@ -1165,6 +1165,21 @@ def test_zero_unreleased_headings_fails(check_site, changelog_path: Path, site_d
         check_site.check_changelog_single_unreleased_heading(site_dir)
 
 
+def test_unreadable_changelog_names_the_error_type_not_the_path(
+    check_site, changelog_path: Path, site_dir: Path, tmp_path: Path
+) -> None:
+    """The read-error branch must not carry the absolute path either: str(exc) for a
+    FileNotFoundError names the full filename, and main() prints CheckFailed into the
+    public publication log. `changelog_path` points at a file that was never written."""
+    with pytest.raises(check_site.CheckFailed) as excinfo:
+        check_site.check_changelog_single_unreleased_heading(site_dir)
+
+    message = str(excinfo.value)
+    assert "FileNotFoundError" in message
+    assert "CHANGELOG.md" in message
+    assert str(tmp_path) not in message
+
+
 def test_real_repository_changelog_passes(check_site, site_dir: Path) -> None:
     """Drives the real function against THIS repository's real, unmocked
     CHANGELOG.md (check_site.CHANGELOG_PATH left at its real default,

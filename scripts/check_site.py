@@ -2027,7 +2027,12 @@ def check_changelog_single_unreleased_heading(_site_dir: Path) -> None:
     try:
         text = CHANGELOG_PATH.read_text(encoding="utf-8")
     except OSError as exc:
-        raise CheckFailed(f"could not read {CHANGELOG_PATH.name} ({exc})") from exc
+        # Type and errno only: str(exc) for FileNotFoundError/PermissionError carries the
+        # absolute filename, and main() prints CheckFailed into the public publication log.
+        errno_label = exc.errno if exc.errno is not None else "n/a"
+        raise CheckFailed(
+            f"could not read {CHANGELOG_PATH.name} ({type(exc).__name__}, errno {errno_label})"
+        ) from exc
 
     lines_matched = [i + 1 for i, line in enumerate(text.splitlines()) if _RE_UNRELEASED_HEADING.match(line)]
     if len(lines_matched) != 1:
