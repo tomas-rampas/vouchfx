@@ -487,6 +487,12 @@ public sealed class MqExpectRedisProvider
         "    /// Redacts credential material from an exception message before it reaches the\n" +
         "    /// observation / event stream (§17).  Mirrors\n" +
         "    /// MqPublishRedis_Helpers.RedactCredentials / CacheAssertRedis_Helpers.RedactCredentials.\n" +
+        "    /// Value bound: StackExchange.Redis's ConfigurationOptions parser delimits OPTIONS\n" +
+        "    /// on ',' only (it splits the configuration string on comma, then each option on\n" +
+        "    /// its FIRST '='), so ';' is not special to it and can appear inside a password\n" +
+        "    /// value verbatim; bounding the value match on ';' as well (as this used to) left\n" +
+        "    /// the remainder of such a password unredacted (#553), so the value-class is\n" +
+        "    /// bounded on ',' ONLY.\n" +
         "    /// </summary>\n" +
         "    internal static string RedactCredentials(string connStr, string message)\n" +
         "    {\n" +
@@ -494,12 +500,12 @@ public sealed class MqExpectRedisProvider
         "            message = message.Replace(connStr, \"***\", System.StringComparison.Ordinal);\n" +
         "        message = System.Text.RegularExpressions.Regex.Replace(\n" +
         "            message,\n" +
-        "            \"(?:password|pwd)\\\\s*=\\\\s*[^,;]+\",\n" +
+        "            \"(?:password|pwd)\\\\s*=\\\\s*[^,]+\",\n" +
         "            \"password=***\",\n" +
         "            System.Text.RegularExpressions.RegexOptions.IgnoreCase);\n" +
         "        message = System.Text.RegularExpressions.Regex.Replace(\n" +
         "            message,\n" +
-        "            \"user\\\\s*=\\\\s*[^,;]+\",\n" +
+        "            \"user\\\\s*=\\\\s*[^,]+\",\n" +
         "            \"user=***\",\n" +
         "            System.Text.RegularExpressions.RegexOptions.IgnoreCase);\n" +
         "        return message;\n" +

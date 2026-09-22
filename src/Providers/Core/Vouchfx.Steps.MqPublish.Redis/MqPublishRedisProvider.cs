@@ -301,9 +301,14 @@ public sealed class MqPublishRedisProvider
         "    /// Redacts credential material from an exception message before it reaches the\n" +
         "    /// observation / event stream (§17).  Mirrors\n" +
         "    /// CacheAssertRedis_Helpers.RedactCredentials: Redis connection strings carry\n" +
-        "    /// password=/user= tokens (comma-separated).  Removes: (1) the full connection\n" +
+        "    /// password=/user= tokens.  StackExchange.Redis's ConfigurationOptions parser\n" +
+        "    /// delimits OPTIONS on ',' only (it splits the configuration string on comma,\n" +
+        "    /// then each option on its FIRST '='), so ';' is not special to it and can appear\n" +
+        "    /// inside a password value verbatim; bounding the value match on ';' as well\n" +
+        "    /// (as this used to) left the remainder of such a password unredacted (#553),\n" +
+        "    /// so the value-class is bounded on ',' ONLY.  Removes: (1) the full connection\n" +
         "    /// string if it appears literally; (2) password=/pwd= key-value pairs up to the\n" +
-        "    /// next comma or semicolon; (3) user= key-value pairs likewise.\n" +
+        "    /// next comma; (3) user= key-value pairs likewise.\n" +
         "    /// </summary>\n" +
         "    internal static string RedactCredentials(string connStr, string message)\n" +
         "    {\n" +
@@ -311,12 +316,12 @@ public sealed class MqPublishRedisProvider
         "            message = message.Replace(connStr, \"***\", System.StringComparison.Ordinal);\n" +
         "        message = System.Text.RegularExpressions.Regex.Replace(\n" +
         "            message,\n" +
-        "            \"(?:password|pwd)\\\\s*=\\\\s*[^,;]+\",\n" +
+        "            \"(?:password|pwd)\\\\s*=\\\\s*[^,]+\",\n" +
         "            \"password=***\",\n" +
         "            System.Text.RegularExpressions.RegexOptions.IgnoreCase);\n" +
         "        message = System.Text.RegularExpressions.Regex.Replace(\n" +
         "            message,\n" +
-        "            \"user\\\\s*=\\\\s*[^,;]+\",\n" +
+        "            \"user\\\\s*=\\\\s*[^,]+\",\n" +
         "            \"user=***\",\n" +
         "            System.Text.RegularExpressions.RegexOptions.IgnoreCase);\n" +
         "        return message;\n" +
