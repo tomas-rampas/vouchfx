@@ -3013,6 +3013,23 @@ public sealed class SystemProcessRunnerTests
     /// a <c>finally</c> clause in syntax however the compiler lowers it.
     /// </para>
     /// <para>
+    /// <strong>THE OFFENDERS LOOP BELOW ASKS THE RECLAIM QUESTION OF PID KILLS ONLY, SINCE
+    /// #549.</strong> The bare-name match above is what makes <c>killing</c> — which
+    /// <c>finally</c> blocks count at all — cover both spellings with one rule; the RECLAIM
+    /// requirement does not extend the same way. A bareword <c>KillTreeQuietly(pid, ...)</c>
+    /// reopens its target through <see cref="TryOpen"/>'s guard and can, in principle, land on a
+    /// recycled pid, which is exactly what the guarded reclaim exists to rule out (#539). A
+    /// member-access <c>ChildProcess.KillTreeQuietly(process)</c> kills through a
+    /// <see cref="Process"/> handle the row already holds from its own launch — it has no pid to
+    /// reopen and therefore no pid-recycle exposure at all, so requiring a reclaim ahead of it
+    /// would be requiring a look this method never needs. <see cref="BarewordInvocationsNamed"/>
+    /// and <see cref="MemberInvocationsNamed"/> split <see cref="InvocationsNamed"/>'s match by
+    /// receiver shape so the offenders loop can ask the two questions separately, and the two
+    /// count assertions below are this split's OWN vacuity guards: a shape that stopped matching
+    /// — a rename, a reformatting neither helper can see through — would otherwise let the
+    /// offenders loop pass vacuously over an empty list rather than saying so.
+    /// </para>
+    /// <para>
     /// <strong>Roslyn over this file's own source, and the self-reference is safe by NODE
     /// KIND.</strong> The method names below are string constants, and this row's messages spell
     /// them too, but the scan switches on <see cref="InvocationExpressionSyntax"/> — a string
@@ -3042,6 +3059,8 @@ public sealed class SystemProcessRunnerTests
         const string ReclaimMethod = "ReclaimPidForTeardownQuietlyAsync";
         const string FlagName = "lateLookTaken";
         const int ExpectedKillingFinallies = 5;
+        const int ExpectedPidKills = 5;
+        const int ExpectedHandleKills = 2;
 
         var killing = SelfSource()
             .DescendantNodes(descendIntoTrivia: false)
@@ -3052,24 +3071,43 @@ public sealed class SystemProcessRunnerTests
         Assert.True(
             killing.Count == ExpectedKillingFinallies,
             FormattableString.Invariant(
-                $"This file holds {killing.Count} `finally` block(s) calling `{KillMethod}`, not the {ExpectedKillingFinallies} this census covers (rows 1, 2 and 5, and the two rows that launch a shape directly — the writer-contract theory #541 added and the guard-anchor row #529 added). A new one needs the same guarded `{ReclaimMethod}` ahead of its kill — see #539 — and one that has gone means a teardown path was removed. Re-aim this count rather than deleting it."));
+                $"This file holds {killing.Count} `finally` block(s) calling `{KillMethod}` in either form (a bareword pid kill or a `ChildProcess.{KillMethod}` handle kill), not the {ExpectedKillingFinallies} this census covers (rows 1, 2 and 5, and the two rows that launch a shape directly — the writer-contract theory #541 added and the guard-anchor row #529 added). A new PID kill needs the same guarded `{ReclaimMethod}` ahead of it — see #539 — a handle kill does not (#549, see below); either way, one that has gone means a teardown path was removed. Re-aim this count rather than deleting it."));
 
-        var offenders = new List<string>();
-        foreach (var clause in killing)
-        {
-            foreach (var kill in InvocationsNamed(clause, KillMethod))
-            {
-                if (!GuardedReclaimPrecedes(clause, kill, ReclaimMethod))
-                {
-                    offenders.Add(Describe(kill));
-                }
-            }
-        }
+        // #549: split by receiver shape rather than counting every `KillMethod` invocation as one
+        // undifferentiated kind. Only a PID kill needs the guarded reclaim ahead of it — a HANDLE
+        // kill reaches a process this row already holds through its own launch and has no pid to
+        // reopen, so it carries no pid-recycle exposure for the reclaim to guard against.
+        var pidKills = killing
+            .SelectMany(clause => BarewordInvocationsNamed(clause, KillMethod)
+                .Select(kill => (Clause: clause, Kill: kill)))
+            .ToList();
+        var handleKills = killing
+            .SelectMany(clause => MemberInvocationsNamed(clause, KillMethod))
+            .ToList();
+
+        // Vacuity guards for the split itself, the same discipline the `killing` count above
+        // already applies: an exact figure for each shape, so a shape that stopped matching says
+        // so here rather than letting the offenders loop below pass over an empty list for the
+        // wrong reason.
+        Assert.True(
+            pidKills.Count == ExpectedPidKills,
+            FormattableString.Invariant(
+                $"Found {pidKills.Count} bareword `{KillMethod}` (pid) call(s) across the {ExpectedKillingFinallies} killing `finally` blocks, not the {ExpectedPidKills} this census covers — one per block. A pid kill reopens its target through TryOpen's guard and can land on a recycled pid, which is what the guarded `{ReclaimMethod}` below rules out (#539); a count that has moved means a pid kill was added or removed somewhere in this file."));
+
+        Assert.True(
+            handleKills.Count == ExpectedHandleKills,
+            FormattableString.Invariant(
+                $"Found {handleKills.Count} `ChildProcess.{KillMethod}` (handle) call(s), not the {ExpectedHandleKills} this census covers — one each in the two rows that launch a shape directly and hold a Process handle of their own. A handle kill has no pid to reopen, so it is deliberately NOT required to carry a reclaim ahead of it (#549); a count that has moved means one was added or removed."));
+
+        var offenders = pidKills
+            .Where(pair => !GuardedReclaimPrecedes(pair.Clause, pair.Kill, ReclaimMethod))
+            .Select(pair => Describe(pair.Kill))
+            .ToList();
 
         Assert.True(
             offenders.Count == 0,
             FormattableString.Invariant(
-                $"{offenders.Count} tree-kill(s) in a `finally` are not preceded, in the same block and under a `pid is null` guard, by `{ReclaimMethod}`. Without that look the kill receives whatever the attempt happened to hold — which on the path an assertion ended is null — and a child whose first write was merely late is left to ChildLifetime (#539). Put the guarded reclaim first:\n  ")
+                $"{offenders.Count} pid kill(s) in a `finally` are not preceded, in the same block and under a `pid is null` guard, by `{ReclaimMethod}`. Without that look the kill receives whatever the attempt happened to hold — which on the path an assertion ended is null — and a child whose first write was merely late is left to ChildLifetime (#539). A `ChildProcess.{KillMethod}` handle kill is exempt from this rule (#549): it kills through a handle the row already holds and has no pid to reopen. Put the guarded reclaim first:\n  ")
             + string.Join("\n  ", offenders));
 
         // THE SECOND CONJUNCT, which the guard-shape check above cannot see. Only the `finally`
@@ -3395,6 +3433,44 @@ public sealed class SystemProcessRunnerTests
                 IdentifierNameSyntax name => name.Identifier.ValueText == methodName,
                 _ => false,
             });
+
+    /// <summary>
+    /// Every BAREWORD invocation of a method with this name — no receiver, called the way this
+    /// file's own private statics are — at any depth (#549).
+    /// </summary>
+    /// <remarks>
+    /// The PID-kill half of <see cref="InvocationsNamed"/>'s match, split out by receiver shape
+    /// rather than by symbol: this file's own <c>KillTreeQuietly(pid, startedUtc, pidFile)</c> is
+    /// a plain <see cref="IdentifierNameSyntax"/> invocation, never a member access, so this is
+    /// the set <see cref="EveryFinallyThatKills_ReclaimsAPidFirst"/> checks for a guarded reclaim
+    /// ahead of it.
+    /// </remarks>
+    private static IEnumerable<InvocationExpressionSyntax> BarewordInvocationsNamed(
+        SyntaxNode node, string methodName) =>
+        node.DescendantNodes(descendIntoTrivia: false)
+            .OfType<InvocationExpressionSyntax>()
+            .Where(invocation =>
+                invocation.Expression is IdentifierNameSyntax name
+                && name.Identifier.ValueText == methodName);
+
+    /// <summary>
+    /// Every invocation of a method with this name reached through a member access —
+    /// <c>Receiver.MethodName(...)</c> — at any depth (#549).
+    /// </summary>
+    /// <remarks>
+    /// The HANDLE-kill half of <see cref="InvocationsNamed"/>'s match: today this file's only
+    /// member-access kill is <c>ChildProcess.KillTreeQuietly(process)</c>, which kills through a
+    /// <see cref="Process"/> handle a row already holds from its own launch rather than a pid it
+    /// has to reopen. <see cref="EveryFinallyThatKills_ReclaimsAPidFirst"/> deliberately does not
+    /// require a reclaim ahead of anything this matches.
+    /// </remarks>
+    private static IEnumerable<InvocationExpressionSyntax> MemberInvocationsNamed(
+        SyntaxNode node, string methodName) =>
+        node.DescendantNodes(descendIntoTrivia: false)
+            .OfType<InvocationExpressionSyntax>()
+            .Where(invocation =>
+                invocation.Expression is MemberAccessExpressionSyntax access
+                && access.Name.Identifier.ValueText == methodName);
 
     /// <summary>
     /// A census offender as its failure message names it: line, then first line of text.
