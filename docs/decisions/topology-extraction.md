@@ -67,7 +67,8 @@ Syntax has no types, so each shape below is recognised by the form of the call:
   - `TopicSpecification { Name = … }` gives `define`.
 - **Constant folding.** The extractor folds:
   - literals: regular, verbatim and raw;
-  - `const string` fields and locals, and `static readonly string` fields with a literal initialiser, anywhere in the analysed tree. A first pass collects these declarations into a table; a name that appears twice with different values is unresolved.
+  - `const string` fields and locals, anywhere in the analysed tree. A first pass collects these declarations into a table; a name that appears twice with different values is unresolved.
+  - `static readonly string` fields with a literal initialiser, but only when no assignment to that field appears anywhere else in the analysed tree. `static readonly` is not a compile-time constant: a static constructor may assign it again, and folding the initialiser would then report a name the running code never uses. That false resolved entry would suppress VFX-D-1210. Any other assignment makes the field `unresolved` with reason `non-constant`.
   - `nameof`, `+` concatenation, and interpolated strings whose holes all fold.
 
   Anything else is reported as `unresolved`, with its literal skeleton kept (§3).
@@ -116,7 +117,7 @@ The command writes one indented JSON document to stdout, serialised with the CLI
 - `confidence` is `literal`, `constant` or `unresolved`. A `constant` entry also carries `declaredAt`, the location of the constant's own declaration. A consumer treats any unknown confidence value as `unresolved`.
 - `provenance` is relative to the root and uses forward slashes. The document never contains an absolute path.
 
-**A dynamic name is never dropped.** It is emitted with `confidence: "unresolved"`, `name: null` and a `reason`: `non-constant`, `configuration`, `parameter`, `ambiguous-constant` or `too-long`. Where some of the name is known, a `pattern` keeps that skeleton and writes each unknown fragment as `{?}`, so `$"{env}.orders"` becomes `{?}.orders`. In a pattern, `{?}` matches any non-empty text. Dropping such a name silently would make VFX-D-1210 fire on a real contract.
+**A dynamic name is never dropped.** It is emitted with `confidence: "unresolved"`, its value field set to `null`, and a `reason`. The value field depends on the entry's kind: `route` for an HTTP route, `name` for a topic or table. The reason is one of `non-constant`, `configuration`, `parameter`, `ambiguous-constant` or `too-long`. Where some of the value is known, a `pattern` keeps that skeleton; `pattern` is legal only on an `unresolved` entry, and it writes each unknown fragment as `{?}`, so `$"{env}.orders"` becomes `{?}.orders`. In a pattern, `{?}` matches any non-empty text. Dropping such a name silently would make VFX-D-1210 fire on a real contract.
 
 **Completeness is data.** `complete` becomes `false` whenever a bound trips, a file is skipped (`too-large`, `too-deep`, `binary`, `symlink` or `unreadable`) or a file parses with errors, and the cause is named in `incomplete` or `skipped`. `unanalysedSourceFiles` counts files under the root in source languages the extractor does not read (`.py`, `.java`, `.kt`, `.js`, `.ts`, `.go`, `.fs`, `.vb` and similar).
 
@@ -218,7 +219,7 @@ vouchfx-mcp must make these changes:
 
 - **Model the document.** Replace `SuiteTopology(IReadOnlySet<string> Names)` with a model of the v1 document that ignores unknown kinds and fields, and treats any `schemaVersion` other than 1 as no topology.
 - **Obtain it from the pinned CLI.** Use the existing `CliPinVerifier` and subprocess plumbing, with a timeout above the command's own budget. Make the rule **CLI-optional**, like `get_schema`'s cross-check. If there is no pinned CLI, the exit is non-zero, the call times out or the document cannot be parsed, there is no topology and the rule stays silent. `validate_suite` stays usable offline.
-- **Run it in the right process.** Run `topology` from the server process, not from the validate worker, and pass the result to the worker as data. Cache it per root and set of globs, keyed on the file list and file timestamps, and apply `PathSafetyGuard` to the root passed in.
+- **Run it in the right process.** Run `topology` from the server process, not from the validate worker, and pass the result to the worker as data. Cache it per root and set of globs, keyed on the file list and a content hash of each file (SHA-256 of its bytes), and apply `PathSafetyGuard` to the root passed in. Timestamps alone are not enough: a tool that preserves modification times, or a file system with coarse timestamp granularity, can change a file's content without changing its timestamp. The resulting stale entry would suppress VFX-D-1210, a false negative. Timestamps and sizes may still short-circuit the hash, but only as a reason to re-hash, never as a reason to skip it.
 - **Go live.** Register the rule, add the route matcher for `path`, and update `docs/errors/VFX-D-1210.md`. Advance `ENGINE_PIN` to the first engine release that carries the command.
 
 ### 7. Effort and staged plan
@@ -252,7 +253,7 @@ vouchfx-mcp must make these changes:
 3. **Should route matching compare HTTP methods?** Recommended: **paths only at first.** The document already carries `method`, so a method-mismatch diagnostic can follow once the false-positive rate of path matching has been measured.
 4. **Should `topology` read `.csproj` files, as XML and never evaluated, to limit the scan to web projects?** Recommended: **no, not in the MVP.** Over-matching is the safe direction (§2), and reading project files would widen the parsed surface for no measured gain.
 5. **Where should the relational-table check in stage 2 live?** Recommended: **on the MCP side**, by conservatively identifying the single table after `FROM`, `INTO` or `UPDATE` in `query` and skipping anything else. That needs no change to the frozen language, whereas a new step field would.
-6. **Should surface (b) be tracked separately from U1?** Recommended: **yes**, as an additive field on `environment-error` (§1), so that U1 does not hold it back.
+6. **Should surface (b) be tracked separately from U1?** Recommended: **yes**, as a separately reviewed wire-contract change (§1): either the `resourceRole` property on `environment-error`, or the freeze-neutral new record, as the maintainer decides. Tracked separately, U1 does not hold it back.
 7. **Should a file over the depth caps be skipped, or parsed in a separate process?** Recommended: **skip it**, as `too-deep`, which makes the scan incomplete. Legitimate code does not nest that deeply, and a process per file would cost more than it saves.
 
 ## Related documents
