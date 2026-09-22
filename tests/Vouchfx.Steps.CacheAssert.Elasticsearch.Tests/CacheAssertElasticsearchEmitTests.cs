@@ -563,10 +563,20 @@ public sealed class CacheAssertElasticsearchEmitTests
     /// is released.  Without this, those rows would be asserting a belief about the host.
     /// </summary>
     /// <remarks>
-    /// MEASURED on Windows 10.0.26200 (2026-09-18).  Cross-platform by construction rather
-    /// than by measurement: a plain bind of a port already bound without
-    /// <c>SO_REUSEADDR</c> is EADDRINUSE on Linux too, which .NET surfaces as the same
-    /// <see cref="SocketError.AddressAlreadyInUse"/>.  The Linux lane is what CI proves.
+    /// MEASURED on Windows 10.0.26200 (2026-09-18): the HOLD half below passed on the first
+    /// attempt.  NOT cross-platform by construction, whatever an earlier revision of this
+    /// comment claimed: a plain bind of a port already bound is EADDRINUSE on Linux only when
+    /// NEITHER socket carries <c>SO_REUSEADDR</c>, and .NET sets it on every TCP socket
+    /// immediately before <c>bind()</c> regardless of platform (<c>SystemNative_Bind</c>,
+    /// dotnet/runtime <c>src/native/libs/System.Native/pal_networking.c</c>) — so on Linux this
+    /// test's own "intruder" carried <c>SO_REUSEADDR</c> too, and the second bind SUCCEEDED.
+    /// MEASURED on PR #546's first CI run (ubuntu-latest, 2026-09-22): this test failed exactly
+    /// that way — the assertion expecting <see cref="SocketException"/> from the second bind saw
+    /// none. <see cref="DeadLoopbackEndpoint.Reserve"/> now clears <c>SO_REUSEADDR</c> on the
+    /// reservation immediately after its own bind (Linux-only; see
+    /// <see cref="DeadLoopbackEndpoint"/>'s own remarks for the full mechanism). MEASURED on the
+    /// same Linux host with the fix applied (2026-09-22): the HOLD half below now also passes on
+    /// the first attempt, matching Windows.
     /// The two halves are asymmetric on purpose: the HOLD half must succeed on the first
     /// attempt (nothing can legitimately take a held port), whereas the RELEASE half is
     /// retried — see the comment at the loop for why one attempt would be a race.

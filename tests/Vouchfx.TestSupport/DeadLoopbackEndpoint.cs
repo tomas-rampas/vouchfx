@@ -37,9 +37,11 @@ namespace Vouchfx.TestSupport;
 /// <see cref="SocketError.ConnectionRefused"/>, which each consuming provider maps to
 /// <c>EnvironmentError</c> — the verdict those rows assert.  MEASURED on this host (Windows
 /// 10.0.26200, 2026-09-18): a connect to a held, non-listening reservation returns
-/// <c>ConnectionRefused</c>, and no netstat row exists for the port at all.  The Linux CI runner
-/// is not measured here and this comment claims nothing about it; the consuming assertions are
-/// the cross-platform check, since they demand that verdict on whatever platform runs them.
+/// <c>ConnectionRefused</c>, and no netstat row exists for the port at all.  MEASURED separately
+/// on Linux (Ubuntu 24.04.4 LTS, x86-64, 2026-09-22): the same connect returns
+/// <c>ConnectionRefused</c> too, unaffected by the <c>SO_REUSEADDR</c> fix below — that fix
+/// touches only the reuse flag and never calls <see cref="Socket.Listen(int)"/>, so this half of
+/// the contract held on Linux even before the fix; only the HOLD half (next paragraph) needed one.
 /// </para>
 /// <para>
 /// Why it stays dead — the point of holding the socket rather than releasing it: while the
@@ -52,6 +54,37 @@ namespace Vouchfx.TestSupport;
 /// itself, and it is exactly what must not be used here: from the moment it closes, the port is
 /// dead only by assumption, and the port it returns is in the ephemeral range the allocator draws
 /// from.  That assumption is the defect #461 was filed for.
+/// </para>
+/// <para>
+/// The HOLD half above was, until now, Windows-measured only, and it does not carry over to
+/// Linux unaided: MEASURED on Linux (Ubuntu 24.04.4 LTS, x86-64, 2026-09-22), a bare reservation
+/// is NOT exclusive there on its own — an ordinary second bind of the same address:port
+/// SUCCEEDS. The cause is <c>SystemNative_Bind</c> (dotnet/runtime,
+/// <c>src/native/libs/System.Native/pal_networking.c</c>), which sets <c>SO_REUSEADDR</c> on the
+/// socket immediately before every TCP <see cref="Socket.Bind(EndPoint)"/> call on Unix —
+/// unconditionally, and on both sides of a race, so the reservation and any "intruder" both
+/// carry it by construction. Linux permits two <c>SO_REUSEADDR</c> sockets to share an
+/// address:port as long as neither is listening, which is exactly this type's shape: a plain
+/// bind of an already-bound port is EADDRINUSE on Linux only when NEITHER socket carries
+/// <c>SO_REUSEADDR</c>, and .NET's own <see cref="Socket.Bind(EndPoint)"/> forces it onto every
+/// TCP socket, so that premise does not hold for .NET specifically. <see cref="Reserve"/>
+/// therefore clears <c>SO_REUSEADDR</c> on the reservation immediately after its own bind, via
+/// <see cref="Socket.SetRawSocketOption"/> — a raw level/name pass-through to
+/// <c>setsockopt(2)</c> with no bound-socket guard. The managed
+/// <see cref="Socket.ExclusiveAddressUse"/> property cannot do this job: it throws
+/// <see cref="InvalidOperationException"/> once the socket is bound, and setting it BEFORE
+/// <see cref="Socket.Bind(EndPoint)"/> does not survive either, because
+/// <c>SystemNative_Bind</c> re-asserts <c>SO_REUSEADDR</c> unconditionally on every bind,
+/// overwriting whatever was set beforehand — only a change applied AFTER the reservation's own
+/// bind persists. That timing is also why it works: Linux's bind-conflict check reads the
+/// EXISTING owner's reuse flag at the moment of the SECOND bind, so clearing the reservation's
+/// flag after its own bind is what makes a later intruder's bind fail. MEASURED with the fix
+/// applied (same host, same date): the intruder's bind now fails with
+/// <c>AddressAlreadyInUse</c>, matching the Windows behaviour above, and the connect-refused half
+/// (previous paragraph) is unaffected. This is gated to <see cref="OperatingSystem.IsLinux"/>:
+/// the raw <c>SOL_SOCKET</c>/<c>SO_REUSEADDR</c> values (1/2) used are Linux x86-64/arm64
+/// numbers, differ on other platforms, and are unnecessary on Windows, where the measurement
+/// above already holds without them.
 /// </para>
 /// <para>
 /// The host is the IPv4 literal 127.0.0.1, not "localhost": the reservation is bound to
@@ -118,6 +151,22 @@ public sealed class DeadLoopbackEndpoint : IDisposable
             // Port 0: the OS picks a port it considers unused. The successful bind is the
             // evidence it was free; holding it is what keeps it that way.
             reservation.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+
+            if (OperatingSystem.IsLinux())
+            {
+                // Undo the SO_REUSEADDR that SystemNative_Bind (dotnet/runtime,
+                // pal_networking.c) forces onto every TCP socket immediately before the bind()
+                // call above — without this, Linux lets a later, equally SO_REUSEADDR-carrying
+                // bind take the port out from under the reservation (see the type-level
+                // remarks). Must run AFTER Bind: the managed ExclusiveAddressUse setter refuses
+                // to run once bound, and running it before Bind is undone by Bind itself
+                // re-asserting SO_REUSEADDR. The raw level/name pass-through carries neither
+                // restriction.
+                const int SolSocket = 1;   // Linux x86-64/arm64 SOL_SOCKET
+                const int SoReuseAddr = 2; // Linux x86-64/arm64 SO_REUSEADDR
+                reservation.SetRawSocketOption(SolSocket, SoReuseAddr, BitConverter.GetBytes(0));
+            }
+
             return new DeadLoopbackEndpoint(
                 reservation, (IPEndPoint)reservation.LocalEndPoint!);
         }
