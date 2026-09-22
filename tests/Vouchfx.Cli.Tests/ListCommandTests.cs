@@ -6,12 +6,20 @@
 //   • --json yields exactly the sealed registry's step types: count == 25 and a spot
 //     check of well-known dotted keys, sorted ordinally by type, with bar-B fields.
 //   • the human table renders a header, every step-type key, and a summary count line.
+//   • #556: every entry is tier "core" with a language-reference link, both verify modes and
+//     an example; every example passes the SAME pipeline `vouchfx validate` runs (schema, AST,
+//     provider bind/Validate/emit, Roslyn compile) by driving ValidateCommand.Execute itself;
+//     each example's dependency agrees with the planner's DependencyKindStepMap wherever that
+//     map speaks; the 25 examples compose into one suite that still validates; and the human
+//     table is unchanged.
 // This never starts a topology — StepKindRegistry reflection is entirely Docker-free.
 
 using System.Text.Json;
 using Vouchfx.Cli;
 using Vouchfx.Engine.Compilation.Schema;
+using Vouchfx.Engine.Planning;
 using Xunit;
+using YamlDotNet.RepresentationModel;
 
 namespace Vouchfx.Cli.Tests;
 
@@ -151,5 +159,238 @@ public sealed class ListCommandTests
         ListCommand.Execute(json: false, sw);
 
         Assert.DoesNotContain("schemaVersion", sw.ToString(), StringComparison.Ordinal);
+    }
+
+    // ── #556: tier, supportedVerifyModes, docsUrl, example ───────────────────
+
+    [Fact]
+    public void Execute_Json_EveryEntryIsCore_WithAReferenceLinkBothVerifyModesAndAnExample()
+    {
+        // Also proves the four init-only members survive a round trip through the CLI's own
+        // options (System.Text.Json sets them after the positional constructor runs).
+        var document = ListJson();
+
+        Assert.Equal(25, document.StepTypes.Count);
+        Assert.All(document.StepTypes, st =>
+        {
+            Assert.Equal(EngineExport.CoreTier, st.Tier);
+            Assert.Equal(new[] { "IMMEDIATE", "RETRY" }, st.SupportedVerifyModes);
+            Assert.NotNull(st.DocsUrl);
+            Assert.StartsWith("https://vouchfx.io/language-reference/#", st.DocsUrl, StringComparison.Ordinal);
+            Assert.False(string.IsNullOrWhiteSpace(st.Example), $"{st.Type} has no example.");
+        });
+
+        // The two anchors the issue names, as the published page already links them.
+        Assert.Equal(
+            "https://vouchfx.io/language-reference/#httprest",
+            Assert.Single(document.StepTypes, st => st.Type == "http.rest").DocsUrl);
+        Assert.Equal(
+            "https://vouchfx.io/language-reference/#db-assertpostgres",
+            Assert.Single(document.StepTypes, st => st.Type == "db-assert.postgres").DocsUrl);
+    }
+
+    [Fact]
+    public void Execute_Json_EveryExample_PassesTheValidatePipeline()
+    {
+        var document = ListJson();
+
+        var dir = Path.Combine(Path.GetTempPath(), "vouchfx-list-examples-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            foreach (var st in document.StepTypes)
+            {
+                File.WriteAllText(Path.Combine(dir, st.Type + ".e2e.yaml"), st.Example);
+            }
+
+            var (exitCode, failures, scenarioCount) = Validate(dir);
+
+            Assert.True(
+                failures.Count == 0,
+                "Catalogue examples failed `vouchfx validate`:\n" + string.Join("\n", failures));
+            Assert.Equal(document.StepTypes.Count, scenarioCount);
+            Assert.Equal(ExitCodes.Success, exitCode);
+        }
+        finally
+        {
+            try { Directory.Delete(dir, recursive: true); } catch { /* best-effort */ }
+        }
+    }
+
+    [Fact]
+    public void Execute_Json_ExampleDependencies_AgreeWithTheKindThePlannerMapsEachTypeTo()
+    {
+        // The example's environment is derived inside Vouchfx.Engine.Compilation, which cannot
+        // reference the planner; this is the one place that sees both, so it pins the two against
+        // each other for every type DependencyKindStepMap maps (it maps only asserting/observing
+        // types — mq-publish.* are absent from it by design, not by omission here).
+        var byType = ListJson().StepTypes.ToDictionary(st => st.Type, StringComparer.Ordinal);
+
+        var checkedTypes = 0;
+        foreach (var (kind, stepTypes) in DependencyKindStepMap.CandidateStepTypes)
+        {
+            foreach (var stepType in stepTypes)
+            {
+                var root = LoadYamlMapping(byType[stepType].Example!);
+                var dependencies = (YamlMappingNode)((YamlMappingNode)root.Children[new YamlScalarNode("environment")])
+                    .Children[new YamlScalarNode("dependencies")];
+                var dependency = Assert.Single(dependencies.Children);
+                var step = (YamlMappingNode)Assert.Single(((YamlSequenceNode)root.Children[new YamlScalarNode("steps")]).Children);
+
+                Assert.Equal(kind, Scalar((YamlMappingNode)dependency.Value, "type"));
+                Assert.Equal(((YamlScalarNode)dependency.Key).Value, Scalar(step, "target"));
+                checkedTypes++;
+            }
+        }
+
+        // Never vacuous: the map is non-empty today (and DependencyKindStepMapDriftTests holds
+        // every entry it names to the current registration).
+        Assert.NotEqual(0, checkedTypes);
+    }
+
+    [Fact]
+    public void Execute_Json_TheExamplesComposeIntoOneSuiteThatStillValidates()
+    {
+        // StepCatalogueEntry.Example's documentation claims the examples compose: a dependency is
+        // named after its kind (so same-kind examples declare the SAME resource) and a step id is
+        // the type (so no two collide). Merge all 25, requiring every same-named resource to be
+        // declared identically, and the result must still pass `vouchfx validate`.
+        var services = new YamlMappingNode();
+        var dependencies = new YamlMappingNode();
+        var steps = new YamlSequenceNode();
+
+        foreach (var st in ListJson().StepTypes)
+        {
+            var root = LoadYamlMapping(st.Example!);
+            if (root.Children.TryGetValue(new YamlScalarNode("environment"), out var environment))
+            {
+                MergeResources((YamlMappingNode)environment, "services", services, st.Type);
+                MergeResources((YamlMappingNode)environment, "dependencies", dependencies, st.Type);
+            }
+
+            foreach (var step in ((YamlSequenceNode)root.Children[new YamlScalarNode("steps")]).Children)
+            {
+                steps.Add(step);
+            }
+        }
+
+        Assert.Equal(25, steps.Children.Count);
+        var composed = new YamlMappingNode
+        {
+            {
+                "environment",
+                new YamlMappingNode { { "services", services }, { "dependencies", dependencies } }
+            },
+            { "steps", steps },
+        };
+
+        var dir = Path.Combine(Path.GetTempPath(), "vouchfx-list-compose-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            File.WriteAllText(Path.Combine(dir, "composed.e2e.yaml"), ToYaml(composed));
+
+            var (exitCode, failures, scenarioCount) = Validate(dir);
+
+            Assert.True(
+                failures.Count == 0,
+                "The composed catalogue examples failed `vouchfx validate`:\n" + string.Join("\n", failures));
+            Assert.Equal(1, scenarioCount);
+            Assert.Equal(ExitCodes.Success, exitCode);
+        }
+        finally
+        {
+            try { Directory.Delete(dir, recursive: true); } catch { /* best-effort */ }
+        }
+    }
+
+    [Fact]
+    public void Execute_Human_TableIsUnchanged_ByTheFourNewFields()
+    {
+        var sw = new StringWriter();
+        ListCommand.Execute(json: false, sw);
+        var text = sw.ToString();
+
+        Assert.Equal(
+            $"{"TYPE",-32} {"FAMILY",-16} {"PROVIDER",-16} VERSION",
+            text.Split('\n')[0].TrimEnd('\r'));
+        Assert.DoesNotContain("https://", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("RETRY", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("scaffolded-suite", text, StringComparison.Ordinal);
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private static StepCatalogueDocument ListJson()
+    {
+        var sw = new StringWriter();
+        Assert.Equal(ExitCodes.Success, ListCommand.Execute(json: true, sw));
+
+        var document = JsonSerializer.Deserialize<StepCatalogueDocument>(sw.ToString(), CliJsonContract.Options);
+        Assert.NotNull(document);
+        return document!;
+    }
+
+    /// <summary>
+    /// Runs <see cref="ValidateCommand.Execute"/> — the whole `vouchfx validate` orchestration,
+    /// discovery included — over <paramref name="dir"/> and returns the exit code, one line per
+    /// invalid scenario, and the scenario count. Failure lines name the FILE only and blank the
+    /// temporary directory out of every message, so an assertion never prints a host path.
+    /// </summary>
+    private static (int ExitCode, List<string> Failures, int ScenarioCount) Validate(string dir)
+    {
+        var stdout = new StringWriter();
+        var exitCode = ValidateCommand.Execute(dir, json: true, stdout, new StringWriter());
+
+        using var report = JsonDocument.Parse(stdout.ToString());
+        var scenarios = report.RootElement.GetProperty("scenarios").EnumerateArray().ToList();
+        var failures = scenarios
+            .Where(s => !s.GetProperty("valid").GetBoolean())
+            .Select(s => Path.GetFileName(s.GetProperty("path").GetString()) + ": " + string.Join(
+                " | ",
+                s.GetProperty("diagnostics").EnumerateArray().Select(d =>
+                    d.GetProperty("stage").GetString() + " "
+                    + d.GetProperty("message").GetString()!.Replace(dir, "<dir>", StringComparison.Ordinal))))
+            .ToList();
+
+        return (exitCode, failures, scenarios.Count);
+    }
+
+    private static void MergeResources(YamlMappingNode environment, string section, YamlMappingNode into, string stepType)
+    {
+        if (!environment.Children.TryGetValue(new YamlScalarNode(section), out var node))
+        {
+            return;
+        }
+
+        foreach (var (name, declaration) in ((YamlMappingNode)node).Children)
+        {
+            if (into.Children.TryGetValue(name, out var existing))
+            {
+                Assert.True(
+                    string.Equals(ToYaml(existing), ToYaml(declaration), StringComparison.Ordinal),
+                    $"{stepType}'s example declares {section}.{name} differently from an earlier example.");
+                continue;
+            }
+
+            into.Add(name, declaration);
+        }
+    }
+
+    private static YamlMappingNode LoadYamlMapping(string yaml)
+    {
+        var stream = new YamlStream();
+        stream.Load(new StringReader(yaml));
+        return (YamlMappingNode)Assert.Single(stream.Documents).RootNode;
+    }
+
+    private static string? Scalar(YamlMappingNode mapping, string key) =>
+        mapping.Children.TryGetValue(new YamlScalarNode(key), out var node) ? ((YamlScalarNode)node).Value : null;
+
+    private static string ToYaml(YamlNode node)
+    {
+        var writer = new StringWriter();
+        new YamlStream(new YamlDocument(node)).Save(writer, assignAnchors: false);
+        return writer.ToString();
     }
 }

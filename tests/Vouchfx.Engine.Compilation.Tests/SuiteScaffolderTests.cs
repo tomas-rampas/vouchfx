@@ -53,7 +53,11 @@ public sealed class SuiteScaffolderTests
     // own registry-parity discipline). A provider whose catalogue entry under- or
     // over-specifies what SuiteScaffolder needs to emit a valid skeleton fails here
     // immediately, by type, rather than surfacing later as a broken MCP scaffold call.
-    private static Assembly[] CoreProviderAssemblies() => new[]
+    //
+    // Internal (with FullCoreRegistry below) so CatalogueEnrichmentTests and
+    // LanguageReferenceLinkTests (#556) reuse this list, whose exhaustiveness
+    // AllCoreProviderTypes_DiscoversExactlyTwentyFive already guards, rather than keep a fourth copy.
+    internal static Assembly[] CoreProviderAssemblies() => new[]
     {
         typeof(HttpRestProvider).Assembly,
         typeof(DbAssertPostgresProvider).Assembly,
@@ -82,7 +86,7 @@ public sealed class SuiteScaffolderTests
         typeof(HttpSoapProvider).Assembly,
     };
 
-    private static StepKindRegistry FullCoreRegistry() =>
+    internal static StepKindRegistry FullCoreRegistry() =>
         StepKindRegistry.BuildAndFreeze(CoreProviderAssemblies());
 
     public static IEnumerable<object[]> AllCoreProviderTypes() =>

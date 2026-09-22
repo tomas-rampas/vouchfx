@@ -8,9 +8,21 @@
 // Fail-closed: any registered step type without a usable schema fragment aborts the
 // entire export (no partial success document). Secrets are never resolved or embedded;
 // only structural field names and metadata are emitted.
+//
+// Enrichment (#556, additive): every entry carries supportedVerifyModes, an engine fact that
+// needs nothing from the caller. The Core-set overload additionally stamps tier, docsUrl and
+// example, the three fields that depend on knowing which providers the caller ships. It stamps
+// them in a SECOND pass, after every base entry has been built, so an incomplete registry still
+// throws before the scaffolder has run for any type. The overload without a Core set leaves
+// those three null ("the caller did not say") rather than guessing, and so never calls the
+// scaffolder at all — which is also what keeps SuiteScaffolder.Generate, itself a caller of
+// that overload, from recursing into its own example rendering.
 
+using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Vouchfx.Engine.Abstractions;
+using Vouchfx.Engine.Compilation.Scaffold;
 using Vouchfx.Sdk;
 
 namespace Vouchfx.Engine.Compilation.Schema;
@@ -27,7 +39,9 @@ namespace Vouchfx.Engine.Compilation.Schema;
 /// <para>
 /// Both exports cover <strong>every registered</strong> provider in the supplied
 /// registry (Core and any additional providers already loaded in-process). There is
-/// no silent Core-only filter.
+/// no silent Core-only filter: the Core assembly set the catalogue overload accepts
+/// LABELS entries (their tier, and whether they get a reference link and an example),
+/// it never removes one.
 /// </para>
 /// <para>
 /// Incomplete catalogue metadata fails the entire export with
@@ -41,6 +55,29 @@ public static class EngineExport
     /// <see cref="StepCatalogueDocument"/>.
     /// </summary>
     public const int CatalogueSchemaVersion = 1;
+
+    /// <summary>
+    /// The <see cref="StepCatalogueEntry.Tier"/> value for a provider declared in one of the
+    /// Core assemblies the caller supplied.
+    /// </summary>
+    public const string CoreTier = "core";
+
+    /// <summary>
+    /// The <see cref="StepCatalogueEntry.Tier"/> value for a provider declared outside every
+    /// Core assembly the caller supplied — Blueprint §13.9's second and only other tier.
+    /// </summary>
+    public const string CommunityTier = "community";
+
+    /// <summary>
+    /// <see cref="StepCatalogueEntry.SupportedVerifyModes"/> for every entry: each
+    /// <see cref="VerifyMode"/> member as the wire token the <c>step-started</c> event emits
+    /// (<c>StepEventBuilder</c>'s own <c>ToString().ToUpperInvariant()</c>), in the enum's value
+    /// order. Derived from the enum rather than listed, so a new mode cannot be compiled by the
+    /// pipeline yet missing here. One read-only instance shared by every entry: a consumer
+    /// cannot mutate it through a cast.
+    /// </summary>
+    private static readonly IReadOnlyList<string> SupportedVerifyModeTokens = Array.AsReadOnly(
+        Enum.GetValues<VerifyMode>().Select(mode => mode.ToString().ToUpperInvariant()).ToArray());
 
     /// <summary>
     /// Shared <see cref="JsonSerializerOptions"/> for catalogue documents: camelCase
@@ -117,7 +154,8 @@ public static class EngineExport
 
     /// <summary>
     /// Builds the shape-level step catalogue for every provider in
-    /// <paramref name="registry"/>, sorted by dotted type key (ordinal).
+    /// <paramref name="registry"/>, sorted by dotted type key (ordinal), without stating
+    /// which providers are Core.
     /// </summary>
     /// <param name="registry">The frozen provider registry to catalogue.</param>
     /// <param name="engineVersion">
@@ -126,7 +164,13 @@ public static class EngineExport
     /// </param>
     /// <returns>
     /// A complete <see cref="StepCatalogueDocument"/>. Never a partial document:
-    /// incomplete metadata throws before the return.
+    /// incomplete metadata throws before the return. Every entry's
+    /// <see cref="StepCatalogueEntry.SupportedVerifyModes"/> is populated;
+    /// <see cref="StepCatalogueEntry.Tier"/>, <see cref="StepCatalogueEntry.DocsUrl"/> and
+    /// <see cref="StepCatalogueEntry.Example"/> are <see langword="null"/>, because each
+    /// depends on the Core set this overload is not given — use
+    /// <see cref="BuildCatalogue(StepKindRegistry, string, IEnumerable{Assembly})"/> to
+    /// supply it.
     /// </returns>
     /// <exception cref="CatalogueExportException">
     /// Thrown when any registered step type lacks a schema fragment or its fragment
@@ -137,20 +181,44 @@ public static class EngineExport
         string? engineVersion = null)
     {
         ArgumentNullException.ThrowIfNull(registry);
+        return BuildDocument(registry, engineVersion, coreProviderAssemblies: null);
+    }
 
-        var entries = new List<StepCatalogueEntry>(capacity: registry.All.Count);
-
-        // Sort first so failure order is deterministic when multiple types are broken.
-        foreach (var registered in registry.All
-                     .OrderBy(rp => $"{rp.Kind.Family}.{rp.Kind.Provider}", StringComparer.Ordinal))
-        {
-            entries.Add(BuildEntry(registered));
-        }
-
-        return new StepCatalogueDocument(
-            SchemaVersion: CatalogueSchemaVersion,
-            EngineVersion: engineVersion,
-            StepTypes: entries);
+    /// <summary>
+    /// Builds the shape-level step catalogue for every provider in
+    /// <paramref name="registry"/>, sorted by dotted type key (ordinal), labelling each
+    /// entry against the caller's Core provider set (additive, #556).
+    /// </summary>
+    /// <param name="registry">The frozen provider registry to catalogue.</param>
+    /// <param name="engineVersion">
+    /// Optional host / engine version stamp written into the document; may be
+    /// <see langword="null"/>.
+    /// </param>
+    /// <param name="coreProviderAssemblies">
+    /// The assemblies whose providers the caller ships as Core — for the CLI,
+    /// <c>ProviderRegistryFactory.CoreProviderAssemblies()</c>. A provider is Core when the
+    /// type of its registered instance is declared in one of these assemblies. An empty set
+    /// is a statement too (nothing is Core), unlike the overload that takes no set.
+    /// </param>
+    /// <returns>
+    /// The same document the other overload builds, with every entry's
+    /// <see cref="StepCatalogueEntry.Tier"/> stated, and <see cref="StepCatalogueEntry.DocsUrl"/>
+    /// and <see cref="StepCatalogueEntry.Example"/> filled for each Core entry (an
+    /// <see cref="StepCatalogueEntry.Example"/> stays <see langword="null"/> when the engine
+    /// cannot derive the environment the step targets). Every existing field is identical.
+    /// </returns>
+    /// <exception cref="CatalogueExportException">
+    /// Thrown when any registered step type lacks a schema fragment or its fragment
+    /// cannot be parsed for field names — before any entry is labelled.
+    /// </exception>
+    public static StepCatalogueDocument BuildCatalogue(
+        StepKindRegistry registry,
+        string? engineVersion,
+        IEnumerable<Assembly> coreProviderAssemblies)
+    {
+        ArgumentNullException.ThrowIfNull(registry);
+        ArgumentNullException.ThrowIfNull(coreProviderAssemblies);
+        return BuildDocument(registry, engineVersion, coreProviderAssemblies.ToHashSet());
     }
 
     /// <summary>
@@ -163,6 +231,64 @@ public static class EngineExport
     }
 
     // ── Internals ──────────────────────────────────────────────────────────────
+
+    private static StepCatalogueDocument BuildDocument(
+        StepKindRegistry registry,
+        string? engineVersion,
+        HashSet<Assembly>? coreProviderAssemblies)
+    {
+        // Sort first so failure order is deterministic when multiple types are broken.
+        var sorted = registry.All
+            .OrderBy(rp => $"{rp.Kind.Family}.{rp.Kind.Provider}", StringComparer.Ordinal)
+            .ToList();
+
+        // Pass 1, the fail-closed pass: every base entry (every fragment parsed) exists before
+        // anything is labelled, so a broken registry throws without the scaffolder ever running.
+        var entries = new List<StepCatalogueEntry>(capacity: sorted.Count);
+        foreach (var registered in sorted)
+        {
+            entries.Add(BuildEntry(registered));
+        }
+
+        // Pass 2, only when the caller stated a Core set (see the file header).
+        if (coreProviderAssemblies is not null)
+        {
+            for (var i = 0; i < entries.Count; i++)
+            {
+                entries[i] = WithCoreSetFields(registry, sorted[i], entries[i], coreProviderAssemblies);
+            }
+        }
+
+        return new StepCatalogueDocument(
+            SchemaVersion: CatalogueSchemaVersion,
+            EngineVersion: engineVersion,
+            StepTypes: entries);
+    }
+
+    /// <summary>
+    /// Stamps the three Core-set-dependent fields (#556) onto a base entry: the tier from
+    /// assembly membership, then — for a Core entry only — the language-reference link and the
+    /// scaffolded example. A Community entry keeps both <see langword="null"/>: the reference
+    /// documents only the Core registry, and only Core examples are proven valid.
+    /// </summary>
+    private static StepCatalogueEntry WithCoreSetFields(
+        StepKindRegistry registry,
+        RegisteredProvider registered,
+        StepCatalogueEntry entry,
+        HashSet<Assembly> coreProviderAssemblies)
+    {
+        if (!coreProviderAssemblies.Contains(registered.Instance.GetType().Assembly))
+        {
+            return entry with { Tier = CommunityTier };
+        }
+
+        return entry with
+        {
+            Tier = CoreTier,
+            DocsUrl = LanguageReferenceLink.For(entry.Type),
+            Example = SuiteScaffolder.TryRenderCatalogueExample(registry, entry),
+        };
+    }
 
     private static void EnsureAllProvidersHaveSchemaFragments(StepKindRegistry registry)
     {
@@ -201,7 +327,8 @@ public static class EngineExport
         var familyIntent = ResolveFamilyIntent(family);
 
         // Capture is a common language-level step field; bar B marks every fragment-backed
-        // type as capture-capable (the root schema accepts capture on every step).
+        // type as capture-capable (the root schema accepts capture on every step). Verify modes
+        // are likewise language-wide (#556; see SupportedVerifyModeTokens).
         return new StepCatalogueEntry(
             Type: typeKey,
             Family: family,
@@ -211,7 +338,10 @@ public static class EngineExport
             CaptureSupported: true,
             FamilyIntent: familyIntent,
             ExactlyOneOfGroups: exactlyOneOf,
-            AtLeastOneOfGroups: atLeastOneOf);
+            AtLeastOneOfGroups: atLeastOneOf)
+        {
+            SupportedVerifyModes = SupportedVerifyModeTokens,
+        };
     }
 
     /// <summary>

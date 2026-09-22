@@ -2,7 +2,9 @@
 //
 // Deterministic, catalogue-driven emission of a schema-valid .e2e.yaml skeleton.
 // No LLM, no timestamps, no secret literals. CLI and MCP share this library so they
-// cannot drift (REQ-001..006, EDGE-001..005, REQ-010).
+// cannot drift (REQ-001..006, EDGE-001..005, REQ-010). The catalogue's own per-type
+// `example` (#556) is rendered here too, from the same emission code, so an example can
+// never show a field value `vouchfx scaffold` would not produce.
 
 using System.Globalization;
 using System.Text;
@@ -61,23 +63,153 @@ public static partial class SuiteScaffolder
 
         ValidateIntent(registry, intent);
 
+        // Deliberately the overload WITHOUT a Core set (#556): the Core-set overload renders
+        // each Core entry's Example through TryRenderCatalogueExample below, so calling it here
+        // would recurse, and nothing an example-bearing entry adds is read by this class. The
+        // fail-closed contract is the same either way (a provider without a schema fragment
+        // throws CatalogueExportException).
         var catalogue = EngineExport.BuildCatalogue(registry, engineVersion);
         var byType = catalogue.StepTypes.ToDictionary(
             e => e.Type,
             e => e,
             StringComparer.Ordinal);
 
+        return Render(intent, byType, engineVersion, includeProvenance: true, out _);
+    }
+
+    // ── Catalogue examples (#556) ─────────────────────────────────────────────
+
+    /// <summary>
+    /// The one service every service-targeting catalogue example declares. <c>app</c> is the
+    /// name the published recipes and examples already use for the system under test.
+    /// </summary>
+    internal const string CatalogueExampleServiceName = "app";
+
+    /// <summary>
+    /// The structured intent behind <see cref="StepCatalogueEntry.Example"/>: one step of the
+    /// entry's type over the canonical minimal environment that step targets.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The environment is chosen by the SAME rules <see cref="TargetResolver"/> uses to pick
+    /// the step's <c>target</c>, so the declared resource and the target naming it cannot
+    /// disagree: a service-targeting family (<see cref="TargetsServicesFirst"/>) gets one
+    /// service named <see cref="CatalogueExampleServiceName"/>; any other type gets one
+    /// dependency of its first preferred kind, NAMED after that kind; a type with no preferred
+    /// kind gets no environment. <c>DependencyKindStepMap</c> (the planner's explicit,
+    /// CI-guarded kind-to-type table) cannot be the source because this assembly cannot
+    /// reference the planner, and it maps only asserting/observing types (no
+    /// <c>mq-publish.*</c>); a test in the CLI suite, which sees both, pins the two against
+    /// each other for every type the planner maps.
+    /// </para>
+    /// <para>
+    /// Naming a dependency after its kind is what lets examples compose: the examples of
+    /// <c>mq-publish.kafka</c> and <c>mq-expect.kafka</c> merge into one <c>kafka</c>
+    /// dependency that both steps target, and examples of different kinds never collide on a
+    /// name. The step id is the type with its dot replaced by a hyphen, which is unique across
+    /// the Core registry (a CLI test merges all 25 examples into one suite and validates it).
+    /// (The engine derives a <c>postgres</c> dependency's database resource as
+    /// <c>postgresdb</c>, so a kind-named dependency cannot collide with its own Aspire
+    /// resources.)
+    /// </para>
+    /// </remarks>
+    internal static ScaffoldIntent CatalogueExampleIntent(StepCatalogueEntry entry)
+    {
+        ArgumentNullException.ThrowIfNull(entry);
+
+        var steps = new[] { new ScaffoldStepIntent(entry.Type.Replace('.', '-'), entry.Type) };
+
+        if (TargetsServicesFirst(entry.Family))
+        {
+            return new ScaffoldIntent(
+                steps,
+                Services: new[] { new ScaffoldServiceIntent(CatalogueExampleServiceName) });
+        }
+
+        var kind = TargetResolver.PreferredDependencyKinds(entry.Type, entry.Family, entry.Provider)
+            .FirstOrDefault(KnownDependencyKinds.Contains);
+
+        return kind is null
+            ? new ScaffoldIntent(steps)
+            : new ScaffoldIntent(steps, Dependencies: new[] { new ScaffoldDependencyIntent(kind, kind) });
+    }
+
+    /// <summary>
+    /// Renders <see cref="StepCatalogueEntry.Example"/> for <paramref name="entry"/>: exactly
+    /// what <see cref="Generate"/> emits for <see cref="CatalogueExampleIntent"/>, minus the
+    /// provenance comment lines (which carry the engine version), with LF line endings on every
+    /// host. Returns <see langword="null"/> — never a known-invalid document — when the intent
+    /// fails the scaffold's own validation, or when the step emits a <c>target</c> the canonical
+    /// environment does not declare (the engine cannot derive what the step targets).
+    /// </summary>
+    /// <param name="registry">The registry <paramref name="entry"/> was built from.</param>
+    /// <param name="entry">
+    /// A base catalogue entry (the example reads only its type, family, provider, required
+    /// fields and field groups).
+    /// </param>
+    internal static string? TryRenderCatalogueExample(StepKindRegistry registry, StepCatalogueEntry entry)
+    {
+        ArgumentNullException.ThrowIfNull(registry);
+        ArgumentNullException.ThrowIfNull(entry);
+
+        var intent = CatalogueExampleIntent(entry);
+        try
+        {
+            ValidateIntent(registry, intent);
+        }
+        catch (ScaffoldException)
+        {
+            return null;
+        }
+
+        var byType = new Dictionary<string, StepCatalogueEntry>(StringComparer.Ordinal)
+        {
+            [entry.Type] = entry,
+        };
+
+        // engineVersion is never passed: with the provenance lines left out it would appear
+        // nowhere anyway, and the example must not vary by build.
+        var yaml = Render(intent, byType, engineVersion: null, includeProvenance: false, out var targetUndeclared);
+
+        // AppendLine writes Environment.NewLine; the catalogue is one document on every host
+        // (the language reference normalises the same way).
+        return targetUndeclared ? null : yaml.ReplaceLineEndings("\n");
+    }
+
+    // ── Rendering ─────────────────────────────────────────────────────────────
+
+    private static string Render(
+        ScaffoldIntent intent,
+        Dictionary<string, StepCatalogueEntry> byType,
+        string? engineVersion,
+        bool includeProvenance,
+        out bool targetUndeclared)
+    {
         var services = intent.Services ?? Array.Empty<ScaffoldServiceIntent>();
         var dependencies = intent.Dependencies ?? Array.Empty<ScaffoldDependencyIntent>();
         var targetResolver = new TargetResolver(services, dependencies);
 
         var sb = new StringBuilder(capacity: 2048);
-        AppendProvenance(sb, engineVersion);
+        if (includeProvenance)
+        {
+            AppendProvenance(sb, engineVersion);
+        }
+
         AppendMetadata(sb);
         AppendEnvironment(sb, services, dependencies);
         AppendSteps(sb, intent.Steps, byType, targetResolver);
+
+        targetUndeclared = targetResolver.ResolvedToFallback;
         return sb.ToString();
     }
+
+    /// <summary>
+    /// The families whose <c>target</c> <see cref="TargetResolver"/> resolves to a SERVICE
+    /// first: HTTP calls and metrics scrapes hit the system under test.
+    /// </summary>
+    private static bool TargetsServicesFirst(string family) =>
+        string.Equals(family, "http", StringComparison.Ordinal)
+        || string.Equals(family, "metrics-assert", StringComparison.Ordinal);
 
     // ── Validation ────────────────────────────────────────────────────────────
 
@@ -755,17 +887,25 @@ public static partial class SuiteScaffolder
             _dependencies = dependencies;
         }
 
+        /// <summary>
+        /// Whether any <see cref="ResolveTarget"/> call fell back to
+        /// <see cref="FallbackTargetName"/> — a name the outline does not declare, which every
+        /// target-taking Core provider's own Validate rejects (measured: all 22 of them, with no
+        /// environment). #556 reads this to withhold a catalogue example rather than publish
+        /// one that fails.
+        /// </summary>
+        public bool ResolvedToFallback { get; private set; }
+
         public string ResolveTarget(string stepType, string family, string provider)
         {
             // HTTP / metrics hit services.
-            if (string.Equals(family, "http", StringComparison.Ordinal)
-                || string.Equals(family, "metrics-assert", StringComparison.Ordinal))
+            if (TargetsServicesFirst(family))
             {
                 if (_services.Count > 0)
                     return _services[0].Name;
                 if (_dependencies.Count > 0)
                     return _dependencies[0].Name;
-                return FallbackTargetName;
+                return Fallback();
             }
 
             // Prefer a dependency whose kind matches the provider / family convention.
@@ -787,10 +927,19 @@ public static partial class SuiteScaffolder
                 return _dependencies[0].Name;
             if (_services.Count > 0)
                 return _services[0].Name;
+            return Fallback();
+        }
+
+        private string Fallback()
+        {
+            ResolvedToFallback = true;
             return FallbackTargetName;
         }
 
-        private static string[] PreferredDependencyKinds(
+        // Internal rather than private so SuiteScaffolder.CatalogueExampleIntent (the
+        // enclosing type, which cannot see a nested type's private members) derives a catalogue
+        // example's environment from these same preferences — see its remarks.
+        internal static string[] PreferredDependencyKinds(
             string stepType,
             string family,
             string provider)
