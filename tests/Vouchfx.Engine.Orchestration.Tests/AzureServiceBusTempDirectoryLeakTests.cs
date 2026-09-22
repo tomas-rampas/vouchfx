@@ -4,7 +4,7 @@
 // non-Docker EnvironmentMapperTests case that inspects builder.Resources without Docker.
 // Measured: +3 leaked vouchfx-asb-<guid> directories per Vouchfx.Engine.Orchestration.Tests run.
 //
-// Two halves, two tests, neither needing Docker:
+// Three parts, none needing Docker:
 //   A. Configure(builder) alone (no StartAsync) must never touch the filesystem — the directory
 //      + Config.json write is now deferred to Aspire's own OnBeforeResourceStarted hook, which
 //      fires only during a genuine DistributedApplication.StartAsync.
@@ -12,12 +12,16 @@
 //      every directory it is told about via tempDirectoriesToClean, after StopAsync returns.
 //      Exercised against a Build()-built but never-StartAsync()-ed DistributedApplication via
 //      the ForTestingDisposal seam, so no DCP/Docker is required.
+//   C. A StartAsync that throws never hands the list to a topology, so SuiteTopology removes
+//      what the start hook created itself: the shared helper directly, and a census of the
+//      catch that calls it (the hook only runs against a real container).
 //
 // Host temp-directory names are never printed (existence-only assertions), per this repo's
 // testing conventions.
 using Aspire.Hosting;
 using Aspire.Hosting.ApplicationModel;
 using Vouchfx.Engine.Authoring.Model;
+using Vouchfx.TestSupport;
 using Xunit;
 
 namespace Vouchfx.Engine.Orchestration.Tests;
@@ -103,22 +107,31 @@ public sealed class AzureServiceBusTempDirectoryLeakTests
     {
         var tempDir = Path.Combine(Path.GetTempPath(), $"vouchfx-asb-{Guid.NewGuid():N}");
         Directory.CreateDirectory(tempDir);
-        File.WriteAllText(Path.Combine(tempDir, "Config.json"), "{}");
 
-        var app = CreateBuilder().Build();
-        var topology = HeadlessTopology.ForTestingDisposal(app, new[] { tempDir });
+        try
+        {
+            File.WriteAllText(Path.Combine(tempDir, "Config.json"), "{}");
 
-        await topology.DisposeAsync();
+            var app = CreateBuilder().Build();
+            var topology = HeadlessTopology.ForTestingDisposal(app, new[] { tempDir });
 
-        // Existence-only: never print the path value itself.
-        Assert.False(Directory.Exists(tempDir));
+            await topology.DisposeAsync();
+
+            // Existence-only, with a fixed message: never print the path value itself.
+            Assert.False(
+                Directory.Exists(tempDir),
+                "DisposeAsync left a tracked engine-owned temp directory in place.");
+        }
+        finally
+        {
+            // A failure above must not leave behind the very leak this file exists to prevent.
+            if (Directory.Exists(tempDir))
+            {
+                Directory.Delete(tempDir, recursive: true);
+            }
+        }
     }
 
-    /// <summary>
-    /// A caller that passes no <c>tempDirectoriesToClean</c> at all (every non-azureservicebus
-    /// topology) must still dispose cleanly — the parameter is optional and <see langword="null"/>
-    /// is treated as empty, not as a null-reference fault in the cleanup loop.
-    /// </summary>
     /// <summary>
     /// <see cref="HeadlessTopology.DisposeAsync"/> deletes only engine-owned temp directories
     /// (#438 review): a list entry that is not a direct child of the system temp directory named
@@ -191,6 +204,11 @@ public sealed class AzureServiceBusTempDirectoryLeakTests
             "The temp root itself must never count as engine-owned.");
     }
 
+    /// <summary>
+    /// A caller that passes no <c>tempDirectoriesToClean</c> at all (every non-azureservicebus
+    /// topology) must still dispose cleanly — the parameter is optional and <see langword="null"/>
+    /// is treated as empty, not as a null-reference fault in the cleanup loop.
+    /// </summary>
     [Fact]
     public async Task DisposeAsync_WithNoTempDirectoriesToClean_DisposesCleanly()
     {
@@ -200,5 +218,106 @@ public sealed class AzureServiceBusTempDirectoryLeakTests
         var exception = await Record.ExceptionAsync(() => topology.DisposeAsync().AsTask());
 
         Assert.Null(exception);
+    }
+
+    // ── C. A StartAsync that throws still removes what a start hook created ──
+
+    /// <summary>
+    /// The helper both cleanup paths share (#438) deletes an engine-owned directory and leaves any
+    /// other entry in place, exactly as <see cref="HeadlessTopology.DisposeAsync"/> always did.
+    /// </summary>
+    [Fact]
+    public void DeleteEngineOwnedTempDirectories_RemovesEngineOwnedEntriesAndNothingElse()
+    {
+        var owned = Path.Combine(Path.GetTempPath(), $"vouchfx-asb-{Guid.NewGuid():N}");
+        var notOwned = Path.Combine(Path.GetTempPath(), $"not-engine-owned-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(owned);
+        Directory.CreateDirectory(notOwned);
+
+        try
+        {
+            File.WriteAllText(Path.Combine(owned, "Config.json"), "{}");
+
+            HeadlessTopology.DeleteEngineOwnedTempDirectories(new List<string> { owned, notOwned });
+
+            // Existence-only, with fixed messages: never print the path value itself.
+            Assert.False(
+                Directory.Exists(owned),
+                "The helper left an engine-owned temp directory in place.");
+            Assert.True(
+                Directory.Exists(notOwned),
+                "The helper deleted a directory that is not engine-owned.");
+        }
+        finally
+        {
+            foreach (var dir in new[] { owned, notOwned })
+            {
+                if (Directory.Exists(dir))
+                {
+                    Directory.Delete(dir, recursive: true);
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// When <c>HeadlessTopology.StartAsync</c> throws, <c>SuiteTopology</c> removes what the
+    /// azureservicebus start hook may already have created (#438). <c>StartAsync</c> disposes its
+    /// own half-built topology on the way out, and that topology never received the list, so this
+    /// catch is the only place left to do it.
+    /// </summary>
+    /// <remarks>
+    /// A census rather than a behavioural test, because the hook runs only once DCP starts a real
+    /// emulator container, and a start that then fails needs a genuine Docker host. The check is
+    /// structural: the innermost <c>try</c> around the <c>StartAsync</c> call has exactly one
+    /// <c>catch</c>, which passes <c>mapped.AsbTempDirectoriesCreated</c> to
+    /// <see cref="HeadlessTopology.DeleteEngineOwnedTempDirectories"/> and then rethrows, so the
+    /// classification below it is unchanged.
+    /// </remarks>
+    [Fact]
+    public void SuiteTopology_RemovesStartHookDirectories_WhenStartAsyncThrows()
+    {
+        var path = Path.Combine(
+            RepoRoot.Resolve(), "src", "Engine", "Vouchfx.Engine.Orchestration", "SuiteTopology.cs");
+        Assert.True(File.Exists(path), "SuiteTopology.cs is not where this census expects it.");
+
+        var root = Microsoft.CodeAnalysis.CSharp.CSharpSyntaxTree
+            .ParseText(File.ReadAllText(path))
+            .GetRoot();
+
+        var startCalls = root.DescendantNodes()
+            .OfType<Microsoft.CodeAnalysis.CSharp.Syntax.InvocationExpressionSyntax>()
+            .Where(i => i.Expression.ToString() == "HeadlessTopology.StartAsync")
+            .ToList();
+        Assert.True(
+            startCalls.Count == 1,
+            "Expected exactly one HeadlessTopology.StartAsync call in SuiteTopology.cs.");
+
+        var innermostTry = startCalls[0].Ancestors()
+            .OfType<Microsoft.CodeAnalysis.CSharp.Syntax.TryStatementSyntax>()
+            .FirstOrDefault(t => t.Block.Span.Contains(startCalls[0].Span));
+        Assert.True(
+            innermostTry is not null,
+            "The HeadlessTopology.StartAsync call is not inside a try block.");
+        Assert.True(
+            innermostTry!.Catches.Count == 1,
+            "The try around HeadlessTopology.StartAsync should have exactly one catch.");
+
+        var catchClause = innermostTry.Catches[0];
+        var cleanup = catchClause.DescendantNodes()
+            .OfType<Microsoft.CodeAnalysis.CSharp.Syntax.InvocationExpressionSyntax>()
+            .Where(i => i.Expression.ToString() == "HeadlessTopology.DeleteEngineOwnedTempDirectories")
+            .ToList();
+        Assert.True(
+            cleanup.Count == 1
+                && cleanup[0].ArgumentList.Arguments.Count == 1
+                && cleanup[0].ArgumentList.Arguments[0].ToString() == "mapped.AsbTempDirectoriesCreated",
+            "The catch around HeadlessTopology.StartAsync must pass mapped.AsbTempDirectoriesCreated "
+            + "to HeadlessTopology.DeleteEngineOwnedTempDirectories.");
+        Assert.True(
+            catchClause.Block.Statements.LastOrDefault()
+                is Microsoft.CodeAnalysis.CSharp.Syntax.ThrowStatementSyntax { Expression: null },
+            "The catch around HeadlessTopology.StartAsync must end in a bare `throw;`, so the "
+            + "classification below it still sees the original exception.");
     }
 }

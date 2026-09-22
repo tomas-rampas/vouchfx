@@ -490,10 +490,23 @@ public sealed class SuiteTopology : IAsyncDisposable, IKeptTopology
         HeadlessTopology topology;
         try
         {
-            topology = await HeadlessTopology.StartAsync(
-                appHostAssemblyName: appHostAssemblyName,
-                configureResources: mapped.Configure,
-                cancellationToken: cancellationToken).ConfigureAwait(false);
+            try
+            {
+                topology = await HeadlessTopology.StartAsync(
+                    appHostAssemblyName: appHostAssemblyName,
+                    configureResources: mapped.Configure,
+                    cancellationToken: cancellationToken).ConfigureAwait(false);
+            }
+            catch
+            {
+                // #438, the failure half. A start hook may already have created its directory
+                // (the azureservicebus entry creates it as the emulator container starts) when
+                // StartAsync throws. StartAsync then disposes its own half-built topology, which
+                // never received the list below, so this is the only place left to remove it. The
+                // rethrow keeps every catch clause below exactly as it was.
+                HeadlessTopology.DeleteEngineOwnedTempDirectories(mapped.AsbTempDirectoriesCreated);
+                throw;
+            }
 
             // #438: the SAME list mapped.Configure's azureservicebus entry (if any) appends to
             // once its container actually starts. HeadlessTopology.DisposeAsync reads it back

@@ -125,6 +125,75 @@ public sealed class HeadlessTopology : IAsyncDisposable
     }
 
     /// <summary>
+    /// Removes every directory in <paramref name="tempDirectories"/> that
+    /// <see cref="IsEngineOwnedTempDirectory"/> accepts, best-effort and one directory at a time
+    /// (#438).
+    /// </summary>
+    /// <param name="tempDirectories">
+    /// The list a start hook appends to — today, EnvironmentMapper's
+    /// <c>MappedTopology.AsbTempDirectoriesCreated</c>. It is snapshotted under the lock that hook
+    /// takes on the same instance.
+    /// </param>
+    /// <remarks>
+    /// <para>
+    /// Two callers, one for each way a run can end once a start hook may have run.
+    /// <see cref="DisposeAsync"/> calls it after <c>StopAsync</c> has returned, so deletion never
+    /// races a container that still holds the mount. <c>SuiteTopology</c> calls it when
+    /// <see cref="StartAsync"/> itself throws: <see cref="StartAsync"/> has then disposed its own
+    /// half-built topology, which never received the list, so without this call a directory the
+    /// hook created before the failure would outlive the run.
+    /// </para>
+    /// <para>
+    /// Only the IO-family exceptions a still-held mount realistically produces are swallowed:
+    /// the directory already gone, or still locked because a bounded <c>StopAsync</c> was cut
+    /// short. Every entry the engine appends comes from a controlled
+    /// <c>Path.Combine(Path.GetTempPath(), "vouchfx-asb-&lt;guid&gt;")</c> construction, so no
+    /// other exception type is expected from <c>Directory.Delete</c> on it, and an entry that is
+    /// not engine-owned is never deleted at all.
+    /// </para>
+    /// </remarks>
+    internal static void DeleteEngineOwnedTempDirectories(IReadOnlyList<string> tempDirectories)
+    {
+        ArgumentNullException.ThrowIfNull(tempDirectories);
+
+        // Snapshot under the lock EnvironmentMapper's hook takes on the same list instance: no
+        // start hook should still be running once StopAsync, or a failed StartAsync's own
+        // disposal, has returned, but the lock makes that a guarantee rather than an assumption
+        // about Aspire's event ordering.
+        string[] snapshot;
+        lock (tempDirectories)
+        {
+            snapshot = tempDirectories.ToArray();
+        }
+
+        foreach (var dir in snapshot)
+        {
+            // Defence in depth: the list is engine-internal and today holds only
+            // EnvironmentMapper's vouchfx-asb-<guid> directories, but a recursive delete is not
+            // something a future entry should be able to aim anywhere else.
+            if (!IsEngineOwnedTempDirectory(dir))
+            {
+                continue;
+            }
+
+            try
+            {
+                Directory.Delete(dir, recursive: true);
+            }
+            catch (IOException)
+            {
+                // Still mounted, or already removed (DirectoryNotFoundException derives from
+                // IOException) — either way, not this teardown's fault to report.
+            }
+            catch (UnauthorizedAccessException)
+            {
+                // A still-running container (StopAsync timed out) can hold the mount in a way
+                // that denies the delete rather than raising IOException.
+            }
+        }
+    }
+
+    /// <summary>
     /// Test seam (#438): wraps an already-<c>Build()</c>-built but never-<c>StartAsync()</c>-ed
     /// <see cref="DistributedApplication"/> in a <see cref="HeadlessTopology"/>, bypassing
     /// <see cref="StartAsync"/>'s DCP path resolution, logging setup and — critically —
@@ -531,46 +600,9 @@ public sealed class HeadlessTopology : IAsyncDisposable
         // source once its container actually started (today: EnvironmentMapper's
         // azureservicebus Config.json directory) — AFTER StopAsync above has returned, so
         // deletion never races a container that still holds the mount. Best-effort and
-        // per-directory: one failure must not stop the others, or skip the final _app
-        // release below. Only the IO-family exceptions a still-held mount realistically
-        // produces are swallowed (directory already gone, or still locked because StopAsync
-        // above was itself cut short by stopCts) — every entry here came from a controlled
-        // Path.Combine(Path.GetTempPath(), "vouchfx-asb-<guid>") construction, so no other
-        // exception type is expected from Directory.Delete on it.
-        // Snapshot under the lock EnvironmentMapper's hook takes on the same list instance: no
-        // start hook should still be running once StopAsync has returned, but the lock makes that
-        // a guarantee rather than an assumption about Aspire's event ordering.
-        string[] tempDirectories;
-        lock (_tempDirectoriesToClean)
-        {
-            tempDirectories = _tempDirectoriesToClean.ToArray();
-        }
-
-        foreach (var dir in tempDirectories)
-        {
-            // Defence in depth: the list is engine-internal and today holds only
-            // EnvironmentMapper's vouchfx-asb-<guid> directories, but a recursive delete is not
-            // something a future entry should be able to aim anywhere else.
-            if (!IsEngineOwnedTempDirectory(dir))
-            {
-                continue;
-            }
-
-            try
-            {
-                Directory.Delete(dir, recursive: true);
-            }
-            catch (IOException)
-            {
-                // Still mounted, or already removed (DirectoryNotFoundException derives from
-                // IOException) — either way, not this teardown's fault to report.
-            }
-            catch (UnauthorizedAccessException)
-            {
-                // A still-running container (StopAsync above timed out) can hold the mount in
-                // a way that denies the delete rather than raising IOException.
-            }
-        }
+        // per-directory, so one failure cannot stop the others or skip the final _app release
+        // below; see DeleteEngineOwnedTempDirectories for what is swallowed and why.
+        DeleteEngineOwnedTempDirectories(_tempDirectoriesToClean);
 
         // Guarded for the reason the StopAsync catch above already states as a RULE — "teardown
         // must never throw into the verdict path (§12.1)" — which this line contradicted by being

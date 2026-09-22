@@ -531,12 +531,12 @@ public static class EnvironmentMapper
                     // tempDirectoriesToClean is the SAME list MappedTopology.
                     // AsbTempDirectoriesCreated exposes, so HeadlessTopology.DisposeAsync (the
                     // single teardown chokepoint, §4.5) can remove exactly what a real run
-                    // actually created, once the container has stopped. One path this does not
-                    // cover: an overall StartAsync that fails AFTER this hook already fired for
-                    // THIS resource (DCP started the emulator, then a DIFFERENT resource's
-                    // health gate timed out) never constructs a HeadlessTopology, so
-                    // DisposeAsync never runs — the directory is retained exactly as the OS
-                    // reclaims-on-reboot fallback below already accepts for an abnormal DCP exit.
+                    // actually created, once the container has stopped. The one path DisposeAsync
+                    // cannot see, an overall StartAsync that fails AFTER this hook already fired
+                    // for THIS resource (DCP started the emulator, then failed on something
+                    // else), is SuiteTopology's: StartAsync disposes its own half-built topology,
+                    // which never received this list, so SuiteTopology removes these directories
+                    // itself through the same HeadlessTopology.DeleteEngineOwnedTempDirectories.
                     emulatorBuilder.OnBeforeResourceStarted((_, _, _) =>
                     {
                         Directory.CreateDirectory(asbTempDir);
@@ -545,8 +545,8 @@ public static class EnvironmentMapper
                         // write still leaves it for DisposeAsync to remove. Locked because Aspire
                         // starts resources concurrently: a suite declaring two azureservicebus
                         // dependencies can run this hook for both at once, and List<T> is not safe
-                        // for concurrent Add. HeadlessTopology.DisposeAsync snapshots under the
-                        // same lock.
+                        // for concurrent Add. HeadlessTopology.DeleteEngineOwnedTempDirectories
+                        // snapshots under the same lock.
                         lock (tempDirectoriesToClean)
                         {
                             tempDirectoriesToClean.Add(asbTempDir);

@@ -1,4 +1,5 @@
-// The one resolver every test project uses to find the repository checkout root (#551).
+// The shared resolver for the repository checkout root (#551), used by the callers migrated to it
+// below. It is not yet the only one: see "NOT folded in here" further down.
 //
 // Before this type existed, seven independent test methods each re-derived the repo root by
 // walking a FIXED number of parent directories up from the test assembly's own build output

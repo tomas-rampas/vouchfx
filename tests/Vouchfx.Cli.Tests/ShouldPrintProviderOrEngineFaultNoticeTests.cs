@@ -115,6 +115,22 @@ public sealed class ShouldPrintProviderOrEngineFaultNoticeTests
     }
 
     /// <summary>
+    /// <c>--fail-on-inconclusive</c> takes the code to <see cref="ExitCodes.Inconclusive"/> (4)
+    /// before #480's rule is reached: the Inconclusive twin of the <c>--fail-on-env-error</c> row
+    /// above, on the headline shape's own Inconclusive aggregate. The exit code is the same 4 that
+    /// #480's rule would have chosen, but the flag chose it first, and the flag is the reason the
+    /// author asked for, so this notice stays silent.
+    /// </summary>
+    [Fact]
+    public void FailOnInconclusiveTookTheCodeFirst_DoesNotPrint()
+    {
+        Assert.False(ShouldPrintFor(
+            PreTopologyRefusalAssurance,
+            providerOrEngineFaultObserved: true,
+            failOnInconclusive: true));
+    }
+
+    /// <summary>
     /// #425's parse-failure rule already took the code off <see cref="ExitCodes.Success"/> before
     /// #480's rule is reached — a run with an unread file is #425's territory (the issue's own
     /// framing: #425 and #369 fire on a run that is VISIBLY broken), not #480's, and neither #425
@@ -219,9 +235,10 @@ public sealed class ShouldPrintProviderOrEngineFaultNoticeTests
     /// The same argument shape <c>MixedSuiteEngineFaultExitCodeTests.ExitCodeFor</c> hands
     /// <see cref="RunCommand.ComputeExitCode"/>, routed instead at
     /// <see cref="RunCommand.ShouldPrintProviderOrEngineFaultNotice"/> — the predicate this file
-    /// pins. <c>failOnInconclusive</c> is fixed at <see langword="false"/> for the same reason that
+    /// pins. <c>failOnInconclusive</c> defaults to <see langword="false"/> for the same reason that
     /// file gives: every shape here that exits non-zero at all does so under the default
-    /// invocation, which is the whole point of #480's rule and of this notice.
+    /// invocation, which is the whole point of #480's rule and of this notice. The one row that
+    /// sets it pins the flag's own boundary.
     /// </summary>
     private static bool ShouldPrintFor(
         SecurityAssurance securityAssurance,
@@ -230,13 +247,14 @@ public sealed class ShouldPrintProviderOrEngineFaultNoticeTests
         int parseFailureCount = 0,
         Verdict suiteVerdict = Verdict.Inconclusive,
         bool failOnEnvironmentError = false,
-        bool executedAnyScenario = true) =>
+        bool executedAnyScenario = true,
+        bool failOnInconclusive = false) =>
         RunCommand.ShouldPrintProviderOrEngineFaultNotice(
             parsedCount,
             parseFailureCount,
             suiteVerdict,
             failOnEnvironmentError,
-            failOnInconclusive: false,
+            failOnInconclusive,
             securityAssurance,
             executedAnyScenario,
             providerOrEngineFaultObserved);
