@@ -9,6 +9,7 @@
 // as a delegate, so the decision logic is exercised without starting or ending anything.
 //
 // Run with: dotnet test --filter "requires!=docker&FullyQualifiedName~DrillHostSweep".
+using Vouchfx.TestSupport;
 using Xunit;
 
 namespace Vouchfx.Engine.Runtime.Tests;
@@ -345,9 +346,9 @@ public sealed class DrillHostSweepTests : IDisposable
     [Fact]
     public void ReportPath_IsOutsideTheRepository()
     {
-        var repoRoot = Path.GetFullPath(Path.Combine(
-            Path.GetDirectoryName(typeof(DrillHostSweepTests).Assembly.Location)!,
-            "..", "..", "..", "..", ".."));
+        // RepoRoot.Resolve() (#551) — anchored on vouchfx.sln, shared with every other test
+        // project that needs the repo root, rather than this row's own fixed-depth walk.
+        var repoRoot = RepoRoot.Resolve();
 
         Assert.False(DrillHostSweep.IsUnder(DrillHostSweepFixture.ReportPath, repoRoot));
     }

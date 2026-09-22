@@ -37,6 +37,7 @@ using Vouchfx.Steps.MqExpect.Kafka;
 using Vouchfx.Steps.MqPublish.Kafka;
 using Vouchfx.Steps.Script.Csharp;
 using Vouchfx.Steps.WebhookListen.Http;
+using Vouchfx.TestSupport;
 using Xunit;
 
 namespace Vouchfx.Engine.Runtime.Tests;
@@ -69,20 +70,11 @@ public sealed class Sprint11ReferenceCompileTests
     private const string SuiteNamespace = "VouchfxGenerated";
 
     // ── Resolve the example file path from the test assembly location ──────────────
-    // The example file lives at examples/reference/reference.e2e.yaml relative to the
-    // repo root.  We locate the repo root by walking up from the test assembly's output
-    // directory (bin/<configuration>/net8.0 under tests/Vouchfx.Engine.Runtime.Tests/).
-    // This mirrors the pattern used by M2EndToEndTests and the Sprint 7 capstone.
-    private static string ResolveRepoRoot()
-    {
-        var assemblyDir = Path.GetDirectoryName(
-            typeof(Sprint11ReferenceCompileTests).Assembly.Location)!;
-        // Walk up: net8.0 → <configuration> → bin → Vouchfx.Engine.Runtime.Tests → tests → repo root
-        return Path.GetFullPath(Path.Combine(assemblyDir, "..", "..", "..", "..", ".."));
-    }
-
+    // The example file lives at examples/reference/reference.e2e.yaml relative to the repo root.
+    // RepoRoot.Resolve() (#551) locates the repo root, anchored on vouchfx.sln, shared with every
+    // other test project that needs it.
     private static string ReferenceYamlPath =>
-        Path.Combine(ResolveRepoRoot(), "examples", "reference", "reference.e2e.yaml");
+        Path.Combine(RepoRoot.Resolve(), "examples", "reference", "reference.e2e.yaml");
 
     /// <summary>
     /// Loads the published reference scenario from disk, drives parse → schema-validate

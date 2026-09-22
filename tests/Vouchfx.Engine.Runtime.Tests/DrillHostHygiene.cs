@@ -65,6 +65,7 @@
 // deliberately NOT widened to the whole repository's bin output - the running test host has
 // tests/**/bin modules mapped, so a repo-wide root would name the sweeper itself.
 using System.Diagnostics;
+using Vouchfx.TestSupport;
 using Xunit;
 
 namespace Vouchfx.Engine.Runtime.Tests;
@@ -196,12 +197,13 @@ internal static class DrillHostSweep
     /// The one directory a process may hold an image under and still be considered an orphan:
     /// this repository's CLI build output, both configurations.
     /// </summary>
-    internal static string ResolveCliBinRoot()
-    {
-        var assemblyDirectory = Path.GetDirectoryName(typeof(DrillHostSweep).Assembly.Location)!;
-        var repoRoot = Path.GetFullPath(Path.Combine(assemblyDirectory, "..", "..", "..", "..", ".."));
-        return Path.GetFullPath(Path.Combine(repoRoot, "src", "Cli", "Vouchfx.Cli", "bin"));
-    }
+    /// <remarks>
+    /// The repo root comes from <see cref="RepoRoot.Resolve()"/> (#551) — anchored on
+    /// <c>vouchfx.sln</c>, shared with every other test project that needs it — rather than this
+    /// method's own fixed-depth walk from the test assembly's build output.
+    /// </remarks>
+    internal static string ResolveCliBinRoot() =>
+        Path.GetFullPath(Path.Combine(RepoRoot.Resolve(), "src", "Cli", "Vouchfx.Cli", "bin"));
 
     /// <summary>
     /// Decides which candidates are orphans, kills them through <paramref name="kill"/>, and

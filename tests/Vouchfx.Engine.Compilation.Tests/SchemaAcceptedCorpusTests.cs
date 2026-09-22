@@ -615,7 +615,9 @@ public sealed class SchemaAcceptedCorpusTests
     /// <summary>
     /// Walks up from the test assembly's base directory until it finds the
     /// directory containing <c>vouchfx.sln</c> — the repo root. Mirrors
-    /// <c>SchemaFreezeTests.FindRepoRoot</c> / <c>ExamplesCompileTests.ResolveRepoRoot</c>.
+    /// <c>SchemaFreezeTests.FindRepoRoot</c> — one of a family of copies of this same walk that
+    /// pre-date, and were not folded into, <c>Vouchfx.TestSupport.RepoRoot.Resolve()</c> (#551);
+    /// see that type's own remarks for which walks it did and did not collapse.
     /// </summary>
     private static string FindRepoRoot()
     {
