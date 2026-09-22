@@ -140,6 +140,20 @@ public sealed class DeadLoopbackEndpoint : IDisposable
     /// </summary>
     public string Authority => $"{Host}:{Port}";
 
+    /// <summary>
+    /// Whether <see cref="Dispose"/> has closed the reservation's socket handle: the proof that
+    /// the port was released rather than leaked.
+    /// </summary>
+    /// <remarks>
+    /// The kernel frees a bound port when its last handle closes, and this process holds exactly
+    /// one, so the closed handle IS the release.  A consumer that wants to assert release must read
+    /// this rather than re-bind <see cref="Port"/>: the number re-enters the shared ephemeral pool
+    /// the moment it is released, and any other test host, outbound connection or process on the
+    /// host can be handed it in the gap, so a re-bind attempt bounded at any length cannot tell
+    /// that rival from a leak.
+    /// </remarks>
+    public bool IsReleased => _reservation.SafeHandle.IsClosed;
+
     /// <summary>Binds — but does not listen on — an OS-allocated loopback port.</summary>
     /// <returns>A reservation that holds the port until it is disposed.</returns>
     public static DeadLoopbackEndpoint Reserve()

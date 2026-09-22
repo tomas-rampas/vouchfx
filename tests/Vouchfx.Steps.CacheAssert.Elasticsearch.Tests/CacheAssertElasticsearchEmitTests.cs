@@ -577,9 +577,11 @@ public sealed class CacheAssertElasticsearchEmitTests
     /// <see cref="DeadLoopbackEndpoint"/>'s own remarks for the full mechanism). MEASURED on the
     /// same Linux host with the fix applied (2026-09-22): the HOLD half below now also passes on
     /// the first attempt, matching Windows.
-    /// The two halves are asymmetric on purpose: the HOLD half must succeed on the first
-    /// attempt (nothing can legitimately take a held port), whereas the RELEASE half is
-    /// retried — see the comment at the loop for why one attempt would be a race.
+    /// The two halves prove different facts on purpose: the HOLD half binds the port a second
+    /// time and must fail on the first attempt (nothing can legitimately take a held port),
+    /// whereas the RELEASE half asserts the reservation's own handle is closed rather than
+    /// re-binding the port — see the comment at that assertion for why a re-bind would race
+    /// every other process on the host for the same ephemeral number.
     /// </remarks>
     [Fact]
     public void DeadLoopbackEndpoint_HoldsThePortUntilDisposed()
@@ -606,38 +608,14 @@ public sealed class CacheAssertElasticsearchEmitTests
             dead.Dispose();
         }
 
-        // Released, not leaked: the same bind now succeeds.  Bounded retry rather than one
-        // attempt, because the released port re-enters the ephemeral pool and another test
-        // collection — or another test process on this host — can be handed it in the gap.
-        // That race is the only reason a single attempt would fail spuriously; a socket the
-        // reservation genuinely leaked fails EVERY attempt, so the release half keeps its
-        // teeth.  The loop is the smallest thing that separates the two.
-        const int attempts = 10;
-        SocketException? last = null;
-        for (var i = 0; i < attempts; i++)
-        {
-            var after = new Socket(
-                AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-            try
-            {
-                after.Bind(endpoint);
-                return;
-            }
-            catch (SocketException ex)
-            {
-                last = ex;
-                Thread.Sleep(50);
-            }
-            finally
-            {
-                after.Dispose();
-            }
-        }
-
-        Assert.Fail(
-            $"the port was never rebindable in {attempts} attempts " +
-            $"(last: {last?.SocketErrorCode}) — either Dispose leaked the reservation, " +
-            "or this host lost the ephemeral-allocation race every time");
+        // Released, not leaked: the reservation's own socket handle is closed.  That is the fact
+        // the kernel acts on — a bound port is freed when its last handle closes, and this process
+        // holds exactly one — and it is race-free.  Re-binding the same port would not be: the
+        // number re-enters the shared ephemeral pool the moment it is released, and any other test
+        // host, outbound connection or process on this host can be handed it in the gap, so a wait
+        // bounded at any length cannot tell that rival from a leak (PR #555 review).  A leaked
+        // reservation, by contrast, is a handle that is still open, which this sees every time.
+        Assert.True(dead.IsReleased, "the reservation's socket handle is still open after Dispose");
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────
