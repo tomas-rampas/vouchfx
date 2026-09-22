@@ -2386,32 +2386,49 @@ public sealed class GitChangeSetTests
         };
         psi.ArgumentList.Add("--version");
 
+        // The start sits in its own try/catch, above the `using`: it is the one step allowed to
+        // fail before there is anything to kill (git absent from PATH raises Win32Exception here).
+        System.Diagnostics.Process? process;
         try
         {
-            using var process = System.Diagnostics.Process.Start(psi);
-            if (process is null)
-            {
-                return false;
-            }
-
-            // Started before the wait: a child that fills a redirected pipe blocks otherwise.
-            var drain = Task.WhenAll(
-                process.StandardOutput.ReadToEndAsync(),
-                process.StandardError.ReadToEndAsync());
-
-            if (!process.WaitForExit(BareNameProbeBudgetMilliseconds))
-            {
-                ChildProcess.KillTreeQuietly(process);
-                ObserveQuietly(drain);
-                return false;
-            }
-
-            ObserveQuietly(drain);
-            return process.ExitCode == 0;
+            process = System.Diagnostics.Process.Start(psi);
         }
         catch (System.ComponentModel.Win32Exception)
         {
             return false; // No git this host can launch from the bare name.
+        }
+
+        if (process is null)
+        {
+            return false;
+        }
+
+        using (process)
+        {
+            try
+            {
+                // Started before the wait: a child that fills a redirected pipe blocks otherwise.
+                var drain = Task.WhenAll(
+                    process.StandardOutput.ReadToEndAsync(),
+                    process.StandardError.ReadToEndAsync());
+
+                if (!process.WaitForExit(BareNameProbeBudgetMilliseconds))
+                {
+                    ObserveQuietly(drain);
+                    return false;
+                }
+
+                ObserveQuietly(drain);
+                return process.ExitCode == 0;
+            }
+            finally
+            {
+                // House shape (#548, ChildProcessKillCallSiteCensusTests): the kill sits in an
+                // UNCONDITIONAL `finally` rather than only the timeout branch above, so the census
+                // can see it. Safe on the clean-exit path too — KillTreeQuietly no-ops on a process
+                // that has already exited, so this changes nothing about what the method returns.
+                ChildProcess.KillTreeQuietly(process);
+            }
         }
     }
 
