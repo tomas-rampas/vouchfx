@@ -54,13 +54,46 @@ public sealed class HeadlessTopology : IAsyncDisposable
 {
     private readonly DistributedApplication _app;
     private readonly DcpFlightRecorder? _recorder;
+
+    // #438: host-filesystem directories a configureResources callback created as bind-mount
+    // sources for a container this instance started (today: EnvironmentMapper's azureservicebus
+    // Config.json directory) — generic here deliberately, so HeadlessTopology stays unaware of
+    // what a directory holds or which dependency type created it. Removed in DisposeAsync, AFTER
+    // StopAsync returns, so deletion never races a container that still holds the mount.
+    private readonly IReadOnlyList<string> _tempDirectoriesToClean;
+
     private bool _disposed;
 
-    private HeadlessTopology(DistributedApplication app, DcpFlightRecorder? recorder)
+    private HeadlessTopology(
+        DistributedApplication app,
+        DcpFlightRecorder? recorder,
+        IReadOnlyList<string> tempDirectoriesToClean)
     {
         _app = app;
         _recorder = recorder;
+        _tempDirectoriesToClean = tempDirectoriesToClean;
     }
+
+    /// <summary>
+    /// Test seam (#438): wraps an already-<c>Build()</c>-built but never-<c>StartAsync()</c>-ed
+    /// <see cref="DistributedApplication"/> in a <see cref="HeadlessTopology"/>, bypassing
+    /// <see cref="StartAsync"/>'s DCP path resolution, logging setup and — critically —
+    /// <c>StartAsync</c> itself. Lets <c>DisposeAsync</c>'s <c>tempDirectoriesToClean</c> cleanup
+    /// loop be pinned in isolation, without Docker, DCP, or a real container: an un-started host's
+    /// own <c>StopAsync</c>/<c>DisposeAsync</c> are reached exactly as a started one's are (both
+    /// calls are unconditionally guarded already), so the only thing this seam changes is skipping
+    /// the DCP orchestration <see cref="StartAsync"/> would otherwise require.
+    /// </summary>
+    /// <remarks>
+    /// <c>internal</c>, not <c>private</c> — same reasoning as <see cref="ApplyDcpPathSelfHeal"/>:
+    /// the Orchestration test project sees it via this project's assembly-level
+    /// <c>InternalsVisibleTo</c>. No production caller exists; <see cref="StartAsync"/> is
+    /// otherwise unchanged.
+    /// </remarks>
+    internal static HeadlessTopology ForTestingDisposal(
+        DistributedApplication app,
+        IReadOnlyList<string>? tempDirectoriesToClean = null) =>
+        new(app, recorder: null, tempDirectoriesToClean ?? Array.Empty<string>());
 
     /// <summary>
     /// Gets the underlying <see cref="DistributedApplication"/> instance.
@@ -85,11 +118,20 @@ public sealed class HeadlessTopology : IAsyncDisposable
     /// but before <see cref="DistributedApplication.StartAsync"/> is called.
     /// Use this to add containers, projects and dependencies.
     /// </param>
+    /// <param name="tempDirectoriesToClean">
+    /// Optional, and a LIVE reference, not a snapshot (#438): host-filesystem directories a
+    /// resource <paramref name="configureResources"/> adds may create as a bind-mount source once
+    /// its container actually starts — e.g. <c>EnvironmentMapper</c>'s <c>MappedTopology.AsbTempDirectoriesCreated</c>.
+    /// Passed here BEFORE anything has been created, and read back in <see cref="DisposeAsync"/>
+    /// once whatever this run started has actually populated it. <see langword="null"/> is treated
+    /// as empty.
+    /// </param>
     /// <param name="cancellationToken">Propagated to <see cref="DistributedApplication.StartAsync"/>.</param>
     /// <returns>A started <see cref="HeadlessTopology"/> that must be disposed when the test ends.</returns>
     public static async Task<HeadlessTopology> StartAsync(
         string? appHostAssemblyName = null,
         Action<IDistributedApplicationBuilder>? configureResources = null,
+        IReadOnlyList<string>? tempDirectoriesToClean = null,
         CancellationToken cancellationToken = default)
     {
         var options = new DistributedApplicationOptions
@@ -246,7 +288,7 @@ public sealed class HeadlessTopology : IAsyncDisposable
         // golden evidence and then discard it on exactly the fault this exists to capture.
         // SuiteTopology and StubTopology own the far end of the window; a caller that uses
         // HeadlessTopology directly drops it at DisposeAsync.
-        return new HeadlessTopology(app, recorder);
+        return new HeadlessTopology(app, recorder, tempDirectoriesToClean ?? Array.Empty<string>());
     }
 
     /// <summary>
@@ -436,9 +478,46 @@ public sealed class HeadlessTopology : IAsyncDisposable
             // TopologyTeardownLeakTests, not by a runtime log.
         }
 
-        // Guarded for the reason the catch above already states as a RULE — "teardown must never
-        // throw into the verdict path (§12.1)" — which this line contradicted by being the one
-        // teardown call left bare (issue #466). It is the final release, so nothing follows it
+        // #438: remove every host-filesystem directory a resource created as a bind-mount
+        // source once its container actually started (today: EnvironmentMapper's
+        // azureservicebus Config.json directory) — AFTER StopAsync above has returned, so
+        // deletion never races a container that still holds the mount. Best-effort and
+        // per-directory: one failure must not stop the others, or skip the final _app
+        // release below. Only the IO-family exceptions a still-held mount realistically
+        // produces are swallowed (directory already gone, or still locked because StopAsync
+        // above was itself cut short by stopCts) — every entry here came from a controlled
+        // Path.Combine(Path.GetTempPath(), "vouchfx-asb-<guid>") construction, so no other
+        // exception type is expected from Directory.Delete on it.
+        // Snapshot under the lock EnvironmentMapper's hook takes on the same list instance: no
+        // start hook should still be running once StopAsync has returned, but the lock makes that
+        // a guarantee rather than an assumption about Aspire's event ordering.
+        string[] tempDirectories;
+        lock (_tempDirectoriesToClean)
+        {
+            tempDirectories = _tempDirectoriesToClean.ToArray();
+        }
+
+        foreach (var dir in tempDirectories)
+        {
+            try
+            {
+                Directory.Delete(dir, recursive: true);
+            }
+            catch (IOException)
+            {
+                // Still mounted, or already removed (DirectoryNotFoundException derives from
+                // IOException) — either way, not this teardown's fault to report.
+            }
+            catch (UnauthorizedAccessException)
+            {
+                // A still-running container (StopAsync above timed out) can hold the mount in
+                // a way that denies the delete rather than raising IOException.
+            }
+        }
+
+        // Guarded for the reason the StopAsync catch above already states as a RULE — "teardown
+        // must never throw into the verdict path (§12.1)" — which this line contradicted by being
+        // the one teardown call left bare (issue #466). It is the final release, so nothing follows it
         // that a swallow can skip, and it runs from `finally`/`await using` frames on every run
         // path: an exception raised here does not merely add a fault, it REPLACES whatever
         // verdict or exception was already in flight, and under `--parallel` lands in the slot
