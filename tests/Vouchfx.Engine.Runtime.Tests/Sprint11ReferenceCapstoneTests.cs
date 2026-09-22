@@ -227,11 +227,6 @@ public sealed class Sprint11ReferenceCapstoneTests
             var psi = new ProcessStartInfo
             {
                 FileName = "dotnet",
-                Arguments =
-                    $"\"{cliDllPath}\" run \"{ReferenceSeedBaseDir}\"" +
-                    $" --events \"{eventsPath}\"" +
-                    $" --junit \"{junitPath}\"" +
-                    $" --html \"{htmlPath}\"",
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
@@ -240,6 +235,22 @@ public sealed class Sprint11ReferenceCapstoneTests
                 // resolve relative to the scenario file's location.
                 WorkingDirectory = ReferenceSeedBaseDir,
             };
+
+            // ArgumentList, not a spliced Arguments string (#554): matches every other caller of
+            // the built CLI in this project (KafkaSecurityConfirmationDrillDockerTests.RunCliAsync,
+            // KafkaAuthorisationDrillDockerTests.RunCliAsync and
+            // ThreeRequirementsSuiteDockerTests.RunCliAsync) and lets the platform quote each
+            // element itself, which removes the class of bug where a path containing a space or a
+            // quote changes the argument count.
+            psi.ArgumentList.Add(cliDllPath);
+            psi.ArgumentList.Add("run");
+            psi.ArgumentList.Add(ReferenceSeedBaseDir);
+            psi.ArgumentList.Add("--events");
+            psi.ArgumentList.Add(eventsPath);
+            psi.ArgumentList.Add("--junit");
+            psi.ArgumentList.Add(junitPath);
+            psi.ArgumentList.Add("--html");
+            psi.ArgumentList.Add(htmlPath);
 
             // Pass the secret env var into the child process.
             psi.Environment[SecretEnvVarName] = SecretValue;
