@@ -515,11 +515,10 @@ The same engine as alpha.1, with release-quality fixes found by cutting alpha.1 
 
 ## [1.0.0-alpha.1] — 2026-07-08
 
-**The first public release.** Everything recorded under `Unreleased` below, published as a pre-release for
-pilot validation ahead of v1.0 GA: the `vouchfx` dotnet global tool on NuGet.org (published via Trusted
-Publishing — no long-lived keys), per-OS self-contained archives, MSI/deb/pkg installers and the VSCode
-extension attached to the GitHub release, all cosign-signed with SLSA provenance attestations and CycloneDX
-SBOMs.
+**The first public release.** Everything recorded below, published as a pre-release for pilot validation
+ahead of v1.0 GA: the `vouchfx` dotnet global tool on NuGet.org (published via Trusted Publishing — no
+long-lived keys), per-OS self-contained archives, MSI/deb/pkg installers and the VSCode extension attached
+to the GitHub release, all cosign-signed with SLSA provenance attestations and CycloneDX SBOMs.
 
 ```bash
 dotnet tool install --global vouchfx --prerelease
@@ -527,8 +526,6 @@ dotnet tool install --global vouchfx --prerelease
 
 The Provider SDK (`Platform.Sdk`) is not part of the alpha package set; it ships to NuGet.org with v1.0 GA.
 *(Superseded: the SDK closure shipped early, at v1.0.0-alpha.3, and was renamed to `Vouchfx.*` in alpha.4 — see those entries.)*
-
-## [Unreleased]
 
 ### Added
 
