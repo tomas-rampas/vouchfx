@@ -712,20 +712,22 @@ public sealed class SystemProcessRunnerTests
     /// comes back. So the cost of a figure too tight is bounded at the leak.
     /// </para>
     /// <para>
-    /// <strong>The collapse itself is older and is NOT closed, and measuring it corrected two
-    /// claims worth keeping straight.</strong> The lower bound, an unreadable
+    /// <strong>The collapse itself is older, and #547 is what closed it — measuring the OLD one
+    /// first corrected two claims worth keeping straight.</strong> The lower bound, an unreadable
     /// <see cref="Process.StartTime"/> and a throwing <see cref="Process.GetProcessById(int)"/>
-    /// all still answer <see langword="null"/> on the liveness path, so "refused" and "gone"
-    /// remain one word there; only the three-way <see cref="TryOpen"/> the follow-up describes
-    /// fixes that. But the route by which it would reach rows 1 and 5 is narrower than this
-    /// paragraph used to say. Their <c>dead</c> assertion is about the RUNNER's own tree-kill,
-    /// which no guard here gates: by the time they ask, <c>Run</c> has returned and the child is
-    /// genuinely dead, so they pass on the merits. A vacuous pass needs the runner's kill to have
-    /// FAILED as well — the #532-review scenario this file records as having no portable
-    /// reproduction. MEASURED on both drills: with the lower bound tightened until it opens
-    /// nothing, six rows redden; with the upper bound made always-refusing, four do; rows 1 and 5
-    /// are absent from both, and their absence is that compound precondition rather than a
-    /// vacuous pass.
+    /// used all to answer <see langword="null"/> on the liveness path, so "refused" and "gone"
+    /// were one word there; <see cref="PidLookup"/> is the three-way <see cref="TryOpen"/> answer
+    /// that tells them apart now. But the route by which the old collapse would have reached rows
+    /// 1 and 5 was narrower than this paragraph used to say. Their <c>dead</c> assertion is about
+    /// the RUNNER's own tree-kill, which no guard here gates: by the time they ask, <c>Run</c>
+    /// has returned and the child is genuinely dead, so they pass on the merits. A vacuous pass
+    /// needed the runner's kill to have FAILED as well — the #532-review scenario this file
+    /// records as having no portable reproduction. MEASURED on both drills: with the lower bound
+    /// tightened until it opens nothing, six rows redden; with the upper bound made
+    /// always-refusing, four do; rows 1 and 5 are absent from both, and their absence is that
+    /// compound precondition rather than a vacuous pass. Both mutations act on a comparison
+    /// TryOpen still makes before it decides Opened/Gone/Refused, so the figures are unaffected
+    /// by #547 and were not re-measured for it.
     /// </para>
     /// <para>
     /// <strong>Too loose, and what the second bound actually buys.</strong> A recycled pid's
@@ -2169,13 +2171,13 @@ public sealed class SystemProcessRunnerTests
                             $"'{relation}' is not a relation this row sets up. Each InlineData names one arrangement of a process start, an attempt date and a pid file's write time, and the arrangement is what decides whether TryOpen must refuse — so an unrecognised name has no expected answer and must not borrow another case's."));
             }
 
-            var opened = TryOpen(host.Id, startedUtc, pidFile, PidBounds.Both);
+            var outcome = TryOpen(host.Id, startedUtc, pidFile, PidBounds.Both, out var opened);
             using (opened)
             {
                 Assert.True(
-                    refusalExpected == (opened is null),
+                    refusalExpected == (outcome != PidLookup.Opened),
                     FormattableString.Invariant(
-                        $"TryOpen {(opened is null ? "refused" : "accepted")} pid {host.Id} in the '{relation}' case, where it must {(refusalExpected ? "refuse" : "accept")} it. Signed against the process's own start, negative meaning earlier: the attempt is dated {(startedUtc - hostStartedUtc).TotalSeconds:F1}s from it, and the pid file was written {((PidFileWrittenUtc(pidFile) ?? hostStartedUtc) - hostStartedUtc).TotalSeconds:F1}s from it — no file at all reads as 0.0 here, and means the upper bound was skipped. A refusal that should have been an acceptance leaks whatever the pid named for {ChildLifetime.TotalSeconds:F0}s, because KillTreeQuietly then kills nothing; an acceptance that should have been a refusal tree-kills a stranger, DESCENDANTS INCLUDED. Both bounds and the missing-file fallback are separately drilled — see this row's remarks before re-aiming it."));
+                        $"TryOpen {(outcome == PidLookup.Opened ? "accepted" : "refused")} pid {host.Id} in the '{relation}' case, where it must {(refusalExpected ? "refuse" : "accept")} it. Signed against the process's own start, negative meaning earlier: the attempt is dated {(startedUtc - hostStartedUtc).TotalSeconds:F1}s from it, and the pid file was written {((PidFileWrittenUtc(pidFile) ?? hostStartedUtc) - hostStartedUtc).TotalSeconds:F1}s from it — no file at all reads as 0.0 here, and means the upper bound was skipped. A refusal that should have been an acceptance leaks whatever the pid named for {ChildLifetime.TotalSeconds:F0}s, because KillTreeQuietly then kills nothing; an acceptance that should have been a refusal tree-kills a stranger, DESCENDANTS INCLUDED. Both bounds and the missing-file fallback are separately drilled — see this row's remarks before re-aiming it."));
             }
         }
         finally
@@ -2241,10 +2243,11 @@ public sealed class SystemProcessRunnerTests
             File.WriteAllText(pidFile, "1\n");
             File.SetLastWriteTimeUtc(pidFile, hostStartedUtc.AddSeconds(-10));
 
-            using (var refused = TryOpen(host.Id, hostStartedUtc, pidFile, PidBounds.Both))
+            var premiseOutcome = TryOpen(host.Id, hostStartedUtc, pidFile, PidBounds.Both, out var refused);
+            using (refused)
             {
                 Assert.True(
-                    refused is null,
+                    premiseOutcome != PidLookup.Opened,
                     FormattableString.Invariant(
                         $"This row's premise is gone: TryOpen ACCEPTED pid {host.Id} against a pid file backdated ten seconds, so the upper bound is not refusing the arrangement this row is built on and what it asserts below proves nothing. Fix the sibling theory's `younger-than-the-announcement` case first — it pins the same refusal — and come back to this one."));
             }
@@ -2256,6 +2259,77 @@ public sealed class SystemProcessRunnerTests
                 reportedDead,
                 FormattableString.Invariant(
                     $"WaitForDeath reported pid {host.Id} DEAD — and that pid is this test host, which is running this assertion. The pid file was backdated so that TryOpen's upper bound refuses it while the lower bound accepts, so the only way to answer 'dead' here is to have consulted the upper bound (PidBounds.Both) on a question it must not be asked. Every refusal then reads as a death: rows 1 and 5 kill a child, ask this method whether it went, and pass over a live one. That is #529's own defect arriving through its own fix — restore PidBounds.LowerOnly in WaitForDeath."));
+        }
+        finally
+        {
+            TryDeleteDirectory(directory);
+        }
+    }
+
+    /// <summary>
+    /// A pid <see cref="TryOpen"/> refuses reads as <see cref="PidLookup.Refused"/>, never
+    /// <see cref="PidLookup.Gone"/> — the two are different facts and #547 is what lets a caller
+    /// tell them apart (follow-up to #529/#546).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>THE ARRANGEMENT REUSES THE SIBLING THEORY'S <c>older-than-the-attempt</c>
+    /// RELATION</strong> — this test host's own process, alive by construction, asked about
+    /// against an attempt dated an hour after it actually started. The lower bound refuses it,
+    /// exactly as
+    /// <see cref="TryOpen_RefusesAProcessOutsideTheWindowTheChildMustHaveStartedIn"/> already
+    /// pins. That row only ever asked "opened or not", so both a REFUSED and a (hypothetical)
+    /// GONE answer would satisfy it identically; this row is downstream of it and pins WHICH of
+    /// the two a refusal now means.
+    /// </para>
+    /// <para>
+    /// <strong>WITHOUT #547 THIS ROW HAS NOTHING TO ASSERT.</strong> Before it,
+    /// <see cref="TryOpen"/> answered every refusal with the same <see langword="null"/> a
+    /// missing process gets, so "gone" and "refused" were one word — see <see cref="PidBounds"/>'s
+    /// remarks. <see cref="PidLookup"/> is what gives the two facts different names, and the
+    /// assertion below requires the REFUSED one specifically, which a regression to the old
+    /// collapse cannot satisfy.
+    /// </para>
+    /// <para>
+    /// <strong>Open, read, dispose — never kill</strong>, for the reason
+    /// <see cref="TryOpen_RefusesAProcessOutsideTheWindowTheChildMustHaveStartedIn"/>'s remarks
+    /// give: the pid under test is the runner's own, and <see cref="KillTreeQuietly"/> would take
+    /// its whole tree. This row calls <see cref="TryOpen"/> directly and never
+    /// <see cref="KillTreeQuietly"/>, so <see cref="EveryFinallyThatKills_ReclaimsAPidFirst"/>'s
+    /// census — which counts killing <c>finally</c> blocks — has nothing here to count either
+    /// way.
+    /// </para>
+    /// <para>
+    /// <strong>THE DRILL.</strong> Folding <see cref="PidLookup.Refused"/> back into
+    /// <see cref="PidLookup.Gone"/> at either of <see cref="TryOpen"/>'s bound checks reddens
+    /// this row on the assertion below. The sibling theory does not move under that same
+    /// mutation, because it only ever asked "opened or not" and both answers are "not".
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void TryOpen_KeepsARefusalFromReadingAsGone()
+    {
+        using var host = Process.GetCurrentProcess();
+        var hostStartedUtc = host.StartTime.ToUniversalTime();
+        var directory = CreateScratchDirectory();
+        var pidFile = Path.Combine(directory, PidFileName);
+
+        try
+        {
+            // The sibling theory's `older-than-the-attempt` relation: an attempt dated an hour
+            // after this (definitely alive) process actually started, so the lower bound refuses
+            // it while GetProcessById still finds it — REFUSED, not GONE.
+            var startedUtc = hostStartedUtc.AddHours(1);
+            File.WriteAllText(pidFile, "1\n");
+
+            var outcome = TryOpen(host.Id, startedUtc, pidFile, PidBounds.Both, out var opened);
+            using (opened)
+            {
+                Assert.True(
+                    outcome == PidLookup.Refused,
+                    FormattableString.Invariant(
+                        $"TryOpen answered '{outcome}' for pid {host.Id} — this test host's own process, running this very assertion — dated an hour before the attempt it is being asked about. The lower bound must refuse it, and a refusal is REFUSED, not GONE: a process genuinely exists at this pid (this one), so reporting it GONE would be reporting a fact the OS itself contradicts. #547 exists precisely so this distinction reaches every caller of TryOpen — see PidLookup and this row's remarks — and reading GONE here means the two have been folded back into one, which is the exact defect WaitForDeath_AsksWhetherThePidIsGone_NotWhetherItCorroborates and PidFileWriters_PublishAPidTheReaderAccepts (rows 1 and 5, via the #481 leak cover) both depend on not happening."));
+            }
         }
         finally
         {
@@ -2407,12 +2481,15 @@ public sealed class SystemProcessRunnerTests
 
                     // End to end, and disposed rather than leaked: the guard that will be asked
                     // to open this pid in the `finally` below accepts it now.
-                    using var openedForTeardown =
-                        TryOpen(pid, startedUtc, pidFile, PidBounds.Both);
-                    Assert.True(
-                        openedForTeardown is not null,
-                        FormattableString.Invariant(
-                            $"TryOpen refused the pid '{pidFileName}' announced, although this row has just established that the process is alive and that its start time sits {skew.TotalMilliseconds:F1}ms before the file's write time. Both of #529's comparisons should therefore accept it, so a refusal here means a bound is reading something other than what this row measured — and in teardown it would mean killing nothing."));
+                    var openedOutcome = TryOpen(
+                        pid, startedUtc, pidFile, PidBounds.Both, out var openedForTeardown);
+                    using (openedForTeardown)
+                    {
+                        Assert.True(
+                            openedOutcome == PidLookup.Opened,
+                            FormattableString.Invariant(
+                                $"TryOpen refused the pid '{pidFileName}' announced, although this row has just established that the process is alive and that its start time sits {skew.TotalMilliseconds:F1}ms before the file's write time. Both of #529's comparisons should therefore accept it, so a refusal here means a bound is reading something other than what this row measured — and in teardown it would mean killing nothing."));
+                    }
                 }
                 finally
                 {
@@ -4289,14 +4366,15 @@ public sealed class SystemProcessRunnerTests
     /// <see cref="Process.HasExited"/> costs nothing and endangers nobody.
     /// </para>
     /// <para>
-    /// <strong>And giving it to a liveness caller is not merely useless, it is harmful.</strong>
-    /// <see cref="TryOpen"/> answers with a handle or <see langword="null"/>, so
-    /// <see cref="IsAlive"/> reads every refusal as "gone" and <see cref="WaitForDeath"/> reads
-    /// "gone" as the death it was waiting for. A bound that refuses a LIVE child therefore
-    /// reports it dead, and rows 1 and 5's <c>dead</c> assertion — the #481 leak cover — passes
-    /// over a running process. Asking the question narrowly is what keeps the answer honest:
-    /// <see cref="WaitForDeath"/> wants to know whether the pid is GONE, and a pid whose
-    /// corroboration failed is not gone.
+    /// <strong>And giving it to a liveness caller was not merely useless, it was harmful.</strong>
+    /// Before #547, <see cref="TryOpen"/> answered with a handle or <see langword="null"/>, so
+    /// <see cref="IsAlive"/> read every refusal as "gone" and <see cref="WaitForDeath"/>, calling
+    /// through it, read "gone" as the death it was waiting for. A bound that refused a LIVE child
+    /// therefore reported it dead, and rows 1 and 5's <c>dead</c> assertion — the #481 leak cover
+    /// — could pass over a running process. Asking the question narrowly is what keeps the answer
+    /// honest: <see cref="WaitForDeath"/> wants to know whether the pid is GONE, and a pid whose
+    /// corroboration failed is not gone — and since #547 it no longer has to trust the bound
+    /// alone to say so, because <see cref="PidLookup.Refused"/> says it directly.
     /// </para>
     /// <para>
     /// <strong>The split is by QUESTION, not by caller.</strong>
@@ -4308,11 +4386,12 @@ public sealed class SystemProcessRunnerTests
     /// <see cref="WaitForDeath_AsksWhetherThePidIsGone_NotWhetherItCorroborates"/>.
     /// </para>
     /// <para>
-    /// What this does NOT close: the lower bound, an unreadable
+    /// <strong>#547 closed what this did NOT.</strong> The lower bound, an unreadable
     /// <see cref="Process.StartTime"/> and a <see cref="Process.GetProcessById(int)"/> that
-    /// throws all still collapse into the same <see langword="null"/> on the liveness path. Those
-    /// are older than #529 and are the tri-state follow-up's business;
-    /// <see cref="TryOpen"/>'s remarks carry that residual.
+    /// throws used all still to collapse into the same <see langword="null"/> on the liveness
+    /// path — older than #529, and left as the tri-state follow-up's business at the time.
+    /// <see cref="PidLookup"/> is that follow-up, and <see cref="TryOpen"/>'s remarks carry what
+    /// it changed and what is still open (pid identity within the accepted window).
     /// </para>
     /// </remarks>
     private enum PidBounds
@@ -4324,6 +4403,51 @@ public sealed class SystemProcessRunnerTests
 
         /// <summary>Both bounds — the caller is about to kill what it opens.</summary>
         Both,
+    }
+
+    /// <summary>
+    /// What <see cref="TryOpen"/> found for a pid: opened, gone, or refused (#547).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>THREE FACTS, NOT TWO returns carrying one meaning.</strong> Before #547,
+    /// <see cref="TryOpen"/> answered a handle or <see langword="null"/>, and <c>null</c> meant
+    /// two different things: the pid names no process at all, or it names one this row could not
+    /// corroborate as the child it is looking for. <see cref="IsAlive"/> read both as "not alive"
+    /// and <see cref="WaitForDeath"/>, through it, read both as "dead" — so a LIVE pid a bound
+    /// merely could not corroborate was reported dead. This enum is what lets a caller ask which
+    /// happened.
+    /// </para>
+    /// <para>
+    /// <strong>Gone is what <see cref="Process.GetProcessById(int)"/> itself says, or the absence
+    /// of a pid to ask it about.</strong> Refused is everything else that stops
+    /// <see cref="TryOpen"/> handing a handle back although the OS reports a process at that
+    /// number: an unreadable <see cref="Process.StartTime"/>, or either bound's comparison
+    /// failing. A process IS there in every Refused case; this row's corroboration of it is not.
+    /// </para>
+    /// <para>
+    /// Every helper that reads <see cref="TryOpen"/> — <see cref="IsAlive"/>,
+    /// <see cref="WaitForDeath"/>, <see cref="KillTreeQuietly"/> — switches on this exhaustively,
+    /// with a <see langword="default"/> arm that throws, so a fourth member cannot be added
+    /// silently and read as one of these three by accident.
+    /// </para>
+    /// </remarks>
+    private enum PidLookup
+    {
+        /// <summary>A live process was opened, corroborated against the bounds asked for.</summary>
+        Opened,
+
+        /// <summary>
+        /// No such process — there was no pid to look up, or
+        /// <see cref="Process.GetProcessById(int)"/> found nothing at it.
+        /// </summary>
+        Gone,
+
+        /// <summary>
+        /// A process exists at this pid, but this row could not corroborate that it is the one
+        /// it is looking for.
+        /// </summary>
+        Refused,
     }
 
     /// <summary>
@@ -4386,11 +4510,14 @@ public sealed class SystemProcessRunnerTests
     /// applies the second comparison only when asked, and only the caller about to KILL asks.
     /// What is left of the collapse is the arms that predate #529 — the lower bound, an
     /// unreadable <see cref="Process.StartTime"/>, a throwing
-    /// <see cref="Process.GetProcessById(int)"/> — and closing THOSE is the three-way answer
-    /// (open, gone, refused) the follow-up describes, reaching every helper that reads this one
+    /// <see cref="Process.GetProcessById(int)"/> — and closing THOSE is #547's
+    /// <see cref="PidLookup"/>: <see cref="PidLookup.Opened"/>, <see cref="PidLookup.Gone"/> or
+    /// <see cref="PidLookup.Refused"/>, reaching every helper that reads this one
     /// (<see cref="IsAlive"/>, <see cref="WaitForDeath"/>, <see cref="KillTreeQuietly"/>) rather
     /// than a line here. The fail-toward-today missing-file answer is part of the same posture:
-    /// a file that cannot be stat'd produces the old guard, never a refusal.
+    /// a file that cannot be stat'd produces the old guard, never a refusal — it still falls back
+    /// to <see cref="PidLookup.Opened"/> on the lower bound alone, never to
+    /// <see cref="PidLookup.Refused"/>.
     /// </para>
     /// <para>
     /// <strong>THE LEDGER THIS PARAGRAPH USED TO KEEP.</strong> #524 multiplied the number of
@@ -4412,12 +4539,14 @@ public sealed class SystemProcessRunnerTests
     /// <see cref="TheGuardsAnchors_StayInTheOrderARealChildProduces"/>.
     /// </para>
     /// </remarks>
-    private static Process? TryOpen(
-        int? pid, DateTime startedUtc, string pidFile, PidBounds bounds)
+    private static PidLookup TryOpen(
+        int? pid, DateTime startedUtc, string pidFile, PidBounds bounds, out Process? process)
     {
+        process = null;
+
         if (pid is not int id)
         {
-            return null;
+            return PidLookup.Gone;
         }
 
         // The upper bound is asked for, never assumed. A caller that is about to KILL needs it;
@@ -4443,36 +4572,40 @@ public sealed class SystemProcessRunnerTests
                     $"TryOpen does not know which bounds '{bounds}' asks for. Every member of PidBounds names a question — is this pid GONE, or is it the one that wrote this file — and the answer decides whether a refusal can be read as a death. Say which, here and at PidBounds, rather than inheriting one.")),
         };
 
-        Process process;
+        Process candidate;
         try
         {
-            process = Process.GetProcessById(id);
+            candidate = Process.GetProcessById(id);
         }
         catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
         {
-            // No such process — it has already exited.
-            return null;
+            // No such process — it has already exited. GONE: the OS itself says there is
+            // nothing here, which is a different fact from a bound refusing one that IS there.
+            return PidLookup.Gone;
         }
 
         DateTime startedByProcessUtc;
         try
         {
-            startedByProcessUtc = process.StartTime.ToUniversalTime();
+            startedByProcessUtc = candidate.StartTime.ToUniversalTime();
         }
         catch (Exception ex) when (ex is InvalidOperationException
                                        or System.ComponentModel.Win32Exception
                                        or NotSupportedException)
         {
-            // StartTime unreadable (exited, access denied, remote) — treat it as not ours.
-            process.Dispose();
-            return null;
+            // StartTime unreadable (exited, access denied, remote) — GetProcessById found
+            // something, so this is REFUSED rather than GONE (#547): a process is there, this
+            // row simply cannot corroborate it.
+            candidate.Dispose();
+            return PidLookup.Refused;
         }
 
         if (startedByProcessUtc < startedUtc.AddSeconds(-5))
         {
-            // Older than this row: a recycled pid, not our child.
-            process.Dispose();
-            return null;
+            // Older than this row: a recycled pid, not our child. REFUSED, not GONE — the
+            // process this pid now names is alive; it is merely not the one being looked for.
+            candidate.Dispose();
+            return PidLookup.Refused;
         }
 
         if (applyUpperBound
@@ -4480,11 +4613,13 @@ public sealed class SystemProcessRunnerTests
             && startedByProcessUtc > announcedUtc + PidStartTimeTolerance)
         {
             // Younger than the announcement: whatever wrote that pid, this process is not it.
-            process.Dispose();
-            return null;
+            // REFUSED for the same reason as the lower-bound arm above.
+            candidate.Dispose();
+            return PidLookup.Refused;
         }
 
-        return process;
+        process = candidate;
+        return PidLookup.Opened;
     }
 
     /// <summary>
@@ -4553,30 +4688,50 @@ public sealed class SystemProcessRunnerTests
 
     /// <summary>Whether the recorded pid is still a live process started by this row.</summary>
     /// <remarks>
+    /// <para>
     /// <paramref name="pidFile"/> is carried for <see cref="TryOpen"/>'s upper bound alone —
     /// nothing here reads it, and the file still being on disk at this point is a property of
     /// every call site rather than of this method. <paramref name="bounds"/> is NOT defaulted,
     /// deliberately: which question is being asked is the whole of #529's split, and a default
     /// would let a new caller inherit one without choosing it. See <see cref="PidBounds"/>.
+    /// </para>
+    /// <para>
+    /// <strong><see cref="PidLookup.Gone"/> and <see cref="PidLookup.Refused"/> both read as
+    /// <see langword="false"/> here, and that is deliberate rather than the pre-#547 collapse
+    /// reappearing.</strong> This method answers "is the pid alive AND, if <paramref
+    /// name="bounds"/> asks for it, corroborated" — <see cref="PidFileWriters_PublishAPidTheReaderAccepts"/>'s
+    /// <see cref="PidBounds.Both"/> call wants exactly that combined question, so a refusal
+    /// failing it is correct. What #547 changed is that a caller asking a NARROWER question —
+    /// merely whether the pid is GONE — no longer has to ask it through this collapse;
+    /// <see cref="WaitForDeath"/> reads <see cref="TryOpen"/> directly instead.
+    /// </para>
     /// </remarks>
     private static bool IsAlive(int? pid, DateTime startedUtc, string pidFile, PidBounds bounds)
     {
-        var process = TryOpen(pid, startedUtc, pidFile, bounds);
-        if (process is null)
+        var outcome = TryOpen(pid, startedUtc, pidFile, bounds, out var process);
+        switch (outcome)
         {
-            return false;
-        }
-
-        using (process)
-        {
-            try
-            {
-                return !process.HasExited;
-            }
-            catch (InvalidOperationException)
-            {
+            case PidLookup.Gone:
+            case PidLookup.Refused:
                 return false;
-            }
+
+            case PidLookup.Opened:
+                using (process)
+                {
+                    try
+                    {
+                        return !process!.HasExited;
+                    }
+                    catch (InvalidOperationException)
+                    {
+                        return false;
+                    }
+                }
+
+            default:
+                throw new InvalidOperationException(
+                    FormattableString.Invariant(
+                        $"TryOpen returned '{outcome}', which IsAlive does not know how to read. Every PidLookup member is a fact this method has to turn into a verdict, and a fourth one needs that decision made here rather than inherited from a default."));
         }
     }
 
@@ -4598,13 +4753,58 @@ public sealed class SystemProcessRunnerTests
     /// <see cref="WaitForDeath_AsksWhetherThePidIsGone_NotWhetherItCorroborates"/> reddens if
     /// this line ever asks for both.
     /// </para>
+    /// <para>
+    /// <strong>Reads <see cref="TryOpen"/> DIRECTLY rather than through <see cref="IsAlive"/>,
+    /// and that is #547's fix rather than an equivalent rewording.</strong>
+    /// <see cref="IsAlive"/> collapses <see cref="PidLookup.Gone"/> and
+    /// <see cref="PidLookup.Refused"/> alike into <see langword="false"/> — correct for its own
+    /// corroborated-liveness callers, but exactly the collapse this method must not inherit.
+    /// Only <see cref="PidLookup.Gone"/>, or an opened process that has since
+    /// <see cref="Process.HasExited"/>, ends the poll early here;
+    /// <see cref="PidLookup.Refused"/> is treated the same as a live, still-running
+    /// <see cref="PidLookup.Opened"/> pid — the poll continues until the window expires.
+    /// </para>
     /// </remarks>
     private static bool WaitForDeath(int? pid, DateTime startedUtc, TimeSpan window, string pidFile)
     {
         var deadline = DateTime.UtcNow + window;
         while (true)
         {
-            if (!IsAlive(pid, startedUtc, pidFile, PidBounds.LowerOnly))
+            var outcome = TryOpen(pid, startedUtc, pidFile, PidBounds.LowerOnly, out var process);
+            bool gone;
+            switch (outcome)
+            {
+                case PidLookup.Gone:
+                    gone = true;
+                    break;
+
+                case PidLookup.Refused:
+                    // Uncorroborated is not gone (#547) — see this method's remarks and PidLookup.
+                    gone = false;
+                    break;
+
+                case PidLookup.Opened:
+                    using (process)
+                    {
+                        try
+                        {
+                            gone = process!.HasExited;
+                        }
+                        catch (InvalidOperationException)
+                        {
+                            gone = true;
+                        }
+                    }
+
+                    break;
+
+                default:
+                    throw new InvalidOperationException(
+                        FormattableString.Invariant(
+                            $"TryOpen returned '{outcome}', which WaitForDeath does not know how to read. Every PidLookup member is a fact this method has to turn into a verdict, and a fourth one needs that decision made here rather than inherited from a default."));
+            }
+
+            if (gone)
             {
                 return true;
             }
@@ -4623,23 +4823,45 @@ public sealed class SystemProcessRunnerTests
     /// a red run leaves nothing behind.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// <see cref="PidBounds.Both"/>: this is the caller the upper bound exists for, and the only
     /// kind of caller it is safe to give it to. A refusal here costs a leak; a missing refusal
     /// here costs a stranger's whole process tree.
+    /// </para>
+    /// <para>
+    /// <strong>Kills on <see cref="PidLookup.Opened"/> alone.</strong>
+    /// <see cref="PidLookup.Gone"/> and <see cref="PidLookup.Refused"/> both mean nothing is
+    /// killed, but they are kept as separate arms rather than folded into one "do nothing" case:
+    /// #547 exists precisely so that a refusal and a gone pid are never merged back into a single
+    /// meaning anywhere they are read, this method included.
+    /// </para>
     /// </remarks>
     private static void KillTreeQuietly(int? pid, DateTime startedUtc, string pidFile)
     {
-        var process = TryOpen(pid, startedUtc, pidFile, PidBounds.Both);
-        if (process is null)
+        var outcome = TryOpen(pid, startedUtc, pidFile, PidBounds.Both, out var process);
+        switch (outcome)
         {
-            return;
-        }
+            case PidLookup.Opened:
+                // Kill inside, dispose outside: `using` emits its Dispose in the enclosing
+                // finally, so the dangerous dispose-then-kill order cannot be written here. See
+                // ChildProcess's remarks.
+                using (process)
+                {
+                    ChildProcess.KillTreeQuietly(process!);
+                }
 
-        // Kill inside, dispose outside: `using` emits its Dispose in the enclosing finally, so the
-        // dangerous dispose-then-kill order cannot be written here. See ChildProcess's remarks.
-        using (process)
-        {
-            ChildProcess.KillTreeQuietly(process);
+                break;
+
+            case PidLookup.Gone:
+            case PidLookup.Refused:
+                // Nothing to kill — and never kill on Refused (#547): a pid this row could not
+                // corroborate is not this row's to tree-kill.
+                break;
+
+            default:
+                throw new InvalidOperationException(
+                    FormattableString.Invariant(
+                        $"TryOpen returned '{outcome}', which KillTreeQuietly does not know how to read. Every PidLookup member is a fact this method has to turn into a verdict, and a fourth one needs that decision made here rather than inherited from a default."));
         }
     }
 
