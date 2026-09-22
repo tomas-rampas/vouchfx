@@ -60,7 +60,7 @@ Syntax has no types, so each shape below is recognised by the form of the call:
 - **Routes** (`kind: route`, `technology: aspnetcore`, `direction: serve`).
   - *Minimal APIs:* `MapGet`, `MapPost`, `MapPut`, `MapDelete` and `MapPatch(pattern, handler)`; `MapMethods(pattern, methods, handler)`; and `Map(pattern, handler)`, recorded with method `*`. A `MapGroup(prefix)` prefix is applied when the group is the receiver chain itself, or a local initialised from one in the same method.
   - *Controllers:* a class-level `[Route]` combined with `[HttpGet]` … `[HttpOptions]` or an action-level `[Route]`. Tokens follow ASP.NET Core's own rules: `[controller]` becomes the class name without a trailing `Controller`, `[action]` the method name without a trailing `Async` (the framework's `SuppressAsyncSuffixInActionNames` default) or an `[ActionName]` argument where one is present, and `[area]` an `[Area]` argument. A template starting with `/` or `~/` overrides the class prefix. An application-model convention can rename controllers and actions at run time, and syntax cannot see what it does. So in a tree that declares a class implementing `IApplicationModelConvention`, `IControllerModelConvention` or `IActionModelConvention`, each token-derived segment becomes `{?}` in an `unresolved` entry with reason `convention`, rather than a name the running service may not use. No sample uses controllers. They are in scope because attribute arguments must be compile-time constants, so an attribute-routed template is always a literal or a named constant. The constant table below resolves it whenever the constant is declared in the analysed tree.
-  - *Path base:* `UsePathBase` adds a prefixed twin of every route, prefixed with the literal (`/x`) when the argument is one, and with `{?}` otherwise.
+  - *Path base:* `UsePathBase` adds a prefixed twin of every route, prefixed with the literal (`/x`) when the argument is one, and with `{?}` otherwise. The unprefixed route stays, because the middleware moves a matching prefix into `PathBase` and passes a request that lacks it through unchanged, so both forms reach routing.
 - **Kafka topics** (`kind: topic`, `technology: kafka`), from Confluent.Kafka:
   - `Produce` and `ProduceAsync`, whose first argument is a string or `new TopicPartition(…)`, give `produce`;
   - `Subscribe` (a string or a collection of strings) and `Assign(new TopicPartition(…))` give `consume`;
@@ -74,7 +74,7 @@ Syntax has no types, so each shape below is recognised by the form of the call:
   Anything else is reported as `unresolved`, with its literal skeleton kept (§3).
 - **Preprocessor.** A file with `#if` directives is parsed twice: once with no symbols defined, and once with every symbol its conditions mention. The union is reported, and entries from conditional regions are marked `conditional: true`. A route behind `#if DEBUG` is therefore not lost. The two parses do not reach every branch, though: a condition such as `#if DEBUG && !TRACE` is false under both, so a route in that region is in neither parse. Roslyn keeps an inactive region as `DisabledTextTrivia`, so the extractor can see exactly which regions neither parse analysed. It lists each one in `skipped` with reason `conditional-region-unanalysed` and marks the scan incomplete, so the document never claims a completeness it does not have. Enumerating every satisfying symbol assignment is deferred, because the number of assignments grows exponentially with the symbols a file mentions.
 
-Recognition is deliberately permissive. An over-match, such as a `MapGet` or `Produce` on some unrelated type, adds a name, and an extra name can only silence VFX-D-1210, never make it fire. So nothing is gated on `using` directives or project SDKs. `samples/orders-dotnet` shows why: it relies on the Web SDK's implicit usings, so a gate on `using` directives would miss all three of its routes.
+Recognition is deliberately permissive. An over-match, such as a `MapGet` or `Produce` on some unrelated type, adds a name, and for the values it matches, an extra name can only silence VFX-D-1210. It is not harmless in every respect, though. It also counts as evidence that its kind appears in the code at all (§6, condition 3), so it can let the rule fire on values the real code serves in a style the extractor does not recognise (one §2 does not list). Test projects are where most stray registrations live, since a `WebApplicationFactory` host maps its own routes, so the default excludes cover them (§4). What remains is stated rather than claimed away: a tree that mixes a recognised style with an unrecognised one can draw a false VFX-D-1210. That is advice in `semanticDiagnostics`, never a schema error or a verdict. So nothing is gated on `using` directives or project SDKs. `samples/orders-dotnet` shows why: it relies on the Web SDK's implicit usings, so a gate on `using` directives would miss all three of its routes.
 
 **Out of the MVP, and what each would add:**
 
@@ -95,12 +95,13 @@ The output follows `plan`'s convention. With `--json`, the command writes one in
   "schemaVersion": 1,
   "engineVersion": "<engine version>",
   "sources": ["**/*.cs"],
-  "exclude": ["**/bin/**", "**/obj/**", "**/.git/**", "**/node_modules/**"],
+  "exclude": ["**/bin/**", "**/obj/**", "**/.git/**", "**/node_modules/**", "**/test/**", "**/tests/**", "**/*.Tests/**"],
   "complete": true,
   "incomplete": [],
   "filesAnalysed": 6,
   "skipped": [],
   "unanalysedSourceFiles": {},
+  "inputDigest": "<SHA-256 of the scan's inputs>",
   "entries": [
     { "kind": "route", "technology": "aspnetcore", "direction": "serve", "method": "GET",
       "route": "/orders/{id}", "rawRoute": "/orders/{id:guid}", "confidence": "literal",
@@ -139,7 +140,7 @@ The output follows `plan`'s convention. With `--json`, the command writes one in
 
 `file` and `path` are relative to the root and use forward slashes, like `provenance`. A consumer treats a reason it does not know as it treats the known ones: the scan is incomplete.
 
-**Deterministic.** Entries are sorted ordinally by kind, method, name (or route, or pattern), file, line and column; `incomplete` by reason and file; `skipped` by path, start line and reason; and `unanalysedSourceFiles` by extension. The document carries no timestamps and no host paths, so a given tree always yields the same document, whatever the operating system and whatever order the file system listed it in. Only `engineVersion` varies, between engine releases.
+**Deterministic.** Entries are sorted ordinally by kind, method, name (or route, or pattern), file, line and column; `incomplete` by reason and file; `skipped` by path, start line and reason; and `unanalysedSourceFiles` by extension. `inputDigest` covers the relative path and bytes of every file the scan read and the path and reason of every entry it skipped (§6 uses it to keep a cache current). The document carries no timestamps and no host paths, so a given tree always yields the same document, whatever the operating system and whatever order the file system listed it in. Only `engineVersion` varies, between engine releases.
 
 **Route-pattern syntax.** `route` is a normalised template:
 
@@ -175,10 +176,10 @@ For example:
 
 ```text
 vouchfx topology [<root>] [--sources <glob>]... [--exclude <glob>]... [--json] [--output <file>]
-                 [--max-files <n>] [--max-file-bytes <n>] [--time-budget <seconds>]
+                 [--max-files <n>] [--max-file-bytes <n>] [--time-budget <seconds>] [--digest-only]
 ```
 
-- **Root and globs.** `<root>` defaults to the current directory and must be an existing directory. `--sources` defaults to `**/*.cs`. `--exclude` adds to the defaults `**/bin/**`, `**/obj/**`, `**/.git/**` and `**/node_modules/**`. Globs are relative to the root and use `run --path`'s wildcard semantics (`*`, `**`, `?`, case-insensitive). They are compiled with `RegexOptions.NonBacktracking`, because they are matched against every file in the tree and the existing `GlobMatcher` sets no match timeout.
+- **Root and globs.** `<root>` defaults to the current directory and must be an existing directory. `--sources` defaults to `**/*.cs`. `--exclude` adds to the defaults `**/bin/**`, `**/obj/**`, `**/.git/**`, `**/node_modules/**`, `**/test/**`, `**/tests/**` and `**/*.Tests/**`. Globs are relative to the root and use `run --path`'s wildcard semantics (`*`, `**`, `?`, case-insensitive). They are compiled with `RegexOptions.NonBacktracking`, because they are matched against every file in the tree and the existing `GlobMatcher` sets no match timeout.
 - **Bounds.** The defaults below apply; a value out of range is a usage error.
   - 10,000 files, 128 MiB in total, and 1 MiB per file. A larger file is skipped whole, never truncated, because a truncated file parses differently.
   - A nesting depth of 64 brackets and 4 interpolated strings, enforced by the pre-scan (§5).
@@ -246,7 +247,7 @@ vouchfx-mcp must make these changes:
 
 - **Model the document.** Replace `SuiteTopology(IReadOnlySet<string> Names)` with a model of the v1 document that ignores unknown kinds and fields, and treats any `schemaVersion` other than 1 as no topology.
 - **Obtain it from the pinned CLI.** Use the existing `CliPinVerifier` and subprocess plumbing, with a timeout above the command's own budget. Make the rule **CLI-optional**, like `get_schema`'s cross-check. If there is no pinned CLI, the exit is non-zero, the call times out or the document cannot be parsed, there is no topology and the rule stays silent. `validate_suite` stays usable offline.
-- **Run it in the right process.** Run `topology` from the server process, not from the validate worker, and pass the result to the worker as data. Cache it per root, keyed on the pinned engine's version, the full set of options passed to `topology` (globs and bounds), the file list and a content hash of each file (SHA-256 of its bytes), and apply `PathSafetyGuard` to the root passed in. The engine version is in the key because recognition and bounds change between engine releases, so advancing `ENGINE_PIN` invalidates every entry rather than serving a topology the new engine would not produce. Timestamps alone are not enough: a tool that preserves modification times, or a file system with coarse timestamp granularity, can change a file's content without changing its timestamp. The resulting stale entry would suppress VFX-D-1210, a false negative. Timestamps and sizes may still short-circuit the hash, but only as a reason to re-hash, never as a reason to skip it.
+- **Run it in the right process.** Run `topology` from the server process, not from the validate worker, and pass the result to the worker as data. Cache it per root, keyed on the pinned engine's version, the full set of options passed to `topology` (globs and bounds), and the engine's own `inputDigest`, and apply `PathSafetyGuard` to the root passed in. The engine version is in the key because recognition and bounds change between engine releases, so advancing `ENGINE_PIN` invalidates every entry rather than serving a topology the new engine would not produce. The MCP never reads a workspace file itself, because a second traversal would sit outside the extractor's bounds and containment. Instead, the document carries `inputDigest`, a SHA-256 over the relative path and bytes of every file the scan read and the path and reason of every entry it skipped, computed by the same bounded, contained walk. To check a cached document, the MCP runs `topology --json --digest-only`, which performs that walk without parsing and prints only the digest. A match reuses the cached document, and a mismatch runs the full scan. The check is content-sensitive, so a tool that preserves modification times cannot leave a stale entry behind, and it is bounded by the same caps and budget as the scan itself.
 - **Go live.** Register the rule, add the route matcher for `path`, and update `docs/errors/VFX-D-1210.md`. Advance `ENGINE_PIN` to the first engine release that carries the command.
 
 ### 7. Effort and staged plan
