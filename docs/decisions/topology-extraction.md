@@ -140,7 +140,32 @@ The output follows `plan`'s convention. With `--json`, the command writes one in
 
 `file` and `path` are relative to the root and use forward slashes, like `provenance`. A consumer treats a reason it does not know as it treats the known ones: the scan is incomplete.
 
-**Deterministic.** Entries are sorted ordinally by kind, method, name (or route, or pattern), file, line and column; `incomplete` by reason and file; `skipped` by path, start line and reason; and `unanalysedSourceFiles` by extension. `inputDigest` covers the relative path and bytes of every file the scan read and the path and reason of every entry it skipped (§6 uses it to keep a cache current). The document carries no timestamps and no host paths, so a given tree always yields the same document, whatever the operating system and whatever order the file system listed it in. Only `engineVersion` varies, between engine releases.
+**Deterministic.** Entries are sorted ordinally by kind, method, name (or route, or pattern), file, line and column; `incomplete` by reason and file; `skipped` by path, start line and reason; and `unanalysedSourceFiles` by extension. `inputDigest` is a SHA-256 over what the walk decides before any analysis. The walk reads whole each file that `--sources` selects, and skips a file over the per-file limit as `too-large` without reading it. The digest takes three kinds of entry, in ordinal order of relative path, and covers each one's path followed by:
+
+- for a file the walk read whole, its bytes;
+- for an entry the walk skipped (`too-large`, `symlink`, `not-regular` or `unreadable`), the reason;
+- for a file counted in `unanalysedSourceFiles`, that fact alone, because adding such a file changes the MCP's condition 2 (§6).
+
+Each field is length-prefixed, so two different walks cannot produce the same input. `binary`, `too-deep`, `conditional-region-unanalysed` and `parse-errors` are left out, because each is a function of bytes the digest already covers, under an engine version and options that the MCP's cache key covers too. §6 uses the digest to keep a cache current.
+
+The document carries no timestamps and no host paths, so a given tree always yields the same document, whatever the operating system and whatever order the file system listed it in. Only `engineVersion` varies, between engine releases.
+
+**The digest-only document.** `--digest-only` runs the same walk, with the same globs, containment and bounds, and stops before analysis: it neither pre-scans nor parses. It changes which document is produced, not where it goes. `--json`, `--output` and the human summary behave as they do for a full scan, and a usage error or an internal fault exits as §4 says, with no document. The document is the full one's header without the analysis fields, plus a marker that keeps the two shapes apart:
+
+```json
+{
+  "schemaVersion": 1,
+  "engineVersion": "<engine version>",
+  "digestOnly": true,
+  "sources": ["**/*.cs"],
+  "exclude": ["**/bin/**", "**/obj/**", "**/.git/**", "**/node_modules/**", "**/test/**", "**/tests/**", "**/*.Tests/**"],
+  "complete": true,
+  "incomplete": [],
+  "inputDigest": "<SHA-256 of the scan's inputs>"
+}
+```
+
+Here `complete` is `false` exactly when `incomplete` is non-empty. `incomplete` can name only a walk-level cause: `max-files`, `max-total-bytes`, `time-budget` or `worker-busy`. The document lists no `skipped` entries, because the digest already covers every walk-level skip. A full document never carries `digestOnly`. A consumer that finds the marker where it expected a full document treats the output as no topology.
 
 **Route-pattern syntax.** `route` is a normalised template:
 
@@ -180,7 +205,7 @@ vouchfx topology [<root>] [--sources <glob>]... [--exclude <glob>]... [--json] [
 ```
 
 - **Root and globs.** `<root>` defaults to the current directory and must be an existing directory. `--sources` defaults to `**/*.cs`. `--exclude` adds to the defaults `**/bin/**`, `**/obj/**`, `**/.git/**`, `**/node_modules/**`, `**/test/**`, `**/tests/**` and `**/*.Tests/**`. Globs are relative to the root and use `run --path`'s wildcard semantics (`*`, `**`, `?`, case-insensitive). They are compiled with `RegexOptions.NonBacktracking`, because they are matched against every file in the tree and the existing `GlobMatcher` sets no match timeout.
-- **Bounds.** The defaults below apply; a value out of range is a usage error.
+- **Bounds.** Each limit below is both the default and a ceiling. `--max-files`, `--max-file-bytes` and `--time-budget` can lower their limit but never raise it: each takes an integer from 1 up to its default, and any other value is a usage error (exit 2). The ceilings are what the hostile-input measurements in §5 cover. Raising one is therefore an engine change, made with the Roslyn pin and re-measured against the adversarial corpus, rather than a caller's choice. A tree beyond a ceiling gets an incomplete document, on which the MCP rule stays silent (§6). The fixed budget also lets a caller such as the MCP use a single timeout, set above 60 seconds, for every call.
   - 10,000 files, 128 MiB in total, and 1 MiB per file. A larger file is skipped whole, never truncated, because a truncated file parses differently.
   - A nesting depth of 64 brackets and 4 interpolated strings, enforced by the pre-scan (§5).
   - 50,000 entries, and 512 characters for any emitted string. A longer name becomes `unresolved`, with reason `too-long`.
@@ -247,7 +272,7 @@ vouchfx-mcp must make these changes:
 
 - **Model the document.** Replace `SuiteTopology(IReadOnlySet<string> Names)` with a model of the v1 document that ignores unknown kinds and fields, and treats any `schemaVersion` other than 1 as no topology.
 - **Obtain it from the pinned CLI.** Use the existing `CliPinVerifier` and subprocess plumbing, with a timeout above the command's own budget. Make the rule **CLI-optional**, like `get_schema`'s cross-check. If there is no pinned CLI, the exit is non-zero, the call times out or the document cannot be parsed, there is no topology and the rule stays silent. `validate_suite` stays usable offline.
-- **Run it in the right process.** Run `topology` from the server process, not from the validate worker, and pass the result to the worker as data. Cache it per root, keyed on the pinned engine's version, the full set of options passed to `topology` (globs and bounds), and the engine's own `inputDigest`, and apply `PathSafetyGuard` to the root passed in. The engine version is in the key because recognition and bounds change between engine releases, so advancing `ENGINE_PIN` invalidates every entry rather than serving a topology the new engine would not produce. The MCP never reads a workspace file itself, because a second traversal would sit outside the extractor's bounds and containment. Instead, the document carries `inputDigest`, a SHA-256 over the relative path and bytes of every file the scan read and the path and reason of every entry it skipped, computed by the same bounded, contained walk. To check a cached document, the MCP runs `topology --json --digest-only`, which performs that walk without parsing and prints only the digest. A match reuses the cached document, and a mismatch runs the full scan. The check is content-sensitive, so a tool that preserves modification times cannot leave a stale entry behind, and it is bounded by the same caps and budget as the scan itself.
+- **Run it in the right process.** Run `topology` from the server process, not from the validate worker, and pass the result to the worker as data. Cache it per root, keyed on the pinned engine's version, the full set of options passed to `topology` (globs and bounds), and the engine's own `inputDigest`, and apply `PathSafetyGuard` to the root passed in. The engine version is in the key because recognition and bounds change between engine releases, so advancing `ENGINE_PIN` invalidates every entry rather than serving a topology the new engine would not produce. The MCP never reads a workspace file itself, because a second traversal would sit outside the extractor's bounds and containment. Instead, the document carries `inputDigest` (§3), which the same bounded, contained walk computes. To check a cached document, the MCP runs `topology --json --digest-only` with the same options, which performs that walk without the analysis and prints the digest-only document (§3). It reuses the cached document only when the digest-only document is `complete` and its `inputDigest` equals the cached document's. Otherwise it runs the full scan. A digest-only document that is not `complete` means the walk itself hit a bound, and the full scan performs the same walk under the same bounds. It would stop at the same point for `max-files` and `max-total-bytes`, and almost always sooner for `time-budget`, since it parses as well. Silence is the rule's safe direction, so the MCP treats that call as having no topology instead of spending a second budget. It caches any document except one whose `incomplete` names `time-budget` or `worker-busy`, the two causes that depend on the moment rather than on the inputs. The check is content-sensitive, so a tool that preserves modification times cannot leave a stale entry behind, and it is bounded by the same caps and budget as the scan itself.
 - **Go live.** Register the rule, add the route matcher for `path`, and update `docs/errors/VFX-D-1210.md`. Advance `ENGINE_PIN` to the first engine release that carries the command.
 
 ### 7. Effort and staged plan
