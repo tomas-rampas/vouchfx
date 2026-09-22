@@ -413,10 +413,10 @@ Trusted Publishing (OIDC). No long-lived signing or publishing keys are managed 
 pipeline. Verify a downloaded artefact with:
 
 ```bash
-gh attestation verify vouchfx.1.0.0-rc.3.nupkg --repo tomas-rampas/vouchfx
+gh attestation verify vouchfx.1.0.0-rc.5.nupkg --repo tomas-rampas/vouchfx
 
-cosign verify-blob vouchfx.1.0.0-rc.3.nupkg \
-  --bundle vouchfx.1.0.0-rc.3.nupkg.cosign.bundle \
+cosign verify-blob vouchfx.1.0.0-rc.5.nupkg \
+  --bundle vouchfx.1.0.0-rc.5.nupkg.cosign.bundle \
   --certificate-identity-regexp '^https://github\.com/tomas-rampas/vouchfx/\.github/workflows/release\.yml@.*' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
