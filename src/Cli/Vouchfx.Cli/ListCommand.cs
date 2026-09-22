@@ -114,10 +114,15 @@ internal static class ListCommand
         StepCatalogueDocument catalogue;
         try
         {
-            catalogue = EngineExport.BuildCatalogue(
-                registry,
-                CliJsonContract.EngineVersion,
-                ProviderRegistryFactory.CoreProviderAssemblies());
+            // The four #556 members reach only the --json output; the human table shows none
+            // of them. So the table keeps the overload without a Core set, which never runs the
+            // scaffolder or computes a docs link, and its output and cost are what they were.
+            catalogue = json
+                ? EngineExport.BuildCatalogue(
+                    registry,
+                    CliJsonContract.EngineVersion,
+                    ProviderRegistryFactory.CoreProviderAssemblies())
+                : EngineExport.BuildCatalogue(registry, CliJsonContract.EngineVersion);
         }
         catch (CatalogueExportException ex)
         {

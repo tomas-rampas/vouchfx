@@ -198,7 +198,11 @@ public static class EngineExport
     /// The assemblies whose providers the caller ships as Core — for the CLI,
     /// <c>ProviderRegistryFactory.CoreProviderAssemblies()</c>. A provider is Core when the
     /// type of its registered instance is declared in one of these assemblies. An empty set
-    /// is a statement too (nothing is Core), unlike the overload that takes no set.
+    /// is a statement too (nothing is Core), unlike the overload that takes no set. The set is
+    /// the caller's assertion, and <see cref="StepCatalogueEntry.DocsUrl"/> relies on it: the
+    /// link points at the published language reference, which documents the engine's own Core
+    /// providers, so an assembly passed here that is not one of them gets a link with no section
+    /// behind it.
     /// </param>
     /// <returns>
     /// The same document the other overload builds, with every entry's

@@ -6,3 +6,8 @@
 #   https://pypi.org/pypi/mkdocs-git-revision-date-localized-plugin/json
 mkdocs-material==9.7.7
 mkdocs-git-revision-date-localized-plugin==1.5.3
+# Python-Markdown is pinned explicitly, not left to mkdocs-material's range: its toc
+# slugify produces the heading anchors that `vouchfx list --json`'s docsUrl names, and
+# LanguageReferenceLink ports that slugify as measured against this exact version (#556).
+# Advance it only together with LanguageReferenceLinkTests' slugify vectors.
+Markdown==3.10.3
