@@ -119,7 +119,10 @@ public sealed class Sprint11ReferenceCapstoneTests
     {
         Assert.True(
             File.Exists(ReferenceYamlPath),
-            $"Reference YAML not found: {ReferenceYamlPath}");
+            // Relative to the repository root (BuiltCli.RelativeToRepoRoot, #552): this capstone
+            // runs on the docker lane, whose CI job logs are public, and an absolute path here
+            // would publish the layout of whatever host ran the job (#498 class).
+            $"Reference YAML not found: {BuiltCli.RelativeToRepoRoot(ReferenceYamlPath)}");
 
         var yaml = await File.ReadAllTextAsync(ReferenceYamlPath);
 
@@ -196,7 +199,10 @@ public sealed class Sprint11ReferenceCapstoneTests
     {
         Assert.True(
             File.Exists(ReferenceYamlPath),
-            $"Reference YAML not found: {ReferenceYamlPath}");
+            // Relative to the repository root (BuiltCli.RelativeToRepoRoot, #552): this capstone
+            // runs on the docker lane, whose CI job logs are public, and an absolute path here
+            // would publish the layout of whatever host ran the job (#498 class).
+            $"Reference YAML not found: {BuiltCli.RelativeToRepoRoot(ReferenceYamlPath)}");
 
         var cliDllPath = BuiltCli.Resolve();
 
@@ -291,9 +297,19 @@ public sealed class Sprint11ReferenceCapstoneTests
             Assert.Equal(0, proc.ExitCode);
 
             // ── 2. All three artifact files created and non-empty ─────────────────
-            Assert.True(File.Exists(eventsPath), $"Events file not created: {eventsPath}");
-            Assert.True(File.Exists(junitPath), $"JUnit file not created: {junitPath}");
-            Assert.True(File.Exists(htmlPath), $"HTML file not created: {htmlPath}");
+            // Each path is printed relative to the repository root (BuiltCli.RelativeToRepoRoot,
+            // #552), same reason as ReferenceYamlPath above: these fall under the system temp
+            // directory, not the repository, but the helper renders that just as safely (see its
+            // remarks) — never the host's own absolute prefix.
+            Assert.True(
+                File.Exists(eventsPath),
+                $"Events file not created: {BuiltCli.RelativeToRepoRoot(eventsPath)}");
+            Assert.True(
+                File.Exists(junitPath),
+                $"JUnit file not created: {BuiltCli.RelativeToRepoRoot(junitPath)}");
+            Assert.True(
+                File.Exists(htmlPath),
+                $"HTML file not created: {BuiltCli.RelativeToRepoRoot(htmlPath)}");
 
             var eventsContent = await File.ReadAllTextAsync(eventsPath);
             var junitContent = await File.ReadAllTextAsync(junitPath);

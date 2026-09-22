@@ -971,7 +971,13 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
 
         // The whole directory, not one file: the sibling only reaches the runner as an unbuilt
         // document when discovery finds it, and discovery walks a root.
-        _output.WriteLine($"{cli} run {suiteDirectory} [and again with --parallel 1]");
+        //
+        // Both paths are printed relative to the repository root (BuiltCli.RelativeToRepoRoot,
+        // #552): this drill runs on the docker lane, whose CI job logs are public, and an absolute
+        // path there would publish the layout of whatever host ran the job (#498 class).
+        _output.WriteLine(
+            $"{BuiltCli.RelativeToRepoRoot(cli)} run {BuiltCli.RelativeToRepoRoot(suiteDirectory)}"
+            + " [and again with --parallel 1]");
 
         using var sequentialCts = new CancellationTokenSource(TimeSpan.FromMinutes(5));
         var (sequentialExit, sequentialOutput) =
@@ -1332,7 +1338,11 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
         var cli = BuiltCli.Resolve();
         var suiteDirectory = MaterialiseSuiteDirectoryWithSchemaRejectedSibling(row, shape);
 
-        _output.WriteLine($"{cli} run {suiteDirectory}  [sibling shape: {shape}]");
+        // Relative to the repository root (BuiltCli.RelativeToRepoRoot, #552) — see the sibling
+        // drill above for why an absolute path here is refused.
+        _output.WriteLine(
+            $"{BuiltCli.RelativeToRepoRoot(cli)} run {BuiltCli.RelativeToRepoRoot(suiteDirectory)}"
+            + $"  [sibling shape: {shape}]");
 
         using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(5));
         var (exitCode, output) = await RunCliAsync(cli, "run", suiteDirectory, cts.Token);
@@ -1592,7 +1602,12 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
         var cli = BuiltCli.Resolve();
         var suiteDirectory = MaterialiseSuiteDirectory(row, securedEndpoint, keystoreTarget);
         var suite = Path.Combine(suiteDirectory, "drill.e2e.yaml");
-        _output.WriteLine($"row '{row}': {cli} run {suite}");
+
+        // Relative to the repository root (BuiltCli.RelativeToRepoRoot, #552) — see the sibling
+        // drill above for why an absolute path here is refused.
+        _output.WriteLine(
+            $"row '{row}': {BuiltCli.RelativeToRepoRoot(cli)} run "
+            + $"{BuiltCli.RelativeToRepoRoot(suite)}");
 
         using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(5));
         var (exitCode, output) = await RunCliAsync(cli, "run", suite, cts.Token);
@@ -1974,7 +1989,12 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
         var suiteDirectory = MaterialiseSuiteDirectory(
             row, securedEndpoint, keystoreTarget, pinnedHostPort, consumeStep, healthCheckPort);
         afterMaterialise?.Invoke(suiteDirectory);
-        _output.WriteLine($"row '{row}': suite directory {suiteDirectory}");
+
+        // Relative to the repository root (BuiltCli.RelativeToRepoRoot, #552) — this drill runs on
+        // the docker lane, whose CI job logs are public, and an absolute path there would publish
+        // the layout of whatever host ran the job (#498 class).
+        _output.WriteLine(
+            $"row '{row}': suite directory {BuiltCli.RelativeToRepoRoot(suiteDirectory)}");
 
         var yaml = File.ReadAllText(Path.Combine(suiteDirectory, "drill.e2e.yaml"));
 
