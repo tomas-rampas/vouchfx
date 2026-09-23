@@ -665,7 +665,7 @@ public sealed class JunitXmlRendererTests
     }
 
     // -------------------------------------------------------------------------
-    // Test 8 (issue #566, gate finding B.1): the wire durationMs is clamped at the
+    // Test 8 (issue #566): the wire durationMs is clamped at the
     // USE SITE, not only inside the derivation helper — a hostile or malformed
     // stream can carry a negative durationMs directly, bypassing the helper
     // entirely, and that must never render as a negative JUnit time.

@@ -185,10 +185,10 @@ public sealed class HtmlRenderer
                             // duplicate must never overwrite the timestamp an earlier one already
                             // recorded. A default (unset) Timestamp counts as absent (the same rule
                             // applied to the scenario-completed side below) because EventEnvelope.Timestamp
-                            // (EventEnvelope.cs:61-62) is NOT `required`: a hand-written or truncated
-                            // line carrying no `ts` field deserialises to default(DateTimeOffset) —
-                            // the same fact EventHistoryReader.cs:183-185 already relies on to treat a
-                            // missing `ts` as unrecognisable rather than a legitimate epoch instant.
+                            // is NOT `required`: a hand-written or truncated line carrying no `ts` field
+                            // deserialises to default(DateTimeOffset) — the same fact EventHistoryReader
+                            // relies on, in its own equivalent check, to treat a missing `ts` as
+                            // unrecognisable rather than a legitimate epoch instant.
                             if (startedScenario.StartedAt is null && envelope.Timestamp != default)
                             {
                                 startedScenario.StartedAt = envelope.Timestamp;
@@ -267,13 +267,14 @@ public sealed class HtmlRenderer
                             // engine now stamps scenario-started at the scenario's REAL start and
                             // scenario-completed after the reproducibility envelope is built
                             // (ScenarioRunner.RunScenarioCoreAsync), so this is the scenario's wall
-                            // clock including script compilation, per-scenario setup and the
-                            // engine's post-step bookkeeping (MEASURED on one probe: of a 2854ms
-                            // total, the one step took 1511ms, compile + per-scenario setup ~1313ms,
-                            // post-step bookkeeping ~30ms) — it cannot fall below the sum of that
-                            // scenario's step durations, barring a wall-clock adjustment
-                            // mid-scenario (both timestamps are adjustable UtcNow reads, not a
-                            // monotonic clock).
+                            // clock including the engine's in-scenario staging (variables, secret
+                            // scope, security configuration) and script compilation BEFORE the step
+                            // runs, plus its post-step bookkeeping AFTER. Topology startup and any
+                            // host-resource listener (webhook/OTLP) start EARLIER in the call chain,
+                            // before scenarioStartedAt is captured, and so fall OUTSIDE this interval.
+                            // It cannot fall below the sum of that scenario's step durations, barring
+                            // a wall-clock adjustment mid-scenario (both timestamps are adjustable
+                            // UtcNow reads, not a monotonic clock).
                             var wireDurationMs = GetLong(envelope, "durationMs");
                             scenario.DurationMs = wireDurationMs.HasValue
                                 ? Math.Max(0L, wireDurationMs.Value)

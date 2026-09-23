@@ -8,9 +8,10 @@
 // Why these tests do NOT stand up a topology:
 //   The runner derives substitution/capture provenance and emits StepCompletedEvent
 //   only AFTER the isolated Roslyn delegate has run against a live topology
-//   (RunScenarioAgainstTopologyAsync), which, until #566 made it internal and
-//   ScenarioAgainstTopologyStartedTimestampTests drove it against a fake topology, was
-//   reachable only through Docker-backed entry points. Per the S05-G-01 brief,
+//   (RunScenarioAgainstTopologyAsync). Without Docker it was reachable only through the
+//   --watch path, whose archive buffer never leaves the runner, until #566 made it
+//   internal and ScenarioAgainstTopologyStartedTimestampTests drove it against a fake
+//   topology with the buffer in hand. Per the S05-G-01 brief,
 //   we therefore assert the redaction + SecretDerived wiring at the event-derivation
 //   layer — the same code path the runner uses — WITHOUT containers, mirroring how the
 //   existing non-docker ScenarioRunner tests (RunAsync_*_NoTopology) avoid Docker:

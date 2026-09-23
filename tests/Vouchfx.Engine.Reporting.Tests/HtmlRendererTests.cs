@@ -715,7 +715,7 @@ public sealed class HtmlRendererTests
     }
 
     // -------------------------------------------------------------------------
-    // Test 10 (issue #566, gate finding B.1): the wire durationMs is clamped at the
+    // Test 10 (issue #566): the wire durationMs is clamped at the
     // USE SITE, not only inside the derivation helper — a hostile or malformed
     // stream can carry a negative durationMs directly, bypassing the helper
     // entirely, and that must never render as a negative duration suffix.

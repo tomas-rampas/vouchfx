@@ -784,10 +784,19 @@ public static class ScenarioRunner
         {
             // Schema-invalid → Inconclusive (the scenario never ran; this is an
             // authoring error, not a product defect).
+            //
+            // ONE local `now`, read once: this refusal executed nothing between its
+            // scenario-started and scenario-completed lines, so the archive pair must record
+            // ONE instant, not two separate UtcNow reads straddling the ToLine/ScenarioCompletedLine
+            // calls below — the renderers derive the scenario's rendered duration from exactly
+            // this (started, completed) `ts` gap since issue #566, and a refusal is not a race
+            // whose serialisation gap (measured at 10 to 23 ms: a parallel refusal rendered
+            // `time="0.010"`) should show up as a non-zero duration.
+            var now = DateTimeOffset.UtcNow;
             buffer.Add(EventStreamJson.ToLine(new ScenarioStartedEvent
             {
                 RunId = runId,
-                Timestamp = DateTimeOffset.UtcNow,
+                Timestamp = now,
                 ScenarioId = scenarioName,
             }));
 
@@ -797,7 +806,7 @@ public static class ScenarioRunner
             // triaging from a JUnit publisher needs every error the door found, not the first.
             buffer.Add(StepEventBuilder.ScenarioCompletedLine(
                 runId,
-                DateTimeOffset.UtcNow,
+                now,
                 scenarioName,
                 Verdict.Inconclusive,
                 new VerdictCounts { Inconclusive = 1 },
@@ -862,10 +871,14 @@ public static class ScenarioRunner
         }
         catch (Exception ex)
         {
+            // ONE local `now`, read once — same reasoning as the schema door above: an
+            // unparseable document executed nothing, so its archive pair must record ONE
+            // instant rather than two straddling UtcNow reads (issue #566).
+            var now = DateTimeOffset.UtcNow;
             buffer.Add(EventStreamJson.ToLine(new ScenarioStartedEvent
             {
                 RunId = runId,
-                Timestamp = DateTimeOffset.UtcNow,
+                Timestamp = now,
                 ScenarioId = scenarioName,
             }));
 
@@ -873,7 +886,7 @@ public static class ScenarioRunner
 
             buffer.Add(StepEventBuilder.ScenarioCompletedLine(
                 runId,
-                DateTimeOffset.UtcNow,
+                now,
                 scenarioName,
                 Verdict.Inconclusive,
                 new VerdictCounts { Inconclusive = 1 },
@@ -4761,7 +4774,13 @@ public static class ScenarioRunner
         // stamped at `now9`, taken only after RunIsolatedAsync had already returned —
         // so a scenario whose script ran for 1.5s could render a derived duration of
         // ~30ms (the bookkeeping between the script finishing and `now9` being
-        // taken), silently discarding the time the scenario's own steps took. Each of
+        // taken), silently discarding the time the scenario's own steps took.
+        // MEASURED on one probe (a single script.csharp step sleeping 1.5s): rendered
+        // duration 2854ms total, of which the step itself took 1511ms, the in-scenario
+        // staging + script compilation BEFORE it ran took ~1313ms, and the post-step
+        // bookkeeping (reproducibility envelope + completion) took ~30ms — none of
+        // which includes topology startup or host-listener start, both of which happen
+        // earlier in the call chain, before `scenarioStartedAt` is captured. Each of
         // the three sites above now shares this ONE instant for its started line, so
         // the rendered duration cannot fall below the wall-clock time the scenario's
         // steps actually consumed — barring a wall-clock adjustment mid-scenario,

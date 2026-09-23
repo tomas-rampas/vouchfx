@@ -1,8 +1,8 @@
 // Tests for issue #566 — BLOCKING-LANE companion to ScenarioStartedTimestampAccuracyTests.
 //
-// WHY THIS FILE EXISTS. The gatekeeper's round-4 finding: ScenarioStartedTimestampAccuracyTests
-// carries [Trait("requires", "docker")], and build.yml's Docker lane runs with
-// `continue-on-error: true` (build.yml:243-254) — so reverting ScenarioRunner.cs's
+// WHY THIS FILE EXISTS. ScenarioStartedTimestampAccuracyTests carries
+// [Trait("requires", "docker")], and build.yml's Docker lane runs with
+// `continue-on-error: true` (the Docker / Aspire integration job in build.yml) — so reverting ScenarioRunner.cs's
 // `scenarioStartedAt` fix back to `now9` would pass every BLOCKING check and still merge. This
 // file drives the SAME production method the Docker test does, at unit speed, with no trait,
 // so a regression here fails the build.
@@ -26,14 +26,16 @@
 // (`Assert.Empty(pipeline.HostResourcePlan)`) as the precondition that guards it. The method's
 // call graph therefore contains no topology-starting code at all: it does nothing but compile and
 // execute the script in this process. (This test project IS declared an Aspire host —
-// Vouchfx.Engine.Runtime.Tests.csproj:7/:11 — the same as the Docker-gated sibling relies on; the
+// its csproj sets `<IsAspireHost>true</IsAspireHost>` under the Aspire.AppHost.Sdk, the same as the Docker-gated sibling relies on; the
 // guarantee here is about what THIS METHOD calls, not about what the project could start.)
 //
 // RED PROOF. Temporarily restoring `now9` (the pre-#566 timestamp) at the success-path archive
-// `scenario-started` line reproduces the exact measured pre-fix shape — see the round-3/round-4
-// handback reports for the quoted failure text captured that way, restored immediately after from
-// a scratchpad backup. This file is not re-deriving that proof inline; it is the PERMANENT pin
-// that keeps the blocking lane sensitive to the same regression going forward.
+// `scenario-started` line reproduces the exact measured pre-fix shape: for a 414ms step, the
+// archive delta collapsed to ~37ms (the reconstruction-bookkeeping gap, not the step's own work);
+// for the compile-failure catch path, both the started and completed lines were stamped from the
+// SAME local instant, making the delta exactly zero. Restored immediately after from a scratchpad
+// backup. This file is not re-deriving that proof inline; it is the PERMANENT pin that keeps the
+// blocking lane sensitive to the same regression going forward.
 
 using System;
 using System.Collections.Generic;
@@ -89,8 +91,8 @@ public sealed class ScenarioAgainstTopologyStartedTimestampTests
     // limit (no syntax check), so this passes authoring validation and ProviderPipeline.Compile
     // (pipeline.Failure stays null) and fails only later, at Roslyn compile time inside
     // RunScenarioAgainstTopologyAsync's inner try — landing in the generic `catch (Exception ex)`
-    // this test targets (issue #566 gate finding C: that catch's OWN started line, not only the
-    // success path's, needed pinning in the blocking lane).
+    // this test targets: that catch's OWN started line is a THIRD archive site the #566 fix
+    // touches, distinct from the success path, and needed its own pin in the blocking lane.
     private const string InvalidCompileScenarioYaml = """
         steps:
           - id: broken-script
@@ -212,6 +214,107 @@ public sealed class ScenarioAgainstTopologyStartedTimestampTests
             + $"({scenarioStartedTs:o}) on the compile-failure catch path — pre-#566 this catch "
             + "stamped both lines from the SAME instant, making the delta exactly zero "
             + "(issue #566).");
+    }
+
+    // ── Pre-topology refusal doors: schema (Step 2) and parse/AST-build (Step 3) ──
+    //
+    // A refusal at either door executes NOTHING — no compile, no script, no topology — so its
+    // archive pair must record ONE instant, not two separate DateTimeOffset.UtcNow reads
+    // straddling the EventStreamJson.ToLine/ScenarioCompletedLine calls (the gap being only the
+    // first line's own JSON serialisation: measured at ~10 ms under --parallel contention, where
+    // a refusal rendered `time="0.010"`, and 22.6 ms in the red proof of these tests).
+    // RunScenarioOwningTopologyAsync has no injectable topology factory: reading its source shows
+    // both doors `return` (the schema door inside its `if (!validationResult.IsValid)` block; the
+    // parse door inside its `catch (Exception ex)` around Step 3) hundreds of lines before the
+    // first topology-starting call (`SuiteTopology suite;` / `.StartAsync(...)`, first reached only
+    // once BOTH doors have passed) — so there is nothing to inject and assert-not-invoked; the
+    // refusal shapes below are proof by construction that this call cannot reach DCP.
+
+    // Missing the required `id` field — DocumentValidator.Validate (Step 2) refuses this before
+    // any AST is built.
+    private const string SchemaInvalidScenarioYaml = """
+        steps:
+          - type: script.csharp
+            code: |
+              Vars.Set("k", "v");
+        """;
+
+    // Schema-VALID (JSON Schema has no step-id-uniqueness rule) but AstBuilder.Build (Step 3)
+    // throws AstBuildException for the duplicate id, landing in RunScenarioOwningTopologyAsync's
+    // parse-door `catch (Exception ex)`.
+    private const string UnbuildableDuplicateIdScenarioYaml = """
+        steps:
+          - id: dup
+            type: script.csharp
+            code: |
+              Vars.Set("k", "one");
+          - id: dup
+            type: script.csharp
+            code: |
+              Vars.Set("k", "two");
+        """;
+
+    [Fact]
+    public async Task RunScenarioOwningTopologyAsync_SchemaInvalidDocument_ArchiveStartedEqualsCompletedTimestamp()
+    {
+        var output = new StringWriter();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+
+        var result = await ScenarioRunner.RunScenarioOwningTopologyAsync(
+            registry: Registry,
+            yamlText: SchemaInvalidScenarioYaml,
+            scenarioName: "duration-archive-schema-invalid",
+            declaredTargets: ScenarioRunner.DeclaredTargetsOf(SchemaInvalidScenarioYaml, Registry),
+            appHostAssemblyName: "Vouchfx.Engine.Runtime.Tests",
+            output: output,
+            seedBaseDirectory: null,
+            livePump: null,
+            cancellationToken: cts.Token);
+
+        Assert.Equal(Verdict.Inconclusive, result.Verdict);
+
+        // Door identity: the schema door prints the validation errors, never the parse door's
+        // "Parse / AST error:" prefix. Pinned so this test cannot drift onto the other door.
+        Assert.DoesNotContain("Parse / AST error", output.ToString(), StringComparison.Ordinal);
+
+        var startedTs = SingleEventTimestamp(result.Buffer, "scenario-started");
+        var completedTs = SingleEventTimestamp(result.Buffer, "scenario-completed");
+
+        // RED with a double UtcNow read at this door: the two lines carry distinct instants
+        // (measured under --parallel contention: time="0.010" instead of "0.000").
+        Assert.Equal(startedTs, completedTs);
+    }
+
+    [Fact]
+    public async Task RunScenarioOwningTopologyAsync_UnbuildableDocument_ArchiveStartedEqualsCompletedTimestamp()
+    {
+        var output = new StringWriter();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+
+        var result = await ScenarioRunner.RunScenarioOwningTopologyAsync(
+            registry: Registry,
+            yamlText: UnbuildableDuplicateIdScenarioYaml,
+            scenarioName: "duration-archive-unbuildable",
+            declaredTargets: ScenarioRunner.DeclaredTargetsOf(UnbuildableDuplicateIdScenarioYaml, Registry),
+            appHostAssemblyName: "Vouchfx.Engine.Runtime.Tests",
+            output: output,
+            seedBaseDirectory: null,
+            livePump: null,
+            cancellationToken: cts.Token);
+
+        Assert.Equal(Verdict.Inconclusive, result.Verdict);
+
+        // Door identity: two steps sharing an id pass the schema (its only uniqueItems rule is
+        // on ports) and are refused by AstBuilder, so the parse door's "Parse / AST error:"
+        // prefix must be what reached the terminal. If a future schema rule caught duplicate
+        // ids, this test would otherwise drift onto the schema door and leave the parse door
+        // unpinned.
+        Assert.Contains("Parse / AST error", output.ToString(), StringComparison.Ordinal);
+
+        var startedTs = SingleEventTimestamp(result.Buffer, "scenario-started");
+        var completedTs = SingleEventTimestamp(result.Buffer, "scenario-completed");
+
+        Assert.Equal(startedTs, completedTs);
     }
 
     /// <summary>
