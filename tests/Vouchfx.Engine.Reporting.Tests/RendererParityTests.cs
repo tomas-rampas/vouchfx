@@ -812,8 +812,8 @@ public sealed class RendererParityTests
     // -------------------------------------------------------------------------
     // Two rules no prior renderer test pinned: FIRST-WINS on a duplicate
     // scenario-started, and the default-Timestamp scenario-started NOT being
-    // recorded at all.  Each of these two tests fails under a last-wins or
-    // accept-default recording rule in any of the three renderers.
+    // recorded at all.  The first fails under a last-wins rule, the second under an
+    // accept-default rule, in any of the three renderers.
     // -------------------------------------------------------------------------
 
     [Fact]
