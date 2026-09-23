@@ -514,5 +514,218 @@ public sealed class JunitXmlRendererTests
         Assert.Contains("&lt;", output, StringComparison.Ordinal);
         Assert.Contains("&gt;", output, StringComparison.Ordinal);
     }
+
+    // -------------------------------------------------------------------------
+    // Test 7: scenario duration is DERIVED from the scenario-started /
+    // scenario-completed timestamp delta, because the frozen v1 wire contract
+    // never gave ScenarioCompletedEvent a durationMs field. See the fix note on
+    // JunitXmlRenderer.DeriveScenarioDurationMs.
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void Render_ScenarioTimestampDelta_ProducesNonZeroTestcaseAndSuiteTime()
+    {
+        var t0 = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+
+        var lines = new[]
+        {
+            Line(new ScenarioStartedEvent { RunId = "run-7a", ScenarioId = "first", Timestamp = t0 }),
+            Line(new ScenarioCompletedEvent
+            {
+                RunId = "run-7a",
+                ScenarioId = "first",
+                Verdict = Verdict.Pass,
+                Counts = new VerdictCounts { Pass = 1 },
+                Timestamp = t0.AddMilliseconds(1234),
+            }),
+
+            Line(new ScenarioStartedEvent { RunId = "run-7a", ScenarioId = "second", Timestamp = t0 }),
+            Line(new ScenarioCompletedEvent
+            {
+                RunId = "run-7a",
+                ScenarioId = "second",
+                Verdict = Verdict.Pass,
+                Counts = new VerdictCounts { Pass = 1 },
+                Timestamp = t0.AddMilliseconds(500),
+            }),
+        };
+
+        using var writer = new StringWriter();
+        JunitXmlRenderer.Render(lines, writer);
+        var doc = XDocument.Parse(writer.ToString());
+
+        var first = doc.Descendants("testcase").Single(tc => (string?)tc.Attribute("name") == "first");
+        var second = doc.Descendants("testcase").Single(tc => (string?)tc.Attribute("name") == "second");
+        Assert.Equal("1.234", (string?)first.Attribute("time"));
+        Assert.Equal("0.500", (string?)second.Attribute("time"));
+
+        var suite = doc.Descendants("testsuite").Single();
+        Assert.Equal("1.734", (string?)suite.Attribute("time"));
+
+        var suites = doc.Root;
+        Assert.NotNull(suites);
+        Assert.Equal("1.734", (string?)suites!.Attribute("time"));
+    }
+
+    [Fact]
+    public void Render_ScenarioCompletedWithNoStartedEvent_TimeIsZero()
+    {
+        var lines = new[]
+        {
+            Line(new ScenarioCompletedEvent
+            {
+                RunId = "run-7b",
+                ScenarioId = "orphan",
+                Verdict = Verdict.Pass,
+                Counts = new VerdictCounts { Pass = 1 },
+                Timestamp = new DateTimeOffset(2026, 1, 1, 0, 0, 1, TimeSpan.Zero),
+            }),
+        };
+
+        using var writer = new StringWriter();
+        JunitXmlRenderer.Render(lines, writer);
+        var doc = XDocument.Parse(writer.ToString());
+
+        var testcase = doc.Descendants("testcase").Single();
+        Assert.Equal("0.000", (string?)testcase.Attribute("time"));
+    }
+
+    [Fact]
+    public void Render_ScenarioCompletedTimestampBeforeStarted_TimeIsZeroNeverNegative()
+    {
+        var t0 = new DateTimeOffset(2026, 1, 1, 0, 0, 10, TimeSpan.Zero);
+
+        var lines = new[]
+        {
+            Line(new ScenarioStartedEvent { RunId = "run-7c", ScenarioId = "backwards", Timestamp = t0 }),
+            Line(new ScenarioCompletedEvent
+            {
+                RunId = "run-7c",
+                ScenarioId = "backwards",
+                Verdict = Verdict.Pass,
+                Counts = new VerdictCounts { Pass = 1 },
+                Timestamp = t0.AddSeconds(-5),
+            }),
+        };
+
+        using var writer = new StringWriter();
+        JunitXmlRenderer.Render(lines, writer);
+        var doc = XDocument.Parse(writer.ToString());
+
+        var testcase = doc.Descendants("testcase").Single();
+        Assert.Equal("0.000", (string?)testcase.Attribute("time"));
+    }
+
+    [Fact]
+    public void Render_WireDurationMs_WinsOverTimestampDeltaDerivation()
+    {
+        var t0 = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+
+        var lines = new[]
+        {
+            Line(new ScenarioStartedEvent { RunId = "run-7d", ScenarioId = "wire-wins", Timestamp = t0 }),
+
+            // Hand-written scenario-completed carrying an explicit durationMs of 42, with
+            // a timestamp that — if the delta derivation ran instead — would give 1234 ms.
+            // The wire value must win.
+            "{\"v\":1,\"schemaVersion\":\"v1\",\"type\":\"scenario-completed\",\"ts\":\"2026-01-01T00:00:01.234Z\","
+                + "\"runId\":\"run-7d\",\"scenarioId\":\"wire-wins\",\"verdict\":\"PASS\",\"durationMs\":42,"
+                + "\"counts\":{\"pass\":1,\"fail\":0,\"envError\":0,\"inconclusive\":0}}",
+        };
+
+        using var writer = new StringWriter();
+        JunitXmlRenderer.Render(lines, writer);
+        var doc = XDocument.Parse(writer.ToString());
+
+        var testcase = doc.Descendants("testcase").Single();
+        Assert.Equal("0.042", (string?)testcase.Attribute("time"));
+    }
+
+    [Fact]
+    public void Render_BothTimestampsDefault_TimeIsZero()
+    {
+        var lines = new[]
+        {
+            Line(new ScenarioStartedEvent { RunId = "run-7e", ScenarioId = "no-timestamps" }),
+            Line(new ScenarioCompletedEvent
+            {
+                RunId = "run-7e",
+                ScenarioId = "no-timestamps",
+                Verdict = Verdict.Pass,
+                Counts = new VerdictCounts { Pass = 1 },
+            }),
+        };
+
+        using var writer = new StringWriter();
+        JunitXmlRenderer.Render(lines, writer);
+        var doc = XDocument.Parse(writer.ToString());
+
+        var testcase = doc.Descendants("testcase").Single();
+        Assert.Equal("0.000", (string?)testcase.Attribute("time"));
+    }
+
+    // -------------------------------------------------------------------------
+    // Test 8 (issue #566): the wire durationMs is clamped at the
+    // USE SITE, not only inside the derivation helper — a hostile or malformed
+    // stream can carry a negative durationMs directly, bypassing the helper
+    // entirely, and that must never render as a negative JUnit time.
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void Render_NegativeWireDurationMs_ClampsToZero()
+    {
+        var lines = new[]
+        {
+            // durationMs:-5 — a hostile/malformed value the wire read must clamp, not
+            // pass through to FormatSeconds verbatim.
+            "{\"v\":1,\"schemaVersion\":\"v1\",\"type\":\"scenario-completed\",\"ts\":\"2026-01-01T00:00:00Z\","
+                + "\"runId\":\"run-8a\",\"scenarioId\":\"hostile-negative\",\"verdict\":\"PASS\",\"durationMs\":-5,"
+                + "\"counts\":{\"pass\":1,\"fail\":0,\"envError\":0,\"inconclusive\":0}}",
+        };
+
+        using var writer = new StringWriter();
+        JunitXmlRenderer.Render(lines, writer);
+        var doc = XDocument.Parse(writer.ToString());
+
+        var testcase = doc.Descendants("testcase").Single();
+        Assert.Equal("0.000", (string?)testcase.Attribute("time"));
+    }
+
+    [Fact]
+    public void Render_TwoScenariosWithMaxValueWireDurationMs_SuiteTimeNeverNegative()
+    {
+        // Two scenarios each carrying wire durationMs = long.MaxValue: an unclamped
+        // `totalMs += d` sum would overflow into a negative long, which would render
+        // as a NEGATIVE <testsuite>/<testsuites> time — the saturating add must catch
+        // this instead of wrapping.
+        static string MaxValueLine(string scenarioId) =>
+            "{\"v\":1,\"schemaVersion\":\"v1\",\"type\":\"scenario-completed\",\"ts\":\"2026-01-01T00:00:00Z\","
+                + "\"runId\":\"run-8b\",\"scenarioId\":\"" + scenarioId + "\",\"verdict\":\"PASS\",\"durationMs\":"
+                + long.MaxValue
+                + ",\"counts\":{\"pass\":1,\"fail\":0,\"envError\":0,\"inconclusive\":0}}";
+
+        var lines = new[]
+        {
+            MaxValueLine("overflow-one"),
+            MaxValueLine("overflow-two"),
+        };
+
+        using var writer = new StringWriter();
+        JunitXmlRenderer.Render(lines, writer);
+        var output = writer.ToString();
+        var doc = XDocument.Parse(output);
+
+        Assert.Equal(2, doc.Descendants("testcase").Count());
+
+        var suite = doc.Descendants("testsuite").Single();
+        var suiteTime = (string?)suite.Attribute("time");
+        Assert.NotNull(suiteTime);
+        Assert.False(suiteTime!.StartsWith('-'), $"<testsuite> time='{suiteTime}' must never be negative.");
+
+        var suites = doc.Root!;
+        var suitesTime = (string?)suites.Attribute("time");
+        Assert.NotNull(suitesTime);
+        Assert.False(suitesTime!.StartsWith('-'), $"<testsuites> time='{suitesTime}' must never be negative.");
+    }
 }
 

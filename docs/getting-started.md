@@ -270,7 +270,7 @@ For CI integration (GitHub Actions, GitLab, Jenkins):
 vouchfx run examples/getting-started --junit results.xml
 ```
 
-The XML file maps vouchfx verdicts to standard JUnit elements (`<failure>` for Fail, `<error>` for EnvironmentError, `<skipped>` for Inconclusive), so your CI system can ingest and visualise results natively.
+The XML file maps vouchfx verdicts to standard JUnit elements (`<failure>` for Fail, `<error>` for EnvironmentError, `<skipped>` for Inconclusive), so your CI system can ingest and visualise results natively. Each `<testcase>` `time` is the scenario's wall-clock duration from its `scenario-started` to its `scenario-completed` event, script compilation included and topology startup excluded, and the suite `time` is their sum, so it is not the run's elapsed time.
 
 ### Streaming JSON Lines events
 

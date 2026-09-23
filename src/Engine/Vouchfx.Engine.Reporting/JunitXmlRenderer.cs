@@ -149,6 +149,20 @@ public sealed class JunitXmlRenderer
                             var scenarioId = GetStr(envelope, "scenarioId") ?? "(unknown)";
                             var scenario = model.GetOrAddScenario(envelope.RunId, scenarioId);
                             scenario.File ??= GetStr(envelope, "file");
+
+                            // First scenario-started for this (runId, scenarioId) wins — a later
+                            // duplicate must never overwrite the timestamp an earlier one already
+                            // recorded.  A default (unset) Timestamp counts as absent (the same rule
+                            // applied to the scenario-completed side below) because EventEnvelope.Timestamp
+                            // is NOT `required`: a hand-written or truncated line carrying no `ts` field
+                            // deserialises to default(DateTimeOffset) — the same fact EventHistoryReader
+                            // relies on, in its own equivalent check, to treat a missing `ts` as
+                            // unrecognisable rather than a legitimate epoch instant.
+                            if (scenario.StartedAt is null && envelope.Timestamp != default)
+                            {
+                                scenario.StartedAt = envelope.Timestamp;
+                            }
+
                             break;
                         }
 
@@ -157,7 +171,32 @@ public sealed class JunitXmlRenderer
                             var scenarioId = GetStr(envelope, "scenarioId") ?? "(unknown)";
                             var scenario = model.GetOrAddScenario(envelope.RunId, scenarioId);
                             scenario.Verdict = GetStr(envelope, "verdict");
-                            scenario.DurationMs = GetLong(envelope, "durationMs");
+
+                            // WHY: the frozen v1 wire contract never gave ScenarioCompletedEvent a
+                            // durationMs field — only StepCompletedEvent carries one (docs/01 §14
+                            // golden: event-stream-wire-contract.v1.txt). The tolerant wire read is
+                            // tried FIRST and wins whenever present — clamped at 0 (Math.Max) because
+                            // a hostile or malformed stream can carry a negative durationMs, which
+                            // must never render as a negative JUnit time — so an additive future
+                            // field is honoured without touching this renderer. Otherwise the
+                            // duration is DERIVED from the wall-clock gap between this event's
+                            // timestamp and its scenario-started sibling — a contract-neutral
+                            // fallback that adds no field to the frozen contract. Issue #566: the
+                            // engine now stamps scenario-started at the scenario's REAL start and
+                            // scenario-completed after the reproducibility envelope is built
+                            // (ScenarioRunner.RunScenarioCoreAsync), so this is the scenario's wall
+                            // clock including the engine's in-scenario staging (variables, secret
+                            // scope, security configuration) and script compilation BEFORE the step
+                            // runs, plus its post-step bookkeeping AFTER. Topology startup and any
+                            // host-resource listener (webhook/OTLP) start EARLIER in the call chain,
+                            // before scenarioStartedAt is captured, and so fall OUTSIDE this interval.
+                            // It cannot fall below the sum of that scenario's step durations, barring
+                            // a wall-clock adjustment mid-scenario (both timestamps are adjustable
+                            // UtcNow reads, not a monotonic clock).
+                            var wireDurationMs = GetLong(envelope, "durationMs");
+                            scenario.DurationMs = wireDurationMs.HasValue
+                                ? Math.Max(0L, wireDurationMs.Value)
+                                : DeriveScenarioDurationMs(scenario.StartedAt, envelope.Timestamp);
                             scenario.Counts = ReadCounts(envelope);
 
                             // #372. Absent on every ordinary pass and on any stream written by an
@@ -226,7 +265,13 @@ public sealed class JunitXmlRenderer
                     break;
             }
 
-            totalMs += scenario.DurationMs ?? 0;
+            // Saturating add: a hostile stream can carry a wire durationMs of
+            // long.MaxValue on more than one scenario, and totalMs += d would silently
+            // wrap negative (overflow), which would render as a NEGATIVE <testsuite>/
+            // <testsuites> time — worse than merely wrong, it looks like a parse bug to
+            // a consumer. Clamp the running total at long.MaxValue instead of wrapping.
+            var d = scenario.DurationMs ?? 0;
+            totalMs = d > long.MaxValue - totalMs ? long.MaxValue : totalMs + d;
         }
 
         output.WriteLine("<?xml version=\"1.0\" encoding=\"utf-8\"?>");
@@ -376,6 +421,49 @@ public sealed class JunitXmlRenderer
     /// </summary>
     private static string FormatSeconds(long milliseconds)
         => (milliseconds / 1000.0).ToString("0.000", CultureInfo.InvariantCulture);
+
+    /// <summary>
+    /// Derives a scenario's duration from the wall-clock gap between its recorded
+    /// scenario-started timestamp and the supplied scenario-completed timestamp,
+    /// used as the fallback when the wire event carries no explicit
+    /// <c>durationMs</c> (see the call site's WHY comment). Returns
+    /// <see langword="null"/> when no scenario-started timestamp was recorded — a
+    /// partial buffer with no scenario-started, or one whose Timestamp was default —
+    /// so the caller falls through to the existing "0.000 / no suffix" rendering
+    /// exactly as before this change. A negative delta (clock skew, or a
+    /// scenario-completed timestamp that precedes its scenario-started sibling) is
+    /// clamped to zero — it must never render as a negative duration.
+    /// </summary>
+    /// <remarks>
+    /// Byte-for-byte the same logic as <c>HtmlRenderer.DeriveScenarioDurationMs</c>. Not
+    /// shared through a common helper because these renderers are deliberately
+    /// independent — but they must not diverge, which two parity theories pin, each
+    /// feeding ONE stream to both renderers:
+    /// <c>RendererParityTests.JunitAndHtml_DeriveSameScenarioDuration_FromTimestampDelta</c>
+    /// pins the ROUNDING MODE and the derived millisecond value across a sub-millisecond
+    /// delta that rounds to zero, an exact midpoint (2.5ms), a non-midpoint fraction
+    /// (1234.6ms), an ordinary multi-second delta, and completed-precedes-started
+    /// clamping to zero; <c>RendererParityTests.JunitAndHtml_AgreeOnAbsentScenarioDuration</c>
+    /// pins the ABSENT branch — no scenario-started recorded, or a scenario-completed
+    /// whose own Timestamp is left default. On the JUnit side "0.000" is indistinguishable
+    /// from a derived zero (both print via <c>FormatSeconds(scenario.DurationMs ?? 0)</c>),
+    /// so it is the HTML HALF of that theory that actually pins the absent branch as its
+    /// OWN case, distinct from a derived-zero duration: only HTML omits the " (N ms)"
+    /// suffix entirely for an absent duration, where a derived zero prints "(0 ms)". Neither
+    /// theory pins anything beyond those two helpers agreeing with each other.
+    /// </remarks>
+    private static long? DeriveScenarioDurationMs(DateTimeOffset? startedAt, DateTimeOffset completedAt)
+    {
+        if (startedAt is null || completedAt == default)
+        {
+            return null;
+        }
+
+        var deltaMs = (completedAt - startedAt.Value).TotalMilliseconds;
+        return deltaMs <= 0
+            ? 0L
+            : (long)Math.Round(deltaMs, MidpointRounding.AwayFromZero);
+    }
 
     // -------------------------------------------------------------------------
     // XML escaping — the load-bearing safety helper.  Every dynamic string the
@@ -573,6 +661,14 @@ public sealed class JunitXmlRenderer
         public string? File { get; set; }
 
         public string? Verdict { get; set; }
+
+        /// <summary>
+        /// The scenario-started timestamp, recorded so scenario-completed can derive
+        /// a duration when the wire event carries no explicit <c>durationMs</c>.
+        /// <see langword="null"/> when no scenario-started was seen for this scenario,
+        /// or its Timestamp was left at the default (unset) value.
+        /// </summary>
+        public DateTimeOffset? StartedAt { get; set; }
 
         public long? DurationMs { get; set; }
 
