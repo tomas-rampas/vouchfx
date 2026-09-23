@@ -15,6 +15,9 @@
 //   10. Emit: RequiredHelpers bounds the XRANGE scan with an explicit count (mirrors
 //       mq-expect.nats's MaxMsgs=10000 cap) — the emitted CSX must never call
 //       StreamRangeAsync unbounded.
+//   11. Emit: RequiredHelpers declares a CancellationToken 'ct' parameter and the defensive
+//       OperationCanceledException filter (#492, mirrors cache-assert.redis verbatim).
+//   12. Emit: StatementBlock passes the step-scoped __stepCt_<safeId> token to the call site (#492).
 using Vouchfx.Engine.Abstractions;
 using Vouchfx.Engine.Abstractions.Secrets;
 using Vouchfx.Engine.Compilation;
@@ -179,11 +182,13 @@ public sealed class MqExpectRedisEmitTests
                 new RedisMatch($"${{secret:env/{envName}}}", null));
 
             var fragment = _provider.Emit(model, new StubCompileContext(stepId));
-            var usings = string.Join("\n", fragment.RequiredUsings.Select(u => $"using {u};"));
-            var helpers = string.Join("\n", fragment.RequiredHelpers);
-            var csx = $"{usings}\n{helpers}\n{fragment.StatementBlock}";
 
-            var compiled = RoslynScriptCompiler.CompileOnce(csx, additionalReferencePaths: s_additionalRefs);
+            // Splice via CsxAssembler (not a manual join) — it declares the per-step
+            // __stepCt_<safeId> local the emitted call site now references (§4 common
+            // step fields, issue #232 / #492).
+            var assembled = CsxAssembler.Assemble(new[] { (stepId, fragment) });
+            var compiled = RoslynScriptCompiler.CompileOnce(
+                assembled.CsxSource, additionalReferencePaths: s_additionalRefs);
 
             var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
             {
@@ -235,6 +240,49 @@ public sealed class MqExpectRedisEmitTests
             h.Contains("StreamRangeAsync(stream, \"-\", \"+\", 10000)", StringComparison.Ordinal));
         Assert.DoesNotContain(fragment.RequiredHelpers, h =>
             h.Contains("StreamRangeAsync(stream, \"-\", \"+\")", StringComparison.Ordinal));
+    }
+
+    // ── 11. Emit: helper declares 'ct' and the defensive OCE filter (#492) ───────
+
+    /// <summary>
+    /// <c>MqExpectRedis_Helpers.ExpectAsync</c> must declare a
+    /// <see cref="System.Threading.CancellationToken"/> parameter and carry the
+    /// defensive <c>OperationCanceledException</c> filter that rethrows a step-token
+    /// cut past this provider's own error handling — matching
+    /// <c>CacheAssertRedis_Helpers.Execute</c> verbatim (#492).  StackExchange.Redis's
+    /// async API has no CancellationToken overload to pass 'ct' into, so this pins the
+    /// signature and the defensive filter only; it is not a behavioural change (see the
+    /// provider's header comment).
+    /// </summary>
+    [Fact]
+    public void Emit_RequiredHelpers_DeclaresCancellationTokenParameterAndDefensiveFilter()
+    {
+        var fragment = _provider.Emit(GetModel(), new StubCompileContext("exp-step"));
+
+        Assert.Contains(fragment.RequiredHelpers, h =>
+            h.Contains("System.Threading.CancellationToken ct)", StringComparison.Ordinal));
+        Assert.Contains(fragment.RequiredHelpers, h =>
+            h.Contains(
+                "catch (System.OperationCanceledException) when (ct.IsCancellationRequested)",
+                StringComparison.Ordinal));
+    }
+
+    // ── 12. Emit: call site passes the step-scoped token (#492) ──────────────────
+
+    /// <summary>
+    /// The emitted call to <c>ExpectAsync</c> must pass the step's own
+    /// <c>__stepCt_&lt;safeId&gt;</c> local — the token <c>CsxAssembler</c>'s
+    /// <c>WrapForImmediate</c>/<c>WrapForRetry</c> declares for every step — matching
+    /// every other ct-wired provider's call-site convention (#492).
+    /// </summary>
+    [Fact]
+    public void Emit_StatementBlock_PassesStepScopedCancellationTokenToCallSite()
+    {
+        const string rawId = "exp-ct-step";
+        var safeId = CsxFragment.SanitiseId(rawId);
+        var fragment = _provider.Emit(GetModel(), new StubCompileContext(rawId));
+
+        Assert.Contains($"__stepCt_{safeId}", fragment.StatementBlock, StringComparison.Ordinal);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

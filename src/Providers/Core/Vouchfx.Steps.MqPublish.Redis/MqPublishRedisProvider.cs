@@ -39,6 +39,20 @@
 // Verdict taxonomy (§12.1): Pass on a successful XADD; EnvironmentError on a missing
 // conn:: key, a missing secret, or any connection/protocol failure.  This provider never
 // writes Inconclusive — that verdict is the RetryRunner's alone.
+//
+// Cancellation / latency contract (#492): the emitted call site now passes the step's
+// __stepCt_<safeId> token and the helper carries a defensive OperationCanceledException
+// filter (mirrors cache-assert.redis).  StackExchange.Redis's async API genuinely has no
+// CancellationToken overload on ConnectionMultiplexer.ConnectAsync or
+// IDatabaseAsync.StreamAddAsync (measured against the pinned 2.13.1), so this wiring
+// changes no behaviour today.  A declared timeout: is still honoured as a VERDICT
+// (WrapForImmediate's late-enforcement supersession resolves an overrun to
+// Inconclusive), but the step's actual completion is bounded only by the client's own
+// ConnectTimeout/SyncTimeout defaults (5 s each, measured), not by the declared budget.
+// Do not derive ConfigurationOptions timeouts from the step budget to close that gap —
+// rejected for the same reason #367 rejected it for mq-publish.kafka: a client-side
+// timeout expiry surfaces as RedisTimeoutException -> EnvironmentError, the wrong
+// verdict for what should be Inconclusive.
 using System.Text.Json;
 using Vouchfx.Engine.Abstractions;
 using Vouchfx.Sdk;
@@ -213,6 +227,9 @@ public sealed class MqPublishRedisProvider
         "    /// credentials reach the event stream.\n" +
         "    /// Stream and payload VALUES are resolved INSIDE the guarded region via\n" +
         "    /// Secret_Helpers.ResolveTemplate (§17).\n" +
+        "    /// 'ct' is the step-scoped token (#492): StackExchange.Redis's async API has no\n" +
+        "    /// CancellationToken overload to pass it into, so it is observed only by the\n" +
+        "    /// defensive OperationCanceledException filter below.\n" +
         "    /// </remarks>\n" +
         "    public static async System.Threading.Tasks.Task PublishAsync(\n" +
         "        System.Collections.Generic.IDictionary<string, object?> vars,\n" +
@@ -220,7 +237,8 @@ public sealed class MqPublishRedisProvider
         "        string outcomeKey,\n" +
         "        string connKey,\n" +
         "        string streamTemplate,\n" +
-        "        string payloadTemplate)\n" +
+        "        string payloadTemplate,\n" +
+        "        System.Threading.CancellationToken ct)\n" +
         "    {\n" +
         "        var sw = System.Diagnostics.Stopwatch.StartNew();\n" +
         "        var connStr = vars.TryGetValue(connKey, out var c) && c is string s ? s : null;\n" +
@@ -274,6 +292,17 @@ public sealed class MqPublishRedisProvider
         "            observation = \"{\\\"error\\\":\" +\n" +
         "                System.Text.Json.JsonSerializer.Serialize(RedactCredentials(connStr ?? string.Empty, ex.Message)) + \"}\";\n" +
         "        }\n" +
+        "        catch (System.OperationCanceledException) when (ct.IsCancellationRequested)\n" +
+        "        {\n" +
+        "            // Step-token cut (#232): rethrow past this provider's own error handling so\n" +
+        "            // the assembler's wrapper classifies it as Inconclusive(step-timeout) instead\n" +
+        "            // of the generic-error branch below misclassifying it.  The redis client's\n" +
+        "            // async API does not observe 'ct' internally (StackExchange.Redis's\n" +
+        "            // ConnectionMultiplexer.ConnectAsync / IDatabaseAsync have no CancellationToken\n" +
+        "            // overloads, #492) — this filter is defensive, guarding against a future call\n" +
+        "            // path that does.\n" +
+        "            throw;\n" +
+        "        }\n" +
         "        catch (System.Exception ex)\n" +
         "        {\n" +
         "            // Any other connection/protocol/parse failure = EnvironmentError (§12.1).\n" +
@@ -301,9 +330,14 @@ public sealed class MqPublishRedisProvider
         "    /// Redacts credential material from an exception message before it reaches the\n" +
         "    /// observation / event stream (§17).  Mirrors\n" +
         "    /// CacheAssertRedis_Helpers.RedactCredentials: Redis connection strings carry\n" +
-        "    /// password=/user= tokens (comma-separated).  Removes: (1) the full connection\n" +
+        "    /// password=/user= tokens.  StackExchange.Redis's ConfigurationOptions parser\n" +
+        "    /// delimits OPTIONS on ',' only (it splits the configuration string on comma,\n" +
+        "    /// then each option on its FIRST '='), so ';' is not special to it and can appear\n" +
+        "    /// inside a password value verbatim; bounding the value match on ';' as well\n" +
+        "    /// (as this used to) left the remainder of such a password unredacted (#553),\n" +
+        "    /// so the value-class is bounded on ',' ONLY.  Removes: (1) the full connection\n" +
         "    /// string if it appears literally; (2) password=/pwd= key-value pairs up to the\n" +
-        "    /// next comma or semicolon; (3) user= key-value pairs likewise.\n" +
+        "    /// next comma; (3) user= key-value pairs likewise.\n" +
         "    /// </summary>\n" +
         "    internal static string RedactCredentials(string connStr, string message)\n" +
         "    {\n" +
@@ -311,12 +345,12 @@ public sealed class MqPublishRedisProvider
         "            message = message.Replace(connStr, \"***\", System.StringComparison.Ordinal);\n" +
         "        message = System.Text.RegularExpressions.Regex.Replace(\n" +
         "            message,\n" +
-        "            \"(?:password|pwd)\\\\s*=\\\\s*[^,;]+\",\n" +
+        "            \"(?:password|pwd)\\\\s*=\\\\s*[^,]+\",\n" +
         "            \"password=***\",\n" +
         "            System.Text.RegularExpressions.RegexOptions.IgnoreCase);\n" +
         "        message = System.Text.RegularExpressions.Regex.Replace(\n" +
         "            message,\n" +
-        "            \"user\\\\s*=\\\\s*[^,;]+\",\n" +
+        "            \"user\\\\s*=\\\\s*[^,]+\",\n" +
         "            \"user=***\",\n" +
         "            System.Text.RegularExpressions.RegexOptions.IgnoreCase);\n" +
         "        return message;\n" +
@@ -346,7 +380,8 @@ public sealed class MqPublishRedisProvider
                     {{JsonSerializer.Serialize(VarKeys.Outcome(safeId))}},
                     {{JsonSerializer.Serialize(VarKeys.Connection(model.Target))}},
                     {{streamTemplateLiteral}},
-                    {{payloadTemplateLiteral}});
+                    {{payloadTemplateLiteral}},
+                    __stepCt_{{safeId}});
             }
             """;
 

@@ -37,6 +37,7 @@
 using System;
 using System.IO;
 using System.Text.RegularExpressions;
+using Vouchfx.TestSupport;
 using Xunit;
 
 namespace Vouchfx.Engine.Orchestration.Tests;
@@ -47,19 +48,11 @@ namespace Vouchfx.Engine.Orchestration.Tests;
 /// </summary>
 public sealed class EnvironmentMapperLedgerHopCensusTests
 {
-    /// <summary>
-    /// Mirrors <c>EnvironmentMapperSidecarDriftGuardTests.ResolveRepoRoot</c> — walk up from the
-    /// test assembly's output directory to the repo root.
-    /// </summary>
-    private static string ResolveRepoRoot()
-    {
-        var assemblyDir =
-            Path.GetDirectoryName(typeof(EnvironmentMapperLedgerHopCensusTests).Assembly.Location)!;
-        return Path.GetFullPath(Path.Combine(assemblyDir, "..", "..", "..", "..", ".."));
-    }
-
+    // RepoRoot.Resolve() (#551) — anchored on vouchfx.sln, shared with every other test project
+    // that needs the repo root, rather than this file's own fixed-depth walk from the test
+    // assembly's output directory.
     private static string SuiteTopologySourcePath => Path.Combine(
-        ResolveRepoRoot(), "src", "Engine", "Vouchfx.Engine.Orchestration", "SuiteTopology.cs");
+        RepoRoot.Resolve(), "src", "Engine", "Vouchfx.Engine.Orchestration", "SuiteTopology.cs");
 
     [Fact]
     public void SuiteTopology_PassesThePathLedgerToEnvironmentMapperMap()

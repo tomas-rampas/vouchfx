@@ -214,10 +214,9 @@ internal sealed class GitChangeSet : IChangeSet
         // The refusal reuses the launch failure's OUTCOME — a ChangeSetException, which the CLI
         // maps to exit 2 — but no longer its WORDING: this site has no candidate and the launch
         // site has one, so "is git installed and on PATH?" is the actionable question here and a
-        // misdirection there. See GitNotStartable. Whether
-        // selection-infrastructure failure deserves a code of its own is an open question, filed as
-        // #521 — see RunGit's remarks — and a fix for a binary-resolution defect does not get to
-        // answer it in passing.
+        // misdirection there. See GitNotStartable. Exit 2 for every selection-infrastructure
+        // failure, this one included, is the recorded decision — blueprint §16.4 (issue #521),
+        // and see RunGit's remarks — not something this binary-resolution fix answers in passing.
         var gitExecutable = (gitExecutableLocator ?? LocateGitOnPath)()
             ?? throw new ChangeSetException(GitUnavailable("the change-set computation"));
 
@@ -395,19 +394,22 @@ internal sealed class GitChangeSet : IChangeSet
     /// </para>
     /// <para>
     /// <strong>All three map to the SAME exception, so the CLI still exits 2 (usage error).</strong>
-    /// That is deliberate and is NOT an assertion that a wedged git is a usage mistake: whether
-    /// selection-infrastructure failure deserves an exit code of its own is an open question, and
-    /// answering it here — quietly, in a bug fix — would change the CLI's documented exit-code
-    /// contract as a side effect of stopping a hang.
+    /// That is deliberate and is NOT an assertion that a wedged git is a usage mistake: it is the
+    /// same selection-infrastructure classification blueprint §16.4 records for every
+    /// <c>--changed-since</c> failure — decided there, once, rather than answered quietly, in a
+    /// bug fix, as a side effect of stopping a hang.
     /// </para>
     /// <para>
-    /// <strong>THAT QUESTION IS OPEN, AND IT IS FILED AS #521.</strong> It used to be attributed
-    /// to issues #480 and #466-B, and neither reaches it. #466 closed on a different axis — how
-    /// <c>ParallelSuiteRunner</c>'s slot catch-all CLASSIFIES an unexpected engine throw — and
-    /// #480's answer is narrower still: a provider or engine defect never exits 0, which says
-    /// nothing about a git that could not be run. #521 asks what those two do not, so until it is
-    /// decided the exit code stays 2. This is the canonical statement of it; the other sites that
-    /// used to carry the same citation point here.
+    /// <strong>THE DECISION IS RECORDED IN BLUEPRINT §16.4, AS ISSUE #521.</strong> It used to be
+    /// attributed to issues #480 and #466-B, and neither reached it. #466 closed on a different
+    /// axis — how <c>ParallelSuiteRunner</c>'s slot catch-all CLASSIFIES an unexpected engine
+    /// throw — and #480's answer is narrower still: a provider or engine defect never exits 0,
+    /// which says nothing about a git that could not be run. #521 answers what those two did not:
+    /// exit 2, for every one of the causes this method maps, unconditionally, because the operator
+    /// asked for a selection the environment cannot satisfy and failing before any scenario runs is
+    /// the same class of problem as a bad path. This is the canonical statement of the reasoning
+    /// behind that answer; the other sites that used to carry the open-question citation now point
+    /// at blueprint §16.4 instead.
     /// </para>
     /// <para>
     /// <strong><see cref="OperationCanceledException"/> is the one documented outcome that must

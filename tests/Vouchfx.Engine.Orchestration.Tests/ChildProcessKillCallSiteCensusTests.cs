@@ -33,11 +33,12 @@
 // ObjectCreationExpressionSyntax and returns false for everything else, and a string literal —
 // interpolated or not — is neither.
 //
-// SCOPE: THREE ROOTS — THE PRODUCTION TREE AND TWO TEST ASSEMBLIES. This census reads the whole of
-// src/, plus Vouchfx.Engine.Orchestration.Tests and Vouchfx.Engine.Runtime.Tests — the latter being
-// the drill lane, where issue #378 found the same defect first, and where the blast radius is worse
-// than here: an unguarded launch there strands a CLI holding DCP, its containers and its
-// aspire-session-network-*, which surfaces later as a build failure naming no test.
+// SCOPE: FOUR ROOTS — THE PRODUCTION TREE AND THREE TEST ASSEMBLIES. This census reads the whole
+// of src/, plus Vouchfx.Engine.Orchestration.Tests, Vouchfx.Engine.Runtime.Tests (the drill lane,
+// where issue #378 found the same defect first, and where the blast radius is worse than here: an
+// unguarded launch there strands a CLI holding DCP, its containers and its
+// aspire-session-network-*, which surfaces later as a build failure naming no test) and
+// Vouchfx.Cli.Tests (added by #548 — see below).
 //
 // WHY src/ JOINED, AND WHAT ITS ABSENCE COST — issue #481. Until then this census read the two test
 // projects and nothing else, so the production tree had never been censused at all. src/ holds
@@ -51,6 +52,21 @@
 // process they were never handed a way to reclaim. A census that watches only the test lanes is
 // watching the lane where the blast radius is smallest.
 //
+// WHY Vouchfx.Cli.Tests JOINED, AND WHAT ITS ABSENCE COST — issue #548, found during #541's review
+// and widened during #529. SystemProcessRunner's production launch (src/) was censused from #481
+// on, but the tests that launch a REAL child to exercise it — GitChangeSetTests.BareNameGitLaunches
+// (a bare-name `git --version` probe used as a comparison point) and SystemProcessRunnerTests' two
+// real-child rows, PidFileWriters_PublishAPidTheReaderAccepts (#541) and
+// TheGuardsAnchors_StayInTheOrderARealChildProduces (#529) — sat in the one assembly this census did
+// not read. Each launches its own child directly (not through the runner under test) to have
+// something real to assert against. Measured landing this root: two of the three already used the
+// house shape, and the third did not — BareNameGitLaunches called the kill from inside the timeout
+// `if`, same as the pre-#378 drill-lane sites the header above describes, rather than from a
+// `finally`, so it ran on the timeout path only and never on a throw between the wait and the
+// return. Fixed alongside adding this root, to the same shape SystemProcessRunnerTests' two rows
+// already use. That is the point of a census over a syntactic guess: nothing had checked whether
+// the kill was even a `finally`, so the next site added there need not have had one either.
+//
 // It can read trees it does not reference. CensusFiles enumerates .cs files off disk and
 // FindLaunchSites parses them as text, so assembly boundaries, internals visibility and project
 // references are all irrelevant — the only thing needed is a directory path, and every root is
@@ -59,8 +75,9 @@
 //
 // This is also what makes the `new Process` half of the detection worth its lines: the ONLY such
 // launch in the repository is Sprint11ReferenceCapstoneTests, in the drill lane. Over the
-// Orchestration project alone that branch never fired, and src/ does not fire it either — the
-// production launch uses the static `Process.Start` spelling.
+// Orchestration project alone that branch never fired, and neither src/ nor Vouchfx.Cli.Tests fires
+// it either — both the production launch and all three Cli.Tests launches use the static
+// `Process.Start` spelling.
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -73,19 +90,21 @@ using Xunit;
 namespace Vouchfx.Engine.Orchestration.Tests;
 
 /// <summary>
-/// Pins that every child-process launch in the three censused trees — <c>src/</c> and the two test
+/// Pins that every child-process launch in the four censused trees — <c>src/</c> and the three test
 /// projects named in the header — is paired with a <c>finally</c> that calls a member named
 /// <c>KillTreeQuietly</c>.
 /// </summary>
 /// <remarks>
 /// <para>
 /// What is matched is the bare identifier (see <see cref="KillMethod"/>), not a resolved symbol.
-/// The two test projects satisfy it with
+/// The three test projects satisfy it with
 /// <see cref="Vouchfx.TestSupport.ChildProcess.KillTreeQuietly(System.Diagnostics.Process)"/>;
 /// <c>src/</c> cannot — that project is <c>IsPackable=false</c> and referenced only by test
 /// assemblies, so product code has no way to call it — and satisfies the census with its own copy
 /// on <c>Vouchfx.Cli.Selection.SystemProcessRunner</c>. The two copies are held to one catch filter
-/// by <c>Vouchfx.Cli.Tests.ProcessKillGuardParityTests</c>, which parses both sources.
+/// by <c>Vouchfx.Cli.Tests.ProcessKillGuardParityTests</c>, which parses both sources — so
+/// <c>Vouchfx.Cli.Tests</c> is both a censused root and, via that unrelated test, one of the two
+/// sources the catch-filter parity check reads; the two checks are independent of one another.
 /// </para>
 /// <para>
 /// Both launch spellings are recognised, because the repository uses both: the static
@@ -117,15 +136,24 @@ public sealed class ChildProcessKillCallSiteCensusTests
     /// <remarks>
     /// A floor rather than an exact count, for the reason the sibling census in
     /// Vouchfx.Engine.Runtime.Tests gives: an exact count is a second thing to maintain and would
-    /// redden on every unrelated file added. Each test project held well over sixty files when this
-    /// was written, and <c>src/</c> — a tree of dozens of projects — several times that again, so
-    /// one floor comfortably serves all three. Applied PER ROOT, so a root that silently resolves to
+    /// redden on every unrelated file added. The three test projects held at least fifty files each
+    /// when #548 added the third (<c>Vouchfx.Cli.Tests</c> the thinnest, at 54; the other two well
+    /// over sixty), and <c>src/</c> — a tree of dozens of projects — several times that again, so one
+    /// floor comfortably serves all four. Applied PER ROOT, so a root that silently resolves to
     /// somewhere thin cannot hide behind another one's size.
     /// </remarks>
     private const int MinimumCensusFiles = 20;
 
     /// <summary>The sibling test project this census reads in addition to its own.</summary>
     private const string DrillLaneProjectName = "Vouchfx.Engine.Runtime.Tests";
+
+    /// <summary>
+    /// The second sibling test project this census reads — added by #548, which found that the
+    /// production launch site (<c>src/</c>, censused since #481) had test-lane siblings of its own
+    /// that no census covered: <c>GitChangeSetTests.BareNameGitLaunches</c> and
+    /// <c>SystemProcessRunnerTests</c>' two real-child rows, all in this project.
+    /// </summary>
+    private const string CliProjectName = "Vouchfx.Cli.Tests";
 
     /// <summary>The production source tree, censused since issue #481 — see the header.</summary>
     /// <remarks>
@@ -150,10 +178,13 @@ public sealed class ChildProcessKillCallSiteCensusTests
 
     /// <summary>Build output, which holds generated sources this census has no business reading.</summary>
     /// <remarks>
-    /// Enough for all three roots, checked rather than assumed when <c>src/</c> joined: over that
-    /// tree <c>git status --ignored</c> reports <c>bin/</c> and <c>obj/</c> and nothing else, and no
-    /// root holds a vendored or generated directory these two do not already cover. Should one
-    /// appear, adding it here is the whole fix — the exclusion is applied per root.
+    /// Enough for all four roots, checked rather than assumed when <c>src/</c> joined and again when
+    /// <c>Vouchfx.Cli.Tests</c> joined (#548: its own directory holds only <c>bin/</c>, <c>obj/</c>
+    /// and <c>Golden/</c>, the last holding JSON fixtures that <see cref="CensusFiles"/>'s <c>*.cs</c>
+    /// filter already skips): over each tree <c>git status --ignored</c> reports <c>bin/</c> and
+    /// <c>obj/</c> and nothing else, and no root holds a vendored or generated directory these two do
+    /// not already cover. Should one appear, adding it here is the whole fix — the exclusion is
+    /// applied per root.
     /// </remarks>
     private static readonly string[] s_excludedDirectories = { "bin", "obj" };
 
@@ -245,9 +276,9 @@ public sealed class ChildProcessKillCallSiteCensusTests
     /// <c>src/</c> root reddens on the vacuity assertion instead of passing over an empty
     /// population. That is the intended behaviour, and it is why the guard is asserted per root
     /// rather than over the union: a production tree whose only launch has become invisible is
-    /// precisely the state issue #481 found, and it must not be able to hide behind two healthy test
-    /// lanes. The correct response to that red is to teach the census the new spelling, or to move
-    /// the root, never to delete the assertion.
+    /// precisely the state issue #481 found, and it must not be able to hide behind three healthy
+    /// test lanes. The correct response to that red is to teach the census the new spelling, or to
+    /// move the root, never to delete the assertion.
     /// </para>
     /// </remarks>
     [Fact]
@@ -260,10 +291,10 @@ public sealed class ChildProcessKillCallSiteCensusTests
             Assert.True(
                 Directory.Exists(root),
                 $"This census is configured to read '{root}', which does not exist. It reads the "
-                + "production source tree and two test projects by PATH, all resolved by walking up "
-                + "from this project's own directory, so renaming or moving any of them takes that "
-                + "root out from under this census and would otherwise leave part of the population "
-                + "silently uncensused.");
+                + "production source tree and three test projects by PATH, all resolved by walking "
+                + "up from this project's own directory, so renaming or moving any of them takes "
+                + "that root out from under this census and would otherwise leave part of the "
+                + "population silently uncensused.");
 
             var files = CensusFiles(root);
 
@@ -334,27 +365,30 @@ public sealed class ChildProcessKillCallSiteCensusTests
     }
 
     /// <summary>
-    /// The directories this census reads: this project, the drill lane, and the production source
-    /// tree.
+    /// The directories this census reads: this project, the drill lane, the CLI test project
+    /// (#548), and the production source tree.
     /// </summary>
     /// <remarks>
     /// <para>
     /// Paths, not assembly references - which is the whole reason anything beyond this project is
-    /// reachable at all. Nothing here loads the drill lane's assembly, or any of the assemblies
-    /// under <c>src/</c>, and nothing needs to see their internals; the files are read as text.
+    /// reachable at all. Nothing here loads the drill lane's assembly, the CLI test assembly, or any
+    /// of the assemblies under <c>src/</c>, and nothing needs to see their internals; the files are
+    /// read as text.
     /// </para>
     /// <para>
     /// Resolved by walking up from this project's own directory, which
     /// <see cref="ProjectDirectory"/> derives from the compiled assembly: one <c>..</c> reaches
-    /// <c>tests/</c>, where the drill lane is a sibling, and a second reaches the repository root,
-    /// where <c>src/</c> sits. Each is checked for existence before it is enumerated, so a move that
-    /// invalidates one of these relative walks reddens rather than quietly censusing nothing.
+    /// <c>tests/</c>, where both the drill lane and <c>Vouchfx.Cli.Tests</c> are siblings, and a
+    /// second reaches the repository root, where <c>src/</c> sits. Each is checked for existence
+    /// before it is enumerated, so a move that invalidates one of these relative walks reddens
+    /// rather than quietly censusing nothing.
     /// </para>
     /// </remarks>
     private static string[] CensusRoots() => new[]
     {
         ProjectDirectory(),
         Path.GetFullPath(Path.Combine(ProjectDirectory(), "..", DrillLaneProjectName)),
+        Path.GetFullPath(Path.Combine(ProjectDirectory(), "..", CliProjectName)),
         Path.GetFullPath(Path.Combine(ProjectDirectory(), "..", "..", SourceRootName)),
     };
 

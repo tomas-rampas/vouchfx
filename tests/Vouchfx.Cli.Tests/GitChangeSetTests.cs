@@ -293,17 +293,16 @@ public sealed class GitChangeSetTests
     /// hit it.
     /// </para>
     /// <para>
-    /// The exit code is deliberately unchanged at 2 (usage error): whether selection-infrastructure
-    /// failure deserves a code of its own is an open question, and this fix must not answer it
-    /// quietly.
+    /// The exit code is deliberately unchanged at 2 (usage error): this fix must not answer the
+    /// selection-infrastructure exit-code question quietly, as a side effect of stopping a hang.
     /// </para>
     /// <para>
-    /// <strong>That question is open and is filed as #521.</strong> It used to cite issues #480
-    /// and #466-B, and neither reaches it. #466 closed on a different axis — how
+    /// <strong>That question is decided, in blueprint §16.4, as issue #521.</strong> It used to
+    /// cite issues #480 and #466-B, and neither reached it. #466 closed on a different axis — how
     /// <c>ParallelSuiteRunner</c>'s slot catch-all CLASSIFIES an unexpected engine throw — and
     /// #480's answer is narrower still: a provider or engine defect never exits 0. A git that
-    /// could not be run is neither. Until #521 is decided, a <c>--changed-since</c> git failure is
-    /// a usage error and exits 2.
+    /// could not be run is neither. §16.4 answers it instead: every <c>--changed-since</c> git
+    /// failure, a wedged git included, is a usage error and exits 2.
     /// </para>
     /// </remarks>
     [Fact]
@@ -1297,22 +1296,66 @@ public sealed class GitChangeSetTests
     /// <para>
     /// <strong>HOW THE THRESHOLD WAS CHOSEN.</strong> Quadrupling the length costs 4x when the scan
     /// is linear and 16x when it is quadratic, so the ceiling is the smaller measurement times
-    /// EIGHT: twice the linear expectation, half the quadratic signal. That ratio alone is not safe
-    /// on a fast host, where the smaller measurement is around a millisecond and eight times noise
-    /// is still noise, so the ceiling is floored at 100 ms: about twenty-five times the larger
-    /// measurement as it stands (3.4 to 4.3 ms at 64,033 characters, measured across the four
-    /// openers), and fifty times below the 5,010 to 5,078 ms the quadratic scan takes at that
-    /// length (measured, by reverting the memo against this row). The two clauses cover opposite
-    /// hosts: the floor carries a fast one, the ratio carries a loaded one where both measurements
-    /// inflate together, and a quadratic scan breaches both. THE DETECTION MARGIN IS THE
-    /// SMALLER NUMBER, NOT THE LOUDER ONE: reverting the memo makes the SMALLER measurement
-    /// quadratic too (around 355 ms at 16,033 characters), so the ceiling inflates with it to
-    /// roughly 2,840 ms while the larger is about 5,010 ms — the row still reds, but by some
-    /// 1.8x, not by the 16.0x to 17.3x the raw ratio against a healthy ceiling suggests.
-    /// 1.8x is adequate and it is the number that bounds the decision, so it is the one
-    /// stated. Each measurement is the FASTEST of three attempts, because
-    /// a scheduling hiccup can only inflate a timing, so the minimum is the least noisy estimator
-    /// available.
+    /// EIGHT: twice the linear expectation, half the quadratic signal. A ratio between two
+    /// wall-clock samples is not by itself safe on a shared host, which is #544: on GitHub Actions
+    /// run 35214483522, with a second run of the same commit executing beside it, the U+00AB case
+    /// took 103.7 ms against a ceiling of 102.0 ms (both figures CI-cited) and reddened by 1.7%
+    /// while the property held — 8.1x, as the message printed it, is not a quadratic scan, which
+    /// at four times the length costs sixteen. So the ceiling is floored, and the floor is
+    /// 500 ms: 4.8x that sample, the only healthy figure on record from the lane that actually
+    /// gates merges. The retired 100 ms sat BELOW that sample, which is how #544 happened, and
+    /// 250 ms would have left only 2.4x — while against the regression this row exists to catch
+    /// the two are indistinguishable, for the reason the next paragraph measures.
+    /// MEASURED unloaded on this host over 20 consecutive runs, 80 of 80 green: 0.475 to
+    /// 0.634 ms at 16,033 characters and 2.02 to 2.55 ms at 64,033, across the four openers.
+    /// MEASURED again with 40 spinning processes on 20 cores, 20 more runs and 80 of 80 green:
+    /// 0.94 to 2.01 ms and 3.74 to 19.10 ms, a worst ratio of 17.5x with no regression present
+    /// and that 19.10 ms worst large sample 26x below the floor. Load does NOT inflate the two
+    /// terms together, so it is the floor and not the ratio clause that carries a busy host.
+    /// </para>
+    /// <para>
+    /// The floor costs nothing against the regression this row exists to catch, because it is
+    /// never consulted there. MEASURED by deleting the memo's early return and running this row:
+    /// the SMALLER measurement goes quadratic too, 325 to 353 ms at 16,033 characters, so the
+    /// ratio clause alone lifts the ceiling to 2,599 to 2,821 ms — 250 ms and 500 ms are
+    /// indistinguishable at that point. What the floor does cost is how subtle a quadratic
+    /// must be to hide. A CONSTANT-FACTOR slowdown this row cannot see at any floor: it scales
+    /// both measurements alike, so the ratio clause is invariant to it, and below the floor nothing
+    /// is compared at all. A quadratic weaker than the memo removal is what the floor decides
+    /// (derived from the figures below, scaling both of its measurements by k): the row stays
+    /// green while 5,894k stays under the floor, so a quadratic 59x weaker slipped under the old
+    /// 100 ms, 24x weaker would under 250 ms and 12x weaker does under 500 ms. So this row is a
+    /// linear-versus-quadratic gate for the memo class of regression rather than a cost bound —
+    /// and on the LANE THAT GATES MERGES it is, in practice, neither: the floor dominates there.
+    /// Derived from the one healthy CI sample on record: a 102.0 ms ceiling implies
+    /// <c>small</c> ≈ 12.75 ms, so <c>8 x small</c> ≈ 102 ms sits below the 500 ms floor and the
+    /// ratio clause never binds. What ubuntu-latest asserts is the flat 500 ms — an absolute
+    /// bound after all, just not the one the clause above describes. The ratio is what this row
+    /// means; the floor is what it usually enforces.
+    /// </para>
+    /// <para>
+    /// THE DETECTION MARGIN IS THE SMALLER NUMBER, NOT THE LOUDER ONE: against those inflated
+    /// ceilings the reverted scan measures 5,894 to 6,274 ms at 64,033 characters, so the row reds
+    /// by 2.1x to 2.4x, not by the 16.7x to 18.9x the raw ratio between the two measurements
+    /// suggests. 2.1x is adequate and it is the number that bounds the decision, so it is the one
+    /// stated — and it is why the headroom stays at EIGHT rather than widening to absorb noise:
+    /// twelve would lift the reverted ceiling to 3,898 to 4,231 ms and cut the worst margin,
+    /// U+00AB again, to 1.4x. Those are UNLOADED figures; the reverted scan under load was not
+    /// measured. The bias measured above — sustained load inflating the larger scan further than
+    /// the smaller — runs in the direction that widens that red, not one that narrows it.
+    /// </para>
+    /// <para>
+    /// Each measurement is the FASTEST of five attempts, and the two lengths are timed alternately
+    /// (<see cref="FastestSubstitutions"/>, which argues for that shape and bounds the claim): a
+    /// scheduling hiccup can only inflate a timing, so the minimum is the least noisy estimator
+    /// available, and more samples tighten it. The cost is wall-clock time in the lane, and it is
+    /// per CASE that this compares with #544's. The like-for-like pair is the one to read, both
+    /// halves measured the same way on the same host: all four cases together cost 75 to 97 ms
+    /// over 30 runs of this row on its own, against 53 to 61 ms for the three-attempt shape — the
+    /// five-attempt shape is somewhat dearer, not an order cheaper. MEASURED here over 10
+    /// filtered runs, the U+00AB case alone takes 16.5 to 23.4 ms on this host; the 553 ms
+    /// CI-cited for that same case is a SHARED-RUNNER figure under the old shape and belongs
+    /// beside the other CI numbers above, not beside a local one.
     /// </para>
     /// <para>
     /// The equality assertion comes first and is not incidental: it warms the JIT before anything
@@ -1329,8 +1372,8 @@ public sealed class GitChangeSetTests
         const int SmallOpeners = 8_000;
         const int LargeMultiple = 4;
         const double LinearHeadroom = 8.0;
-        const double NoiseFloorMilliseconds = 100.0;
-        const int Attempts = 3;
+        const double SharedHostFloorMilliseconds = 500.0;
+        const int Attempts = 5;
 
         var small = UnterminatedOpeners(opener, SmallOpeners);
         var large = UnterminatedOpeners(opener, SmallOpeners * LargeMultiple);
@@ -1340,16 +1383,19 @@ public sealed class GitChangeSetTests
                 + "<path> smith/x is unreadable.",
             GitChangeSet.SubstituteAbsolutePaths(small));
 
-        var smallMilliseconds = FastestSubstitution(small, Attempts);
-        var largeMilliseconds = FastestSubstitution(large, Attempts);
+        // Named access, not a positional deconstruction: both halves are doubles, so nothing but
+        // the names spells which is which, and a swap would time the small text against the
+        // large one's ceiling and stay green. The names do not catch a swapped return (they are
+        // compile-time only); they keep the order readable from the tuple type to this line.
+        var timings = FastestSubstitutions(small, large, Attempts);
 
-        var ceiling = Math.Max(NoiseFloorMilliseconds, LinearHeadroom * smallMilliseconds);
+        var ceiling = Math.Max(SharedHostFloorMilliseconds, LinearHeadroom * timings.Small);
         Assert.True(
-            largeMilliseconds <= ceiling,
-            $"U+{(int)opener:X4}: {large.Length} characters took {largeMilliseconds:0.0} ms "
+            timings.Large <= ceiling,
+            $"U+{(int)opener:X4}: {large.Length} characters took {timings.Large:0.0} ms "
             + $"against a ceiling of {ceiling:0.0} ms, from {small.Length} characters at "
-            + $"{smallMilliseconds:0.0} ms. A {LargeMultiple}x length may cost {LinearHeadroom}x, "
-            + $"not {largeMilliseconds / Math.Max(smallMilliseconds, 0.001):0.0}x.");
+            + $"{timings.Small:0.0} ms. A {LargeMultiple}x length may cost {LinearHeadroom}x, "
+            + $"not {timings.Large / Math.Max(timings.Small, 0.001):0.0}x.");
     }
 
     /// <summary>
@@ -1369,24 +1415,47 @@ public sealed class GitChangeSetTests
         + "/home/john smith/x is unreadable.";
 
     /// <summary>
-    /// The fastest of <paramref name="attempts"/> substitutions of <paramref name="text"/>.
+    /// The fastest substitution of each text across <paramref name="attempts"/> interleaved pairs.
     /// </summary>
-    /// <param name="text">The text to scan.</param>
-    /// <param name="attempts">How many times to scan it.</param>
-    /// <returns>The shortest elapsed time, in milliseconds.</returns>
-    private static double FastestSubstitution(string text, int attempts)
+    /// <param name="small">The shorter text to scan.</param>
+    /// <param name="large">The longer text to scan.</param>
+    /// <param name="attempts">How many pairs to time.</param>
+    /// <returns>The shortest elapsed time for each text, in milliseconds.</returns>
+    /// <remarks>
+    /// The two texts are timed alternately — small, large, small, large — rather than in two
+    /// separate runs. The claim for that is narrow, and INFERRED rather than measured: it removes
+    /// a systematic bias, because a burst of load shorter than the whole row is then equally
+    /// likely to fall on a small sample as on a large one and so cannot, by construction, inflate
+    /// one term's minimum and not the other's. It does NOT make a loaded host safe. MEASURED
+    /// under sustained load, the larger scan still inflates further than the smaller one — which
+    /// is why the caller's floor, and not its ratio clause, is what carries a loaded host.
+    /// </remarks>
+    private static (double Small, double Large) FastestSubstitutions(
+        string small, string large, int attempts)
     {
-        var fastest = double.MaxValue;
+        var fastestSmall = double.MaxValue;
+        var fastestLarge = double.MaxValue;
         for (var attempt = 0; attempt < attempts; attempt++)
         {
-            var elapsed = Stopwatch.StartNew();
-            GitChangeSet.SubstituteAbsolutePaths(text);
-            elapsed.Stop();
-
-            fastest = Math.Min(fastest, elapsed.Elapsed.TotalMilliseconds);
+            fastestSmall = Math.Min(fastestSmall, SubstitutionMilliseconds(small));
+            fastestLarge = Math.Min(fastestLarge, SubstitutionMilliseconds(large));
         }
 
-        return fastest;
+        return (fastestSmall, fastestLarge);
+    }
+
+    /// <summary>
+    /// How long one substitution of <paramref name="text"/> takes, in milliseconds.
+    /// </summary>
+    /// <param name="text">The text to scan.</param>
+    /// <returns>The elapsed time, in milliseconds.</returns>
+    private static double SubstitutionMilliseconds(string text)
+    {
+        var elapsed = Stopwatch.StartNew();
+        GitChangeSet.SubstituteAbsolutePaths(text);
+        elapsed.Stop();
+
+        return elapsed.Elapsed.TotalMilliseconds;
     }
 
     /// <summary>
@@ -1767,9 +1836,9 @@ public sealed class GitChangeSetTests
     /// <para>
     /// There is deliberately no fallback to the bare name: falling back is precisely the
     /// search-order hole the resolution closes, so "not found" has to be a refusal. The exit code
-    /// is unchanged on purpose — whether selection-infrastructure failure deserves one of its own
-    /// is an open question, filed as #521. This comment used to cite issues #480 and #466-B;
-    /// neither answers it (see
+    /// is unchanged on purpose — blueprint §16.4 decides, as issue #521, that a
+    /// selection-infrastructure failure gets no code of its own. This comment used to cite issues
+    /// #480 and #466-B; neither answered it (see
     /// <see cref="GitTimesOut_SurfacesChangeSetException_NamingTheBudget"/>'s remarks for why).
     /// </para>
     /// <para>
@@ -2317,32 +2386,49 @@ public sealed class GitChangeSetTests
         };
         psi.ArgumentList.Add("--version");
 
+        // The start sits in its own try/catch, above the `using`: it is the one step allowed to
+        // fail before there is anything to kill (git absent from PATH raises Win32Exception here).
+        System.Diagnostics.Process? process;
         try
         {
-            using var process = System.Diagnostics.Process.Start(psi);
-            if (process is null)
-            {
-                return false;
-            }
-
-            // Started before the wait: a child that fills a redirected pipe blocks otherwise.
-            var drain = Task.WhenAll(
-                process.StandardOutput.ReadToEndAsync(),
-                process.StandardError.ReadToEndAsync());
-
-            if (!process.WaitForExit(BareNameProbeBudgetMilliseconds))
-            {
-                ChildProcess.KillTreeQuietly(process);
-                ObserveQuietly(drain);
-                return false;
-            }
-
-            ObserveQuietly(drain);
-            return process.ExitCode == 0;
+            process = System.Diagnostics.Process.Start(psi);
         }
         catch (System.ComponentModel.Win32Exception)
         {
             return false; // No git this host can launch from the bare name.
+        }
+
+        if (process is null)
+        {
+            return false;
+        }
+
+        using (process)
+        {
+            try
+            {
+                // Started before the wait: a child that fills a redirected pipe blocks otherwise.
+                var drain = Task.WhenAll(
+                    process.StandardOutput.ReadToEndAsync(),
+                    process.StandardError.ReadToEndAsync());
+
+                if (!process.WaitForExit(BareNameProbeBudgetMilliseconds))
+                {
+                    ObserveQuietly(drain);
+                    return false;
+                }
+
+                ObserveQuietly(drain);
+                return process.ExitCode == 0;
+            }
+            finally
+            {
+                // House shape (#548, ChildProcessKillCallSiteCensusTests): the kill sits in an
+                // UNCONDITIONAL `finally` rather than only the timeout branch above, so the census
+                // can see it. Safe on the clean-exit path too — KillTreeQuietly no-ops on a process
+                // that has already exited, so this changes nothing about what the method returns.
+                ChildProcess.KillTreeQuietly(process);
+            }
         }
     }
 

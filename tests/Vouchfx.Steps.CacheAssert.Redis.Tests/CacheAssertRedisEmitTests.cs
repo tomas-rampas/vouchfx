@@ -21,6 +21,7 @@ using Vouchfx.Engine.Abstractions;
 using Vouchfx.Engine.Compilation;
 using Vouchfx.Sdk;
 using Vouchfx.Steps.CacheAssert.Redis;
+using Vouchfx.TestSupport;
 using Xunit;
 
 namespace Vouchfx.Steps.CacheAssert.Redis.Tests;
@@ -72,10 +73,23 @@ public sealed class CacheAssertRedisEmitTests
         typeof(System.Text.RegularExpressions.Regex).Assembly.Location,
     };
 
-    // A dead local endpoint: nothing listens on 56789, abortConnect=false keeps Connect
-    // from throwing, and the tiny timeouts + connectRetry=0 make the operation fail fast.
-    private const string DeadEndpoint =
-        "localhost:56789,abortConnect=false,connectTimeout=200,connectRetry=0,syncTimeout=800";
+    /// <summary>
+    /// The connection string for a Redis endpoint that cannot answer.  The authority comes
+    /// from a held <see cref="DeadLoopbackEndpoint"/> reservation — the port is dead because
+    /// this process owns it for the row's lifetime, not because the file asserts nothing is
+    /// listening there (#527).  The tuning that follows is what keeps the row fast:
+    /// abortConnect=false stops Connect itself from throwing, and connectRetry=0 plus the
+    /// small timeouts bound the wait.  It is spelled once here for every row.
+    /// </summary>
+    /// <param name="dead">The held reservation whose authority the client is pointed at.</param>
+    /// <param name="credentials">
+    /// Credential tokens to splice in (e.g. <c>password=…,user=…</c>) for the rows that
+    /// exercise the redaction path; omitted otherwise.
+    /// </param>
+    private static string DeadConn(DeadLoopbackEndpoint dead, string? credentials = null) =>
+        $"{dead.Authority}," +
+        (credentials is null ? string.Empty : credentials + ",") +
+        "abortConnect=false,connectTimeout=200,connectRetry=0,syncTimeout=800";
 
     // ── 1. StatementBlock braces ──────────────────────────────────────────────
 
@@ -184,9 +198,10 @@ public sealed class CacheAssertRedisEmitTests
     {
         var model = GetModel("cache", "user:42", "active");
 
+        using var dead = DeadLoopbackEndpoint.Reserve();
         var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
         {
-            [VarKeys.Connection("cache")] = DeadEndpoint,
+            [VarKeys.Connection("cache")] = DeadConn(dead),
         };
 
         var outcome = await RunStepAsync(model, "cache-dead", vars);
@@ -218,9 +233,10 @@ public sealed class CacheAssertRedisEmitTests
                 Exists: op is RedisOp.Exists or RedisOp.Ttl ? true : null,
                 Length: op is RedisOp.HLen or RedisOp.LLen or RedisOp.SCard ? 1L : null));
 
+        using var dead = DeadLoopbackEndpoint.Reserve();
         var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
         {
-            [VarKeys.Connection("cache")] = DeadEndpoint,
+            [VarKeys.Connection("cache")] = DeadConn(dead),
         };
 
         var outcome = await RunStepAsync(model, "cache-" + CacheAssertRedisProvider.OpToken(op), vars);
@@ -232,13 +248,50 @@ public sealed class CacheAssertRedisEmitTests
     }
 
     // ── 11. Compile round-trip: credential absent from observation on failure ──
+    //
+    // WHAT THIS ROW CAN AND CANNOT ASSERT — read before "tightening" it to an exact
+    // equality the way the Elasticsearch twin does
+    // (CacheAssertElasticsearchEmitTests, row 13).  There the provider's generic catch
+    // emits ONLY ex.GetType().Name, so the whole observation is a 30-character constant
+    // and equality is the right pin.  Here all three catches
+    // (CacheAssertRedisProvider.cs:511, :517, :533) emit
+    // RedactCredentials(connStr, ex.Message) — the REDACTED CLIENT MESSAGE.  MEASURED on
+    // this host (2026-09-18): the observation is
+    // {"error":"The message timed out in the backlog attempting to send … UnableToConnect
+    // on 127.0.0.1:<port>/Interactive … v: 2.13.1.38939 …"} — several hundred characters
+    // of StackExchange.Redis diagnostics, including the ENDPOINT it failed to reach and
+    // the client version.  MEASURED which catch that arrives through, because the wording
+    // misleads: despite reading as a timeout it is a RedisConnectionException, so :511 is
+    // this row's path and a mutation drill aimed at :517 does not redden it.  So:
+    //   • host and port ARE present, BY DESIGN.  RedactCredentials
+    //     (CacheAssertRedisProvider.cs:560) strips credential tokens, not endpoints, and
+    //     an endpoint is not credential material (§17).  Their absence is deliberately
+    //     NOT asserted — it would pin a third-party message, and a bare port number is a
+    //     4-5 digit substring that this message is full of.
+    //   • no ENCODED spelling of the password can reach the observation.  The grammar is
+    //     comma-separated key=value and the client sends AUTH as plaintext RESP, so the
+    //     password has exactly one spelling.  There is no base64 header as in the
+    //     Elasticsearch case, hence no encoded form whose absence could be asserted.
+    //   • the password=/user= regexes in RedactCredentials are load-bearing, not
+    //     belt-and-braces, because the client can produce a `password=` fragment that is
+    //     NOT the literal connection string — which the literal replacement therefore
+    //     misses.  MEASURED on the pinned StackExchange.Redis 2.13.1 (FileVersion
+    //     2.13.1.38939): ConfigurationOptions.Parse(conn).ToString() returns
+    //     `…,user=default,password=sup3rsecret,abortConnect=False,…` — tokens REORDERED
+    //     and `abortConnect` recased, so it is not the input string.  The parameterless
+    //     overload defaults to includePassword:true and does NOT mask; only the explicit
+    //     ToString(false) renders `password=*****`.  (Recorded because the DLL contains
+    //     both an `includePassword` parameter and the literal `*****`, and reading those
+    //     two facts statically invites the opposite conclusion.)
+    // Each assertion uses the boolean form: xunit prints the ACTUAL on a failed
+    // Assert.DoesNotContain, and the actual here is the string under suspicion of
+    // carrying the secret.
 
     [Fact]
     public async Task Emit_CompileAndRun_CredentialedConnFails_CredentialAbsentFromObservation()
     {
-        const string connStr =
-            "localhost:56789,password=sup3rsecret,user=default,abortConnect=false," +
-            "connectTimeout=200,connectRetry=0,syncTimeout=800";
+        using var dead = DeadLoopbackEndpoint.Reserve();
+        var connStr = DeadConn(dead, "password=sup3rsecret,user=default");
         var model = GetModel("cache", "user:42", "active");
 
         var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
@@ -250,8 +303,28 @@ public sealed class CacheAssertRedisEmitTests
 
         Assert.Equal(Verdict.EnvironmentError, outcome.Verdict);
         Assert.NotNull(outcome.Observation);
-        // §17: the password must never appear in the observation.
-        Assert.DoesNotContain("sup3rsecret", outcome.Observation!, StringComparison.Ordinal);
+        var obs = outcome.Observation!;
+
+        // §17: the password must never appear in the observation, in any spelling.
+        Assert.True(
+            !obs.Contains("sup3rsecret", StringComparison.Ordinal),
+            "observation leaked the password");
+
+        // The only row here with detection power of its own: `user=default` shares no
+        // substring with the password, so a regression that leaked the username alone
+        // would pass the row above and fail this one.  RedactCredentials strips the
+        // `user=` token for that reason — a username is credential material even though
+        // it is not the secret half of the pair.
+        Assert.True(
+            !obs.Contains("user=default", StringComparison.Ordinal),
+            "observation leaked the user= token");
+
+        // The whole connection string echoed verbatim.  This CONTAINS the password, so
+        // the first row already fails whenever this one would — it is kept so a failure
+        // names the leak shape rather than merely reporting that a secret appeared.
+        Assert.True(
+            !obs.Contains(connStr, StringComparison.Ordinal),
+            "observation echoed the connection string verbatim");
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────

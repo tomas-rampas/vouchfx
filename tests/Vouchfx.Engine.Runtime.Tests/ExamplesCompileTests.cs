@@ -123,16 +123,10 @@ public sealed class ExamplesCompileTests
     private const string SuiteNamespace = "VouchfxGenerated";
 
     // ── Discover every examples/**/*.e2e.yaml file from disk ───────────────────────────
-    // Mirrors Sprint11ReferenceCompileTests.ResolveRepoRoot: walk up from the test
-    // assembly's output directory (bin/Debug|Release/net8.0 under
-    // tests/Vouchfx.Engine.Runtime.Tests/) to the repo root.
-    private static string ResolveRepoRoot()
-    {
-        var assemblyDir = Path.GetDirectoryName(typeof(ExamplesCompileTests).Assembly.Location)!;
-        return Path.GetFullPath(Path.Combine(assemblyDir, "..", "..", "..", "..", ".."));
-    }
-
-    private static string ExamplesDirectory => Path.Combine(ResolveRepoRoot(), "examples");
+    // RepoRoot.Resolve() (#551) — anchored on vouchfx.sln, shared with every other test project
+    // that needs the repo root, rather than this file's own fixed-depth walk from the test
+    // assembly's output directory.
+    private static string ExamplesDirectory => Path.Combine(RepoRoot.Resolve(), "examples");
 
     /// <summary>
     /// Enumerates every <c>*.e2e.yaml</c> file under <c>examples/</c> (recursively), sorted
@@ -688,7 +682,7 @@ public sealed class ExamplesCompileTests
     [MemberData(nameof(ExampleFiles))]
     public void Example_ParsesValidatesAndCompiles(string path)
     {
-        var relativePath = Path.GetRelativePath(ResolveRepoRoot(), path);
+        var relativePath = Path.GetRelativePath(RepoRoot.Resolve(), path);
 
         EnsureFixtureMaterial(path);
 

@@ -16,7 +16,14 @@
       "captureSupported": true,
       "familyIntent": "Query a data store and assert properties of the result set or document.",
       "exactlyOneOfGroups": [],
-      "atLeastOneOfGroups": []
+      "atLeastOneOfGroups": [],
+      "tier": "core",
+      "supportedVerifyModes": [
+        "IMMEDIATE",
+        "RETRY"
+      ],
+      "docsUrl": "https://vouchfx.io/language-reference/#db-assertpostgres",
+      "example": "metadata:\n  name: scaffolded-suite\n  tags: [scaffolded]\n  description: Machine-drafted suite skeleton from vouchfx scaffold; review and fill before trust.\n\nenvironment:\n  dependencies:\n    postgres:\n      type: postgres\n\nsteps:\n  - id: db-assert-postgres\n    type: db-assert.postgres\n    expect:\n      rowCount: 0\n    query: SELECT 1 AS scaffold\n    target: postgres\n"
     },
     {
       "type": "http.rest",
@@ -35,7 +42,14 @@
       "captureSupported": true,
       "familyIntent": "Call HTTP endpoints (REST or SOAP) on services under test and assert responses.",
       "exactlyOneOfGroups": [],
-      "atLeastOneOfGroups": []
+      "atLeastOneOfGroups": [],
+      "tier": "core",
+      "supportedVerifyModes": [
+        "IMMEDIATE",
+        "RETRY"
+      ],
+      "docsUrl": "https://vouchfx.io/language-reference/#httprest",
+      "example": "metadata:\n  name: scaffolded-suite\n  tags: [scaffolded]\n  description: Machine-drafted suite skeleton from vouchfx scaffold; review and fill before trust.\n\nenvironment:\n  services:\n    app:\n      image: traefik/whoami\n      httpPort: 80\n\nsteps:\n  - id: http-rest\n    type: http.rest\n    method: GET\n    path: /\n    target: app\n"
     },
     {
       "type": "mq-publish.kafka",
@@ -52,7 +66,14 @@
       "captureSupported": true,
       "familyIntent": "Publish a message onto a broker to drive the system under test.",
       "exactlyOneOfGroups": [],
-      "atLeastOneOfGroups": []
+      "atLeastOneOfGroups": [],
+      "tier": "community",
+      "supportedVerifyModes": [
+        "IMMEDIATE",
+        "RETRY"
+      ],
+      "docsUrl": null,
+      "example": null
     },
     {
       "type": "script.csharp",
@@ -68,7 +89,14 @@
           "file"
         ]
       ],
-      "atLeastOneOfGroups": []
+      "atLeastOneOfGroups": [],
+      "tier": null,
+      "supportedVerifyModes": [
+        "IMMEDIATE",
+        "RETRY"
+      ],
+      "docsUrl": null,
+      "example": null
     },
     {
       "type": "mq-expect.azureservicebus",
@@ -90,7 +118,32 @@
           "expectPayloadContains",
           "expectProperties"
         ]
-      ]
+      ],
+      "tier": null,
+      "supportedVerifyModes": null,
+      "docsUrl": null,
+      "example": null
+    },
+    {
+      "type": "trace-expect.otlp",
+      "family": "trace-expect",
+      "provider": "otlp",
+      "requiredFields": [
+        "match",
+        "receiver"
+      ],
+      "optionalFields": [],
+      "captureSupported": true,
+      "familyIntent": "Expect distributed-trace spans (e.g. OTLP) matching declared criteria.",
+      "exactlyOneOfGroups": [],
+      "atLeastOneOfGroups": [],
+      "tier": "core",
+      "supportedVerifyModes": [
+        "IMMEDIATE",
+        "RETRY"
+      ],
+      "docsUrl": "https://vouchfx.io/language-reference/#trace-expectotlp",
+      "example": "metadata:\n  name: scaffolded-suite\n  tags: [scaffolded]\n  description: Machine-drafted suite skeleton from vouchfx scaffold; review and fill before trust.\n\nsteps:\n  - id: trace-expect-otlp\n    type: trace-expect.otlp\n    match:\n      traceId: \u002200000000000000000000000000000001\u0022\n    receiver: scaffold-receiver\n"
     }
   ]
 }

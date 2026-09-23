@@ -5393,6 +5393,17 @@ public static class ScenarioRunner
     /// observation the renderer was handed was already scrubbed before it entered the event
     /// stream this render replays.
     /// </para>
+    /// <para>
+    /// <strong>A hostile <c>Message</c> getter is guarded, not trusted (issue #518).</strong>
+    /// This method runs INSIDE <see cref="BuildDiffLookup"/>'s catch, so a second throw while
+    /// composing the diagnostic is not itself caught by anything — a provider exception type is
+    /// free to override <c>Message</c> and throw from the getter, which would re-open exactly the
+    /// escape #485 closed. <c>ex.GetType()</c> is <see cref="object"/>'s own non-virtual,
+    /// non-overridable method, so the dedup key and <c>faultType</c> stay unconditional; only the
+    /// <c>ex.Message</c> read is wrapped, and degrades to a fixed placeholder rather than the
+    /// provider's text — the type name alone (already in the composed line) is what a reader
+    /// needs to find the offending provider.
+    /// </para>
     /// </remarks>
     private static void ReportDiffRendererFault(
         TextWriter diagnostics,
@@ -5431,27 +5442,52 @@ public static class ScenarioRunner
                 + "test can produce) - this seam cannot tell the two apart"
             : $"This is a defect in the provider ({rendererTypeName}), not in the suite";
 
-        // ONE LINE MEANS ONE LINE, so the provider's message is flattened first.
-        // DisplaySanitiser deliberately PRESERVES \n — its remarks call it "common and benign in
-        // multi-line diagnostic text", which is true of the sites it was built for and false of
-        // this one. A provider exception message carrying newlines would otherwise split this
-        // diagnostic across several lines mid-render, which interleaves with the report the
-        // renderer is streaming and breaks the ONE-LINE-PER-FAULT RENDERING the CHANGELOG
-        // publishes ("one line per (kind, member, exception type) per run"). It would NOT break
-        // the once-per-fault property itself — `reported.TryAdd` above runs before this message
-        // is composed, so exactly one WriteLine happens either way; what a multi-line message
-        // costs is the shape of that one line, not its uniqueness.
-        //
-        // ReplaceLineEndings rather than a pair of Replace calls, and the difference is measured
-        // on this runtime (net8.0) rather than read off the documentation: it collapses a CRLF
-        // PAIR to a single space where two Replace calls leave two, and it recognises LF, CR,
-        // CRLF, FF (U+000C), NEL (U+0085), LS (U+2028) and PS (U+2029) in one pass. The last two
-        // are the reason this is not merely tidier: every other separator in that list is a
-        // C0/C1 control the sanitiser below strips anyway (it drops 0x00-0x1F except \t/\n, and
-        // 0x7F-0x9F), while U+2028/U+2029 sit outside both ranges and would otherwise reach the
-        // terminal intact. VT (U+000B) is NOT in the set ReplaceLineEndings recognises — also
-        // measured — and needs nothing here: it is a C0 control the sanitiser drops.
-        var flatMessage = ex.Message.ReplaceLineEndings(" ");
+        // Issue #518: Message is VIRTUAL, and a hostile or careless provider exception type is
+        // free to override it and throw from the getter itself. That would defeat the very
+        // containment this handler exists to provide: BuildDiffLookup's catch already contains
+        // the CanRender/RenderDiff throw, but this method runs INSIDE that catch, and a second
+        // throw while composing the diagnostic is not inside any try there either — it would
+        // escape past BuildDiffLookup, past TerminalRenderer's per-envelope filter (narrowed to
+        // JsonException/InvalidOperationException and so no backstop for an arbitrary second
+        // throw), and take the whole render down exactly as issue #485 did. `faultType` and the
+        // dedup key above read `ex.GetType()` instead of a provider-overridable member — that is
+        // Object's own non-virtual, non-overridable method, so those stay unconditional; only the
+        // Message read needs the guard. A throw here degrades to the exception's type name alone,
+        // which the composed line already carries via `faultType`, so no attribution is lost.
+        string flatMessage;
+        try
+        {
+            // ONE LINE MEANS ONE LINE, so the provider's message is flattened first.
+            // DisplaySanitiser deliberately PRESERVES \n — its remarks call it "common and benign
+            // in multi-line diagnostic text", which is true of the sites it was built for and
+            // false of this one. A provider exception message carrying newlines would otherwise
+            // split this diagnostic across several lines mid-render, which interleaves with the
+            // report the renderer is streaming and breaks the ONE-LINE-PER-FAULT RENDERING the
+            // CHANGELOG publishes ("one line per (kind, member, exception type) per run"). It
+            // would NOT break the once-per-fault property itself — `reported.TryAdd` above runs
+            // before this message is composed, so exactly one WriteLine happens either way; what
+            // a multi-line message costs is the shape of that one line, not its uniqueness.
+            //
+            // ReplaceLineEndings rather than a pair of Replace calls, and the difference is
+            // measured on this runtime (net8.0) rather than read off the documentation: it
+            // collapses a CRLF PAIR to a single space where two Replace calls leave two, and it
+            // recognises LF, CR, CRLF, FF (U+000C), NEL (U+0085), LS (U+2028) and PS (U+2029) in
+            // one pass. The last two are the reason this is not merely tidier: every other
+            // separator in that list is a C0/C1 control the sanitiser below strips anyway (it
+            // drops 0x00-0x1F except \t/\n, and 0x7F-0x9F), while U+2028/U+2029 sit outside both
+            // ranges and would otherwise reach the terminal intact. VT (U+000B) is NOT in the set
+            // ReplaceLineEndings recognises — also measured — and needs nothing here: it is a C0
+            // control the sanitiser drops.
+            flatMessage = ex.Message.ReplaceLineEndings(" ");
+        }
+        catch (Exception)
+        {
+            // The provider's Message getter is itself the fault now; nothing it could report
+            // would be trustworthy, so no attempt is made to read it a second way (ToString()
+            // would routinely re-enter the same broken getter by convention). The FullName-keyed
+            // dedup above and `faultType` in the line below still identify the offending type.
+            flatMessage = "(unavailable - the exception's own Message getter also threw)";
+        }
 
         diagnostics.WriteLine(
             DisplaySanitiser.SanitiseForDisplay(

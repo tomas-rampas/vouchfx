@@ -54,12 +54,178 @@ public sealed class HeadlessTopology : IAsyncDisposable
 {
     private readonly DistributedApplication _app;
     private readonly DcpFlightRecorder? _recorder;
+
+    // #438: the ledger of host-filesystem directories a configureResources callback creates as
+    // bind-mount sources for a container this instance started (today: EnvironmentMapper's
+    // azureservicebus Config.json directory) — generic here deliberately, so HeadlessTopology
+    // stays unaware of what a directory holds or which dependency type created it. Closed in
+    // DisposeAsync, AFTER StopAsync returns, so deletion never races a container that still holds
+    // the mount, and so a start hook that still fires after that close refuses rather than
+    // creating a directory nothing will ever remove (TempDirectoryLedger's own remarks explain
+    // the race this closes). The constructor takes it from the app's own services, where
+    // EnvironmentMapper's Configure registers it, so it is attached whoever called StartAsync and
+    // no public input ever names a directory to delete. Defaults to a fresh, open, empty ledger
+    // rather than null, so a topology that tracks nothing (every non-azureservicebus topology)
+    // still has something harmless for DisposeAsync to close.
+    private TempDirectoryLedger _tempDirectoriesToClean = new();
+
     private bool _disposed;
 
     private HeadlessTopology(DistributedApplication app, DcpFlightRecorder? recorder)
     {
         _app = app;
         _recorder = recorder;
+
+        // #438: a mapped topology registers its temp-directory ledger in the builder's services
+        // (EnvironmentMapper's Configure), so the topology that owns the app attaches it here,
+        // whoever called StartAsync. Absent for any other configureResources callback.
+        if (app.Services.GetService<TempDirectoryLedger>() is { } ledger)
+        {
+            _tempDirectoriesToClean = ledger;
+        }
+    }
+
+    /// <summary>The name prefix of every temp directory the engine creates for itself (#438).</summary>
+    internal const string EngineTempDirectoryPrefix = "vouchfx-";
+
+    /// <summary>
+    /// Whether <paramref name="path"/> is a directory the engine could have created for itself: a
+    /// direct child of the system temp directory whose name starts with
+    /// <see cref="EngineTempDirectoryPrefix"/>. <see cref="DisposeAsync"/> deletes nothing else,
+    /// whatever its temp-directory ledger holds (#438).
+    /// </summary>
+    internal static bool IsEngineOwnedTempDirectory(string path)
+    {
+        var comparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+
+        try
+        {
+            var full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+            var tempRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(Path.GetTempPath()));
+
+            return string.Equals(Path.GetDirectoryName(full), tempRoot, comparison)
+                && Path.GetFileName(full).StartsWith(EngineTempDirectoryPrefix, StringComparison.Ordinal);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            // A path that cannot even be normalised is certainly not one the engine created.
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Closes <paramref name="ledger"/> and removes every directory its closing snapshot names
+    /// that <see cref="IsEngineOwnedTempDirectory"/> accepts, best-effort and one directory at a
+    /// time (#438).
+    /// </summary>
+    /// <param name="ledger">
+    /// The ledger a start hook stages into — today, EnvironmentMapper's
+    /// <c>MappedTopology.AsbTempDirectoriesCreated</c>. <see cref="TempDirectoryLedger.Close"/>
+    /// takes the snapshot and permanently refuses every later
+    /// <see cref="TempDirectoryLedger.Stage"/> call, both under the ledger's own lock.
+    /// </param>
+    /// <remarks>
+    /// <para>
+    /// Two callers, one for each way a run can end once a start hook may have run.
+    /// <see cref="DisposeAsync"/> calls it after <c>StopAsync</c> has returned, so deletion never
+    /// races a container that still holds the mount. <see cref="StartAsync"/>'s own failure
+    /// catch calls it when the start throws, after disposing the app: no topology will ever own
+    /// the ledger then, so without this call a directory the hook created before the failure
+    /// would outlive the run. Both take the ledger from the app's services, where
+    /// <c>EnvironmentMapper</c>'s Configure registers it, so a caller that starts a mapped
+    /// topology through <see cref="StartAsync"/> directly gets both.
+    /// </para>
+    /// <para>
+    /// <b>The true guarantee, not the one this comment used to claim.</b> This used to snapshot a
+    /// plain list under a lock a start hook also took, and claimed that lock made "no hook is
+    /// still running once this returns" "a guarantee rather than an assumption about Aspire's
+    /// event ordering". That overclaimed: the lock made the snapshot itself atomic, but nothing
+    /// stopped a hook from running, and creating a directory, AFTER the snapshot had already been
+    /// taken and deleted from — per Aspire 13.4.2's own source, a cancelled <c>StartAsync</c> can
+    /// return while DCP is still creating containers in the background, and that background work
+    /// can still fire the hook. The guarantee this call actually has is narrower and is now true:
+    /// closing and snapshotting <paramref name="ledger"/> happen under the SAME lock
+    /// <see cref="TempDirectoryLedger.Stage"/> holds for its own create-record-populate sequence
+    /// (see that type's remarks), so every <c>Stage</c> call either finishes completely before
+    /// this close (its directory IS in the snapshot below) or starts completely after it (it
+    /// throws <see cref="InvalidOperationException"/> and creates nothing) — never a directory
+    /// that exists on disk but appears in no snapshot this method ever took.
+    /// </para>
+    /// <para>
+    /// Only the IO-family exceptions a still-held mount realistically produces are swallowed:
+    /// the directory already gone, or still locked because a bounded <c>StopAsync</c> was cut
+    /// short. Every entry the engine stages comes from a controlled
+    /// <c>Path.Combine(Path.GetTempPath(), "vouchfx-asb-&lt;guid&gt;")</c> construction, so no
+    /// other exception type is expected from <c>Directory.Delete</c> on it, and an entry that is
+    /// not engine-owned is never deleted at all.
+    /// </para>
+    /// </remarks>
+    internal static void DeleteEngineOwnedTempDirectories(TempDirectoryLedger ledger)
+    {
+        ArgumentNullException.ThrowIfNull(ledger);
+
+        // Close() takes the snapshot and permanently refuses every later Stage() call, both
+        // under the ledger's own lock — see the remarks above and TempDirectoryLedger's own
+        // header for why that is what makes "no hook creates something after this snapshot" a
+        // guarantee rather than an assumption about Aspire's event ordering.
+        var snapshot = ledger.Close();
+
+        foreach (var dir in snapshot)
+        {
+            // Defence in depth: the ledger is engine-internal and today holds only
+            // EnvironmentMapper's vouchfx-asb-<guid> directories, but a recursive delete is not
+            // something a future entry should be able to aim anywhere else.
+            if (!IsEngineOwnedTempDirectory(dir))
+            {
+                continue;
+            }
+
+            try
+            {
+                Directory.Delete(dir, recursive: true);
+            }
+            catch (IOException)
+            {
+                // Still mounted, or already removed (DirectoryNotFoundException derives from
+                // IOException) — either way, not this teardown's fault to report.
+            }
+            catch (UnauthorizedAccessException)
+            {
+                // A still-running container (StopAsync timed out) can hold the mount in a way
+                // that denies the delete rather than raising IOException.
+            }
+        }
+    }
+
+    /// <summary>
+    /// Test seam (#438): wraps an already-<c>Build()</c>-built but never-<c>StartAsync()</c>-ed
+    /// <see cref="DistributedApplication"/> in a <see cref="HeadlessTopology"/>, bypassing
+    /// <see cref="StartAsync"/>'s DCP path resolution, logging setup and — critically —
+    /// <c>StartAsync</c> itself. Lets <c>DisposeAsync</c>'s <c>tempDirectoriesToClean</c> cleanup
+    /// loop be pinned in isolation, without Docker, DCP, or a real container: an un-started host's
+    /// own <c>StopAsync</c>/<c>DisposeAsync</c> are reached exactly as a started one's are (both
+    /// calls are unconditionally guarded already), so the only thing this seam changes is skipping
+    /// the DCP orchestration <see cref="StartAsync"/> would otherwise require.
+    /// </summary>
+    /// <remarks>
+    /// <c>internal</c>, not <c>private</c> — same reasoning as <see cref="ApplyDcpPathSelfHeal"/>:
+    /// the Orchestration test project sees it via this project's assembly-level
+    /// <c>InternalsVisibleTo</c>. No production caller exists; <see cref="StartAsync"/> is
+    /// otherwise unchanged.
+    /// </remarks>
+    internal static HeadlessTopology ForTestingDisposal(
+        DistributedApplication app,
+        TempDirectoryLedger? tempDirectoriesToClean = null)
+    {
+        var topology = new HeadlessTopology(app, recorder: null);
+        if (tempDirectoriesToClean is not null)
+        {
+            topology._tempDirectoriesToClean = tempDirectoriesToClean;
+        }
+
+        return topology;
     }
 
     /// <summary>
@@ -234,7 +400,24 @@ public sealed class HeadlessTopology : IAsyncDisposable
             // StartAsync can fail with an Environment error (image-pull failure, DCP crash, partial
             // start).  The DistributedApplication is IAsyncDisposable and already holds resources
             // that must be released; dispose it before re-throwing so containers do not leak.
-            await app.DisposeAsync().ConfigureAwait(false);
+            // #438: a start hook may already have staged a temp directory into the mapped
+            // topology's ledger, and no HeadlessTopology will ever own it, so this failure path
+            // closes the ledger itself. Resolved before the dispose, which disposes the service
+            // provider; cleaned after it, so deletion follows DCP's own stop, and in a finally,
+            // so a dispose that throws cannot skip it.
+            var tempDirectoryLedger = app.Services.GetService<TempDirectoryLedger>();
+            try
+            {
+                await app.DisposeAsync().ConfigureAwait(false);
+            }
+            finally
+            {
+                if (tempDirectoryLedger is not null)
+                {
+                    DeleteEngineOwnedTempDirectories(tempDirectoryLedger);
+                }
+            }
+
             throw;
         }
 
@@ -436,9 +619,17 @@ public sealed class HeadlessTopology : IAsyncDisposable
             // TopologyTeardownLeakTests, not by a runtime log.
         }
 
-        // Guarded for the reason the catch above already states as a RULE — "teardown must never
-        // throw into the verdict path (§12.1)" — which this line contradicted by being the one
-        // teardown call left bare (issue #466). It is the final release, so nothing follows it
+        // #438: remove every host-filesystem directory a resource created as a bind-mount
+        // source once its container actually started (today: EnvironmentMapper's
+        // azureservicebus Config.json directory) — AFTER StopAsync above has returned, so
+        // deletion never races a container that still holds the mount. Best-effort and
+        // per-directory, so one failure cannot stop the others or skip the final _app release
+        // below; see DeleteEngineOwnedTempDirectories for what is swallowed and why.
+        DeleteEngineOwnedTempDirectories(_tempDirectoriesToClean);
+
+        // Guarded for the reason the StopAsync catch above already states as a RULE — "teardown
+        // must never throw into the verdict path (§12.1)" — which this line contradicted by being
+        // the one teardown call left bare (issue #466). It is the final release, so nothing follows it
         // that a swallow can skip, and it runs from `finally`/`await using` frames on every run
         // path: an exception raised here does not merely add a fault, it REPLACES whatever
         // verdict or exception was already in flight, and under `--parallel` lands in the slot

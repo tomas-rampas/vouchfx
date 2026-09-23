@@ -97,6 +97,44 @@ file sealed class StubThrowingRenderDiffProvider : DiffStubProviderBase, IStepDi
     private static object? AbsentField(JsonElement observation) => null;
 }
 
+/// <summary>
+/// A provider-shaped exception whose own <see cref="Message"/> getter throws (issue #518) —
+/// deliberately or by accident, since a lazily-composed message can dereference state the
+/// failure already invalidated.  Nothing stops a provider's exception type doing this, and
+/// <c>ScenarioRunner.ReportDiffRendererFault</c> reads <c>ex.Message</c> while already inside
+/// <c>BuildDiffLookup</c>'s catch, so a second throw from here is not itself caught by anything
+/// upstream of the fix.  The getter produces a REAL <see cref="System.NullReferenceException"/>
+/// the way a defective getter produces one — by dereferencing something it assumed was there —
+/// rather than throwing the type directly, which CA2201 forbids.  The TYPE is load-bearing
+/// exactly as <see cref="StubThrowingRenderDiffProvider.RenderDiff"/>'s is: it sits outside
+/// BOTH renderers' <c>JsonException or InvalidOperationException</c> filter, so an unguarded
+/// compose step escapes past them and takes the whole render down, rather than being silently
+/// reabsorbed by a filter that happens to tolerate the same type (as an
+/// <see cref="System.InvalidOperationException"/> here would be).
+/// </summary>
+file sealed class HostileMessageException : System.Exception
+{
+    public override string Message => AbsentField()!.ToString()!;
+
+    /// <summary>Always <see langword="null"/> — the "field the Message getter assumed was there".</summary>
+    private static object? AbsentField() => null;
+}
+
+/// <summary>
+/// <c>RenderDiff</c> throws <see cref="HostileMessageException"/> — the escape #518 closes, on
+/// the same member and the same composing method <see cref="StubThrowingRenderDiffProvider"/>
+/// exercises for the plain-throw case.
+/// </summary>
+[StepProvider]
+file sealed class StubThrowingMessageRenderDiffProvider : DiffStubProviderBase, IStepDiffRenderer
+{
+    public override StepKindId Kind => new("stub", "throwing-message-renderdiff");
+
+    public bool CanRender(JsonElement observation) => true;
+
+    public string? RenderDiff(JsonElement observation) => throw new HostileMessageException();
+}
+
 /// <summary><c>CanRender</c> throws — a renderer broken for every payload, not just one.</summary>
 [StepProvider]
 file sealed class StubThrowingCanRenderProvider : DiffStubProviderBase, IStepDiffRenderer
@@ -459,6 +497,44 @@ public sealed class DiffRendererThrowContainmentTests
             typeof(DiffRendererThrowContainmentTests).Namespace!,
             diagnostics,
             System.StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Issue #518: a provider exception whose OWN <c>Message</c> getter throws must not escape
+    /// the containment #485 built. <c>ReportDiffRendererFault</c> runs INSIDE
+    /// <c>BuildDiffLookup</c>'s catch and reads <c>ex.Message</c> while composing the diagnostic
+    /// — a second throw there used to propagate straight out of the closure, past
+    /// <c>TerminalRenderer</c>'s per-envelope filter (narrowed to
+    /// <see cref="JsonException"/>/<see cref="System.InvalidOperationException"/>, so no backstop
+    /// for an arbitrary second throw) and take the whole render down, exactly like the original
+    /// #485 escape. The run must still complete, every artefact must still land, and the
+    /// diagnostic must still name the exception's TYPE (<c>ex.GetType()</c> cannot be overridden
+    /// to throw) even though its message could not be read.
+    /// </summary>
+    [Fact]
+    public void RenderDiffThrowsAndTheExceptionsMessageGetterAlsoThrows_TerminalAndEveryArtefactStillWritten()
+    {
+        var (terminal, diagnostics, html, junit, events) =
+            RenderEverything(FailedStep("stub.throwing-message-renderdiff"));
+
+        Assert.Contains(StepId, terminal, System.StringComparison.Ordinal);
+        Assert.Contains("FAIL", terminal, System.StringComparison.Ordinal);
+
+        Assert.Contains(StepId, html, System.StringComparison.Ordinal);
+        Assert.Contains("</html>", html, System.StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(ScenarioId, junit, System.StringComparison.Ordinal);
+        Assert.Contains("</testsuites>", junit, System.StringComparison.Ordinal);
+        Assert.Equal(4, events.Split('\n', System.StringSplitOptions.RemoveEmptyEntries).Length);
+
+        // Only the diff is absent — the HTML carries no diff fragment for this step.
+        Assert.DoesNotContain("class=\"diff\"", html, System.StringComparison.Ordinal);
+
+        // The fault is still named by TYPE, degrading past the unreadable message rather than
+        // taking the render down with it.
+        Assert.Contains(
+            "stub.throwing-message-renderdiff", diagnostics, System.StringComparison.Ordinal);
+        Assert.Contains(nameof(IStepDiffRenderer.RenderDiff), diagnostics, System.StringComparison.Ordinal);
+        Assert.Contains(nameof(HostileMessageException), diagnostics, System.StringComparison.Ordinal);
     }
 
     // ── CanRender throws ──────────────────────────────────────────────────────

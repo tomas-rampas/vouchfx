@@ -309,7 +309,7 @@ public sealed class HandOffHintTests
     /// Assembles a real <see cref="PlanInputs"/> from a fixture suite directory, using the
     /// same internal Ingest seam <c>RunCorrelatorTests</c> already exercises directly
     /// (<see cref="SuiteSetLoader"/>, <see cref="EventHistoryReader"/>,
-    /// <see cref="RunCorrelator"/>) plus <see cref="EngineExport.BuildCatalogue"/> — the exact
+    /// <see cref="RunCorrelator"/>) plus <see cref="EngineExport.BuildCatalogue(Vouchfx.Sdk.StepKindRegistry, string)"/> — the exact
     /// sequence <c>PlanExport.BuildPlan</c> itself runs (including its fail-closed catalogue
     /// guard, whose return value <see cref="PlanInputs"/> no longer carries — see
     /// <c>PlanExport.BuildPlan</c>'s own comment; REQ-005/REQ-007 classify against

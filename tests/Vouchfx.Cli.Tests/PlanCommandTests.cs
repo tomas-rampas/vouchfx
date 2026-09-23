@@ -509,7 +509,7 @@ public sealed class PlanCommandTests
     /// <summary>
     /// Implements <see cref="IStepProvider"/> only — no <c>IStepBinder&lt;T&gt;</c>, so the
     /// registry records a <see langword="null"/> <c>SchemaFragment</c> (the fail-closed
-    /// export target <see cref="EngineExport.BuildCatalogue"/> rejects).
+    /// export target <see cref="EngineExport.BuildCatalogue(StepKindRegistry, string)"/> rejects).
     /// </summary>
     [StepProvider]
     private sealed class IncompleteNoFragmentProvider : IStepProvider

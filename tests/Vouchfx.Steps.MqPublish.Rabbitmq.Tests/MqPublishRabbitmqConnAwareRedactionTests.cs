@@ -19,6 +19,11 @@
 //       Redaction correctness is covered by the crafted-message tests (1) and (2) above.
 //   (4) Regex-fallback isolation: amqpUri="" disables steps (a)+(b); a message with '@'
 //       in the password exercises only the greedy step-(c) regex.
+//   (5) Decoded-vs-escaped password divergence (#553): Uri.UserInfo (and the password
+//       extracted from it) is percent-ESCAPED, but RabbitMQ.Client 7.2.1 stores and may
+//       echo the DECODED password.  A password that percent-encodes to something else
+//       (e.g. "p@ss" -> "p%40ss") previously evaded step (b) entirely when the message
+//       echoed it decoded and carried no "amqp://" prefix for step (c) to catch.
 using Vouchfx.Engine.Abstractions;
 using Vouchfx.Engine.Compilation;
 using Vouchfx.Sdk;
@@ -205,5 +210,38 @@ public sealed class MqPublishRabbitmqConnAwareRedactionTests
         // New [^/\s]*@ → matches "amqp://alice:p@ssw0rd@" → full password gone             → PASS.
         Assert.DoesNotContain("ssw0rd", result, StringComparison.Ordinal);
         Assert.Contains("amqp://***@", result, StringComparison.Ordinal);
+    }
+
+    // ── (5) Decoded password diverges from its escaped form (#553) ────────────────
+
+    /// <summary>
+    /// A password whose DECODED form differs from its ESCAPED form must be redacted even
+    /// when the driver echoes the password decoded rather than in <c>Uri.UserInfo</c>'s
+    /// percent-escaped form. <c>"p@ss"</c> percent-encodes to <c>"p%40ss"</c> in the URI's
+    /// userinfo, so <c>Uri.UserInfo</c> yields the ESCAPED password <c>"p%40ss"</c> — but
+    /// RabbitMQ.Client 7.2.1 stores and may echo the DECODED password <c>"p@ss"</c>. The
+    /// crafted message below carries no <c>amqp://</c> prefix (mirroring case (1)'s
+    /// SetUri-style message), so step (c)'s regex fallback cannot fire either — only the
+    /// decoded-password replacement added to step (b) catches this.
+    /// </summary>
+    [Fact]
+    public async Task RedactAmqpUri_DecodedPasswordDiffersFromEscapedForm_IsFullyRedacted()
+    {
+        const string amqpUri = "amqp://alice:p%40ss@host:5672";
+        const string message = "Bad user info in AMQP URI: alice:p@ss";
+
+        var result = await CallRedactAsync(amqpUri, message);
+
+        // The DECODED password must be absent — Uri.UserInfo alone (escaped "p%40ss")
+        // would never match this message.
+        // Boolean assertions with fixed diagnostics, never Assert.Contains/DoesNotContain on
+        // `result`: xUnit prints the actual string on failure, which here would publish the
+        // very password this test exists to keep out of a log.
+        Assert.True(
+            !result.Contains("p@ss", StringComparison.Ordinal),
+            "result leaked the decoded password");
+        Assert.True(
+            result.Contains("***", StringComparison.Ordinal),
+            "result does not carry the redaction marker");
     }
 }

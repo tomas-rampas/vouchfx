@@ -10,6 +10,12 @@
 // The --json document is the public shape-level catalogue (EngineExport.BuildCatalogue):
 // every registered type with required/optional fields, captureSupported, and familyIntent.
 // Incomplete metadata fails the entire export (non-zero exit, no partial document).
+//
+// #556 (additive): the catalogue is built with ProviderRegistryFactory.CoreProviderAssemblies()
+// as the Core set — the same method that feeds BuildCoreRegistry(), so the set and the
+// registry cannot disagree — which makes every entry tier "core" and gives each one its
+// language-reference docsUrl and a validated example suite. The human table is unchanged: it
+// still prints TYPE / FAMILY / PROVIDER / VERSION and nothing the four new fields carry.
 
 using System.CommandLine;
 using Vouchfx.Engine.Compilation.Schema;
@@ -73,14 +79,16 @@ internal static class ListCommand
     {
         Description = "Emit a single schema-versioned JSON catalogue document to stdout "
             + "instead of the human-readable table (required/optional fields, capture "
-            + "support, family intent per step type).",
+            + "support, family intent, tier, supported verify modes, language-reference "
+            + "link and a minimal example suite per step type).",
     };
 
     /// <summary>
     /// The Docker-free orchestration of a <c>list</c> invocation: freezes the Core
     /// registry, builds the shape-level catalogue via
-    /// <see cref="EngineExport.BuildCatalogue"/>, and renders either the human table or
-    /// the <c>--json</c> document.
+    /// <see cref="EngineExport.BuildCatalogue(StepKindRegistry, string, IEnumerable{System.Reflection.Assembly})"/>
+    /// with the CLI's Core assembly set, and renders either the human table or the
+    /// <c>--json</c> document.
     /// </summary>
     /// <param name="json">When <see langword="true"/>, emit the JSON document instead of the human table.</param>
     /// <param name="output">The writer that receives the table / JSON document.</param>
@@ -106,7 +114,15 @@ internal static class ListCommand
         StepCatalogueDocument catalogue;
         try
         {
-            catalogue = EngineExport.BuildCatalogue(registry, CliJsonContract.EngineVersion);
+            // The four #556 members reach only the --json output; the human table shows none
+            // of them. So the table keeps the overload without a Core set, which never runs the
+            // scaffolder or computes a docs link, and its output and cost are what they were.
+            catalogue = json
+                ? EngineExport.BuildCatalogue(
+                    registry,
+                    CliJsonContract.EngineVersion,
+                    ProviderRegistryFactory.CoreProviderAssemblies())
+                : EngineExport.BuildCatalogue(registry, CliJsonContract.EngineVersion);
         }
         catch (CatalogueExportException ex)
         {

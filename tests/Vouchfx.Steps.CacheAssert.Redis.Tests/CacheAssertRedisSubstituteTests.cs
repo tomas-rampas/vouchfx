@@ -11,6 +11,7 @@ using Vouchfx.Engine.Abstractions;
 using Vouchfx.Engine.Compilation;
 using Vouchfx.Sdk;
 using Vouchfx.Steps.CacheAssert.Redis;
+using Vouchfx.TestSupport;
 using Xunit;
 
 namespace Vouchfx.Steps.CacheAssert.Redis.Tests;
@@ -150,11 +151,16 @@ public sealed class CacheAssertRedisSubstituteTests
                 typeof(System.Text.RegularExpressions.Regex).Assembly.Location,
             });
 
+        // The endpoint is dead because this process holds the port for the row's lifetime
+        // (#527) — abortConnect=false keeps Connect from throwing, and connectRetry=0 plus
+        // the small timeouts bound the wait.
+        using var dead = DeadLoopbackEndpoint.Reserve();
         var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
         {
             ["userId"] = "42",
             [VarKeys.Connection("cache")] =
-                "localhost:56789,abortConnect=false,connectTimeout=200,connectRetry=0,syncTimeout=800",
+                $"{dead.Authority},abortConnect=false,connectTimeout=200,connectRetry=0," +
+                "syncTimeout=800",
         };
         var globals = new ScriptGlobalVariables(vars);
 

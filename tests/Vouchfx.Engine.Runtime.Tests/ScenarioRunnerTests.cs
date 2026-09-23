@@ -295,6 +295,70 @@ public sealed class ScenarioRunnerTests
     }
 
     /// <summary>
+    /// A service's <c>env:</c> reference to an UNSET process environment variable
+    /// (<c>${env:NAME}</c>, EDGE-008) must be classified as <see cref="Verdict.Inconclusive"/>
+    /// through the sequential/single-scenario <see cref="ScenarioRunner.RunAsync"/> path — NOT
+    /// <see cref="Verdict.EnvironmentError"/> — exactly like the <c>${conn:typo}</c> twin above.
+    /// No Docker is required: <c>EnvironmentMapper.Map</c> throws before
+    /// <c>HeadlessTopology.StartAsync</c> (and therefore DCP) is ever reached.
+    /// </summary>
+    /// <remarks>
+    /// Pins issue #437: two published surfaces
+    /// (<c>docs/02_YAML_DSL_Specification_and_VSCode_Extension_Design.md</c> and this project's
+    /// <c>CHANGELOG.md</c>) told authors an unset <c>${env:NAME}</c> reference is reported as an
+    /// <b>Environment error</b>, gated by <c>--fail-on-env-error</c>. Measured against the built
+    /// CLI, it is <see cref="Verdict.Inconclusive"/> — gated by <c>--fail-on-inconclusive</c>
+    /// instead, exactly as the taxonomy already treats the sibling
+    /// <c>${conn:typo}</c>/malformed-secret refusals above — and nothing pinned that before this
+    /// test. The variable name is GUID-suffixed so this test cannot collide with a variable the
+    /// host process genuinely has set.
+    /// </remarks>
+    [Fact]
+    public async Task RunAsync_EnvConfigReferencesUnsetEnvironmentVariable_ReturnsInconclusive_NoTopology()
+    {
+        var unsetVarName = "VOUCHFX_PIN437_" + Guid.NewGuid().ToString("N");
+        // Defensive: guarantee the variable is genuinely unset for this process, regardless of
+        // the host shell's own environment (mirrors EnvironmentMapperTests' EDGE-008 discipline)
+        // — belt-and-braces beside the GUID suffix, which already makes a collision vanishingly
+        // unlikely.
+        Environment.SetEnvironmentVariable(unsetVarName, null);
+
+        const string yamlTemplate = """
+            environment:
+              services:
+                api:
+                  image: myorg/api:1.0
+                  env:
+                    FOO: "${env:__UNSET_VAR_NAME__}"
+            steps:
+              - id: get-noop
+                type: http.rest
+                target: api
+                method: GET
+                path: /
+                expect:
+                  status: 200
+            """;
+        var yaml = yamlTemplate.Replace("__UNSET_VAR_NAME__", unsetVarName, StringComparison.Ordinal);
+
+        var sw = new StringWriter();
+
+        var verdict = await ScenarioRunner.RunAsync(
+            yamlText: yaml,
+            scenarioName: "env-config-unset-variable",
+            providerAssemblies: ProviderAssemblies,
+            appHostAssemblyName: AppHostAssemblyName,
+            output: sw);
+
+        Assert.Equal(Verdict.Inconclusive, verdict);
+        Assert.NotEqual(Verdict.EnvironmentError, verdict);
+        Assert.NotEqual(Verdict.Fail, verdict);
+
+        var rendered = sw.ToString();
+        Assert.Contains(unsetVarName, rendered, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// A <c>db-assert.postgres</c> step whose <c>expect.row</c> value references an
     /// unknown secret source must be rejected by the central secret-validation pass
     /// before the topology is started, returning <see cref="Verdict.Inconclusive"/>.

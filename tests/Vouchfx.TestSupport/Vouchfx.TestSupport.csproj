@@ -14,9 +14,15 @@
     assemblies: TestCertificateAuthority / TestCertificateStoreGuard (the mTLS
     certificate bed), ChildProcess.KillTreeQuietly (the guarded tree-kill every
     child-process launch site calls from its `finally`, lifted here by #475 once a
-    second assembly needed it), and HostPathDisclosure.AssertNoAbsoluteHostPath (the
+    second assembly needed it), HostPathDisclosure.AssertNoAbsoluteHostPath (the
     "no resolved host path reached this channel" property, lifted here by #473 after
-    two divergent private copies were found in Vouchfx.Engine.Runtime.Tests).
+    two divergent private copies were found in Vouchfx.Engine.Runtime.Tests), and
+    DeadLoopbackEndpoint (the held, never-listening loopback reservation a row points at
+    when it needs a connect to be REFUSED, lifted here by #527 once four more files in
+    three more assemblies would otherwise have copied #461's private nested original), and
+    RepoRoot.Resolve (the repository-checkout-root walk, anchored on vouchfx.sln, lifted here
+    by #551 once nine copies of the same FIXED-DEPTH walk - with no anchor check at all - were
+    found drifting across two assemblies).
 
     THIS LIST IS AN INDEX, AND KEEPING IT CURRENT IS THE POINT OF IT: an entry that
     is missing is a helper the next author does not know exists, and a helper nobody

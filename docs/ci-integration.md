@@ -206,6 +206,25 @@ A failed probe is the exception because it already reports a measured security f
 words. Note the reach: this line goes to **stdout only** — it is in neither `--junit` nor `--events`,
 so a job that reads only the machine-readable artefacts sees a bare non-zero exit and nothing else.
 
+**The provider- or engine-surface guard rule carries the same kind of line.** It needs one more than
+the parse-failure and nothing-executed rules beside it do: those two fire on a run that is *visibly*
+broken — nothing executed, or a file the engine could not read — while this rule can fire on a run
+whose terminal shows a *passing* scenario, with the refused sibling's own diagnostic one line among
+many. Printed exactly when this rule, and no earlier rule, is why the run is non-zero:
+
+> This run exits non-zero because a scenario was refused at a provider- or engine-surface guard
+> before it could run, not because of any verdict reported above: that alone makes a run non-zero
+> whatever its siblings did, including a scenario that ran and passed. The diagnostic naming what
+> failed is printed above; this line exists only to connect it to the exit code.
+
+It follows the security line's own reach — **stdout only**, absent from `--junit` and `--events` — and
+the two lines never print together: REQ-018's carve-out is decided inside `ExitCodes.FromVerdict`
+before this rule is ever consulted, so whenever the security line is why the run is non-zero, this one
+stays silent rather than printing a second, redundant explanation. It names no step, deliberately: the
+diagnostic the guard itself printed above already names the offending step and its provider type where
+one exists, and the suite-level CSX-assembly-failure arm has none to give (the exception it catches
+does not identify the fragment), so one wording serves both arms truthfully.
+
 #### What does *not* break CI
 
 - **A topology that came up and then failed its health gate, when that is the run's *only* fault.**
@@ -374,7 +393,7 @@ which force-moves them to each published release's commit:
 | Tag | Tracks | State |
 |---|---|---|
 | `v1-alpha` | `v1.0.0-alpha.N` and `v1.0.0-beta.N` | Retired at `v1.0.0-alpha.10` — never deleted, simply no longer moved. |
-| `v1-rc` | `v1.0.0-rc.N` | Current pre-GA tag. Tracks the latest release candidate; currently points at `v1.0.0-rc.3`. Moving to v1 at GA is an explicit edit. |
+| `v1-rc` | `v1.0.0-rc.N` | Current pre-GA tag. Tracks the latest release candidate; currently points at `v1.0.0-rc.5`. Moving to v1 at GA is an explicit edit. |
 | `v1` | `v1.y.z` GA releases only | Starts moving once v1.0.0 ships. |
 
 **Each pre-GA line gets its own tag on purpose.** A consumer who pinned `v1-alpha` chose the alpha
@@ -496,7 +515,7 @@ For production use, pin everything to something immutable.
 
 1. **Pin the `uses:` reference to a full commit SHA**, not a moving branch or tag:
    ```yaml
-   uses: tomas-rampas/vouchfx/.github/workflows/vouchfx-run.yml@a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0 # v1.0.0-rc.3
+   uses: tomas-rampas/vouchfx/.github/workflows/vouchfx-run.yml@a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0 # v1.0.0-rc.5
    ```
    A branch or tag ref — including the `v1-alpha`/`v1-rc`/`v1` convenience tags — lets the workflow definition
    change underneath you; a SHA is immutable. The trailing `# vX.Y.Z` comment is not decorative: it is
@@ -537,13 +556,13 @@ opening an MR to bump the pinned SHA and its trailing comment.
 **Resolving a SHA by hand** (the first pin, or without Dependabot/Renovate):
 
 ```bash
-git ls-remote --tags https://github.com/tomas-rampas/vouchfx v1.0.0-rc.3
+git ls-remote --tags https://github.com/tomas-rampas/vouchfx v1.0.0-rc.5
 ```
 
 Depending on how the release tag was created (both kinds are documented in
 [RELEASING.md](https://github.com/tomas-rampas/vouchfx/blob/main/RELEASING.md)), this prints either
-*two* lines — `refs/tags/v1.0.0-rc.3` (an annotated tag object's own SHA) and
-`refs/tags/v1.0.0-rc.3^{}` (the commit it points at, "peeled") — or a *single* line for a lightweight
+*two* lines — `refs/tags/v1.0.0-rc.5` (an annotated tag object's own SHA) and
+`refs/tags/v1.0.0-rc.5^{}` (the commit it points at, "peeled") — or a *single* line for a lightweight
 tag, whose SHA already **is** the commit. **If a `^{}` line is present, take that one**; otherwise the
 single line's SHA is the commit SHA to pin.
 
