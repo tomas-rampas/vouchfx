@@ -176,6 +176,8 @@ nav:
       - Changelog: changelog.md
       - Governance: governance.md
       - "Decision: dotnet tool packaging": decisions/dotnet-tool-packaging.md
+      - "Proposal: topology extraction (U1)": decisions/topology-extraction.md
+      - "Proposal: detached runs and artefacts (U4)": decisions/detached-runs-and-artefacts.md
       - Project README: project-readme.md
   - Blog:
       - blog/index.md
