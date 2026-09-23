@@ -490,34 +490,10 @@ public sealed class SuiteTopology : IAsyncDisposable, IKeptTopology
         HeadlessTopology topology;
         try
         {
-            try
-            {
-                topology = await HeadlessTopology.StartAsync(
-                    appHostAssemblyName: appHostAssemblyName,
-                    configureResources: mapped.Configure,
-                    cancellationToken: cancellationToken).ConfigureAwait(false);
-            }
-            catch
-            {
-                // #438, the failure half. A start hook may already have created its directory
-                // (the azureservicebus entry creates it as the emulator container starts) when
-                // StartAsync throws, and one may still fire afterwards, if DCP was still creating
-                // that container in the background when a cancelled start unwound. StartAsync
-                // disposes its own half-built topology, which never received the ledger below, so
-                // this is the only place left to close it: closing removes what was staged and
-                // makes any later hook refuse (TempDirectoryLedger's remarks). The rethrow keeps
-                // every catch clause below exactly as it was.
-                HeadlessTopology.DeleteEngineOwnedTempDirectories(mapped.AsbTempDirectoriesCreated);
-                throw;
-            }
-
-            // #438: the SAME TempDirectoryLedger mapped.Configure's azureservicebus entry (if
-            // any) stages into once its container actually starts. HeadlessTopology.DisposeAsync
-            // closes it after teardown to remove whatever this run staged — and a start hook
-            // that still fires after that close finds the ledger refusing it rather than
-            // creating an orphan. Attached here, with no await since StartAsync returned, so no
-            // teardown path can run before it is in place.
-            topology.TrackTempDirectories(mapped.AsbTempDirectoriesCreated);
+            topology = await HeadlessTopology.StartAsync(
+                appHostAssemblyName: appHostAssemblyName,
+                configureResources: mapped.Configure,
+                cancellationToken: cancellationToken).ConfigureAwait(false);
         }
         catch (OrchestrationException)
         {

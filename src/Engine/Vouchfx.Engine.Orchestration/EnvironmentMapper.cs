@@ -543,9 +543,9 @@ public static class EnvironmentMapper
                     // orphan, and Aspire logs this one resource as FailedToStart. The one path
                     // DisposeAsync itself cannot reach, an overall StartAsync that fails AFTER
                     // this hook already fired for THIS resource (DCP started the emulator, then
-                    // failed on something else) but BEFORE the ledger closes, is SuiteTopology's:
-                    // StartAsync disposes its own half-built topology, which never received this
-                    // ledger, so SuiteTopology closes it itself through the same
+                    // failed on something else), is StartAsync's own failure catch: it resolves
+                    // this ledger from the app's services (registered at the top of Configure)
+                    // and closes it through the same
                     // HeadlessTopology.DeleteEngineOwnedTempDirectories.
                     emulatorBuilder.OnBeforeResourceStarted((_, _, _) =>
                     {
@@ -1599,6 +1599,14 @@ public static class EnvironmentMapper
             // trust notice — .ConfigureInvokedTwice_DoesNotDuplicateTheTrustNotice.
             endpointSelectionNotices.Clear();
             endpointTrustNotices.Clear();
+
+            // #438: the ledger goes into this builder's own services, so HeadlessTopology finds it
+            // whoever started the topology: its constructor attaches it for DisposeAsync, and
+            // StartAsync's own failure catch cleans it when the start throws. A caller composing
+            // Map with the public HeadlessTopology.StartAsync directly therefore gets the same
+            // cleanup SuiteTopology does, with no internal call to make. The type is internal, so
+            // no caller outside this assembly can register a ledger of its own and aim the delete.
+            builder.Services.AddSingleton(asbTempDirectoriesCreated);
 
             var mostSpecificDependencyResources = new List<IResourceBuilder<IResource>>();
 

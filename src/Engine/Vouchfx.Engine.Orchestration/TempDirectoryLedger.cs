@@ -2,23 +2,16 @@
 //
 // THE RACE THIS CLOSES
 // ---------------------
-// #438's original fix deferred an azureservicebus dependency's Config.json directory to an
-// Aspire OnBeforeResourceStarted hook, and had that hook append the created path to a plain
-// List<string> under `lock (list)`. Both cleanup call sites (HeadlessTopology.DisposeAsync, and
-// the catch around HeadlessTopology.StartAsync in SuiteTopology) snapshotted that same list under
-// the same lock before deleting each entry, and the snapshot itself commented that "the lock makes
-// that a guarantee rather than an assumption about Aspire's event ordering".
-//
-// That overclaimed. The lock made the SNAPSHOT atomic — no torn read of the list — but a lock
-// around a snapshot cannot stop a hook from running AFTER the snapshot was taken; it only stops
-// two threads from touching the list at literally the same instant. In the pinned Aspire
-// 13.4.2 source, `DcpExecutor.RunApplicationAsync` awaits container creation with
+// An azureservicebus dependency stages its Config.json directory from an Aspire
+// OnBeforeResourceStarted hook, and teardown removes what was staged. Recording each path in a
+// list, and snapshotting that list under a lock before deleting, makes the snapshot atomic, but
+// a lock around a snapshot cannot stop a hook from running AFTER the snapshot was taken. In the
+// pinned Aspire 13.4.2 source, `DcpExecutor.RunApplicationAsync` awaits container creation with
 // `Task.WhenAll(createExecutables, createContainers).WaitAsync(ct)`. A cancelled start can
-// therefore throw out of `StartAsync` — unwinding into SuiteTopology's own catch, which snapshots
-// and deletes — WHILE the container-creation task is still running in the background. That task
-// can still publish `BeforeResourceStartedEvent` and run the hook after the snapshot has already
-// been taken and deleted from, which creates a directory the snapshot never saw and that nothing
-// will ever delete.
+// therefore throw out of `StartAsync`, into the failure path that cleans up, WHILE the
+// container-creation task is still running in the background. That task can still publish
+// `BeforeResourceStartedEvent` and run the hook after the snapshot has been taken and deleted
+// from, which creates a directory the snapshot never saw and that nothing will ever delete.
 //
 // THE FIX
 // -------
@@ -43,10 +36,14 @@
 //
 // SCOPE
 // -----
-// One ledger per topology start: SuiteTopology.StartAsync calls EnvironmentMapper.Map exactly once
-// per start (StubTopology does not use EnvironmentMapper at all), so a ledger is closed at most
-// once per topology and is never reused across a later, legitimate start — closing it at teardown
-// can never refuse a directory a later, different start needed to stage.
+// One ledger per MappedTopology, and a MappedTopology serves one start: SuiteTopology maps once
+// per start, and StubTopology does not use EnvironmentMapper at all. EnvironmentMapper's
+// Configure registers the ledger in the builder's services, and HeadlessTopology resolves it
+// from there on both of its cleanup paths, so a caller that composes EnvironmentMapper.Map with
+// the public HeadlessTopology.StartAsync directly gets the same cleanup. Such a caller that starts
+// a second topology from the same MappedTopology finds the ledger closed by the first one's
+// teardown, and that start's azureservicebus emulator fails to start rather than leaking a
+// directory. Map again for a second start.
 
 namespace Vouchfx.Engine.Orchestration;
 

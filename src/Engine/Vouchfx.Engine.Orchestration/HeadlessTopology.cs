@@ -62,9 +62,11 @@ public sealed class HeadlessTopology : IAsyncDisposable
     // DisposeAsync, AFTER StopAsync returns, so deletion never races a container that still holds
     // the mount, and so a start hook that still fires after that close refuses rather than
     // creating a directory nothing will ever remove (TempDirectoryLedger's own remarks explain
-    // the race this closes). Defaults to a fresh, open, empty ledger rather than null, so a
-    // topology that tracks nothing (every non-azureservicebus topology) still has something
-    // harmless for DisposeAsync to close.
+    // the race this closes). The constructor takes it from the app's own services, where
+    // EnvironmentMapper's Configure registers it, so it is attached whoever called StartAsync and
+    // no public input ever names a directory to delete. Defaults to a fresh, open, empty ledger
+    // rather than null, so a topology that tracks nothing (every non-azureservicebus topology)
+    // still has something harmless for DisposeAsync to close.
     private TempDirectoryLedger _tempDirectoriesToClean = new();
 
     private bool _disposed;
@@ -73,32 +75,14 @@ public sealed class HeadlessTopology : IAsyncDisposable
     {
         _app = app;
         _recorder = recorder;
-    }
 
-    /// <summary>
-    /// Hands this topology the LIVE <see cref="TempDirectoryLedger"/> a resource stages a
-    /// bind-mount source directory into once its container starts (#438) — today,
-    /// EnvironmentMapper's <c>MappedTopology.AsbTempDirectoriesCreated</c> — so
-    /// <see cref="DisposeAsync"/> can close it and remove what it holds after <c>StopAsync</c>
-    /// returns.
-    /// </summary>
-    /// <param name="tempDirectoriesToClean">
-    /// The ledger itself, not a snapshot: a directory a start hook stages later is still seen,
-    /// right up until <see cref="DisposeAsync"/> closes it. <see cref="DisposeAsync"/> deletes
-    /// only the entries <see cref="IsEngineOwnedTempDirectory"/> accepts, whatever else the
-    /// ledger holds.
-    /// </param>
-    /// <remarks>
-    /// Internal and separate from <see cref="StartAsync"/> deliberately: <see cref="StartAsync"/>
-    /// keeps its public signature exactly, and a public input naming directories that disposal
-    /// deletes would let an external caller aim that delete anywhere. <c>SuiteTopology</c> calls
-    /// this in the same synchronous statement sequence that receives the started topology, with
-    /// no await in between, so no teardown path can run before the ledger is attached.
-    /// </remarks>
-    internal void TrackTempDirectories(TempDirectoryLedger tempDirectoriesToClean)
-    {
-        ArgumentNullException.ThrowIfNull(tempDirectoriesToClean);
-        _tempDirectoriesToClean = tempDirectoriesToClean;
+        // #438: a mapped topology registers its temp-directory ledger in the builder's services
+        // (EnvironmentMapper's Configure), so the topology that owns the app attaches it here,
+        // whoever called StartAsync. Absent for any other configureResources callback.
+        if (app.Services.GetService<TempDirectoryLedger>() is { } ledger)
+        {
+            _tempDirectoriesToClean = ledger;
+        }
     }
 
     /// <summary>The name prefix of every temp directory the engine creates for itself (#438).</summary>
@@ -146,10 +130,12 @@ public sealed class HeadlessTopology : IAsyncDisposable
     /// <para>
     /// Two callers, one for each way a run can end once a start hook may have run.
     /// <see cref="DisposeAsync"/> calls it after <c>StopAsync</c> has returned, so deletion never
-    /// races a container that still holds the mount. <c>SuiteTopology</c> calls it when
-    /// <see cref="StartAsync"/> itself throws: <see cref="StartAsync"/> has then disposed its own
-    /// half-built topology, which never received the ledger, so without this call a directory the
-    /// hook created before the failure would outlive the run.
+    /// races a container that still holds the mount. <see cref="StartAsync"/>'s own failure
+    /// catch calls it when the start throws, after disposing the app: no topology will ever own
+    /// the ledger then, so without this call a directory the hook created before the failure
+    /// would outlive the run. Both take the ledger from the app's services, where
+    /// <c>EnvironmentMapper</c>'s Configure registers it, so a caller that starts a mapped
+    /// topology through <see cref="StartAsync"/> directly gets both.
     /// </para>
     /// <para>
     /// <b>The true guarantee, not the one this comment used to claim.</b> This used to snapshot a
@@ -236,7 +222,7 @@ public sealed class HeadlessTopology : IAsyncDisposable
         var topology = new HeadlessTopology(app, recorder: null);
         if (tempDirectoriesToClean is not null)
         {
-            topology.TrackTempDirectories(tempDirectoriesToClean);
+            topology._tempDirectoriesToClean = tempDirectoriesToClean;
         }
 
         return topology;
@@ -414,7 +400,17 @@ public sealed class HeadlessTopology : IAsyncDisposable
             // StartAsync can fail with an Environment error (image-pull failure, DCP crash, partial
             // start).  The DistributedApplication is IAsyncDisposable and already holds resources
             // that must be released; dispose it before re-throwing so containers do not leak.
+            // #438: a start hook may already have staged a temp directory into the mapped
+            // topology's ledger, and no HeadlessTopology will ever own it, so this failure path
+            // closes the ledger itself. Resolved before the dispose, which disposes the service
+            // provider; cleaned after it, so deletion follows DCP's own stop.
+            var tempDirectoryLedger = app.Services.GetService<TempDirectoryLedger>();
             await app.DisposeAsync().ConfigureAwait(false);
+            if (tempDirectoryLedger is not null)
+            {
+                DeleteEngineOwnedTempDirectories(tempDirectoryLedger);
+            }
+
             throw;
         }
 

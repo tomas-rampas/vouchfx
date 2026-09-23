@@ -4,33 +4,31 @@
 // non-Docker EnvironmentMapperTests case that inspects builder.Resources without Docker.
 // Measured: +3 leaked vouchfx-asb-<guid> directories per Vouchfx.Engine.Orchestration.Tests run.
 //
-// A follow-up fix replaced the plain List<string> + `lock (list)` this file originally pinned
-// with TempDirectoryLedger (see that type's own header comment for the full account). The lock
-// made a teardown SNAPSHOT atomic, but could not stop a start hook from creating a directory
-// AFTER the snapshot had already been taken and deleted from: per Aspire 13.4.2's source, a
-// cancelled StartAsync can return while DCP is still creating containers in the background, and
-// that background work can still publish BeforeResourceStartedEvent and run the hook.
-// TempDirectoryLedger closes that gap by making "take the snapshot" and "refuse anything staged
-// later" one atomic operation, under one lock.
+// The staged directories live in a TempDirectoryLedger (see that type's header comment): taking
+// the teardown snapshot and refusing anything staged later are one operation under one lock, so
+// a start hook that still fires after cleanup (per Aspire 13.4.2's source, a cancelled StartAsync
+// can return while DCP is still creating containers in the background) refuses rather than
+// leaving a directory nothing will remove.
 //
 // Four parts, none needing Docker:
 //   A. Configure(builder) alone (no StartAsync) must never touch the filesystem — the directory
-//      + Config.json write is now deferred to Aspire's own OnBeforeResourceStarted hook, which
-//      fires only during a genuine DistributedApplication.StartAsync.
+//      + Config.json write is deferred to Aspire's own OnBeforeResourceStarted hook, which fires
+//      only during a genuine DistributedApplication.StartAsync.
 //   B. HeadlessTopology.DisposeAsync — the single teardown chokepoint (§4.5) — must close the
-//      ledger it is told about via tempDirectoriesToClean and remove every directory the closing
-//      snapshot names, after StopAsync returns. Exercised against a Build()-built but
-//      never-StartAsync()-ed DistributedApplication via the ForTestingDisposal seam, so no
-//      DCP/Docker is required.
-//   C. A StartAsync that throws never hands the ledger to a topology, so SuiteTopology closes
-//      it itself: the shared helper directly, and a census of the catch that calls it (the hook
-//      only runs against a real container).
+//      topology's ledger and remove every directory the closing snapshot names, after StopAsync
+//      returns. Exercised against a Build()-built but never-StartAsync()-ed
+//      DistributedApplication via the ForTestingDisposal seam, so no DCP/Docker is required. One
+//      row passes no ledger at all, proving the topology takes it from the app's services where
+//      Configure registered it, which is what serves a caller composing Map with StartAsync
+//      directly.
+//   C. A StartAsync that throws never produces a topology, so StartAsync's own failure catch
+//      closes the ledger: the shared helper directly, and a census of that catch (the hook only
+//      runs against a real container).
 //   D. TempDirectoryLedger's own close/stage race, pinned directly: staging after close refuses
 //      and creates nothing; DeleteEngineOwnedTempDirectories itself closes the ledger, so a later
 //      Stage sees the same refusal; a populate callback that throws still leaves its directory
-//      recorded for cleanup; ~32 Stage calls racing one close leave no directory behind under any
-//      interleaving (deterministic, not merely likely); and — the one test here that drives the
-//      REAL Aspire hook rather than the ledger alone — publishing BeforeResourceStartedEvent
+//      recorded for cleanup; 32 Stage calls racing one close leave no directory behind under any
+//      interleaving (deterministic, not merely likely); and publishing BeforeResourceStartedEvent
 //      directly against the builder's own eventing fires EnvironmentMapper's actual hook, without
 //      Docker or DCP.
 //
@@ -285,67 +283,137 @@ public sealed class AzureServiceBusTempDirectoryLeakTests
     }
 
     /// <summary>
-    /// When <c>HeadlessTopology.StartAsync</c> throws, <c>SuiteTopology</c> removes what the
-    /// azureservicebus start hook may already have created (#438). <c>StartAsync</c> disposes its
-    /// own half-built topology on the way out, and that topology never received the ledger, so
-    /// this catch is the only place left to close it.
+    /// When <c>HeadlessTopology.StartAsync</c> throws, its own failure catch closes the mapped
+    /// topology's ledger (#438): no topology will ever own it then, so this catch is the only
+    /// place left to remove what a start hook staged. It covers every caller, SuiteTopology and a
+    /// caller composing <c>EnvironmentMapper.Map</c> with <c>StartAsync</c> directly alike.
     /// </summary>
     /// <remarks>
     /// A census rather than a behavioural test, because the hook runs only once DCP starts a real
     /// emulator container, and a start that then fails needs a genuine Docker host. The check is
-    /// structural: the innermost <c>try</c> around the <c>StartAsync</c> call has exactly one
-    /// <c>catch</c>, which passes <c>mapped.AsbTempDirectoriesCreated</c> to
-    /// <see cref="HeadlessTopology.DeleteEngineOwnedTempDirectories"/> and then rethrows, so the
-    /// classification below it is unchanged.
+    /// structural, on the catch around <c>app.StartAsync</c> inside the public
+    /// <c>HeadlessTopology.StartAsync</c>: it resolves the ledger from <c>app.Services</c> BEFORE
+    /// <c>app.DisposeAsync()</c> (which disposes the service provider), calls
+    /// <c>DeleteEngineOwnedTempDirectories</c> AFTER it (so deletion follows DCP's own stop), and
+    /// ends in a bare <c>throw;</c>, so the caller's classification still sees the original
+    /// exception.
     /// </remarks>
     [Fact]
-    public void SuiteTopology_RemovesStartHookDirectories_WhenStartAsyncThrows()
+    public void HeadlessTopologyStartAsync_ClosesTheMappedLedger_WhenTheStartThrows()
     {
         var path = Path.Combine(
-            RepoRoot.Resolve(), "src", "Engine", "Vouchfx.Engine.Orchestration", "SuiteTopology.cs");
-        Assert.True(File.Exists(path), "SuiteTopology.cs is not where this census expects it.");
+            RepoRoot.Resolve(), "src", "Engine", "Vouchfx.Engine.Orchestration", "HeadlessTopology.cs");
+        Assert.True(File.Exists(path), "HeadlessTopology.cs is not where this census expects it.");
 
         var root = Microsoft.CodeAnalysis.CSharp.CSharpSyntaxTree
             .ParseText(File.ReadAllText(path))
             .GetRoot();
 
-        var startCalls = root.DescendantNodes()
-            .OfType<Microsoft.CodeAnalysis.CSharp.Syntax.InvocationExpressionSyntax>()
-            .Where(i => i.Expression.ToString() == "HeadlessTopology.StartAsync")
+        var startAsync = root.DescendantNodes()
+            .OfType<Microsoft.CodeAnalysis.CSharp.Syntax.MethodDeclarationSyntax>()
+            .Where(m => m.Identifier.Text == "StartAsync"
+                && m.Modifiers.Any(modifier => modifier.Text == "public"))
             .ToList();
-        Assert.True(
-            startCalls.Count == 1,
-            "Expected exactly one HeadlessTopology.StartAsync call in SuiteTopology.cs.");
+        Assert.True(startAsync.Count == 1, "Expected exactly one public StartAsync in HeadlessTopology.cs.");
 
-        var innermostTry = startCalls[0].Ancestors()
+        var appStart = startAsync[0].DescendantNodes()
+            .OfType<Microsoft.CodeAnalysis.CSharp.Syntax.InvocationExpressionSyntax>()
+            .Where(i => i.Expression.ToString() == "app.StartAsync")
+            .ToList();
+        Assert.True(appStart.Count == 1, "Expected exactly one app.StartAsync call in HeadlessTopology.StartAsync.");
+
+        var innermostTry = appStart[0].Ancestors()
             .OfType<Microsoft.CodeAnalysis.CSharp.Syntax.TryStatementSyntax>()
-            .FirstOrDefault(t => t.Block.Span.Contains(startCalls[0].Span));
-        Assert.True(
-            innermostTry is not null,
-            "The HeadlessTopology.StartAsync call is not inside a try block.");
+            .FirstOrDefault(t => t.Block.Span.Contains(appStart[0].Span));
+        Assert.True(innermostTry is not null, "The app.StartAsync call is not inside a try block.");
         Assert.True(
             innermostTry!.Catches.Count == 1,
-            "The try around HeadlessTopology.StartAsync should have exactly one catch.");
+            "The try around app.StartAsync should have exactly one catch.");
 
         var catchClause = innermostTry.Catches[0];
-        var cleanup = catchClause.DescendantNodes()
+        var invocations = catchClause.Block.DescendantNodes()
             .OfType<Microsoft.CodeAnalysis.CSharp.Syntax.InvocationExpressionSyntax>()
-            .Where(i => i.Expression.ToString() == "HeadlessTopology.DeleteEngineOwnedTempDirectories")
             .ToList();
+
+        var resolve = invocations.FindIndex(i =>
+            i.Expression.ToString() == "app.Services.GetService<TempDirectoryLedger>");
+        var dispose = invocations.FindIndex(i => i.Expression.ToString() == "app.DisposeAsync");
+        var cleanup = invocations.FindIndex(i => i.Expression.ToString() == "DeleteEngineOwnedTempDirectories");
+
         Assert.True(
-            cleanup.Count == 1
-                && cleanup[0].ArgumentList.Arguments.Count == 1
-                && cleanup[0].ArgumentList.Arguments[0].ToString() == "mapped.AsbTempDirectoriesCreated",
-            "The catch around HeadlessTopology.StartAsync must pass mapped.AsbTempDirectoriesCreated "
-            + "to HeadlessTopology.DeleteEngineOwnedTempDirectories.");
+            resolve >= 0,
+            "The catch around app.StartAsync must resolve the TempDirectoryLedger from app.Services.");
+        Assert.True(dispose >= 0, "The catch around app.StartAsync must dispose the app.");
+        Assert.True(
+            cleanup >= 0,
+            "The catch around app.StartAsync must call DeleteEngineOwnedTempDirectories.");
+        Assert.True(
+            resolve < dispose,
+            "The ledger must be resolved before app.DisposeAsync disposes the service provider.");
+        Assert.True(
+            dispose < cleanup,
+            "DeleteEngineOwnedTempDirectories must run after app.DisposeAsync, so deletion follows DCP's own stop.");
         Assert.True(
             catchClause.Block.Statements.LastOrDefault()
                 is Microsoft.CodeAnalysis.CSharp.Syntax.ThrowStatementSyntax { Expression: null },
-            "The catch around HeadlessTopology.StartAsync must end in a bare `throw;`, so the "
-            + "classification below it still sees the original exception.");
+            "The catch around app.StartAsync must end in a bare `throw;`, so the caller still sees "
+            + "the original exception.");
     }
 
-    // ── D. TempDirectoryLedger's own close/stage race ─────────────────────────
+    /// <summary>
+    /// A caller that composes <c>EnvironmentMapper.Map</c> with <c>HeadlessTopology</c> itself,
+    /// never touching anything internal, still has its staged directory removed (#438): the
+    /// topology takes the ledger from the app's services, where <c>Configure</c> registered it,
+    /// and <c>DisposeAsync</c> closes it. Driven through the real hook, with no Docker: the app is
+    /// built but never started, and the hook runs by publishing its event directly.
+    /// </summary>
+    [Fact]
+    public async Task DisposeAsync_ClosesTheLedgerItTookFromTheAppsServices_ForADirectlyComposedTopology()
+    {
+        var mapped = EnvironmentMapper.Map(CreateAzureServiceBusEnvironment());
+        var builder = CreateBuilder();
+        mapped.Configure(builder);
+
+        var resource = builder.Resources.Single(r => r.Name == "bus");
+        var mount = resource.Annotations.OfType<ContainerMountAnnotation>().Single();
+        var mountDirectory = Path.GetDirectoryName(mount.Source);
+        Assert.NotNull(mountDirectory);
+
+        var services = new ServiceCollection().BuildServiceProvider();
+        var app = builder.Build();
+
+        try
+        {
+            // No ledger is handed to the seam: the constructor must find it on its own.
+            var topology = HeadlessTopology.ForTestingDisposal(app);
+
+            await builder.Eventing.PublishAsync(
+                new BeforeResourceStartedEvent(resource, services),
+                CancellationToken.None);
+            Assert.True(
+                Directory.Exists(mountDirectory),
+                "Publishing BeforeResourceStartedEvent did not create the bind-mount directory.");
+
+            await topology.DisposeAsync();
+
+            Assert.False(
+                Directory.Exists(mountDirectory),
+                "DisposeAsync left the directory behind: the topology did not attach the ledger "
+                + "EnvironmentMapper registered in the app's services.");
+
+            var exception = await Record.ExceptionAsync(() => builder.Eventing.PublishAsync(
+                new BeforeResourceStartedEvent(resource, services),
+                CancellationToken.None));
+            Assert.IsType<InvalidOperationException>(exception);
+        }
+        finally
+        {
+            if (mountDirectory is not null && Directory.Exists(mountDirectory))
+            {
+                Directory.Delete(mountDirectory, recursive: true);
+            }
+        }
+    }
 
     /// <summary>(a) A <see cref="TempDirectoryLedger.Stage"/> call made after <see cref="TempDirectoryLedger.Close"/> refuses and creates nothing.</summary>
     [Fact]
@@ -380,7 +448,7 @@ public sealed class AzureServiceBusTempDirectoryLeakTests
     /// handed (it calls <see cref="TempDirectoryLedger.Close"/> to take its snapshot), so a
     /// <see cref="TempDirectoryLedger.Stage"/> call made afterwards refuses and creates nothing —
     /// exactly the shape a start hook that fires after <see cref="HeadlessTopology.DisposeAsync"/>
-    /// (or the <c>SuiteTopology</c> failure path) hits.
+    /// (or <see cref="HeadlessTopology.StartAsync"/>'s own failure catch) hits.
     /// </summary>
     [Fact]
     public void DeleteEngineOwnedTempDirectories_ClosesTheLedger_SoALaterStageThrowsAndCreatesNothing()
@@ -445,7 +513,7 @@ public sealed class AzureServiceBusTempDirectoryLeakTests
     }
 
     /// <summary>
-    /// (d) ~32 parallel <see cref="TempDirectoryLedger.Stage"/> calls for distinct engine-owned
+    /// (d) 32 parallel <see cref="TempDirectoryLedger.Stage"/> calls for distinct engine-owned
     /// paths race one <see cref="HeadlessTopology.DeleteEngineOwnedTempDirectories"/> call.
     /// Whichever <c>Stage</c> calls lose the race throw <see cref="InvalidOperationException"/> and
     /// create nothing; whichever win are included in the close snapshot and are then deleted. So
