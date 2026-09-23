@@ -294,9 +294,9 @@ public sealed class AzureServiceBusTempDirectoryLeakTests
     /// structural, on the catch around <c>app.StartAsync</c> inside the public
     /// <c>HeadlessTopology.StartAsync</c>: it resolves the ledger from <c>app.Services</c> BEFORE
     /// <c>app.DisposeAsync()</c> (which disposes the service provider), calls
-    /// <c>DeleteEngineOwnedTempDirectories</c> AFTER it (so deletion follows DCP's own stop), and
-    /// ends in a bare <c>throw;</c>, so the caller's classification still sees the original
-    /// exception.
+    /// <c>DeleteEngineOwnedTempDirectories</c> AFTER it (so deletion follows DCP's own stop) in a
+    /// <c>finally</c> around that dispose (so a dispose that throws cannot skip it), and ends in a
+    /// bare <c>throw;</c>, so the caller's classification still sees the original exception.
     /// </remarks>
     [Fact]
     public void HeadlessTopologyStartAsync_ClosesTheMappedLedger_WhenTheStartThrows()
@@ -353,6 +353,16 @@ public sealed class AzureServiceBusTempDirectoryLeakTests
         Assert.True(
             dispose < cleanup,
             "DeleteEngineOwnedTempDirectories must run after app.DisposeAsync, so deletion follows DCP's own stop.");
+
+        // ...and in a finally around that dispose, so a dispose that throws cannot skip it.
+        var cleanupFinally = invocations[cleanup].Ancestors()
+            .OfType<Microsoft.CodeAnalysis.CSharp.Syntax.FinallyClauseSyntax>()
+            .FirstOrDefault();
+        Assert.True(
+            cleanupFinally?.Parent is Microsoft.CodeAnalysis.CSharp.Syntax.TryStatementSyntax guarded
+                && guarded.Block.Span.Contains(invocations[dispose].Span),
+            "DeleteEngineOwnedTempDirectories must sit in a finally whose try disposes the app, so a "
+            + "dispose that throws cannot skip the cleanup.");
         Assert.True(
             catchClause.Block.Statements.LastOrDefault()
                 is Microsoft.CodeAnalysis.CSharp.Syntax.ThrowStatementSyntax { Expression: null },

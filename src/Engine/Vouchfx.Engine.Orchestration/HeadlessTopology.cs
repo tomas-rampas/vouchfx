@@ -403,12 +403,19 @@ public sealed class HeadlessTopology : IAsyncDisposable
             // #438: a start hook may already have staged a temp directory into the mapped
             // topology's ledger, and no HeadlessTopology will ever own it, so this failure path
             // closes the ledger itself. Resolved before the dispose, which disposes the service
-            // provider; cleaned after it, so deletion follows DCP's own stop.
+            // provider; cleaned after it, so deletion follows DCP's own stop, and in a finally,
+            // so a dispose that throws cannot skip it.
             var tempDirectoryLedger = app.Services.GetService<TempDirectoryLedger>();
-            await app.DisposeAsync().ConfigureAwait(false);
-            if (tempDirectoryLedger is not null)
+            try
             {
-                DeleteEngineOwnedTempDirectories(tempDirectoryLedger);
+                await app.DisposeAsync().ConfigureAwait(false);
+            }
+            finally
+            {
+                if (tempDirectoryLedger is not null)
+                {
+                    DeleteEngineOwnedTempDirectories(tempDirectoryLedger);
+                }
             }
 
             throw;
