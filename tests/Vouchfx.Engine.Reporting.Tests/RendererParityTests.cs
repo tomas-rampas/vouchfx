@@ -612,32 +612,35 @@ public sealed class RendererParityTests
 
     // -------------------------------------------------------------------------
     // Scenario-duration derivation parity: the frozen v1 wire contract gives
-    // ScenarioCompletedEvent no durationMs field, so both JUnit and HTML derive the
-    // scenario's duration from the SAME scenario-started/scenario-completed
-    // timestamp delta (see the fix note on JunitXmlRenderer.DeriveScenarioDurationMs /
-    // HtmlRenderer.DeriveScenarioDurationMs). This is what pins the two independent
-    // helpers together: ONE stream, fed to both renderers, must yield the identical
-    // derived millisecond value.
+    // ScenarioCompletedEvent no durationMs field, so JUnit, HTML AND the terminal
+    // (issue #569) all derive the scenario's duration from the SAME
+    // scenario-started/scenario-completed timestamp delta (see the fix note on
+    // JunitXmlRenderer.DeriveScenarioDurationMs / HtmlRenderer.DeriveScenarioDurationMs /
+    // TerminalRenderer.DeriveScenarioDurationMs). This is what pins the three
+    // independent helpers together: ONE stream, fed to all three renderers, must
+    // yield the identical derived millisecond value.
     // -------------------------------------------------------------------------
 
     public static IEnumerable<object[]> ScenarioDurationDeltaCases()
     {
-        // A genuine, sub-second delta: both renderers must show 1234 ms.
+        // A genuine, low-second-order delta (1.234s, NOT sub-second): all three
+        // renderers must show 1234 ms.
         yield return new object[] { TimeSpan.FromMilliseconds(1234), "1.234", 1234L };
 
-        // A sub-millisecond delta that rounds DOWN to zero: both renderers must agree
-        // on a zero duration (JUnit "0.000", HTML "0 ms"), not merely both be non-null.
+        // A sub-millisecond delta that rounds DOWN to zero: all three renderers must
+        // agree on a zero duration (JUnit "0.000", HTML "0 ms", terminal "total=0 ms"),
+        // not merely all be non-null.
         yield return new object[] { TimeSpan.FromMilliseconds(0.4), "0.000", 0L };
 
         // completed PRECEDES started (clock skew / reordering): the derivation clamps
-        // at zero rather than a negative duration, and both renderers must agree.
+        // at zero rather than a negative duration, and all three renderers must agree.
         yield return new object[] { TimeSpan.FromSeconds(-5), "0.000", 0L };
 
         // A MIDPOINT value: MidpointRounding.AwayFromZero must round 2.5 UP to 3, not
         // down to 2 (ToEven) and not truncate to 2. This is the row that catches a
-        // one-sided switch to ToEven or truncation on either helper — both gates that
-        // reviewed this fix measured the prior theory as insensitive to exactly that
-        // class of change.
+        // one-sided switch to ToEven or truncation on any of the three helpers — both
+        // gates that reviewed this fix measured the prior theory as insensitive to
+        // exactly that class of change.
         yield return new object[] { TimeSpan.FromMilliseconds(2.5), "0.003", 3L };
 
         // A non-midpoint fractional value: 1234.6 rounds UP to 1235 under
@@ -649,7 +652,7 @@ public sealed class RendererParityTests
 
     [Theory]
     [MemberData(nameof(ScenarioDurationDeltaCases))]
-    public void JunitAndHtml_DeriveSameScenarioDuration_FromTimestampDelta(
+    public void AllRenderers_DeriveSameScenarioDuration_FromTimestampDelta(
         TimeSpan delta,
         string expectedJunitTime,
         long expectedDerivedDurationMs)
@@ -657,8 +660,8 @@ public sealed class RendererParityTests
         var startedAt = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
         var completedAt = startedAt + delta;
 
-        // ONE stream, fed to both renderers — the §14 single-stream model applied to
-        // the duration derivation specifically.
+        // ONE stream, fed to all three renderers — the §14 single-stream model applied
+        // to the duration derivation specifically.
         var buffer = new[]
         {
             Line(new ScenarioStartedEvent
@@ -677,9 +680,11 @@ public sealed class RendererParityTests
             }),
         };
 
+        using var terminalWriter = new StringWriter();
         using var htmlWriter = new StringWriter();
         using var junitWriter = new StringWriter();
 
+        TerminalRenderer.Render(buffer, terminalWriter, diffLookup: null);
         HtmlRenderer.Render(buffer, htmlWriter, diffLookup: null);
         JunitXmlRenderer.Render(buffer, junitWriter);
 
@@ -701,34 +706,47 @@ public sealed class RendererParityTests
             "HTML scenario heading did not carry the expected duration suffix "
             + $"'{expectedHtmlSuffix}' for a {delta.TotalMilliseconds}ms timestamp delta, "
             + $"while JUnit derived time=\"{expectedJunitTime}\" from the SAME stream — "
-            + "the two DeriveScenarioDurationMs helpers disagree.");
+            + "HtmlRenderer.DeriveScenarioDurationMs disagrees with its siblings.");
+
+        // Terminal (issue #569): the scenario summary line's ` total=N ms` suffix names
+        // ITS derivation — same stream, same expected millisecond value as JUnit/HTML.
+        var terminalOutput = terminalWriter.ToString();
+        var expectedTerminalSuffix = string.Format(
+            CultureInfo.InvariantCulture,
+            " total={0} ms)",
+            expectedDerivedDurationMs);
+        Assert.True(
+            terminalOutput.Contains(expectedTerminalSuffix, StringComparison.Ordinal),
+            "Terminal scenario summary line did not carry the expected duration suffix "
+            + $"'{expectedTerminalSuffix}' for a {delta.TotalMilliseconds}ms timestamp delta, "
+            + $"while JUnit derived time=\"{expectedJunitTime}\" from the SAME stream — "
+            + "TerminalRenderer.DeriveScenarioDurationMs disagrees with its siblings.");
     }
 
     // -------------------------------------------------------------------------
-    // Scenario-duration derivation parity, the ABSENT-duration branches: both
-    // helpers must agree that no duration could be derived at all — JUnit falls
-    // back to "0.000" and HTML omits the scenario heading's " (N ms)" suffix
-    // entirely (not merely "(0 ms)", which is the DERIVED-zero case the theory
-    // above already covers).
+    // Scenario-duration derivation parity, the ABSENT-duration branches: all three
+    // renderers must agree that no duration could be derived at all — JUnit falls
+    // back to "0.000", and HTML/the terminal each omit their own duration suffix
+    // entirely (not merely a derived zero, which the theory above already covers).
     // -------------------------------------------------------------------------
 
     public static IEnumerable<object[]> ScenarioDurationAbsentCases()
     {
-        // No scenario-started at all: StartedAt is never recorded, so neither
-        // helper's derivation can run.
+        // No scenario-started at all: StartedAt is never recorded, so none of the
+        // three helpers' derivation can run.
         yield return new object[] { /* includeStartedEvent */ false, /* completedTimestampIsDefault */ false };
 
         // A scenario-started IS present and carries a real timestamp, but the
         // scenario-completed event's OWN Timestamp is left at the default (unset)
         // value — treated as absent by the same default-Timestamp rule the
         // scenario-started side applies (see the fix note on the ScenarioStarted
-        // case in both renderers).
+        // case in all three renderers).
         yield return new object[] { /* includeStartedEvent */ true, /* completedTimestampIsDefault */ true };
     }
 
     [Theory]
     [MemberData(nameof(ScenarioDurationAbsentCases))]
-    public void JunitAndHtml_AgreeOnAbsentScenarioDuration(
+    public void AllRenderers_AgreeOnAbsentScenarioDuration(
         bool includeStartedEvent,
         bool completedTimestampIsDefault)
     {
@@ -759,9 +777,11 @@ public sealed class RendererParityTests
 
         buffer.Add(Line(completedEvent));
 
+        using var terminalWriter = new StringWriter();
         using var htmlWriter = new StringWriter();
         using var junitWriter = new StringWriter();
 
+        TerminalRenderer.Render(buffer, terminalWriter, diffLookup: null);
         HtmlRenderer.Render(buffer, htmlWriter, diffLookup: null);
         JunitXmlRenderer.Render(buffer, junitWriter);
 
@@ -780,6 +800,130 @@ public sealed class RendererParityTests
         Assert.True(headingEnd > headingStart, "The scenario heading must be a well-formed <h2>.");
         var heading = htmlOutput[headingStart..(headingEnd + "</h2>".Length)];
         Assert.DoesNotContain("ms)", heading, StringComparison.Ordinal);
+
+        // Terminal (issue #569): agrees with HTML's absent branch — no " total=N ms"
+        // suffix at all, isolated to the scenario summary line so a step-level suffix
+        // elsewhere cannot satisfy this by accident.
+        var terminalOutput = terminalWriter.ToString();
+        var terminalLine = terminalOutput
+            .Split(NewlineSeparators, StringSplitOptions.None)
+            .Single(line => line.StartsWith("Scenario 'duration-flow': ", StringComparison.Ordinal));
+        Assert.DoesNotContain("total=", terminalLine, StringComparison.Ordinal);
+    }
+
+    // -------------------------------------------------------------------------
+    // Two rules no prior renderer test pinned: FIRST-WINS on a duplicate
+    // scenario-started, and the default-Timestamp scenario-started NOT being
+    // recorded at all.  Before these tests existed, a last-wins or accept-default
+    // mutation in any of the three renderers passed every test; each is now proved
+    // red by a corresponding one-renderer mutation.
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void AllRenderers_FirstScenarioStartedWins_OnDuplicate()
+    {
+        var firstStartedAt = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var duplicateStartedAt = firstStartedAt.AddSeconds(1);
+        var completedAt = firstStartedAt.AddMilliseconds(1234);
+
+        // A LAST-WINS mutation would derive completedAt - duplicateStartedAt = 234ms
+        // instead of the correct completedAt - firstStartedAt = 1234ms.
+        var buffer = new[]
+        {
+            Line(new ScenarioStartedEvent
+            {
+                RunId = "run-first-wins",
+                ScenarioId = "duplicate-start-flow",
+                Timestamp = firstStartedAt,
+            }),
+            Line(new ScenarioStartedEvent
+            {
+                RunId = "run-first-wins",
+                ScenarioId = "duplicate-start-flow",
+                Timestamp = duplicateStartedAt,
+            }),
+            Line(new ScenarioCompletedEvent
+            {
+                RunId = "run-first-wins",
+                ScenarioId = "duplicate-start-flow",
+                Verdict = Verdict.Pass,
+                Counts = new VerdictCounts { Pass = 1 },
+                Timestamp = completedAt,
+            }),
+        };
+
+        using var terminalWriter = new StringWriter();
+        using var htmlWriter = new StringWriter();
+        using var junitWriter = new StringWriter();
+
+        TerminalRenderer.Render(buffer, terminalWriter, diffLookup: null);
+        HtmlRenderer.Render(buffer, htmlWriter, diffLookup: null);
+        JunitXmlRenderer.Render(buffer, junitWriter);
+
+        var junitDoc = XDocument.Parse(junitWriter.ToString());
+        var testcase = junitDoc.Descendants("testcase").Single();
+        Assert.Equal("1.234", (string?)testcase.Attribute("time"));
+
+        Assert.Contains(
+            "<span class=\"verdict\">PASS</span> (1234 ms)</h2>",
+            htmlWriter.ToString(),
+            StringComparison.Ordinal);
+
+        Assert.Contains(" total=1234 ms)", terminalWriter.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AllRenderers_DefaultTimestampScenarioStarted_IsNotRecorded()
+    {
+        // scenario-started's OWN Timestamp is left default (unset) — the
+        // "envelope.Timestamp != default" recording guard must skip it entirely, exactly
+        // as if no scenario-started had been seen at all. An ACCEPT-DEFAULT-TS mutation
+        // (dropping that guard) would instead record it and derive a bogus multi-year
+        // delta from default(DateTimeOffset) (0001-01-01) against the real completed
+        // timestamp below, rather than reporting an absent duration.
+        var buffer = new[]
+        {
+            Line(new ScenarioStartedEvent
+            {
+                RunId = "run-default-ts",
+                ScenarioId = "default-ts-flow",
+                // Timestamp deliberately left unset (default(DateTimeOffset)).
+            }),
+            Line(new ScenarioCompletedEvent
+            {
+                RunId = "run-default-ts",
+                ScenarioId = "default-ts-flow",
+                Verdict = Verdict.Pass,
+                Counts = new VerdictCounts { Pass = 1 },
+                Timestamp = new DateTimeOffset(2026, 1, 1, 0, 0, 5, TimeSpan.Zero),
+            }),
+        };
+
+        using var terminalWriter = new StringWriter();
+        using var htmlWriter = new StringWriter();
+        using var junitWriter = new StringWriter();
+
+        TerminalRenderer.Render(buffer, terminalWriter, diffLookup: null);
+        HtmlRenderer.Render(buffer, htmlWriter, diffLookup: null);
+        JunitXmlRenderer.Render(buffer, junitWriter);
+
+        var junitDoc = XDocument.Parse(junitWriter.ToString());
+        var testcase = junitDoc.Descendants("testcase").Single();
+        Assert.Equal("0.000", (string?)testcase.Attribute("time"));
+
+        var htmlOutput = htmlWriter.ToString();
+        var headingStart = htmlOutput.IndexOf("<h2>Scenario:", StringComparison.Ordinal);
+        Assert.True(headingStart >= 0, "The scenario heading must be present to be asserted over.");
+        var headingEnd = htmlOutput.IndexOf("</h2>", headingStart, StringComparison.Ordinal);
+        Assert.True(headingEnd > headingStart, "The scenario heading must be a well-formed <h2>.");
+        var heading = htmlOutput[headingStart..(headingEnd + "</h2>".Length)];
+        Assert.DoesNotContain("ms)", heading, StringComparison.Ordinal);
+
+        var terminalOutput = terminalWriter.ToString();
+        var terminalLine = terminalOutput
+            .Split(NewlineSeparators, StringSplitOptions.None)
+            .Single(line => line.StartsWith("Scenario 'default-ts-flow': ", StringComparison.Ordinal));
+        Assert.DoesNotContain("total=", terminalLine, StringComparison.Ordinal);
     }
 
     // -------------------------------------------------------------------------

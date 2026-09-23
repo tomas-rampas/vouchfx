@@ -219,7 +219,7 @@ Scenario 'getting-started-hello-world' started
   step 'whoami-GET-api': PASS (19 ms)
     provenance:
       captured 'hostname' <- step 'whoami-GET-api' ($.hostname)
-Scenario 'getting-started-hello-world': PASS  (pass=1 fail=0 envError=0 inconclusive=0)
+Scenario 'getting-started-hello-world': PASS  (pass=1 fail=0 envError=0 inconclusive=0 total=1342 ms)
 ```
 
 (Before the scenario line, you may see Aspire/topology startup messages such as "Distributed application started.")

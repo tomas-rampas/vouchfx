@@ -17,7 +17,15 @@
 //   • S03-G-01: step-completed lines include the duration in milliseconds
 //     (e.g. "  step 'ping': PASS (42 ms)").  When durationMs is absent the
 //     suffix is omitted rather than throwing.  step-attempt lines include tMs
-//     when present.  scenario-completed appends durationMs when present.
+//     when present.  Issue #569: scenario-completed's ` total=N ms` suffix is
+//     DERIVED from the wall-clock gap between its scenario-started and
+//     scenario-completed timestamps — the frozen v1 wire contract never gave
+//     ScenarioCompletedEvent a durationMs field, only StepCompletedEvent
+//     carries one — and a wire durationMs, if ever present on a future
+//     contract, takes precedence over the derivation.  All three duration
+//     reads in this file (step duration, attempt elapsed time, scenario
+//     total) are clamped at zero so a hostile or malformed stream can never
+//     render a negative duration.
 //
 // Display safety (issue #266, Item 4): every string field this renderer reads out of the
 // event stream — resourceName/errorKind/registryHost/detail (EnvironmentError), a step's
@@ -204,6 +212,25 @@ public sealed class TerminalRenderer
         // (they don't carry it today) and is tracked for the S8 parallelism work.
         var stepKinds = new Dictionary<(string RunId, string StepId), string>();
 
+        // (runId, scenarioId) → scenario-started timestamp, populated below as the
+        // stream is read (issue #569).  scenario-completed derives its ` total=N ms`
+        // suffix from the gap between this recorded instant and its own timestamp — the
+        // frozen v1 wire contract gives ScenarioCompletedEvent no durationMs field.  First
+        // wins per key: every stream the engine writes starts a scenario before completing
+        // it, and runId is a fresh GUID per scenario execution, so a hand-assembled
+        // duplicate scenario-started is the only way the key repeats — first-wins matches
+        // JunitXmlRenderer/HtmlRenderer's identical rule for the same field, identical on
+        // every stream the engine writes.  One residual: this file's GetStr runs scenarioId
+        // through DisplaySanitiser.SanitiseForDisplay (this file's header comment) before it
+        // becomes a dictionary key, while JunitXmlRenderer/HtmlRenderer key on the raw
+        // string — a hand-crafted scenarioId that differs from its sibling only by a
+        // character SanitiseForDisplay strips would collide here and stay distinct there.
+        // The terminal's OWN correctness is unaffected (the scenario-started KEY and the
+        // scenario-completed LOOKUP both run through the same GetStr, so they always agree
+        // with each other); only byte-identity of the KEY SHAPE with the other two
+        // renderers is the residual, not on any stream the engine itself ever writes.
+        var scenarioStarts = new Dictionary<(string RunId, string ScenarioId), DateTimeOffset>();
+
         foreach (var line in jsonLines)
         {
             // Skip blank / whitespace-only lines before attempting deserialisation.
@@ -242,7 +269,29 @@ public sealed class TerminalRenderer
                     }
                 }
 
-                RenderEnvelope(envelope, output, stepKinds, decorate, diffLookup);
+                // Record the scenario-started timestamp (issue #569) — first wins, and a
+                // default (unset) Timestamp counts as absent because EventEnvelope.Timestamp
+                // is not `required`: a hand-written or truncated line carrying no `ts` field
+                // deserialises to default(DateTimeOffset), the same rule JunitXmlRenderer and
+                // HtmlRenderer apply to this same field.  Keyed on envelope.RunId and
+                // GetStr(envelope, "scenarioId") ?? "(unknown)" UNCONDITIONALLY — no
+                // runId/scenarioId presence guard — matching JunitXmlRenderer/HtmlRenderer's
+                // key shape exactly, so the two rules agree on every stream the engine writes.
+                // RunId is `required` but NOT null-enforced on net8.0, so a hand-written
+                // `"runId": null` deserialises to null (the HtmlRenderer abort tracked as #571);
+                // a ValueTuple key tolerates a null or empty element, so that is no throw risk
+                // here — never re-key this map on the bare string.
+                if (envelope.Type == EventTypes.ScenarioStarted)
+                {
+                    var startedScenarioId = GetStr(envelope, "scenarioId") ?? "(unknown)";
+                    if (envelope.Timestamp != default
+                        && !scenarioStarts.ContainsKey((envelope.RunId, startedScenarioId)))
+                    {
+                        scenarioStarts[(envelope.RunId, startedScenarioId)] = envelope.Timestamp;
+                    }
+                }
+
+                RenderEnvelope(envelope, output, stepKinds, scenarioStarts, decorate, diffLookup);
             }
             catch (Exception ex) when (ex is JsonException or InvalidOperationException)
             {
@@ -267,6 +316,10 @@ public sealed class TerminalRenderer
         EventEnvelope envelope,
         TextWriter output,
         IReadOnlyDictionary<(string RunId, string StepId), string> stepKinds,
+        // Concrete Dictionary, not IReadOnlyDictionary (CA1859): unlike stepKinds this map
+        // is read only here, never forwarded to another method, so the interface indirection
+        // buys nothing.
+        Dictionary<(string RunId, string ScenarioId), DateTimeOffset> scenarioStarts,
         bool decorate,
         Func<string, JsonElement, string?>? diffLookup)
     {
@@ -298,9 +351,12 @@ public sealed class TerminalRenderer
                 {
                     var stepId = GetStr(envelope, "stepId") ?? "(unknown)";
                     var verdict = GetStr(envelope, "verdict") ?? "(unknown)";
+                    // Display-only, InvariantCulture — but a negative durationMs (a hostile
+                    // or malformed stream) is never a truthful value, so clamp at zero rather
+                    // than printing a "-" (issue #569).
                     var durationMs = GetLong(envelope, "durationMs");
                     var durationSuffix = durationMs.HasValue
-                        ? string.Format(CultureInfo.InvariantCulture, " ({0} ms)", durationMs.Value)
+                        ? string.Format(CultureInfo.InvariantCulture, " ({0} ms)", Math.Max(0L, durationMs.Value))
                         : string.Empty;
 
                     // Accessibility (S10-G-03a, WCAG 1.4.1): the verdict TEXT token is rendered
@@ -342,7 +398,25 @@ public sealed class TerminalRenderer
                     var scenarioId = GetStr(envelope, "scenarioId") ?? "(unknown)";
                     var verdict = GetStr(envelope, "verdict") ?? "(unknown)";
                     var counts = ReadCounts(envelope);
-                    var totalMs = GetLong(envelope, "durationMs");
+
+                    // WHY: the frozen v1 wire contract never gave ScenarioCompletedEvent a
+                    // durationMs field — only StepCompletedEvent carries one (docs/01 §14
+                    // golden: event-stream-wire-contract.v1.txt). The tolerant wire read is
+                    // tried FIRST and wins whenever present — clamped at 0 (Math.Max) because
+                    // a hostile or malformed stream can carry a negative durationMs, which
+                    // must never render as a negative duration suffix — so an additive future
+                    // field is honoured without touching this renderer. Otherwise the total
+                    // is DERIVED from the wall-clock gap between this event's timestamp and
+                    // its scenario-started sibling, recorded in scenarioStarts as the stream
+                    // was read — a contract-neutral fallback that adds no field to the frozen
+                    // contract (issue #569, mirroring JunitXmlRenderer/HtmlRenderer's #566 fix).
+                    var startedAt = scenarioStarts.TryGetValue((envelope.RunId, scenarioId), out var started)
+                        ? started
+                        : (DateTimeOffset?)null;
+                    var wireDurationMs = GetLong(envelope, "durationMs");
+                    var totalMs = wireDurationMs.HasValue
+                        ? Math.Max(0L, wireDurationMs.Value)
+                        : DeriveScenarioDurationMs(startedAt, envelope.Timestamp);
                     var totalSuffix = totalMs.HasValue
                         ? string.Format(CultureInfo.InvariantCulture, " total={0} ms", totalMs.Value)
                         : string.Empty;
@@ -616,8 +690,11 @@ public sealed class TerminalRenderer
         // Elapsed time relative to step start, in seconds with one decimal place,
         // right-padded so the "attempt" columns line up across attempts (the §14.5
         // example aligns on the elapsed column).  Absent timing renders as "?".
+        // Display-only, InvariantCulture — but a negative tMs (a hostile or malformed
+        // stream) is never a truthful value, so clamp at zero rather than printing a
+        // negative elapsed time (issue #569).
         var elapsed = tMs.HasValue
-            ? string.Format(CultureInfo.InvariantCulture, "{0,5:0.0}s", tMs.Value / 1000.0)
+            ? string.Format(CultureInfo.InvariantCulture, "{0,5:0.0}s", Math.Max(0L, tMs.Value) / 1000.0)
             : "    ?s";
 
         var observationSummary = SummariseObservation(envelope);
@@ -702,6 +779,40 @@ public sealed class TerminalRenderer
             .Select(static p => p.Name);
 
         return "{" + string.Join(", ", keys) + "}";
+    }
+
+    /// <summary>
+    /// Derives a scenario's duration from the wall-clock gap between its recorded
+    /// scenario-started timestamp and the supplied scenario-completed timestamp,
+    /// used as the fallback when the wire event carries no explicit
+    /// <c>durationMs</c> (see the call site's WHY comment). Returns
+    /// <see langword="null"/> when no scenario-started timestamp was recorded — a
+    /// partial buffer with no scenario-started, or one whose Timestamp was default —
+    /// so the caller falls through to the existing "no suffix" rendering exactly as
+    /// before this change. A negative delta (clock skew, or a scenario-completed
+    /// timestamp that precedes its scenario-started sibling) is clamped to zero — it
+    /// must never render as a negative duration.
+    /// </summary>
+    /// <remarks>
+    /// Byte-for-byte the same logic as <c>JunitXmlRenderer.DeriveScenarioDurationMs</c>
+    /// and <c>HtmlRenderer.DeriveScenarioDurationMs</c>. Not shared through a common
+    /// helper because the three renderers are deliberately independent — but they must
+    /// not diverge, which <c>RendererParityTests</c> pins across all three renderers at
+    /// once: the SAME fixed stream, rendered by each, must yield the identical derived
+    /// millisecond value (including the rounding mode at a midpoint and a non-midpoint
+    /// fraction) and the three must agree on the absent branch.
+    /// </remarks>
+    private static long? DeriveScenarioDurationMs(DateTimeOffset? startedAt, DateTimeOffset completedAt)
+    {
+        if (startedAt is null || completedAt == default)
+        {
+            return null;
+        }
+
+        var deltaMs = (completedAt - startedAt.Value).TotalMilliseconds;
+        return deltaMs <= 0
+            ? 0L
+            : (long)Math.Round(deltaMs, MidpointRounding.AwayFromZero);
     }
 
     // -------------------------------------------------------------------------
