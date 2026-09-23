@@ -273,12 +273,20 @@ public sealed class HttpRestProvider
     /// and <c>bodyContains</c> into the <c>body</c> member of a Fail observation. It is kept
     /// as a raw string so it reads as ordinary C#, and it names nothing from the response
     /// body in any string it returns — only paths, expected templates, reasons, JSON kinds
-    /// and node counts (§17).
+    /// and node counts (§17). A resolved <c>bodyContains</c> that comes out the empty string
+    /// (every placeholder was SET, just to <c>""</c>) gets the identical Inconclusive
+    /// classification (<c>bodyContainsResolvedEmpty</c>, §12.1) one step later than the
+    /// unset-placeholder check — otherwise <c>body.IndexOf("", Ordinal)</c> would pass in any
+    /// body (#562).
     /// </para>
     /// <para>
     /// Both helpers must be byte-identical across every instance of the same
     /// provider within a suite (§13.3.1 dedup rule); neither contains any
-    /// per-step interpolation.
+    /// per-step interpolation. <c>HttpRest_Helpers</c> disposes the <c>HttpResponseMessage</c>
+    /// it reads from as soon as the status and (when needed) the body are copied out, rather
+    /// than leaving it for the per-call <c>HttpClient</c>'s own <c>Dispose()</c> to reclaim
+    /// (#562) — every attempt under <c>verifyMode: RETRY</c> gets its own request and
+    /// response, so this runs once per attempt, not once per step.
     /// </para>
     /// </summary>
     private static readonly IReadOnlyList<string> s_helpers = new[]
@@ -444,31 +452,60 @@ public sealed class HttpRestProvider
         "                var bodyContains = bodyContainsTemplate == null\n" +
         "                    ? null\n" +
         "                    : Secret_Helpers.ResolveTemplate(secrets, vars, bodyContainsTemplate);\n" +
-        "                var resp = await client.SendAsync(req, ct).ConfigureAwait(false);\n" +
-        "                var actual = (int)resp.StatusCode;\n" +
-        "                bool ok = expectedStatus.HasValue\n" +
-        "                    ? actual == expectedStatus.Value\n" +
-        "                    : (actual >= 200 && actual < 300);\n" +
-        "                verdict = ok\n" +
-        "                    ? Vouchfx.Engine.Abstractions.Verdict.Pass\n" +
-        "                    : Vouchfx.Engine.Abstractions.Verdict.Fail;\n" +
-        "                var statusFields = \"\\\"status\\\":\" + actual +\n" +
-        "                    \",\\\"expected\\\":\" +\n" +
-        "                    (expectedStatus.HasValue\n" +
-        "                        ? expectedStatus.Value.ToString(\n" +
-        "                              System.Globalization.CultureInfo.InvariantCulture)\n" +
-        "                        : \"null\");\n" +
-        "                observation = \"{\" + statusFields + \"}\";\n" +
-        "\n" +
-        "                // ONE body read, shared by the response-body assertions and the captures, and\n" +
-        "                // only once the status check has held — a status mismatch keeps today's\n" +
-        "                // observation and evaluates nothing else.\n" +
-        "                bool hasBodyAssertions = jsonPaths.Length > 0 || bodyContains != null;\n" +
-        "                string bodyStr = string.Empty;\n" +
-        "                if (verdict != Vouchfx.Engine.Abstractions.Verdict.Fail\n" +
-        "                    && (hasBodyAssertions || captureVarNames.Length > 0))\n" +
+        "                if (bodyContains is { Length: 0 })\n" +
         "                {\n" +
-        "                    bodyStr = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);\n" +
+        "                    // A bodyContains template such as \"{token}\" whose placeholder IS set, but\n" +
+        "                    // to the empty string, resolves to \"\" here: body.IndexOf(\"\", Ordinal) is 0\n" +
+        "                    // in ANY body, so the assertion would otherwise pass vacuously — or, read any\n" +
+        "                    // other way, blame the service for a check that could never fail. The\n" +
+        "                    // unsetPlaceholder guard above catches an ABSENT or null placeholder before\n" +
+        "                    // anything is sent; this is the same 'nothing left to check' fault, reached\n" +
+        "                    // only after resolution, so it gets the identical classification (#562):\n" +
+        "                    // Inconclusive, and the request built so far is never sent.\n" +
+        "                    vars[outcomeKey] = new Vouchfx.Engine.Abstractions.StepOutcome(\n" +
+        "                        Vouchfx.Engine.Abstractions.Verdict.Inconclusive,\n" +
+        "                        sw.ElapsedMilliseconds,\n" +
+        "                        \"{\\\"bodyContainsResolvedEmpty\\\":true}\");\n" +
+        "                    return;\n" +
+        "                }\n" +
+        "                var resp = await client.SendAsync(req, ct).ConfigureAwait(false);\n" +
+        "                bool hasBodyAssertions;\n" +
+        "                string bodyStr;\n" +
+        "                string statusFields;\n" +
+        "                // Scope resp's lifetime to exactly where it is needed: disposed as soon as the\n" +
+        "                // status is read and the body (if any) is copied into bodyStr — retries\n" +
+        "                // included — rather than left open for the client's own Dispose() below.\n" +
+        "                try\n" +
+        "                {\n" +
+        "                    var actual = (int)resp.StatusCode;\n" +
+        "                    bool ok = expectedStatus.HasValue\n" +
+        "                        ? actual == expectedStatus.Value\n" +
+        "                        : (actual >= 200 && actual < 300);\n" +
+        "                    verdict = ok\n" +
+        "                        ? Vouchfx.Engine.Abstractions.Verdict.Pass\n" +
+        "                        : Vouchfx.Engine.Abstractions.Verdict.Fail;\n" +
+        "                    statusFields = \"\\\"status\\\":\" + actual +\n" +
+        "                        \",\\\"expected\\\":\" +\n" +
+        "                        (expectedStatus.HasValue\n" +
+        "                            ? expectedStatus.Value.ToString(\n" +
+        "                                  System.Globalization.CultureInfo.InvariantCulture)\n" +
+        "                            : \"null\");\n" +
+        "                    observation = \"{\" + statusFields + \"}\";\n" +
+        "\n" +
+        "                    // ONE body read, shared by the response-body assertions and the captures, and\n" +
+        "                    // only once the status check has held — a status mismatch keeps today's\n" +
+        "                    // observation and evaluates nothing else.\n" +
+        "                    hasBodyAssertions = jsonPaths.Length > 0 || bodyContains != null;\n" +
+        "                    bodyStr = string.Empty;\n" +
+        "                    if (verdict != Vouchfx.Engine.Abstractions.Verdict.Fail\n" +
+        "                        && (hasBodyAssertions || captureVarNames.Length > 0))\n" +
+        "                    {\n" +
+        "                        bodyStr = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);\n" +
+        "                    }\n" +
+        "                }\n" +
+        "                finally\n" +
+        "                {\n" +
+        "                    resp.Dispose();\n" +
         "                }\n" +
         "                // ONE JSON parse, shared the same way. jsonParsed records that a parse was\n" +
         "                // attempted; jsonNode is null when it failed OR when the body is the literal\n" +
@@ -938,13 +975,16 @@ public sealed class HttpRestProvider
                 }
             }
 
-            // Author text as a JSON string literal, cut at MaxEchoChars on a code-point boundary
-            // and marked with a trailing ellipsis when cut.
+            // Author text as a JSON string literal. The TOTAL length after this cut, the
+            // trailing ellipsis included, is at most MaxEchoChars (DSL §5.1: "cut to 256
+            // characters with a trailing …") — so the kept prefix is MaxEchoChars - 1
+            // characters, backed off one further on a code-point boundary when that would
+            // split a surrogate pair.
             private static string Bounded(string text)
             {
                 if (text.Length > MaxEchoChars)
                 {
-                    int cut = MaxEchoChars;
+                    int cut = MaxEchoChars - 1;
                     if (char.IsHighSurrogate(text[cut - 1]))
                         cut--;
                     text = text.Substring(0, cut) + (char)0x2026;
@@ -1355,7 +1395,8 @@ public sealed class HttpRestProvider
     ///   <item>When <c>expect.json</c> or <c>expect.bodyContains</c> is declared (#558),
     ///   evaluates them against the response body once the status check has held: any
     ///   that does not hold → <see cref="Verdict.Fail"/>, and the captures do not run.  An
-    ///   expected value naming an unset <c>{placeholder}</c> →
+    ///   expected value naming an unset <c>{placeholder}</c>, or a <c>bodyContains</c> that
+    ///   resolves to the empty string, →
     ///   <see cref="Verdict.Inconclusive"/> before anything is sent.</item>
     ///   <item>When <see cref="ICompileContext.Captures"/> is non-empty, reads the
     ///   response body and evaluates each JSONPath via JsonPath.Net.  A miss →
@@ -1597,9 +1638,10 @@ public sealed class HttpRestProvider
     /// <remarks>
     /// Recognised: <c>{"status":…,"expected":…,"body":{"failed":k,"of":n,"first":{…}}}</c>,
     /// whose <c>first</c> names an <c>assertion</c> and a <c>reason</c>. Every other shape
-    /// this provider emits — pass, status mismatch, capture miss, unset placeholder, timeout,
-    /// secret and transport errors — returns <see langword="false"/>, so each renders exactly
-    /// as it did before the body assertions existed: with no diff.
+    /// this provider emits — pass, status mismatch, capture miss, unset placeholder, a
+    /// resolved-empty <c>bodyContains</c>, timeout, secret and transport errors — returns
+    /// <see langword="false"/>, so each renders exactly as it did before the body assertions
+    /// existed: with no diff.
     /// </remarks>
     /// <inheritdoc cref="IStepDiffRenderer.CanRender" />
     public bool CanRender(JsonElement observation) => TryReadBodyFailure(observation, out _);

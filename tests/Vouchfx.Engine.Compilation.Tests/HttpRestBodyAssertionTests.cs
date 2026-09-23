@@ -773,6 +773,26 @@ public sealed class HttpRestBodyAssertionTests
         Assert.Equal(new string('A', 255) + (char)0x2026, echoed);
     }
 
+    /// <summary>
+    /// The 256-character cap is on the TOTAL echoed text, the ellipsis included (DSL §5.1):
+    /// with no surrogate pair astride the cut, that is 255 kept characters plus the ellipsis
+    /// — never 256 kept characters plus the ellipsis, which would total 257.
+    /// </summary>
+    [Fact]
+    public async Task Execute_LongExpectedTemplate_NoSurrogateAtTheCut_TotalIsStill256()
+    {
+        using var responder = ScriptedResponder.Start(CannedResponse.Json("{\"v\":\"x\"}"));
+
+        var template = new string('A', 300);
+        var model = Model("GET", new HttpExpect(200, new[] { new HttpJsonAssertion("$.v", template, null) }));
+
+        var (outcome, _) = await RunAsync(model, responder.BaseUrl);
+
+        var echoed = BodyOf(outcome).GetProperty("first").GetProperty("expected").GetString();
+        Assert.Equal(new string('A', 255) + (char)0x2026, echoed);
+        Assert.Equal(256, echoed!.Length);
+    }
+
     // ═════════════════════════════════════════════════════════════════════════════════════
     // 4. Execute — interplay with capture
     // ═════════════════════════════════════════════════════════════════════════════════════
@@ -898,6 +918,67 @@ public sealed class HttpRestBodyAssertionTests
         Assert.Equal(Verdict.Inconclusive, outcome.Verdict);
         Assert.Equal("{\"placeholderUnmet\":\"hostname\"}", outcome.Observation);
         Assert.Equal(0, responder.RequestCount);
+    }
+
+    /// <summary>
+    /// A <c>bodyContains</c> template such as <c>"{token}"</c> whose placeholder IS set, but
+    /// to the empty string, resolves to <c>""</c> — the unset-placeholder guard does not catch
+    /// it (the value is present, not null). Unless guarded separately this would pass
+    /// vacuously (<c>body.IndexOf("", Ordinal)</c> is 0 in any body); instead the step is
+    /// Inconclusive and NOTHING is sent, mirroring the unset-placeholder classification (#562).
+    /// </summary>
+    [Fact]
+    public async Task Execute_BodyContainsResolvesEmpty_IsInconclusive_AndNothingIsSent()
+    {
+        using var responder = ScriptedResponder.Start(CannedResponse.Text("Hostname: web-1", "text/plain"));
+
+        var model = Model("GET", new HttpExpect(200, null, "{token}"));
+        var seed = new Dictionary<string, object?>(StringComparer.Ordinal) { ["token"] = string.Empty };
+
+        var (outcome, _) = await RunAsync(model, responder.BaseUrl, seed: seed);
+
+        Assert.Equal(Verdict.Inconclusive, outcome.Verdict);
+        Assert.Equal("{\"bodyContainsResolvedEmpty\":true}", outcome.Observation);
+        Assert.Equal(0, responder.RequestCount);
+    }
+
+    /// <summary>
+    /// A <c>bodyContains</c> placeholder that resolves to genuine non-empty text still passes
+    /// when the body carries it: the empty-resolution guard does not disturb the ordinary case.
+    /// </summary>
+    [Fact]
+    public async Task Execute_BodyContainsResolvesNonEmpty_StillPasses()
+    {
+        using var responder = ScriptedResponder.Start(CannedResponse.Text("Hostname: web-1", "text/plain"));
+
+        var model = Model("GET", new HttpExpect(200, null, "Hostname: {hostname}"));
+        var seed = new Dictionary<string, object?>(StringComparer.Ordinal) { ["hostname"] = "web-1" };
+
+        var (outcome, _) = await RunAsync(model, responder.BaseUrl, seed: seed);
+
+        Assert.Equal(Verdict.Pass, outcome.Verdict);
+        Assert.Equal(1, responder.RequestCount);
+    }
+
+    /// <summary>
+    /// A <c>bodyContains</c> placeholder that resolves to genuine non-empty text the body does
+    /// NOT carry still fails as <c>notFound</c> — the empty-resolution guard is specific to the
+    /// empty string and never widens into a general exemption for a placeholder-bearing value.
+    /// </summary>
+    [Fact]
+    public async Task Execute_BodyContainsResolvesNonEmpty_StillFailsWhenAbsent()
+    {
+        using var responder = ScriptedResponder.Start(CannedResponse.Text("Hostname: web-1", "text/plain"));
+
+        var model = Model("GET", new HttpExpect(200, null, "Hostname: {hostname}"));
+        var seed = new Dictionary<string, object?>(StringComparer.Ordinal) { ["hostname"] = "web-2" };
+
+        var (outcome, _) = await RunAsync(model, responder.BaseUrl, seed: seed);
+
+        Assert.Equal(Verdict.Fail, outcome.Verdict);
+        var first = BodyOf(outcome).GetProperty("first");
+        Assert.Equal("notFound", first.GetProperty("reason").GetString());
+        Assert.Equal(1, responder.RequestCount);
     }
 
     /// <summary>
