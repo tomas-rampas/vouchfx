@@ -38,6 +38,13 @@
 /.github/actions/                               @tomas-rampas
 /ci/                                            @tomas-rampas
 
+# Claude Code on the web bootstrap. WHY: .claude/settings.json registers
+# .claude/hooks/session-start.sh as a SessionStart hook, so a web session runs the
+# checked-out branch's copy of it, as root, before anyone has read the diff: the same
+# supply-chain class as the workflows above. Owner review is mandatory, and web
+# sessions should be opened only on branches you trust.
+/.claude/                                       @tomas-rampas
+
 # Central build / dependency-version / package-feed control. WHY: an unreviewed
 # edit here silently changes a dependency version, adds a package source, or alters
 # the build contract across the WHOLE solution — a classic supply-chain vector — so

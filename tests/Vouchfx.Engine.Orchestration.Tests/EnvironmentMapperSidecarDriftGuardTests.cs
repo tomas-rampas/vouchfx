@@ -22,25 +22,18 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text.RegularExpressions;
+using Vouchfx.TestSupport;
 using Xunit;
 
 namespace Vouchfx.Engine.Orchestration.Tests;
 
 public sealed class EnvironmentMapperSidecarDriftGuardTests
 {
-    // Mirrors ExamplesCompileTests.ResolveRepoRoot / Sprint11ReferenceCompileTests.
-    // ResolveRepoRoot: walk up from the test assembly's output directory
-    // (bin/Debug|Release/net8.0 under tests/Vouchfx.Engine.Orchestration.Tests/) to the repo
-    // root.
-    private static string ResolveRepoRoot()
-    {
-        var assemblyDir =
-            Path.GetDirectoryName(typeof(EnvironmentMapperSidecarDriftGuardTests).Assembly.Location)!;
-        return Path.GetFullPath(Path.Combine(assemblyDir, "..", "..", "..", "..", ".."));
-    }
-
+    // RepoRoot.Resolve() (#551) — anchored on vouchfx.sln, shared with every other test project
+    // that needs the repo root, rather than this file's own fixed-depth walk from the test
+    // assembly's output directory.
     private static string EnvironmentMapperSourcePath => Path.Combine(
-        ResolveRepoRoot(), "src", "Engine", "Vouchfx.Engine.Orchestration", "EnvironmentMapper.cs");
+        RepoRoot.Resolve(), "src", "Engine", "Vouchfx.Engine.Orchestration", "EnvironmentMapper.cs");
 
     [Fact]
     public void ServiceEndpointsWriteSites_EverySuffixedKey_IsAccountedForByGetDependencyServiceSidecarNames()

@@ -12,6 +12,9 @@
 //   8.  Emit: RequiredHelpers includes Substitute_Helpers and Secret_Helpers sources (§17 parity).
 //   9.  Full compile-and-run (no docker): missing ${secret:env/…} in payload → EnvironmentError,
 //       observation is REFERENCE-ONLY (secretError marker + source + path, never a value, §17).
+//   10. Emit: RequiredHelpers declares a CancellationToken 'ct' parameter and the defensive
+//       OperationCanceledException filter (#492, mirrors cache-assert.redis verbatim).
+//   11. Emit: StatementBlock passes the step-scoped __stepCt_<safeId> token to the call site (#492).
 using Vouchfx.Engine.Abstractions;
 using Vouchfx.Engine.Abstractions.Secrets;
 using Vouchfx.Engine.Compilation;
@@ -220,11 +223,13 @@ public sealed class MqPublishRedisEmitTests
                 $"{{\"token\":\"${{secret:env/{envName}}}\"}}");
 
             var fragment = _provider.Emit(model, new StubCompileContext(stepId));
-            var usings = string.Join("\n", fragment.RequiredUsings.Select(u => $"using {u};"));
-            var helpers = string.Join("\n", fragment.RequiredHelpers);
-            var csx = $"{usings}\n{helpers}\n{fragment.StatementBlock}";
 
-            var compiled = RoslynScriptCompiler.CompileOnce(csx, additionalReferencePaths: s_additionalRefs);
+            // Splice via CsxAssembler (not a manual join) — it declares the per-step
+            // __stepCt_<safeId> local the emitted call site now references (§4 common
+            // step fields, issue #232 / #492).
+            var assembled = CsxAssembler.Assemble(new[] { (stepId, fragment) });
+            var compiled = RoslynScriptCompiler.CompileOnce(
+                assembled.CsxSource, additionalReferencePaths: s_additionalRefs);
 
             // Stage a connection value so the helper proceeds past the connection check
             // and INTO secret resolution; no real Redis is needed — resolution throws
@@ -266,6 +271,49 @@ public sealed class MqPublishRedisEmitTests
         {
             Environment.SetEnvironmentVariable(envName, null);
         }
+    }
+
+    // ── 10. Emit: helper declares 'ct' and the defensive OCE filter (#492) ───────
+
+    /// <summary>
+    /// <c>MqPublishRedis_Helpers.PublishAsync</c> must declare a
+    /// <see cref="System.Threading.CancellationToken"/> parameter and carry the
+    /// defensive <c>OperationCanceledException</c> filter that rethrows a step-token
+    /// cut past this provider's own error handling — matching
+    /// <c>CacheAssertRedis_Helpers.Execute</c> verbatim (#492).  StackExchange.Redis's
+    /// async API has no CancellationToken overload to pass 'ct' into, so this pins the
+    /// signature and the defensive filter only; it is not a behavioural change (see the
+    /// provider's header comment).
+    /// </summary>
+    [Fact]
+    public void Emit_RequiredHelpers_DeclaresCancellationTokenParameterAndDefensiveFilter()
+    {
+        var fragment = _provider.Emit(GetModel(), new StubCompileContext("pub-step"));
+
+        Assert.Contains(fragment.RequiredHelpers, h =>
+            h.Contains("System.Threading.CancellationToken ct)", StringComparison.Ordinal));
+        Assert.Contains(fragment.RequiredHelpers, h =>
+            h.Contains(
+                "catch (System.OperationCanceledException) when (ct.IsCancellationRequested)",
+                StringComparison.Ordinal));
+    }
+
+    // ── 11. Emit: call site passes the step-scoped token (#492) ──────────────────
+
+    /// <summary>
+    /// The emitted call to <c>PublishAsync</c> must pass the step's own
+    /// <c>__stepCt_&lt;safeId&gt;</c> local — the token <c>CsxAssembler</c>'s
+    /// <c>WrapForImmediate</c> declares for every IMMEDIATE step — matching every other
+    /// ct-wired provider's call-site convention (#492).
+    /// </summary>
+    [Fact]
+    public void Emit_StatementBlock_PassesStepScopedCancellationTokenToCallSite()
+    {
+        const string rawId = "pub-ct-step";
+        var safeId = CsxFragment.SanitiseId(rawId);
+        var fragment = _provider.Emit(GetModel(), new StubCompileContext(rawId));
+
+        Assert.Contains($"__stepCt_{safeId}", fragment.StatementBlock, StringComparison.Ordinal);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

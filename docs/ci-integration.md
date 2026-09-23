@@ -206,6 +206,25 @@ A failed probe is the exception because it already reports a measured security f
 words. Note the reach: this line goes to **stdout only** — it is in neither `--junit` nor `--events`,
 so a job that reads only the machine-readable artefacts sees a bare non-zero exit and nothing else.
 
+**The provider- or engine-surface guard rule carries the same kind of line.** It needs one more than
+the parse-failure and nothing-executed rules beside it do: those two fire on a run that is *visibly*
+broken — nothing executed, or a file the engine could not read — while this rule can fire on a run
+whose terminal shows a *passing* scenario, with the refused sibling's own diagnostic one line among
+many. Printed exactly when this rule, and no earlier rule, is why the run is non-zero:
+
+> This run exits non-zero because a scenario was refused at a provider- or engine-surface guard
+> before it could run, not because of any verdict reported above: that alone makes a run non-zero
+> whatever its siblings did, including a scenario that ran and passed. The diagnostic naming what
+> failed is printed above; this line exists only to connect it to the exit code.
+
+It follows the security line's own reach — **stdout only**, absent from `--junit` and `--events` — and
+the two lines never print together: REQ-018's carve-out is decided inside `ExitCodes.FromVerdict`
+before this rule is ever consulted, so whenever the security line is why the run is non-zero, this one
+stays silent rather than printing a second, redundant explanation. It names no step, deliberately: the
+diagnostic the guard itself printed above already names the offending step and its provider type where
+one exists, and the suite-level CSX-assembly-failure arm has none to give (the exception it catches
+does not identify the fragment), so one wording serves both arms truthfully.
+
 #### What does *not* break CI
 
 - **A topology that came up and then failed its health gate, when that is the run's *only* fault.**

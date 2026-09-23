@@ -12,6 +12,7 @@
 using System;
 using System.Buffers;
 using System.IO;
+using Vouchfx.TestSupport;
 using Xunit;
 
 namespace Vouchfx.Engine.Runtime.Tests;
@@ -66,21 +67,18 @@ internal static class BuiltCli
     }
 
     /// <summary>
-    /// Walks up from this test assembly's own build output to the repository root.
+    /// The repository root, anchored on <c>vouchfx.sln</c> (#551).
     /// </summary>
     /// <remarks>
-    /// Walk up: net8.0 → &lt;configuration&gt; → bin → &lt;project&gt; → tests → repo root. The
-    /// same shape ExamplesCompileTests.ResolveRepoRoot and Sprint11ReferenceCompileTests use — kept
-    /// here as the one place <see cref="Resolve"/> and <see cref="RelativeToRepoRoot"/> both derive
-    /// it from, so the two can never disagree about where the root is.
+    /// Delegates to <see cref="Vouchfx.TestSupport.RepoRoot.Resolve()"/> — the one answer to
+    /// "where is the repo" every test project in the solution now shares — rather than deriving
+    /// its own fixed-depth walk from this assembly's build output, which is what this method used
+    /// to do. Kept as a named wrapper (rather than inlining the call at each of
+    /// <see cref="Resolve"/> and <see cref="RelativeToRepoRoot"/>) purely so neither of those two
+    /// — nor <c>BuiltCliTests</c>, which calls this directly — needed to change when the walk
+    /// itself moved.
     /// </remarks>
-    internal static string ResolveRepoRoot()
-    {
-        var assemblyDirectory = Path.GetDirectoryName(typeof(BuiltCli).Assembly.Location)!;
-
-        return Path.GetFullPath(
-            Path.Combine(assemblyDirectory, "..", "..", "..", "..", ".."));
-    }
+    internal static string ResolveRepoRoot() => RepoRoot.Resolve();
 
     /// <summary>
     /// Renders <paramref name="absolutePath"/> relative to the repository root, for splicing into

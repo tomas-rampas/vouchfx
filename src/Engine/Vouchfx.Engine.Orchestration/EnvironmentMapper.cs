@@ -143,6 +143,28 @@ public sealed record MappedTopology(
     /// </remarks>
     internal IReadOnlyList<EndpointTrustNotice> EndpointTrustNotices { get; init; }
         = Array.Empty<EndpointTrustNotice>();
+
+    /// <summary>
+    /// Gets the ledger of <c>azureservicebus</c> temp Config.json directories a real run of this
+    /// topology creates (#438). It stays empty when none was declared, <see cref="Configure"/> has
+    /// not run, or no such dependency's container has started yet.
+    /// </summary>
+    /// <remarks>
+    /// Unlike <see cref="EndpointSelectionNotices"/>/<see cref="EndpointTrustNotices"/>, nothing
+    /// stages into this ledger synchronously inside <see cref="Configure"/>: an entry is staged
+    /// only from Aspire's own <c>OnBeforeResourceStarted</c> callback, which fires exclusively
+    /// when DCP is genuinely about to start that emulator container — i.e. only during a real
+    /// <see cref="Aspire.Hosting.DistributedApplication.StartAsync"/>. A bare
+    /// <see cref="Configure"/> call against a builder that is never started — every non-Docker
+    /// <c>EnvironmentMapperTests</c> case — leaves this ledger's snapshot empty, because the
+    /// directory itself is never created on that path. <see cref="HeadlessTopology.DisposeAsync"/>
+    /// (the single teardown chokepoint, §4.5) closes this ledger and removes every directory its
+    /// closing snapshot names, after the container has stopped — and, once closed, a hook that
+    /// still fires later (see <see cref="TempDirectoryLedger"/>'s own remarks for how that can
+    /// happen) finds the ledger refusing it rather than creating an orphan.
+    /// </remarks>
+    internal TempDirectoryLedger AsbTempDirectoriesCreated { get; init; }
+        = new();
 }
 
 /// <summary>
@@ -206,6 +228,20 @@ public static class EnvironmentMapper
     /// <c>imageRegistry</c> was captured by <see cref="Map"/> but consumed only inside the
     /// services loop, so dependencies never saw it at all.
     /// </para>
+    /// <para>
+    /// The eighth parameter, <c>tempDirectoriesToClean</c>, is a <see cref="TempDirectoryLedger"/>
+    /// (#438) for dependencies that must stage a host-filesystem artefact (a bind-mount source) a
+    /// real container will read — today only <c>azureservicebus</c>'s generated Config.json
+    /// directory. A Build lambda that needs one calls <see cref="TempDirectoryLedger.Stage"/> from
+    /// inside an Aspire <c>OnBeforeResourceStarted</c> hook — which fires only during a genuine
+    /// <c>DistributedApplication.StartAsync</c>, never for a bare <c>Configure(builder)</c> call
+    /// with no container ever started — so the directory is created, recorded, and populated only
+    /// once DCP is genuinely about to start that container. <see cref="HeadlessTopology.DisposeAsync"/>
+    /// (the single teardown chokepoint, §4.5) closes the same ledger, which is what stops a hook
+    /// that fires AFTER teardown from creating something nobody will ever remove — see
+    /// <see cref="TempDirectoryLedger"/>'s own remarks for the race this closes. Existing types
+    /// that do not need this mechanism receive <c>_</c> for the parameter.
+    /// </para>
     /// </remarks>
     private sealed record DependencyRegistration(
         Func<IDistributedApplicationBuilder, string, DependencySpec,
@@ -213,6 +249,7 @@ public static class EnvironmentMapper
              Dictionary<string, Func<CancellationToken, Task<string?>>>,
              string?,
              ImagePullPolicy?,
+             TempDirectoryLedger,
              (IResourceBuilder<IResource> Retained, IResourceBuilder<IResource> MostSpecific)> Build,
         Func<string, DependencySpec, IEnumerable<string>> HealthGateNames);
 
@@ -230,7 +267,7 @@ public static class EnvironmentMapper
             // hardware.  Retain the DATABASE builder for connection-string discovery too.
 
             ["postgres"] = new DependencyRegistration(
-                Build: (builder, name, spec, _, _, imageRegistry, pullPolicy) =>
+                Build: (builder, name, spec, _, _, imageRegistry, pullPolicy, _) =>
                 {
                     var serverBuilder = ApplyImageOverrides(builder.AddPostgres(name), spec, imageRegistry, pullPolicy);
                     var dbBuilder = serverBuilder.AddDatabase(name + "db");
@@ -240,7 +277,7 @@ public static class EnvironmentMapper
                 HealthGateNames: (name, _) => new[] { name + "db" }),
 
             ["sqlserver"] = new DependencyRegistration(
-                Build: (builder, name, spec, _, _, imageRegistry, pullPolicy) =>
+                Build: (builder, name, spec, _, _, imageRegistry, pullPolicy, _) =>
                 {
                     var serverBuilder = ApplyImageOverrides(builder.AddSqlServer(name), spec, imageRegistry, pullPolicy);
                     var dbBuilder = serverBuilder.AddDatabase(name + "db");
@@ -250,7 +287,7 @@ public static class EnvironmentMapper
                 HealthGateNames: (name, _) => new[] { name + "db" }),
 
             ["mysql"] = new DependencyRegistration(
-                Build: (builder, name, spec, _, _, imageRegistry, pullPolicy) =>
+                Build: (builder, name, spec, _, _, imageRegistry, pullPolicy, _) =>
                 {
                     var serverBuilder = ApplyImageOverrides(builder.AddMySql(name), spec, imageRegistry, pullPolicy);
                     var dbBuilder = serverBuilder.AddDatabase(name + "db");
@@ -260,7 +297,7 @@ public static class EnvironmentMapper
                 HealthGateNames: (name, _) => new[] { name + "db" }),
 
             ["mongodb"] = new DependencyRegistration(
-                Build: (builder, name, spec, _, _, imageRegistry, pullPolicy) =>
+                Build: (builder, name, spec, _, _, imageRegistry, pullPolicy, _) =>
                 {
                     var serverBuilder = ApplyImageOverrides(builder.AddMongoDB(name), spec, imageRegistry, pullPolicy);
                     var dbBuilder = serverBuilder.AddDatabase(name + "db");
@@ -272,7 +309,7 @@ public static class EnvironmentMapper
             // ---- server-only: gate on the server itself ----
 
             ["redis"] = new DependencyRegistration(
-                Build: (builder, name, spec, _, _, imageRegistry, pullPolicy) =>
+                Build: (builder, name, spec, _, _, imageRegistry, pullPolicy, _) =>
                 {
                     var serverBuilder = ApplyImageOverrides(builder.AddRedis(name), spec, imageRegistry, pullPolicy);
                     var retained = (IResourceBuilder<IResource>)(object)serverBuilder;
@@ -281,7 +318,7 @@ public static class EnvironmentMapper
                 HealthGateNames: (name, _) => new[] { name }),
 
             ["elasticsearch"] = new DependencyRegistration(
-                Build: (builder, name, spec, _, _, imageRegistry, pullPolicy) =>
+                Build: (builder, name, spec, _, _, imageRegistry, pullPolicy, _) =>
                 {
                     var serverBuilder = ApplyImageOverrides(builder.AddElasticsearch(name), spec, imageRegistry, pullPolicy);
                     // Stability environment variables: single-node discovery, security
@@ -304,7 +341,7 @@ public static class EnvironmentMapper
                 HealthGateNames: (name, _) => new[] { name }),
 
             ["rabbitmq"] = new DependencyRegistration(
-                Build: (builder, name, spec, _, _, imageRegistry, pullPolicy) =>
+                Build: (builder, name, spec, _, _, imageRegistry, pullPolicy, _) =>
                 {
                     var serverBuilder = ApplyImageOverrides(builder.AddRabbitMQ(name), spec, imageRegistry, pullPolicy);
                     var retained = (IResourceBuilder<IResource>)(object)serverBuilder;
@@ -313,7 +350,7 @@ public static class EnvironmentMapper
                 HealthGateNames: (name, _) => new[] { name }),
 
             ["nats"] = new DependencyRegistration(
-                Build: (builder, name, spec, _, _, imageRegistry, pullPolicy) =>
+                Build: (builder, name, spec, _, _, imageRegistry, pullPolicy, _) =>
                 {
                     // WithJetStream() appends the '-js' flag so the NATS container starts with
                     // JetStream enabled.  Without it, CreateStreamAsync / PublishAsync throw
@@ -333,7 +370,7 @@ public static class EnvironmentMapper
             // Gate ordering: broker first, then SR (SR depends on the broker).
 
             ["kafka"] = new DependencyRegistration(
-                Build: (builder, name, spec, serviceEndpoints, _, imageRegistry, pullPolicy) =>
+                Build: (builder, name, spec, serviceEndpoints, _, imageRegistry, pullPolicy, _) =>
                 {
                     var kafkaBuilder = ApplyImageOverrides(builder.AddKafka(name), spec, imageRegistry, pullPolicy);
 
@@ -385,7 +422,7 @@ public static class EnvironmentMapper
             // Health gate: container's /api/v1/info endpoint via HTTP health check.
 
             ["mailpit"] = new DependencyRegistration(
-                Build: (builder, name, spec, serviceEndpoints, _, imageRegistry, pullPolicy) =>
+                Build: (builder, name, spec, serviceEndpoints, _, imageRegistry, pullPolicy, _) =>
                 {
                     // Pin a stable tag for determinism (§4): never float on 'latest'.
                     // Authors may still override via the dependency's 'version' field, or now
@@ -433,7 +470,7 @@ public static class EnvironmentMapper
             // ready, so the sidecar's "running" state is subsumed by the emulator gate).
 
             ["azureservicebus"] = new DependencyRegistration(
-                Build: (builder, name, spec, _, depConnBuilders, imageRegistry, pullPolicy) =>
+                Build: (builder, name, spec, _, depConnBuilders, imageRegistry, pullPolicy, tempDirectoriesToClean) =>
                 {
                     var sidecarName = name + "-sqledge";
 
@@ -456,23 +493,20 @@ public static class EnvironmentMapper
                         imageRegistry,
                         pullPolicy);
 
-                    // Generate a Config.json that declares the ASB emulator namespace.
-                    // Queues and topics are read from spec.Extra; if absent, an empty
-                    // namespace is declared.  Entities not declared here will not be
-                    // available; a missing entity surfaces as ServiceBusException → EnvironmentError.
+                    // Config.json declares the ASB emulator namespace. Queues and topics are
+                    // read from spec.Extra (pure — already fully known here, no I/O); if
+                    // absent, an empty namespace is declared. Entities not declared here will
+                    // not be available; a missing entity surfaces as ServiceBusException →
+                    // EnvironmentError.
                     var queues = ParseAsbQueues(spec.Extra);
                     var topics = ParseAsbTopics(spec.Extra);
                     var configJson = GenerateAsbConfigJson(queues, topics);
-                    // Write to a vouchfx-prefixed temp subdirectory so the file is
-                    // identifiable for manual cleanup.  The OS reclaims temp files on
-                    // reboot; the emulator reads this path at container-start time and
-                    // the normal teardown path (§4.5) removes the container before the
-                    // engine exits, so the file is only retained on abnormal DCP exits.
+                    // The bind-mount SOURCE path is computed here (pure string construction,
+                    // no I/O — see the OnBeforeResourceStarted hook below for why the
+                    // directory and file are not created at this point).
                     var asbTempDir = Path.Combine(
                         Path.GetTempPath(), $"vouchfx-asb-{Guid.NewGuid():N}");
-                    Directory.CreateDirectory(asbTempDir);
                     var configPath = Path.Combine(asbTempDir, "Config.json");
-                    File.WriteAllText(configPath, configJson);
 
                     var emulatorBuilder = builder
                         .AddContainer(name, "mcr.microsoft.com/azure-messaging/servicebus-emulator", "1.1.2")
@@ -486,6 +520,44 @@ public static class EnvironmentMapper
                         .WaitFor(sidecarBuilder);
 
                     emulatorBuilder = ApplyImageOverrides(emulatorBuilder, spec, imageRegistry, pullPolicy);
+
+                    // #438: the directory + Config.json write is DEFERRED to this
+                    // OnBeforeResourceStarted hook rather than performed eagerly above.
+                    // Build() — and so this whole Configure() callback — also runs for every
+                    // Map()+Configure() caller that never starts a real topology, including
+                    // every in-memory EnvironmentMapperTests case that inspects
+                    // builder.Resources without Docker; writing eagerly there created a real
+                    // vouchfx-asb-<guid> directory nothing ever removed (measured: +3 leaked
+                    // per Vouchfx.Engine.Orchestration.Tests run). OnBeforeResourceStarted
+                    // fires only when Aspire's DCP is genuinely about to start THIS container
+                    // — i.e. only during a real DistributedApplication.StartAsync — so a bare
+                    // Configure(builder) call never creates the file at all, and there is
+                    // nothing to clean up on that path because nothing was written.
+                    // tempDirectoriesToClean is the SAME TempDirectoryLedger MappedTopology.
+                    // AsbTempDirectoriesCreated exposes, so HeadlessTopology.DisposeAsync (the
+                    // single teardown chokepoint, §4.5) can close it and remove exactly what a
+                    // real run actually staged, once the container has stopped. A start hook
+                    // that still fires AFTER that close — DCP finishing a container-creation
+                    // task that outlived a cancelled StartAsync, see TempDirectoryLedger's own
+                    // remarks — finds the ledger closed: Stage throws instead of creating an
+                    // orphan, and Aspire logs this one resource as FailedToStart. The one path
+                    // DisposeAsync itself cannot reach, an overall StartAsync that fails AFTER
+                    // this hook already fired for THIS resource (DCP started the emulator, then
+                    // failed on something else), is StartAsync's own failure catch: it resolves
+                    // this ledger from the app's services (registered at the top of Configure)
+                    // and closes it through the same
+                    // HeadlessTopology.DeleteEngineOwnedTempDirectories.
+                    emulatorBuilder.OnBeforeResourceStarted((_, _, _) =>
+                    {
+                        // Stage creates asbTempDir, records it, and writes Config.json into it —
+                        // all under the ledger's own lock, so a concurrent close cannot snapshot
+                        // a half-written directory (Aspire starts resources concurrently: a suite
+                        // declaring two azureservicebus dependencies runs this hook for both at
+                        // once) and a close that already ran refuses this Stage outright rather
+                        // than silently creating something cleanup has already given up on.
+                        tempDirectoriesToClean.Stage(asbTempDir, _ => File.WriteAllText(configPath, configJson));
+                        return Task.CompletedTask;
+                    });
 
                     // Capture the AMQP endpoint reference; resolve after StartAsync.
                     // IResourceBuilder<T> is covariant (out T) in Aspire 13.x, so
@@ -539,7 +611,7 @@ public static class EnvironmentMapper
             // for a containerised SUT exactly as they do for kafka/elasticsearch/mailpit.
 
             ["dynamodb"] = new DependencyRegistration(
-                Build: (builder, name, spec, serviceEndpoints, depConnBuilders, imageRegistry, pullPolicy) =>
+                Build: (builder, name, spec, serviceEndpoints, depConnBuilders, imageRegistry, pullPolicy, _) =>
                 {
                     // Pin a specific tag (§4) — verified to exist on Docker Hub before use.
                     // Authors may override via 'version', or now via 'image:'
@@ -587,7 +659,7 @@ public static class EnvironmentMapper
             // registrations above use fixed default test credentials.
 
             ["minio"] = new DependencyRegistration(
-                Build: (builder, name, spec, serviceEndpoints, depConnBuilders, imageRegistry, pullPolicy) =>
+                Build: (builder, name, spec, serviceEndpoints, depConnBuilders, imageRegistry, pullPolicy, _) =>
                 {
                     // Pin a specific tag (§4), and name the registry EXPLICITLY (#533).
                     // This reference used to be the bare "minio/minio", which resolves to
@@ -796,6 +868,23 @@ public static class EnvironmentMapper
         // discriminated case of the one above): a staged address that resolves to an https
         // listener the engine holds no trust material for. Same lifecycle, same reason.
         var endpointTrustNotices = new List<EndpointTrustNotice>();
+
+        // #438: the ledger for the azureservicebus dependency's temp Config.json directory,
+        // staged into ONLY once the directory is actually created (see its
+        // DependencyRegistration.Build entry below). Unlike the two notice lists above, nothing
+        // writes here synchronously inside Configure — an entry is staged later, from Aspire's
+        // own OnBeforeResourceStarted callback, which fires only during a genuine
+        // DistributedApplication.StartAsync. So a bare Configure(builder) call against a builder
+        // that is never started (every non-Docker EnvironmentMapperTests case) leaves this
+        // ledger's snapshot empty, because the directory itself was never created on that path —
+        // there is nothing here to reset between two Configure invocations for the same reason.
+        // The SAME TempDirectoryLedger instance is surfaced as
+        // MappedTopology.AsbTempDirectoriesCreated so HeadlessTopology.DisposeAsync (the single
+        // teardown chokepoint, §4.5) can close it and remove whatever this run actually staged,
+        // after the container has stopped — and so that a hook firing later than that close
+        // refuses rather than orphaning a directory (TempDirectoryLedger's own remarks explain
+        // why that can happen and why refusing it is safe).
+        var asbTempDirectoriesCreated = new TempDirectoryLedger();
 
         // #348: same treatment, same reason — captured once here so the endpoint-less project-form
         // refusal inside the Configure closure is a plain set lookup. Empty is the PERMISSIVE
@@ -1511,13 +1600,22 @@ public static class EnvironmentMapper
             endpointSelectionNotices.Clear();
             endpointTrustNotices.Clear();
 
+            // #438: the ledger goes into this builder's own services, so HeadlessTopology finds it
+            // whoever started the topology: its constructor attaches it for DisposeAsync, and
+            // StartAsync's own failure catch cleans it when the start throws. A caller composing
+            // Map with the public HeadlessTopology.StartAsync directly therefore gets the same
+            // cleanup SuiteTopology does, with no internal call to make. The type is internal, so
+            // no caller outside this assembly can register a ledger of its own and aim the delete.
+            builder.Services.AddSingleton(asbTempDirectoriesCreated);
+
             var mostSpecificDependencyResources = new List<IResourceBuilder<IResource>>();
 
             foreach (var (name, spec) in dependencies)
             {
                 var entry = s_dependencyRegistry[spec.Type];
                 var (retained, mostSpecific) = entry.Build(
-                    builder, name, spec, serviceEndpoints, depConnBuilders, imageRegistry, envPullPolicy);
+                    builder, name, spec, serviceEndpoints, depConnBuilders, imageRegistry, envPullPolicy,
+                    asbTempDirectoriesCreated);
                 dependencyBuilders[name] = retained;
                 mostSpecificDependencyResources.Add(mostSpecific);
 
@@ -2204,6 +2302,10 @@ public static class EnvironmentMapper
             StagedServiceEndpoints = serviceEndpoints,
             EndpointSelectionNotices = endpointSelectionNotices,
             EndpointTrustNotices = endpointTrustNotices,
+            // The SAME TempDirectoryLedger instance the azureservicebus OnBeforeResourceStarted
+            // hook (if any) stages into — not a copy, so closing it after StartAsync reflects
+            // what was actually created rather than the empty state at Map's return (#438).
+            AsbTempDirectoriesCreated = asbTempDirectoriesCreated,
         };
     }
 

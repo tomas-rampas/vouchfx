@@ -89,21 +89,14 @@ public sealed class Sprint11ReferenceCapstoneTests
     };
 
     // ── Resolve paths from the test assembly location ──────────────────────────────
-
-    /// <summary>Walks up from the test assembly output to the repo root.</summary>
-    private static string ResolveRepoRoot()
-    {
-        var assemblyDir = Path.GetDirectoryName(
-            typeof(Sprint11ReferenceCapstoneTests).Assembly.Location)!;
-        // Walk up: net8.0 → <configuration> → bin → Vouchfx.Engine.Runtime.Tests → tests → repo root
-        return Path.GetFullPath(Path.Combine(assemblyDir, "..", "..", "..", "..", ".."));
-    }
+    // RepoRoot.Resolve() (#551) — anchored on vouchfx.sln, shared with every other test project
+    // that needs the repo root.
 
     private static string ReferenceYamlPath =>
-        Path.Combine(ResolveRepoRoot(), "examples", "reference", "reference.e2e.yaml");
+        Path.Combine(RepoRoot.Resolve(), "examples", "reference", "reference.e2e.yaml");
 
     private static string ReferenceSeedBaseDir =>
-        Path.Combine(ResolveRepoRoot(), "examples", "reference");
+        Path.Combine(RepoRoot.Resolve(), "examples", "reference");
 
     // ── Test A: engine API ─────────────────────────────────────────────────────────
 

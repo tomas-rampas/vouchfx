@@ -293,17 +293,16 @@ public sealed class GitChangeSetTests
     /// hit it.
     /// </para>
     /// <para>
-    /// The exit code is deliberately unchanged at 2 (usage error): whether selection-infrastructure
-    /// failure deserves a code of its own is an open question, and this fix must not answer it
-    /// quietly.
+    /// The exit code is deliberately unchanged at 2 (usage error): this fix must not answer the
+    /// selection-infrastructure exit-code question quietly, as a side effect of stopping a hang.
     /// </para>
     /// <para>
-    /// <strong>That question is open and is filed as #521.</strong> It used to cite issues #480
-    /// and #466-B, and neither reaches it. #466 closed on a different axis — how
+    /// <strong>That question is decided, in blueprint §16.4, as issue #521.</strong> It used to
+    /// cite issues #480 and #466-B, and neither reached it. #466 closed on a different axis — how
     /// <c>ParallelSuiteRunner</c>'s slot catch-all CLASSIFIES an unexpected engine throw — and
     /// #480's answer is narrower still: a provider or engine defect never exits 0. A git that
-    /// could not be run is neither. Until #521 is decided, a <c>--changed-since</c> git failure is
-    /// a usage error and exits 2.
+    /// could not be run is neither. §16.4 answers it instead: every <c>--changed-since</c> git
+    /// failure, a wedged git included, is a usage error and exits 2.
     /// </para>
     /// </remarks>
     [Fact]
@@ -1837,9 +1836,9 @@ public sealed class GitChangeSetTests
     /// <para>
     /// There is deliberately no fallback to the bare name: falling back is precisely the
     /// search-order hole the resolution closes, so "not found" has to be a refusal. The exit code
-    /// is unchanged on purpose — whether selection-infrastructure failure deserves one of its own
-    /// is an open question, filed as #521. This comment used to cite issues #480 and #466-B;
-    /// neither answers it (see
+    /// is unchanged on purpose — blueprint §16.4 decides, as issue #521, that a
+    /// selection-infrastructure failure gets no code of its own. This comment used to cite issues
+    /// #480 and #466-B; neither answered it (see
     /// <see cref="GitTimesOut_SurfacesChangeSetException_NamingTheBudget"/>'s remarks for why).
     /// </para>
     /// <para>
@@ -2387,32 +2386,49 @@ public sealed class GitChangeSetTests
         };
         psi.ArgumentList.Add("--version");
 
+        // The start sits in its own try/catch, above the `using`: it is the one step allowed to
+        // fail before there is anything to kill (git absent from PATH raises Win32Exception here).
+        System.Diagnostics.Process? process;
         try
         {
-            using var process = System.Diagnostics.Process.Start(psi);
-            if (process is null)
-            {
-                return false;
-            }
-
-            // Started before the wait: a child that fills a redirected pipe blocks otherwise.
-            var drain = Task.WhenAll(
-                process.StandardOutput.ReadToEndAsync(),
-                process.StandardError.ReadToEndAsync());
-
-            if (!process.WaitForExit(BareNameProbeBudgetMilliseconds))
-            {
-                ChildProcess.KillTreeQuietly(process);
-                ObserveQuietly(drain);
-                return false;
-            }
-
-            ObserveQuietly(drain);
-            return process.ExitCode == 0;
+            process = System.Diagnostics.Process.Start(psi);
         }
         catch (System.ComponentModel.Win32Exception)
         {
             return false; // No git this host can launch from the bare name.
+        }
+
+        if (process is null)
+        {
+            return false;
+        }
+
+        using (process)
+        {
+            try
+            {
+                // Started before the wait: a child that fills a redirected pipe blocks otherwise.
+                var drain = Task.WhenAll(
+                    process.StandardOutput.ReadToEndAsync(),
+                    process.StandardError.ReadToEndAsync());
+
+                if (!process.WaitForExit(BareNameProbeBudgetMilliseconds))
+                {
+                    ObserveQuietly(drain);
+                    return false;
+                }
+
+                ObserveQuietly(drain);
+                return process.ExitCode == 0;
+            }
+            finally
+            {
+                // House shape (#548, ChildProcessKillCallSiteCensusTests): the kill sits in an
+                // UNCONDITIONAL `finally` rather than only the timeout branch above, so the census
+                // can see it. Safe on the clean-exit path too — KillTreeQuietly no-ops on a process
+                // that has already exited, so this changes nothing about what the method returns.
+                ChildProcess.KillTreeQuietly(process);
+            }
         }
     }
 

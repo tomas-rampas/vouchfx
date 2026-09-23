@@ -9,6 +9,7 @@ using Vouchfx.Engine.Authoring.Ast;
 using Vouchfx.Engine.Orchestration;
 using Vouchfx.Sdk;
 using Vouchfx.Steps.MqPublish.Kafka;
+using Vouchfx.TestSupport;
 using Xunit;
 
 namespace Vouchfx.Engine.Runtime.Tests;
@@ -287,7 +288,7 @@ public sealed class SuiteProtocolTargetsTests
     [Fact]
     public void ProtocolFamilyLists_CoverEverySvcKeyConsumingStepType()
     {
-        var providersDirectory = Path.Combine(ResolveRepoRoot(), "src", "Providers");
+        var providersDirectory = Path.Combine(RepoRoot.Resolve(), "src", "Providers");
         Assert.True(
             Directory.Exists(providersDirectory),
             $"Provider sources not found at '{providersDirectory}'; this guard cannot run.");
@@ -543,7 +544,7 @@ public sealed class SuiteProtocolTargetsTests
     [Fact]
     public void EverySuiteTopologyStartCallSite_PassesBothTargetSets()
     {
-        var sourceDirectory = Path.Combine(ResolveRepoRoot(), "src");
+        var sourceDirectory = Path.Combine(RepoRoot.Resolve(), "src");
         Assert.True(
             Directory.Exists(sourceDirectory),
             $"Engine sources not found at '{sourceDirectory}'; this guard cannot run.");
@@ -713,15 +714,5 @@ public sealed class SuiteProtocolTargetsTests
         }
 
         return string.Join('\n', lines);
-    }
-
-    /// <summary>
-    /// Walks up from the test assembly's output directory to the repository root — the same
-    /// derivation <c>ExamplesCompileTests.ResolveRepoRoot</c> uses, and for the same reason.
-    /// </summary>
-    private static string ResolveRepoRoot()
-    {
-        var assemblyDir = Path.GetDirectoryName(typeof(SuiteProtocolTargetsTests).Assembly.Location)!;
-        return Path.GetFullPath(Path.Combine(assemblyDir, "..", "..", "..", "..", ".."));
     }
 }
