@@ -506,7 +506,7 @@ An `http` step issues an HTTP request to one of the services declared in the env
 | path | The request path, which may contain `{placeholder}` and `${secret:…}` tokens resolved at execution time. |
 | headers | An optional map of request headers. Each header value may contain `{placeholder}` and `${secret:…}` tokens. |
 | body | An optional request body. A YAML scalar is treated as a template string; a YAML mapping or sequence is serialised to JSON and then used as a template. All `{placeholder}` and `${secret:…}` tokens are resolved at step-execution time. |
-| expect | An assertion block: expected status code, and optional assertions on response headers and body fields. |
+| expect | An optional assertion block. `status` is the expected status code (any 2xx when omitted); `json` maps a JSONPath to an expected value or to `{ exists: true }` / `{ exists: false }`; `bodyContains` is a substring the decoded body must contain. See *Response-body assertions* below. Response headers are not asserted on. |
 
 ```yaml
 - id: create-user
@@ -520,11 +520,45 @@ An `http` step issues an HTTP request to one of the services declared in the env
     plan:  "standard"
   expect:
     status: 201
-    body:
-      id: { exists: true }
+    json:
+      "$.id": { exists: true }                 # server-generated: presence, not value
+      "$.email": "jane@{tenantId}.example"     # the posted value, echoed back
   capture:
     newUserId: "$.id"        # JSONPath into the response body
 ```
+
+#### `http.rest` — response-body assertions
+
+`expect.json` and `expect.bodyContains` assert on what the service answered, not only on its status. Both are evaluated only once the status check has held, and both before any `capture` runs, so a capture never reads a response the step has already failed.
+
+- **`json`** maps a JSONPath (RFC 9535; the key is used verbatim and is never `{placeholder}`-substituted) to an expectation over the body parsed as JSON. The value you write is either a scalar (a string, or a bare number or boolean, read as its literal text) or exactly `{ exists: true }` / `{ exists: false }`; any other mapping, and any sequence, is refused. A scalar value asserts that the path selects **exactly one** node whose value, compared as text, equals it: the *found* node is canonicalised by its own JSON kind — a string by its unescaped value, a number or boolean by its JSON spelling, an object or array by its compact JSON — so matching an object or array in the body means writing that compact JSON yourself, as a quoted string. That is the text `capture` stores, so the comparison is type-blind (`2` matches the number 2 and the string `"2"`) and spelling-sensitive (`2` does not match `2.0`, and a bare YAML `True` does not match `true`). A JSON null in the body compares as the text `null`; write it quoted, `"null"`, because an unquoted YAML null or an empty value is refused as a forgotten value. `{ exists: true }` asserts that the path selects at least one node (a present null counts), and `{ exists: false }` that it selects none — with a descendant path such as `$..password`, that a field appears nowhere in the body.
+- **`bodyContains`** is a substring the body must contain, compared ordinally (case-sensitive, no trimming). It is the assertion for a body that is not JSON, such as `text/plain` or HTML.
+
+```yaml
+- id: wait-until-shipped
+  type: http.rest
+  target: orders-api
+  method: GET
+  path: "/orders/{orderId}"
+  verifyMode: RETRY
+  timeout: 30s
+  expect:
+    json:
+      "$.status": SHIPPED
+      "$.shipment.trackingNumber": { exists: true }
+      "$.cancelledAt": "null"                  # a JSON null, written quoted
+- id: whoami-text
+  type: http.rest
+  target: whoami
+  method: GET
+  path: /
+  expect:
+    bodyContains: "Hostname: {hostname}"
+```
+
+The body is decoded as `capture` decodes it: the `Content-Type` charset is honoured and a byte-order mark is stripped. Expected values may carry `{placeholder}` and `${secret:…}` tokens, resolved when the step executes and before the request is sent. A value naming a placeholder that is not set makes the step **Inconclusive** (`placeholderUnmet`) and sends nothing, rather than comparing against an empty string (under `verifyMode: RETRY` the step still polls out its window first, sending nothing on any attempt); an unresolvable secret is an **Environment error**, again with nothing sent. A `bodyContains` value that resolves — once every placeholder and secret is substituted — to the empty string gets the same classification (**Inconclusive**, `bodyContainsResolvedEmpty`), for the same reason one step later: every body "contains" `""`, so comparing against it would pass whatever the service answered, rather than checking anything. `vouchfx validate` refuses a key that is not a valid JSONPath, and any body assertion on a `HEAD` request or alongside `status: 204` or `304`, whose responses carry no content.
+
+An assertion that does not hold makes the step **Fail** — including a body that is not JSON at all, since the service answered and the status held. The observation names the first assertion that did not hold: its path and your expected value, each cut to 256 characters with a trailing `…` if longer, a reason (`mismatch`, `missing`, `multipleNodes`, `present`, `notJson`, `unevaluable` or `notFound`) and, at most, the JSON kind of the node found or a node count. Nothing read from the response body is recorded, because a service may echo a secret back. Under `verifyMode: RETRY` every attempt re-sends the request and re-evaluates the body, so poll with a safe method such as GET: a POST is sent again on every attempt.
 
 #### `http.soap` — step fields
 
@@ -1233,6 +1267,8 @@ The `capture` field, available on any step, is a map from a variable name to a c
 
 JSONPath uses JsonPath.Net (§5.7 libraries) and evaluates `$.id` to read a top-level field, `$.payload.accountId` to reach nested fields. XPath evaluates against the XML body; a non-XML response, invalid XPath expression, or no matching element results in a capture miss, which counts as an inconclusive outcome (timeout/unmet precondition) rather than a test failure.
 
+A capture is a precondition, not a claim. When the value itself is what the step should prove, state it as an assertion: `http.rest`'s `expect.json` (§5.1) uses the same JSONPath and the same text, and a value that does not match there is a **Fail**. An `http.rest` step evaluates its assertions first and runs its captures only once every assertion has held.
+
 Examples:
 
 ```yaml
@@ -1247,6 +1283,7 @@ capture:
 Anywhere a value is expected in a declarative step, a captured or seeded variable can be substituted with brace syntax: `{newUserId}` is replaced, at execution time, by the current value of the `newUserId` variable. Substitution also works with secret references: `{foo}` reads from the context, whilst `${secret:source/path}` resolves from a configured secret source. Both are resolved at step-execution time (never at compile time), ensuring secrets are never baked into the compiled code. Substitution works inside:
 
 - HTTP paths, headers, and request **body** (the body is treated as a template string if a scalar, or serialised to JSON and then used as a template if a YAML mapping or sequence).
+- The expected values of `http.rest`'s `expect.json` entries and `expect.bodyContains` (§5.1); the JSONPath keys themselves are used verbatim. Here, unlike the fields above, a placeholder naming a variable that is not set makes the step Inconclusive instead of resolving to an empty string, and the request is not sent.
 - Kafka topic names, message keys, plain payloads, Avro field values, and message headers.
 - Database query strings and parameter values.
 - Webhook listener URLs (via the `listener` name staged at `{<listener>}`), and all fields of the `match` criteria.
@@ -1689,7 +1726,7 @@ Notice the third step's verdict. It is not a failure; it is inconclusive. Step 3
 
 ### 14.4 The expected-versus-observed diff
 
-For every assertion in a failing step, the report shows what the YAML expected and what the engine observed, side by side. The diff is rendered in the vocabulary of the data the step worked with: a `db-assert.postgres` failure shows row counts and column-by-column field comparisons; a `db-assert.mongodb` failure shows a document diff with nested paths; a `db-assert.redis` failure shows key-and-value comparisons; an `http.rest` failure shows expected status, body fields, and headers against what came back. Each provider supplies its own rendering hook, which is why the diff stays faithful to the technology rather than collapsing into a generic textual comparison.
+For every assertion in a failing step, the report shows what the YAML expected and what the engine observed, side by side. The diff is rendered in the vocabulary of the data the step worked with: a `db-assert.postgres` failure shows row counts and column-by-column field comparisons; a `db-assert.mongodb` failure shows a document diff with nested paths; a `db-assert.redis` failure shows key-and-value comparisons; an `http.rest` response-body failure shows the first assertion that did not hold — its JSONPath and the expected value, each cut to 256 characters with a trailing `…` if longer — against the JSON kind or the number of nodes found, never the response's own text, which may echo a secret. A status mismatch draws no diff; its observation records the status received and the status expected. Each provider supplies its own rendering hook, which is why the diff stays faithful to the technology rather than collapsing into a generic textual comparison.
 
 ### 14.5 The reproducibility envelope on every report
 

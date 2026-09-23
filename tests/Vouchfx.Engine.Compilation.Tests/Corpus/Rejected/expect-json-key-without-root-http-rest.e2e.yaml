@@ -1,0 +1,18 @@
+# expected-instance-location: /steps/0/expect/json/id
+# expected-keyword: pattern
+#
+# Response-body assertions (#558): every 'expect.json' key is a JSONPath, and a JSONPath
+# starts at the root '$'. The 'propertyNames' pattern catches the likeliest slip in the
+# editor — writing 'id:' for '$.id:' — at authoring time. (A key that starts with '$' but
+# is still not a valid JSONPath is refused by the provider's Validate instead.)
+metadata:
+  name: rejected-expect-json-key-without-root-http-rest
+steps:
+  - id: get-order
+    type: http.rest
+    target: orders-api
+    method: GET
+    path: /orders/1
+    expect:
+      json:
+        id: { exists: true }

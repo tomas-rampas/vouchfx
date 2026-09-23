@@ -1,0 +1,41 @@
+# Response-body assertions (#558): http.rest's 'expect' block accepts 'json' — a map of
+# JSONPath to a scalar expected value or to { exists: true|false } — and 'bodyContains', a
+# substring of the decoded body. Every scalar type the schema admits appears at least once,
+# as do both exists forms, the quoted text "null" (how a JSON null is asserted), a filter
+# selector, a {placeholder}, a secret reference, and a bare numeric bodyContains.
+metadata:
+  name: surface-expect-json-and-body-contains
+environment:
+  services:
+    app:
+      image: traefik/whoami:latest
+variables:
+  orderId: "A-1"
+steps:
+  - id: get-order
+    type: http.rest
+    target: app
+    method: GET
+    path: /api
+    expect:
+      status: 200
+      json:
+        "$.id": "{orderId}"
+        "$.status": PENDING
+        "$.quantity": 2
+        "$.price": 1.5
+        "$.gift": false
+        "$.cancelledAt": "null"
+        "$.note": ""
+        "$.lines[?@.sku == 'SKU-1'].quantity": 2
+        "$.audit.caller": "${secret:env/API_CLIENT_ID}"
+        "$.createdAt": { exists: true }
+        "$..password": { exists: false }
+      bodyContains: "Hostname"
+  - id: get-text
+    type: http.rest
+    target: app
+    method: GET
+    path: /
+    expect:
+      bodyContains: 42

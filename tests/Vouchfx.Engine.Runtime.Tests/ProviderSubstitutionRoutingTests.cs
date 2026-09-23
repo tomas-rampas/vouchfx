@@ -9,7 +9,8 @@
 //   fails — surfacing the gap rather than silently passing.
 //
 // ROUTING MAP (verified against the provider sources, S07 Sprint 5/6/7):
-//   http.rest        path / each header value / body  → Secret_Helpers.ResolveTemplate
+//   http.rest        path / each header value / body / each expect.json value /
+//                    expect.bodyContains (#558) → Secret_Helpers.ResolveTemplate
 //                    (single pass: {placeholder} + ${secret:…}) inside HttpRest_Helpers.
 //   mq-publish.kafka topic / key / payload / header values / avro record values
 //                    → Secret_Helpers.ResolveTemplate inside MqPublishKafka_Helpers.
@@ -91,6 +92,39 @@ public sealed class ProviderSubstitutionRoutingTests
         // runtime, never baked at emit time).
         Assert.Contains("{orderId}", fragment.StatementBlock, StringComparison.Ordinal);
         Assert.Contains("${secret:env/TOK}", fragment.StatementBlock, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// #558: the response-body assertions' expected values — each <c>expect.json</c> scalar and
+    /// <c>expect.bodyContains</c> — route through the same single-pass
+    /// <c>Secret_Helpers.ResolveTemplate</c> as the path, headers and body, and reach the
+    /// emitted block as literal template text. The JSONPath keys are author text used verbatim:
+    /// no resolve call names them.
+    /// </summary>
+    [Fact]
+    public void HttpRest_RoutesBodyAssertionExpectedValues_ThroughResolveTemplate()
+    {
+        var provider = new HttpRestProvider();
+        var model = new HttpRestModel(
+            Target: "svc",
+            Method: "GET",
+            Path: "/orders/1",
+            Headers: null,
+            Body: null,
+            Expect: new HttpExpect(
+                Status: 200,
+                Json: new[] { new HttpJsonAssertion("$.id", "{orderId}", null) },
+                BodyContains: "${secret:env/TOK}"));
+
+        var fragment = provider.Emit(model, new StubCtx("http-step"));
+        var helpers = string.Join("\n", fragment.RequiredHelpers);
+
+        Assert.Contains("Secret_Helpers.ResolveTemplate(secrets, vars, jsonExpectedTemplates[ji])", helpers, StringComparison.Ordinal);
+        Assert.Contains("Secret_Helpers.ResolveTemplate(secrets, vars, bodyContainsTemplate)", helpers, StringComparison.Ordinal);
+        Assert.DoesNotContain("ResolveTemplate(secrets, vars, jsonPaths", helpers, StringComparison.Ordinal);
+
+        Assert.Contains("\"{orderId}\"", fragment.StatementBlock, StringComparison.Ordinal);
+        Assert.Contains("\"${secret:env/TOK}\"", fragment.StatementBlock, StringComparison.Ordinal);
     }
 
     // ── mq-publish.kafka: topic/key/payload/header values → ResolveTemplate ──

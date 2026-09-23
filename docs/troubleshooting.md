@@ -674,11 +674,17 @@ The step executed successfully, but the response did not match the expected cond
 **Fix:**
 
 1. **Review the assertion.** Is it correct for the current test? `http.rest` asserts the
-   status code only — to check a response body, `capture` the value and assert it in a
-   later `script.csharp` step (or a `db-assert`).
+   status code and, through `expect.json` and `expect.bodyContains`, the response body. A
+   failing body assertion's observation names the first one that did not hold — its
+   JSONPath, a reason such as `mismatch`, `missing` or `notJson`, and your expected value,
+   each cut to 256 characters with a trailing `…` if longer — with the JSON kind of what was
+   found, never the response's own text. Remember that `expect.json` compares text: `2` does
+   not match `2.0`, and an equality path must select exactly one node.
    ```yaml
    expect:
      status: 201  # Should this be 200?
+     json:
+       "$.status": PENDING  # Or has the service already moved it on?
    ```
 
 2. **Examine the actual response.** Run the step in isolation (if possible) and log the full response:

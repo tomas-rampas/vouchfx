@@ -1,0 +1,17 @@
+# expected-instance-location: /steps/0/expect/json/$.id/type
+# expected-keyword: additionalProperties
+#
+# Response-body assertions (#558): the mapping form of an 'expect.json' value is exactly
+# { exists: true|false }. Any other matcher key (here 'type') is refused, so a later matcher
+# can be added without an existing suite changing meaning.
+metadata:
+  name: rejected-expect-json-extra-matcher-key-http-rest
+steps:
+  - id: get-order
+    type: http.rest
+    target: orders-api
+    method: GET
+    path: /orders/1
+    expect:
+      json:
+        "$.id": { exists: true, type: string }

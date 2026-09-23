@@ -1,0 +1,17 @@
+# expected-instance-location: /steps/0/expect/json/$.cancelledAt
+# expected-keyword: type
+#
+# Response-body assertions (#558): an 'expect.json' value that is a YAML null — written
+# 'null', '~' or left empty — is refused as a forgotten value, exactly as mq-expect's
+# 'match.json' refuses one. A JSON null is asserted with the quoted TEXT "null".
+metadata:
+  name: rejected-expect-json-yaml-null-value-http-rest
+steps:
+  - id: get-order
+    type: http.rest
+    target: orders-api
+    method: GET
+    path: /orders/1
+    expect:
+      json:
+        "$.cancelledAt": null

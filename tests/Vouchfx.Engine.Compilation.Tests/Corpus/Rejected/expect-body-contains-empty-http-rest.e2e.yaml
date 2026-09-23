@@ -1,0 +1,15 @@
+# expected-instance-location: /steps/0/expect/bodyContains
+# expected-keyword: minLength
+#
+# Response-body assertions (#558): every body contains the empty string, so an empty
+# 'expect.bodyContains' could never fail and is refused.
+metadata:
+  name: rejected-expect-body-contains-empty-http-rest
+steps:
+  - id: get-page
+    type: http.rest
+    target: web
+    method: GET
+    path: /
+    expect:
+      bodyContains: ""

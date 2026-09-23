@@ -6542,7 +6542,8 @@ public static class ScenarioRunner
     /// <remarks>
     /// The implementation uses the raw YAML mapping node to extract the same fields
     /// that the provider emitters wrap.  For <c>http.rest</c> this is <c>path</c>
-    /// (and header values when present); for <c>db-assert.postgres</c> this is
+    /// (and header values when present), a scalar <c>body</c>, and the expected values
+    /// of <c>expect.json</c> and <c>expect.bodyContains</c>; for <c>db-assert.postgres</c> this is
     /// <c>query</c>, each parameter value, AND each <c>expect.row</c> value — every
     /// text the <c>DbAssertPostgresProvider.Emit</c> path resolves at runtime via
     /// <c>Substitute_Helpers.Resolve</c>/<c>ResolveIdentifier</c>.  Keeping this set
@@ -6602,6 +6603,40 @@ public static class ScenarioRunner
             // its {placeholder}/${secret:…} tokens must be recognised here too.
             if (TryGetScalar(raw, "body", out var body) && !string.IsNullOrEmpty(body))
                 texts.Add(body);
+
+            // Response-body assertions (#558): each expect.json scalar VALUE and
+            // expect.bodyContains are expected-value templates the provider resolves through
+            // Secret_Helpers.ResolveTemplate at runtime, exactly like the fields above, so they
+            // belong to this scan — or a ${secret:…} there would be resolved at run time while
+            // invisible to the pre-compile secret validation, provenance and the reproducibility
+            // envelope. The JSONPath KEYS are not collected: the provider uses them verbatim and
+            // never resolves them. A { exists: … } value carries no template.
+            if (raw.Children.TryGetValue(
+                    new YamlDotNet.RepresentationModel.YamlScalarNode("expect"),
+                    out var restExpectNode)
+                && restExpectNode is YamlDotNet.RepresentationModel.YamlMappingNode restExpectMap)
+            {
+                if (restExpectMap.Children.TryGetValue(
+                        new YamlDotNet.RepresentationModel.YamlScalarNode("json"),
+                        out var jsonNode)
+                    && jsonNode is YamlDotNet.RepresentationModel.YamlMappingNode jsonMap)
+                {
+                    foreach (var kv in jsonMap.Children)
+                    {
+                        if (kv.Value is YamlDotNet.RepresentationModel.YamlScalarNode sv
+                            && !string.IsNullOrEmpty(sv.Value))
+                        {
+                            texts.Add(sv.Value);
+                        }
+                    }
+                }
+
+                if (TryGetScalar(restExpectMap, "bodyContains", out var bodyContains)
+                    && !string.IsNullOrEmpty(bodyContains))
+                {
+                    texts.Add(bodyContains);
+                }
+            }
         }
         // db-assert.postgres: 'query', each parameter value, AND each expect.row
         // value are substitutable (B-03).  DbAssertPostgresProvider.Emit wraps all
