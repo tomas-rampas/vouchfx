@@ -27,6 +27,14 @@
 # environment caches container state after this hook completes) it finishes in well
 # under a second. Progress goes to stderr; the single summary line on stdout is what
 # the session sees.
+#
+# Trust model. This file comes from the checked-out branch, and the SessionStart hook
+# runs it at session start (as root in a web container) before anyone has read the
+# diff. So .claude/ is treated like .github/workflows/: it is code-owned in
+# .github/CODEOWNERS, and web sessions should be opened only on branches you trust.
+# The alternative is to move this bootstrap into the Claude Code environment's own
+# setup script, which no branch controls, and delete this file and its registration
+# in .claude/settings.json.
 set -euo pipefail
 
 if [ "${CLAUDE_CODE_REMOTE:-}" != "true" ]; then
