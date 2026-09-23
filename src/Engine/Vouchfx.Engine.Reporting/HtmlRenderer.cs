@@ -221,9 +221,14 @@ public sealed class HtmlRenderer
                             }
 
                             var step = model.GetOrAddStep(envelope.RunId, stepId);
+
+                            // Display-only, InvariantCulture — but a negative tMs (a hostile or
+                            // malformed stream) is never a truthful value, so clamp at zero at the
+                            // point of read, mirroring the scenario-level clamp below (issue #569).
+                            var attemptTMs = GetLong(envelope, "tMs");
                             step.Attempts.Add(new AttemptRow(
                                 Attempt: GetInt(envelope, "attempt"),
-                                TMs: GetLong(envelope, "tMs"),
+                                TMs: attemptTMs.HasValue ? Math.Max(0L, attemptTMs.Value) : null,
                                 Outcome: GetStr(envelope, "outcome"),
                                 ObservationSummary: SummariseObservation(envelope)));
                             break;
@@ -239,7 +244,12 @@ public sealed class HtmlRenderer
 
                             var step = model.GetOrAddStep(envelope.RunId, stepId);
                             step.Verdict = GetStr(envelope, "verdict");
-                            step.DurationMs = GetLong(envelope, "durationMs");
+
+                            // Display-only, InvariantCulture — but a negative durationMs (a hostile
+                            // or malformed stream) is never a truthful value, so clamp at zero at the
+                            // point of read, mirroring the scenario-level clamp below (issue #569).
+                            var stepDurationMs = GetLong(envelope, "durationMs");
+                            step.DurationMs = stepDurationMs.HasValue ? Math.Max(0L, stepDurationMs.Value) : null;
                             step.Completed = envelope;
                             break;
                         }
@@ -923,23 +933,25 @@ public sealed class HtmlRenderer
     /// clamped to zero — it must never render as a negative duration.
     /// </summary>
     /// <remarks>
-    /// Byte-for-byte the same logic as <c>JunitXmlRenderer.DeriveScenarioDurationMs</c>.
-    /// Not shared through a common helper because these renderers are deliberately
-    /// independent (mirroring <see cref="IsForbiddenReportCharacter"/> below) — but they
-    /// must not diverge, which two parity theories pin, each feeding ONE stream to both
-    /// renderers:
-    /// <c>RendererParityTests.JunitAndHtml_DeriveSameScenarioDuration_FromTimestampDelta</c>
+    /// Byte-for-byte the same logic as <c>JunitXmlRenderer.DeriveScenarioDurationMs</c>
+    /// and <c>TerminalRenderer.DeriveScenarioDurationMs</c>. Not shared through a common
+    /// helper because these renderers are deliberately independent (mirroring
+    /// <see cref="IsForbiddenReportCharacter"/> below) — but they must not diverge, which
+    /// two parity theories pin across all THREE renderers at once, each feeding ONE
+    /// stream to all three:
+    /// <c>RendererParityTests.AllRenderers_DeriveSameScenarioDuration_FromTimestampDelta</c>
     /// pins the ROUNDING MODE and the derived millisecond value across a sub-millisecond
     /// delta that rounds to zero, an exact midpoint (2.5ms), a non-midpoint fraction
     /// (1234.6ms), an ordinary multi-second delta, and completed-precedes-started
-    /// clamping to zero; <c>RendererParityTests.JunitAndHtml_AgreeOnAbsentScenarioDuration</c>
+    /// clamping to zero; <c>RendererParityTests.AllRenderers_AgreeOnAbsentScenarioDuration</c>
     /// pins the ABSENT branch — no scenario-started recorded, or a scenario-completed
     /// whose own Timestamp is left default. On the JUnit side "0.000" is indistinguishable
     /// from a derived zero (both print via <c>FormatSeconds(scenario.DurationMs ?? 0)</c>),
-    /// so it is the HTML HALF of that theory that actually pins the absent branch as its
-    /// OWN case, distinct from a derived-zero duration: only HTML omits the " (N ms)"
-    /// suffix entirely for an absent duration, where a derived zero prints "(0 ms)". Neither
-    /// theory pins anything beyond those two helpers agreeing with each other.
+    /// so it is the HTML and TERMINAL halves of that theory that actually pin the absent
+    /// branch as their OWN case, distinct from a derived-zero duration: HTML and the
+    /// terminal each omit their " (N ms)" / " total=N ms" suffix entirely for an absent
+    /// duration, where a derived zero prints "(0 ms)" / " total=0 ms" respectively.
+    /// Neither theory pins anything beyond those three helpers agreeing with each other.
     /// </remarks>
     private static long? DeriveScenarioDurationMs(DateTimeOffset? startedAt, DateTimeOffset completedAt)
     {

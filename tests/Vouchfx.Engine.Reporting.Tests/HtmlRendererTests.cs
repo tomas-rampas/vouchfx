@@ -742,4 +742,58 @@ public sealed class HtmlRendererTests
             output,
             StringComparison.Ordinal);
     }
+
+    // -------------------------------------------------------------------------
+    // Test 11 (issue #569): the step-level durationMs and the attempt-level tMs are
+    // ALSO clamped at zero — the scenario-level clamp above (Test 10) does not cover
+    // these two separate wire reads. A hostile or malformed stream can carry a
+    // negative value on either, and neither may ever render as a negative duration.
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void Render_NegativeStepDurationMsAndAttemptTMs_ClampToZero()
+    {
+        var lines = new[]
+        {
+            Line(new ScenarioStartedEvent { RunId = "run-11", ScenarioId = "hostile-negative-step" }),
+            Line(new StepStartedEvent
+            {
+                RunId = "run-11",
+                StepId = "negative-step",
+                Kind = "http.rest",
+                VerifyMode = "RETRY",
+            }),
+            Line(new StepAttemptEvent
+            {
+                RunId = "run-11",
+                StepId = "negative-step",
+                Attempt = 1,
+                TMs = -3,
+                Outcome = Verdict.Inconclusive,
+            }),
+            Line(new StepCompletedEvent
+            {
+                RunId = "run-11",
+                StepId = "negative-step",
+                Verdict = Verdict.Fail,
+                DurationMs = -7,
+            }),
+        };
+
+        using var writer = new StringWriter();
+        HtmlRenderer.Render(lines, writer);
+        var output = writer.ToString();
+
+        // The step's duration suffix (WriteStep) clamps -7 to " (0 ms)".
+        Assert.Contains(
+            "<span class=\"verdict\">FAIL</span> (0 ms)",
+            output,
+            StringComparison.Ordinal);
+
+        // The attempt timeline (WriteAttemptTimeline) clamps -3 to an elapsed of "0.0s".
+        Assert.Contains(
+            "<li>t=0.0s attempt 1 <span class=\"verdict\">INCONCLUSIVE</span></li>",
+            output,
+            StringComparison.Ordinal);
+    }
 }

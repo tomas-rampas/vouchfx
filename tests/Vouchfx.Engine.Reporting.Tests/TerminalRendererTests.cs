@@ -386,4 +386,185 @@ public sealed class TerminalRendererTests
         // Scenario summary present.
         Assert.Contains("pass=1", output, StringComparison.Ordinal);
     }
+
+    // -------------------------------------------------------------------------
+    // Issue #569: scenario-completed's ` total=N ms` suffix, absent since the frozen
+    // v1 wire contract never gave ScenarioCompletedEvent a durationMs field, is now
+    // DERIVED from the scenario-started/scenario-completed timestamp gap — mirroring
+    // the #566 fix already applied to JunitXmlRenderer and HtmlRenderer.
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void Render_ScenarioCompleted_DerivesTotalFromTimestampDelta()
+    {
+        var startedAt = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var completedAt = startedAt.AddMilliseconds(1234);
+
+        var lines = new[]
+        {
+            Line(new ScenarioStartedEvent
+            {
+                RunId      = "run-dur1",
+                ScenarioId = "duration-scenario",
+                Timestamp  = startedAt,
+            }),
+            Line(new ScenarioCompletedEvent
+            {
+                RunId      = "run-dur1",
+                ScenarioId = "duration-scenario",
+                Verdict    = Verdict.Pass,
+                Counts     = new VerdictCounts { Pass = 1 },
+                Timestamp  = completedAt,
+            }),
+        };
+
+        using var writer = new StringWriter();
+        TerminalRenderer.Render(lines, writer);
+        var output = writer.ToString();
+
+        Assert.Contains(" total=1234 ms)", output, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Render_ScenarioCompleted_WireDurationMsTakesPrecedenceOverDerivedDelta()
+    {
+        // scenario-started at t0; scenario-completed 1234ms later would derive 1234,
+        // but ScenarioCompletedEvent carries no durationMs field on the typed record
+        // (frozen v1 contract), so the wire value is hand-written here — a wire
+        // durationMs, were a future contract to add one, must win over the derivation.
+        var lines = new[]
+        {
+            Line(new ScenarioStartedEvent
+            {
+                RunId      = "run-dur2",
+                ScenarioId = "wire-wins-scenario",
+                Timestamp  = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero),
+            }),
+            """{"v":1,"schemaVersion":"v1","type":"scenario-completed","ts":"2026-01-01T00:00:01.234Z","runId":"run-dur2","scenarioId":"wire-wins-scenario","verdict":"PASS","counts":{"pass":1,"fail":0,"envError":0,"inconclusive":0},"durationMs":42}""",
+        };
+
+        using var writer = new StringWriter();
+        TerminalRenderer.Render(lines, writer);
+        var output = writer.ToString();
+
+        Assert.Contains(" total=42 ms)", output, StringComparison.Ordinal);
+        Assert.DoesNotContain(" total=1234 ms)", output, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Render_NegativeDurations_AreClampedToZero_NeverNegative()
+    {
+        // A hostile or malformed stream can carry a negative durationMs/tMs on any of
+        // the three duration-bearing event types this renderer reads; none may ever
+        // render as a negative value (issue #569).  Each clamp is asserted below by its
+        // own exact rendered fragment (proving the value is "0", the positive claim),
+        // rather than by a whole-output DoesNotContain("-") (the negative claim) — the
+        // latter fails SAFE, not UNSAFE: a stray hyphen anywhere in fixed surrounding
+        // text (a future step id, a future format change) would give a spurious FAILURE,
+        // never a false PASS, so it proves nothing an exact Contains doesn't already.
+        var lines = new[]
+        {
+            Line(new ScenarioStartedEvent
+            {
+                RunId      = "runNeg",
+                ScenarioId = "negativeScenario",
+            }),
+            Line(new StepStartedEvent
+            {
+                RunId      = "runNeg",
+                StepId     = "negativeStep",
+                Kind       = "http.rest",
+                VerifyMode = "RETRY",
+            }),
+            Line(new StepAttemptEvent
+            {
+                RunId   = "runNeg",
+                StepId  = "negativeStep",
+                Attempt = 1,
+                TMs     = -3,
+                Outcome = Verdict.Inconclusive,
+            }),
+            Line(new StepCompletedEvent
+            {
+                RunId      = "runNeg",
+                StepId     = "negativeStep",
+                Verdict    = Verdict.Fail,
+                DurationMs = -7,
+            }),
+            // ScenarioCompletedEvent has no typed DurationMs field (frozen v1
+            // contract), so the negative wire value is hand-written.
+            """{"v":1,"schemaVersion":"v1","type":"scenario-completed","ts":"2026-01-01T00:00:00Z","runId":"runNeg","scenarioId":"negativeScenario","verdict":"FAIL","counts":{"pass":0,"fail":1,"envError":0,"inconclusive":0},"durationMs":-5}""",
+        };
+
+        using var writer = new StringWriter();
+        TerminalRenderer.Render(lines, writer);
+        var output = writer.ToString();
+
+        // step-attempt tMs=-3 clamps to an elapsed of 0.0s.
+        Assert.Contains("t=  0.0s   attempt 1   INCONCLUSIVE", output, StringComparison.Ordinal);
+        // step-completed durationMs=-7 clamps to " (0 ms)".
+        Assert.Contains(" (0 ms)", output, StringComparison.Ordinal);
+        // scenario-completed durationMs=-5 clamps to " total=0 ms)".
+        Assert.Contains(" total=0 ms)", output, StringComparison.Ordinal);
+    }
+
+    // -------------------------------------------------------------------------
+    // The scenario-started recording rule keys UNCONDITIONALLY on envelope.RunId and
+    // GetStr(envelope, "scenarioId") ?? "(unknown)" — no runId/scenarioId presence
+    // guard — matching JunitXmlRenderer/HtmlRenderer's key shape.  These two tests
+    // pin the absence of any runId/scenarioId presence guard on the recording (and
+    // the matching lookup): an empty runId, and a scenario-started/-completed pair
+    // that both omit scenarioId entirely (so the key is the shared "(unknown)"
+    // fallback).  Both must still derive the total from the timestamp delta.
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void Render_ScenarioStarted_EmptyRunId_StillDerivesTotal()
+    {
+        var startedAt = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var completedAt = startedAt.AddMilliseconds(1234);
+
+        var lines = new[]
+        {
+            Line(new ScenarioStartedEvent
+            {
+                RunId      = string.Empty,
+                ScenarioId = "empty-run-scenario",
+                Timestamp  = startedAt,
+            }),
+            Line(new ScenarioCompletedEvent
+            {
+                RunId      = string.Empty,
+                ScenarioId = "empty-run-scenario",
+                Verdict    = Verdict.Pass,
+                Counts     = new VerdictCounts { Pass = 1 },
+                Timestamp  = completedAt,
+            }),
+        };
+
+        using var writer = new StringWriter();
+        TerminalRenderer.Render(lines, writer);
+        var output = writer.ToString();
+
+        Assert.Contains(" total=1234 ms)", output, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Render_ScenarioStarted_MissingScenarioId_StillDerivesTotal()
+    {
+        // scenarioId is `required` on the typed record, so a missing wire property is
+        // simulated with hand-written JSON — both events omit it, so both resolve to
+        // the shared "(unknown)" fallback key.
+        var lines = new[]
+        {
+            """{"v":1,"schemaVersion":"v1","type":"scenario-started","ts":"2026-01-01T00:00:00Z","runId":"run-noscenid"}""",
+            """{"v":1,"schemaVersion":"v1","type":"scenario-completed","ts":"2026-01-01T00:00:01.234Z","runId":"run-noscenid","verdict":"PASS","counts":{"pass":1,"fail":0,"envError":0,"inconclusive":0}}""",
+        };
+
+        using var writer = new StringWriter();
+        TerminalRenderer.Render(lines, writer);
+        var output = writer.ToString();
+
+        Assert.Contains(" total=1234 ms)", output, StringComparison.Ordinal);
+    }
 }

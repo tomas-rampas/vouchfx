@@ -4765,11 +4765,12 @@ public static class ScenarioRunner
         // constructors, or `BclReferencePaths()` — propagates out of this method with no
         // started line added at all — that path was, and remains, unaffected by this fix.
         //
-        // WHY this matters (issue #566): the JUnit and HTML renderers derive a
-        // scenario's rendered duration from the (started, completed) `ts` pair on
+        // WHY this matters (issue #566): the JUnit, HTML and terminal renderers derive
+        // a scenario's rendered duration from the (started, completed) `ts` pair on
         // these ARCHIVE lines — the frozen v1 wire contract gives
         // ScenarioCompletedEvent no durationMs field (see
-        // JunitXmlRenderer.DeriveScenarioDurationMs / HtmlRenderer's twin). Before
+        // JunitXmlRenderer.DeriveScenarioDurationMs / HtmlRenderer's / TerminalRenderer's
+        // twins, the last added by issue #569). Before
         // this fix the archive `scenario-started` line on the success path was
         // stamped at `now9`, taken only after RunIsolatedAsync had already returned —
         // so a scenario whose script ran for 1.5s could render a derived duration of
