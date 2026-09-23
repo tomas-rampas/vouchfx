@@ -1745,7 +1745,7 @@
                     "pattern": "^[0-9]+$"
                   },
                   "json": {
-                    "description": "Optional map of JSONPath expressions (RFC 9535, used verbatim) to expectations over the response body parsed as JSON. A scalar asserts that the path selects exactly one node whose value, compared as text, equals it (a string by its unescaped value, a number or boolean by its JSON spelling, null as the text null, an object or array as compact JSON); a bare numeric or boolean scalar is read as its literal text. { exists: true } / { exists: false } asserts that the path selects at least one node / none. Values may contain {placeholder} and ${secret:source/path} tokens.",
+                    "description": "Optional map of JSONPath expressions (RFC 9535, used verbatim) to expectations over the response body parsed as JSON. Each value is a scalar or exactly { exists: true } / { exists: false }; no other mapping, and no sequence, is accepted. A scalar asserts that the path selects exactly one node whose text equals it; a bare numeric or boolean scalar is read as its literal text. The node found is compared by its canonical text: a string by its unescaped value, a number or boolean by its JSON spelling, null as the text null (write it quoted), and an object or array as its compact JSON, which you write as a quoted string. { exists: true } / { exists: false } asserts that the path selects at least one node / none. Values may contain {placeholder} and ${secret:source/path} tokens.",
                     "type": "object",
                     "minProperties": 1,
                     "propertyNames": {
