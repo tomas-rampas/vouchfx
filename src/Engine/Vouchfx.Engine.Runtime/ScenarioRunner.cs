@@ -4448,7 +4448,20 @@ public static class ScenarioRunner
     /// <see cref="RunSuiteAsync"/>'s per-scenario loop supplies a distinct value, when a
     /// non-first scenario's own directory differs from the shared seed root.
     /// </param>
-    private static async Task<Verdict> RunScenarioAgainstTopologyAsync(
+    // internal (not private), issue #566: Vouchfx.Engine.Runtime.Tests drives this method
+    // DIRECTLY against a fake, zero-dependency IKeptTopology (no SuiteTopology, no
+    // HeadlessTopology, no Aspire/DCP call anywhere on this path) so the archive
+    // scenario-started timestamp fix is pinned at unit speed in the `requires!=docker`
+    // blocking lane — see ScenarioAgainstTopologyStartedTimestampTests. The Docker-gated
+    // ScenarioStartedTimestampAccuracyTests remains the end-to-end companion through the
+    // full RunScenarioOwningTopologyAsync → real-topology path. The same csproj
+    // InternalsVisibleTo grant that exposes this to the test assembly ALSO exposes it to
+    // the `vouchfx` CLI and Vouchfx.Engine.Compilation.MemoryHarness (see this project's
+    // .csproj) — neither is a new caller of this method: production code keeps going
+    // through the OWNING entry points (RunScenarioOwningTopologyAsync, RunSuiteAsync,
+    // RunPlannedScenarioAgainstKeptTopologyAsync), which is what builds or is handed the
+    // real topology this method requires.
+    internal static async Task<Verdict> RunScenarioAgainstTopologyAsync(
         ScenarioAst ast,
         string scenarioName,
         string runId,
@@ -4724,15 +4737,38 @@ public static class ScenarioRunner
         ResolvedSecretLedger? sharedLedger = null,
         SecurityPathDisclosureLedger? sharedPathLedger = null)
     {
-        // ── Issue #262: live scenario-started signal ──────────────────────────
-        // Posted immediately, before anything else, using its OWN real-time timestamp —
-        // entirely separate from the batch `now9`-stamped copy the success path below still
-        // adds to `buffer` for the end-of-run archive (unaffected, byte-identical to
-        // pre-#262 whether or not a live pump is attached).  A null livePump makes this a
-        // no-op; every early-exit path below reports its own scenario-completed line to the
-        // SAME pump (see the two catch blocks), so a live tail never sees an orphaned
-        // scenario-started with no matching completion.
-        livePump?.Post(StepEventBuilder.ScenarioStartedLine(runId, DateTimeOffset.UtcNow, scenarioName));
+        // ── Issue #262 / #566: scenario-started signal ────────────────────────
+        // Captured ONCE, before anything else, as the scenario's real start instant.
+        // Posted immediately to the live pump — a null livePump makes this a no-op —
+        // and ALSO reused for the ARCHIVE `scenario-started` line at the three sites
+        // in this method's execution core that add one (the success path near the
+        // bottom of this method, and the SecretResolutionException / generic
+        // Exception catches around the compile+run call), so the archive and the
+        // live tail agree on when the scenario actually started rather than each
+        // site stamping its own, later, `DateTimeOffset.UtcNow`. This is NOT "every
+        // exit path": an exception thrown by any of the several calls made OUTSIDE the
+        // inner try that owns those two catches — e.g. `SecurityConfigurationAccessor.Build`,
+        // `BuildCaptureOriginMap`, the `LiveStepEventSink` / `ScriptGlobalVariables`
+        // constructors, or `BclReferencePaths()` — propagates out of this method with no
+        // started line added at all — that path was, and remains, unaffected by this fix.
+        //
+        // WHY this matters (issue #566): the JUnit and HTML renderers derive a
+        // scenario's rendered duration from the (started, completed) `ts` pair on
+        // these ARCHIVE lines — the frozen v1 wire contract gives
+        // ScenarioCompletedEvent no durationMs field (see
+        // JunitXmlRenderer.DeriveScenarioDurationMs / HtmlRenderer's twin). Before
+        // this fix the archive `scenario-started` line on the success path was
+        // stamped at `now9`, taken only after RunIsolatedAsync had already returned —
+        // so a scenario whose script ran for 1.5s could render a derived duration of
+        // ~30ms (the bookkeeping between the script finishing and `now9` being
+        // taken), silently discarding the time the scenario's own steps took. Each of
+        // the three sites above now shares this ONE instant for its started line, so
+        // the rendered duration cannot fall below the wall-clock time the scenario's
+        // steps actually consumed — barring a wall-clock adjustment mid-scenario,
+        // since both this timestamp and `UtcNow` at completion are adjustable system
+        // clock reads, not a monotonic clock.
+        var scenarioStartedAt = DateTimeOffset.UtcNow;
+        livePump?.Post(StepEventBuilder.ScenarioStartedLine(runId, scenarioStartedAt, scenarioName));
 
         // ── Stage the `variables` block constants (DSL §3) ────────────────────
         // Pre-loaded into the shared context under their bare names (no prefix) so
@@ -4909,8 +4945,12 @@ public static class ScenarioRunner
                 // characters and ANSI escape sequences an author's `${secret:source/path}`
                 // field value could embed — so it is sanitised the same as every other
                 // author-controlled text reaching this human output stream.
+                // Issue #566: the archive started line uses the scenario's REAL start
+                // (scenarioStartedAt), not this catch's own later instant — so a scenario
+                // that started and then failed here reports the time until the failure,
+                // not a near-zero delta from stamping both events at the same instant.
                 var nowSE = DateTimeOffset.UtcNow;
-                buffer.Add(StepEventBuilder.ScenarioStartedLine(runId, nowSE, scenarioName));
+                buffer.Add(StepEventBuilder.ScenarioStartedLine(runId, scenarioStartedAt, scenarioName));
 
                 // The record carries the SAME reference-only text the terminal gets (#372),
                 // built once. It is reference-only by construction, so the ledger pass over it
@@ -4941,8 +4981,11 @@ public static class ScenarioRunner
             }
             catch (Exception ex)
             {
+                // Issue #566: same reasoning as the SecretResolutionException catch above —
+                // the archive started line uses the scenario's REAL start (scenarioStartedAt),
+                // not this catch's own later instant.
                 var nowCE = DateTimeOffset.UtcNow;
-                buffer.Add(StepEventBuilder.ScenarioStartedLine(runId, nowCE, scenarioName));
+                buffer.Add(StepEventBuilder.ScenarioStartedLine(runId, scenarioStartedAt, scenarioName));
 
                 // Built BEFORE the emit, not after it, so the record can carry it (#372). A CSX
                 // compilation failure is the scenario's cause and belongs in --junit/--html/
@@ -4991,8 +5034,13 @@ public static class ScenarioRunner
             }
 
             // ── Emit events from outcomes + aggregate verdict ─────────────────────
+            // Issue #566: the archive started line uses scenarioStartedAt (the real start,
+            // captured before RunIsolatedAsync ran the script), NOT now9 — now9 is taken only
+            // here, AFTER the script has already finished, and stays reserved for the step
+            // lines below (StepStartedLine / BuildAttemptEventLines / StepCompletedLine),
+            // which is the reconstruction batch's own timestamp and unrelated to this fix.
             var now9 = DateTimeOffset.UtcNow;
-            buffer.Add(StepEventBuilder.ScenarioStartedLine(runId, now9, scenarioName));
+            buffer.Add(StepEventBuilder.ScenarioStartedLine(runId, scenarioStartedAt, scenarioName));
 
             var aggregate = Verdict.Pass;
             var counts = new int[4];

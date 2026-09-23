@@ -644,4 +644,102 @@ public sealed class HtmlRendererTests
         // And the row carries the cause-neutral token in place of it.
         Assert.Contains("(no hash recorded)", fixtureRow, StringComparison.Ordinal);
     }
+
+    // -------------------------------------------------------------------------
+    // Test 9: the scenario heading shows a duration DERIVED from the
+    // scenario-started / scenario-completed timestamp delta, because the frozen
+    // v1 wire contract never gave ScenarioCompletedEvent a durationMs field. See
+    // the fix note on HtmlRenderer.DeriveScenarioDurationMs.
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void Render_ScenarioTimestampDelta_ShowsDurationSuffixOnScenarioHeading()
+    {
+        var t0 = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+
+        var lines = new[]
+        {
+            Line(new ScenarioStartedEvent { RunId = "run-9", ScenarioId = "timed-flow", Timestamp = t0 }),
+            Line(new ScenarioCompletedEvent
+            {
+                RunId = "run-9",
+                ScenarioId = "timed-flow",
+                Verdict = Verdict.Pass,
+                Counts = new VerdictCounts { Pass = 1 },
+                Timestamp = t0.AddMilliseconds(1234),
+            }),
+        };
+
+        using var writer = new StringWriter();
+        HtmlRenderer.Render(lines, writer);
+        var output = writer.ToString();
+
+        // Scoped to the scenario heading itself (the verdict span immediately
+        // precedes the duration suffix and the closing </h2>) — not a step suffix,
+        // which this stream carries none of.
+        Assert.Contains(
+            "<span class=\"verdict\">PASS</span> (1234 ms)</h2>",
+            output,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Render_ScenarioCompletedWithNoStartedEvent_HeadingHasNoDurationSuffix()
+    {
+        var lines = new[]
+        {
+            Line(new ScenarioCompletedEvent
+            {
+                RunId = "run-9b",
+                ScenarioId = "orphan",
+                Verdict = Verdict.Pass,
+                Counts = new VerdictCounts { Pass = 1 },
+                Timestamp = new DateTimeOffset(2026, 1, 1, 0, 0, 1, TimeSpan.Zero),
+            }),
+        };
+
+        using var writer = new StringWriter();
+        HtmlRenderer.Render(lines, writer);
+        var output = writer.ToString();
+
+        // Isolate the scenario <h2> from the rest of the document (which carries no
+        // steps here, so there is nothing else to confuse this with) and assert it
+        // carries no " ms)" duration suffix at all.
+        var headingStart = output.IndexOf("<h2>Scenario:", StringComparison.Ordinal);
+        Assert.True(headingStart >= 0, "The scenario heading must be present to be asserted over.");
+        var headingEnd = output.IndexOf("</h2>", headingStart, StringComparison.Ordinal);
+        Assert.True(headingEnd > headingStart, "The scenario heading must be a well-formed <h2>.");
+        var heading = output[headingStart..(headingEnd + "</h2>".Length)];
+
+        Assert.DoesNotContain("ms)", heading, StringComparison.Ordinal);
+    }
+
+    // -------------------------------------------------------------------------
+    // Test 10 (issue #566, gate finding B.1): the wire durationMs is clamped at the
+    // USE SITE, not only inside the derivation helper — a hostile or malformed
+    // stream can carry a negative durationMs directly, bypassing the helper
+    // entirely, and that must never render as a negative duration suffix.
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void Render_NegativeWireDurationMs_ClampsToZero()
+    {
+        var lines = new[]
+        {
+            // durationMs:-5 — a hostile/malformed value the wire read must clamp, not
+            // pass through to the duration suffix verbatim.
+            "{\"v\":1,\"schemaVersion\":\"v1\",\"type\":\"scenario-completed\",\"ts\":\"2026-01-01T00:00:00Z\","
+                + "\"runId\":\"run-10\",\"scenarioId\":\"hostile-negative\",\"verdict\":\"PASS\",\"durationMs\":-5,"
+                + "\"counts\":{\"pass\":1,\"fail\":0,\"envError\":0,\"inconclusive\":0}}",
+        };
+
+        using var writer = new StringWriter();
+        HtmlRenderer.Render(lines, writer);
+        var output = writer.ToString();
+
+        Assert.Contains(
+            "<span class=\"verdict\">PASS</span> (0 ms)</h2>",
+            output,
+            StringComparison.Ordinal);
+    }
 }
