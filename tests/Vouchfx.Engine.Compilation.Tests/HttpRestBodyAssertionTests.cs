@@ -707,6 +707,67 @@ public sealed class HttpRestBodyAssertionTests
     }
 
     /// <summary>
+    /// The library's OTHER measured fault shape is likewise <c>unevaluable</c>: reflecting
+    /// JsonPath.Net 3.0.2's assembly shows it declares exactly one exception type of its own,
+    /// <see cref="Json.Path.PathParseException"/> — what <c>JsonPath.Parse</c> itself throws on
+    /// a malformed expression, measured with an unterminated bracket (<c>$.a[</c>). A numeric
+    /// overflow shape raising <see cref="OverflowException"/> was also measured and found NOT to
+    /// occur: every overflow-adjacent probe (huge/negative/subnormal literals on either side of a
+    /// filter comparison, oversized integers, an out-of-range bracket index) raised the same
+    /// <see cref="FormatException"/> as <see cref="Execute_FilterTheLibraryCannotEvaluate_IsUnevaluable"/>,
+    /// never a distinct <see cref="OverflowException"/> — so PathParseException, not overflow, is
+    /// this codebase's second measured shape. 'vouchfx validate' already refuses a malformed
+    /// 'expect.json' key with the same JsonPath.TryParse (<c>ValidateBodyAssertions</c>), so this
+    /// exception is unreachable once a suite has been validated; this row binds directly —
+    /// bypassing Validate, exactly as every other Execute row in this file does — to prove the
+    /// catch still classifies it correctly on the defensive path.
+    /// </summary>
+    [Fact]
+    public async Task Execute_MalformedPathReachingEvaluate_IsUnevaluable()
+    {
+        using var responder = ScriptedResponder.Start(CannedResponse.Json("{\"a\":1}"));
+
+        var model = Model("GET", new HttpExpect(200, new[] { new HttpJsonAssertion("$.a[", null, true) }));
+
+        var (outcome, _) = await RunAsync(model, responder.BaseUrl);
+
+        Assert.Equal(Verdict.Fail, outcome.Verdict);
+        Assert.Equal("unevaluable", BodyOf(outcome).GetProperty("first").GetProperty("reason").GetString());
+    }
+
+    /// <summary>
+    /// An exception that is NOT one of the two measured library-native "cannot evaluate this
+    /// claim" shapes must never read as <c>unevaluable</c> (the review finding on #562: a bare
+    /// <c>catch (System.Exception)</c> here swallowed host/cancellation faults too). There is no
+    /// way to make JsonPath.Net 3.0.2 itself raise a third shape — the probe behind the two Fail
+    /// rows above was exhaustive over numeric-overflow, malformed-path and pathological-filter
+    /// inputs and never found one — so this row asserts the catch's TYPE SET structurally,
+    /// straight out of the emitted helper source, rather than trying to provoke one at runtime.
+    /// The sibling capture-path catches in the FIRST helper class, <c>HttpRest_Helpers</c> (S04-
+    /// B-02, unchanged by #562's finding, which named only this helper's <c>EvaluateJson</c>),
+    /// still use a bare <c>catch (System.Exception)</c> for a miss-is-not-a-crash capture
+    /// contract and are deliberately left alone.
+    /// </summary>
+    [Fact]
+    public void Emit_UnevaluableCatch_IsRestrictedToTheMeasuredJsonPathFaults()
+    {
+        var helper = Assert.Single(
+            new HttpRestProvider()
+                .Emit(
+                    Model("GET", new HttpExpect(200, new[] { new HttpJsonAssertion("$.a", "1", null) })),
+                    new StubCompileContext(StepId))
+                .RequiredHelpers,
+            IsBodyAssertionsHelper);
+
+        Assert.Contains(
+            "catch (System.Exception ex) when (ex is System.FormatException or Json.Path.PathParseException)",
+            helper,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("catch (System.Exception)", helper, StringComparison.Ordinal);
+        Assert.DoesNotContain("catch (Exception)", helper, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// <c>bodyContains</c> is an ordinal, case-sensitive substring of the decoded body: found
     /// passes, a different case is <c>notFound</c> — on a text/plain body, where it is the only
     /// assertion there is.

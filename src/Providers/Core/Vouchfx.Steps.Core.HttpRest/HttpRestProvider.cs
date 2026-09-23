@@ -921,12 +921,35 @@ public sealed class HttpRestProvider
                     if (count == 1)
                         single = matches![0].Value;
                 }
-                catch (System.Exception)
+                catch (System.Exception ex) when (ex is System.FormatException or Json.Path.PathParseException)
                 {
-                    // Measured on JsonPath.Net 3.0.2: a filter comparing a number beyond the
-                    // library's numeric range throws FormatException over a valid body. The claim
-                    // cannot be checked against this body. The exception's own text is not
+                    // unevaluable means exactly these two, MEASURED on JsonPath.Net 3.0.2 (see
+                    // HttpRestBodyAssertionTests): reflecting the package's assembly shows it
+                    // declares exactly one exception type of its own, Json.Path.PathParseException
+                    // (what JsonPath.Parse throws on a malformed expression), and every other
+                    // library-native fault this call can raise measured as System.FormatException —
+                    // a filter comparing a number beyond decimal's range (e.g. 1e400) throws it from
+                    // JsonElement's lazy numeric conversion, over a body that is otherwise perfectly
+                    // valid. PathParseException is kept defensively rather than because it is
+                    // reachable here: 'vouchfx validate' already rejects an unparseable 'expect.json'
+                    // key with the same JsonPath.TryParse (ValidateBodyAssertions), so on the
+                    // engine's own path this 'path' has already parsed once; it is caught in case a
+                    // caller reaches Bind/Emit/Execute without validating first. Either way the claim
+                    // cannot be checked against this body, so it is this one assertion's Fail — same
+                    // as a mismatch — never the step's outcome. The exception's own text is not
                     // guaranteed free of body content, so it is not reported.
+                    //
+                    // Everything else propagates: it is not the library saying a claim is
+                    // unevaluable, it is the evaluation itself failing, which is not a fact about the
+                    // response body and must not be reported as one. That includes
+                    // OperationCanceledException (HttpRest_Helpers' outer catch ladder rethrows it,
+                    // when it is the step's own token, to the assembler's Inconclusive(step-timeout)
+                    // handling — §12.1), OutOfMemoryException, and any other unexpected library or
+                    // runtime defect (a NullReferenceException from a future JsonPath.Net regression,
+                    // for instance) — those reach that ladder's final catch(System.Exception) and
+                    // become EnvironmentError, an engine/infra fault rather than a false Fail blaming
+                    // the service under test. That catch reports the exception's message, as it does
+                    // for a connection failure; neither of the two types caught here ever reaches it.
                     return head + ",\"reason\":\"unevaluable\"" + claim + "}";
                 }
                 if (exists)
