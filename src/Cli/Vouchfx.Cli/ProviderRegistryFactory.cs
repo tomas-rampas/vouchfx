@@ -63,6 +63,11 @@ internal static class ProviderRegistryFactory
     /// <c>cache-assert.redis</c>, <c>cache-assert.elasticsearch</c>,
     /// <c>metrics-assert.prometheus</c>, <c>db-assert.dynamodb</c>,
     /// <c>storage-assert.s3</c> and <c>trace-expect.otlp</c>.
+    /// <para>
+    /// <c>list --json</c> also passes this set to <c>EngineExport.BuildCatalogue</c> as the
+    /// Core set (#556), so membership here is what makes a catalogue entry tier
+    /// <c>"core"</c> and earns it a language-reference link and an example.
+    /// </para>
     /// </remarks>
     public static Assembly[] CoreProviderAssemblies() => new[]
     {

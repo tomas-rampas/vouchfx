@@ -49,6 +49,37 @@ public sealed class ListJsonGoldenTests
     private static readonly IReadOnlyList<IReadOnlyList<string>> MqExpectAsbAtLeastOneOf =
         new IReadOnlyList<string>[] { new[] { "expectPayloadContains", "expectProperties" } };
 
+    // #556 (additive): the fixture pins every shape the four new members take on the wire — a
+    // Core entry with all four populated (db-assert.postgres, http.rest); a Core entry whose
+    // example carries double quotes (trace-expect.otlp, freezing how the encoder escapes them
+    // inside the string); a Community entry (tier stated, no link, no example); an entry from the
+    // overload given no Core set (supportedVerifyModes only); and an entry hand-built before the
+    // members existed (all four null). The golden therefore freezes the explicit nulls rather
+    // than merely tolerating them. Examples are spelled with "\n" escapes, never raw literals,
+    // so a CRLF checkout cannot change the bytes under test. Mirrors CatalogueJsonGoldenTests.
+    private static readonly string[] VerifyModes = new[] { "IMMEDIATE", "RETRY" };
+    private static readonly string[] TraceExpectRequired = new[] { "match", "receiver" };
+
+    private const string ExampleMetadata =
+        "metadata:\n"
+        + "  name: scaffolded-suite\n"
+        + "  tags: [scaffolded]\n"
+        + "  description: Machine-drafted suite skeleton from vouchfx scaffold; review and fill before trust.\n"
+        + "\n";
+
+    private const string DbAssertPostgresExample = ExampleMetadata
+        + "environment:\n  dependencies:\n    postgres:\n      type: postgres\n\n"
+        + "steps:\n  - id: db-assert-postgres\n    type: db-assert.postgres\n"
+        + "    expect:\n      rowCount: 0\n    query: SELECT 1 AS scaffold\n    target: postgres\n";
+
+    private const string HttpRestExample = ExampleMetadata
+        + "environment:\n  services:\n    app:\n      image: traefik/whoami\n      httpPort: 80\n\n"
+        + "steps:\n  - id: http-rest\n    type: http.rest\n    method: GET\n    path: /\n    target: app\n";
+
+    private const string TraceExpectOtlpExample = ExampleMetadata
+        + "steps:\n  - id: trace-expect-otlp\n    type: trace-expect.otlp\n"
+        + "    match:\n      traceId: \"00000000000000000000000000000001\"\n    receiver: scaffold-receiver\n";
+
     private static StepCatalogueDocument BuildFixture() => new(
         SchemaVersion: EngineExport.CatalogueSchemaVersion,
         EngineVersion: "1.2.3-golden",
@@ -63,7 +94,13 @@ public sealed class ListJsonGoldenTests
                 CaptureSupported: true,
                 FamilyIntent: "Query a data store and assert properties of the result set or document.",
                 ExactlyOneOfGroups: NoGroups,
-                AtLeastOneOfGroups: NoGroups),
+                AtLeastOneOfGroups: NoGroups)
+            {
+                Tier = "core",
+                SupportedVerifyModes = VerifyModes,
+                DocsUrl = "https://vouchfx.io/language-reference/#db-assertpostgres",
+                Example = DbAssertPostgresExample,
+            },
             new StepCatalogueEntry(
                 Type: "http.rest",
                 Family: "http",
@@ -73,7 +110,13 @@ public sealed class ListJsonGoldenTests
                 CaptureSupported: true,
                 FamilyIntent: "Call HTTP endpoints (REST or SOAP) on services under test and assert responses.",
                 ExactlyOneOfGroups: NoGroups,
-                AtLeastOneOfGroups: NoGroups),
+                AtLeastOneOfGroups: NoGroups)
+            {
+                Tier = "core",
+                SupportedVerifyModes = VerifyModes,
+                DocsUrl = "https://vouchfx.io/language-reference/#httprest",
+                Example = HttpRestExample,
+            },
             new StepCatalogueEntry(
                 Type: "mq-publish.kafka",
                 Family: "mq-publish",
@@ -83,7 +126,11 @@ public sealed class ListJsonGoldenTests
                 CaptureSupported: true,
                 FamilyIntent: "Publish a message onto a broker to drive the system under test.",
                 ExactlyOneOfGroups: NoGroups,
-                AtLeastOneOfGroups: NoGroups),
+                AtLeastOneOfGroups: NoGroups)
+            {
+                Tier = "community",
+                SupportedVerifyModes = VerifyModes,
+            },
             new StepCatalogueEntry(
                 Type: "script.csharp",
                 Family: "script",
@@ -93,7 +140,10 @@ public sealed class ListJsonGoldenTests
                 CaptureSupported: true,
                 FamilyIntent: "Run inline or file-backed C# for cases the declarative step types cannot express.",
                 ExactlyOneOfGroups: ScriptCsharpExactlyOneOf,
-                AtLeastOneOfGroups: NoGroups),
+                AtLeastOneOfGroups: NoGroups)
+            {
+                SupportedVerifyModes = VerifyModes,
+            },
             new StepCatalogueEntry(
                 Type: "mq-expect.azureservicebus",
                 Family: "mq-expect",
@@ -104,6 +154,22 @@ public sealed class ListJsonGoldenTests
                 FamilyIntent: "Assert that a message matching declared criteria was received from a broker.",
                 ExactlyOneOfGroups: NoGroups,
                 AtLeastOneOfGroups: MqExpectAsbAtLeastOneOf),
+            new StepCatalogueEntry(
+                Type: "trace-expect.otlp",
+                Family: "trace-expect",
+                Provider: "otlp",
+                RequiredFields: TraceExpectRequired,
+                OptionalFields: Array.Empty<string>(),
+                CaptureSupported: true,
+                FamilyIntent: "Expect distributed-trace spans (e.g. OTLP) matching declared criteria.",
+                ExactlyOneOfGroups: NoGroups,
+                AtLeastOneOfGroups: NoGroups)
+            {
+                Tier = "core",
+                SupportedVerifyModes = VerifyModes,
+                DocsUrl = "https://vouchfx.io/language-reference/#trace-expectotlp",
+                Example = TraceExpectOtlpExample,
+            },
         });
 
     [Fact]

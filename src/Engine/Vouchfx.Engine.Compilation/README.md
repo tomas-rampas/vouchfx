@@ -26,12 +26,13 @@ engine** as the source of truth for step types and schema:
 | Entry point | Purpose |
 | --- | --- |
 | `Schema.EngineExport.ComposeSchemaJson(registry)` | Composed v1 JSON Schema (root + every registered provider fragment) |
-| `Schema.EngineExport.BuildCatalogue(registry, engineVersion?)` | Shape-level catalogue (required/optional fields, capture, family intent) |
+| `Schema.EngineExport.BuildCatalogue(registry, engineVersion?)` | Shape-level catalogue (required/optional fields, capture, family intent, supported verify modes) |
+| `Schema.EngineExport.BuildCatalogue(registry, engineVersion, coreProviderAssemblies)` | The same, plus each entry's `tier`, a language-reference `docsUrl` for each Core entry, and a validated `example` suite for each Core entry whose step target can be derived (`null` otherwise) |
 | `Schema.EngineExport.SerializeCatalogue(document)` | Same wire shape as `vouchfx list --json` |
 
-Both exports cover **all registered** providers in the supplied registry (not Core-only).
-Incomplete metadata fails closed via `CatalogueExportException`. CLI equivalents:
-`vouchfx schema` and `vouchfx list --json`.
+Both exports cover **all registered** providers in the supplied registry (not Core-only);
+the Core assembly set labels entries, it never filters them. Incomplete metadata fails closed
+via `CatalogueExportException`. CLI equivalents: `vouchfx schema` and `vouchfx list --json`.
 
 ## Learn more
 
