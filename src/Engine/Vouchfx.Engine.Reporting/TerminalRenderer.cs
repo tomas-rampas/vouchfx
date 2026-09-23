@@ -219,16 +219,19 @@ public sealed class TerminalRenderer
         // wins per key: every stream the engine writes starts a scenario before completing
         // it, and runId is a fresh GUID per scenario execution, so a hand-assembled
         // duplicate scenario-started is the only way the key repeats — first-wins matches
-        // JunitXmlRenderer/HtmlRenderer's identical rule for the same field, identical on
-        // every stream the engine writes.  One residual: this file's GetStr runs scenarioId
-        // through DisplaySanitiser.SanitiseForDisplay (this file's header comment) before it
-        // becomes a dictionary key, while JunitXmlRenderer/HtmlRenderer key on the raw
-        // string — a hand-crafted scenarioId that differs from its sibling only by a
-        // character SanitiseForDisplay strips would collide here and stay distinct there.
-        // The terminal's OWN correctness is unaffected (the scenario-started KEY and the
-        // scenario-completed LOOKUP both run through the same GetStr, so they always agree
-        // with each other); only byte-identity of the KEY SHAPE with the other two
-        // renderers is the residual, not on any stream the engine itself ever writes.
+        // JunitXmlRenderer/HtmlRenderer's rule for the same field, identical on every
+        // stream the engine writes.  This file keys on the DISPLAY-SANITISED scenarioId —
+        // GetStr runs it through DisplaySanitiser.SanitiseForDisplay (this file's header
+        // comment) before it becomes a dictionary key — while JunitXmlRenderer/HtmlRenderer
+        // key on the raw string.  Two DISTINCT scenario ids within ONE run that differ only
+        // by characters SanitiseForDisplay strips — a whole CSI/OSC control sequence, not
+        // merely one character, e.g. "a\u001b[31m" and "a" both sanitise to "a" — therefore
+        // COLLIDE here and stay distinct in JUnit/HTML.  On such a stream this file pairs
+        // the LATER scenario's completion with the EARLIER scenario's start, so the
+        // terminal's derived total is WRONG on that stream, not merely different from its
+        // siblings.  No stream the engine itself writes can produce this: a runId belongs
+        // to exactly one scenario execution, so two distinct scenarios sharing a runId only
+        // arises from a hand-crafted or adversarial stream.
         var scenarioStarts = new Dictionary<(string RunId, string ScenarioId), DateTimeOffset>();
 
         foreach (var line in jsonLines)
@@ -276,7 +279,8 @@ public sealed class TerminalRenderer
                 // HtmlRenderer apply to this same field.  Keyed on envelope.RunId and
                 // GetStr(envelope, "scenarioId") ?? "(unknown)" UNCONDITIONALLY — no
                 // runId/scenarioId presence guard — matching JunitXmlRenderer/HtmlRenderer's
-                // key shape exactly, so the two rules agree on every stream the engine writes.
+                // rule for the same field, identical on every stream the engine writes (see
+                // the scenarioStarts declaration above for the display-sanitisation residual).
                 // RunId is `required` but NOT null-enforced on net8.0, so a hand-written
                 // `"runId": null` deserialises to null (the HtmlRenderer abort tracked as #571);
                 // a ValueTuple key tolerates a null or empty element, so that is no throw risk
@@ -788,10 +792,9 @@ public sealed class TerminalRenderer
     /// <c>durationMs</c> (see the call site's WHY comment). Returns
     /// <see langword="null"/> when no scenario-started timestamp was recorded — a
     /// partial buffer with no scenario-started, or one whose Timestamp was default —
-    /// so the caller falls through to the existing "no suffix" rendering exactly as
-    /// before this change. A negative delta (clock skew, or a scenario-completed
-    /// timestamp that precedes its scenario-started sibling) is clamped to zero — it
-    /// must never render as a negative duration.
+    /// so the caller omits the ` total=N ms` suffix entirely. A negative delta (clock
+    /// skew, or a scenario-completed timestamp that precedes its scenario-started
+    /// sibling) is clamped to zero — it must never render as a negative duration.
     /// </summary>
     /// <remarks>
     /// Byte-for-byte the same logic as <c>JunitXmlRenderer.DeriveScenarioDurationMs</c>

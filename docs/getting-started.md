@@ -222,6 +222,8 @@ Scenario 'getting-started-hello-world' started
 Scenario 'getting-started-hello-world': PASS  (pass=1 fail=0 envError=0 inconclusive=0 total=1342 ms)
 ```
 
+The scenario's `total` is its wall-clock time from `scenario-started` to `scenario-completed`, which includes script compilation and the engine's in-scenario staging, so it is far larger than the single step's 19 ms; topology startup falls outside it.
+
 (Before the scenario line, you may see Aspire/topology startup messages such as "Distributed application started.")
 
 On an interactive terminal, the verdict is colour-coded and prefixed with a shape glyph: `[+]` for PASS, `[x]` for FAIL, `[!]` for ENV_ERROR, or `[?]` for INCONCLUSIVE. When output is piped (as in CI), glyphs and colours are omitted and you see plain text as shown above. The process exit code (0 on Pass) is the shell's `$?`, not a printed line.

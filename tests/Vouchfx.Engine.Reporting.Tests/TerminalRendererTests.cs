@@ -509,12 +509,12 @@ public sealed class TerminalRendererTests
     }
 
     // -------------------------------------------------------------------------
-    // Issue #569 (m1): the scenario-started recording rule keys UNCONDITIONALLY on
-    // envelope.RunId and GetStr(envelope, "scenarioId") ?? "(unknown)" — no runId/
-    // scenarioId presence guard — matching JunitXmlRenderer/HtmlRenderer's key shape
-    // exactly.  These two tests pin the absence of any runId/scenarioId presence guard
-    // on the recording (and the matching lookup): an empty runId, and a scenario-started/-completed
-    // pair that both omit scenarioId entirely (so the key is the shared "(unknown)"
+    // The scenario-started recording rule keys UNCONDITIONALLY on envelope.RunId and
+    // GetStr(envelope, "scenarioId") ?? "(unknown)" — no runId/scenarioId presence
+    // guard — matching JunitXmlRenderer/HtmlRenderer's key shape.  These two tests
+    // pin the absence of any runId/scenarioId presence guard on the recording (and
+    // the matching lookup): an empty runId, and a scenario-started/-completed pair
+    // that both omit scenarioId entirely (so the key is the shared "(unknown)"
     // fallback).  Both must still derive the total from the timestamp delta.
     // -------------------------------------------------------------------------
 

@@ -637,10 +637,8 @@ public sealed class RendererParityTests
         yield return new object[] { TimeSpan.FromSeconds(-5), "0.000", 0L };
 
         // A MIDPOINT value: MidpointRounding.AwayFromZero must round 2.5 UP to 3, not
-        // down to 2 (ToEven) and not truncate to 2. This is the row that catches a
-        // one-sided switch to ToEven or truncation on any of the three helpers — both
-        // gates that reviewed this fix measured the prior theory as insensitive to
-        // exactly that class of change.
+        // down to 2 (ToEven) and not truncate to 2. This row fails if any of the three
+        // helpers switches to ToEven or truncation.
         yield return new object[] { TimeSpan.FromMilliseconds(2.5), "0.003", 3L };
 
         // A non-midpoint fractional value: 1234.6 rounds UP to 1235 under
@@ -720,7 +718,7 @@ public sealed class RendererParityTests
             "Terminal scenario summary line did not carry the expected duration suffix "
             + $"'{expectedTerminalSuffix}' for a {delta.TotalMilliseconds}ms timestamp delta, "
             + $"while JUnit derived time=\"{expectedJunitTime}\" from the SAME stream — "
-            + "TerminalRenderer.DeriveScenarioDurationMs disagrees with its siblings.");
+            + "TerminalRenderer's derived total disagrees with its siblings.");
     }
 
     // -------------------------------------------------------------------------
@@ -814,9 +812,8 @@ public sealed class RendererParityTests
     // -------------------------------------------------------------------------
     // Two rules no prior renderer test pinned: FIRST-WINS on a duplicate
     // scenario-started, and the default-Timestamp scenario-started NOT being
-    // recorded at all.  Before these tests existed, a last-wins or accept-default
-    // mutation in any of the three renderers passed every test; each is now proved
-    // red by a corresponding one-renderer mutation.
+    // recorded at all.  Each of these two tests fails under a last-wins or
+    // accept-default recording rule in any of the three renderers.
     // -------------------------------------------------------------------------
 
     [Fact]
