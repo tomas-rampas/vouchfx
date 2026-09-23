@@ -145,23 +145,26 @@ public sealed record MappedTopology(
         = Array.Empty<EndpointTrustNotice>();
 
     /// <summary>
-    /// Gets the <c>azureservicebus</c> temp Config.json directories a real run of this topology
-    /// actually created (#438), or empty when none was declared, <see cref="Configure"/> has not
-    /// run, or no such dependency's container has started yet.
+    /// Gets the ledger of <c>azureservicebus</c> temp Config.json directories a real run of this
+    /// topology creates (#438). It stays empty when none was declared, <see cref="Configure"/> has
+    /// not run, or no such dependency's container has started yet.
     /// </summary>
     /// <remarks>
     /// Unlike <see cref="EndpointSelectionNotices"/>/<see cref="EndpointTrustNotices"/>, nothing
-    /// writes here synchronously inside <see cref="Configure"/>: an entry is appended only from
-    /// Aspire's own <c>OnBeforeResourceStarted</c> callback, which fires exclusively when DCP is
-    /// genuinely about to start that emulator container — i.e. only during a real
+    /// stages into this ledger synchronously inside <see cref="Configure"/>: an entry is staged
+    /// only from Aspire's own <c>OnBeforeResourceStarted</c> callback, which fires exclusively
+    /// when DCP is genuinely about to start that emulator container — i.e. only during a real
     /// <see cref="Aspire.Hosting.DistributedApplication.StartAsync"/>. A bare
     /// <see cref="Configure"/> call against a builder that is never started — every non-Docker
-    /// <c>EnvironmentMapperTests</c> case — leaves this empty, because the directory itself is
-    /// never created on that path. <see cref="HeadlessTopology.DisposeAsync"/> (the single
-    /// teardown chokepoint, §4.5) removes every entry here after the container has stopped.
+    /// <c>EnvironmentMapperTests</c> case — leaves this ledger's snapshot empty, because the
+    /// directory itself is never created on that path. <see cref="HeadlessTopology.DisposeAsync"/>
+    /// (the single teardown chokepoint, §4.5) closes this ledger and removes every directory its
+    /// closing snapshot names, after the container has stopped — and, once closed, a hook that
+    /// still fires later (see <see cref="TempDirectoryLedger"/>'s own remarks for how that can
+    /// happen) finds the ledger refusing it rather than creating an orphan.
     /// </remarks>
-    internal IReadOnlyList<string> AsbTempDirectoriesCreated { get; init; }
-        = Array.Empty<string>();
+    internal TempDirectoryLedger AsbTempDirectoriesCreated { get; init; }
+        = new();
 }
 
 /// <summary>
@@ -226,16 +229,18 @@ public static class EnvironmentMapper
     /// services loop, so dependencies never saw it at all.
     /// </para>
     /// <para>
-    /// The eighth parameter, <c>tempDirectoriesToClean</c>, is a mutable list (#438) for
-    /// dependencies that must stage a host-filesystem artefact (a bind-mount source) a real
-    /// container will read — today only <c>azureservicebus</c>'s generated Config.json
-    /// directory.  A Build lambda that needs one defers the actual <c>Directory.CreateDirectory</c>
-    /// / file write to an Aspire <c>OnBeforeResourceStarted</c> hook — which fires only during a
-    /// genuine <c>DistributedApplication.StartAsync</c>, never for a bare <c>Configure(builder)</c>
-    /// call with no container ever started — and appends the created path there when it runs, so
-    /// <see cref="HeadlessTopology.DisposeAsync"/> (the single teardown chokepoint, §4.5) can
-    /// remove exactly what this run actually created. Existing types that do not need this
-    /// mechanism receive <c>_</c> for the parameter.
+    /// The eighth parameter, <c>tempDirectoriesToClean</c>, is a <see cref="TempDirectoryLedger"/>
+    /// (#438) for dependencies that must stage a host-filesystem artefact (a bind-mount source) a
+    /// real container will read — today only <c>azureservicebus</c>'s generated Config.json
+    /// directory. A Build lambda that needs one calls <see cref="TempDirectoryLedger.Stage"/> from
+    /// inside an Aspire <c>OnBeforeResourceStarted</c> hook — which fires only during a genuine
+    /// <c>DistributedApplication.StartAsync</c>, never for a bare <c>Configure(builder)</c> call
+    /// with no container ever started — so the directory is created, recorded, and populated only
+    /// once DCP is genuinely about to start that container. <see cref="HeadlessTopology.DisposeAsync"/>
+    /// (the single teardown chokepoint, §4.5) closes the same ledger, which is what stops a hook
+    /// that fires AFTER teardown from creating something nobody will ever remove — see
+    /// <see cref="TempDirectoryLedger"/>'s own remarks for the race this closes. Existing types
+    /// that do not need this mechanism receive <c>_</c> for the parameter.
     /// </para>
     /// </remarks>
     private sealed record DependencyRegistration(
@@ -244,7 +249,7 @@ public static class EnvironmentMapper
              Dictionary<string, Func<CancellationToken, Task<string?>>>,
              string?,
              ImagePullPolicy?,
-             List<string>,
+             TempDirectoryLedger,
              (IResourceBuilder<IResource> Retained, IResourceBuilder<IResource> MostSpecific)> Build,
         Func<string, DependencySpec, IEnumerable<string>> HealthGateNames);
 
@@ -528,31 +533,29 @@ public static class EnvironmentMapper
                     // — i.e. only during a real DistributedApplication.StartAsync — so a bare
                     // Configure(builder) call never creates the file at all, and there is
                     // nothing to clean up on that path because nothing was written.
-                    // tempDirectoriesToClean is the SAME list MappedTopology.
+                    // tempDirectoriesToClean is the SAME TempDirectoryLedger MappedTopology.
                     // AsbTempDirectoriesCreated exposes, so HeadlessTopology.DisposeAsync (the
-                    // single teardown chokepoint, §4.5) can remove exactly what a real run
-                    // actually created, once the container has stopped. The one path DisposeAsync
-                    // cannot see, an overall StartAsync that fails AFTER this hook already fired
-                    // for THIS resource (DCP started the emulator, then failed on something
-                    // else), is SuiteTopology's: StartAsync disposes its own half-built topology,
-                    // which never received this list, so SuiteTopology removes these directories
-                    // itself through the same HeadlessTopology.DeleteEngineOwnedTempDirectories.
+                    // single teardown chokepoint, §4.5) can close it and remove exactly what a
+                    // real run actually staged, once the container has stopped. A start hook
+                    // that still fires AFTER that close — DCP finishing a container-creation
+                    // task that outlived a cancelled StartAsync, see TempDirectoryLedger's own
+                    // remarks — finds the ledger closed: Stage throws instead of creating an
+                    // orphan, and Aspire logs this one resource as FailedToStart. The one path
+                    // DisposeAsync itself cannot reach, an overall StartAsync that fails AFTER
+                    // this hook already fired for THIS resource (DCP started the emulator, then
+                    // failed on something else) but BEFORE the ledger closes, is SuiteTopology's:
+                    // StartAsync disposes its own half-built topology, which never received this
+                    // ledger, so SuiteTopology closes it itself through the same
+                    // HeadlessTopology.DeleteEngineOwnedTempDirectories.
                     emulatorBuilder.OnBeforeResourceStarted((_, _, _) =>
                     {
-                        Directory.CreateDirectory(asbTempDir);
-
-                        // Recorded as soon as the directory exists, before the write, so a failed
-                        // write still leaves it for DisposeAsync to remove. Locked because Aspire
-                        // starts resources concurrently: a suite declaring two azureservicebus
-                        // dependencies can run this hook for both at once, and List<T> is not safe
-                        // for concurrent Add. HeadlessTopology.DeleteEngineOwnedTempDirectories
-                        // snapshots under the same lock.
-                        lock (tempDirectoriesToClean)
-                        {
-                            tempDirectoriesToClean.Add(asbTempDir);
-                        }
-
-                        File.WriteAllText(configPath, configJson);
+                        // Stage creates asbTempDir, records it, and writes Config.json into it —
+                        // all under the ledger's own lock, so a concurrent close cannot snapshot
+                        // a half-written directory (Aspire starts resources concurrently: a suite
+                        // declaring two azureservicebus dependencies runs this hook for both at
+                        // once) and a close that already ran refuses this Stage outright rather
+                        // than silently creating something cleanup has already given up on.
+                        tempDirectoriesToClean.Stage(asbTempDir, _ => File.WriteAllText(configPath, configJson));
                         return Task.CompletedTask;
                     });
 
@@ -866,18 +869,22 @@ public static class EnvironmentMapper
         // listener the engine holds no trust material for. Same lifecycle, same reason.
         var endpointTrustNotices = new List<EndpointTrustNotice>();
 
-        // #438: the azureservicebus dependency's temp Config.json directory, recorded ONLY once
-        // the directory is actually created (see its DependencyRegistration.Build entry below).
-        // Unlike the two notice lists above, nothing writes here synchronously inside Configure —
-        // an entry is added later, from Aspire's own OnBeforeResourceStarted callback, which fires
-        // only during a genuine DistributedApplication.StartAsync. So a bare Configure(builder)
-        // call against a builder that is never started (every non-Docker EnvironmentMapperTests
-        // case) leaves this empty, because the directory itself was never created on that path —
-        // there is nothing here to Clear() between two Configure invocations for the same reason.
-        // The SAME list instance is surfaced as MappedTopology.AsbTempDirectoriesCreated so
-        // HeadlessTopology.DisposeAsync (the single teardown chokepoint, §4.5) can remove
-        // whatever this run actually created, after the container has stopped.
-        var asbTempDirectoriesCreated = new List<string>();
+        // #438: the ledger for the azureservicebus dependency's temp Config.json directory,
+        // staged into ONLY once the directory is actually created (see its
+        // DependencyRegistration.Build entry below). Unlike the two notice lists above, nothing
+        // writes here synchronously inside Configure — an entry is staged later, from Aspire's
+        // own OnBeforeResourceStarted callback, which fires only during a genuine
+        // DistributedApplication.StartAsync. So a bare Configure(builder) call against a builder
+        // that is never started (every non-Docker EnvironmentMapperTests case) leaves this
+        // ledger's snapshot empty, because the directory itself was never created on that path —
+        // there is nothing here to reset between two Configure invocations for the same reason.
+        // The SAME TempDirectoryLedger instance is surfaced as
+        // MappedTopology.AsbTempDirectoriesCreated so HeadlessTopology.DisposeAsync (the single
+        // teardown chokepoint, §4.5) can close it and remove whatever this run actually staged,
+        // after the container has stopped — and so that a hook firing later than that close
+        // refuses rather than orphaning a directory (TempDirectoryLedger's own remarks explain
+        // why that can happen and why refusing it is safe).
+        var asbTempDirectoriesCreated = new TempDirectoryLedger();
 
         // #348: same treatment, same reason — captured once here so the endpoint-less project-form
         // refusal inside the Configure closure is a plain set lookup. Empty is the PERMISSIVE
@@ -2287,9 +2294,9 @@ public static class EnvironmentMapper
             StagedServiceEndpoints = serviceEndpoints,
             EndpointSelectionNotices = endpointSelectionNotices,
             EndpointTrustNotices = endpointTrustNotices,
-            // The SAME list instance the azureservicebus OnBeforeResourceStarted hook (if any)
-            // appends to — not a copy, so it reflects what StartAsync actually created rather
-            // than the empty state at Map's return (#438).
+            // The SAME TempDirectoryLedger instance the azureservicebus OnBeforeResourceStarted
+            // hook (if any) stages into — not a copy, so closing it after StartAsync reflects
+            // what was actually created rather than the empty state at Map's return (#438).
             AsbTempDirectoriesCreated = asbTempDirectoriesCreated,
         };
     }
