@@ -363,7 +363,10 @@ on GitLab — so artefacts are available precisely when a suite does not pass:
 
 - **`results.xml`** — JUnit XML for CI ingestion. The four verdicts map to distinct JUnit primitives
   (Fail → `<failure>`, EnvironmentError → `<error>`, Inconclusive → `<skipped>`). On GitLab this is
-  surfaced natively in the pipeline and merge-request test-report UI. Each `<testcase>` `time` is the scenario's wall-clock duration from its `scenario-started` to its `scenario-completed` event, script compilation included and topology startup excluded, and the suite `time` is their sum, so it is not the run's elapsed time.
+  surfaced natively in the pipeline and merge-request test-report UI. Each `<testcase>` `time` is
+  the scenario's wall-clock duration from its `scenario-started` to its `scenario-completed` event,
+  script compilation included and topology startup excluded, and the suite `time` is their sum, so
+  it is not the run's elapsed time.
 - **`report.html`** — a self-contained HTML report with polling timelines, captured-variable
   provenance, failed-step diffs and the reproducibility envelope, with no secret values embedded.
 
