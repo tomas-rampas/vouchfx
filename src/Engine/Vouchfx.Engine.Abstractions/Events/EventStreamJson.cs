@@ -109,10 +109,12 @@ public static class EventStreamJson
     /// <exception cref="InvalidOperationException">
     /// Thrown if <paramref name="line"/> is the JSON literal <c>null</c>, or a
     /// required field (<c>type</c>, <c>runId</c>) is present but explicitly
-    /// <see langword="null"/> on the wire (e.g. <c>"runId": null</c>). An empty
-    /// string (e.g. <c>"runId": ""</c>) is legal wire content and is accepted,
-    /// not rejected.
+    /// <see langword="null"/> on the wire (e.g. <c>"runId": null</c>).
     /// </exception>
+    /// <remarks>
+    /// An empty string (e.g. <c>"runId": ""</c>) is legal wire content and is
+    /// accepted, not rejected.
+    /// </remarks>
     public static EventEnvelope FromLine(string line)
     {
         var envelope = JsonSerializer.Deserialize<EventEnvelope>(line, Options)
@@ -121,10 +123,10 @@ public static class EventStreamJson
                 "the input was not a JSON object.");
 
         // STJ's `required` enforces presence only, not non-null. `RespectNullableAnnotations`
-        // (an STJ 9+ opt-in, off by default) is not used here because Abstractions compiles
-        // against the in-box STJ 8 (Directory.Packages.props pins STJ 10.0.8 only for the
-        // projects — Runtime, Cli — that reference the package explicitly; Abstractions
-        // resolves no STJ package). A wire line carrying "runId": null or "type": null
+        // (an STJ 9+ opt-in, off by default) is not used here because Abstractions resolves
+        // no STJ package (the 10.0.8 pin in Directory.Packages.props is a transitive security
+        // pin that reaches only other projects' graphs), so it compiles against the in-box
+        // STJ 8. A wire line carrying "runId": null or "type": null
         // therefore satisfies `required` and deserialises the property to null despite its
         // non-nullable `string` type.
         // An ABSENT required field is a different, pre-existing failure mode: STJ's
