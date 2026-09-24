@@ -15,6 +15,10 @@
 //     the Extra bag would also be affected), so the safest and most explicit
 //     approach is no policy at all.
 
+using System.Collections.Concurrent;
+using System.Linq;
+using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -191,22 +195,258 @@ public static class EventStreamJson
     /// deserialised as <typeparamref name="T"/>.
     /// </exception>
     /// <exception cref="InvalidOperationException">
-    /// Thrown if deserialisation produces a <see langword="null"/> result.
+    /// Thrown if deserialisation produces a <see langword="null"/> result, or if
+    /// <typeparamref name="T"/> has a <see langword="required"/> reference-type member
+    /// (e.g. <c>scenarioId</c>, <c>stepId</c>, <c>counts</c>) that deserialised to null
+    /// (#573), or if reading such a member's value itself threw (see the third bullet below).
     /// </exception>
     /// <remarks>
-    /// Unlike <see cref="FromLine(string)"/>, this overload does NOT add a null-required-field
-    /// guard for <c>runId</c>/<c>type</c>: the typed payload records (<see cref="ScenarioStartedEvent"/>,
-    /// <see cref="StepCompletedEvent"/>, etc.) each declare their own <c>required string RunId</c>
-    /// independently — there is no shared interface or base type across them to hang a generic
-    /// check on. Nor does that guard, even on the untyped overload, cover every typed record's
-    /// own required strings (e.g. <c>scenarioId</c>, <c>stepId</c>) — only <c>runId</c> and
-    /// <c>type</c> are checked there, because those two are the only required fields
-    /// <see cref="EventEnvelope"/> itself carries. To have <c>runId</c>/<c>type</c> null-checked,
-    /// call <see cref="FromLine(string)"/> on the same line first, as the engine's own readers do.
+    /// <para>
+    /// This overload guards <typeparamref name="T"/>'s OWN <see langword="required"/>
+    /// reference-type members — <c>runId</c>, <c>scenarioId</c>, <c>stepId</c>, <c>counts</c>,
+    /// the reproducibility-envelope lists (<c>secretReferences</c>, <c>fixtures</c>), the
+    /// transport-notice strings (<c>kind</c>, <c>service</c>, <c>selectedEndpoint</c>), and so
+    /// on for every record — the same way <see cref="FromLine(string)"/> guards
+    /// <see cref="EventEnvelope.RunId"/>: STJ's <c>required</c> enforces presence only, not
+    /// non-null, so a wire line carrying e.g. <c>"scenarioId": null</c> would otherwise satisfy
+    /// <c>required string ScenarioId</c> and hand the caller a record whose non-nullable member
+    /// is null. Value types are excluded outright: a non-nullable one (<c>Verdict</c>,
+    /// <c>long</c>) cannot hold null at all, so guarding it is unnecessary, and a nullable one
+    /// (<c>Nullable&lt;T&gt;</c>, e.g. a future <c>required long?</c>) is excluded for the same
+    /// reason a nullable REFERENCE type is (next sentence) — it is itself nullable-annotated
+    /// and legitimately allows null — even though the check below treats every value type as
+    /// one case for simplicity. A <see langword="required"/> reference-type member that is
+    /// itself nullable-annotated (e.g. a future <c>required string?</c>) is excluded too, for
+    /// that same reason.
+    /// </para>
+    /// <para>
+    /// <c>runId</c> is guarded here because every typed record declares it
+    /// <see langword="required"/>; <c>type</c> is not (no typed record marks it
+    /// <see langword="required"/>), so a <c>"type": null</c> line yields a null
+    /// <c>Type</c> unless <see cref="FromLine(string)"/> accepts the line first, as the
+    /// engine's own readers do.
+    /// </para>
+    /// <para>
+    /// A member's nullable ANNOTATION — not merely its CLR type — is what excludes it, read via
+    /// <see cref="NullabilityInfoContext"/>: a member is guarded only when that read state is
+    /// <see cref="NullabilityState.NotNull"/> (or, see below, when the read itself throws). A
+    /// type compiled WITHOUT a nullable context (no <c>#nullable enable</c> and no
+    /// <c>&lt;Nullable&gt;enable&lt;/Nullable&gt;</c>) reports
+    /// <see cref="NullabilityState.Unknown"/> for every reference-type member and therefore gets
+    /// NO guard at all — every in-tree record compiles under this project's repo-wide
+    /// <c>&lt;Nullable&gt;enable&lt;/Nullable&gt;</c>, so this only matters for a third-party
+    /// <typeparamref name="T"/> built without it.
+    /// </para>
+    /// <para>
+    /// Three further hardenings for hosting scenarios this repository does not itself exercise
+    /// (Abstractions ships as a published NuGet package a host may run under conditions this
+    /// solution never builds with):
+    /// </para>
+    /// <list type="bullet">
+    ///   <item><description>
+    ///     <strong>Nullability metadata unavailable.</strong> If the host disables
+    ///     <c>NullabilityInfoContext.IsSupported</c> (the
+    ///     <c>NullabilityInfoContextSupport=false</c> MSBuild property),
+    ///     <c>NullabilityInfoContext.Create</c> throws
+    ///     <see cref="InvalidOperationException"/> for EVERY property. Left uncaught, that would
+    ///     make <see cref="FromLine{T}"/> refuse every valid line for every typed record in that
+    ///     host, silently: the Planner would count every line skipped and the telemetry builder
+    ///     would tally zero scenarios, with no signal anything was wrong. A member is instead
+    ///     treated as guarded (as if <see cref="NullabilityState.NotNull"/>) when the
+    ///     nullability read itself throws — over-guarding a hypothetical nullable
+    ///     <see langword="required"/> member there is the safer failure than silently
+    ///     discarding every event line. A default <c>PublishTrimmed</c>/<c>PublishAot</c> publish
+    ///     never reaches this code: it disables reflection-based System.Text.Json, so
+    ///     <see cref="EventStreamJson"/>'s static initialiser throws first. Not reachable in this
+    ///     repo today — no project here sets <c>PublishTrimmed</c>, <c>PublishAot</c> or
+    ///     <c>NullabilityInfoContextSupport</c>.
+    ///   </description></item>
+    ///   <item><description>
+    ///     <strong>Collectible types.</strong> A <typeparamref name="T"/> loaded into a
+    ///     collectible <see cref="System.Runtime.Loader.AssemblyLoadContext"/> (e.g. a
+    ///     <c>script.csharp</c> compiled body reaching <see cref="FromLine{T}"/> with its own
+    ///     record type) is never added to the static per-type cache below: caching it there
+    ///     would pin the type — and so its ALC — alive for the process's remaining lifetime,
+    ///     defeating the whole point of a collectible context. This closes no leak that exists
+    ///     today (the shared <see cref="Options"/> serialiser already resolves and pins types
+    ///     through STJ's own reflection cache, so a collectible <typeparamref name="T"/>
+    ///     reaching this method at all is already not fully unloadable) — it only avoids a
+    ///     SECOND, independent cache adding to that.
+    ///   </description></item>
+    ///   <item><description>
+    ///     <strong>A throwing getter.</strong> Every in-tree required member is a plain
+    ///     auto-property, so this is unreachable today, but a third-party record's required
+    ///     property could compute its value and throw. Reading it via
+    ///     <see cref="PropertyInfo.GetValue(object?)"/> wraps such a throw in
+    ///     <see cref="System.Reflection.TargetInvocationException"/> — outside this method's
+    ///     documented exception surface and outside every in-tree consumer's
+    ///     <c>JsonException or InvalidOperationException</c> catch filter — so it is unwrapped
+    ///     and re-thrown as <see cref="InvalidOperationException"/> naming the wire name,
+    ///     keeping the failure inside the type every consumer already handles.
+    ///   </description></item>
+    /// </list>
     /// </remarks>
-    public static T FromLine<T>(string line) =>
-        JsonSerializer.Deserialize<T>(line, Options)
+    public static T FromLine<T>(string line)
+    {
+        var payload = JsonSerializer.Deserialize<T>(line, Options)
             ?? throw new InvalidOperationException(
                 $"Deserialisation of event-stream line as {typeof(T).Name} produced a null result; " +
                 "the input was not a JSON object.");
+
+        var requiredMembers = GetRequiredReferenceMembers(typeof(T));
+        for (var i = 0; i < requiredMembers.Length; i++)
+        {
+            var member = requiredMembers[i];
+            object? value;
+            try
+            {
+                value = member.Property.GetValue(payload);
+            }
+            catch (TargetInvocationException ex) when (ex.InnerException is not null)
+            {
+                // A throwing getter (unreachable for every in-tree record today) would
+                // otherwise surface as TargetInvocationException — outside this method's
+                // documented exceptions and every in-tree catch filter. Unwrap and re-throw
+                // as the type every consumer already treats as "skip this line". The inner
+                // exception travels as InnerException only: its message may carry a value
+                // from the line, and every guard message stays fixed text plus the wire and
+                // record names.
+                throw new InvalidOperationException(
+                    $"Event-stream line's {member.WireName} member threw while being read for "
+                    + $"the required-reference-member guard on {typeof(T).Name}.",
+                    ex.InnerException);
+            }
+
+            if (value is null)
+            {
+                throw new InvalidOperationException(
+                    $"Event-stream line has a null {member.WireName}; the {typeof(T).Name} field is required.");
+            }
+        }
+
+        return payload;
+    }
+
+    /// <summary>
+    /// Per-closed-<c>T</c> cache of <see cref="ComputeRequiredReferenceMembers"/>'s result,
+    /// keyed by the closed generic type <see cref="FromLine{T}"/> was called with. A type from
+    /// a collectible <see cref="System.Runtime.Loader.AssemblyLoadContext"/> is deliberately
+    /// never added here (see <see cref="FromLine{T}"/>'s remarks) — its members are computed
+    /// fresh on every call instead.
+    /// </summary>
+    private static readonly ConcurrentDictionary<Type, RequiredReferenceMember[]>
+        s_requiredReferenceMembersByType = new();
+
+    /// <summary>
+    /// One of a typed record's own <see langword="required"/> reference-type members that
+    /// <see cref="FromLine{T}"/> null-checks: the reflected <see cref="PropertyInfo"/> (used
+    /// to read the deserialised value) paired with its wire name (used in the exception
+    /// message).
+    /// </summary>
+    private readonly record struct RequiredReferenceMember(PropertyInfo Property, string WireName);
+
+    private static RequiredReferenceMember[] GetRequiredReferenceMembers(Type type)
+    {
+        if (type.IsCollectible)
+        {
+            return ComputeRequiredReferenceMembers(type, ReadNullabilityState);
+        }
+
+        return s_requiredReferenceMembersByType.GetOrAdd(
+            type, static t => ComputeRequiredReferenceMembers(t, ReadNullabilityState));
+    }
+
+    /// <summary>
+    /// Reflects over <paramref name="type"/>'s public instance properties and returns the
+    /// ones that are both <see langword="required"/> (<see cref="RequiredMemberAttribute"/>)
+    /// and a non-nullable reference type, using <paramref name="readNullabilityState"/> to
+    /// obtain each candidate property's nullability read state (normally
+    /// <see cref="ReadNullabilityState"/>; overridable only from tests, so the
+    /// "nullability read throws" hardening can be exercised deterministically without a
+    /// genuinely trimmed host).
+    /// </summary>
+    private static RequiredReferenceMember[] ComputeRequiredReferenceMembers(
+        Type type, Func<PropertyInfo, NullabilityState> readNullabilityState)
+    {
+        var members = new List<RequiredReferenceMember>();
+
+        foreach (var property in type.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+        {
+            if (property.GetCustomAttribute<RequiredMemberAttribute>() is null)
+            {
+                continue;
+            }
+
+            if (property.PropertyType.IsValueType)
+            {
+                continue;
+            }
+
+            NullabilityState nullabilityState;
+            try
+            {
+                nullabilityState = readNullabilityState(property);
+            }
+            catch (InvalidOperationException)
+            {
+                // NullabilityInfoContext.IsSupported=false (a trimmed/AOT host) makes Create
+                // throw for every property. See FromLine{T}'s remarks for the full rationale:
+                // treat the member as guarded rather than let every consumer silently discard
+                // every line for every typed record.
+                nullabilityState = NullabilityState.NotNull;
+            }
+
+            if (nullabilityState != NullabilityState.NotNull)
+            {
+                continue;
+            }
+
+            var wireName = property.GetCustomAttribute<JsonPropertyNameAttribute>()?.Name ?? property.Name;
+            members.Add(new RequiredReferenceMember(property, wireName));
+        }
+
+        // An array, not IReadOnlyList<T>: FromLine{T} iterates this on every call with a `for`
+        // loop over .Length rather than `foreach` over an interface, avoiding the boxed
+        // enumerator allocation a `foreach` over IReadOnlyList<T> would otherwise cost per line.
+        return members.ToArray();
+    }
+
+    private static NullabilityState ReadNullabilityState(PropertyInfo property) =>
+        new NullabilityInfoContext().Create(property).ReadState;
+
+    /// <summary>
+    /// Test-only accessor (visible to <c>Vouchfx.Engine.Abstractions.Tests</c> via
+    /// <c>InternalsVisibleTo</c>) for the wire names of <paramref name="type"/>'s own
+    /// null-guarded required reference members. Takes a <see cref="Type"/> directly (rather
+    /// than being reached generically through reflection from the test) so the census in
+    /// <c>EventStreamJsonRequiredReferenceNullTests</c> can call it for any record resolved by
+    /// name from the golden, not just a compile-time-known <c>T</c>.
+    /// </summary>
+    internal static IReadOnlyList<string> GetRequiredReferenceMemberWireNamesForTests(Type type) =>
+        GetRequiredReferenceMembers(type).Select(m => m.WireName).ToList();
+
+    /// <summary>
+    /// Test-only accessor: <see langword="true"/> when <paramref name="type"/>'s required
+    /// reference members are currently held in the static cache. Used to pin that a
+    /// collectible type's members are computed fresh every call rather than cached.
+    /// </summary>
+    internal static bool IsCachedForTests(Type type) => s_requiredReferenceMembersByType.ContainsKey(type);
+
+    /// <summary>
+    /// Test-only accessor: computes <paramref name="type"/>'s required reference-type members
+    /// using <paramref name="nullabilityReader"/> in place of the real
+    /// <see cref="NullabilityInfoContext"/>-backed reader, bypassing the cache entirely. Lets a
+    /// test simulate <c>NullabilityInfoContext.Create</c> throwing (as it does under a trimmed
+    /// host with <c>NullabilityInfoContext.IsSupported=false</c>) deterministically, without
+    /// needing that host — <c>IsSupported</c> is read once via a static field on the type's
+    /// first use in the process, so flipping the real
+    /// <c>System.Reflection.NullabilityInfoContext.IsSupported</c> <see cref="AppContext"/>
+    /// switch mid test-run has no effect once anything else in the process has already
+    /// touched <see cref="NullabilityInfoContext"/> (measured: confirmed via a throwaway probe
+    /// that an early <c>AppContext.SetSwitch</c> only takes effect before the type's first
+    /// touch in the process).
+    /// </summary>
+    internal static IReadOnlyList<string> ComputeRequiredReferenceMemberWireNamesForTests(
+        Type type, Func<PropertyInfo, NullabilityState> nullabilityReader) =>
+        ComputeRequiredReferenceMembers(type, nullabilityReader).Select(m => m.WireName).ToList();
 }
