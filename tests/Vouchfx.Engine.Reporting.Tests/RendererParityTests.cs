@@ -924,6 +924,100 @@ public sealed class RendererParityTests
     }
 
     // -------------------------------------------------------------------------
+    // #571: a "runId": null line must be tolerated IDENTICALLY by all three
+    // renderers — none may render the invalid scenario, and the two valid
+    // scenarios surrounding it must still render on every surface.  Before the
+    // fix this diverged: HtmlRenderer threw ArgumentNullException and aborted its
+    // whole document (ReportModel.GetOrAddScenario -> _lastScenarioByRun[runId] =
+    // scenario, with a null dictionary key), while JunitXmlRenderer and
+    // TerminalRenderer tolerated the line via their ValueTuple (runId, scenarioId)
+    // cache — which accepts a null element — and went on to render a scenario
+    // FROM the invalid line, using each renderer's own GetStr(envelope, "scenarioId")
+    // ?? "(unknown)" fallback (not a value the wire itself carries) for any field
+    // the line happened to omit.
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void AllRenderers_IgnoreAnEnvelopeWithNullRunId()
+    {
+        // `required` on net8.0 enforces presence only, not non-nullness, so this line
+        // satisfies `required string RunId` on the untyped envelope and would otherwise
+        // deserialise to a null RunId.
+        const string nullRunIdScenarioStarted =
+            """{"v":1,"schemaVersion":"v1","type":"scenario-started","ts":"2026-01-01T00:00:00Z","runId":null,"scenarioId":"poisoned-flow"}""";
+        const string nullRunIdScenarioCompleted =
+            """{"v":1,"schemaVersion":"v1","type":"scenario-completed","ts":"2026-01-01T00:00:05Z","runId":null,"scenarioId":"poisoned-flow","verdict":"PASS"}""";
+
+        var buffer = new List<string>
+        {
+            Line(new ScenarioStartedEvent { RunId = "run-before", ScenarioId = "before-flow" }),
+            Line(new StepCompletedEvent
+            {
+                RunId = "run-before",
+                StepId = "before-step",
+                Verdict = Verdict.Pass,
+                DurationMs = 10,
+            }),
+            Line(new ScenarioCompletedEvent
+            {
+                RunId = "run-before",
+                ScenarioId = "before-flow",
+                Verdict = Verdict.Pass,
+                Counts = new VerdictCounts { Pass = 1 },
+            }),
+            nullRunIdScenarioStarted,
+            nullRunIdScenarioCompleted,
+            Line(new ScenarioStartedEvent { RunId = "run-after", ScenarioId = "after-flow" }),
+            Line(new StepCompletedEvent
+            {
+                RunId = "run-after",
+                StepId = "after-step",
+                Verdict = Verdict.Fail,
+                DurationMs = 15,
+            }),
+            Line(new ScenarioCompletedEvent
+            {
+                RunId = "run-after",
+                ScenarioId = "after-flow",
+                Verdict = Verdict.Fail,
+                Counts = new VerdictCounts { Fail = 1 },
+            }),
+        };
+
+        using var terminalWriter = new StringWriter();
+        using var htmlWriter = new StringWriter();
+        using var junitWriter = new StringWriter();
+
+        var terminalEx = Record.Exception(() => TerminalRenderer.Render(buffer, terminalWriter, diffLookup: null));
+        var htmlEx = Record.Exception(() => HtmlRenderer.Render(buffer, htmlWriter, diffLookup: null));
+        var junitEx = Record.Exception(() => JunitXmlRenderer.Render(buffer, junitWriter));
+
+        Assert.Null(terminalEx);
+        Assert.Null(htmlEx);
+        Assert.Null(junitEx);
+
+        var terminalOutput = terminalWriter.ToString();
+        var htmlOutput = htmlWriter.ToString();
+        var junitOutput = junitWriter.ToString();
+
+        // None of the three renderers surfaces the poisoned scenario's id anywhere.
+        Assert.DoesNotContain("poisoned-flow", terminalOutput, StringComparison.Ordinal);
+        Assert.DoesNotContain("poisoned-flow", htmlOutput, StringComparison.Ordinal);
+        Assert.DoesNotContain("poisoned-flow", junitOutput, StringComparison.Ordinal);
+
+        // Each renderer still renders BOTH valid scenarios' verdicts.
+        var expectedSurvivingVerdicts = new SortedDictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["before-flow"] = "PASS",
+            ["after-flow"] = "FAIL",
+        };
+
+        Assert.Equal(expectedSurvivingVerdicts, ExtractTerminalVerdicts(terminalOutput, expectedSurvivingVerdicts.Keys));
+        Assert.Equal(expectedSurvivingVerdicts, ExtractHtmlVerdicts(htmlOutput, expectedSurvivingVerdicts.Keys));
+        Assert.Equal(expectedSurvivingVerdicts, ExtractJunitVerdicts(junitOutput, expectedSurvivingVerdicts.Keys));
+    }
+
+    // -------------------------------------------------------------------------
     // Per-renderer verdict extraction.
     // -------------------------------------------------------------------------
 
@@ -933,11 +1027,12 @@ public sealed class RendererParityTests
     /// <c>Scenario '{id}': {TOKEN}  (pass=… fail=… envError=… inconclusive=…)</c>.
     /// The token sits between the scenario-id quote+colon and the counts parenthesis.
     /// </summary>
-    private static SortedDictionary<string, string> ExtractTerminalVerdicts(string output)
+    private static SortedDictionary<string, string> ExtractTerminalVerdicts(
+        string output, IEnumerable<string>? scenarioIds = null)
     {
         var result = new SortedDictionary<string, string>(StringComparer.Ordinal);
 
-        foreach (var scenarioId in ExpectedVerdicts.Keys)
+        foreach (var scenarioId in scenarioIds ?? ExpectedVerdicts.Keys)
         {
             // Match only the scenario-COMPLETED summary line: it begins
             // "Scenario '{id}': " (the started line is "Scenario '{id}' started",
@@ -987,9 +1082,11 @@ public sealed class RendererParityTests
     /// The run-summary block also uses <c>verdict-*</c> classes but is NOT a
     /// <c>scenario</c> section, so it is skipped.
     /// </remarks>
-    private static SortedDictionary<string, string> ExtractHtmlVerdicts(string output)
+    private static SortedDictionary<string, string> ExtractHtmlVerdicts(
+        string output, IEnumerable<string>? scenarioIds = null)
     {
         var result = new SortedDictionary<string, string>(StringComparer.Ordinal);
+        var candidateIds = (scenarioIds ?? ExpectedVerdicts.Keys).ToList();
 
         var lines = SplitLines(output);
         string? pendingClassToken = null;
@@ -1015,7 +1112,7 @@ public sealed class RendererParityTests
             }
 
             var afterMarker = line.Substring(headingMarker.Length);
-            var scenarioId = ExpectedVerdicts.Keys.FirstOrDefault(id =>
+            var scenarioId = candidateIds.FirstOrDefault(id =>
                 afterMarker.StartsWith(id, StringComparison.Ordinal));
             if (scenarioId is null)
             {
@@ -1068,15 +1165,17 @@ public sealed class RendererParityTests
     /// Extracts each scenario's verdict from the JUnit XML output via the authoritative
     /// <c>vouchfx.verdict</c> property on its <c>&lt;testcase&gt;</c>.
     /// </summary>
-    private static SortedDictionary<string, string> ExtractJunitVerdicts(string output)
+    private static SortedDictionary<string, string> ExtractJunitVerdicts(
+        string output, IEnumerable<string>? scenarioIds = null)
     {
         var result = new SortedDictionary<string, string>(StringComparer.Ordinal);
+        var candidateIds = (scenarioIds ?? ExpectedVerdicts.Keys).ToHashSet(StringComparer.Ordinal);
         var doc = XDocument.Parse(output);
 
         foreach (var testcase in doc.Descendants("testcase"))
         {
             var name = (string?)testcase.Attribute("name");
-            if (name is null || !ExpectedVerdicts.ContainsKey(name))
+            if (name is null || !candidateIds.Contains(name))
             {
                 continue;
             }

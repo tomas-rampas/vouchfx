@@ -102,17 +102,55 @@ public static class EventStreamJson
     /// </param>
     /// <returns>The deserialised envelope.</returns>
     /// <exception cref="JsonException">
-    /// Thrown if <paramref name="line"/> is not valid JSON or does not represent
-    /// an object.
+    /// Thrown if <paramref name="line"/> is not valid JSON, does not represent an
+    /// object, or a required field (<c>type</c>, <c>runId</c>) is absent.
     /// </exception>
     /// <exception cref="InvalidOperationException">
-    /// Thrown if the required fields (<c>type</c>, <c>runId</c>) are absent.
+    /// Thrown if <paramref name="line"/> is the JSON literal <c>null</c>, or a
+    /// required field (<c>type</c>, <c>runId</c>) is present but explicitly
+    /// <see langword="null"/> on the wire (e.g. <c>"runId": null</c>).
     /// </exception>
-    public static EventEnvelope FromLine(string line) =>
-        JsonSerializer.Deserialize<EventEnvelope>(line, Options)
+    public static EventEnvelope FromLine(string line)
+    {
+        var envelope = JsonSerializer.Deserialize<EventEnvelope>(line, Options)
             ?? throw new InvalidOperationException(
                 "Deserialisation of event-stream line produced a null result; " +
                 "the input was not a JSON object.");
+
+        // `required` on net8.0 enforces PRESENCE only, not non-nullness (STJ's
+        // RespectNullableAnnotations opt-in is not available on this TFM) — a wire
+        // line carrying "runId": null or "type": null satisfies `required` and
+        // deserialises the property to null despite its non-nullable `string` type.
+        // An ABSENT required field is a different, pre-existing failure mode: STJ's
+        // own `required`-member enforcement throws JsonException for that case,
+        // never reaching the null checks below — the two paths stay distinct.
+        // An EMPTY string, by contrast, is deliberately ACCEPTED here: "" is a
+        // legal (if unusual) value for a non-nullable `string` field, satisfies
+        // `required`, and is pinned as legal wire content by
+        // TerminalRendererTests.Render_ScenarioStarted_EmptyRunId_StillDerivesTotal
+        // — only the JSON-null case is malformed. Every in-tree consumer of this method
+        // (the three renderers, EventHistoryReader, TelemetryEventBuilder) already
+        // treats InvalidOperationException as "skip this line" per §14's per-line
+        // tolerance, so failing fast here — instead of handing a contract-violating
+        // envelope on to the caller — makes a null required field malformed
+        // everywhere uniformly, rather than one renderer (HtmlRenderer, whose
+        // _lastScenarioByRun dictionary key rejects a null RunId) aborting the
+        // whole document while the others render a scenario from data that was
+        // never valid.
+        if (envelope.RunId is null)
+        {
+            throw new InvalidOperationException(
+                "Event-stream line has a null runId; the envelope field is required.");
+        }
+
+        if (envelope.Type is null)
+        {
+            throw new InvalidOperationException(
+                "Event-stream line has a null type; the envelope field is required.");
+        }
+
+        return envelope;
+    }
 
     /// <summary>
     /// Serialises <paramref name="payload"/> to a compact single-line JSON
@@ -147,6 +185,20 @@ public static class EventStreamJson
     /// <exception cref="InvalidOperationException">
     /// Thrown if deserialisation produces a <see langword="null"/> result.
     /// </exception>
+    /// <remarks>
+    /// Unlike <see cref="FromLine(string)"/>, this overload does NOT add a null-required-field
+    /// guard for <c>runId</c>/<c>type</c>: the typed payload records (<see cref="ScenarioStartedEvent"/>,
+    /// <see cref="StepCompletedEvent"/>, etc.) each declare their own <c>required string RunId</c>
+    /// independently — there is no shared interface or base type across them to hang a generic
+    /// check on. Nor does that guard, even on the untyped overload, cover every typed record's
+    /// own required strings (e.g. <c>scenarioId</c>, <c>stepId</c>) — only <c>runId</c> and
+    /// <c>type</c> are checked there, because those two are the only required fields
+    /// <see cref="EventEnvelope"/> itself carries. Call this overload only AFTER
+    /// <see cref="FromLine(string)"/> has already accepted the same line earlier in the same
+    /// loop: both in-tree production callers (<c>EventHistoryReader</c>, <c>TelemetryEventBuilder</c>)
+    /// follow that rule, so a null-runId/type line is already rejected before either reaches a
+    /// typed call.
+    /// </remarks>
     public static T FromLine<T>(string line) =>
         JsonSerializer.Deserialize<T>(line, Options)
             ?? throw new InvalidOperationException(

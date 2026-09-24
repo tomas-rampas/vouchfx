@@ -229,11 +229,15 @@ public sealed class PlanExportTests
     [Fact]
     public void CorruptEventLines_AreSkippedAndCounted()
     {
+        // ingest/corrupt-events/history.jsonl carries three corrupt lines: not-JSON, a JSON
+        // object missing the required `type`/`runId` fields, and (#571) a `runId: null` line —
+        // `required` on net8.0 enforces presence only, so that line would otherwise satisfy
+        // `required string RunId` and hand the reader a null run id.
         var report = PlannerTestFixtures.Plan(
             PlannerTestFixtures.FixtureRoot("ingest/basic-suites"),
             PlannerTestFixtures.FixtureRoot("ingest/corrupt-events"));
 
-        Assert.Equal(2, report.Inventory.SkippedEventLines);
+        Assert.Equal(3, report.Inventory.SkippedEventLines);
     }
 
     // ── EDGE-007 ─────────────────────────────────────────────────────────────────

@@ -154,6 +154,15 @@ public sealed class TelemetryEventBuilderTests
             "this is not json",
             string.Empty,
             "   ",
+            // #571: `required` on net8.0 enforces presence only, not non-nullness, so this
+            // line would otherwise satisfy `required string RunId` on the untyped envelope
+            // and hand the builder a null run id. It is a scenario-completed line
+            // specifically (not scenario-started) because Build's switch increments
+            // scenarioCount as soon as envelope.Type matches, BEFORE the typed
+            // AccumulateScenarioCompleted read runs — so this row proves the line is
+            // rejected before the type switch is ever reached, not merely that its typed
+            // payload read happens to fail afterwards.
+            """{"v":1,"schemaVersion":"v1","type":"scenario-completed","ts":"2024-01-15T10:00:00+00:00","runId":null}""",
             SyntheticEvents.ScenarioStarted("A", T0.AddMilliseconds(10)),
             SyntheticEvents.StepStarted("a1", "http.rest", T0.AddMilliseconds(20)),
             SyntheticEvents.ScenarioCompleted(

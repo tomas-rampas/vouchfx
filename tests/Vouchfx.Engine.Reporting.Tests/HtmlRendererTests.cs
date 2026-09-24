@@ -796,4 +796,71 @@ public sealed class HtmlRendererTests
             output,
             StringComparison.Ordinal);
     }
+
+    // -------------------------------------------------------------------------
+    // #571: a "runId": null scenario pair must not abort the whole document —
+    // both surrounding valid scenarios must still render.
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void Render_NullRunIdScenarioAmongValidOnes_DoesNotThrowAndRendersBothValidScenarios()
+    {
+        // `required` on net8.0 enforces presence only, not non-nullness, so a wire line
+        // carrying "runId": null satisfies `required string RunId` on the untyped envelope.
+        // Before EventStreamJson.FromLine rejected it, this reached
+        // ReportModel.GetOrAddScenario -> _lastScenarioByRun[runId] = scenario and threw
+        // ArgumentNullException, aborting the whole document (BuildModel has no catch for
+        // ArgumentNullException — only JsonException/InvalidOperationException).
+        const string nullRunIdScenarioStarted =
+            """{"v":1,"schemaVersion":"v1","type":"scenario-started","ts":"2024-01-15T10:00:00+00:00","runId":null,"scenarioId":"poisoned-flow"}""";
+        const string nullRunIdScenarioCompleted =
+            """{"v":1,"schemaVersion":"v1","type":"scenario-completed","ts":"2024-01-15T10:00:05+00:00","runId":null,"scenarioId":"poisoned-flow","verdict":"PASS"}""";
+
+        var lines = new[]
+        {
+            Line(new ScenarioStartedEvent { RunId = "run-before", ScenarioId = "before-flow" }),
+            Line(new StepCompletedEvent
+            {
+                RunId = "run-before",
+                StepId = "before-step",
+                Verdict = Verdict.Pass,
+                DurationMs = 10,
+            }),
+            Line(new ScenarioCompletedEvent
+            {
+                RunId = "run-before",
+                ScenarioId = "before-flow",
+                Verdict = Verdict.Pass,
+                Counts = new VerdictCounts { Pass = 1 },
+            }),
+            nullRunIdScenarioStarted,
+            nullRunIdScenarioCompleted,
+            Line(new ScenarioStartedEvent { RunId = "run-after", ScenarioId = "after-flow" }),
+            Line(new StepCompletedEvent
+            {
+                RunId = "run-after",
+                StepId = "after-step",
+                Verdict = Verdict.Pass,
+                DurationMs = 15,
+            }),
+            Line(new ScenarioCompletedEvent
+            {
+                RunId = "run-after",
+                ScenarioId = "after-flow",
+                Verdict = Verdict.Pass,
+                Counts = new VerdictCounts { Pass = 1 },
+            }),
+        };
+
+        using var writer = new StringWriter();
+        var exception = Record.Exception(() => HtmlRenderer.Render(lines, writer));
+        Assert.Null(exception);
+
+        var output = writer.ToString();
+        Assert.Contains("before-flow", output, StringComparison.Ordinal);
+        Assert.Contains("before-step", output, StringComparison.Ordinal);
+        Assert.Contains("after-flow", output, StringComparison.Ordinal);
+        Assert.Contains("after-step", output, StringComparison.Ordinal);
+        Assert.DoesNotContain("poisoned-flow", output, StringComparison.Ordinal);
+    }
 }

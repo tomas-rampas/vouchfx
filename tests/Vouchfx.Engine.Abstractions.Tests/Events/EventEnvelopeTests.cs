@@ -228,6 +228,78 @@ public sealed class EventEnvelopeTests
     }
 
     // -------------------------------------------------------------------------
+    // Test 6 — #571: an explicit "runId": null must be rejected, not accepted as null
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void FromLine_NullRunId_ThrowsInvalidOperationExceptionNamingRunId()
+    {
+        // Arrange — `required` on net8.0 enforces presence only, not non-nullness
+        // (RespectNullableAnnotations is unavailable on this TFM), so this line
+        // satisfies `required string RunId` and would otherwise deserialise to null.
+        const string nullRunIdJson = """
+            {
+                "v": 1,
+                "schemaVersion": "v1",
+                "type": "scenario-started",
+                "ts": "2024-01-15T10:00:00+00:00",
+                "runId": null
+            }
+            """;
+
+        // Act & Assert
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => EventStreamJson.FromLine(nullRunIdJson));
+        Assert.Contains("runId", ex.Message, StringComparison.Ordinal);
+    }
+
+    // -------------------------------------------------------------------------
+    // Test 7 — #571: an explicit "type": null must be rejected the same way
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void FromLine_NullType_ThrowsInvalidOperationExceptionNamingType()
+    {
+        const string nullTypeJson = """
+            {
+                "v": 1,
+                "schemaVersion": "v1",
+                "type": null,
+                "ts": "2024-01-15T10:00:00+00:00",
+                "runId": "r-7f3a"
+            }
+            """;
+
+        // Act & Assert
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => EventStreamJson.FromLine(nullTypeJson));
+        Assert.Contains("type", ex.Message, StringComparison.Ordinal);
+    }
+
+    // -------------------------------------------------------------------------
+    // Test 8 — #571: a line missing runId entirely stays on the DISTINCT
+    // "required member absent" path (JsonException), never the null-value path.
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void FromLine_MissingRunId_ThrowsJsonExceptionNotInvalidOperationException()
+    {
+        // Arrange — runId is absent altogether, as opposed to present-and-null.
+        const string missingRunIdJson = """
+            {
+                "v": 1,
+                "schemaVersion": "v1",
+                "type": "scenario-started",
+                "ts": "2024-01-15T10:00:00+00:00"
+            }
+            """;
+
+        // Act & Assert — STJ's own `required`-member enforcement fires here (JsonException),
+        // distinct from the InvalidOperationException the null-value guard above throws.
+        Assert.Throws<JsonException>(() => EventStreamJson.FromLine(missingRunIdJson));
+    }
+
+    // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
 
