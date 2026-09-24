@@ -154,7 +154,7 @@ public sealed class TelemetryEventBuilderTests
             "this is not json",
             string.Empty,
             "   ",
-            // #571: `required` on net8.0 enforces presence only, not non-nullness, so this
+            // #571: `required` enforces presence only, not non-nullness, so this
             // line would otherwise satisfy `required string RunId` on the untyped envelope
             // and hand the builder a null run id. It is a scenario-completed line
             // specifically (not scenario-started) because Build's switch increments

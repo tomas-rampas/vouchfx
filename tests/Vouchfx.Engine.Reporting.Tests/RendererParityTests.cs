@@ -940,7 +940,7 @@ public sealed class RendererParityTests
     [Fact]
     public void AllRenderers_IgnoreAnEnvelopeWithNullRunId()
     {
-        // `required` on net8.0 enforces presence only, not non-nullness, so this line
+        // `required` enforces presence only, not non-nullness, so this line
         // satisfies `required string RunId` on the untyped envelope and would otherwise
         // deserialise to a null RunId.
         const string nullRunIdScenarioStarted =

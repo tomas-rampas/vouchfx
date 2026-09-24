@@ -234,8 +234,7 @@ public sealed class EventEnvelopeTests
     [Fact]
     public void FromLine_NullRunId_ThrowsInvalidOperationExceptionNamingRunId()
     {
-        // Arrange — `required` on net8.0 enforces presence only, not non-nullness
-        // (RespectNullableAnnotations is unavailable on this TFM), so this line
+        // Arrange — `required` enforces presence, not non-null, so this line
         // satisfies `required string RunId` and would otherwise deserialise to null.
         const string nullRunIdJson = """
             {
@@ -297,6 +296,36 @@ public sealed class EventEnvelopeTests
         // Act & Assert — STJ's own `required`-member enforcement fires here (JsonException),
         // distinct from the InvalidOperationException the null-value guard above throws.
         Assert.Throws<JsonException>(() => EventStreamJson.FromLine(missingRunIdJson));
+    }
+
+    // -------------------------------------------------------------------------
+    // Test 9 — #571: an empty "runId"/"type" is legal wire content, not malformed.
+    // Pins the third boundary alongside Test 6/7 (null, rejected) and Test 8
+    // (absent, rejected): absent -> JsonException; JSON null -> InvalidOperationException;
+    // empty string -> ACCEPTED. The #569 terminal test
+    // (Render_ScenarioStarted_EmptyRunId_StillDerivesTotal) pins the same boundary from
+    // the consumer side; this test pins it at the point FromLine itself decides it.
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void FromLine_EmptyRunIdAndType_AreAccepted()
+    {
+        const string emptyRunIdAndTypeJson = """
+            {
+                "v": 1,
+                "schemaVersion": "v1",
+                "type": "",
+                "ts": "2024-01-15T10:00:00+00:00",
+                "runId": ""
+            }
+            """;
+
+        // Act
+        var envelope = EventStreamJson.FromLine(emptyRunIdAndTypeJson);
+
+        // Assert — both empty strings deserialise and are returned unchanged, not rejected.
+        Assert.Equal(string.Empty, envelope.RunId);
+        Assert.Equal(string.Empty, envelope.Type);
     }
 
     // -------------------------------------------------------------------------

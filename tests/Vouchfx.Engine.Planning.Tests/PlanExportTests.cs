@@ -231,8 +231,8 @@ public sealed class PlanExportTests
     {
         // ingest/corrupt-events/history.jsonl carries three corrupt lines: not-JSON, a JSON
         // object missing the required `type`/`runId` fields, and (#571) a `runId: null` line —
-        // `required` on net8.0 enforces presence only, so that line would otherwise satisfy
-        // `required string RunId` and hand the reader a null run id.
+        // `required` enforces presence only, not non-null, so that line would otherwise
+        // satisfy `required string RunId` and hand the reader a null run id.
         var report = PlannerTestFixtures.Plan(
             PlannerTestFixtures.FixtureRoot("ingest/basic-suites"),
             PlannerTestFixtures.FixtureRoot("ingest/corrupt-events"));

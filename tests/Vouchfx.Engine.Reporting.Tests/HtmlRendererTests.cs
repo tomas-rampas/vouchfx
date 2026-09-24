@@ -805,7 +805,7 @@ public sealed class HtmlRendererTests
     [Fact]
     public void Render_NullRunIdScenarioAmongValidOnes_DoesNotThrowAndRendersBothValidScenarios()
     {
-        // `required` on net8.0 enforces presence only, not non-nullness, so a wire line
+        // `required` enforces presence only, not non-nullness, so a wire line
         // carrying "runId": null satisfies `required string RunId` on the untyped envelope.
         // Before EventStreamJson.FromLine rejected it, this reached
         // ReportModel.GetOrAddScenario -> _lastScenarioByRun[runId] = scenario and threw

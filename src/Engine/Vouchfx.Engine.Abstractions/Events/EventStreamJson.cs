@@ -103,12 +103,15 @@ public static class EventStreamJson
     /// <returns>The deserialised envelope.</returns>
     /// <exception cref="JsonException">
     /// Thrown if <paramref name="line"/> is not valid JSON, does not represent an
-    /// object, or a required field (<c>type</c>, <c>runId</c>) is absent.
+    /// object, a required field (<c>type</c>, <c>runId</c>) is absent, or a mapped
+    /// field has the wrong JSON type (e.g. a numeric <c>runId</c>).
     /// </exception>
     /// <exception cref="InvalidOperationException">
     /// Thrown if <paramref name="line"/> is the JSON literal <c>null</c>, or a
     /// required field (<c>type</c>, <c>runId</c>) is present but explicitly
-    /// <see langword="null"/> on the wire (e.g. <c>"runId": null</c>).
+    /// <see langword="null"/> on the wire (e.g. <c>"runId": null</c>). An empty
+    /// string (e.g. <c>"runId": ""</c>) is legal wire content and is accepted,
+    /// not rejected.
     /// </exception>
     public static EventEnvelope FromLine(string line)
     {
@@ -117,10 +120,13 @@ public static class EventStreamJson
                 "Deserialisation of event-stream line produced a null result; " +
                 "the input was not a JSON object.");
 
-        // `required` on net8.0 enforces PRESENCE only, not non-nullness (STJ's
-        // RespectNullableAnnotations opt-in is not available on this TFM) — a wire
-        // line carrying "runId": null or "type": null satisfies `required` and
-        // deserialises the property to null despite its non-nullable `string` type.
+        // STJ's `required` enforces presence only, not non-null. `RespectNullableAnnotations`
+        // (an STJ 9+ opt-in, off by default) is not used here because Abstractions compiles
+        // against the in-box STJ 8 (Directory.Packages.props pins STJ 10.0.8 only for the
+        // projects — Runtime, Cli — that reference the package explicitly; Abstractions
+        // resolves no STJ package). A wire line carrying "runId": null or "type": null
+        // therefore satisfies `required` and deserialises the property to null despite its
+        // non-nullable `string` type.
         // An ABSENT required field is a different, pre-existing failure mode: STJ's
         // own `required`-member enforcement throws JsonException for that case,
         // never reaching the null checks below — the two paths stay distinct.
@@ -193,11 +199,8 @@ public static class EventStreamJson
     /// check on. Nor does that guard, even on the untyped overload, cover every typed record's
     /// own required strings (e.g. <c>scenarioId</c>, <c>stepId</c>) — only <c>runId</c> and
     /// <c>type</c> are checked there, because those two are the only required fields
-    /// <see cref="EventEnvelope"/> itself carries. Call this overload only AFTER
-    /// <see cref="FromLine(string)"/> has already accepted the same line earlier in the same
-    /// loop: both in-tree production callers (<c>EventHistoryReader</c>, <c>TelemetryEventBuilder</c>)
-    /// follow that rule, so a null-runId/type line is already rejected before either reaches a
-    /// typed call.
+    /// <see cref="EventEnvelope"/> itself carries. To have <c>runId</c>/<c>type</c> null-checked,
+    /// call <see cref="FromLine(string)"/> on the same line first, as the engine's own readers do.
     /// </remarks>
     public static T FromLine<T>(string line) =>
         JsonSerializer.Deserialize<T>(line, Options)

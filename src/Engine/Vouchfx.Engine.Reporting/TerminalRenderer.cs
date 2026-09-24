@@ -283,8 +283,7 @@ public sealed class TerminalRenderer
                 // the scenarioStarts declaration above for the display-sanitisation residual).
                 // EventStreamJson.FromLine refuses a null runId (#571), so envelope.RunId is
                 // non-null here; an empty runId is legal and keys fine, pinned by
-                // TerminalRendererTests.Render_ScenarioStarted_EmptyRunId_StillDerivesTotal —
-                // never re-key this map on the bare string.
+                // TerminalRendererTests.Render_ScenarioStarted_EmptyRunId_StillDerivesTotal.
                 if (envelope.Type == EventTypes.ScenarioStarted)
                 {
                     var startedScenarioId = GetStr(envelope, "scenarioId") ?? "(unknown)";
