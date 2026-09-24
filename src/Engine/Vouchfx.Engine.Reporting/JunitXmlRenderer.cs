@@ -222,8 +222,8 @@ public sealed class JunitXmlRenderer
                 // as a lone surrogate (InvalidOperationException at GetString) — skip this
                 // line and continue, exactly like the sibling renderers (§14 tolerance).
                 // This ALSO tolerates a line whose EventStreamJson.FromLine itself throws
-                // InvalidOperationException — a null / non-object / missing-required-field
-                // line — which is skipped here just like malformed JSON.
+                // InvalidOperationException — the line was the JSON literal null, or a null
+                // runId/type (#571) — which is skipped here just like malformed JSON.
                 continue;
             }
         }

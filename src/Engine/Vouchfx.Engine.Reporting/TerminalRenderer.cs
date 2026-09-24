@@ -281,10 +281,9 @@ public sealed class TerminalRenderer
                 // runId/scenarioId presence guard — matching JunitXmlRenderer/HtmlRenderer's
                 // rule for the same field, identical on every stream the engine writes (see
                 // the scenarioStarts declaration above for the display-sanitisation residual).
-                // RunId is `required` but NOT null-enforced on net8.0, so a hand-written
-                // `"runId": null` deserialises to null (the HtmlRenderer abort tracked as #571);
-                // a ValueTuple key tolerates a null or empty element, so that is no throw risk
-                // here — never re-key this map on the bare string.
+                // EventStreamJson.FromLine refuses a null runId (#571), so envelope.RunId is
+                // non-null here; an empty runId is legal and keys fine, pinned by
+                // TerminalRendererTests.Render_ScenarioStarted_EmptyRunId_StillDerivesTotal.
                 if (envelope.Type == EventTypes.ScenarioStarted)
                 {
                     var startedScenarioId = GetStr(envelope, "scenarioId") ?? "(unknown)";
@@ -302,11 +301,11 @@ public sealed class TerminalRenderer
                 // Malformed JSON (JsonException at parse) OR an unreadable string value such
                 // as a lone surrogate (InvalidOperationException at GetString) — skip this
                 // line and continue with the rest of the stream.  This ALSO tolerates a line
-                // whose EventStreamJson.FromLine itself throws InvalidOperationException — a
-                // null / non-object / missing-required-field line — which is skipped here
-                // just like malformed JSON.  A diagnostic comment is intentionally omitted
-                // here to keep the stub output clean; a future production renderer may write
-                // one.
+                // whose EventStreamJson.FromLine itself throws InvalidOperationException — the
+                // line was the JSON literal null, or a null runId/type (#571) — which is
+                // skipped here just like malformed JSON.  A diagnostic comment is intentionally
+                // omitted here to keep the stub output clean; a future production renderer may
+                // write one.
                 continue;
             }
         }
