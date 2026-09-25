@@ -374,7 +374,7 @@ public sealed class EventStreamJsonRequiredReferenceNullTests
     }
 
     // =========================================================================
-    // m2: the nullability-annotation branch — required-and-nullable vs required-and-not
+    // The nullability-annotation branch — required-and-nullable vs required-and-not
     // =========================================================================
 
     /// <summary>
@@ -415,7 +415,7 @@ public sealed class EventStreamJsonRequiredReferenceNullTests
     }
 
     // =========================================================================
-    // LOW-1: a host with NullabilityInfoContext.IsSupported=false must over-guard, not
+    // A host with NullabilityInfoContext.IsSupported=false must over-guard, not
     // silently skip every line
     // =========================================================================
 
@@ -453,7 +453,7 @@ public sealed class EventStreamJsonRequiredReferenceNullTests
     }
 
     // =========================================================================
-    // LOW-2: a type from a collectible AssemblyLoadContext is never cached
+    // A type from a collectible AssemblyLoadContext is never cached
     // =========================================================================
 
     [Fact]
@@ -612,7 +612,7 @@ public sealed class EventStreamJsonRequiredReferenceNullTests
     }
 
     // =========================================================================
-    // MINOR-1: a write-only required property under a throwing nullability read must
+    // A write-only required property under a throwing nullability read must
     // never be listed — it cannot be read to null-check it
     // =========================================================================
 
@@ -638,7 +638,7 @@ public sealed class EventStreamJsonRequiredReferenceNullTests
     }
 
     // =========================================================================
-    // MINOR-2: a genuinely collectible ordinary type (not a Reflection.Emit stub with no
+    // A genuinely collectible ordinary type (not a Reflection.Emit stub with no
     // properties) is never cached, and the guard still fires through it
     // =========================================================================
 
@@ -795,7 +795,7 @@ public sealed class EventStreamJsonRequiredReferenceNullTests
     }
 
     // =========================================================================
-    // security LOW-2a: a member mapped through a [SetsRequiredMembers] constructor still
+    // A member mapped through a [SetsRequiredMembers] constructor still
     // reports IsRequired == false from STJ, so the guard must test the MemberInfo's own
     // RequiredMemberAttribute directly rather than trust JsonPropertyInfo.IsRequired alone.
     // =========================================================================
@@ -842,7 +842,7 @@ public sealed class EventStreamJsonRequiredReferenceNullTests
     }
 
     // =========================================================================
-    // m2 (code-review-gatekeeper, measured): a [JsonIgnore] member still appears in
+    // A [JsonIgnore] member (code-review-gatekeeper, measured) still appears in
     // JsonTypeInfo.Properties with both Get and Set null, so it is never bound to or from the
     // wire at all. Before the fix, the guard's RequiredMemberAttribute fallback still admitted
     // it (the C# `required` modifier is on the member, not on the JSON mapping) despite
@@ -871,7 +871,7 @@ public sealed class EventStreamJsonRequiredReferenceNullTests
     {
         // Pre-fix, this threw InvalidOperationException: "Event-stream line has a null X; the
         // JsonIgnoredSetsRequiredMembersProbe field is required." — measured by running this
-        // test against the pre-m2 code (no p.Set null check).
+        // test against the code before the [JsonIgnore] fix (no p.Set null check).
         const string line = """{"RunId":"r"}""";
 
         var restored = EventStreamJson.FromLine<JsonIgnoredSetsRequiredMembersProbe>(line);
@@ -891,7 +891,7 @@ public sealed class EventStreamJsonRequiredReferenceNullTests
     }
 
     // =========================================================================
-    // gate m3: a polymorphic T's contract is the DERIVED type's, not typeof(T)'s — a required
+    // A polymorphic T's contract is the DERIVED type's, not typeof(T)'s — a required
     // member declared only on the derived type must still be guarded.
     // =========================================================================
 
@@ -921,7 +921,38 @@ public sealed class EventStreamJsonRequiredReferenceNullTests
     }
 
     // =========================================================================
-    // gate M1: [JsonRequired] alone (no C# `required` modifier) is already guarded via
+    // [JsonDerivedType] alone, with no [JsonPolymorphic], still configures STJ's
+    // polymorphism resolution: JsonTypeInfo.PolymorphismOptions is non-null for this form too
+    // (measured), so FromLine{T}'s payload.GetType() contract-selection branch fires exactly
+    // as it does for the [JsonPolymorphic]+[JsonDerivedType] pair above.
+    // =========================================================================
+
+    [JsonDerivedType(typeof(DerivedTypeOnlyDerived), "d")]
+    private abstract record DerivedTypeOnlyBase
+    {
+        public required string RunId { get; init; }
+    }
+
+    private sealed record DerivedTypeOnlyDerived : DerivedTypeOnlyBase
+    {
+        public required string D { get; init; }
+    }
+
+    [Fact]
+    public void JsonDerivedTypeWithoutJsonPolymorphic_NullDerivedOnlyRequiredMember_Throws_NamingDerivedType()
+    {
+        const string line = """{"$type":"d","RunId":"r","D":null}""";
+
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => EventStreamJson.FromLine<DerivedTypeOnlyBase>(line));
+
+        Assert.Equal(
+            "Event-stream line has a null D; the DerivedTypeOnlyDerived field is required.",
+            ex.Message);
+    }
+
+    // =========================================================================
+    // [JsonRequired] alone (no C# `required` modifier) is already guarded via
     // JsonPropertyInfo.IsRequired — pinned here, not a new code path.
     // =========================================================================
 
@@ -961,7 +992,7 @@ public sealed class EventStreamJsonRequiredReferenceNullTests
     }
 
     // =========================================================================
-    // security LOW-2b: a type-level custom JsonConverter exposes no properties to STJ's
+    // A type-level custom JsonConverter exposes no properties to STJ's
     // contract at all (JsonTypeInfo.Kind == None) — the converter owns null handling, and
     // there is nothing for this guard to scan.
     // =========================================================================
@@ -969,8 +1000,14 @@ public sealed class EventStreamJsonRequiredReferenceNullTests
     private sealed class TypeLevelConverterProbeConverter : JsonConverter<TypeLevelConverterProbe>
     {
         public override TypeLevelConverterProbe Read(
-            ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) =>
-            new(reader.GetString() ?? string.Empty);
+            ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        {
+            // Ignores the token's content and returns a null Value. For a JSON null token STJ
+            // never calls Read (HandleNull is false for a reference type), which is why the
+            // test line is a string.
+            reader.Skip();
+            return new() { Value = null! };
+        }
 
         public override void Write(
             Utf8JsonWriter writer, TypeLevelConverterProbe value, JsonSerializerOptions options) =>
@@ -978,19 +1015,46 @@ public sealed class EventStreamJsonRequiredReferenceNullTests
     }
 
     [JsonConverter(typeof(TypeLevelConverterProbeConverter))]
-    private sealed record TypeLevelConverterProbe(string Value);
+    private sealed record TypeLevelConverterProbe
+    {
+        public required string Value { get; init; }
+    }
 
     [Fact]
     public void TypeLevelJsonConverter_ExposesNoMembersToTheGuard()
     {
+        // Value is `required`, so an empty list here is the converter emptying
+        // JsonTypeInfo.Properties (Kind == None) — not merely the probe having nothing
+        // required to find. The companion test below pins the consequence: the guard
+        // never sees Value at all, so a null the converter itself accepts is accepted.
         var wireNames = EventStreamJson.GetRequiredReferenceMemberWireNamesForTests(
             typeof(TypeLevelConverterProbe));
 
         Assert.Empty(wireNames);
     }
 
+    [Fact]
+    public void TypeLevelJsonConverter_ReadReturningNullRequiredMember_IsAccepted()
+    {
+        // The converter's Read (above) ignores the wire token entirely and always returns
+        // Value = null!. Because a type-level JsonConverter empties JsonTypeInfo.Properties,
+        // the guard's reflection scan never sees Value — required or not — so this line is
+        // accepted, not refused.
+        //
+        // The first #573 commit scanned public properties for RequiredMemberAttribute, so it
+        // listed Value and would have refused this null (inferred from that code, not run).
+        // Without the converter the shape itself is refused by STJ's own JsonException, since
+        // the ordinary property-based contract expects a JSON object rather than a bare string
+        // (measured with the attribute temporarily removed, then restored).
+        const string line = "\"ignored\"";
+
+        var restored = EventStreamJson.FromLine<TypeLevelConverterProbe>(line);
+
+        Assert.Null(restored.Value);
+    }
+
     // =========================================================================
-    // m1 (code-review-gatekeeper, measured): a type-level JsonConverter on T whose Read
+    // A type-level JsonConverter (code-review-gatekeeper, measured) on T whose Read
     // legitimately constructs and returns an instance of a DIFFERENT type than T. Keyed on
     // payload.GetType() unconditionally, the guard would read the RETURNED type's OWN default
     // reflection contract (ConvDerived has no converter of its own, so it gets a plain
@@ -1046,7 +1110,7 @@ public sealed class EventStreamJsonRequiredReferenceNullTests
     }
 
     // =========================================================================
-    // gate m1: an INHERITED non-public required member — declared on a non-sealed base record,
+    // An INHERITED non-public required member — declared on a non-sealed base record,
     // read through a sealed derived record with no members of its own. This shape compiles:
     // CS9032 only fires when a member is less visible than its OWN declaring type, and
     // `internal` on a `private` base is not less visible.

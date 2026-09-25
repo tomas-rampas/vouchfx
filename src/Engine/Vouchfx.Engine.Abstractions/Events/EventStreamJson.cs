@@ -195,11 +195,12 @@ public static class EventStreamJson
     /// deserialised as <typeparamref name="T"/>.
     /// </exception>
     /// <exception cref="InvalidOperationException">
-    /// Thrown if deserialisation produces a <see langword="null"/> result, or if a reference-type
-    /// member that System.Text.Json's contract for the type that bound the line treats as
-    /// required — the C# <see langword="required"/> modifier or
-    /// <see cref="JsonRequiredAttribute"/> — deserialised to null (#573), or if reading such a
-    /// member's value itself threw (see the third bullet below).
+    /// Thrown if deserialisation produces a <see langword="null"/> result, or if a
+    /// non-nullable-annotated reference-type member that the guard treats as required
+    /// (System.Text.Json's own required set, plus a <see langword="required"/> member behind a
+    /// <see cref="SetsRequiredMembersAttribute"/> constructor; see the remarks) deserialised to
+    /// null (#573), or if reading such a member's value itself threw (see the third bullet
+    /// below).
     /// </exception>
     /// <remarks>
     /// <para>
@@ -463,7 +464,7 @@ public static class EventStreamJson
             // STJ reports IsRequired == false for a member mapped through a constructor
             // carrying [SetsRequiredMembers], even though the member itself still carries the
             // C# `required` modifier (RequiredMemberAttribute) — test the MemberInfo directly
-            // so such a member stays guarded (security LOW-2a).
+            // so a required member behind a [SetsRequiredMembers] constructor stays guarded.
             if (!p.IsRequired && !member.IsDefined(typeof(RequiredMemberAttribute), inherit: false))
             {
                 continue;
