@@ -198,8 +198,16 @@ public static class TelemetryEventBuilder
                     break;
 
                 case EventTypes.ScenarioCompleted:
-                    scenarioCount++;
-                    AccumulateScenarioCompleted(line, scenarioVerdicts, stepVerdicts);
+                    // #573: count only a line that actually yielded a scenario — a
+                    // "counts": null line now fails EventStreamJson.FromLine<ScenarioCompletedEvent>'s
+                    // required-reference-member guard (Counts is `required`), so incrementing
+                    // scenarioCount before the typed parse would count a scenario that
+                    // contributed no verdicts at all.
+                    if (AccumulateScenarioCompleted(line, scenarioVerdicts, stepVerdicts))
+                    {
+                        scenarioCount++;
+                    }
+
                     break;
 
                 case EventTypes.StepStarted:
@@ -250,7 +258,13 @@ public static class TelemetryEventBuilder
     /// Reads a scenario-completed line's verdict (into the scenario tally) and its
     /// nested per-step <c>counts</c> (summed into the step tally).
     /// </summary>
-    private static void AccumulateScenarioCompleted(
+    /// <returns>
+    /// <see langword="true"/> when the line parsed as a <see cref="ScenarioCompletedEvent"/>
+    /// and was accumulated; <see langword="false"/> when it was skipped (unparseable, or a
+    /// required reference member — e.g. <c>counts</c> — deserialised to null), so the caller
+    /// knows not to count it toward <c>scenarioCount</c>.
+    /// </returns>
+    private static bool AccumulateScenarioCompleted(
         string line,
         MutableVerdictCounts scenarioVerdicts,
         MutableVerdictCounts stepVerdicts)
@@ -262,7 +276,7 @@ public static class TelemetryEventBuilder
         }
         catch (Exception ex) when (ex is JsonException or InvalidOperationException)
         {
-            return;
+            return false;
         }
 
         scenarioVerdicts.Add(scenario.Verdict, 1);
@@ -274,6 +288,7 @@ public static class TelemetryEventBuilder
         stepVerdicts.Fail += counts.Fail;
         stepVerdicts.EnvError += counts.EnvError;
         stepVerdicts.Inconclusive += counts.Inconclusive;
+        return true;
     }
 
     /// <summary>

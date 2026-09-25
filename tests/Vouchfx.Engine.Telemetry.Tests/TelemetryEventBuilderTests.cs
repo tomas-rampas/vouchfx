@@ -154,14 +154,21 @@ public sealed class TelemetryEventBuilderTests
             "this is not json",
             string.Empty,
             "   ",
-            // #571: `required` enforces presence only, not non-nullness, so this
-            // line would otherwise satisfy `required string RunId` on the untyped envelope
-            // and hand the builder a null run id. It is a scenario-completed line
-            // specifically (not scenario-started) because Build's switch increments
-            // scenarioCount as soon as envelope.Type matches, BEFORE the typed
-            // AccumulateScenarioCompleted read runs — so this row proves the line is
-            // rejected before the type switch is ever reached, not merely that its typed
-            // payload read happens to fail afterwards.
+            // #571: `required` enforces presence only, not non-nullness, so this line would
+            // otherwise satisfy `required string RunId` on the untyped envelope and hand the
+            // builder a null run id. `EventStreamJson.FromLine(line)` rejects it at the very
+            // top of the loop, before Build's switch on envelope.Type is ever reached — so
+            // ScenarioCount alone no longer pins the guard: since #573, `scenarioCount`
+            // increments only AFTER AccumulateScenarioCompleted's typed parse succeeds, and
+            // this line — missing scenarioId/verdict/counts entirely — would fail that typed
+            // parse with JsonException regardless of whether the untyped guard runs, so
+            // ScenarioCount would read 1 either way. What the guard alone prevents is this
+            // line's `ts` (2024-01-15, more than two years before T0) from ever reaching
+            // `earliestEvent`: without it, the envelope would parse, the switch would never
+            // increment ScenarioCount (as above) but WOULD still update `earliestEvent` from
+            // the envelope's timestamp before the switch runs, dragging the run-start anchor
+            // back to 2024 and inflating StartupMs by roughly that gap instead of leaving it
+            // at 0. Asserting StartupMs stays 0 is what actually pins the guard here.
             """{"v":1,"schemaVersion":"v1","type":"scenario-completed","ts":"2024-01-15T10:00:00+00:00","runId":null}""",
             SyntheticEvents.ScenarioStarted("A", T0.AddMilliseconds(10)),
             SyntheticEvents.StepStarted("a1", "http.rest", T0.AddMilliseconds(20)),
@@ -172,6 +179,65 @@ public sealed class TelemetryEventBuilderTests
         var ev = Build(lines);
 
         Assert.Equal(1, ev.ScenarioCount);
+        Assert.Equal(1, ev.StepProviders["http.rest"]);
+        Assert.Equal(0, ev.StartupMs);
+    }
+
+    [Fact]
+    public void Build_ScenarioCompletedWithNullCounts_DoesNotThrow_AndIsNotCountedOrTallied()
+    {
+        var lines = new List<string>
+        {
+            // #573: `required` enforces presence only, not non-nullness, so this line would
+            // otherwise satisfy `required VerdictCounts Counts` and hand
+            // AccumulateScenarioCompleted a null Counts — `counts.Pass` then threw
+            // NullReferenceException (that was the actual pre-fix behaviour: the builder threw,
+            // it did not silently miscount). Unlike the #571 row above, runId here IS valid, so
+            // this line passes the untyped envelope guard and reaches the ScenarioCompleted
+            // case. With the Abstractions guard in place but without the ordering fix below —
+            // i.e. AccumulateScenarioCompleted's typed parse throwing InvalidOperationException
+            // and being caught, but scenarioCount already incremented before that catch ran —
+            // this null-counts line would have been counted as a scenario while contributing no
+            // verdicts at all; that intermediate state is what the ordering fix (and this
+            // assertion) closes.
+            """{"v":1,"schemaVersion":"v1","type":"scenario-completed","ts":"2024-01-15T10:00:00+00:00","runId":"run-null-counts","scenarioId":"S","verdict":"PASS","counts":null}""",
+            SyntheticEvents.ScenarioStarted("A", T0.AddMilliseconds(10)),
+            SyntheticEvents.StepStarted("a1", "http.rest", T0.AddMilliseconds(20)),
+            SyntheticEvents.ScenarioCompleted(
+                "A", Verdict.Pass, new VerdictCounts { Pass = 1 }, T0.AddMilliseconds(30)),
+        };
+
+        var ev = Build(lines);
+
+        // The null-counts line contributes neither to ScenarioCount nor to StepVerdicts —
+        // only the one genuine scenario-completed line (A) is counted/tallied.
+        Assert.Equal(1, ev.ScenarioCount);
+        Assert.Equal(1, ev.StepVerdicts.Pass);
+        Assert.Equal(1, ev.ScenarioVerdicts.Pass);
+    }
+
+    [Fact]
+    public void Build_StepStartedWithNullStepId_DoesNotThrow_AndIsNotTallied()
+    {
+        var lines = new List<string>
+        {
+            // #573: `required` enforces presence only, not non-nullness, so this line would
+            // otherwise satisfy `required string StepId` and hand AccumulateStepKind a
+            // StepStartedEvent with a null StepId. AccumulateStepKind reads only Kind, so
+            // without the guard this line was tallied under http/http.rest, same as any other
+            // step-started line. The guard now refuses the line outright
+            // (InvalidOperationException), so it contributes to neither tally — only the
+            // genuine "a1" step-started line below is counted.
+            """{"v":1,"schemaVersion":"v1","type":"step-started","ts":"2024-01-15T10:00:00+00:00","runId":"run-null-stepid","stepId":null,"kind":"http.rest"}""",
+            SyntheticEvents.ScenarioStarted("A", T0.AddMilliseconds(10)),
+            SyntheticEvents.StepStarted("a1", "http.rest", T0.AddMilliseconds(20)),
+            SyntheticEvents.ScenarioCompleted(
+                "A", Verdict.Pass, new VerdictCounts { Pass = 1 }, T0.AddMilliseconds(30)),
+        };
+
+        var ev = Build(lines);
+
+        Assert.Equal(1, ev.StepFamilies["http"]);
         Assert.Equal(1, ev.StepProviders["http.rest"]);
     }
 

@@ -2,3 +2,4 @@ not json at all
 {"v":1,"schemaVersion":"v1","type":"scenario-started","ts":"2026-01-01T00:00:00Z","runId":"run-1","scenarioId":"checkout-flow"}
 {"foo": "bar"}
 {"v":1,"schemaVersion":"v1","type":"scenario-started","ts":"2026-01-01T00:01:00Z","runId":null,"scenarioId":"checkout-flow"}
+{"v":1,"schemaVersion":"v1","type":"scenario-started","ts":"2026-01-01T00:02:00Z","runId":"run-2","scenarioId":null,"file":"old-name.e2e.yaml"}

@@ -229,15 +229,22 @@ public sealed class PlanExportTests
     [Fact]
     public void CorruptEventLines_AreSkippedAndCounted()
     {
-        // ingest/corrupt-events/history.jsonl carries three corrupt lines: not-JSON, a JSON
-        // object missing the required `type`/`runId` fields, and (#571) a `runId: null` line —
-        // `required` enforces presence only, not non-null, so that line would otherwise
-        // satisfy `required string RunId` and hand the reader a null run id.
+        // ingest/corrupt-events/history.jsonl carries four corrupt lines: not-JSON, a JSON
+        // object missing the required `type`/`runId` fields, (#571) a `runId: null` line, and
+        // (#573) a `scenarioId: null` line whose `file` resolves under the analysed root
+        // (ingest/basic-suites) but no longer exists there — `required` enforces presence
+        // only, not non-null, so each of the last two lines would otherwise satisfy their
+        // `required string` field and hand the reader a null. Before #573's fix, the
+        // `scenarioId: null` line parsed as a `ScenarioStartedEvent` with a null ScenarioId and
+        // reached RunCorrelator.Correlate, which threw ArgumentNullException from
+        // `Dictionary<string,_>.TryGetValue(null)` when classifying its rule-2 renamed-file
+        // check. It is now refused by EventStreamJson.FromLine<ScenarioStartedEvent> itself and
+        // counted here as the fourth skipped line, never reaching the correlator.
         var report = PlannerTestFixtures.Plan(
             PlannerTestFixtures.FixtureRoot("ingest/basic-suites"),
             PlannerTestFixtures.FixtureRoot("ingest/corrupt-events"));
 
-        Assert.Equal(3, report.Inventory.SkippedEventLines);
+        Assert.Equal(4, report.Inventory.SkippedEventLines);
     }
 
     // ── EDGE-007 ─────────────────────────────────────────────────────────────────
