@@ -217,6 +217,31 @@ public sealed class TelemetryEventBuilderTests
     }
 
     [Fact]
+    public void Build_StepStartedWithNullStepId_DoesNotThrow_AndIsNotTallied()
+    {
+        var lines = new List<string>
+        {
+            // #573: `required` enforces presence only, not non-nullness, so this line would
+            // otherwise satisfy `required string StepId` and hand AccumulateStepKind a
+            // StepStartedEvent with a null StepId. AccumulateStepKind reads only Kind, so
+            // without the guard this line was tallied under http/http.rest, same as any other
+            // step-started line. The guard now refuses the line outright
+            // (InvalidOperationException), so it contributes to neither tally — only the
+            // genuine "a1" step-started line below is counted.
+            """{"v":1,"schemaVersion":"v1","type":"step-started","ts":"2024-01-15T10:00:00+00:00","runId":"run-null-stepid","stepId":null,"kind":"http.rest"}""",
+            SyntheticEvents.ScenarioStarted("A", T0.AddMilliseconds(10)),
+            SyntheticEvents.StepStarted("a1", "http.rest", T0.AddMilliseconds(20)),
+            SyntheticEvents.ScenarioCompleted(
+                "A", Verdict.Pass, new VerdictCounts { Pass = 1 }, T0.AddMilliseconds(30)),
+        };
+
+        var ev = Build(lines);
+
+        Assert.Equal(1, ev.StepFamilies["http"]);
+        Assert.Equal(1, ev.StepProviders["http.rest"]);
+    }
+
+    [Fact]
     public void Build_StepKindWithoutDot_TreatsKindAsItsOwnFamily_AndBucketsTheProvider()
     {
         // "script" is a Core FAMILY (the bare-family alias) so it counts under its real
