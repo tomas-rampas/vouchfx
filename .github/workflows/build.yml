@@ -355,7 +355,10 @@ jobs:
       # DCP's cold pull failure reaches the operator only through a health-gate
       # timeout that cannot name a registry. The one place in this job that knows
       # both the image reference and the pull's exit code is this loop, so this
-      # loop is where the failure has to be reported.
+      # loop is where the failure has to be reported. #580 later hit the same
+      # class on quay.io (MinIO withdrew image distribution outright); this time
+      # the fatal pre-pull named the image, but classified it `unknown` until the
+      # `unauthorized` patterns below were added.
       #
       # NOT every pull failure is that failure, though, and the classification below
       # is the whole reason this step can be fatal without re-flaking the lane it
@@ -409,20 +412,44 @@ jobs:
       #               of `absent`'s: re-running is reasonable once the registry
       #               recovers, and the message says so rather than "fix the pin".
       #   absent    — the WHOLE PHRASES `pull access denied`, `repository does not
-      #               exist`, `manifest unknown`, `manifest for … not found`. Quoted
-      #               exactly as the code matches them, because the difference is
-      #               load-bearing and an earlier version of this summary got it
-      #               wrong: it listed the bare words `denied` and `not found`,
-      #               which the function has never used. A bare-word match swallows
-      #               the local daemon's own "Got permission denied while trying to
-      #               connect to the Docker daemon socket" and blames a perfectly
-      #               good pin for it. See the anchoring note on the function
-      #               itself; an editor who trusts a loose summary re-opens that
-      #               hole. FATAL. This never self-resolves — a withdrawn
-      #               repository fails all three attempts identically — so
-      #               re-running the job is pure latency. The #533 text is in this
-      #               bucket verbatim: "pull access denied for minio/minio,
-      #               repository does not exist or may require 'docker login'".
+      #               exist`, `manifest unknown`, `manifest for … not found`,
+      #               `failed to resolve reference … not found`,
+      #               `unauthorized: access to the requested resource is not
+      #               authorized`, `401 unauthorized`, `requested access to the
+      #               resource is denied`.
+      #               Quoted exactly as the code matches them, because the
+      #               difference is load-bearing and an earlier version of this
+      #               summary got it wrong: it listed the bare words `denied` and
+      #               `not found`, which the function has never used. A bare-word
+      #               match swallows the local daemon's own "Got permission
+      #               denied while trying to connect to the Docker daemon socket"
+      #               and blames a perfectly good pin for it. See the anchoring
+      #               note on the function itself; an editor who trusts a loose
+      #               summary re-opens that hole. FATAL. This never self-resolves
+      #               — a withdrawn repository fails all three attempts
+      #               identically — so re-running the job is pure latency. The
+      #               #533 text is in this bucket verbatim: "pull access denied
+      #               for minio/minio, repository does not exist or may require
+      #               'docker login'". The `unauthorized`/`denied` phrases come
+      #               from #580, where MinIO withdrew image distribution
+      #               outright: quay.io answered "unauthorized: access to the
+      #               requested resource is not authorized" to `docker pull` of
+      #               the then-current quay.io/minio/minio pin (MEASURED in CI run
+      #               36105356989); a Docker engine using the containerd image
+      #               store words the same quay.io answer as "failed to resolve
+      #               reference … 401 Unauthorized" (measured locally on Docker
+      #               29.6); and "requested access to the resource is denied" is
+      #               Docker Hub's registry-level answer for the withdrawn
+      #               minio/minio repository as one `docker manifest inspect` run
+      #               reported it (another host got "unauthorized: authentication
+      #               required" for the same repository), while `docker pull` of
+      #               the same repository
+      #               reports the "pull access denied … may require 'docker
+      #               login'" wording already in this bucket — all anonymous-pull
+      #               refusals of a registry-wide takedown, not a local
+      #               permission error. The pin has since moved to
+      #               bitnamilegacy/minio on Docker Hub, but these phrases stay
+      #               live for the next public image a registry withdraws.
       #   transient — `toomanyrequests`, `rate limit`, `too many requests`. WARNS
       #               and continues. Justified because it clears on its own, an
       #               authenticated layer of the same run may be unaffected, and
@@ -472,10 +499,11 @@ jobs:
       # about that number rather than saying "within seconds": the pulls run
       # serially in list order, and the minio image that motivated #533 is LAST of
       # eighteen, so on a cold cache its annotation arrives only after the other
-      # seventeen. The measured cold sweep is 164.4s of per-image pulls; for the
-      # #533 case substitute minio's own 3.8s success for the 48s a failing image
-      # costs, giving 164.4 - 3.8 + 48 = 208.6s, about 3.5 minutes. The gain over a
-      # 44-minute anonymous health-gate timeout is an order of magnitude and does
+      # seventeen. The measured cold sweep is 164.4s of per-image pulls; substitute
+      # a small image's few-second success (the pre-#580 minio pin measured 3.8s)
+      # for the 48s a failing image costs, giving 164.4 - 3.8 + 48 = 208.6s, about
+      # 3.5 minutes. The gain over a 44-minute anonymous health-gate timeout is an
+      # order of magnitude and does
       # not need overstating. Do not read this block as a merge gate; whether that
       # job should gate at all is a separate decision tracked in its own issue.
       - name: Pre-pull dependency images (warm Docker cache; fail fast on an unpullable pin)
@@ -512,7 +540,7 @@ jobs:
           # ONE PATTERN IS AN ANCHORED PAIR, and deliberately not a single phrase.
           # Docker Engine 29 with the containerd image store reports a missing tag
           # as `failed to resolve reference "…": …: not found` — which contains none
-          # of the other four tokens, so before this pair a plain bad pin classified
+          # of the other tokens, so before this pair a plain bad pin classified
           # `unknown` and the operator was told it "may not even be a registry
           # error". But the SAME wrapper carries transport failures:
           # `failed to resolve reference "…": dial tcp …: i/o timeout`. Matching the
@@ -552,7 +580,7 @@ jobs:
             fi
             lowered=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
             case "$lowered" in
-              *"pull access denied"*|*"repository does not exist"*|*"manifest unknown"*|*"manifest for "*" not found"*|*"failed to resolve reference"*" not found"*)
+              *"pull access denied"*|*"repository does not exist"*|*"manifest unknown"*|*"manifest for "*" not found"*|*"failed to resolve reference"*" not found"*|*"unauthorized: access to the requested resource is not authorized"*|*"401 unauthorized"*|*"requested access to the resource is denied"*)
                 printf 'absent\n' ;;
               *toomanyrequests*|*"rate limit"*|*"too many requests"*)
                 printf 'transient\n' ;;
@@ -672,20 +700,28 @@ jobs:
           # this file: a REFUSED attempt costs ~1s (the registry answers 4xx
           # immediately). So a fail-fast image costs 3 x 1s + 15s + 30s = 48s, and a
           # STALLING image costs 3 x 120s + 45s = 405s. A full cold sweep of all 18
-          # HEALTHY images is 165s, MEASURED on run 34883024632, of which the 4
-          # non-Hub images account for 30.2s (mssql 19.1 + servicebus 5.3 +
-          # node-exporter 2.0 + minio 3.8).
+          # HEALTHY images is 165s, MEASURED on run 34883024632 against the PRE-#580
+          # list (minio still `quay.io/minio/minio`), of which the 4 non-Hub images
+          # on THAT list accounted for 30.2s (mssql 19.1 + servicebus 5.3 +
+          # node-exporter 2.0 + minio 3.8). #580 moved minio onto the unqualified
+          # (implicit Docker Hub)
+          # `bitnamilegacy/minio`, so the list now has 3 non-Hub images; that image's
+          # own cold-pull time is UNMEASURED (compressed size ~99 MB, measured
+          # locally), so the 165s/30.2s totals above describe the pre-#580 run only
+          # and are not re-derived for the current list here.
           #
           #   * Mixed, and the binding case: one stall plus seventeen fail-fast
           #     absents = 405s + 17 x 48s = 1,221s = 20m 21s. This MUST fit —
           #     "reports every pin it reaches" is worth little if a genuinely
           #     misconfigured list cannot finish being read.
           #   * Rate-limit sweep, AFTER the aggregate cap above: the first Hub image
-          #     spends a full 48s, the remaining 13 Hub images each take all three
-          #     attempts back to back with no sleeps (~3s each = 39s), and the 4
-          #     non-Hub images pull normally (30.2s measured). 48 + 39 + 30 = 117s,
-          #     under 2 minutes. The like-for-like comparison is against the SAME 18
-          #     images without the cap: 14 x 48s + 30.2s = 702s.
+          #     spends a full 48s, the remaining 14 Hub images each take all three
+          #     attempts back to back with no sleeps (~3s each = 42s), and the 3
+          #     non-Hub images pull normally (26.4s: the 30.2s measured pre-#580,
+          #     less minio's own 3.8s, which moved into the Hub group above).
+          #     48 + 42 + 26.4 = 116.4s, under 2 minutes. The like-for-like
+          #     comparison is against the SAME 18 images without the cap:
+          #     15 x 48s + 26.4s = 746.4s.
           #   * Registry-wide stall: 18 x 405s = 2h 1m. THIS CANNOT BE BUDGETED and
           #     is not meant to be. At 25 minutes the step reaches its first three
           #     or four images, annotates each as a named stall, and is then killed
@@ -742,26 +778,27 @@ jobs:
           # wall. But that same fact bounds the cap: a Hub limit says NOTHING about
           # quay.io or mcr.microsoft.com, and capping those would remove a real
           # defence against an unrelated blip while saving nothing, since they were
-          # never going to be limited. MEASURED composition of the list below: 14 of
-          # the 18 pins are Docker Hub, 2 quay.io, 2 mcr.microsoft.com.
+          # never going to be limited. MEASURED composition of the list below (#580
+          # moved minio onto the unqualified Docker Hub path): 15 of the 18 pins
+          # are Docker Hub, 1 quay.io, 2 mcr.microsoft.com.
           #
           # SCOPED TO THE BACKOFF, not to the attempts — and the arithmetic is the
           # argument, not a preference. For a RATE-LIMITED failure, on this file's
           # one cost assumption (~1s per refused attempt, plus 15s + 30s of backoff)
-          # and over the 14 Hub pins:
-          #   no cap ..................... 14 x 48s = 672s
-          #   cap the ATTEMPTS to 1 ...... 48s + 13 x  1s =  61s   (saves 611s)
-          #   cap the BACKOFF to 0 ....... 48s + 13 x  3s =  87s   (saves 585s)
+          # and over the 15 Hub pins:
+          #   no cap ..................... 15 x 48s = 720s
+          #   cap the ATTEMPTS to 1 ...... 48s + 14 x  1s =  62s   (saves 658s)
+          #   cap the BACKOFF to 0 ....... 48s + 14 x  3s =  90s   (saves 630s)
           # The backoff is essentially the whole saving; for a rate-limited failure
-          # keeping all three attempts costs 26s, which is 1.7% of the step's 1500s
+          # keeping all three attempts costs 28s, which is 1.9% of the step's 1500s
           # budget. Note the limit of that figure: the cap bounds SLEEP time, not
           # wall time, and it arms on a `transient` classification but then applies
           # to every later failure on that registry — so a capped image that STALLS
           # costs 3 x 120s = 360s where the retired attempt-cap would have bounded
           # it at one 120s attempt. That case is covered by the outage assumption
-          # above, not by the 26s figure. An earlier version
-          # of this block capped the ATTEMPTS instead, and bought that 1.7% by
-          # disarming the retry defence for the thirteen remaining Hub pins: the
+          # above, not by the 28s figure. An earlier version
+          # of this block capped the ATTEMPTS instead, and bought that 1.9% by
+          # disarming the retry defence for the fourteen remaining Hub pins: the
           # next one to fail for any unclassifiable reason — a TLS handshake
           # timeout, say — went straight to the fatal `unknown` bucket with no
           # second try, re-introducing exactly the intermittent red the retry-first
@@ -797,9 +834,9 @@ jobs:
           # ApplyImageOverrides uses to decide whether a reference is already
           # qualified: a first path component containing a dot or a colon, or equal
           # to `localhost`, IS a registry; anything else is an implicit Docker Hub
-          # reference. So `postgres:18.3` and `traefik/whoami:latest` are docker.io
-          # while `quay.io/minio/minio:…` and `mcr.microsoft.com/mssql/server:…`
-          # are not.
+          # reference. So `postgres:18.3` and `bitnamilegacy/minio:…` are docker.io
+          # while `quay.io/prometheus/node-exporter:…` and
+          # `mcr.microsoft.com/mssql/server:…` are not.
           registry_of() {
             case "$1" in
               */*)
@@ -855,7 +892,7 @@ jobs:
             mcr.microsoft.com/azure-messaging/servicebus-emulator:1.1.2 \
             quay.io/prometheus/node-exporter:v1.8.2 \
             amazon/dynamodb-local:2.5.2 \
-            quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z ; do
+            bitnamilegacy/minio:2025.7.23-debian-12-r5 ; do
             # FENCE THE RAW PULL OUTPUT. The two printf sites below echo the
             # registry's (or the local daemon's) response into the log verbatim,
             # and the runner parses `::`-prefixed workflow commands out of ORDINARY

@@ -648,7 +648,9 @@ public static class EnvironmentMapper
             // default 200-status WithHttpHealthCheck applies unchanged.
             // WithArgs (reflection-verified against the pinned Aspire.Hosting 13.4.2 DLL:
             // ResourceBuilderExtensions.WithArgs(IResourceBuilder<T>, string[])) supplies the
-            // 'server /data' command MinIO requires to start in server mode.
+            // 'server <data-dir>' command MinIO requires to start in server mode. #580 moved
+            // the data dir from '/data' to '/bitnami/minio/data' — see the registration's own
+            // remarks for why '/data' does not survive the move to bitnamilegacy/minio.
             //
             // Like dynamodb-local, minio is a plain container with no
             // IResourceWithConnectionString, so its connection string is synthesised via
@@ -661,53 +663,52 @@ public static class EnvironmentMapper
             ["minio"] = new DependencyRegistration(
                 Build: (builder, name, spec, serviceEndpoints, depConnBuilders, imageRegistry, pullPolicy, _) =>
                 {
-                    // Pin a specific tag (§4), and name the registry EXPLICITLY (#533).
-                    // This reference used to be the bare "minio/minio", which resolves to
-                    // Docker Hub — and Docker Hub no longer serves that repository at all:
-                    // an unauthenticated pull returns "pull access denied for minio/minio,
-                    // repository does not exist or may require 'docker login'", and Docker
-                    // Hub's own API answers {"message":"object not found"} for both the tag
-                    // and the repository. quay.io publishes the same release TAG, and does so
-                    // as MinIO's own build target rather than as a third-party mirror —
-                    // upstream's Makefile line 9 is `REPO ?= quay.io/minio`. Note what is and
-                    // is not claimed: the tag STRING is identical and the publisher is the
-                    // same, which is the strongest available provenance; byte-equivalence with
-                    // the image Docker Hub used to serve is NOT checkable, because Hub now
-                    // serves nothing to compare against. Re-verify with `docker manifest
-                    // inspect` against quay.io — NOT Docker Hub — before advancing this pin,
-                    // which is what the superseded "verified to exist on Docker Hub before
-                    // use" claim asked for against a registry that no longer has the image.
-                    // A trap for anyone auditing provenance here: the image's `vcs-ref` label
-                    // does NOT resolve in the minio/minio GitHub repository — it is inherited
-                    // from the Red Hat UBI9-micro base layer, so a mismatch there is a false
-                    // alarm rather than a finding.
+                    // #580: MinIO withdrew its public images (measured 2026-09-25:
+                    // quay.io/minio/minio serves no tag and requires auth; docker.io/minio/minio
+                    // and ghcr.io/minio/minio deny every tag). The pin is Bitnami's frozen legacy
+                    // build bitnamilegacy/minio:2025.7.23-debian-12-r5 (index digest
+                    // sha256:6dabb4a2088c9a79908de3bc05f4586c23ad2182c8908e7e3acbf61c1467fb20;
+                    // MinIO DEVELOPMENT.2025-07-23T15-54-02Z; repository last pushed 2025-08-19
+                    // and never updated since; #581 tracks a maintained default). Credentials,
+                    // port 9000 and /minio/health/cluster behave as before (measured against
+                    // this tag).
+                    // The data dir is NOT '/data'. Upstream's image ran as root and declared
+                    // VOLUME /data; this one runs as uid 1001 (gid 0), has no /data, and cannot
+                    // create it under the root-owned 0755 '/', so 'server /data' exits "FATAL
+                    // Unable to initialize backend: file access denied" on every start path
+                    // (measured: plain docker run and the engine's DCP start alike; 7 of 8
+                    // StorageAssertS3DockerTests). '/bitnami/minio/data' is a declared VOLUME
+                    // whose image directory is root:root 0775, which the gid-0 user can write.
+                    // The entrypoint execs 'minio server ...' directly for these args, so
+                    // Bitnami's setup.sh never runs; the engine supplies the root credentials
+                    // through the environment.
                     //
-                    // AUTHOR-VISIBLE CONSEQUENCE of qualifying it: an env-level
-                    // 'imageRegistry' no longer rewrites this dependency. In the branch this
-                    // default takes (no 'image:' set on the dependency), ApplyImageOverrides
-                    // reads the CURRENT image annotation and skips its re-prefix branch
-                    // because HasExplicitRegistryComponent sees the dot in "quay.io". That
-                    // annotation is consulted ONLY in that branch — when spec.Image is set the
-                    // flag comes from the parsed spec image instead and the annotation is
-                    // never read. Either way this is the documented "never rewrites
-                    // already-qualified references" rule, now reaching minio as well. That is deliberate — the
-                    // alternative is the non-existent pull reference
-                    // "<mirror>/quay.io/minio/minio" — and the replacement for a mirroring or
-                    // air-gapped author is the per-dependency 'image:' override, which is
-                    // unaffected. Pinned by
-                    // Map_MinioDependency_ImageRegistry_DoesNotApplyToQualifiedDefault.
+                    // UNQUALIFIED ON PURPOSE: #533 qualified the default with "quay.io/" because
+                    // Docker Hub no longer served minio/minio; that qualification made an
+                    // env-level 'imageRegistry' skip minio as a side effect. The replacement is
+                    // on Docker Hub, so it is unqualified again and the mirror applies, exactly
+                    // like every other Docker-Hub-default dependency (redis, postgres, …).
+                    // Leaving "bitnamilegacy/minio" unqualified means ApplyImageOverrides'
+                    // no-'image:' branch reads the CURRENT image annotation,
+                    // HasExplicitRegistryComponent finds no dot/colon
+                    // in "bitnamilegacy", and the re-prefix branch runs — producing
+                    // "<mirror>/bitnamilegacy/minio", not a shadow "<mirror>/quay.io/…" path
+                    // that would never resolve. Pinned by
+                    // Map_MinioDependency_ImageRegistry_AppliesToUnqualifiedDefault (inverts the
+                    // superseded Map_MinioDependency_ImageRegistry_DoesNotApplyToQualifiedDefault,
+                    // which pinned the now-dead quay.io-qualified behaviour).
                     //
-                    // Authors may override via 'version', or via 'image:'
+                    // Authors may still override via 'version', or via 'image:'
                     // (feat/dependency-image-override) — ApplyImageOverrides applies
                     // spec.Image/spec.Version/imageRegistry/pullPolicy on top of this default.
                     const string accessKey = "vouchfx-minio";
                     const string secretKey = "vouchfx-minio-secret";
                     var containerBuilder = ApplyImageOverrides(
-                        builder.AddContainer(name, "quay.io/minio/minio", "RELEASE.2025-09-07T16-13-09Z"),
+                        builder.AddContainer(name, "bitnamilegacy/minio", "2025.7.23-debian-12-r5"),
                         spec,
                         imageRegistry,
                         pullPolicy)
-                        .WithArgs("server", "/data")
+                        .WithArgs("server", "/bitnami/minio/data")
                         .WithEnvironment("MINIO_ROOT_USER", accessKey)
                         .WithEnvironment("MINIO_ROOT_PASSWORD", secretKey)
                         .WithHttpEndpoint(targetPort: 9000, name: "http")
