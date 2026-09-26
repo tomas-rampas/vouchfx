@@ -52,8 +52,10 @@ public sealed class VerdictJsonConverter : JsonConverter<Verdict>
             TokenFail => Verdict.Fail,
             TokenEnvError => Verdict.EnvironmentError,
             TokenInconclusive => Verdict.Inconclusive,
+            // §17 redaction at source (#576): fixed text only, never the token read from the
+            // line — a hostile wire value must not travel into the exception message.
             _ => throw new JsonException(
-                $"Unknown {nameof(Verdict)} token \"{token}\". " +
+                $"Unknown {nameof(Verdict)} token. " +
                 $"Accepted tokens (case-sensitive): " +
                 $"\"{TokenPass}\", \"{TokenFail}\", \"{TokenEnvError}\", \"{TokenInconclusive}\"."),
         };

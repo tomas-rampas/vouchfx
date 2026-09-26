@@ -81,6 +81,45 @@ public sealed class EventPayloadTests
             JsonSerializer.Deserialize<Verdict>(badJson, EventStreamJson.Options));
     }
 
+    [Fact]
+    public void VerdictConverter_UnknownToken_MessageNeverEchoesTheToken()
+    {
+        // #576 (§17 redaction at source): the unknown-token guard was the one vouchfx-authored
+        // event-stream exception message that still quoted input read from the line. A hostile
+        // wire value must never travel into the exception message — only the fixed
+        // accepted-tokens text. (System.Text.Json's own parse diagnostics still carry the JSON
+        // path and offending bytes; that is STJ's message, not this converter's.)
+        const string marker = "HOSTILE-7f3a";
+        var badJson = $"\"{marker}\"";
+
+        var ex = Assert.Throws<JsonException>(() =>
+            JsonSerializer.Deserialize<Verdict>(badJson, EventStreamJson.Options));
+
+        Assert.DoesNotContain(marker, ex.Message, StringComparison.Ordinal);
+        Assert.Contains("Accepted tokens (case-sensitive)", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("\"PASS\"", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("\"FAIL\"", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("\"ENV_ERROR\"", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("\"INCONCLUSIVE\"", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void VerdictConverter_NonStringToken_ThrowsJsonException()
+    {
+        // The TokenType arm (reader.TokenType, an enum name — not line content) is untouched
+        // by #576 and must still refuse a non-string token. Pin the EXACT message, not merely
+        // the exception type: without this check, STJ's own GetString() rethrows a non-string
+        // token's InvalidOperationException as a JsonException reading "The JSON value could
+        // not be converted to ...Verdict" — a different JsonException that would let the check
+        // be deleted without failing a type-only assertion.
+        const string badJson = "42";
+
+        var ex = Assert.Throws<JsonException>(() =>
+            JsonSerializer.Deserialize<Verdict>(badJson, EventStreamJson.Options));
+
+        Assert.Equal("Expected a JSON string for Verdict but got Number.", ex.Message);
+    }
+
     // =========================================================================
     // ScenarioStartedEvent — round-trip and wire names
     // =========================================================================

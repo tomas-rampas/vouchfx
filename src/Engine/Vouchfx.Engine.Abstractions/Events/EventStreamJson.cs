@@ -192,7 +192,18 @@ public static class EventStreamJson
     /// <returns>The deserialised payload record.</returns>
     /// <exception cref="JsonException">
     /// Thrown if <paramref name="line"/> is not valid JSON or cannot be
-    /// deserialised as <typeparamref name="T"/>.
+    /// deserialised as <typeparamref name="T"/>. Also thrown when System.Text.Json refuses a
+    /// type it must bind, <typeparamref name="T"/> itself or a member's type — for example an
+    /// abstract or interface <typeparamref name="T"/> with no type discriminator on the line,
+    /// or a polymorphic derived type with its own type-level converter (#579) — with the
+    /// original <see cref="NotSupportedException"/> attached as
+    /// <see cref="Exception.InnerException"/>. That inner exception is System.Text.Json's and
+    /// is not redacted: its <c>Path:</c> suffix can name a property or dictionary key read
+    /// from the line, and a custom converter's own message is preserved, so log
+    /// <see cref="Exception.Message"/>, not <see cref="Exception.ToString"/> or the inner
+    /// exception. For a <typeparamref name="T"/> System.Text.Json can never bind (a
+    /// non-polymorphic interface or abstract type) every object line throws this exception,
+    /// so a per-line skip filter silently drops the whole stream.
     /// </exception>
     /// <exception cref="InvalidOperationException">
     /// Thrown if deserialisation produces a <see langword="null"/> result, or if a
@@ -305,10 +316,38 @@ public static class EventStreamJson
     // ScenarioRunner never passes) and calls FromLine<T> with a type from it.
     public static T FromLine<T>(string line)
     {
-        var payload = JsonSerializer.Deserialize<T>(line, Options)
-            ?? throw new InvalidOperationException(
+        T? payload;
+        try
+        {
+            payload = JsonSerializer.Deserialize<T>(line, Options);
+        }
+        catch (NotSupportedException ex)
+        {
+            // #579: System.Text.Json refuses a type it must bind (T itself or a member's type)
+            // — never reached for the untyped FromLine(string) above, which always deserialises
+            // the concrete EventEnvelope — for example an abstract or interface T with no
+            // [JsonPolymorphic] discriminator on the line (STJ 8: "Deserialization of types
+            // without a parameterless constructor..."; STJ 10: "must specify a type
+            // discriminator"), a polymorphic derived type that carries its own type-level
+            // JsonConverter ("does not support metadata writes or reads"), or a member typed as
+            // an interface. Left uncaught, NotSupportedException escapes every consumer's
+            // `catch (Exception ex) when (ex is JsonException or InvalidOperationException)`
+            // filter (§14), so such a line would abort the caller's read loop instead of being
+            // skipped like any other malformed line. Rethrow as JsonException with fixed text
+            // plus the type name only (§17 redaction at source); the original travels as
+            // InnerException, never inlined into the message. The inner exception is STJ's and
+            // is NOT redacted: its "Path:" suffix can name a property or dictionary key read
+            // from the line, and a custom converter's own text is preserved.
+            throw new JsonException(
+                $"Event-stream line cannot be deserialised as {typeof(T).Name}.", ex);
+        }
+
+        if (payload is null)
+        {
+            throw new InvalidOperationException(
                 $"Deserialisation of event-stream line as {typeof(T).Name} produced a null result; " +
                 "the input was not a JSON object.");
+        }
 
         // The runtime type is used only when STJ's OWN polymorphism resolution
         // (JsonTypeInfo.PolymorphismOptions, driven by [JsonPolymorphic] or [JsonDerivedType])

@@ -1199,4 +1199,107 @@ public sealed class EventStreamJsonRequiredReferenceNullTests
 
         return File.ReadAllText(path);
     }
+
+    // =========================================================================
+    // #579 — an abstract/interface T that STJ itself refuses (no type discriminator,
+    // or a polymorphic derived type with its own type-level converter) must surface as
+    // JsonException, never NotSupportedException, so every consumer's
+    // `catch (Exception ex) when (ex is JsonException or InvalidOperationException)`
+    // filter (§14) still catches it.
+    // =========================================================================
+
+    [JsonPolymorphic]
+    [JsonDerivedType(typeof(DerivedProbe), "d")]
+    private abstract record BaseProbe
+    {
+        public required string RunId { get; init; }
+    }
+
+    private sealed record DerivedProbe : BaseProbe;
+
+    private interface IProbe
+    {
+    }
+
+    [Fact]
+    public void FromLineT_AbstractPolymorphicTypeWithoutDiscriminator_ThrowsJsonException()
+    {
+        // No "$type" on the line — STJ cannot pick a derived type for the abstract BaseProbe.
+        const string line = """{"RunId":"r"}""";
+
+        var ex = Assert.Throws<JsonException>(() => EventStreamJson.FromLine<BaseProbe>(line));
+
+        Assert.Equal(
+            $"Event-stream line cannot be deserialised as {nameof(BaseProbe)}.",
+            ex.Message);
+        Assert.IsType<NotSupportedException>(ex.InnerException);
+    }
+
+    [Fact]
+    public void FromLineT_InterfaceType_ThrowsJsonException()
+    {
+        const string line = "{}";
+
+        var ex = Assert.Throws<JsonException>(() => EventStreamJson.FromLine<IProbe>(line));
+
+        Assert.Equal(
+            $"Event-stream line cannot be deserialised as {nameof(IProbe)}.",
+            ex.Message);
+        Assert.IsType<NotSupportedException>(ex.InnerException);
+    }
+
+    [Fact]
+    public void FromLineT_PolymorphicTypeWithDiscriminator_HappyPathStillWorks()
+    {
+        const string line = """{"$type":"d","RunId":"r"}""";
+
+        var restored = EventStreamJson.FromLine<BaseProbe>(line);
+
+        Assert.IsType<DerivedProbe>(restored);
+        Assert.Equal("r", restored.RunId);
+    }
+
+    // Third documented #579 shape: a polymorphic derived type that carries its OWN
+    // type-level JsonConverter. STJ's metadata ($type) reading/writing is implemented only
+    // for its own object-graph converters, not for an arbitrary custom JsonConverter<T>, so
+    // combining [JsonPolymorphic] on the base with [JsonConverter] on the derived type makes
+    // STJ refuse with NotSupportedException ("... does not support metadata writes or
+    // reads ...") rather than ever invoking the converter's Read.
+
+    [JsonConverter(typeof(DerivedConvProbeConverter))]
+    private sealed record DerivedConvProbe : BaseConvProbe;
+
+    [JsonPolymorphic]
+    [JsonDerivedType(typeof(DerivedConvProbe), "c")]
+    private abstract record BaseConvProbe
+    {
+        public required string RunId { get; init; }
+    }
+
+    private sealed class DerivedConvProbeConverter : JsonConverter<DerivedConvProbe>
+    {
+        public override DerivedConvProbe Read(
+            ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) =>
+            new() { RunId = "r" };
+
+        public override void Write(
+            Utf8JsonWriter writer, DerivedConvProbe value, JsonSerializerOptions options)
+        {
+            writer.WriteStartObject();
+            writer.WriteEndObject();
+        }
+    }
+
+    [Fact]
+    public void FromLineT_PolymorphicDerivedTypeWithOwnConverter_ThrowsJsonException()
+    {
+        const string line = """{"$type":"c","RunId":"r"}""";
+
+        var ex = Assert.Throws<JsonException>(() => EventStreamJson.FromLine<BaseConvProbe>(line));
+
+        Assert.Equal(
+            $"Event-stream line cannot be deserialised as {nameof(BaseConvProbe)}.",
+            ex.Message);
+        Assert.IsType<NotSupportedException>(ex.InnerException);
+    }
 }
