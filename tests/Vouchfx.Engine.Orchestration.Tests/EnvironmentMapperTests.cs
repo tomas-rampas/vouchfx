@@ -1754,11 +1754,15 @@ public sealed class EnvironmentMapperTests : IDisposable
 
     /// <summary>
     /// A minio dependency produces a plain container resource pinned to the
-    /// quay.io/minio/minio image, started in server mode ('server /data'), health-gated
-    /// on itself — the off-docker registration lock for the Phase B dependency
+    /// bitnamilegacy/minio image, started in server mode ('server /tmp/minio-data'),
+    /// health-gated on itself — the off-docker registration lock for the Phase B dependency
     /// type (the /minio/health/cluster readiness gate is exercised live by
-    /// StorageAssertS3DockerTests). The reference is registry-qualified because Docker
-    /// Hub no longer serves the repository (#533); quay.io carries the identical tag.
+    /// StorageAssertS3DockerTests). The reference moved off quay.io (#580): quay.io, Docker
+    /// Hub's own <c>minio/minio</c> repository, and ghcr.io all stopped serving MinIO images
+    /// entirely, so the default now points at Bitnami's frozen legacy archive on Docker Hub —
+    /// deliberately UNqualified, so an env-level 'imageRegistry' reaches it like any other
+    /// Docker Hub dependency (see
+    /// <see cref="Map_MinioDependency_ImageRegistry_AppliesToUnqualifiedDefault"/>).
     /// </summary>
     [Fact]
     public async Task Map_MinioDependency_AddsPinnedContainer_ServerMode_GateOnSelf()
@@ -1783,7 +1787,7 @@ public sealed class EnvironmentMapperTests : IDisposable
         Assert.Contains("artefacts", mapped.DependencyNames);
 
         var image = resource!.Annotations.OfType<ContainerImageAnnotation>().Single();
-        Assert.Equal("quay.io/minio/minio", image.Image);
+        Assert.Equal("bitnamilegacy/minio", image.Image);
         Assert.False(string.IsNullOrEmpty(image.Tag));
 
         var args = new List<object>();
@@ -1793,8 +1797,7 @@ public sealed class EnvironmentMapperTests : IDisposable
             await argsCallback.Callback(argsContext);
         }
 
-        Assert.Contains(args, a => a is string s && s == "server");
-        Assert.Contains(args, a => a is string s && s == "/data");
+        Assert.Equal(new object[] { "server", "/tmp/minio-data" }, args);
     }
 
     // -----------------------------------------------------------------------
@@ -3569,13 +3572,15 @@ public sealed class EnvironmentMapperTests : IDisposable
 
     /// <summary>
     /// An 'image:' override on an AddContainer-based kind (minio) replaces the hardcoded
-    /// "quay.io/minio/minio" literal entirely. Since #533 qualified that default with a
-    /// registry, this is also the documented replacement for the env-level 'imageRegistry'
-    /// redirect the same change stopped applying to this dependency — see
-    /// <see cref="Map_MinioDependency_ImageRegistry_DoesNotApplyToQualifiedDefault"/>.
+    /// "bitnamilegacy/minio" default entirely — unaffected by which registry that default
+    /// currently resolves against (#580 moved it off quay.io; see
+    /// <see cref="Map_MinioDependency_ImageRegistry_AppliesToUnqualifiedDefault"/> for how
+    /// 'imageRegistry' now reaches the unqualified default too). The 'server /tmp/minio-data'
+    /// arguments are applied under the override as well — pinned here because that directory
+    /// is what keeps an override to a non-root MinIO build starting (#580).
     /// </summary>
     [Fact]
-    public void Map_DependencyImage_OverridesMinioContainer()
+    public async Task Map_DependencyImage_OverridesMinioContainer()
     {
         var env = new EnvironmentSpec(
             Services: null,
@@ -3594,10 +3599,19 @@ public sealed class EnvironmentMapperTests : IDisposable
         var builder = CreateBuilder();
         mapped.Configure(builder);
 
-        var image = builder.Resources.Single(r => r.Name == "artefacts")
-            .Annotations.OfType<ContainerImageAnnotation>().Single();
+        var resource = builder.Resources.Single(r => r.Name == "artefacts");
+        var image = resource.Annotations.OfType<ContainerImageAnnotation>().Single();
         Assert.Equal("myregistry.example.com/mirror/minio", image.Image);
         Assert.Equal("RELEASE.2024-01-01T00-00-00Z", image.Tag);
+
+        var args = new List<object>();
+        var argsContext = new CommandLineArgsCallbackContext(args, resource, CancellationToken.None);
+        foreach (var argsCallback in resource.Annotations.OfType<CommandLineArgsCallbackAnnotation>())
+        {
+            await argsCallback.Callback(argsContext);
+        }
+
+        Assert.Equal(new object[] { "server", "/tmp/minio-data" }, args);
     }
 
     /// <summary>
@@ -3663,27 +3677,27 @@ public sealed class EnvironmentMapperTests : IDisposable
     }
 
     /// <summary>
-    /// The inverse of the test above, and the author-visible cost of pinning minio's default
-    /// image to a registry-qualified reference (<c>quay.io/minio/minio</c>): an env-level
-    /// <c>imageRegistry</c> no longer reaches a <c>minio</c> dependency that sets no
-    /// <c>image:</c> of its own. <c>ApplyImageOverrides</c> reads the CURRENT image annotation
-    /// in that branch, <c>HasExplicitRegistryComponent</c> sees a first path component
-    /// containing a dot, and the re-prefix branch is skipped — the same
-    /// already-qualified-is-left-alone rule
-    /// <see cref="Map_AzureServiceBusDependency_ImageRegistry_DoesNotDoublePrefixEmbeddedRegistry"/>
-    /// pins for the only other built-in whose default image embeds a registry, now reached by
-    /// minio too. Without this the pull reference would become
-    /// <c>artifactory.mycompany.com/quay.io/minio/minio</c>, a path that does not exist.
-    /// <para>
-    /// This is a BEHAVIOUR CHANGE, not an invariant that always held: before the registry move
-    /// this dependency's default was the bare <c>minio/minio</c> and an env-level
-    /// <c>imageRegistry</c> DID apply to it. The documented replacement for a mirroring or
-    /// air-gapped author is the per-dependency <c>image:</c> override, which still works — pinned
-    /// by <see cref="Map_DependencyImage_OverridesMinioContainer"/>.
-    /// </para>
+    /// #580 moved minio's default off the registry-qualified <c>quay.io/minio/minio</c>
+    /// reference (quay.io, Docker Hub's own <c>minio/minio</c>, and ghcr.io all stopped serving
+    /// MinIO images) onto the UNqualified <c>bitnamilegacy/minio</c> — deliberately unqualified:
+    /// #533 qualified the default with quay.io because Docker Hub no longer served
+    /// <c>minio/minio</c>, and that qualification made an env-level 'imageRegistry' skip minio as
+    /// a side effect. With the default back on Docker Hub, minio should behave like every
+    /// other Docker-Hub-default dependency (e.g. redis, pinned by
+    /// <see cref="Map_DependencyImageRegistry_AppliesWhenNoOwnImageSet"/>): an env-level
+    /// <c>imageRegistry</c> DOES reach a <c>minio</c> dependency that sets no <c>image:</c> of
+    /// its own, producing the mirror-qualified pull reference
+    /// <c>artifactory.mycompany.com/bitnamilegacy/minio</c>. <c>ApplyImageOverrides</c> reads the
+    /// CURRENT image annotation in that branch; <c>HasExplicitRegistryComponent</c> no longer
+    /// sees a dot in the first path component ("bitnamilegacy"), so the re-prefix branch now
+    /// runs. This inverts what
+    /// <c>Map_MinioDependency_ImageRegistry_DoesNotApplyToQualifiedDefault</c> pinned while the
+    /// default was quay.io-qualified. The documented alternative for a mirroring or air-gapped
+    /// author is unchanged and still works: the per-dependency <c>image:</c> override, pinned by
+    /// <see cref="Map_DependencyImage_OverridesMinioContainer"/>.
     /// </summary>
     [Fact]
-    public void Map_MinioDependency_ImageRegistry_DoesNotApplyToQualifiedDefault()
+    public void Map_MinioDependency_ImageRegistry_AppliesToUnqualifiedDefault()
     {
         var env = new EnvironmentSpec(
             Services: null,
@@ -3701,8 +3715,8 @@ public sealed class EnvironmentMapperTests : IDisposable
 
         var image = builder.Resources.Single(r => r.Name == "artefacts")
             .Annotations.OfType<ContainerImageAnnotation>().Single();
-        Assert.Equal("quay.io/minio/minio", image.Image);
-        Assert.Null(image.Registry);
+        Assert.Equal("bitnamilegacy/minio", image.Image);
+        Assert.Equal("artifactory.mycompany.com", image.Registry);
 
         // The TAG is pinned here, not merely asserted non-empty, and the reason is a
         // measured cost rather than tidiness. Four published surfaces hardcode this
@@ -3714,7 +3728,7 @@ public sealed class EnvironmentMapperTests : IDisposable
         // cache warmed nothing for that dependency and no test noticed. The sibling
         // azureservicebus registration pins its own tag for the same reason
         // (Map_AzureServiceBusDependency_ImageRegistry_DoesNotDoublePrefixEmbeddedRegistry).
-        Assert.Equal("RELEASE.2025-09-07T16-13-09Z", image.Tag);
+        Assert.Equal("2025.7.23-debian-12-r5", image.Tag);
     }
 
     /// <summary>
