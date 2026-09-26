@@ -649,8 +649,8 @@ public static class EnvironmentMapper
             // WithArgs (reflection-verified against the pinned Aspire.Hosting 13.4.2 DLL:
             // ResourceBuilderExtensions.WithArgs(IResourceBuilder<T>, string[])) supplies the
             // 'server <data-dir>' command MinIO requires to start in server mode. #580 moved
-            // the data dir from '/data' to '/bitnami/minio/data' — see the registration's own
-            // remarks for why '/data' does not survive the move to bitnamilegacy/minio.
+            // the data dir from '/data' to '/tmp/minio-data' — see the registration's own
+            // remarks for why neither '/data' nor Bitnami's '/bitnami/minio/data' is used.
             //
             // Like dynamodb-local, minio is a plain container with no
             // IResourceWithConnectionString, so its connection string is synthesised via
@@ -672,16 +672,22 @@ public static class EnvironmentMapper
                     // and never updated since; #581 tracks a maintained default). Credentials,
                     // port 9000 and /minio/health/cluster behave as before (measured against
                     // this tag).
-                    // The data dir is NOT '/data'. Upstream's image ran as root and declared
-                    // VOLUME /data; this one runs as uid 1001 (gid 0), has no /data, and cannot
-                    // create it under the root-owned 0755 '/', so 'server /data' exits "FATAL
-                    // Unable to initialize backend: file access denied" on every start path
-                    // (measured: plain docker run and the engine's DCP start alike; 7 of 8
-                    // StorageAssertS3DockerTests). '/bitnami/minio/data' is a declared VOLUME
-                    // whose image directory is root:root 0775, which the gid-0 user can write.
-                    // The entrypoint execs 'minio server ...' directly for these args, so
-                    // Bitnami's setup.sh never runs; the engine supplies the root credentials
-                    // through the environment.
+                    // The data dir is '/tmp/minio-data': not '/data', and not Bitnami's own
+                    // '/bitnami/minio/data'. Upstream's image ran as root and declared VOLUME
+                    // /data; this one runs as uid 1001 (gid 0), has no /data, and cannot create
+                    // it under the root-owned 0755 '/', so 'server /data' exits "FATAL Unable to
+                    // initialize backend: file access denied" on every start path (measured:
+                    // plain docker run and the engine's DCP start alike; 7 of 8
+                    // StorageAssertS3DockerTests). Bitnami's declared VOLUME
+                    // '/bitnami/minio/data' works for this image only: a per-dependency 'image:'
+                    // override to another MinIO build (Chainguard's, uid 65532) has no such
+                    // directory and dies the same way. A directory under the world-writable /tmp
+                    // is one each measured build's user can create at runtime — measured 200 on
+                    // /minio/health/cluster with a bucket round-trip on this image, on
+                    // Chainguard's and on the withdrawn upstream image — so it keeps 'image:'
+                    // overrides working. The entrypoint execs 'minio server ...' directly for
+                    // these args, so Bitnami's setup.sh never runs; the engine supplies the root
+                    // credentials through the environment.
                     //
                     // UNQUALIFIED ON PURPOSE: #533 qualified the default with "quay.io/" because
                     // Docker Hub no longer served minio/minio; that qualification made an
@@ -708,7 +714,7 @@ public static class EnvironmentMapper
                         spec,
                         imageRegistry,
                         pullPolicy)
-                        .WithArgs("server", "/bitnami/minio/data")
+                        .WithArgs("server", "/tmp/minio-data")
                         .WithEnvironment("MINIO_ROOT_USER", accessKey)
                         .WithEnvironment("MINIO_ROOT_PASSWORD", secretKey)
                         .WithHttpEndpoint(targetPort: 9000, name: "http")

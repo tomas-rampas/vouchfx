@@ -497,7 +497,7 @@ jobs:
       # is actually bought is diagnosis, not gating — a named annotation in a few
       # minutes instead of a 44-minute run that never says which image. Be precise
       # about that number rather than saying "within seconds": the pulls run
-      # serially in list order, and the minio image that motivated #533 is LAST of
+      # serially in list order, and the minio pin is LAST of
       # eighteen, so on a cold cache its annotation arrives only after the other
       # seventeen. The measured cold sweep is 164.4s of per-image pulls; substitute
       # a small image's few-second success (the pre-#580 minio pin measured 3.8s)
@@ -1040,7 +1040,7 @@ jobs:
               continue
             fi
             if [ "$kind" = absent ]; then
-              echo "::error::could not pull the pinned image $safe_image — after $max_attempts attempts the registry still says it is not there, which never self-resolves, so re-running will not help. Fix the pin (verify with: docker manifest inspect $safe_image) — or, if a mirror or proxy fronts the registry, the indirection: a 404 from it classifies the same way. Left unpulled this surfaces only as a health-gate timeout that never names the image. Registry said: $(one_line "$output")"
+              echo "::error::could not pull the pinned image $safe_image — after $max_attempts attempts the registry still says it is not there (404) or refuses anonymous access (401), which never self-resolves, so re-running will not help. Fix the pin (verify with: docker manifest inspect $safe_image) — or, if a mirror or proxy fronts the registry, the indirection: a 404 or 401 from it classifies the same way. Left unpulled this surfaces only as a health-gate timeout that never names the image. Registry said: $(one_line "$output")"
             else
               echo "::error::could not pull the pinned image $safe_image after $max_attempts attempts, and the output matches neither 'not there' nor 'rate limited' — it may not even be a registry error (a local daemon or client failure is captured here too). Failing loudly rather than guessing it is transient; if this is a registry condition, classify it into a bucket in classify_pull_failure above. Pull output: $(one_line "$output")"
             fi

@@ -366,7 +366,7 @@ Some managed resources carry built-in container images. The scope of `imageRegis
 
 If this dependency fails to pull, check which registry the run reached. With `imageRegistry` set, the pull goes to `<imageRegistry>/bitnamilegacy/minio:2025.7.23-debian-12-r5`, so a mirror that proxies only an allow-list of Docker Hub repositories must have `bitnamilegacy/minio` added to it. Without `imageRegistry`, the pull goes to Docker Hub directly and needs egress to it. Behind #533's exemption the same dependency used to reach quay.io and bypass the mirror; that no longer happens. To pull the build from a registry or repository of your own, override it per-dependency with `image: artifactory.mycompany.com/bitnamilegacy/minio:2025.7.23-debian-12-r5`. As above, `version:` will not help, because it only replaces the tag and cannot change the registry or repository.
 
-**Principle:** An `image:` field overrides the main container only (never a sidecar) and is used exactly as written. `imageRegistry` reaches every un-qualified image (including the Kafka schema-registry sidecar) but not images with a registry hostname of their own. `imagePullPolicy` applies to all containers.
+**Principle:** An `image:` field overrides the main container only (never a sidecar); a registry-qualified value is used exactly as written, and an un-qualified value is prefixed by `imageRegistry` when one is set. `imageRegistry` reaches every un-qualified image (including the Kafka schema-registry sidecar) but not images with a registry hostname of their own. `imagePullPolicy` applies to all containers.
 
 ### Best practices for private registry operation
 

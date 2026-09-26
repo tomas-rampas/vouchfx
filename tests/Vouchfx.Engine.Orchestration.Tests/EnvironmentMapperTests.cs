@@ -1754,7 +1754,7 @@ public sealed class EnvironmentMapperTests : IDisposable
 
     /// <summary>
     /// A minio dependency produces a plain container resource pinned to the
-    /// bitnamilegacy/minio image, started in server mode ('server /bitnami/minio/data'),
+    /// bitnamilegacy/minio image, started in server mode ('server /tmp/minio-data'),
     /// health-gated on itself — the off-docker registration lock for the Phase B dependency
     /// type (the /minio/health/cluster readiness gate is exercised live by
     /// StorageAssertS3DockerTests). The reference moved off quay.io (#580): quay.io, Docker
@@ -1797,8 +1797,7 @@ public sealed class EnvironmentMapperTests : IDisposable
             await argsCallback.Callback(argsContext);
         }
 
-        Assert.Contains(args, a => a is string s && s == "server");
-        Assert.Contains(args, a => a is string s && s == "/bitnami/minio/data");
+        Assert.Equal(new object[] { "server", "/tmp/minio-data" }, args);
     }
 
     // -----------------------------------------------------------------------
@@ -3576,10 +3575,12 @@ public sealed class EnvironmentMapperTests : IDisposable
     /// "bitnamilegacy/minio" default entirely — unaffected by which registry that default
     /// currently resolves against (#580 moved it off quay.io; see
     /// <see cref="Map_MinioDependency_ImageRegistry_AppliesToUnqualifiedDefault"/> for how
-    /// 'imageRegistry' now reaches the unqualified default too).
+    /// 'imageRegistry' now reaches the unqualified default too). The 'server /tmp/minio-data'
+    /// arguments are applied under the override as well — pinned here because that directory
+    /// is what keeps an override to a non-root MinIO build starting (#580).
     /// </summary>
     [Fact]
-    public void Map_DependencyImage_OverridesMinioContainer()
+    public async Task Map_DependencyImage_OverridesMinioContainer()
     {
         var env = new EnvironmentSpec(
             Services: null,
@@ -3598,10 +3599,19 @@ public sealed class EnvironmentMapperTests : IDisposable
         var builder = CreateBuilder();
         mapped.Configure(builder);
 
-        var image = builder.Resources.Single(r => r.Name == "artefacts")
-            .Annotations.OfType<ContainerImageAnnotation>().Single();
+        var resource = builder.Resources.Single(r => r.Name == "artefacts");
+        var image = resource.Annotations.OfType<ContainerImageAnnotation>().Single();
         Assert.Equal("myregistry.example.com/mirror/minio", image.Image);
         Assert.Equal("RELEASE.2024-01-01T00-00-00Z", image.Tag);
+
+        var args = new List<object>();
+        var argsContext = new CommandLineArgsCallbackContext(args, resource, CancellationToken.None);
+        foreach (var argsCallback in resource.Annotations.OfType<CommandLineArgsCallbackAnnotation>())
+        {
+            await argsCallback.Callback(argsContext);
+        }
+
+        Assert.Equal(new object[] { "server", "/tmp/minio-data" }, args);
     }
 
     /// <summary>
