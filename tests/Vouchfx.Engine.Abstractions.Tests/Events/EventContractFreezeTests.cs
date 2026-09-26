@@ -52,6 +52,29 @@
 //   step event later is a CONSCIOUS, REVIEWED change (it will fail this gate).  A
 //   dedicated assertion below also pins the decision independently of the golden.
 //
+// CENSUS (#578) — what the golden CANNOT show: the golden above renders each
+// frozen record's PUBLIC INSTANCE PROPERTIES only (Type.GetProperties(Public |
+// Instance)). System.Text.Json maps more than that: a public field carrying
+// [JsonInclude], and a non-public property or field carrying [JsonInclude], are
+// both wire members to STJ but invisible to the property-only scan above — such a
+// member could be added to a frozen record and change the wire shape without
+// moving the golden, leaving this gate green.
+// EventWireContract_Census_MatchesStjMappedMembers (below) closes that gap:
+// for every record in s_eventRecords it computes the STJ-mapped member set
+// from EventStreamJson.Options.GetTypeInfo(type).Properties (the same
+// contract FromLine<T> itself already reflects over) and asserts it is
+// IDENTICAL — by (wire name, CLR type, required, extension-data) — to the
+// rendered set from the same public-property enumeration the golden uses.
+// A [JsonInclude] field or non-public [JsonInclude] member therefore fails
+// THIS gate with the member named, even though it cannot appear in the
+// golden text itself. STJ lists an unconditional [JsonIgnore] member with neither
+// getter nor setter; the census drops those from the mapped set, so [JsonIgnore]
+// on a rendered property is reported as rendered-but-unmapped (a conditional
+// ignore keeps both accessors and stays a wire member; see #586). A NEW
+// unconditional [JsonIgnore] public property on a frozen record therefore fails
+// this census permanently, by design: frozen records carry wire members only —
+// put helpers in extension methods, not on the record.
+//
 // REGENERATION (when the event wire contract legitimately changes — additive only
 // for v1.x, e.g. a namespace-qualified CLR type name changes but no wire name does):
 //   VOUCHFX_REGEN_EVENT_CONTRACT=1 dotnet test tests/Vouchfx.Engine.Abstractions.Tests \
@@ -303,12 +326,10 @@ public sealed class EventContractFreezeTests
 
     private static string FormatProperty(PropertyInfo prop)
     {
-        var wire = prop.GetCustomAttribute<JsonPropertyNameAttribute>()?.Name;
+        var wire = GetJsonPropertyName(prop);
         var wirePart = wire is null ? string.Empty : $" [wire={wire}]";
 
-        var required = prop.GetCustomAttribute<RequiredMemberAttribute>() is not null
-            ? " [required]"
-            : string.Empty;
+        var required = IsRequiredMember(prop) ? " [required]" : string.Empty;
 
         var setterKind = prop.SetMethod switch
         {
@@ -319,6 +340,265 @@ public sealed class EventContractFreezeTests
 
         return $"property {FormatType(prop.PropertyType)} {prop.Name}"
             + $"{wirePart}{required}{setterKind}";
+    }
+
+    // ── Census (#578): STJ-mapped vs. golden-rendered member sets ────────────
+
+    /// <summary>
+    /// The explicit <c>[JsonPropertyName]</c> value on <paramref name="prop"/>, or
+    /// <see langword="null"/> when the property carries none (its wire name is then
+    /// its CLR name, since <see cref="EventStreamJson.Options"/> applies no naming
+    /// policy). Shared by <see cref="FormatProperty"/> (the golden renderer) and
+    /// <see cref="GetRenderedMemberSignatures"/> (the census) so the two cannot
+    /// independently drift on what counts as a property's wire name.
+    /// </summary>
+    private static string? GetJsonPropertyName(PropertyInfo prop) =>
+        prop.GetCustomAttribute<JsonPropertyNameAttribute>()?.Name;
+
+    /// <summary>
+    /// <see langword="true"/> when <paramref name="prop"/> carries the C#
+    /// <see langword="required"/> modifier (<see cref="RequiredMemberAttribute"/>).
+    /// Shared by <see cref="FormatProperty"/> and <see cref="GetRenderedMemberSignatures"/>.
+    /// </summary>
+    private static bool IsRequiredMember(PropertyInfo prop) =>
+        prop.GetCustomAttribute<RequiredMemberAttribute>() is not null;
+
+    /// <summary>
+    /// A member's wire-relevant signature, comparable between the golden's rendered
+    /// (public-property-only) view and System.Text.Json's own mapped-member view
+    /// under the shared <see cref="EventStreamJson.Options"/>. Two members with an
+    /// equal <see cref="MemberSignature"/> are indistinguishable on the wire.
+    /// </summary>
+    private readonly record struct MemberSignature(
+        string Wire, Type ClrType, bool Required, bool ExtensionData);
+
+    /// <summary>
+    /// The rendered member set for <paramref name="record"/>: exactly the properties
+    /// the golden renders (<c>GetProperties(Public | Instance)</c>), keyed by the
+    /// DECLARING CLR MEMBER NAME (not the wire name) so it can be diffed against
+    /// <see cref="GetStjMappedMemberSignatures"/>'s keys, which are also declaring
+    /// member names: wire = <c>[JsonPropertyName] ?? property
+    /// name</c>; required = <see cref="RequiredMemberAttribute"/> present;
+    /// extensionData = <see cref="JsonExtensionDataAttribute"/> present.
+    /// </summary>
+    private static Dictionary<string, MemberSignature> GetRenderedMemberSignatures(Type record) =>
+        record
+            .GetProperties(BindingFlags.Public | BindingFlags.Instance)
+            .ToDictionary(
+                p => p.Name,
+                p => new MemberSignature(
+                    Wire: GetJsonPropertyName(p) ?? p.Name,
+                    ClrType: p.PropertyType,
+                    Required: IsRequiredMember(p),
+                    ExtensionData: p.GetCustomAttribute<JsonExtensionDataAttribute>() is not null),
+                StringComparer.Ordinal);
+
+    /// <summary>
+    /// The STJ-mapped member set for <paramref name="record"/>, reflected from
+    /// <see cref="EventStreamJson.Options"/>'s own <c>JsonTypeInfo.Properties</c> —
+    /// the same contract <c>EventStreamJson.FromLine{T}</c> itself reflects over —
+    /// keyed by the DECLARING CLR MEMBER NAME (via each <c>JsonPropertyInfo</c>'s
+    /// <c>AttributeProvider</c>, which is the backing <see cref="PropertyInfo"/> or,
+    /// for a <c>[JsonInclude]</c> field, the backing <see cref="FieldInfo"/>) so a
+    /// mapped field or non-public <c>[JsonInclude]</c> member is keyed the same way
+    /// the golden-rendered set is, even though neither can ever appear IN the
+    /// golden-rendered set: wire = <c>JsonPropertyInfo.Name</c>; clrType =
+    /// <c>JsonPropertyInfo.PropertyType</c>; required = <c>JsonPropertyInfo.IsRequired</c>;
+    /// extensionData = <c>JsonPropertyInfo.IsExtensionData</c>.
+    /// </summary>
+    private static Dictionary<string, MemberSignature> GetStjMappedMemberSignatures(Type record)
+    {
+        var typeInfo = EventStreamJson.Options.GetTypeInfo(record);
+        var signatures = new Dictionary<string, MemberSignature>(StringComparer.Ordinal);
+
+        foreach (var p in typeInfo.Properties)
+        {
+            // A [JsonIgnore] member is still listed here with both Get and Set null
+            // (measured, STJ 8; the same observation as
+            // EventStreamJson.ComputeRequiredReferenceMembers). STJ never reads or
+            // writes it, so it is not a wire member; keeping it would let
+            // [JsonIgnore] on a frozen property drop it from the wire with both
+            // gates green.
+            if (p.Get is null && p.Set is null)
+            {
+                continue;
+            }
+
+            // Every JsonPropertyInfo under the shared reflection-based Options carries
+            // the declaring PropertyInfo/FieldInfo as its AttributeProvider (mirrors the
+            // same observation EventStreamJson.ComputeRequiredReferenceMembers relies on).
+            var memberName = (p.AttributeProvider as MemberInfo)?.Name ?? p.Name;
+            var signature = new MemberSignature(p.Name, p.PropertyType, p.IsRequired, p.IsExtensionData);
+
+            if (!signatures.TryAdd(memberName, signature))
+            {
+                throw new InvalidOperationException(
+                    $"{record.Name}: System.Text.Json maps two members named {memberName} (wire "
+                    + $"{signatures[memberName].Wire} and {p.Name}); the census keys by CLR member name.");
+            }
+        }
+
+        return signatures;
+    }
+
+    /// <summary>
+    /// Describes every difference between <paramref name="rendered"/> (the golden's
+    /// public-property-only view) and <paramref name="stj"/> (System.Text.Json's own
+    /// mapped-member view) for <paramref name="recordName"/>, naming each member
+    /// present in one set but not the other and stating why: a member STJ maps that
+    /// the golden's public-property scan cannot show (a <c>[JsonInclude]</c> field or
+    /// non-public <c>[JsonInclude]</c> member), or a rendered public property STJ does not map to the wire
+    /// (e.g. <c>[JsonIgnore]</c>) — plus any member present in both whose signature
+    /// (wire name, CLR type, required, extension-data) disagrees between the two
+    /// views. Returns an empty list when the two sets are identical.
+    /// </summary>
+    private static List<string> DescribeMemberSetDifferences(
+        string recordName,
+        IReadOnlyDictionary<string, MemberSignature> rendered,
+        IReadOnlyDictionary<string, MemberSignature> stj)
+    {
+        var differences = new List<string>();
+
+        foreach (var memberName in stj.Keys.Except(rendered.Keys, StringComparer.Ordinal)
+            .OrderBy(n => n, StringComparer.Ordinal))
+        {
+            differences.Add(
+                $"{recordName}.{memberName}: System.Text.Json maps this member to the wire "
+                + $"(wire={stj[memberName].Wire}) but the golden's public-property scan cannot "
+                + "show it — a [JsonInclude] field or a non-public [JsonInclude] member.");
+        }
+
+        foreach (var memberName in rendered.Keys.Except(stj.Keys, StringComparer.Ordinal)
+            .OrderBy(n => n, StringComparer.Ordinal))
+        {
+            differences.Add(
+                $"{recordName}.{memberName}: the golden renders this public property "
+                + $"(wire={rendered[memberName].Wire}) but System.Text.Json does not map it to "
+                + "the wire under the shared Options — e.g. [JsonIgnore].");
+        }
+
+        foreach (var memberName in rendered.Keys.Intersect(stj.Keys, StringComparer.Ordinal)
+            .OrderBy(n => n, StringComparer.Ordinal))
+        {
+            var renderedSignature = rendered[memberName];
+            var stjSignature = stj[memberName];
+            if (!renderedSignature.Equals(stjSignature))
+            {
+                differences.Add(
+                    $"{recordName}.{memberName}: golden-rendered {renderedSignature} does not "
+                    + $"match System.Text.Json's mapped {stjSignature}.");
+            }
+        }
+
+        return differences;
+    }
+
+    /// <summary>
+    /// Census gate (#578): every frozen record's STJ-mapped member set (per
+    /// <see cref="GetStjMappedMemberSignatures"/>) must equal its golden-rendered
+    /// member set (per <see cref="GetRenderedMemberSignatures"/>). The golden text
+    /// above freezes only PUBLIC INSTANCE PROPERTIES; this test closes the gap for
+    /// members System.Text.Json ALSO maps but the golden cannot show — a public field
+    /// carrying <c>[JsonInclude]</c>, or a non-public property or field carrying
+    /// <c>[JsonInclude]</c> — so such a member added to a frozen record fails HERE,
+    /// named, even though it moves no golden text.
+    /// </summary>
+    [Fact]
+    public void EventWireContract_Census_MatchesStjMappedMembers()
+    {
+        var differences = new List<string>();
+
+        foreach (var record in s_eventRecords)
+        {
+            var rendered = GetRenderedMemberSignatures(record);
+            var stj = GetStjMappedMemberSignatures(record);
+            differences.AddRange(DescribeMemberSetDifferences(record.Name, rendered, stj));
+        }
+
+        Assert.True(
+            differences.Count == 0,
+            "The v1 event-wire census (#578) found a member System.Text.Json maps that the "
+            + "golden's public-property-only render cannot show (or vice versa), or a member "
+            + "whose wire name, CLR type, required-ness or extension-data flag differs between "
+            + "the two views. This means a [JsonInclude] field, a non-public [JsonInclude] "
+            + "member, a [JsonIgnore] on a rendered property or a required-flag change could "
+            + "change the wire shape of a frozen record WITHOUT moving "
+            + "Golden/event-stream-wire-contract.v1.txt — the property-only golden gate would "
+            + "stay green while the wire contract drifted."
+            + Environment.NewLine
+            + string.Join(Environment.NewLine, differences));
+    }
+
+    /// <summary>
+    /// Private record used ONLY to prove <see cref="DescribeMemberSetDifferences"/> can
+    /// see what the golden's public-property scan structurally cannot (#578): a
+    /// <c>[JsonInclude]</c> field (<see cref="Hidden"/>) and an <c>internal</c>
+    /// <c>[JsonInclude]</c> property (<see cref="Secret"/>) are both members System.Text.Json
+    /// maps to the wire, and neither is a public instance property, so
+    /// <see cref="GetRenderedMemberSignatures"/> (mirroring the golden renderer) cannot
+    /// see either one while <see cref="GetStjMappedMemberSignatures"/> sees both. Two more
+    /// members cover the other branches: <see cref="Dropped"/> (<c>[JsonIgnore]</c>) is a
+    /// public property the golden renders but STJ does not map, and <see cref="Tightened"/>
+    /// (<c>[JsonRequired]</c> without the C# <see langword="required"/> modifier) is mapped on
+    /// both sides with a differing required flag.
+    /// </summary>
+    private sealed record CensusProbeRecord
+    {
+        public required string RunId { get; init; }
+
+        [JsonInclude]
+        public required string Hidden = string.Empty;
+
+        [JsonInclude]
+        internal string Secret { get; init; } = string.Empty;
+
+        [JsonIgnore]
+        public string? Dropped { get; init; }
+
+        [JsonRequired]
+        public string? Tightened { get; init; }
+    }
+
+    /// <summary>
+    /// Negative test (#578): proves the census in
+    /// <see cref="EventWireContract_Census_MatchesStjMappedMembers"/> is load-bearing —
+    /// it can see a member the golden's public-property scan structurally cannot. Both
+    /// <see cref="CensusProbeRecord.Hidden"/> (a <c>[JsonInclude]</c> field) and
+    /// <see cref="CensusProbeRecord.Secret"/> (a non-public <c>[JsonInclude]</c>
+    /// property) must be named as STJ-mapped-but-unrendered differences;
+    /// <see cref="CensusProbeRecord.Dropped"/> (<c>[JsonIgnore]</c>) as rendered-but-unmapped;
+    /// <see cref="CensusProbeRecord.Tightened"/> (<c>[JsonRequired]</c>) as a signature
+    /// mismatch; and <c>RunId</c>, identical on both sides, must not be reported.
+    /// </summary>
+    [Fact]
+    public void Census_Detects_JsonIncludeFieldAndNonPublicMember_GoldenCannotShow()
+    {
+        var rendered = GetRenderedMemberSignatures(typeof(CensusProbeRecord));
+        var stj = GetStjMappedMemberSignatures(typeof(CensusProbeRecord));
+
+        var differences = DescribeMemberSetDifferences(nameof(CensusProbeRecord), rendered, stj);
+
+        Assert.Contains(
+            differences,
+            d => d.Contains($"{nameof(CensusProbeRecord)}.Hidden", StringComparison.Ordinal)
+                && d.Contains("[JsonInclude] field", StringComparison.Ordinal));
+        Assert.Contains(
+            differences,
+            d => d.Contains($"{nameof(CensusProbeRecord)}.Secret", StringComparison.Ordinal)
+                && d.Contains("non-public [JsonInclude] member", StringComparison.Ordinal));
+        Assert.Contains(
+            differences,
+            d => d.Contains($"{nameof(CensusProbeRecord)}.Dropped", StringComparison.Ordinal)
+                && d.Contains("does not map it to the wire", StringComparison.Ordinal));
+        Assert.Contains(
+            differences,
+            d => d.Contains($"{nameof(CensusProbeRecord)}.Tightened", StringComparison.Ordinal)
+                && d.Contains("does not match", StringComparison.Ordinal));
+
+        // RunId is mapped identically on both sides (public required property on both
+        // views) — it must NOT be reported as a difference. Guards against a helper
+        // that reports every member as differing rather than only the true gaps.
+        Assert.DoesNotContain(differences, d => d.StartsWith($"{nameof(CensusProbeRecord)}.RunId", StringComparison.Ordinal));
     }
 
     private static bool IsInitOnly(MethodInfo setter) =>
