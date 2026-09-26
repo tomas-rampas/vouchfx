@@ -67,7 +67,13 @@
 // rendered set from the same public-property enumeration the golden uses.
 // A [JsonInclude] field or non-public [JsonInclude] member therefore fails
 // THIS gate with the member named, even though it cannot appear in the
-// golden text itself.
+// golden text itself. STJ lists an unconditional [JsonIgnore] member with neither
+// getter nor setter; the census drops those from the mapped set, so [JsonIgnore]
+// on a rendered property is reported as rendered-but-unmapped (a conditional
+// ignore keeps both accessors and stays a wire member; see #586). A NEW
+// unconditional [JsonIgnore] public property on a frozen record therefore fails
+// this census permanently, by design: frozen records carry wire members only —
+// put helpers in extension methods, not on the record.
 //
 // REGENERATION (when the event wire contract legitimately changes — additive only
 // for v1.x, e.g. a namespace-qualified CLR type name changes but no wire name does):
