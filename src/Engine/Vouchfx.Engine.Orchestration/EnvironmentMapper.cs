@@ -679,9 +679,10 @@ public static class EnvironmentMapper
                     // initialize backend: file access denied" on every start path (measured:
                     // plain docker run and the engine's DCP start alike; 7 of 8
                     // StorageAssertS3DockerTests). Bitnami's declared VOLUME
-                    // '/bitnami/minio/data' works for this image only: a per-dependency 'image:'
-                    // override to another MinIO build (Chainguard's, uid 65532) has no such
-                    // directory and dies the same way. A directory under the world-writable /tmp
+                    // '/bitnami/minio/data' works for this image and for a root image such as
+                    // upstream's, but not for a non-root override that lacks that directory: a
+                    // per-dependency 'image:' pointing at Chainguard's build (uid 65532) has no
+                    // such directory and dies the same way. A directory under the world-writable /tmp
                     // is one each measured build's user can create at runtime — measured 200 on
                     // /minio/health/cluster with a bucket round-trip on this image, on
                     // Chainguard's and on the withdrawn upstream image — so it keeps 'image:'
