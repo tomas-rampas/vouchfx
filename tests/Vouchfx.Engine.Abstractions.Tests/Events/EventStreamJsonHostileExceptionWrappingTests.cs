@@ -13,9 +13,10 @@
 //      through the public API: the in-tree file readers decode with replacement, and the
 //      renderers' in-memory lines come from ToLine.
 //
-// The filter's three exclusions — JsonException, InvalidOperationException,
-// OutOfMemoryException — must keep passing through unwrapped; one probe per exclusion pins
-// that a bare `catch (Exception)` cannot replace the filter.
+// The filter's five exclusions — JsonException, InvalidOperationException,
+// OutOfMemoryException, OperationCanceledException, TypeInitializationException — must keep
+// passing through unwrapped; one probe per exclusion pins that a bare `catch (Exception)`
+// cannot replace the filter.
 //
 // A null `line` is a caller error, not a malformed line: both overloads assert
 // ArgumentNullException.ThrowIfNull(line) before attempting to deserialise.
@@ -33,7 +34,8 @@ namespace Vouchfx.Engine.Abstractions.Tests.Events;
 /// #584: <see cref="EventStreamJson.FromLine(string)"/> and
 /// <see cref="EventStreamJson.FromLine{T}"/> wrap every exception System.Text.Json or the
 /// bound type itself throws — other than <see cref="JsonException"/>,
-/// <see cref="InvalidOperationException"/>, or <see cref="OutOfMemoryException"/> — as a
+/// <see cref="InvalidOperationException"/>, <see cref="OutOfMemoryException"/>,
+/// <see cref="OperationCanceledException"/> or <see cref="TypeInitializationException"/> — as a
 /// <see cref="JsonException"/> carrying fixed text plus the type name, with the original
 /// attached as <see cref="Exception.InnerException"/> and never inlined into the message.
 /// </summary>
@@ -233,6 +235,59 @@ public sealed class EventStreamJsonHostileExceptionWrappingTests
 
         Assert.Null(ex.InnerException);
         Assert.Contains(Marker, ex.Message, StringComparison.Ordinal);
+    }
+
+    private sealed class CancellingMemberConverter : JsonConverter<string>
+    {
+        public override string Read(
+            ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) =>
+            throw new OperationCanceledException(Marker);
+
+        public override void Write(Utf8JsonWriter writer, string value, JsonSerializerOptions options) =>
+            writer.WriteStringValue(value);
+    }
+
+    private sealed record CancellingConverterMemberProbe
+    {
+        [JsonConverter(typeof(CancellingMemberConverter))]
+        public string Value { get; init; } = string.Empty;
+    }
+
+    [Fact]
+    public void FromLineT_MemberConverterThrowsOperationCanceledException_PassesThroughUnwrapped()
+    {
+        // FromLine takes no cancellation token, so a cancellation a consumer's converter observes
+        // belongs to the caller's own flow; wrapping it would keep the caller's read loop running
+        // after it was cancelled.
+        var ex = Assert.Throws<OperationCanceledException>(
+            () => EventStreamJson.FromLine<CancellingConverterMemberProbe>("""{"Value":"anything"}"""));
+
+        Assert.Equal(Marker, ex.Message);
+    }
+
+    private sealed record ThrowingStaticConstructorProbe
+    {
+        // An explicit static constructor, not a field initialiser: it removes beforefieldinit, so
+        // the runtime runs it before the first instance is created rather than at some later first
+        // static-field access, which a probe with no static field would never reach.
+        static ThrowingStaticConstructorProbe()
+        {
+            throw new InvalidDataException($"marker {Marker}");
+        }
+
+        public string Value { get; init; } = string.Empty;
+    }
+
+    [Fact]
+    public void FromLineT_StaticConstructorThrows_PassesThroughUnwrapped()
+    {
+        // A failing static constructor of T is the type's fault, not the line's: the same class of
+        // fault the Options hoist keeps loud for EventStreamJson's own initialiser.
+        var ex = Assert.Throws<TypeInitializationException>(
+            () => EventStreamJson.FromLine<ThrowingStaticConstructorProbe>("""{"Value":"anything"}"""));
+
+        var inner = Assert.IsType<InvalidDataException>(ex.InnerException);
+        Assert.Equal($"marker {Marker}", inner.Message);
     }
 
     // =========================================================================

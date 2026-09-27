@@ -110,7 +110,8 @@ public static class EventStreamJson
     /// object, a required field (<c>type</c>, <c>runId</c>) is absent, or a mapped
     /// field has the wrong JSON type (e.g. a numeric <c>runId</c>). Also thrown (#584) when
     /// System.Text.Json throws anything other than <see cref="JsonException"/>,
-    /// <see cref="InvalidOperationException"/> or <see cref="OutOfMemoryException"/> while
+    /// <see cref="InvalidOperationException"/>, <see cref="OutOfMemoryException"/>,
+    /// <see cref="OperationCanceledException"/> or <see cref="TypeInitializationException"/> while
     /// reading the line — for example a line string containing an unpaired UTF-16 surrogate —
     /// with the original exception attached as <see cref="Exception.InnerException"/>, which is
     /// not redacted.
@@ -140,7 +141,8 @@ public static class EventStreamJson
         {
             deserialised = JsonSerializer.Deserialize<EventEnvelope>(line, options);
         }
-        catch (Exception ex) when (ex is not (JsonException or InvalidOperationException or OutOfMemoryException))
+        catch (Exception ex) when (ex is not (JsonException or InvalidOperationException
+            or OutOfMemoryException or OperationCanceledException or TypeInitializationException))
         {
             // #584: see FromLine{T}'s catch below. EventEnvelope declares no converters or
             // throwing accessors, so the known case here is a line string holding an unpaired
@@ -237,7 +239,8 @@ public static class EventStreamJson
     /// abstract type) every object line throws this exception, so a per-line skip filter silently
     /// drops the whole stream. Also thrown (#584) when System.Text.Json — or
     /// <typeparamref name="T"/> itself — throws anything other than <see cref="JsonException"/>,
-    /// <see cref="InvalidOperationException"/> or <see cref="OutOfMemoryException"/> while
+    /// <see cref="InvalidOperationException"/>, <see cref="OutOfMemoryException"/>,
+    /// <see cref="OperationCanceledException"/> or <see cref="TypeInitializationException"/> while
     /// reading the line: a consumer type's <c>init</c> accessor, constructor, or member converter
     /// throwing during binding, or a line string containing an unpaired UTF-16 surrogate; the
     /// original is attached as <see cref="Exception.InnerException"/> and is likewise not
@@ -368,7 +371,8 @@ public static class EventStreamJson
         {
             payload = JsonSerializer.Deserialize<T>(line, options);
         }
-        catch (Exception ex) when (ex is not (JsonException or InvalidOperationException or OutOfMemoryException))
+        catch (Exception ex) when (ex is not (JsonException or InvalidOperationException
+            or OutOfMemoryException or OperationCanceledException or TypeInitializationException))
         {
             // #579/#584: anything System.Text.Json — or T while STJ binds it — throws other than
             // JsonException/InvalidOperationException would escape every §14 consumer's per-line
@@ -380,8 +384,14 @@ public static class EventStreamJson
             // accessor, [JsonConstructor] or member converter throwing — measured (STJ 8.0 and
             // 10.0.8, InvalidDataException and ArgumentException probes): STJ passes such a throw
             // through unwrapped (#584); the ArgumentException Deserialize raises for a line
-            // string holding an unpaired UTF-16 surrogate (#584). OutOfMemoryException is never
-            // a malformed line, so it stays unwrapped. Message: fixed text plus the type name
+            // string holding an unpaired UTF-16 surrogate (#584). OutOfMemoryException, an
+            // OperationCanceledException a consumer converter observes (FromLine takes no token)
+            // and a TypeInitializationException from the static constructor of T, of a member's
+            // type or of a $type-selected derived type (measured, STJ 8.0 and 10.0.8: each arrives
+            // bare) are never a malformed line, so they stay unwrapped — like this type's own
+            // static initialiser above. A converter's own static constructor is not covered: STJ
+            // creates an attribute-declared converter through reflection, so that failure arrives
+            // as TargetInvocationException and is wrapped. Message: fixed text plus the type name
             // (§17 redaction at source); the unredacted original travels only as InnerException.
             throw new JsonException(
                 $"Event-stream line cannot be deserialised as {typeof(T).Name}.", ex);
