@@ -108,12 +108,21 @@ public static class EventStreamJson
     /// <exception cref="JsonException">
     /// Thrown if <paramref name="line"/> is not valid JSON, does not represent an
     /// object, a required field (<c>type</c>, <c>runId</c>) is absent, or a mapped
-    /// field has the wrong JSON type (e.g. a numeric <c>runId</c>).
+    /// field has the wrong JSON type (e.g. a numeric <c>runId</c>). Also thrown (#584) when
+    /// System.Text.Json throws anything other than <see cref="JsonException"/>,
+    /// <see cref="InvalidOperationException"/>, <see cref="OutOfMemoryException"/>,
+    /// <see cref="OperationCanceledException"/> or <see cref="TypeInitializationException"/> while
+    /// reading the line — for example a line string containing an unpaired UTF-16 surrogate —
+    /// with the original exception attached as <see cref="Exception.InnerException"/>, which is
+    /// not redacted.
     /// </exception>
     /// <exception cref="InvalidOperationException">
     /// Thrown if <paramref name="line"/> is the JSON literal <c>null</c>, or a
     /// required field (<c>type</c>, <c>runId</c>) is present but explicitly
     /// <see langword="null"/> on the wire (e.g. <c>"runId": null</c>).
+    /// </exception>
+    /// <exception cref="ArgumentNullException">
+    /// Thrown if <paramref name="line"/> is <see langword="null"/>.
     /// </exception>
     /// <remarks>
     /// An empty string (e.g. <c>"runId": ""</c>) is legal wire content and is
@@ -121,7 +130,30 @@ public static class EventStreamJson
     /// </remarks>
     public static EventEnvelope FromLine(string line)
     {
-        var envelope = JsonSerializer.Deserialize<EventEnvelope>(line, Options)
+        ArgumentNullException.ThrowIfNull(line);
+
+        // Read Options outside the try: a failure of this type's own static initialiser (a host
+        // with reflection-based System.Text.Json disabled) is a host fault, not a malformed line.
+        var options = Options;
+
+        EventEnvelope? deserialised;
+        try
+        {
+            deserialised = JsonSerializer.Deserialize<EventEnvelope>(line, options);
+        }
+        catch (Exception ex) when (ex is not (JsonException or InvalidOperationException
+            or OutOfMemoryException or OperationCanceledException or TypeInitializationException))
+        {
+            // #584: see FromLine{T}'s catch below. EventEnvelope declares no converters or
+            // throwing accessors, so the known case here is a line string holding an unpaired
+            // UTF-16 surrogate — reachable only through this public API — for which Deserialize
+            // throws ArgumentException wrapping an EncoderFallbackException (measured, STJ 8.0
+            // and 10.0.8).
+            throw new JsonException(
+                $"Event-stream line cannot be deserialised as {nameof(EventEnvelope)}.", ex);
+        }
+
+        var envelope = deserialised
             ?? throw new InvalidOperationException(
                 "Deserialisation of event-stream line produced a null result; " +
                 "the input was not a JSON object.");
@@ -199,11 +231,20 @@ public static class EventStreamJson
     /// original <see cref="NotSupportedException"/> attached as
     /// <see cref="Exception.InnerException"/>. That inner exception is System.Text.Json's and
     /// is not redacted: its <c>Path:</c> suffix can name a property or dictionary key read
-    /// from the line, and a custom converter's own message is preserved, so log
-    /// <see cref="Exception.Message"/>, not <see cref="Exception.ToString"/> or the inner
-    /// exception. For a <typeparamref name="T"/> System.Text.Json can never bind (a
-    /// non-polymorphic interface or abstract type) every object line throws this exception,
-    /// so a per-line skip filter silently drops the whole stream.
+    /// from the line, and a custom converter's own message is preserved. Only this exception's
+    /// own <see cref="Exception.Message"/> is fixed text: a <see cref="JsonException"/>
+    /// System.Text.Json raises itself carries the same <c>Path:</c> in its own message (#576), so
+    /// a consumer must not treat any caught exception's text as redacted. For a
+    /// <typeparamref name="T"/> System.Text.Json can never bind (a non-polymorphic interface or
+    /// abstract type) every object line throws this exception, so a per-line skip filter silently
+    /// drops the whole stream. Also thrown (#584) when System.Text.Json — or
+    /// <typeparamref name="T"/> itself — throws anything other than <see cref="JsonException"/>,
+    /// <see cref="InvalidOperationException"/>, <see cref="OutOfMemoryException"/>,
+    /// <see cref="OperationCanceledException"/> or <see cref="TypeInitializationException"/> while
+    /// reading the line: a consumer type's <c>init</c> accessor, constructor, or member converter
+    /// throwing during binding, or a line string containing an unpaired UTF-16 surrogate; the
+    /// original is attached as <see cref="Exception.InnerException"/> and is likewise not
+    /// redacted.
     /// </exception>
     /// <exception cref="InvalidOperationException">
     /// Thrown if deserialisation produces a <see langword="null"/> result, or if a
@@ -212,6 +253,9 @@ public static class EventStreamJson
     /// <see cref="SetsRequiredMembersAttribute"/> constructor; see the remarks) deserialised to
     /// null (#573), or if reading such a member's value itself threw (see the third bullet
     /// below).
+    /// </exception>
+    /// <exception cref="ArgumentNullException">
+    /// Thrown if <paramref name="line"/> is <see langword="null"/>.
     /// </exception>
     /// <remarks>
     /// <para>
@@ -316,28 +360,39 @@ public static class EventStreamJson
     // ScenarioRunner never passes) and calls FromLine<T> with a type from it.
     public static T FromLine<T>(string line)
     {
+        ArgumentNullException.ThrowIfNull(line);
+
+        // Read Options outside the try: a failure of this type's own static initialiser (a host
+        // with reflection-based System.Text.Json disabled) is a host fault, not a malformed line.
+        var options = Options;
+
         T? payload;
         try
         {
-            payload = JsonSerializer.Deserialize<T>(line, Options);
+            payload = JsonSerializer.Deserialize<T>(line, options);
         }
-        catch (NotSupportedException ex)
+        catch (Exception ex) when (ex is not (JsonException or InvalidOperationException
+            or OutOfMemoryException or OperationCanceledException or TypeInitializationException))
         {
-            // #579: System.Text.Json refuses a type it must bind (T itself or a member's type)
-            // — never reached for the untyped FromLine(string) above, which always deserialises
-            // the concrete EventEnvelope — for example an abstract or interface T with no
-            // [JsonPolymorphic] discriminator on the line (STJ 8: "Deserialization of types
-            // without a parameterless constructor..."; STJ 10: "must specify a type
-            // discriminator"), a polymorphic derived type that carries its own type-level
-            // JsonConverter ("does not support metadata writes or reads"), or a member typed as
-            // an interface. Left uncaught, NotSupportedException escapes every consumer's
+            // #579/#584: anything System.Text.Json — or T while STJ binds it — throws other than
+            // JsonException/InvalidOperationException would escape every §14 consumer's per-line
             // `catch (Exception ex) when (ex is JsonException or InvalidOperationException)`
-            // filter (§14), so such a line would abort the caller's read loop instead of being
-            // skipped like any other malformed line. Rethrow as JsonException with fixed text
-            // plus the type name only (§17 redaction at source); the original travels as
-            // InnerException, never inlined into the message. The inner exception is STJ's and
-            // is NOT redacted: its "Path:" suffix can name a property or dictionary key read
-            // from the line, and a custom converter's own text is preserved.
+            // filter and abort its read loop instead of skipping the line. Known classes: STJ's
+            // NotSupportedException for a type it cannot bind — an abstract or interface T with
+            // no type discriminator on the line, a polymorphic derived type with its own
+            // type-level converter, a member typed as an interface (#579); a consumer T's init
+            // accessor, [JsonConstructor] or member converter throwing — measured (STJ 8.0 and
+            // 10.0.8, InvalidDataException and ArgumentException probes): STJ passes such a throw
+            // through unwrapped (#584); the ArgumentException Deserialize raises for a line
+            // string holding an unpaired UTF-16 surrogate (#584). OutOfMemoryException, an
+            // OperationCanceledException a consumer converter observes (FromLine takes no token)
+            // and a TypeInitializationException from the static constructor of T, of a member's
+            // type or of a $type-selected derived type (measured, STJ 8.0 and 10.0.8: each arrives
+            // bare) are never a malformed line, so they stay unwrapped — like this type's own
+            // static initialiser above. A converter's own static constructor is not covered: STJ
+            // creates an attribute-declared converter through reflection, so that failure arrives
+            // as TargetInvocationException and is wrapped. Message: fixed text plus the type name
+            // (§17 redaction at source); the unredacted original travels only as InnerException.
             throw new JsonException(
                 $"Event-stream line cannot be deserialised as {typeof(T).Name}.", ex);
         }
