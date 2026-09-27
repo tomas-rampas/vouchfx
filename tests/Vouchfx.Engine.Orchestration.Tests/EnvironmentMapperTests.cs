@@ -3603,6 +3603,8 @@ public sealed class EnvironmentMapperTests : IDisposable
         var image = resource.Annotations.OfType<ContainerImageAnnotation>().Single();
         Assert.Equal("myregistry.example.com/mirror/minio", image.Image);
         Assert.Equal("RELEASE.2024-01-01T00-00-00Z", image.Tag);
+        // #582: the qualified override must not be re-prefixed with the kind's docker.io default.
+        Assert.Null(image.Registry);
 
         var args = new List<object>();
         var argsContext = new CommandLineArgsCallbackContext(args, resource, CancellationToken.None);
@@ -3729,6 +3731,243 @@ public sealed class EnvironmentMapperTests : IDisposable
         // azureservicebus registration pins its own tag for the same reason
         // (Map_AzureServiceBusDependency_ImageRegistry_DoesNotDoublePrefixEmbeddedRegistry).
         Assert.Equal("2025.7.23-debian-12-r5", image.Tag);
+    }
+
+    // -----------------------------------------------------------------------
+    // #582 — the four AddContainer defaults with no built-in Aspire helper (mailpit, dynamodb,
+    // minio, and the kafka schema-registry sidecar) previously left ContainerImageAnnotation.
+    // Registry null, unlike every Aspire-provided kind (postgres, redis, mongodb, kafka's own
+    // broker, …), whose helper (AddPostgres/AddRedis/…) already sets Registry internally:
+    // "docker.io", or "mcr.microsoft.com" for sqlserver. An unqualified short name with no
+    // registry information at all can resolve through Podman's registries.conf short-name
+    // search instead of Docker Hub — silently substituting a different image. Each of the four
+    // registrations now appends '.WithImageRegistry(DockerHubRegistry)' ("docker.io") to its
+    // AddContainer chain, BEFORE ApplyImageOverrides/
+    // ApplySidecarRegistryAndPullPolicy run, so the qualified default applies only when neither
+    // an env-level 'imageRegistry' nor a per-dependency 'image:' is set — both existing overrides
+    // are unaffected by construction (ApplyImageOverrides/ApplySidecarRegistryAndPullPolicy
+    // decide from the image STRING, via HasExplicitRegistryComponent, never from the Registry
+    // field this fix sets). minio's and the schema-registry sidecar's own mirror-applies and
+    // image-override facts are already pinned elsewhere (cited on each fact below); only the
+    // no-override baseline was missing for any of the four kinds before this fix, and mailpit/
+    // dynamodb had no coverage for any of the three facts at all.
+    // -----------------------------------------------------------------------
+
+    [Fact]
+    public void Map_MailpitDependency_NoOverrides_RegistryIsDockerIo()
+    {
+        var env = new EnvironmentSpec(
+            Services: null,
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["mail"] = new DependencySpec(Type: "mailpit", Version: null, Extra: null),
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+        mapped.Configure(builder);
+
+        var resource = builder.Resources.Single(r => r.Name == "mail");
+        var image = resource.Annotations.OfType<ContainerImageAnnotation>().Single();
+        Assert.Equal("docker.io", image.Registry);
+        // The reference DCP hands the runtime, composed by Aspire from Registry/Image:Tag.
+        Assert.True(resource.TryGetContainerImageName(out var reference));
+        Assert.Equal("docker.io/axllent/mailpit:v1.21", reference);
+    }
+
+    [Fact]
+    public void Map_MailpitDependency_ImageRegistry_StillApplies()
+    {
+        var env = new EnvironmentSpec(
+            Services: null,
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["mail"] = new DependencySpec(Type: "mailpit", Version: null, Extra: null),
+            },
+            Seed: null,
+            ImageRegistry: "mirror.example",
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+        mapped.Configure(builder);
+
+        var image = builder.Resources.Single(r => r.Name == "mail")
+            .Annotations.OfType<ContainerImageAnnotation>().Single();
+        Assert.Equal("mirror.example", image.Registry);
+    }
+
+    [Fact]
+    public void Map_MailpitDependency_ImageOverride_StillClearsDefault()
+    {
+        var env = new EnvironmentSpec(
+            Services: null,
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["mail"] = new DependencySpec(Type: "mailpit", Version: null, Extra: null)
+                {
+                    Image = "registry.example/team/img:tag",
+                },
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+        mapped.Configure(builder);
+
+        var image = builder.Resources.Single(r => r.Name == "mail")
+            .Annotations.OfType<ContainerImageAnnotation>().Single();
+        Assert.Null(image.Registry);
+        Assert.Equal("registry.example/team/img", image.Image);
+        Assert.Equal("tag", image.Tag);
+    }
+
+    [Fact]
+    public void Map_DynamodbDependency_NoOverrides_RegistryIsDockerIo()
+    {
+        var env = new EnvironmentSpec(
+            Services: null,
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["orders-db"] = new DependencySpec(Type: "dynamodb", Version: null, Extra: null),
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+        mapped.Configure(builder);
+
+        var resource = builder.Resources.Single(r => r.Name == "orders-db");
+        var image = resource.Annotations.OfType<ContainerImageAnnotation>().Single();
+        Assert.Equal("docker.io", image.Registry);
+        Assert.True(resource.TryGetContainerImageName(out var reference));
+        Assert.Equal("docker.io/amazon/dynamodb-local:2.5.2", reference);
+    }
+
+    [Fact]
+    public void Map_DynamodbDependency_ImageRegistry_StillApplies()
+    {
+        var env = new EnvironmentSpec(
+            Services: null,
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["orders-db"] = new DependencySpec(Type: "dynamodb", Version: null, Extra: null),
+            },
+            Seed: null,
+            ImageRegistry: "mirror.example",
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+        mapped.Configure(builder);
+
+        var image = builder.Resources.Single(r => r.Name == "orders-db")
+            .Annotations.OfType<ContainerImageAnnotation>().Single();
+        Assert.Equal("mirror.example", image.Registry);
+    }
+
+    [Fact]
+    public void Map_DynamodbDependency_ImageOverride_StillClearsDefault()
+    {
+        var env = new EnvironmentSpec(
+            Services: null,
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["orders-db"] = new DependencySpec(Type: "dynamodb", Version: null, Extra: null)
+                {
+                    Image = "registry.example/team/img:tag",
+                },
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+        mapped.Configure(builder);
+
+        var image = builder.Resources.Single(r => r.Name == "orders-db")
+            .Annotations.OfType<ContainerImageAnnotation>().Single();
+        Assert.Null(image.Registry);
+        Assert.Equal("registry.example/team/img", image.Image);
+        Assert.Equal("tag", image.Tag);
+    }
+
+    /// <summary>
+    /// minio's own mirror-applies and image-override facts are already pinned by
+    /// <see cref="Map_MinioDependency_ImageRegistry_AppliesToUnqualifiedDefault"/> and
+    /// <see cref="Map_DependencyImage_OverridesMinioContainer"/> respectively — only the
+    /// no-override baseline is new here (RED before #582: Registry was null).
+    /// </summary>
+    [Fact]
+    public void Map_MinioDependency_NoOverrides_RegistryIsDockerIo()
+    {
+        var env = new EnvironmentSpec(
+            Services: null,
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["artefacts"] = new DependencySpec(Type: "minio", Version: null, Extra: null),
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+        mapped.Configure(builder);
+
+        var resource = builder.Resources.Single(r => r.Name == "artefacts");
+        var image = resource.Annotations.OfType<ContainerImageAnnotation>().Single();
+        Assert.Equal("docker.io", image.Registry);
+        Assert.True(resource.TryGetContainerImageName(out var reference));
+        Assert.Equal("docker.io/bitnamilegacy/minio:2025.7.23-debian-12-r5", reference);
+    }
+
+    /// <summary>
+    /// The kafka schema-registry sidecar's own mirror-applies and (non-)override facts are
+    /// already pinned by <see cref="Map_KafkaWithSchemaRegistry_ImageRegistryAppliesToSidecarToo"/>
+    /// and <see cref="Map_KafkaWithSchemaRegistry_ImageOverrideDoesNotReachSidecar"/> respectively
+    /// — only the no-override baseline is new here. Pins BOTH the broker (whose registry default
+    /// was already "docker.io" via AddKafka, unaffected by this fix) and the sidecar (whose
+    /// default was null before this fix — RED before #582).
+    /// </summary>
+    [Fact]
+    public void Map_KafkaSchemaRegistrySidecar_NoOverrides_RegistryIsDockerIo()
+    {
+        var extra = new YamlMappingNode
+        {
+            { new YamlScalarNode("schemaRegistry"), new YamlScalarNode("true") },
+        };
+        var env = new EnvironmentSpec(
+            Services: null,
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["events"] = new DependencySpec(Type: "kafka", Version: null, Extra: extra),
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+        mapped.Configure(builder);
+
+        var brokerImage = builder.Resources.Single(r => r.Name == "events")
+            .Annotations.OfType<ContainerImageAnnotation>().Single();
+        Assert.Equal("docker.io", brokerImage.Registry);
+
+        var sidecar = builder.Resources.Single(r => r.Name == "events-sr");
+        var sidecarImage = sidecar.Annotations.OfType<ContainerImageAnnotation>().Single();
+        Assert.Equal("docker.io", sidecarImage.Registry);
+        Assert.True(sidecar.TryGetContainerImageName(out var sidecarReference));
+        Assert.Equal("docker.io/confluentinc/cp-schema-registry:7.6.1", sidecarReference);
     }
 
     /// <summary>

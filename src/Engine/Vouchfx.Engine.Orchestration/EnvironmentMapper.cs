@@ -204,6 +204,19 @@ public sealed record MappedTopology(
 /// </remarks>
 public static class EnvironmentMapper
 {
+    /// <summary>
+    /// Registry set on four of the <c>AddContainer</c>-based defaults with no Aspire helper of
+    /// their own — the Kafka schema-registry sidecar, <c>mailpit</c>, <c>dynamodb</c> and
+    /// <c>minio</c> (#582; the <c>azureservicebus</c> pair already embeds its registry in the
+    /// image string). <c>AddContainer(name, image, tag)</c> leaves
+    /// <c>ContainerImageAnnotation.Registry</c> null, so DCP handed the runtime an unqualified
+    /// short name, which Podman resolves through its <c>registries.conf</c> search list; every
+    /// Aspire-provided kind's <c>AddXxx</c> helper already sets its registry. Only the annotation's
+    /// <c>Registry</c> field is set — each image string stays unqualified, so the env-level
+    /// <c>imageRegistry</c> override, which decides from the string, still replaces it.
+    /// </summary>
+    private const string DockerHubRegistry = "docker.io";
+
     // -----------------------------------------------------------------------
     // Registration table — one entry per supported dependency type.
     // -----------------------------------------------------------------------
@@ -389,6 +402,7 @@ public static class EnvironmentMapper
                         var srContainerBuilder = ApplySidecarRegistryAndPullPolicy(
                             builder
                                 .AddContainer(srName, "confluentinc/cp-schema-registry", "7.6.1")
+                                .WithImageRegistry(DockerHubRegistry)
                                 .WithEnvironment("SCHEMA_REGISTRY_HOST_NAME", srName)
                                 .WithEnvironment(
                                     "SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS",
@@ -429,7 +443,8 @@ public static class EnvironmentMapper
                     // via 'image:' (feat/dependency-image-override) — ApplyImageOverrides applies
                     // spec.Image/spec.Version/imageRegistry/pullPolicy on top of this default.
                     var containerBuilder = ApplyImageOverrides(
-                        builder.AddContainer(name, "axllent/mailpit", "v1.21"),
+                        builder.AddContainer(name, "axllent/mailpit", "v1.21")
+                            .WithImageRegistry(DockerHubRegistry),
                         spec,
                         imageRegistry,
                         pullPolicy)
@@ -618,7 +633,8 @@ public static class EnvironmentMapper
                     // (feat/dependency-image-override) — ApplyImageOverrides applies
                     // spec.Image/spec.Version/imageRegistry/pullPolicy on top of this default.
                     var containerBuilder = ApplyImageOverrides(
-                        builder.AddContainer(name, "amazon/dynamodb-local", "2.5.2"),
+                        builder.AddContainer(name, "amazon/dynamodb-local", "2.5.2")
+                            .WithImageRegistry(DockerHubRegistry),
                         spec,
                         imageRegistry,
                         pullPolicy)
@@ -705,13 +721,24 @@ public static class EnvironmentMapper
                     // superseded Map_MinioDependency_ImageRegistry_DoesNotApplyToQualifiedDefault,
                     // which pinned the now-dead quay.io-qualified behaviour).
                     //
+                    // #582: WithImageRegistry(DockerHubRegistry) below sets ONLY the annotation's
+                    // Registry FIELD — the image STRING passed to AddContainer stays
+                    // "bitnamilegacy/minio", unqualified, so HasExplicitRegistryComponent still
+                    // finds no dot/colon in "bitnamilegacy" and the re-prefix branch described
+                    // above still fires, overwriting this docker.io default with an
+                    // env-level 'imageRegistry' when one is set. The default exists only to stop
+                    // Podman's short-name search (registries.conf) from resolving the unqualified
+                    // reference against a registry other than Docker Hub when no 'imageRegistry'
+                    // is set at all.
+                    //
                     // Authors may still override via 'version', or via 'image:'
                     // (feat/dependency-image-override) — ApplyImageOverrides applies
                     // spec.Image/spec.Version/imageRegistry/pullPolicy on top of this default.
                     const string accessKey = "vouchfx-minio";
                     const string secretKey = "vouchfx-minio-secret";
                     var containerBuilder = ApplyImageOverrides(
-                        builder.AddContainer(name, "bitnamilegacy/minio", "2025.7.23-debian-12-r5"),
+                        builder.AddContainer(name, "bitnamilegacy/minio", "2025.7.23-debian-12-r5")
+                            .WithImageRegistry(DockerHubRegistry),
                         spec,
                         imageRegistry,
                         pullPolicy)
@@ -4101,8 +4128,8 @@ public static class EnvironmentMapper
     ///   <item><description>
     ///     Neither set → this method makes no image/tag call at all, leaving whatever default
     ///     the resource's own <c>AddXxx</c>/<c>AddContainer</c> call already established (a
-    ///     provider's built-in default, or this file's own pinned default tag for the
-    ///     <c>AddContainer</c>-based kinds).
+    ///     provider's built-in default, or this file's own pinned default tag and registry for
+    ///     the <c>AddContainer</c>-based kinds).
     ///   </description></item>
     /// </list>
     /// <para>
@@ -4225,7 +4252,7 @@ public static class EnvironmentMapper
             // whether the author's own image string carries an explicit registry component.
             // Previously this only ran inside `if (imageHasExplicitRegistry)`, so an UNQUALIFIED
             // image (e.g. sqlserver + 'image: myorg/mssql-mirror:2022') left the provider's own
-            // built-in registry default in place — harmless for the 12 kinds whose default is
+            // built-in registry default in place — harmless for the kinds whose default is
             // "docker.io" (the implicit default anyway), but for sqlserver AddSqlServer's own
             // default is "mcr.microsoft.com", so the customer's own mirror image silently
             // resolved to "mcr.microsoft.com/myorg/mssql-mirror:2022" — a path that does not
