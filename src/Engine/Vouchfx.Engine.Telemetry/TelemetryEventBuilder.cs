@@ -79,8 +79,19 @@ namespace Vouchfx.Engine.Telemetry;
 /// </remarks>
 public static class TelemetryEventBuilder
 {
-    /// <summary>The current <see cref="TelemetryEvent.SchemaVersion"/> emitted by the builder.</summary>
-    public const int CurrentSchemaVersion = 1;
+    /// <summary>
+    /// The current <see cref="TelemetryEvent.SchemaVersion"/> emitted by the builder.
+    /// </summary>
+    /// <remarks>
+    /// 1 -> 2 (issue #588): the event gained <see cref="TelemetryEvent.SkippedEventLines"/>.
+    /// The reference backend (vouchfx-telemetry-backend, Ingestion/AllowlistParser.cs)
+    /// parses schemaVersion 1 with <c>UnmappedMemberHandling.Disallow</c> and refuses
+    /// the WHOLE batch at the first unrecognised field, while any version above 1 is
+    /// parsed leniently by design — so sending the new field under version 1 would get
+    /// every drained batch containing this event refused by an older backend, whereas
+    /// version 2 lets that same backend accept the event and drop the unknown field.
+    /// </remarks>
+    public const int CurrentSchemaVersion = 2;
 
     /// <summary>
     /// The bucket key used for any step <c>kind</c> outside the frozen Core taxonomy.
@@ -201,6 +212,7 @@ public static class TelemetryEventBuilder
         }
 
         var scenarioCount = 0;
+        var skippedEventLines = 0;
         var stepVerdicts = new MutableVerdictCounts();
         var scenarioVerdicts = new MutableVerdictCounts();
         var stepFamilies = new Dictionary<string, int>(StringComparer.Ordinal);
@@ -218,9 +230,12 @@ public static class TelemetryEventBuilder
 
             // Parse the envelope to read the type discriminator (routes the switch below;
             // timestamps are read from the TYPED record per case, not from here — see
-            // #568 above).  An unparseable line (a future event type, a truncated line)
-            // is skipped — forward-compatible, exactly as the renderers tolerate unknown
-            // input.
+            // #568 above).  An UNPARSEABLE line — malformed JSON, a truncated line, or a
+            // FromLine refusal such as a null runId/type (#571) — is skipped and counted
+            // (issue #588).  A future/unknown event TYPE is a DIFFERENT case: the
+            // envelope parses fine (type is just a string discriminator) and falls into
+            // the switch's default arm below, forward-compatible and NOT counted —
+            // exactly as the renderers tolerate unknown input.
             EventEnvelope envelope;
             try
             {
@@ -228,6 +243,10 @@ public static class TelemetryEventBuilder
             }
             catch (Exception ex) when (ex is JsonException or InvalidOperationException)
             {
+                // Issue #588: an envelope that fails to parse (malformed JSON, or a
+                // FromLine refusal such as a null runId/type — #571) is one skipped
+                // line, counted once.
+                skippedEventLines++;
                 continue;
             }
 
@@ -239,8 +258,16 @@ public static class TelemetryEventBuilder
                     // this timing — mirroring EventHistoryReader's own rule for the
                     // Planner, so a line the typed guard refuses (e.g. a null
                     // scenarioId) no longer feeds this builder while the Planner
-                    // refuses it outright.
-                    AccumulateScenarioStartedTimestamp(line, ref earliestScenarioStarted);
+                    // refuses it outright.  Issue #588: a refused typed parse here (the
+                    // scenario-started's OWN typed read, distinct from the untyped
+                    // envelope parse above) is also one skipped line — never a timing
+                    // line that merely carries a default/absent `ts`, which parsed fine
+                    // and is simply unused.
+                    if (!AccumulateScenarioStartedTimestamp(line, ref earliestScenarioStarted))
+                    {
+                        skippedEventLines++;
+                    }
+
                     break;
 
                 case EventTypes.ScenarioCompleted:
@@ -248,10 +275,15 @@ public static class TelemetryEventBuilder
                     // "counts": null line now fails EventStreamJson.FromLine<ScenarioCompletedEvent>'s
                     // required-reference-member guard (Counts is `required`), so incrementing
                     // scenarioCount before the typed parse would count a scenario that
-                    // contributed no verdicts at all.
+                    // contributed no verdicts at all.  Issue #588: that SAME refusal is
+                    // one skipped line.
                     if (AccumulateScenarioCompleted(line, scenarioVerdicts, stepVerdicts))
                     {
                         scenarioCount++;
+                    }
+                    else
+                    {
+                        skippedEventLines++;
                     }
 
                     break;
@@ -260,17 +292,29 @@ public static class TelemetryEventBuilder
                     // The step `kind` (e.g. "http.rest") lives on step-started.  Tally it
                     // into the family + provider maps, BUCKETING any non-Core kind as
                     // "custom" so an author-chosen id is never written onto the wire.
-                    AccumulateStepKind(line, stepFamilies, stepProviders);
+                    // Issue #588: a refused typed parse here is one skipped line.
+                    if (!AccumulateStepKind(line, stepFamilies, stepProviders))
+                    {
+                        skippedEventLines++;
+                    }
+
                     break;
 
                 case EventTypes.StepCompleted:
                     // #568: same typed-guard + real-`ts` rule as ScenarioStarted above.
-                    AccumulateStepCompletedTimestamp(line, ref earliestStepCompleted);
+                    // Issue #588: same skip-counting rule too.
+                    if (!AccumulateStepCompletedTimestamp(line, ref earliestStepCompleted))
+                    {
+                        skippedEventLines++;
+                    }
+
                     break;
 
                 default:
                     // Unknown / unmeasured event type (step-attempt, environment-error,
-                    // reproducibility-envelope, …): ignored for telemetry.
+                    // reproducibility-envelope, …): ignored for telemetry — NOT counted
+                    // as skipped (issue #588): the envelope parsed fine, this consumer
+                    // simply does not measure it (§14 forward-compatibility).
                     break;
             }
         }
@@ -298,6 +342,7 @@ public static class TelemetryEventBuilder
             StepProviders = stepProviders,
             StartupMs = startupMs,
             TimeToFirstTestMs = timeToFirstTestMs,
+            SkippedEventLines = skippedEventLines,
         };
     }
 
@@ -355,7 +400,13 @@ public static class TelemetryEventBuilder
     /// duration — a silently WRONG zero rather than a crash, which is exactly why this
     /// guard exists instead of relying on the clamp to mask it.
     /// </remarks>
-    private static void AccumulateScenarioStartedTimestamp(
+    /// <returns>
+    /// <see langword="true"/> when the line parsed as a <see cref="ScenarioStartedEvent"/>
+    /// — regardless of whether its <c>ts</c> was usable — so the caller (issue #588) knows
+    /// this line was READ, even though a default/absent <c>ts</c> contributed nothing to
+    /// the timing; <see langword="false"/> only when the typed parse itself was refused.
+    /// </returns>
+    private static bool AccumulateScenarioStartedTimestamp(
         string line, ref DateTimeOffset? earliestScenarioStarted)
     {
         ScenarioStartedEvent scenario;
@@ -365,15 +416,16 @@ public static class TelemetryEventBuilder
         }
         catch (Exception ex) when (ex is JsonException or InvalidOperationException)
         {
-            return;
+            return false;
         }
 
         if (scenario.Timestamp == default)
         {
-            return;
+            return true;
         }
 
         earliestScenarioStarted = Min(earliestScenarioStarted, scenario.Timestamp);
+        return true;
     }
 
     /// <summary>
@@ -381,9 +433,9 @@ public static class TelemetryEventBuilder
     /// <paramref name="earliestStepCompleted"/> — but only when the line's typed
     /// record parses AND its timestamp is a real one (#568). See
     /// <see cref="AccumulateScenarioStartedTimestamp"/> for the identical rule and
-    /// its rationale.
+    /// its rationale, including the (issue #588) return-value contract.
     /// </summary>
-    private static void AccumulateStepCompletedTimestamp(
+    private static bool AccumulateStepCompletedTimestamp(
         string line, ref DateTimeOffset? earliestStepCompleted)
     {
         StepCompletedEvent step;
@@ -393,15 +445,16 @@ public static class TelemetryEventBuilder
         }
         catch (Exception ex) when (ex is JsonException or InvalidOperationException)
         {
-            return;
+            return false;
         }
 
         if (step.Timestamp == default)
         {
-            return;
+            return true;
         }
 
         earliestStepCompleted = Min(earliestStepCompleted, step.Timestamp);
+        return true;
     }
 
     /// <summary>
@@ -417,7 +470,12 @@ public static class TelemetryEventBuilder
     /// measures "how many custom-provider steps ran" without ever writing an
     /// author-chosen id into the event.
     /// </remarks>
-    private static void AccumulateStepKind(
+    /// <returns>
+    /// <see langword="true"/> when the line parsed as a <see cref="StepStartedEvent"/> —
+    /// including a blank/whitespace <c>kind</c>, which is READ, just not tallied — and
+    /// <see langword="false"/> only when the typed parse itself was refused (issue #588).
+    /// </returns>
+    private static bool AccumulateStepKind(
         string line,
         Dictionary<string, int> stepFamilies,
         Dictionary<string, int> stepProviders)
@@ -429,13 +487,13 @@ public static class TelemetryEventBuilder
         }
         catch (Exception ex) when (ex is JsonException or InvalidOperationException)
         {
-            return;
+            return false;
         }
 
         var kind = step.Kind;
         if (string.IsNullOrWhiteSpace(kind))
         {
-            return;
+            return true;
         }
 
         // Family = the portion before the FIRST '.' ("http.rest" -> "http"); a kind with
@@ -451,6 +509,7 @@ public static class TelemetryEventBuilder
 
         Increment(stepFamilies, familyKey);
         Increment(stepProviders, providerKey);
+        return true;
     }
 
     private static void Increment(Dictionary<string, int> map, string key)

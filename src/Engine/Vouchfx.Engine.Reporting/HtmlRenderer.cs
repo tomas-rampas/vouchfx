@@ -73,8 +73,10 @@ public sealed class HtmlRenderer
     /// self-contained HTML document.
     /// </summary>
     /// <param name="jsonLines">
-    /// The sequence of JSON Lines strings to render.  Blank, whitespace-only, and
-    /// malformed lines are skipped silently.  The sequence is enumerated once.
+    /// The sequence of JSON Lines strings to render.  Blank and whitespace-only lines
+    /// are skipped silently; a malformed line is skipped AND COUNTED (issue #588), and
+    /// the count is surfaced as a run-summary paragraph when it is above zero.  The
+    /// sequence is enumerated once.
     /// </param>
     /// <param name="output">
     /// The <see cref="TextWriter"/> that receives the rendered HTML.  Typical call
@@ -94,8 +96,10 @@ public sealed class HtmlRenderer
     /// expected-vs-observed diff under each failed step.
     /// </summary>
     /// <param name="jsonLines">
-    /// The sequence of JSON Lines strings to render.  Blank, whitespace-only, and
-    /// malformed lines are skipped silently.  The sequence is enumerated once.
+    /// The sequence of JSON Lines strings to render.  Blank and whitespace-only lines
+    /// are skipped silently; a malformed line is skipped AND COUNTED (issue #588), and
+    /// the count is surfaced as a run-summary paragraph when it is above zero.  The
+    /// sequence is enumerated once.
     /// </param>
     /// <param name="output">
     /// The <see cref="TextWriter"/> that receives the rendered HTML.
@@ -260,10 +264,6 @@ public sealed class HtmlRenderer
                             var scenario = model.GetOrAddScenario(envelope.RunId, scenarioId);
                             scenario.Verdict = GetStr(envelope, "verdict");
 
-                            // #372. Read tolerantly (§14): absent on an ordinary pass and on any
-                            // stream an older engine wrote, in which case nothing is rendered.
-                            scenario.Message = GetStr(envelope, "message");
-
                             // WHY: the frozen v1 wire contract never gave ScenarioCompletedEvent a
                             // durationMs field — only StepCompletedEvent carries one (docs/01 §14
                             // golden: event-stream-wire-contract.v1.txt). The tolerant wire read is
@@ -290,6 +290,20 @@ public sealed class HtmlRenderer
                                 ? Math.Max(0L, wireDurationMs.Value)
                                 : DeriveScenarioDurationMs(scenario.StartedAt, envelope.Timestamp);
                             scenario.Counts = ReadCounts(envelope);
+
+                            // #372 (issue #588, gatekeeper MINOR probe P4): read LAST, deliberately
+                            // AFTER DurationMs/Counts above. Read tolerantly (§14): absent on an
+                            // ordinary pass and on any stream an older engine wrote, in which case
+                            // nothing is rendered. Since GetStr no longer catches its own read
+                            // failure (MAJOR-1), an unreadable `message` (e.g. a lone surrogate)
+                            // throws and aborts this case — reading it LAST means only the optional
+                            // message itself is lost; the verdict, duration and counts already
+                            // committed above survive, and the line is still counted as skipped by
+                            // BuildModel's per-line catch. Reading it FIRST (the pre-#588 order)
+                            // would abort before Counts was ever stored, silently undercounting the
+                            // run-summary tally for a scenario whose ONLY defect is an unreadable
+                            // message.
+                            scenario.Message = GetStr(envelope, "message");
                             break;
                         }
 
@@ -328,6 +342,19 @@ public sealed class HtmlRenderer
                 // This ALSO tolerates a line whose EventStreamJson.FromLine itself throws
                 // InvalidOperationException — the line was the JSON literal null, or a null
                 // runId/type (#571) — which is skipped here just like malformed JSON.
+                // Issue #588: this IS the tolerance catch the skip count measures.  ALL 16
+                // GetStr call sites above are inside THIS try (BuildModel's per-line loop),
+                // and GetStr itself does not catch — an unreadable string value (e.g. a
+                // lone surrogate) in ANY field BuildModel reads propagates here and is
+                // counted, exactly like the terminal/JUnit renderers' own GetStr.  This is
+                // DIFFERENT from GetStrFromObject: its 8 call sites all run at EMIT time,
+                // inside WriteDocument, OUTSIDE this per-line loop (the model stores the
+                // whole step-completed / envelope and defers those reads to write time), so
+                // GetStrFromObject keeps its own internal catch — a genuinely unreadable
+                // field there degrades to a missing value in an otherwise-complete document
+                // rather than aborting mid-write, and is NOT counted here because the LINE
+                // itself was already read successfully by this per-line loop.
+                model.SkippedEventLines++;
                 continue;
             }
         }
@@ -485,8 +512,38 @@ public sealed class HtmlRenderer
         output.WriteLine(FormatCountRow("verdict-inconclusive", "INCONCLUSIVE", inconclusive));
         output.WriteLine("</tbody>");
         output.WriteLine("</table>");
+
+        // Issue #588: surfaced ONLY when at least one event-stream line could not be
+        // read, directly after the summary table — so a clean stream's report is
+        // byte-identical to before.  The count is the only dynamic content, and it is
+        // an int — it carries no content of its own, only how many bad lines the
+        // stream contained; a hostile stream controls the NUMBER (it sets how many
+        // lines it poisons) but not any string that reaches the document.  Routed
+        // through InvariantCulture for consistency with the rest of this renderer.
+        if (model.SkippedEventLines > 0)
+        {
+            output.WriteLine(FormatSkippedEventLinesParagraph(model.SkippedEventLines));
+        }
+
         output.WriteLine("</section>");
     }
+
+    /// <summary>
+    /// Formats the run-summary paragraph that reports how many event-stream lines
+    /// this renderer could not read (issue #588), singular/plural, InvariantCulture.
+    /// </summary>
+    /// <remarks>
+    /// A skipped line may have been PARTLY rendered before the exception that skipped
+    /// it fired — the note therefore says the REPORT may be incomplete, rather than
+    /// implying the whole line was cleanly omitted (see
+    /// <c>TerminalRenderer.FormatSkippedEventLinesNote</c> for the measured example).
+    /// </remarks>
+    private static string FormatSkippedEventLinesParagraph(int skippedEventLines) => skippedEventLines == 1
+        ? "<p class=\"skipped-lines\">1 event-stream line could not be read, so this report may be incomplete.</p>"
+        : string.Format(
+            CultureInfo.InvariantCulture,
+            "<p class=\"skipped-lines\">{0} event-stream lines could not be read, so this report may be incomplete.</p>",
+            skippedEventLines);
 
     // The verdict label is a fixed, internal token (PASS/FAIL/ENV_ERROR/INCONCLUSIVE) and
     // the count is an int, so neither is attacker-controlled; both are nonetheless routed
@@ -1084,26 +1141,33 @@ public sealed class HtmlRenderer
     // terminal renderer so both renderers read the flat wire shape identically.
     // -------------------------------------------------------------------------
 
+    /// <summary>
+    /// Returns the string value of <paramref name="key"/> from
+    /// <see cref="EventEnvelope.Extra"/>, or <see langword="null"/> when the key is
+    /// absent or not a JSON string.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately does NOT catch a read failure itself (issue #588, MAJOR-1
+    /// correction): a string VALUE carrying a lone / unpaired UTF-16 surrogate parses
+    /// fine but throws <see cref="InvalidOperationException"/> at <c>GetString()</c>.
+    /// Every call site of this method sits inside <c>BuildModel</c>'s per-line
+    /// try/catch, so letting that exception propagate means the WHOLE line is skipped
+    /// and counted there — exactly like <c>TerminalRenderer</c>/<c>JunitXmlRenderer</c>'s
+    /// own <c>GetStr</c>. An earlier version of this method caught the exception here
+    /// and returned <see langword="null"/> instead, which silently degraded the
+    /// offending field to a missing value (e.g. a poisoned <c>stepId</c> made a step
+    /// vanish from its scenario with no line rejected and no count raised) — the exact
+    /// silent drop issue #588 exists to end. This is DIFFERENT from
+    /// <see cref="GetStrFromObject"/>, whose call sites run at EMIT time outside any
+    /// per-line guard and therefore keep their own catch.
+    /// </remarks>
     private static string? GetStr(EventEnvelope envelope, string key)
     {
         if (envelope.Extra is not null
             && envelope.Extra.TryGetValue(key, out var element)
             && element.ValueKind == JsonValueKind.String)
         {
-            // Defensive read — uniform with GetStrFromObject.  A string VALUE carrying a
-            // lone / unpaired UTF-16 surrogate parses fine but throws
-            // InvalidOperationException at GetString().  BuildModel already calls this
-            // INSIDE its per-line guard (so such a line is skipped there), but reading
-            // defensively here too keeps both string-extraction helpers identical and
-            // safe should any future EMIT-time caller route through this overload.
-            try
-            {
-                return element.GetString();
-            }
-            catch (Exception ex) when (ex is InvalidOperationException or JsonException)
-            {
-                return null;
-            }
+            return element.GetString();
         }
 
         return null;
@@ -1175,45 +1239,86 @@ public sealed class HtmlRenderer
         return Array.Empty<JsonElement>();
     }
 
+    /// <summary>
+    /// Reads a string sub-property from a <see cref="JsonElement"/> of kind
+    /// <see cref="JsonValueKind.Object"/>.  Returns <see langword="null"/> if the
+    /// property is absent or not a JSON string, OR if reading it throws (see remarks).
+    /// </summary>
+    /// <remarks>
+    /// Defensive read — kept DELIBERATELY, unlike GetStr above (issue #588, MAJOR-1):
+    /// all 8 call sites of THIS method (provenance name/path/placeholder/originStepId,
+    /// reproducibility source/referenceHash/reference/contentHash) are read at EMIT
+    /// time inside WriteDocument — OUTSIDE BuildModel's per-line try/catch — because
+    /// the renderer stores the whole step-completed / envelope and defers their reads
+    /// to write time; by the time this runs, the LINE itself already parsed and was
+    /// counted successfully (or not at all) by BuildModel.
+    /// <para>
+    /// TWO distinct failure shapes reach here, both from a lone / unpaired UTF-16
+    /// surrogate (the JSON escape <c>"\uD800"</c> with no low-surrogate partner), and
+    /// BOTH are guarded by the SAME try — issue #588 security MINOR widened this
+    /// guard's scope after the gatekeeper measured the second one: (1) a poisoned
+    /// property VALUE parses fine but throws <see cref="InvalidOperationException"/> at
+    /// <c>GetString()</c>; (2) a poisoned property NAME elsewhere in the SAME object
+    /// (not necessarily <paramref name="propertyName"/> itself) makes
+    /// <c>obj.TryGetProperty</c> throw the SAME exception while scanning — MEASURED to
+    /// fire even when <paramref name="propertyName"/> is present and clean, because the
+    /// scan can reach the poisoned key before it can report the match. Either failure,
+    /// left unguarded, would abort WriteDocument mid-stream and leave a TRUNCATED HTML
+    /// file (the writer streams straight to the output) — there is no per-line catch
+    /// left to run at this point, so this genuinely needs its own. Treat either failure
+    /// EXACTLY like a missing field — return null — so the single affected provenance
+    /// row / reproducibility entry is OMITTED while the rest of the document renders to
+    /// completion (all closing tags present); this is NOT counted as a skipped LINE,
+    /// because the line itself was read. Per §17 an omitted-because-unreadable field
+    /// leaks nothing: it simply disappears. JsonException is caught for safety though
+    /// no read here parses fresh JSON.
+    /// </para>
+    /// </remarks>
     private static string? GetStrFromObject(JsonElement obj, string propertyName)
     {
-        if (obj.TryGetProperty(propertyName, out var prop)
-            && prop.ValueKind == JsonValueKind.String)
+        try
         {
-            // Defensive read.  Unlike BuildModel's guarded reads, the nested-object
-            // string fields surfaced here (provenance name/path/placeholder/originStepId,
-            // reproducibility source/referenceHash/reference/contentHash) are read at EMIT
-            // time inside WriteDocument — OUTSIDE the per-line try/catch — because the
-            // renderer stores the whole step-completed / envelope and defers their reads to
-            // write time.  A string VALUE carrying a lone / unpaired UTF-16 surrogate (the
-            // JSON escape "\uD800" with no low-surrogate partner) PARSES fine but throws
-            // InvalidOperationException ("Cannot read incomplete UTF-16…") at GetString().
-            // If that escaped out here it would abort WriteDocument mid-stream and leave a
-            // TRUNCATED HTML file (the writer streams straight to the output).  Treat an
-            // unreadable value EXACTLY like a missing field — return null — so the single
-            // affected provenance row / reproducibility entry is OMITTED while the rest of
-            // the document renders to completion (all closing tags present).  Per §17 an
-            // omitted-because-unreadable field leaks nothing: it simply disappears.
-            // JsonException is caught for safety though no read here parses fresh JSON.
-            try
+            if (obj.TryGetProperty(propertyName, out var prop)
+                && prop.ValueKind == JsonValueKind.String)
             {
                 return prop.GetString();
             }
-            catch (Exception ex) when (ex is InvalidOperationException or JsonException)
-            {
-                return null;
-            }
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or JsonException)
+        {
+            return null;
         }
 
         return null;
     }
 
+    /// <summary>
+    /// Reads a boolean sub-property from a <see cref="JsonElement"/> of kind
+    /// <see cref="JsonValueKind.Object"/>.  Returns <see langword="false"/> if the
+    /// property is absent or not a JSON boolean, OR if reading it throws.
+    /// </summary>
+    /// <remarks>
+    /// Same guard, same reason, as <see cref="GetStrFromObject"/> (issue #588 security
+    /// MINOR): <c>obj.TryGetProperty</c> can throw <see cref="InvalidOperationException"/>
+    /// while scanning past an UNRELATED poisoned property NAME elsewhere in the same
+    /// object, even when <paramref name="propertyName"/> itself is absent or clean —
+    /// this call runs at EMIT time (WriteProvenanceThread), outside any per-line guard,
+    /// so an uncaught throw here would truncate the HTML file mid-write. Treated exactly
+    /// like an absent/non-boolean property: <see langword="false"/>.
+    /// </remarks>
     private static bool GetBoolFromObject(JsonElement obj, string propertyName)
     {
-        if (obj.TryGetProperty(propertyName, out var prop)
-            && prop.ValueKind is JsonValueKind.True or JsonValueKind.False)
+        try
         {
-            return prop.GetBoolean();
+            if (obj.TryGetProperty(propertyName, out var prop)
+                && prop.ValueKind is JsonValueKind.True or JsonValueKind.False)
+            {
+                return prop.GetBoolean();
+            }
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or JsonException)
+        {
+            return false;
         }
 
         return false;
@@ -1242,6 +1347,20 @@ public sealed class HtmlRenderer
         public List<EnvironmentErrorRow> EnvironmentErrors { get; } = new();
 
         public List<EnvelopeRow> Envelopes { get; } = new();
+
+        /// <summary>
+        /// The number of event-stream lines <see cref="BuildModel"/>'s per-line
+        /// tolerance catch skipped (issue #588) — a malformed-JSON parse failure, a
+        /// <c>FromLine</c> refusal (e.g. a null runId/type, #571), or an unreadable
+        /// string value read by <c>GetStr</c> during BuildModel's own extraction (e.g. a
+        /// lone surrogate in ANY field BuildModel reads — GetStr does not catch this
+        /// itself, so it propagates here).  Does NOT count an unreadable value read by
+        /// <c>GetStrFromObject</c> at EMIT time (WriteDocument): that field is omitted
+        /// from an otherwise-complete document instead, because the LINE it came from
+        /// was already read successfully here.  Surfaced by <see cref="WriteRunSummary"/>
+        /// only when greater than zero.
+        /// </summary>
+        public int SkippedEventLines { get; set; }
 
         public ScenarioModel GetOrAddScenario(string runId, string scenarioId)
         {

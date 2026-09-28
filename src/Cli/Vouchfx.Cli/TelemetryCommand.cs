@@ -59,9 +59,10 @@ internal static class TelemetryCommand
             var state = store.Enable();
             Console.Out.WriteLine(
                 "Telemetry ENABLED. Anonymous, aggregate usage data (versions, verdict counts, "
-                + "which built-in step kinds ran, startup timings) will be collected on each run. "
-                + "Your test contents, captured values, secrets, URLs, image names, scenario "
-                + "names and step ids are NEVER collected.");
+                + "which built-in step kinds ran, startup timings, and a count of unreadable "
+                + "event-stream lines) will be collected on each run. Your test contents, "
+                + "captured values, secrets, URLs, image names, scenario names and step ids are "
+                + "NEVER collected.");
             Console.Out.WriteLine(
                 $"Install id: {ShortInstallId(state.InstallId)} (anonymous; identifies this "
                 + "install only).");

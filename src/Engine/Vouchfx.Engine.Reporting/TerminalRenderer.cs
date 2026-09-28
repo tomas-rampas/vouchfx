@@ -79,9 +79,10 @@ public sealed class TerminalRenderer
     /// Renders the supplied JSON Lines event stream to <paramref name="output"/>.
     /// </summary>
     /// <param name="jsonLines">
-    /// The sequence of JSON Lines strings to render.  Blank, whitespace-only, and
-    /// malformed lines are skipped silently.  The sequence is enumerated exactly
-    /// once; it is safe to pass a streaming source.
+    /// The sequence of JSON Lines strings to render.  Blank and whitespace-only lines
+    /// are skipped silently; a malformed line is skipped AND COUNTED (issue #588), and
+    /// the count is surfaced as a trailing note when it is above zero.  The sequence is
+    /// enumerated exactly once; it is safe to pass a streaming source.
     /// </param>
     /// <param name="output">
     /// The <see cref="TextWriter"/> that receives the rendered text.  Typical
@@ -101,9 +102,10 @@ public sealed class TerminalRenderer
     /// failed step (S07-G-01).
     /// </summary>
     /// <param name="jsonLines">
-    /// The sequence of JSON Lines strings to render.  Blank, whitespace-only, and
-    /// malformed lines are skipped silently.  The sequence is enumerated exactly
-    /// once; it is safe to pass a streaming source.
+    /// The sequence of JSON Lines strings to render.  Blank and whitespace-only lines
+    /// are skipped silently; a malformed line is skipped AND COUNTED (issue #588), and
+    /// the count is surfaced as a trailing note when it is above zero.  The sequence is
+    /// enumerated exactly once; it is safe to pass a streaming source.
     /// </param>
     /// <param name="output">
     /// The <see cref="TextWriter"/> that receives the rendered text.
@@ -115,7 +117,11 @@ public sealed class TerminalRenderer
     /// is applicable.  Invoked only for a <c>step-completed</c> event whose verdict is
     /// <see cref="Verdict.Fail"/> and which carries an <c>observation</c>.  When
     /// <see langword="null"/> the renderer behaves exactly like the two-argument
-    /// overload (no diff is drawn).
+    /// overload (no diff is drawn).  The call happens INSIDE this renderer's per-line
+    /// tolerance guard, so a <see cref="JsonException"/> or
+    /// <see cref="InvalidOperationException"/> the delegate throws is treated exactly
+    /// like an unreadable event-stream line (issue #588): the line is skipped and
+    /// counted, rather than aborting the whole render.
     /// </param>
     /// <remarks>
     /// <para>
@@ -154,8 +160,10 @@ public sealed class TerminalRenderer
     /// each step-verdict line (S10-G-03a).
     /// </summary>
     /// <param name="jsonLines">
-    /// The sequence of JSON Lines strings to render.  Blank, whitespace-only, and malformed
-    /// lines are skipped silently.  The sequence is enumerated exactly once.
+    /// The sequence of JSON Lines strings to render.  Blank and whitespace-only lines
+    /// are skipped silently; a malformed line is skipped AND COUNTED (issue #588), and
+    /// the count is surfaced as a trailing note when it is above zero.  The sequence is
+    /// enumerated exactly once.
     /// </param>
     /// <param name="output">The <see cref="TextWriter"/> that receives the rendered text.</param>
     /// <param name="decorate">
@@ -234,6 +242,15 @@ public sealed class TerminalRenderer
         // arises from a hand-crafted or adversarial stream.
         var scenarioStarts = new Dictionary<(string RunId, string ScenarioId), DateTimeOffset>();
 
+        // Issue #588: counts lines this renderer's OWN per-line tolerance catch below
+        // fired for — a malformed-JSON parse failure, or an unreadable string value
+        // read during envelope extraction (e.g. a lone-surrogate escape).  Blank lines
+        // and unknown-but-parseable event types are never counted (they are read
+        // successfully, just not rendered).  Surfaced ONLY when > 0, as a single
+        // trailing note after the whole stream, so every stream the engine writes
+        // today — which never contains an unreadable line — renders byte-identically.
+        var skippedEventLines = 0;
+
         foreach (var line in jsonLines)
         {
             // Skip blank / whitespace-only lines before attempting deserialisation.
@@ -305,11 +322,39 @@ public sealed class TerminalRenderer
                 // line was the JSON literal null, or a null runId/type (#571) — which is
                 // skipped here just like malformed JSON.  A diagnostic comment is intentionally
                 // omitted here to keep the stub output clean; a future production renderer may
-                // write one.
+                // write one.  Issue #588: this IS the tolerance catch the skip count measures.
+                skippedEventLines++;
                 continue;
             }
         }
+
+        // Issue #588: surfaced ONLY when at least one line was unreadable, as the LAST
+        // line of the render — so a clean stream's output is unchanged byte-for-byte.
+        if (skippedEventLines > 0)
+        {
+            output.WriteLine(FormatSkippedEventLinesNote(skippedEventLines));
+        }
     }
+
+    /// <summary>
+    /// Formats the trailing note that reports how many event-stream lines this
+    /// renderer could not read (issue #588), singular/plural, ASCII-only,
+    /// InvariantCulture.
+    /// </summary>
+    /// <remarks>
+    /// A skipped line may have been PARTLY rendered before the exception that skipped
+    /// it fired (measured: a step-completed line poisoned in a field read AFTER
+    /// <c>stepId</c>/<c>verdict</c>/<c>durationMs</c> still prints
+    /// <c>step 's1': PASS (5 ms)</c> and a partial <c>provenance:</c> section before the
+    /// per-line catch fires) — so the note says the output ABOVE it may be incomplete,
+    /// rather than implying the whole line was silently omitted.
+    /// </remarks>
+    private static string FormatSkippedEventLinesNote(int skippedEventLines) => skippedEventLines == 1
+        ? "1 event-stream line could not be read, so the output above may be incomplete."
+        : string.Format(
+            CultureInfo.InvariantCulture,
+            "{0} event-stream lines could not be read, so the output above may be incomplete.",
+            skippedEventLines);
 
     // -------------------------------------------------------------------------
     // Private rendering logic

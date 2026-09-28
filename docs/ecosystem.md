@@ -58,7 +58,7 @@ Real microservices in C#, Python, Node.js and Java with complete end-to-end test
 
 **Opt-in, privacy-first usage analytics — optional and self-hostable.**
 
-The telemetry system is privacy-first and OFF by default. When enabled, it collects anonymous aggregate counts (tool versions, verdict tallies, which Core step kinds ran, startup timings) — never your test contents, secrets, URLs, or data.
+The telemetry system is privacy-first and OFF by default. When enabled, it collects anonymous aggregate counts (tool versions, verdict tallies, which Core step kinds ran, startup timings, a count of unreadable event-stream lines) — never your test contents, secrets, URLs, or data.
 
 A reference backend implementing the frozen ingest contract is open-source and available for self-hosting.
 

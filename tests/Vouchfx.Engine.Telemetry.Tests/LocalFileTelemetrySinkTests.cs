@@ -88,5 +88,6 @@ public sealed class LocalFileTelemetrySinkTests
         StepProviders = new Dictionary<string, int>(),
         StartupMs = 0,
         TimeToFirstTestMs = 0,
+        SkippedEventLines = 0,
     };
 }

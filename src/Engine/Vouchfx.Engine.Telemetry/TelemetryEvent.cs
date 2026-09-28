@@ -156,6 +156,17 @@ public sealed record TelemetryEvent
     /// </summary>
     [JsonPropertyName("timeToFirstTestMs")]
     public required long TimeToFirstTestMs { get; init; }
+
+    /// <summary>
+    /// The number of event-stream lines <see cref="TelemetryEventBuilder"/> could not
+    /// read while building this event — an envelope that failed to parse, or a typed
+    /// read (scenario-started/scenario-completed/step-started/step-completed) the
+    /// builder's own tolerance guard refused.  Counted once per line (issue #588).  A
+    /// non-identifying count: it says HOW MANY lines were unreadable, never which line
+    /// or what it contained.
+    /// </summary>
+    [JsonPropertyName("skippedEventLines")]
+    public required int SkippedEventLines { get; init; }
 }
 
 /// <summary>

@@ -261,8 +261,9 @@ Intent is structured only (step types, ids, optional services/dependencies) — 
 
 **Off by default — nothing is collected or sent unless you explicitly opt in** via
 `vouchfx telemetry enable`. When enabled, it covers anonymous aggregates only: tool/engine/.NET
-versions, verdict counts, which built-in Core step kinds ran, and startup timings. Test contents,
-captured values, secrets, URLs, image names, scenario names and step IDs are **never** collected, and
+versions, verdict counts, which built-in Core step kinds ran, startup timings, and a count of
+unreadable event-stream lines. Test contents, captured values, secrets, URLs, image names,
+scenario names and step IDs are **never** collected, and
 custom-provider step kinds are bucketed under a constant `"custom"` key. Permanent CI gates prevent
 sensitive fields from being added to the allowlist. Suppress per run with `--no-telemetry` or
 `VOUCHFX_NO_TELEMETRY=1`; see [telemetry](https://vouchfx.io/telemetry/) for the exact allowlist and

@@ -8,9 +8,9 @@
 //     The CLI (--junit) merely selects this renderer and feeds it the buffered stream;
 //     the renderer itself neither reads nor mutates the runners or the CLI.
 //   • Same TOLERANCE: blank / whitespace-only lines are skipped, malformed JSON is
-//     caught per-line, unknown event types and unknown fields are ignored (they ride in
-//     EventEnvelope.Extra and are never surfaced) — the §14 forward-compatibility
-//     guarantee.
+//     caught AND COUNTED per-line (issue #588), unknown event types and unknown fields
+//     are ignored (they ride in EventEnvelope.Extra and are never surfaced) — the §14
+//     forward-compatibility guarantee.
 //   • Same (runId, scenarioId) keying so an aggregated multi-run stream does not
 //     cross-resolve a shared scenario id.
 //
@@ -33,6 +33,11 @@
 //   • The <testsuite>/<testsuites> aggregate attributes (tests, failures, errors,
 //     skipped) are computed CONSISTENTLY with that mapping (Fail→failures,
 //     EnvError→errors, Inconclusive→skipped).
+//   • Issue #588: when this renderer's per-line tolerance catch skipped at least one
+//     event-stream line, <testsuite> carries an OPTIONAL suite-level
+//     <properties><property name="vouchfx.skippedEventLines" value="N"/></properties>
+//     block as its FIRST child — absent entirely when nothing was skipped, so a clean
+//     stream's document is byte-identical to before this feature existed.
 //
 // SECRET SAFETY (the load-bearing invariant, §17) — identical discipline to the
 // terminal / HTML renderers:
@@ -92,8 +97,10 @@ public sealed class JunitXmlRenderer
     /// JUnit XML document.
     /// </summary>
     /// <param name="jsonLines">
-    /// The sequence of JSON Lines strings to render.  Blank, whitespace-only, and
-    /// malformed lines are skipped silently.  The sequence is enumerated once.
+    /// The sequence of JSON Lines strings to render.  Blank and whitespace-only lines
+    /// are skipped silently; a malformed line is skipped AND COUNTED (issue #588), and
+    /// the count is surfaced as a suite-level <c>vouchfx.skippedEventLines</c> property
+    /// when it is above zero.  The sequence is enumerated once.
     /// </param>
     /// <param name="output">
     /// The <see cref="TextWriter"/> that receives the rendered XML.  Typical call sites
@@ -224,6 +231,8 @@ public sealed class JunitXmlRenderer
                 // This ALSO tolerates a line whose EventStreamJson.FromLine itself throws
                 // InvalidOperationException — the line was the JSON literal null, or a null
                 // runId/type (#571) — which is skipped here just like malformed JSON.
+                // Issue #588: this IS the tolerance catch the skip count measures.
+                model.SkippedEventLines++;
                 continue;
             }
         }
@@ -296,6 +305,21 @@ public sealed class JunitXmlRenderer
             errors,
             skipped,
             FormatSeconds(totalMs)));
+
+        // Issue #588: surfaced ONLY when at least one event-stream line could not be
+        // read, as a suite-level <properties> block — the FIRST child of <testsuite>
+        // (the JUnit schema orders properties before testcase) — so a clean stream's
+        // document is byte-identical to before.  Mirrors the per-testcase
+        // vouchfx.verdict property's exact markup style.
+        if (model.SkippedEventLines > 0)
+        {
+            output.WriteLine("    <properties>");
+            output.WriteLine(string.Format(
+                CultureInfo.InvariantCulture,
+                "      <property name=\"vouchfx.skippedEventLines\" value=\"{0}\"/>",
+                model.SkippedEventLines));
+            output.WriteLine("    </properties>");
+        }
 
         foreach (var scenario in model.Scenarios)
         {
@@ -636,6 +660,13 @@ public sealed class JunitXmlRenderer
         private readonly Dictionary<(string RunId, string ScenarioId), ScenarioModel> _scenarioIndex = new();
 
         public List<ScenarioModel> Scenarios { get; } = new();
+
+        /// <summary>
+        /// The number of event-stream lines <see cref="BuildModel"/>'s per-line
+        /// tolerance catch skipped (issue #588).  Surfaced by <see cref="WriteDocument"/>
+        /// as a suite-level <c>&lt;properties&gt;</c> block only when greater than zero.
+        /// </summary>
+        public int SkippedEventLines { get; set; }
 
         public ScenarioModel GetOrAddScenario(string runId, string scenarioId)
         {

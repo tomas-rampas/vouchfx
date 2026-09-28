@@ -22,6 +22,8 @@ public sealed class TerminalRendererTests
 
     private static string Line<T>(T payload) => EventStreamJson.ToLine(payload);
 
+    private static readonly string[] NewlineSeparators = { "\r\n", "\n" };
+
     // -------------------------------------------------------------------------
     // Test 1: nominal rendering of a complete scenario recording.
     // -------------------------------------------------------------------------
@@ -161,6 +163,16 @@ public sealed class TerminalRendererTests
         // The valid line after the malformed one must still render.
         Assert.Contains("step-after-bad-line", output);
         Assert.Contains("PASS", output);
+
+        // Issue #588: exactly one line was unreadable, so the trailing note uses the
+        // SINGULAR wording and is the LAST line of the render.
+        var trailingLines = output
+            .Split(NewlineSeparators, StringSplitOptions.None)
+            .Where(l => l.Length > 0)
+            .ToArray();
+        Assert.Equal(
+            "1 event-stream line could not be read, so the output above may be incomplete.",
+            trailingLines[^1]);
     }
 
     // -------------------------------------------------------------------------

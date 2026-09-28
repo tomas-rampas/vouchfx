@@ -40,6 +40,8 @@ public sealed class RendererSurrogateToleranceTests
 {
     private static string Line<T>(T payload) => EventStreamJson.ToLine(payload);
 
+    private static readonly string[] NewlineSeparators = { "\r\n", "\n" };
+
     // A hand-built event line whose scenarioId string VALUE carries a LONE high surrogate:
     // the C# literal "\\uD800" places the six characters  \  u  D  8  0  0  into the JSON
     // TEXT, so the buffer line literally contains \uD800 — a string escape with no matching
@@ -123,6 +125,15 @@ public sealed class RendererSurrogateToleranceTests
         // Both valid scenarios survive — the bad line was skipped, not fatal to the stream.
         Assert.Contains("before-bad", output, StringComparison.Ordinal);
         Assert.Contains("after-bad", output, StringComparison.Ordinal);
+
+        // Issue #588: the one poison line is surfaced as a singular trailing note.
+        var trailingLines = output
+            .Split(NewlineSeparators, StringSplitOptions.None)
+            .Where(l => l.Length > 0)
+            .ToArray();
+        Assert.Equal(
+            "1 event-stream line could not be read, so the output above may be incomplete.",
+            trailingLines[^1]);
     }
 
     [Fact]
@@ -138,6 +149,18 @@ public sealed class RendererSurrogateToleranceTests
         Assert.Contains("<!DOCTYPE html>", output, StringComparison.Ordinal);
         Assert.Contains("before-bad", output, StringComparison.Ordinal);
         Assert.Contains("after-bad", output, StringComparison.Ordinal);
+
+        // Issue #588 (MAJOR-1 correction): HtmlRenderer.GetStr no longer catches its
+        // own read failure — all 16 of its call sites are inside BuildModel's per-line
+        // try, so a lone-surrogate scenarioId now propagates to and IS counted by that
+        // per-line catch, exactly like the terminal/JUnit renderers. This line is
+        // therefore surfaced as a singular note, same as its siblings — the earlier
+        // "HtmlRenderer silently degrades this to (unknown) with no count" behaviour
+        // was the exact silent drop #588 exists to end, not a legitimate divergence.
+        Assert.Contains(
+            "<p class=\"skipped-lines\">1 event-stream line could not be read, so this report may be incomplete.</p>",
+            output,
+            StringComparison.Ordinal);
     }
 
     [Fact]
@@ -160,6 +183,13 @@ public sealed class RendererSurrogateToleranceTests
             .ToList();
         Assert.Contains("before-bad", names);
         Assert.Contains("after-bad", names);
+
+        // Issue #588: the one poison line is surfaced as a suite-level property.
+        var testsuite = doc.Root!.Element("testsuite")!;
+        var skippedProperty = testsuite.Element("properties")!
+            .Elements("property")
+            .Single(p => (string?)p.Attribute("name") == "vouchfx.skippedEventLines");
+        Assert.Equal("1", (string?)skippedProperty.Attribute("value"));
     }
 
     // -------------------------------------------------------------------------

@@ -862,5 +862,212 @@ public sealed class HtmlRendererTests
         Assert.Contains("after-flow", output, StringComparison.Ordinal);
         Assert.Contains("after-step", output, StringComparison.Ordinal);
         Assert.DoesNotContain("poisoned-flow", output, StringComparison.Ordinal);
+
+        // Issue #588: both null-runId lines (scenario-started + scenario-completed) are
+        // individually unreadable (#571's typed guard refuses each), so the run-summary
+        // paragraph surfaces PLURAL wording with count 2.
+        Assert.Contains(
+            "<p class=\"skipped-lines\">2 event-stream lines could not be read, so this report may be incomplete.</p>",
+            output,
+            StringComparison.Ordinal);
+    }
+
+    // -------------------------------------------------------------------------
+    // Issue #588: the run-summary skipped-event-lines paragraph.
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void Render_OneUnreadableLine_SurfacesSingularSkippedLinesParagraph()
+    {
+        var lines = new[]
+        {
+            "{ this is not json",
+            Line(new ScenarioStartedEvent { RunId = "run-z", ScenarioId = "flow-z" }),
+            Line(new ScenarioCompletedEvent
+            {
+                RunId = "run-z",
+                ScenarioId = "flow-z",
+                Verdict = Verdict.Pass,
+                Counts = new VerdictCounts { Pass = 1 },
+            }),
+        };
+
+        using var writer = new StringWriter();
+        HtmlRenderer.Render(lines, writer);
+
+        var output = writer.ToString();
+        Assert.Contains(
+            "<p class=\"skipped-lines\">1 event-stream line could not be read, so this report may be incomplete.</p>",
+            output,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Render_NoUnreadableLines_OmitsSkippedLinesParagraph()
+    {
+        var lines = new[]
+        {
+            string.Empty,
+            "   ",
+            """{"v":1,"schemaVersion":"v1","type":"future-event-2099","ts":"2025-01-01T00:00:00Z","runId":"run-x","somethingNew":{"x":1}}""",
+            Line(new ScenarioStartedEvent { RunId = "run-z", ScenarioId = "flow-z" }),
+            Line(new ScenarioCompletedEvent
+            {
+                RunId = "run-z",
+                ScenarioId = "flow-z",
+                Verdict = Verdict.Pass,
+                Counts = new VerdictCounts { Pass = 1 },
+            }),
+        };
+
+        using var writer = new StringWriter();
+        HtmlRenderer.Render(lines, writer);
+
+        var output = writer.ToString();
+
+        // Byte-identical claim: a stream with no unreadable line must render EXACTLY the
+        // same document as before this feature existed — no stylesheet rule, no
+        // paragraph, no trace of the string "skipped-lines" anywhere in the document at
+        // all when the count is 0.  (WriteStyle emits no ".skipped-lines" CSS rule
+        // unconditionally — only the paragraph itself carries the "skipped-lines" class,
+        // and only when SkippedEventLines > 0.)
+        Assert.DoesNotContain("skipped-lines", output, StringComparison.Ordinal);
+        Assert.DoesNotContain("could not be read", output, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Render_NoUnreadableLines_ProducesByteIdenticalDocument_ToTheSameStreamWithoutTheNoisyLines()
+    {
+        // Issue #588 (post-review fix): WriteStyle must NEVER emit anything related to
+        // skipped-event-lines unconditionally — a normal report (nothing unreadable) has
+        // to be byte-identical to what this renderer produced before the feature existed.
+        // Proven here by comparing against a buffer with the blank lines and the
+        // unknown-but-valid event type simply removed: since those lines contribute
+        // nothing observable either way, the two renders must match byte-for-byte.
+        var cleanLines = new[]
+        {
+            Line(new ScenarioStartedEvent { RunId = "run-z", ScenarioId = "flow-z" }),
+            Line(new ScenarioCompletedEvent
+            {
+                RunId = "run-z",
+                ScenarioId = "flow-z",
+                Verdict = Verdict.Pass,
+                Counts = new VerdictCounts { Pass = 1 },
+            }),
+        };
+
+        var noisyLines = new[]
+        {
+            string.Empty,
+            "   ",
+            """{"v":1,"schemaVersion":"v1","type":"future-event-2099","ts":"2025-01-01T00:00:00Z","runId":"run-x","somethingNew":{"x":1}}""",
+            cleanLines[0],
+            cleanLines[1],
+        };
+
+        using var cleanWriter = new StringWriter();
+        using var noisyWriter = new StringWriter();
+        HtmlRenderer.Render(cleanLines, cleanWriter);
+        HtmlRenderer.Render(noisyLines, noisyWriter);
+
+        var cleanOutput = cleanWriter.ToString();
+        Assert.Equal(cleanOutput, noisyWriter.ToString());
+        Assert.DoesNotContain("skipped-lines", cleanOutput, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Render_ScenarioCompletedWithUnreadableMessage_StillStoresCountsAndDuration_BeforeAbortingTheLine()
+    {
+        // Issue #588 (gatekeeper MINOR, probe P4): BuildModel's ScenarioCompleted case
+        // used to read scenario.Message BEFORE scenario.Counts / scenario.DurationMs.
+        // Now that GetStr throws on an unreadable value (MAJOR-1), an unreadable
+        // `message` aborted the line before the counts were ever stored — the
+        // run-summary FAIL row undercounted to 0 and the duration was lost, even though
+        // the line IS still (correctly) counted as skipped. Message is read LAST so
+        // only the optional message itself is lost when it is unreadable.
+        const string PoisonedMessageLine =
+            "{\"v\":1,\"schemaVersion\":\"v1\",\"type\":\"scenario-completed\","
+            + "\"ts\":\"2026-01-01T00:00:05Z\",\"runId\":\"run-bad\",\"scenarioId\":\"bad-message\","
+            + "\"verdict\":\"FAIL\",\"message\":\"boom\\uD800\","
+            + "\"counts\":{\"pass\":0,\"fail\":1,\"envError\":0,\"inconclusive\":0}}";
+
+        var lines = new[]
+        {
+            Line(new ScenarioStartedEvent { RunId = "run-good", ScenarioId = "good-flow" }),
+            Line(new ScenarioCompletedEvent
+            {
+                RunId = "run-good",
+                ScenarioId = "good-flow",
+                Verdict = Verdict.Pass,
+                Counts = new VerdictCounts { Pass = 1 },
+            }),
+            PoisonedMessageLine,
+        };
+
+        using var writer = new StringWriter();
+        HtmlRenderer.Render(lines, writer);
+
+        var output = writer.ToString();
+
+        // The run-summary FAIL row must show 1 (from the poisoned scenario's counts) —
+        // not 0 — proving the counts were stored BEFORE the message read aborted the
+        // line.
+        Assert.Contains(
+            "<tr class=\"verdict-fail\"><th scope=\"row\"><span class=\"verdict\">FAIL</span></th><td>1</td></tr>",
+            output,
+            StringComparison.Ordinal);
+
+        // The line is still counted as skipped — the message itself IS unreadable.
+        Assert.Contains(
+            "<p class=\"skipped-lines\">1 event-stream line could not be read, so this report may be incomplete.</p>",
+            output,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Render_CapturedEntryWithLoneSurrogateKey_DoesNotTruncateDocument()
+    {
+        // Issue #588 (security MINOR): JsonElement.TryGetProperty throws
+        // InvalidOperationException when an escaped lone/unpaired UTF-16 surrogate
+        // appears anywhere among an object's PROPERTY NAMES (not just a value) — MEASURED
+        // here to fire on the very FIRST extraction, GetStrFromObject(capture, "name"),
+        // even though "name" itself is present and clean; TryGetProperty's internal scan
+        // reaches the unrelated poisoned "\uD800" key before it can report the match.
+        // GetStrFromObject and GetBoolFromObject both run at EMIT time
+        // (WriteProvenanceThread), outside any per-line guard, so an uncaught throw here
+        // truncates the HTML file mid-write — contradicting §14's "a line a renderer
+        // cannot read is skipped rather than aborting the report".
+        // The poisoned key's LENGTH is deliberate: TryGetProperty skips unescaping a raw
+        // candidate name shorter than the name being looked up, so a bare "\uD800" (6
+        // raw bytes) is too short to be reached by "matched" (7 bytes) — it only breaks
+        // "name"/"path". Padded to >= 13 bytes (longer than "secretDerived" too) so it is
+        // reachable by every lookup this test's call chain performs, GetBoolFromObject's
+        // included.
+        const string PoisonedCapturedKeyLine =
+            "{\"v\":1,\"schemaVersion\":\"v1\",\"type\":\"step-completed\","
+            + "\"ts\":\"2026-01-01T00:00:00Z\",\"runId\":\"run-good\","
+            + "\"stepId\":\"poison-step\",\"verdict\":\"PASS\",\"durationMs\":3,"
+            + "\"captured\":[{\"name\":\"n\",\"path\":\"p\",\"\\uD800padpadpadpad\":1}]}";
+
+        var lines = new[]
+        {
+            Line(new ScenarioStartedEvent { RunId = "run-good", ScenarioId = "host-scenario" }),
+            PoisonedCapturedKeyLine,
+            Line(new ScenarioCompletedEvent
+            {
+                RunId = "run-good",
+                ScenarioId = "host-scenario",
+                Verdict = Verdict.Pass,
+                Counts = new VerdictCounts { Pass = 1 },
+            }),
+        };
+
+        using var writer = new StringWriter();
+        var ex = Record.Exception(() => HtmlRenderer.Render(lines, writer));
+        Assert.Null(ex);
+
+        var output = writer.ToString();
+        Assert.Contains("<!DOCTYPE html>", output, StringComparison.Ordinal);
+        Assert.EndsWith("</html>", output.TrimEnd(), StringComparison.Ordinal);
     }
 }
