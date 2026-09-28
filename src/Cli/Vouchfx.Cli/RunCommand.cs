@@ -1284,9 +1284,10 @@ internal static class RunCommand
     /// Split out of <see cref="ExecuteCoreAsync"/> for ONE reason: the stdin-EOF translation needs
     /// a <c>try</c> around the whole pipeline, and the alternative — wrapping it in place — would
     /// have re-indented ~400 lines and hidden the change inside them. The body moved verbatim
-    /// except for ONE line, and it is named here because this paragraph is what tells a reviewer
-    /// they may read the extraction as a move: the <c>ChangeSetException</c> arm now writes
-    /// <c>DisplaySanitiser.SanitiseForDisplay(ex.Message)</c> rather than <c>ex.Message</c>.
+    /// except for ONE line (and, since #568, the <c>runStartedAt</c> capture that is now its
+    /// first statement and its pass to <c>EmitAsync</c>): the <c>ChangeSetException</c> arm
+    /// now writes <c>DisplaySanitiser.SanitiseForDisplay(ex.Message)</c> rather than
+    /// <c>ex.Message</c>.
     /// </para>
     /// <para>
     /// Every parameter is <see cref="ExecuteCoreAsync"/>'s own, forwarded verbatim, with one
@@ -1311,6 +1312,13 @@ internal static class RunCommand
         TelemetryRunHook? telemetryHook,
         CancellationToken runCancellationToken)
     {
+        // #568: the run-start anchor for telemetry's startupMs/timeToFirstTestMs — captured
+        // as the very first statement, before discovery/Docker/anything else, so the anchor
+        // PRECEDES the whole pipeline rather than being some later, already-elapsed instant.
+        // Captured unconditionally (even when telemetryHook is null) to keep this the
+        // single capture site; EmitAsync no-ops when telemetry will not emit.
+        var runStartedAt = DateTimeOffset.UtcNow;
+
         // --watch and --parallel are mutually exclusive: one keeps a SINGLE topology alive for
         // one file, the other fans MANY scenarios across MANY topologies.  Reject the combo as a
         // usage error (exit 2) up front — before discovering or running anything (no Docker).
@@ -1669,7 +1677,8 @@ internal static class RunCommand
         // any error), so telemetry can NEVER affect the verdict or the exit code below.
         if (telemetryHook is not null)
         {
-            await telemetryHook.EmitAsync(runnerEventsPath, isTempEventsFile, runCancellationToken)
+            await telemetryHook.EmitAsync(
+                runnerEventsPath, isTempEventsFile, runStartedAt, runCancellationToken)
                 .ConfigureAwait(false);
         }
 

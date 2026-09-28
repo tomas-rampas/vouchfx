@@ -77,14 +77,13 @@ public sealed class TelemetryEventBuilderTests
     }
 
     [Fact]
-    public void Build_ComputesStartupAndTimeToFirstTest_FromTimestamps()
+    public void Build_ComputesStartupAndTimeToFirstTest_FromSuppliedRunStart()
     {
-        // Earliest event is at +0ms; first scenario-started at +40ms; first step-completed
-        // at +90ms.  startupMs = 40, timeToFirstTestMs = 90.
+        // #568: the anchor is the CALLER-SUPPLIED run start (T0 here), never derived from
+        // the buffer.  First scenario-started at +40ms; first step-completed at +90ms.
+        // startupMs = 40 (T0+40 − T0), timeToFirstTestMs = 90 (T0+90 − T0).
         var lines = new List<string>
         {
-            // An earlier event (a step-started before scenario-started can't happen, but a
-            // probe at +0 establishes the run-start anchor as the earliest event).
             SyntheticEvents.ScenarioStarted("A", T0.AddMilliseconds(40)),
             SyntheticEvents.StepStarted("a1", "http.rest", T0.AddMilliseconds(50)),
             SyntheticEvents.StepCompleted("a1", Verdict.Pass, 5, T0.AddMilliseconds(90)),
@@ -92,31 +91,35 @@ public sealed class TelemetryEventBuilderTests
                 "A", Verdict.Pass, new VerdictCounts { Pass = 1 }, T0.AddMilliseconds(100)),
         };
 
-        var ev = Build(lines);
+        var ev = Build(lines, runStartedAt: T0);
 
-        // Earliest event is the scenario-started at +40, so startup (anchor→first
-        // scenario-started) is 0; time-to-first-test (anchor→first step-completed) is 50.
-        Assert.Equal(0, ev.StartupMs);
-        Assert.Equal(50, ev.TimeToFirstTestMs);
+        Assert.Equal(40, ev.StartupMs);
+        Assert.Equal(90, ev.TimeToFirstTestMs);
     }
 
     [Fact]
-    public void Build_WithEarlierAnchorEvent_ComputesPositiveStartup()
+    public void Build_EarlierNonTimingEvent_NeverMovesTheSuppliedAnchor()
     {
-        // Seed an earlier scenario-started (run anchor) at +0, a LATER scenario-started at
-        // +40 — the EARLIEST scenario-started is the anchor, so this models a multi-scenario
-        // run where startup is measured to the first scenario.  To exercise a positive
-        // startup we put a non-scenario event earliest.
+        // #568: before this fix, an event earlier than the first scenario-started used to
+        // become the run-start anchor itself (the builder took the earliest timestamp of
+        // ANY event in the buffer) — and a transport-notice line (#450/#453: the engine
+        // emits one when it downgrades a listener or configures no client trust), which the
+        // engine can buffer before a scenario's own scenario-started line, is exactly the
+        // PRODUCTION shape the old any-event anchor therefore picked up. Here it sits at
+        // +20, before the genuine scenario-started at +40: the OLD any-event-anchor rule
+        // would compute startupMs = 40-20 = 20 and timeToFirstTestMs = 90-20 = 70.
+        // Under the caller-supplied anchor this line must change NOTHING — StartupMs and
+        // TimeToFirstTestMs must be measured from runStartedAt (T0) alone, exactly as if
+        // this line were absent.
         var lines = new List<string>
         {
-            // step-attempt at +0 → earliest event (run-start anchor), not a scenario-started.
-            EventStreamJson.ToLine(new StepAttemptEvent
+            EventStreamJson.ToLine(new TransportNoticeEvent
             {
                 RunId = "run0000000000000000000000000000",
-                Timestamp = T0,
-                StepId = "warmup",
-                Attempt = 1,
-                TMs = 1,
+                Timestamp = T0.AddMilliseconds(20),
+                Kind = TransportNoticeKinds.NoEngineTrust,
+                Service = "sut",
+                SelectedEndpoint = "https",
             }),
             SyntheticEvents.ScenarioStarted("A", T0.AddMilliseconds(40)),
             SyntheticEvents.StepStarted("a1", "http.rest", T0.AddMilliseconds(50)),
@@ -125,10 +128,177 @@ public sealed class TelemetryEventBuilderTests
                 "A", Verdict.Pass, new VerdictCounts { Pass = 1 }, T0.AddMilliseconds(100)),
         };
 
-        var ev = Build(lines);
+        var ev = Build(lines, runStartedAt: T0);
 
         Assert.Equal(40, ev.StartupMs);
         Assert.Equal(90, ev.TimeToFirstTestMs);
+    }
+
+    [Fact]
+    public void Build_RefusedScenarioStarted_IsSkippedForTiming_EarliestValidOneCountsInstead()
+    {
+        // #568: a scenario-started line the typed guard refuses (here "scenarioId": null,
+        // valid otherwise) must contribute NOTHING to startupMs — mirroring
+        // EventHistoryReader's own rule for the Planner. It sits at +10, before the one
+        // genuine scenario-started at +40, so a bug that read its ts anyway would report 10
+        // instead of 40.
+        var refused = SyntheticEvents.ScenarioStarted("X", T0.AddMilliseconds(10))
+            .Replace("\"scenarioId\":\"X\"", "\"scenarioId\":null", StringComparison.Ordinal);
+
+        var lines = new List<string>
+        {
+            refused,
+            SyntheticEvents.ScenarioStarted("A", T0.AddMilliseconds(40)),
+            SyntheticEvents.ScenarioCompleted(
+                "A", Verdict.Pass, new VerdictCounts { Pass = 1 }, T0.AddMilliseconds(50)),
+        };
+
+        var ev = Build(lines, runStartedAt: T0);
+
+        Assert.Equal(40, ev.StartupMs);
+    }
+
+    [Fact]
+    public void Build_RefusedStepCompleted_IsSkippedForTiming_EarliestValidOneCountsInstead()
+    {
+        // #568: same rule for step-completed — a "stepId": null line at +20 must not feed
+        // timeToFirstTestMs; the genuine step-completed at +90 must.
+        var refused = SyntheticEvents.StepCompleted("s0", Verdict.Pass, 1, T0.AddMilliseconds(20))
+            .Replace("\"stepId\":\"s0\"", "\"stepId\":null", StringComparison.Ordinal);
+
+        var lines = new List<string>
+        {
+            SyntheticEvents.ScenarioStarted("A", T0),
+            refused,
+            SyntheticEvents.StepCompleted("a1", Verdict.Pass, 5, T0.AddMilliseconds(90)),
+            SyntheticEvents.ScenarioCompleted(
+                "A", Verdict.Pass, new VerdictCounts { Pass = 1 }, T0.AddMilliseconds(100)),
+        };
+
+        var ev = Build(lines, runStartedAt: T0);
+
+        Assert.Equal(90, ev.TimeToFirstTestMs);
+    }
+
+    [Fact]
+    public void Build_MultipleValidTimingLines_OutOfBufferOrder_PicksEarliestByTimestamp_NotByListingPosition()
+    {
+        // #568 critic MINOR (measured): swapping Min for last-wins (plain unconditional
+        // assignment) or first-wins (??=, keep-the-first-processed) in either fold left
+        // Telemetry.Tests 139/139 green, because every prior timing test has exactly ONE
+        // valid line of each type - "earliest wins" was unpinned. It matters in production:
+        // ParallelSuiteRunner joins per-scenario event buffers in DECLARATION order, not time
+        // order, so the archive can list a LATER scenario-started/step-completed line before
+        // an EARLIER one.
+        //
+        // THREE valid lines per type, with the minimum listed in the MIDDLE (scenario-started:
+        // 60, 30, 90; step-completed: 120, 80, 150). Min sits in the middle of each listing, so
+        // it differs from both the first-listed and the last-listed value in each fold, and a
+        // first-wins or last-wins fold in either helper fails this test.
+        var lines = new List<string>
+        {
+            SyntheticEvents.ScenarioStarted("A", T0.AddMilliseconds(60)),
+            SyntheticEvents.ScenarioStarted("B", T0.AddMilliseconds(30), runId: "run-b"),
+            SyntheticEvents.ScenarioStarted("C", T0.AddMilliseconds(90), runId: "run-c"),
+            SyntheticEvents.StepCompleted("s1", Verdict.Pass, 5, T0.AddMilliseconds(120)),
+            SyntheticEvents.StepCompleted("s2", Verdict.Pass, 5, T0.AddMilliseconds(80), runId: "run-b"),
+            SyntheticEvents.StepCompleted("s3", Verdict.Pass, 5, T0.AddMilliseconds(150), runId: "run-c"),
+        };
+
+        var ev = Build(lines, runStartedAt: T0);
+
+        Assert.Equal(30, ev.StartupMs);
+        Assert.Equal(80, ev.TimeToFirstTestMs);
+    }
+
+    [Fact]
+    public void Build_ScenarioStartedWithNoTs_DeserialisesToDefaultTimestamp_AndIsSkippedForTiming()
+    {
+        // An absent `ts` on the wire deserialises ScenarioStartedEvent.Timestamp to
+        // default(DateTimeOffset) (0001-01-01, not the Unix epoch) — EventEnvelope.Timestamp
+        // is likewise not `required` (N5, EventHistoryReader's own EDGE-004). That default
+        // must never be folded in as a real timestamp; only the later, genuine
+        // scenario-started at +40 may feed startupMs.
+        var noTs = System.Text.RegularExpressions.Regex.Replace(
+            SyntheticEvents.ScenarioStarted("X", T0.AddMilliseconds(5)),
+            "\"ts\":\"[^\"]*\",",
+            string.Empty);
+
+        var lines = new List<string>
+        {
+            noTs,
+            SyntheticEvents.ScenarioStarted("A", T0.AddMilliseconds(40)),
+            SyntheticEvents.ScenarioCompleted(
+                "A", Verdict.Pass, new VerdictCounts { Pass = 1 }, T0.AddMilliseconds(50)),
+        };
+
+        var ev = Build(lines, runStartedAt: T0);
+
+        Assert.Equal(40, ev.StartupMs);
+    }
+
+    [Fact]
+    public void Build_StepCompletedWithNoTs_DeserialisesToDefaultTimestamp_AndIsSkippedForTiming()
+    {
+        // The twin of the ScenarioStarted case above, for the OTHER typed-record guard
+        // AccumulateStepCompletedTimestamp applies: an absent `ts` on the wire deserialises
+        // StepCompletedEvent.Timestamp to default(DateTimeOffset) (0001-01-01), which must
+        // never be folded in as a real timestamp; only the later, genuine step-completed at
+        // +90 may feed timeToFirstTestMs. Without the Timestamp == default check on THIS
+        // side (StepCompleted, distinct from ScenarioStarted's), this line's stripped `ts`
+        // would still parse and become the earliest step-completed, so DiffMsClamped would
+        // clamp timeToFirstTestMs to 0 - a silently wrong zero.
+        var noTs = System.Text.RegularExpressions.Regex.Replace(
+            SyntheticEvents.StepCompleted("s0", Verdict.Pass, 1, T0.AddMilliseconds(20)),
+            "\"ts\":\"[^\"]*\",",
+            string.Empty);
+
+        var lines = new List<string>
+        {
+            SyntheticEvents.ScenarioStarted("A", T0),
+            noTs,
+            SyntheticEvents.StepCompleted("a1", Verdict.Pass, 5, T0.AddMilliseconds(90)),
+            SyntheticEvents.ScenarioCompleted(
+                "A", Verdict.Pass, new VerdictCounts { Pass = 1 }, T0.AddMilliseconds(100)),
+        };
+
+        var ev = Build(lines, runStartedAt: T0);
+
+        Assert.Equal(90, ev.TimeToFirstTestMs);
+    }
+
+    [Fact]
+    public void Build_ScenarioStartedEarlierThanRunStart_ClampsStartupMsToZero()
+    {
+        // A clock adjustment (or a supplied anchor later than the archive's own first
+        // event) must never produce a negative duration.
+        var lines = new List<string>
+        {
+            SyntheticEvents.ScenarioStarted("A", T0.AddMilliseconds(40)),
+            SyntheticEvents.ScenarioCompleted(
+                "A", Verdict.Pass, new VerdictCounts { Pass = 1 }, T0.AddMilliseconds(50)),
+        };
+
+        var ev = Build(lines, runStartedAt: T0.AddMilliseconds(100));
+
+        Assert.Equal(0, ev.StartupMs);
+    }
+
+    [Fact]
+    public void Build_RunStartedAtDefault_ThrowsArgumentException()
+    {
+        var lines = new List<string> { SyntheticEvents.ScenarioStarted("A", T0) };
+
+        var ex = Assert.Throws<ArgumentException>(() => TelemetryEventBuilder.Build(
+            lines,
+            installId: Guid.NewGuid(),
+            toolVersion: "1.2.3",
+            engineVersion: "1.2.3",
+            dotnetVersion: ".NET 8.0.7",
+            runStartedAt: default,
+            timestamp: T0));
+
+        Assert.Equal("runStartedAt", ex.ParamName);
     }
 
     [Fact]
@@ -149,26 +319,23 @@ public sealed class TelemetryEventBuilderTests
     [Fact]
     public void Build_SkipsUnparseableLines_WithoutThrowing()
     {
+        // #568: this row USED to also pin the #571 untyped-envelope guard, by asserting
+        // StartupMs stayed 0 despite a hostile line's `ts` (2024-01-15) being far earlier
+        // than every genuine event — because the old anchor was the earliest timestamp of
+        // ANY event in the buffer, a line that slipped past the guard would drag that
+        // anchor back to 2024. Now the anchor is the caller-supplied runStartedAt, so no
+        // line's `ts` — hostile or not — can move it at all; that pin is gone. The #571
+        // guard itself is pinned by
+        // EventEnvelopeTests.FromLine_NullRunId_ThrowsInvalidOperationExceptionNamingRunId
+        // (Vouchfx.Engine.Abstractions.Tests). What THIS test still proves: every
+        // unparseable/malformed line below is skipped without throwing and contributes no
+        // count — only the one genuine scenario-started/step-started/scenario-completed
+        // triple at the end is tallied.
         var lines = new List<string>
         {
             "this is not json",
             string.Empty,
             "   ",
-            // #571: `required` enforces presence only, not non-nullness, so this line would
-            // otherwise satisfy `required string RunId` on the untyped envelope and hand the
-            // builder a null run id. `EventStreamJson.FromLine(line)` rejects it at the very
-            // top of the loop, before Build's switch on envelope.Type is ever reached — so
-            // ScenarioCount alone no longer pins the guard: since #573, `scenarioCount`
-            // increments only AFTER AccumulateScenarioCompleted's typed parse succeeds, and
-            // this line — missing scenarioId/verdict/counts entirely — would fail that typed
-            // parse with JsonException regardless of whether the untyped guard runs, so
-            // ScenarioCount would read 1 either way. What the guard alone prevents is this
-            // line's `ts` (2024-01-15, more than two years before T0) from ever reaching
-            // `earliestEvent`: without it, the envelope would parse, the switch would never
-            // increment ScenarioCount (as above) but WOULD still update `earliestEvent` from
-            // the envelope's timestamp before the switch runs, dragging the run-start anchor
-            // back to 2024 and inflating StartupMs by roughly that gap instead of leaving it
-            // at 0. Asserting StartupMs stays 0 is what actually pins the guard here.
             """{"v":1,"schemaVersion":"v1","type":"scenario-completed","ts":"2024-01-15T10:00:00+00:00","runId":null}""",
             SyntheticEvents.ScenarioStarted("A", T0.AddMilliseconds(10)),
             SyntheticEvents.StepStarted("a1", "http.rest", T0.AddMilliseconds(20)),
@@ -176,11 +343,10 @@ public sealed class TelemetryEventBuilderTests
                 "A", Verdict.Pass, new VerdictCounts { Pass = 1 }, T0.AddMilliseconds(30)),
         };
 
-        var ev = Build(lines);
+        var ev = Build(lines, runStartedAt: T0);
 
         Assert.Equal(1, ev.ScenarioCount);
         Assert.Equal(1, ev.StepProviders["http.rest"]);
-        Assert.Equal(0, ev.StartupMs);
     }
 
     [Fact]
@@ -477,12 +643,14 @@ public sealed class TelemetryEventBuilderTests
         return value!;
     }
 
-    private static TelemetryEvent Build(IReadOnlyList<string> lines) =>
+    private static TelemetryEvent Build(
+        IReadOnlyList<string> lines, DateTimeOffset? runStartedAt = null) =>
         TelemetryEventBuilder.Build(
             lines,
             installId: Guid.NewGuid(),
             toolVersion: "1.2.3",
             engineVersion: "1.2.3",
             dotnetVersion: ".NET 8.0.7",
+            runStartedAt: runStartedAt ?? T0,
             timestamp: T0.AddSeconds(5));
 }

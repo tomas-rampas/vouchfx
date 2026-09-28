@@ -10,6 +10,10 @@
 //     never touched.
 
 using System.CommandLine;
+using System.IO;
+using System.Linq;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Vouchfx.Cli;
 using Vouchfx.Engine.Abstractions;
 using Vouchfx.Engine.Abstractions.Events;
@@ -68,13 +72,53 @@ public sealed class TelemetryCliTests
         // Simulate the runner writing the verbatim buffered stream to that path.
         await File.WriteAllLinesAsync(eventsPath!, SyntheticStream());
 
-        await hook.EmitAsync(eventsPath, isTemp, CancellationToken.None);
+        await hook.EmitAsync(eventsPath, isTemp, T0, CancellationToken.None);
 
         Assert.Single(sink.Sent);
         Assert.Equal(1, sink.Sent[0].ScenarioCount);
         Assert.Equal(1, sink.Sent[0].StepProviders["http.rest"]);
         // The hook deletes the temp capture file after reading.
         Assert.False(File.Exists(eventsPath));
+    }
+
+    [Fact]
+    public async Task Hook_EmitAsync_ThreadsRunStartedAtThrough_ToBuiltEvents_StartupMs()
+    {
+        // #568: pins hook → builder plumbing — the runStartedAt EmitAsync is given is the
+        // SAME anchor TelemetryEventBuilder.Build measures startupMs from. A stream whose
+        // first scenario-started sits 250ms after the supplied anchor must produce
+        // StartupMs == 250.
+        using var temp = new TempPathsCli();
+        var store = new TelemetryConsentStore(temp);
+        store.Enable();
+        var sink = new RecordingSinkCli();
+
+        var hook = new TelemetryRunHook(store, temp, sink, noTelemetryFlag: false, TextWriter.Null);
+
+        var (eventsPath, isTemp) = hook.ResolveEventsCapturePath(userEventsPath: null);
+        Assert.NotNull(eventsPath);
+
+        var stream = new[]
+        {
+            EventStreamJson.ToLine(new ScenarioStartedEvent
+            {
+                RunId = "run0", Timestamp = T0.AddMilliseconds(250), ScenarioId = "A",
+            }),
+            EventStreamJson.ToLine(new ScenarioCompletedEvent
+            {
+                RunId = "run0",
+                Timestamp = T0.AddMilliseconds(260),
+                ScenarioId = "A",
+                Verdict = Verdict.Pass,
+                Counts = new VerdictCounts { Pass = 1 },
+            }),
+        };
+        await File.WriteAllLinesAsync(eventsPath!, stream);
+
+        await hook.EmitAsync(eventsPath, isTemp, runStartedAt: T0, CancellationToken.None);
+
+        Assert.Single(sink.Sent);
+        Assert.Equal(250, sink.Sent[0].StartupMs);
     }
 
     [Theory]
@@ -98,7 +142,7 @@ public sealed class TelemetryCliTests
         Assert.False(isTemp);
 
         // Even if a stream existed, EmitAsync with a null path is a no-op.
-        await hook.EmitAsync(eventsPath, isTemp, CancellationToken.None);
+        await hook.EmitAsync(eventsPath, isTemp, T0, CancellationToken.None);
         Assert.Empty(sink.Sent);
     }
 
@@ -114,7 +158,7 @@ public sealed class TelemetryCliTests
 
         var (eventsPath, _) = hook.ResolveEventsCapturePath(userEventsPath: null);
         Assert.Null(eventsPath);
-        await hook.EmitAsync(eventsPath, isTempFile: false, CancellationToken.None);
+        await hook.EmitAsync(eventsPath, isTempFile: false, T0, CancellationToken.None);
         Assert.Empty(sink.Sent);
     }
 
@@ -244,7 +288,7 @@ public sealed class TelemetryCliTests
         var (eventsPath, isTemp) = hook.ResolveEventsCapturePath(userEventsPath: null);
         Assert.NotNull(eventsPath);
         await File.WriteAllLinesAsync(eventsPath!, SyntheticStream());
-        await hook.EmitAsync(eventsPath, isTemp, CancellationToken.None);
+        await hook.EmitAsync(eventsPath, isTemp, T0, CancellationToken.None);
 
         // The event carries the SUPPLIED id (stable per repo), and nothing was
         // written to the local consent store — env mode bypasses it entirely.
@@ -269,7 +313,7 @@ public sealed class TelemetryCliTests
 
         var (eventsPath, isTemp) = hook.ResolveEventsCapturePath(userEventsPath: null);
         Assert.Null(eventsPath);
-        await hook.EmitAsync(eventsPath, isTemp, CancellationToken.None);
+        await hook.EmitAsync(eventsPath, isTemp, T0, CancellationToken.None);
         Assert.Empty(sink.Sent);
     }
 
@@ -289,7 +333,7 @@ public sealed class TelemetryCliTests
 
         var (eventsPath, isTemp) = hook.ResolveEventsCapturePath(userEventsPath: null);
         Assert.Null(eventsPath);
-        await hook.EmitAsync(eventsPath, isTemp, CancellationToken.None);
+        await hook.EmitAsync(eventsPath, isTemp, T0, CancellationToken.None);
         Assert.Empty(sink.Sent);
     }
 
@@ -310,7 +354,7 @@ public sealed class TelemetryCliTests
         var (eventsPath, isTemp) = hook.ResolveEventsCapturePath(userEventsPath: null);
         Assert.NotNull(eventsPath);
         await File.WriteAllLinesAsync(eventsPath!, SyntheticStream());
-        await hook.EmitAsync(eventsPath, isTemp, CancellationToken.None);
+        await hook.EmitAsync(eventsPath, isTemp, T0, CancellationToken.None);
 
         // The invalid env id was ignored with a single warning naming the variable
         // (never echoing the raw value into an event), and the STORE id was used.
@@ -353,6 +397,159 @@ public sealed class TelemetryCliTests
 
         Assert.Contains("telemetry", first.ToString(), StringComparison.OrdinalIgnoreCase);
         Assert.Equal(string.Empty, second.ToString());
+    }
+
+    /// <summary>
+    /// A SOURCE CENSUS over <c>RunCommand.cs</c> (#568 gate review), following the
+    /// precedent set by <c>ShutdownBackstopTests.StdinEofCallback_ArmsTheBackstop_BeforeCancellingTheLinkedSource</c>:
+    /// the capture-placement guarantee is a property of <c>ExecuteRunPipelineAsync</c>'s STATEMENT
+    /// ORDER, not of any behaviour <see cref="TelemetryRunHook"/> or <see cref="TelemetryEventBuilder"/>
+    /// can observe on their own — every row above (and every row in
+    /// Vouchfx.Engine.Telemetry.Tests) would stay green whether <c>runStartedAt</c> is captured at
+    /// the top of the method or moved to just before <c>EmitAsync</c>, because both hooks/builders
+    /// behave correctly for whatever instant they are GIVEN.  It is the CALLER's placement of that
+    /// capture that is the guarantee, and a behavioural probe for it needs a real scenario to
+    /// execute (no non-Docker test in this project can produce one — see this project's own csproj
+    /// comment) or depends on a pre-existing, separately-tracked bug (telemetry reading a stale
+    /// <c>--events</c> file when nothing parses), so this is pinned by reading the source instead.
+    /// </summary>
+    /// <remarks>
+    /// VACUITY FIRST: the single <c>ExecuteRunPipelineAsync</c> method declaration and the single
+    /// <c>EmitAsync</c> call within it are asserted to exist before anything is concluded from
+    /// their shape — a census that stops finding its needle reports no offence and passes for free.
+    /// </remarks>
+    [Fact]
+    public void ExecuteRunPipelineAsync_CapturesRunStartedAtFirst_NeverReassigns_AndPassesItToEmitAsync()
+    {
+        var method = ExecuteRunPipelineAsyncMethod();
+        var body = method.Body;
+        Assert.True(
+            body is not null,
+            "ExecuteRunPipelineAsync no longer has a block body; this census cannot read its "
+            + "statement order.");
+
+        // (1) The FIRST statement is `var runStartedAt = DateTimeOffset.UtcNow;` — nothing may
+        // run before it (discovery, the --watch/--parallel guard, anything). #568: EmitAsync
+        // runs only after both runners (sequential/parallel) return, so a capture moved to
+        // just before it is later than every archived line - it clamps startupMs AND
+        // timeToFirstTestMs to 0 on every run - the original #568 bug.
+        var firstStatement = body!.Statements.FirstOrDefault();
+        var localDecl = firstStatement as LocalDeclarationStatementSyntax;
+        Assert.True(
+            localDecl is not null,
+            "ExecuteRunPipelineAsync's FIRST statement is no longer a local declaration (found: "
+            + $"'{firstStatement}'). #568: runStartedAt must be captured before ANYTHING else in "
+            + "this method or startupMs stops measuring the run's true start.");
+
+        var variables = localDecl!.Declaration.Variables;
+        Assert.True(
+            variables.Count == 1 && variables[0].Identifier.ValueText == "runStartedAt",
+            "ExecuteRunPipelineAsync's first statement no longer declares exactly one variable "
+            + "named 'runStartedAt' (found: "
+            + $"{string.Join(", ", variables.Select(v => v.Identifier.ValueText))}). This is the "
+            + "#568 anchor; renaming or relocating it away from the first statement breaks the "
+            + "telemetry startupMs contract silently.");
+
+        var initializer = variables[0].Initializer?.Value;
+        var isUtcNow = initializer is MemberAccessExpressionSyntax
+        {
+            Name.Identifier.ValueText: "UtcNow",
+            Expression: IdentifierNameSyntax { Identifier.ValueText: "DateTimeOffset" },
+        };
+        Assert.True(
+            isUtcNow,
+            "runStartedAt's initializer is no longer DateTimeOffset.UtcNow (found: "
+            + $"'{initializer}'). Every event on the buffered stream is stamped from "
+            + "DateTimeOffset.UtcNow too (§14); capturing the anchor from a different clock "
+            + "corrupts the startupMs/timeToFirstTestMs comparison.");
+
+        // (2) EXACTLY ONE reference to runStartedAt exists anywhere in the method (besides its
+        // own declaration above), and that ONE reference is the THIRD argument (index 2) of
+        // the single EmitAsync call. A plain IdentifierNameSyntax census, deliberately NOT
+        // restricted to AssignmentExpressionSyntax: an out/ref use (`Foo(out runStartedAt)`,
+        // `ref runStartedAt`) or a deconstruction (`(runStartedAt, _) = ...`) all still write
+        // an IdentifierNameSyntax wherever `runStartedAt` appears, so this catches every form
+        // a reassignment-only scan would miss. The declaration site itself is naturally
+        // excluded: `var runStartedAt = ...`'s name is a VariableDeclaratorSyntax token, never
+        // an IdentifierNameSyntax reference expression, so it is never counted here.
+        var emitCalls = method.DescendantNodes()
+            .OfType<InvocationExpressionSyntax>()
+            .Where(i => i.Expression is MemberAccessExpressionSyntax { Name.Identifier.ValueText: "EmitAsync" })
+            .ToList();
+        Assert.True(
+            emitCalls.Count == 1,
+            $"Expected exactly 1 EmitAsync call in ExecuteRunPipelineAsync, found "
+            + $"{emitCalls.Count}. Zero means this census stopped matching and guards nothing; "
+            + "more than one means a second call site could pass a different (or missing) "
+            + "runStartedAt undetected.");
+
+        var references = method.DescendantNodes()
+            .OfType<IdentifierNameSyntax>()
+            .Where(id => id.Identifier.ValueText == "runStartedAt")
+            .ToList();
+        Assert.True(
+            references.Count == 1,
+            $"Expected exactly 1 reference to runStartedAt in ExecuteRunPipelineAsync (besides "
+            + $"its own declaration), found {references.Count}. Zero means the capture is now "
+            + "unused - dead code, and the fix does nothing. More than one means runStartedAt "
+            + "is read, reassigned (via =, out, ref, or a deconstruction), or passed somewhere "
+            + "else in addition to EmitAsync - any of which could move its effective value away "
+            + "from the run's true start, or silently reproduce the #568 bug under a different "
+            + "guise (e.g. re-captured and reassigned just before EmitAsync).");
+
+        var args = emitCalls[0].ArgumentList.Arguments;
+        Assert.True(
+            args.Count > 2,
+            $"The EmitAsync call has only {args.Count} argument(s); the third (index 2, "
+            + "runStartedAt) is missing entirely.");
+
+        var thirdArgIdentifier = args[2].Expression as IdentifierNameSyntax;
+        Assert.True(
+            thirdArgIdentifier?.Identifier.ValueText == "runStartedAt",
+            "EmitAsync's third argument (index 2) is no longer the identifier 'runStartedAt' "
+            + $"(found: '{args[2].Expression}'). #568: EmitAsync runs only after both runners "
+            + "return, so passing DateTimeOffset.UtcNow (or anything else) captured HERE instead "
+            + "of the value captured at the top of the method clamps startupMs and "
+            + "timeToFirstTestMs to 0 on every run - the original #568 bug, returned via a "
+            + "different capture site.");
+    }
+
+    /// <summary>The single <c>ExecuteRunPipelineAsync</c> method declaration in RunCommand.cs.</summary>
+    private static MethodDeclarationSyntax ExecuteRunPipelineAsyncMethod()
+    {
+        var methods = ParsedRunCommand()
+            .DescendantNodes()
+            .OfType<MethodDeclarationSyntax>()
+            .Where(m => m.Identifier.ValueText == "ExecuteRunPipelineAsync")
+            .ToList();
+
+        Assert.True(
+            methods.Count == 1,
+            "Expected exactly 1 ExecuteRunPipelineAsync method declaration in RunCommand.cs, "
+            + $"found {methods.Count}. Zero means this census stopped matching and guards "
+            + "nothing.");
+
+        return methods[0];
+    }
+
+    /// <summary>The parsed syntax tree of the CLI's <c>RunCommand.cs</c>.</summary>
+    private static CompilationUnitSyntax ParsedRunCommand()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "vouchfx.sln")))
+        {
+            dir = dir.Parent;
+        }
+
+        Assert.NotNull(dir);
+
+        var path = Path.Combine(
+            dir!.FullName, "src", "Cli", "Vouchfx.Cli", "RunCommand.cs");
+
+        Assert.True(File.Exists(path), $"'{path}' not found; this census cannot run.");
+
+        return CSharpSyntaxTree.ParseText(File.ReadAllText(path), path: path)
+            .GetCompilationUnitRoot();
     }
 
     private static string[] SyntheticStream() => new[]

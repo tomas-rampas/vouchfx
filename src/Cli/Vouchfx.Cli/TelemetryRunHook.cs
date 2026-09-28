@@ -269,10 +269,17 @@ internal sealed class TelemetryRunHook
     /// temp file and should be deleted after reading; <see langword="false"/> when it is
     /// the user's own <c>--events</c> file (left in place).
     /// </param>
+    /// <param name="runStartedAt">
+    /// The instant <c>vouchfx run</c> began its pipeline (UTC), captured once by
+    /// <c>RunCommand.ExecuteRunPipelineAsync</c> before discovery (#568) and threaded
+    /// straight through to <see cref="TelemetryEventBuilder.Build"/> as the
+    /// <c>startupMs</c>/<c>timeToFirstTestMs</c> anchor.
+    /// </param>
     /// <param name="cancellationToken">Propagated to the async sink write.</param>
     public async Task EmitAsync(
         string? eventsPath,
         bool isTempFile,
+        DateTimeOffset runStartedAt,
         CancellationToken cancellationToken)
     {
         if (string.IsNullOrEmpty(eventsPath))
@@ -313,6 +320,7 @@ internal sealed class TelemetryRunHook
                 TelemetryVersions.ToolVersion(Assembly.GetExecutingAssembly()),
                 TelemetryVersions.EngineVersion(),
                 TelemetryVersions.DotnetVersion(),
+                runStartedAt,
                 DateTimeOffset.UtcNow);
 
             await _sink.SendAsync(telemetryEvent, cancellationToken).ConfigureAwait(false);

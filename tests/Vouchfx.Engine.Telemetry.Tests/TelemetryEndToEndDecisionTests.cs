@@ -95,6 +95,7 @@ public sealed class TelemetryEndToEndDecisionTests
             "1.0.0",
             "1.0.0",
             ".NET 8.0.7",
+            T0,
             T0.AddSeconds(1));
 
         await sink.SendAsync(ev);

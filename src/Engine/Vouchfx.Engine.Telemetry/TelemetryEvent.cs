@@ -140,14 +140,19 @@ public sealed record TelemetryEvent
 
     /// <summary>
     /// Wall-clock milliseconds from the run starting to the first scenario starting
-    /// (topology + engine startup).  A non-identifying duration.
+    /// (for a scenario that runs, that includes topology and engine startup — a
+    /// scenario refused before it ran instead stamps its scenario-started at refusal
+    /// time, possibly before any topology comes up).  A non-identifying duration.
     /// </summary>
     [JsonPropertyName("startupMs")]
     public required long StartupMs { get; init; }
 
     /// <summary>
-    /// Wall-clock milliseconds from the run starting to the first step completing
-    /// (time-to-first-test).  A non-identifying duration.
+    /// Wall-clock milliseconds from the run starting to the earliest step-completed
+    /// line in the archived event stream (time-to-first-test).  The archive is
+    /// reconstructed after each scenario's script returns and stamps every step line
+    /// with that one shared batch timestamp, so this spans the whole first scenario's
+    /// steps rather than its first step alone.  A non-identifying duration.
     /// </summary>
     [JsonPropertyName("timeToFirstTestMs")]
     public required long TimeToFirstTestMs { get; init; }

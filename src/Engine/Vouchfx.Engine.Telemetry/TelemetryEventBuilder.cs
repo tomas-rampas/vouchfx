@@ -1,4 +1,4 @@
-// Vouchfx.Engine.Telemetry — TelemetryEventBuilder (S10-G-04).
+// Vouchfx.Engine.Telemetry — TelemetryEventBuilder (S10-G-04; anchor fixed #568).
 //
 // The PURE FUNCTION that turns the buffered v1 event stream (the SAME JSON Lines the
 // terminal / HTML / JUnit renderers consume) plus the tool/engine versions into an
@@ -19,12 +19,34 @@
 //                            outside the frozen Core taxonomy is BUCKETED as "custom" so
 //                            an author-chosen provider id never leaves the box (likewise
 //                            for stepFamilies)
-//   • startupMs            = (earliest scenario-started ts) − (run start ts)
-//   • timeToFirstTestMs    = (earliest step-completed ts) − (run start ts)
-// where "run start ts" is the earliest timestamp of ANY event in the buffer (there is
-// no SuiteStarted record in the v1 stream, so the earliest scenario-started is used
-// as the run-start anchor — startupMs is therefore 0 unless an earlier event exists,
-// and timeToFirstTest is measured from that same anchor).
+//   • startupMs            = (earliest VALID scenario-started ts) − runStartedAt
+//   • timeToFirstTestMs    = (earliest VALID step-completed ts) − runStartedAt
+// where runStartedAt is a CALLER-SUPPLIED anchor (#568): the instant `vouchfx run`
+// began its pipeline, captured once via DateTimeOffset.UtcNow before discovery
+// (RunCommand.ExecuteRunPipelineAsync) and threaded through TelemetryRunHook.EmitAsync.
+// The builder no longer derives an anchor from the buffer itself — the previous anchor
+// (the earliest timestamp of ANY event in the buffer) was NORMALLY the first
+// scenario-started line itself, which pinned startupMs at 0 on every run without a
+// transport notice; when a transport notice WAS emitted before the first scenario
+// (CHANGELOG #566), that notice line was earlier still, and the previous anchor moved
+// to IT instead.
+// "VALID" means the line's typed record parsed (EventStreamJson.FromLine<T>, the same
+// `JsonException or InvalidOperationException` filter every consumer uses — a line the
+// typed guard refuses, e.g. a null scenarioId/stepId, contributes to NEITHER timing)
+// AND its `ts` is not default(DateTimeOffset) (an absent `ts` deserialises to default
+// and must never silently feed a timing) — mirroring EventHistoryReader's own rule
+// for the Planner (Ingest/EventHistoryReader.cs), closing the divergence where a line
+// the typed guard refused still fed this builder's timings while the Planner refused
+// it outright.
+// timeToFirstTestMs is measured to the earliest step-completed LINE IN THE ARCHIVE,
+// which is not the same instant as the first step's own completion: the `--events`
+// archive the hook reads is RECONSTRUCTED after each scenario's script returns, and
+// every step line in it (step-started/attempt/completed) carries that one shared
+// batch timestamp (StepEventBuilder, reconstructed via ScenarioRunner) — only the
+// live `--events-stream` copy stamps each step at its real moment. So this figure
+// spans the whole first scenario's steps, not its first step alone. startupMs is
+// unaffected: since #566 the archived scenario-started line carries the scenario's
+// own real start time.
 
 using System.Text.Json;
 using Vouchfx.Engine.Abstractions;
@@ -39,8 +61,9 @@ namespace Vouchfx.Engine.Telemetry;
 /// <remarks>
 /// <para>
 /// This is a pure, deterministic function of its inputs — the buffered JSON Lines
-/// event stream and the supplied version strings — so it is fully unit-testable from a
-/// synthetic event list with no run, no container, and no I/O.
+/// event stream, the supplied version strings, the run-start anchor, and the
+/// timestamp to stamp on the event — so it is fully unit-testable from a synthetic
+/// event list with no run, no container, and no I/O.
 /// </para>
 /// <para>
 /// <strong>Privacy by construction:</strong> the builder derives ONLY non-identifying
@@ -142,15 +165,27 @@ public static class TelemetryEventBuilder
     /// <param name="toolVersion">The CLI tool informational version.</param>
     /// <param name="engineVersion">The engine assembly informational version.</param>
     /// <param name="dotnetVersion">The .NET runtime description.</param>
+    /// <param name="runStartedAt">
+    /// The instant <c>vouchfx run</c> began its pipeline (UTC), captured once by the
+    /// caller before discovery (#568) — the anchor <c>startupMs</c> and
+    /// <c>timeToFirstTestMs</c> are measured from. Must not be
+    /// <see langword="default"/>.
+    /// </param>
     /// <param name="timestamp">The UTC timestamp to stamp on the event (the run's end).</param>
     /// <returns>The fully-populated, allowlisted telemetry event.</returns>
     /// <exception cref="ArgumentNullException">A required reference argument is null.</exception>
+    /// <exception cref="ArgumentException">
+    /// <paramref name="runStartedAt"/> is <see langword="default"/>(<see cref="DateTimeOffset"/>) —
+    /// almost certainly a caller bug (an un-set anchor), so this fails loudly rather
+    /// than reporting durations measured from 0001-01-01.
+    /// </exception>
     public static TelemetryEvent Build(
         IReadOnlyList<string> eventLines,
         Guid installId,
         string toolVersion,
         string engineVersion,
         string dotnetVersion,
+        DateTimeOffset runStartedAt,
         DateTimeOffset timestamp)
     {
         ArgumentNullException.ThrowIfNull(eventLines);
@@ -158,13 +193,19 @@ public static class TelemetryEventBuilder
         ArgumentNullException.ThrowIfNull(engineVersion);
         ArgumentNullException.ThrowIfNull(dotnetVersion);
 
+        if (runStartedAt == default)
+        {
+            throw new ArgumentException(
+                "Must not be default(DateTimeOffset) - the run-start anchor is required.",
+                nameof(runStartedAt));
+        }
+
         var scenarioCount = 0;
         var stepVerdicts = new MutableVerdictCounts();
         var scenarioVerdicts = new MutableVerdictCounts();
         var stepFamilies = new Dictionary<string, int>(StringComparer.Ordinal);
         var stepProviders = new Dictionary<string, int>(StringComparer.Ordinal);
 
-        DateTimeOffset? earliestEvent = null;
         DateTimeOffset? earliestScenarioStarted = null;
         DateTimeOffset? earliestStepCompleted = null;
 
@@ -175,9 +216,11 @@ public static class TelemetryEventBuilder
                 continue;
             }
 
-            // Parse the envelope to read the type discriminator + timestamp.  An
-            // unparseable line (a future event type, a truncated line) is skipped —
-            // forward-compatible, exactly as the renderers tolerate unknown input.
+            // Parse the envelope to read the type discriminator (routes the switch below;
+            // timestamps are read from the TYPED record per case, not from here — see
+            // #568 above).  An unparseable line (a future event type, a truncated line)
+            // is skipped — forward-compatible, exactly as the renderers tolerate unknown
+            // input.
             EventEnvelope envelope;
             try
             {
@@ -188,13 +231,16 @@ public static class TelemetryEventBuilder
                 continue;
             }
 
-            var ts = envelope.Timestamp;
-            earliestEvent = Min(earliestEvent, ts);
-
             switch (envelope.Type)
             {
                 case EventTypes.ScenarioStarted:
-                    earliestScenarioStarted = Min(earliestScenarioStarted, ts);
+                    // #568: only a line whose typed record parses AND carries a real `ts`
+                    // (not default(DateTimeOffset), i.e. not an absent `ts`) may feed
+                    // this timing — mirroring EventHistoryReader's own rule for the
+                    // Planner, so a line the typed guard refuses (e.g. a null
+                    // scenarioId) no longer feeds this builder while the Planner
+                    // refuses it outright.
+                    AccumulateScenarioStartedTimestamp(line, ref earliestScenarioStarted);
                     break;
 
                 case EventTypes.ScenarioCompleted:
@@ -218,7 +264,8 @@ public static class TelemetryEventBuilder
                     break;
 
                 case EventTypes.StepCompleted:
-                    earliestStepCompleted = Min(earliestStepCompleted, ts);
+                    // #568: same typed-guard + real-`ts` rule as ScenarioStarted above.
+                    AccumulateStepCompletedTimestamp(line, ref earliestStepCompleted);
                     break;
 
                 default:
@@ -228,12 +275,12 @@ public static class TelemetryEventBuilder
             }
         }
 
-        // Run-start anchor: the earliest event timestamp in the buffer (there is no
-        // SuiteStarted record in the v1 stream).  Durations are clamped at 0 so a
-        // clock skew can never produce a negative (or misleading) value.
-        var runStart = earliestEvent;
-        var startupMs = DiffMsClamped(runStart, earliestScenarioStarted);
-        var timeToFirstTestMs = DiffMsClamped(runStart, earliestStepCompleted);
+        // Run-start anchor: the caller-supplied instant `vouchfx run` began its
+        // pipeline (#568) — never derived from the buffer itself.  Durations are
+        // clamped at 0 so a clock skew can never produce a negative (or misleading)
+        // value.
+        var startupMs = DiffMsClamped(runStartedAt, earliestScenarioStarted);
+        var timeToFirstTestMs = DiffMsClamped(runStartedAt, earliestStepCompleted);
 
         return new TelemetryEvent
         {
@@ -289,6 +336,72 @@ public static class TelemetryEventBuilder
         stepVerdicts.EnvError += counts.EnvError;
         stepVerdicts.Inconclusive += counts.Inconclusive;
         return true;
+    }
+
+    /// <summary>
+    /// Reads a scenario-started line's <c>ts</c> and folds it into
+    /// <paramref name="earliestScenarioStarted"/> — but only when the line's typed
+    /// record parses AND its timestamp is a real one (#568).
+    /// </summary>
+    /// <remarks>
+    /// Mirrors <c>EventHistoryReader</c>'s own rule for the Planner: a line the typed
+    /// guard refuses (e.g. <c>"scenarioId": null</c>) never reaches
+    /// <see cref="EventStreamJson.FromLine{T}"/>'s return, and a line with no <c>ts</c>
+    /// on the wire deserialises <see cref="ScenarioStartedEvent.Timestamp"/> to
+    /// <see langword="default"/> — both are treated as "no timing information", never
+    /// folded in as a real timestamp. A default timestamp is 0001-01-01, not the Unix
+    /// epoch; were it folded in anyway it would be earlier than any real run start, so
+    /// <c>DiffMsClamped</c> would clamp <c>startupMs</c> to 0 rather than report a huge
+    /// duration — a silently WRONG zero rather than a crash, which is exactly why this
+    /// guard exists instead of relying on the clamp to mask it.
+    /// </remarks>
+    private static void AccumulateScenarioStartedTimestamp(
+        string line, ref DateTimeOffset? earliestScenarioStarted)
+    {
+        ScenarioStartedEvent scenario;
+        try
+        {
+            scenario = EventStreamJson.FromLine<ScenarioStartedEvent>(line);
+        }
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException)
+        {
+            return;
+        }
+
+        if (scenario.Timestamp == default)
+        {
+            return;
+        }
+
+        earliestScenarioStarted = Min(earliestScenarioStarted, scenario.Timestamp);
+    }
+
+    /// <summary>
+    /// Reads a step-completed line's <c>ts</c> and folds it into
+    /// <paramref name="earliestStepCompleted"/> — but only when the line's typed
+    /// record parses AND its timestamp is a real one (#568). See
+    /// <see cref="AccumulateScenarioStartedTimestamp"/> for the identical rule and
+    /// its rationale.
+    /// </summary>
+    private static void AccumulateStepCompletedTimestamp(
+        string line, ref DateTimeOffset? earliestStepCompleted)
+    {
+        StepCompletedEvent step;
+        try
+        {
+            step = EventStreamJson.FromLine<StepCompletedEvent>(line);
+        }
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException)
+        {
+            return;
+        }
+
+        if (step.Timestamp == default)
+        {
+            return;
+        }
+
+        earliestStepCompleted = Min(earliestStepCompleted, step.Timestamp);
     }
 
     /// <summary>
