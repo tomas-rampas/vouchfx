@@ -74,8 +74,11 @@ public sealed class HtmlRenderer
     /// </summary>
     /// <param name="jsonLines">
     /// The sequence of JSON Lines strings to render.  Blank and whitespace-only lines
-    /// are skipped silently; a malformed line is skipped AND COUNTED (issue #588), and
-    /// the count is surfaced as a run-summary paragraph when it is above zero.  The
+    /// are skipped silently.  A line that cannot be read — malformed JSON, a line
+    /// <c>EventStreamJson.FromLine</c> refuses, or a value on it this renderer reads
+    /// that cannot be decoded (e.g. a lone-surrogate escape) — is COUNTED (issue #588),
+    /// and the count is surfaced as a run-summary paragraph when it is above zero;
+    /// whatever the line contributed before the failing read stays in the report.  The
     /// sequence is enumerated once.
     /// </param>
     /// <param name="output">
@@ -97,9 +100,13 @@ public sealed class HtmlRenderer
     /// </summary>
     /// <param name="jsonLines">
     /// The sequence of JSON Lines strings to render.  Blank and whitespace-only lines
-    /// are skipped silently; a malformed line is skipped AND COUNTED (issue #588), and
-    /// the count is surfaced as a run-summary paragraph when it is above zero.  The
-    /// sequence is enumerated once.
+    /// are skipped silently.  A line that cannot be read — malformed JSON, a line
+    /// <c>EventStreamJson.FromLine</c> refuses, or a value on it this renderer reads
+    /// that cannot be decoded (e.g. a lone-surrogate escape), including one
+    /// <paramref name="diffLookup"/> reads — is COUNTED (issue #588), and the count is
+    /// surfaced as a run-summary paragraph when it is above zero; whatever the line
+    /// contributed before the failing read stays in the report.  The sequence is
+    /// enumerated once.
     /// </param>
     /// <param name="output">
     /// The <see cref="TextWriter"/> that receives the rendered HTML.
@@ -109,10 +116,16 @@ public sealed class HtmlRenderer
     /// <c>"db-assert.postgres"</c>) and the step's structured observation, returns the
     /// rendered diff text for that observation, or <see langword="null"/> when no diff
     /// is applicable.  Invoked only for a <c>step-completed</c> event whose verdict is
-    /// <c>FAIL</c> and which carries an <c>observation</c>.  The delegate is a plain
-    /// <see cref="Func{T1, T2, TResult}"/> over <see cref="JsonElement"/> so this
-    /// assembly stays decoupled from <c>Vouchfx.Sdk</c> and the
-    /// <c>IStepDiffRenderer</c> type.
+    /// <c>FAIL</c> and which carries an <c>observation</c>, while that line is read, with
+    /// the step kind recorded by the <c>step-started</c> lines already read for the same
+    /// run and step (none recorded yet, no call).  An <see cref="InvalidOperationException"/>
+    /// or <see cref="JsonException"/> it throws counts the line as unreadable, like the
+    /// terminal renderer.  Any other exception it throws propagates out of this method
+    /// before anything is written to <paramref name="output"/>, because the diff is
+    /// computed while the stream is read, before the document is written.  The delegate is
+    /// a plain <see cref="Func{T1, T2, TResult}"/> over <see cref="JsonElement"/> so this
+    /// assembly stays decoupled from <c>Vouchfx.Sdk</c> and the <c>IStepDiffRenderer</c>
+    /// type.
     /// </param>
     /// <exception cref="ArgumentNullException">
     /// Thrown when <paramref name="jsonLines"/> or <paramref name="output"/> is
@@ -126,21 +139,15 @@ public sealed class HtmlRenderer
         ArgumentNullException.ThrowIfNull(jsonLines);
         ArgumentNullException.ThrowIfNull(output);
 
-        // (runId, stepId) → kind map, populated from step-started events.  Keying by
-        // (runId, stepId) — not stepId alone — disambiguates an aggregated multi-run
-        // stream where two runs reuse the same step id, so a later run's step-started
-        // cannot overwrite an earlier run's kind and make its step-completed resolve the
-        // wrong diff.  This mirrors the terminal renderer's cache verbatim.
-        var stepKinds = new Dictionary<(string RunId, string StepId), string>();
-
         // Materialise the stream into an in-memory model so the HTML can be laid out
-        // top-down (head → body → per-scenario sections → run summary).  The buffer is
-        // already in memory at the call site (it is the same buffered stream the
-        // terminal renderer renders), so a second pass over parsed envelopes is cheap
-        // and keeps the markup generation a pure function of the model.
-        var model = BuildModel(jsonLines, stepKinds);
+        // top-down (head → body → per-scenario sections → run summary).  EVERY read of
+        // the event stream happens here, inside BuildModel's per-line guard, including
+        // the provenance and reproducibility entries and the provider diff (issue #588):
+        // WriteDocument reads only the typed model, so a value that cannot be read is
+        // counted with its line rather than rendered as a default.
+        var model = BuildModel(jsonLines, diffLookup);
 
-        WriteDocument(output, model, stepKinds, diffLookup);
+        WriteDocument(output, model);
     }
 
     // -------------------------------------------------------------------------
@@ -149,12 +156,17 @@ public sealed class HtmlRenderer
 
     private static ReportModel BuildModel(
         IEnumerable<string> jsonLines,
-        // Concrete Dictionary, not IDictionary: this private helper has a single call site
-        // that already holds the concrete map, and the interface buys nothing but an
-        // indirection on every write (CA1859).
-        Dictionary<(string RunId, string StepId), string> stepKinds)
+        Func<string, JsonElement, string?>? diffLookup)
     {
         var model = new ReportModel();
+
+        // (runId, stepId) → kind map, populated from step-started events as the stream
+        // is read, so a step-completed line resolves the kind recorded BEFORE it, as in
+        // the terminal renderer.  Keying by (runId, stepId) — not stepId alone —
+        // disambiguates an aggregated multi-run stream where two runs reuse the same step
+        // id, so a later run's step-started cannot overwrite an earlier run's kind and
+        // make its step-completed resolve the wrong diff.
+        var stepKinds = new Dictionary<(string RunId, string StepId), string>();
 
         foreach (var line in jsonLines)
         {
@@ -254,7 +266,20 @@ public sealed class HtmlRenderer
                             // point of read, mirroring the scenario-level clamp below (issue #569).
                             var stepDurationMs = GetLong(envelope, "durationMs");
                             step.DurationMs = stepDurationMs.HasValue ? Math.Max(0L, stepDurationMs.Value) : null;
-                            step.Completed = envelope;
+
+                            // A later step-completed line for the same step replaces what an
+                            // earlier one recorded (last line wins), so clear it first.
+                            step.Diff = null;
+                            step.HasProvenance = false;
+                            step.Captures.Clear();
+                            step.Substitutions.Clear();
+
+                            // Same order as TerminalRenderer's step-completed case: the diff,
+                            // then the provenance thread.  A read that throws part-way leaves
+                            // what was read before it in the model, the same prefix the
+                            // terminal renderer prints before its own per-line catch fires.
+                            step.Diff = ComputeStepDiff(envelope, stepId, step.Verdict, stepKinds, diffLookup);
+                            ReadProvenance(envelope, step);
                             break;
                         }
 
@@ -319,11 +344,14 @@ public sealed class HtmlRenderer
 
                     case EventTypes.ReproducibilityEnvelope:
                         {
-                            model.Envelopes.Add(new EnvelopeRow(
-                                ScenarioId: GetStr(envelope, "scenarioId") ?? "(unknown)",
-                                EnvSchemaVersion: GetStr(envelope, "envSchemaVersion"),
-                                SecretReferences: ReadArray(envelope, "secretReferences"),
-                                Fixtures: ReadArray(envelope, "fixtures")));
+                            // The two header fields first: if either cannot be read, nothing
+                            // is added.  Then the row, then each entry as it is read, so an
+                            // unreadable entry leaves the entries before it in place.
+                            var envelopeScenarioId = GetStr(envelope, "scenarioId") ?? "(unknown)";
+                            var envSchemaVersion = GetStr(envelope, "envSchemaVersion");
+                            var envelopeRow = new EnvelopeRow(envelopeScenarioId, envSchemaVersion);
+                            model.Envelopes.Add(envelopeRow);
+                            ReadEnvelopeEntries(envelope, envelopeRow);
                             break;
                         }
 
@@ -342,18 +370,15 @@ public sealed class HtmlRenderer
                 // This ALSO tolerates a line whose EventStreamJson.FromLine itself throws
                 // InvalidOperationException — the line was the JSON literal null, or a null
                 // runId/type (#571) — which is skipped here just like malformed JSON.
-                // Issue #588: this IS the tolerance catch the skip count measures.  ALL 16
-                // GetStr call sites above are inside THIS try (BuildModel's per-line loop),
-                // and GetStr itself does not catch — an unreadable string value (e.g. a
-                // lone surrogate) in ANY field BuildModel reads propagates here and is
-                // counted, exactly like the terminal/JUnit renderers' own GetStr.  This is
-                // DIFFERENT from GetStrFromObject: its 8 call sites all run at EMIT time,
-                // inside WriteDocument, OUTSIDE this per-line loop (the model stores the
-                // whole step-completed / envelope and defers those reads to write time), so
-                // GetStrFromObject keeps its own internal catch — a genuinely unreadable
-                // field there degrades to a missing value in an otherwise-complete document
-                // rather than aborting mid-write, and is NOT counted here because the LINE
-                // itself was already read successfully by this per-line loop.
+                // Issue #588: this IS the tolerance catch the skip count measures.  Every
+                // read this renderer makes of the event stream runs inside THIS try: the
+                // GetStr reads in the switch, and — through ComputeStepDiff, ReadProvenance
+                // and ReadEnvelopeEntries — the diff lookup and every GetStrFromObject /
+                // GetBoolFromObject read.  None of those accessors catches, so a value that
+                // cannot be decoded (e.g. a lone surrogate, in a value or in a property name
+                // TryGetProperty scans) propagates here and is counted, as in the terminal
+                // and JUnit renderers.  WriteDocument reads only the typed model, so nothing
+                // after this loop can fail on the stream's content.
                 model.SkippedEventLines++;
                 continue;
             }
@@ -362,15 +387,159 @@ public sealed class HtmlRenderer
         return model;
     }
 
+    /// <summary>
+    /// Returns the provider-specific expected-vs-observed diff for a <c>step-completed</c>
+    /// line, or <see langword="null"/> when none applies: no <paramref name="diffLookup"/>,
+    /// a verdict other than <c>FAIL</c>, no <c>observation</c>, or no step kind recorded
+    /// yet for the line's run and step.  The diff is computed while the stream is read —
+    /// the stream carries only the structured observation, never rendered text (§14).
+    /// </summary>
+    /// <remarks>
+    /// Called only from <see cref="BuildModel"/>'s per-line try, so an
+    /// <see cref="InvalidOperationException"/> or <see cref="JsonException"/> from the
+    /// lookup (e.g. its <c>GetString()</c> on an observation value carrying a lone
+    /// surrogate) counts the line there instead of being caught here.
+    /// </remarks>
+    private static string? ComputeStepDiff(
+        EventEnvelope envelope,
+        string stepId,
+        string? verdict,
+        // Concrete Dictionary, not IReadOnlyDictionary: this private helper has a single
+        // call site that already holds the concrete map (CA1859).
+        Dictionary<(string RunId, string StepId), string> stepKinds,
+        Func<string, JsonElement, string?>? diffLookup)
+    {
+        if (diffLookup is null
+            || !string.Equals(verdict, "FAIL", StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        if (envelope.Extra is null
+            || !envelope.Extra.TryGetValue("observation", out var observation)
+            || observation.ValueKind == JsonValueKind.Null
+            || observation.ValueKind == JsonValueKind.Undefined)
+        {
+            return null;
+        }
+
+        var runId = envelope.RunId;
+        if (string.IsNullOrEmpty(runId)
+            || !stepKinds.TryGetValue((runId, stepId), out var kind))
+        {
+            return null;
+        }
+
+        return diffLookup(kind, observation);
+    }
+
+    /// <summary>
+    /// Reads a <c>step-completed</c> line's <c>captured</c> and <c>substitutions</c>
+    /// arrays into <paramref name="step"/>'s typed provenance rows.  Non-object entries
+    /// are skipped; an absent or wrong-kind field takes the default the terminal renderer
+    /// prints for it.  Each row is appended as soon as it has been read, so a read that
+    /// throws leaves the rows before it in place and the line is counted by
+    /// <see cref="BuildModel"/>'s per-line catch.
+    /// </summary>
+    private static void ReadProvenance(EventEnvelope envelope, StepModel step)
+    {
+        var captured = ReadArray(envelope, "captured");
+        var substitutions = ReadArray(envelope, "substitutions");
+
+        // The section is drawn whenever either array has an entry, even when no entry is
+        // an object — the same condition the terminal renderer uses for its
+        // "provenance:" line.
+        step.HasProvenance = captured.Length != 0 || substitutions.Length != 0;
+
+        foreach (var capture in captured)
+        {
+            if (capture.ValueKind != JsonValueKind.Object)
+            {
+                continue;
+            }
+
+            var name = GetStrFromObject(capture, "name") ?? "(unknown)";
+            var path = GetStrFromObject(capture, "path") ?? "(unknown)";
+            var matched = GetBoolFromObject(capture, "matched");
+            step.Captures.Add(new CaptureRow(name, path, matched));
+        }
+
+        foreach (var substitution in substitutions)
+        {
+            if (substitution.ValueKind != JsonValueKind.Object)
+            {
+                continue;
+            }
+
+            var placeholder = GetStrFromObject(substitution, "placeholder") ?? "(unknown)";
+            var secretDerived = GetBoolFromObject(substitution, "secretDerived");
+            var originStepId = GetStrFromObject(substitution, "originStepId");
+            step.Substitutions.Add(new SubstitutionRow(placeholder, secretDerived, originStepId));
+        }
+    }
+
+    /// <summary>
+    /// Reads a <c>reproducibility-envelope</c> line's <c>secretReferences</c> and
+    /// <c>fixtures</c> arrays into <paramref name="row"/>.  Non-object entries are
+    /// skipped; each entry is appended as soon as it has been read, so a read that throws
+    /// leaves the entries before it in place and the line is counted by
+    /// <see cref="BuildModel"/>'s per-line catch.
+    /// </summary>
+    private static void ReadEnvelopeEntries(EventEnvelope envelope, EnvelopeRow row)
+    {
+        foreach (var reference in ReadArray(envelope, "secretReferences"))
+        {
+            if (reference.ValueKind != JsonValueKind.Object)
+            {
+                continue;
+            }
+
+            var source = GetStrFromObject(reference, "source") ?? "(unknown)";
+            var hash = GetStrFromObject(reference, "referenceHash") ?? "(unknown)";
+            row.SecretReferences.Add(new SecretReferenceRow(source, hash));
+        }
+
+        foreach (var fixture in ReadArray(envelope, "fixtures"))
+        {
+            if (fixture.ValueKind != JsonValueKind.Object)
+            {
+                continue;
+            }
+
+            var reference = GetStrFromObject(fixture, "reference") ?? "(unknown)";
+
+            // CAUSE-NEUTRAL BY CONSTRUCTION (issue #484). The token names what the
+            // envelope KNOWS — that this row carries no hash — and deliberately not
+            // why, because the wire record does not carry a why. FixtureDigest has
+            // two fields, and a null ContentHash is the whole of what the producer
+            // recorded; any word here about the file's state would be this renderer
+            // inventing a cause from an absence.
+            //
+            // The token this replaced, "(absent)", named one: it read as a claim
+            // about the FILE. Five causes reach this branch since #466 widened
+            // ScenarioRunner.HashFixtureOrNull's catch to the IO family, and "(absent)"
+            // was FALSE for three — a locked file, a permission denial, and a path the
+            // filesystem rejects. It stayed true for the other two: a file that was never
+            // there, and one deleted between the existence check and the read, which IS
+            // absent by the time the read fails. Right about two cases in five is still a
+            // token that lies to a reader.
+            //
+            // Do not "improve" this by rendering a cause; the envelope carries none. The
+            // alternative — a Reason field on FixtureDigest — is deliberately NOT taken
+            // yet, and the reasoning lives at HashFixtureOrNull. Two things it does not
+            // rest on, because both are wrong: the §14 freeze (which permits an additive
+            // field), and "no consumer exists" (this event's charter is diffing by
+            // out-of-process consumers). It is simply cheap to reverse later.
+            var contentHash = GetStrFromObject(fixture, "contentHash") ?? "(no hash recorded)";
+            row.Fixtures.Add(new FixtureRow(reference, contentHash));
+        }
+    }
+
     // -------------------------------------------------------------------------
     // Document writing — head (inline style) + body (sections + summary).
     // -------------------------------------------------------------------------
 
-    private static void WriteDocument(
-        TextWriter output,
-        ReportModel model,
-        IReadOnlyDictionary<(string RunId, string StepId), string> stepKinds,
-        Func<string, JsonElement, string?>? diffLookup)
+    private static void WriteDocument(TextWriter output, ReportModel model)
     {
         output.WriteLine("<!DOCTYPE html>");
         output.WriteLine("<html lang=\"en\">");
@@ -399,7 +568,7 @@ public sealed class HtmlRenderer
 
         foreach (var scenario in model.Scenarios)
         {
-            WriteScenario(output, scenario, stepKinds, diffLookup);
+            WriteScenario(output, scenario);
         }
 
         WriteEnvironmentErrors(output, model);
@@ -557,11 +726,7 @@ public sealed class HtmlRenderer
             label,
             count);
 
-    private static void WriteScenario(
-        TextWriter output,
-        ScenarioModel scenario,
-        IReadOnlyDictionary<(string RunId, string StepId), string> stepKinds,
-        Func<string, JsonElement, string?>? diffLookup)
+    private static void WriteScenario(TextWriter output, ScenarioModel scenario)
     {
         var verdictClass = VerdictClass(scenario.Verdict);
         output.WriteLine(string.Format(
@@ -597,18 +762,13 @@ public sealed class HtmlRenderer
 
         foreach (var step in scenario.Steps)
         {
-            WriteStep(output, scenario.RunId, step, stepKinds, diffLookup);
+            WriteStep(output, step);
         }
 
         output.WriteLine("</section>");
     }
 
-    private static void WriteStep(
-        TextWriter output,
-        string runId,
-        StepModel step,
-        IReadOnlyDictionary<(string RunId, string StepId), string> stepKinds,
-        Func<string, JsonElement, string?>? diffLookup)
+    private static void WriteStep(TextWriter output, StepModel step)
     {
         var verdict = step.Verdict ?? "(unknown)";
         var verdictClass = VerdictClass(step.Verdict);
@@ -630,7 +790,7 @@ public sealed class HtmlRenderer
             HtmlEscape(durationSuffix)));
 
         WriteAttemptTimeline(output, step);
-        WriteStepDiff(output, runId, step, verdict, stepKinds, diffLookup);
+        WriteStepDiff(output, step);
         WriteProvenanceThread(output, step);
 
         output.WriteLine("</div>");
@@ -669,60 +829,13 @@ public sealed class HtmlRenderer
     }
 
     /// <summary>
-    /// Writes a provider-specific expected-vs-observed diff under a FAILED step when a
-    /// <paramref name="diffLookup"/> is supplied and the step carries a structured
-    /// observation.  A no-op otherwise.  The diff is computed at render time — the
-    /// stream carries only the structured observation, never rendered text (§14).
+    /// Writes the provider-specific expected-vs-observed diff that
+    /// <see cref="ComputeStepDiff"/> recorded for the step, if any.  A no-op when there
+    /// is none.
     /// </summary>
-    private static void WriteStepDiff(
-        TextWriter output,
-        string runId,
-        StepModel step,
-        string verdict,
-        IReadOnlyDictionary<(string RunId, string StepId), string> stepKinds,
-        Func<string, JsonElement, string?>? diffLookup)
+    private static void WriteStepDiff(TextWriter output, StepModel step)
     {
-        if (diffLookup is null
-            || !string.Equals(verdict, "FAIL", StringComparison.Ordinal)
-            || step.Completed is null)
-        {
-            return;
-        }
-
-        var envelope = step.Completed;
-        if (envelope.Extra is null
-            || !envelope.Extra.TryGetValue("observation", out var observation)
-            || observation.ValueKind == JsonValueKind.Null
-            || observation.ValueKind == JsonValueKind.Undefined)
-        {
-            return;
-        }
-
-        if (string.IsNullOrEmpty(runId)
-            || !stepKinds.TryGetValue((runId, step.StepId), out var kind))
-        {
-            return;
-        }
-
-        // The diff is computed at EMIT time — OUTSIDE the per-line build guard — and the
-        // provider delegate reads string values out of the stored observation.  If the
-        // observation carries a string value with a lone / unpaired UTF-16 surrogate (a
-        // SUT-derived observation can), the delegate's GetString() throws
-        // InvalidOperationException; left unguarded that would abort WriteDocument
-        // mid-stream and truncate the HTML file.  Treat an unreadable observation like a
-        // missing one — OMIT the diff fragment — so the rest of the document still renders
-        // to completion.  JsonException is caught for safety.
-        string? diff;
-        try
-        {
-            diff = diffLookup(kind, observation);
-        }
-        catch (Exception ex) when (ex is InvalidOperationException or JsonException)
-        {
-            return;
-        }
-
-        if (string.IsNullOrEmpty(diff))
+        if (string.IsNullOrEmpty(step.Diff))
         {
             return;
         }
@@ -732,13 +845,14 @@ public sealed class HtmlRenderer
         output.WriteLine(string.Format(
             CultureInfo.InvariantCulture,
             "<div class=\"diff\">{0}</div>",
-            HtmlEscape(diff)));
+            HtmlEscape(step.Diff)));
     }
 
     /// <summary>
     /// Writes the captured-variable provenance thread for a step — the values it
     /// captured and the <c>{placeholder}</c> / <c>${secret:…}</c> references
-    /// substituted into it — exactly as the terminal renderer does, in HTML.
+    /// substituted into it — exactly as the terminal renderer does, in HTML, from the
+    /// rows <see cref="ReadProvenance"/> recorded.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -752,54 +866,29 @@ public sealed class HtmlRenderer
     /// </remarks>
     private static void WriteProvenanceThread(TextWriter output, StepModel step)
     {
-        if (step.Completed is null)
-        {
-            return;
-        }
-
-        var captured = ReadArray(step.Completed, "captured");
-        var substitutions = ReadArray(step.Completed, "substitutions");
-
-        if (captured.Length == 0 && substitutions.Length == 0)
+        if (!step.HasProvenance)
         {
             return;
         }
 
         output.WriteLine("<div class=\"provenance\"><strong>provenance:</strong><ul>");
 
-        foreach (var capture in captured)
+        foreach (var capture in step.Captures)
         {
-            if (capture.ValueKind != JsonValueKind.Object)
-            {
-                continue;
-            }
-
-            var name = GetStrFromObject(capture, "name") ?? "(unknown)";
-            var path = GetStrFromObject(capture, "path") ?? "(unknown)";
-            var matched = GetBoolFromObject(capture, "matched");
-            var matchSuffix = matched ? string.Empty : " (no match)";
+            var matchSuffix = capture.Matched ? string.Empty : " (no match)";
 
             output.WriteLine(string.Format(
                 CultureInfo.InvariantCulture,
                 "<li>captured <span class=\"mono\">{0}</span> &lt;- step <span class=\"mono\">{1}</span> ({2}){3}</li>",
-                HtmlEscape(name),
+                HtmlEscape(capture.Name),
                 HtmlEscape(step.StepId),
-                HtmlEscape(path),
+                HtmlEscape(capture.Path),
                 HtmlEscape(matchSuffix)));
         }
 
-        foreach (var substitution in substitutions)
+        foreach (var substitution in step.Substitutions)
         {
-            if (substitution.ValueKind != JsonValueKind.Object)
-            {
-                continue;
-            }
-
-            var placeholder = GetStrFromObject(substitution, "placeholder") ?? "(unknown)";
-            var secretDerived = GetBoolFromObject(substitution, "secretDerived");
-            var originStepId = GetStrFromObject(substitution, "originStepId");
-
-            if (secretDerived)
+            if (substitution.SecretDerived)
             {
                 // §17: the placeholder field carries the non-sensitive secret REFERENCE
                 // label; render it with a redaction marker and never a value.  The
@@ -807,19 +896,19 @@ public sealed class HtmlRenderer
                 output.WriteLine(string.Format(
                     CultureInfo.InvariantCulture,
                     "<li>substituted <span class=\"mono\">${{secret:{0}}}</span> <span class=\"redacted\">(redacted)</span> -&gt; step <span class=\"mono\">{1}</span></li>",
-                    HtmlEscape(placeholder),
+                    HtmlEscape(substitution.Placeholder),
                     HtmlEscape(step.StepId)));
             }
             else
             {
-                var origin = string.IsNullOrEmpty(originStepId)
+                var origin = string.IsNullOrEmpty(substitution.OriginStepId)
                     ? "(variables/untraced)"
-                    : string.Format(CultureInfo.InvariantCulture, "step '{0}'", originStepId);
+                    : string.Format(CultureInfo.InvariantCulture, "step '{0}'", substitution.OriginStepId);
 
                 output.WriteLine(string.Format(
                     CultureInfo.InvariantCulture,
                     "<li>substituted <span class=\"mono\">{{{0}}}</span> (from {1}) -&gt; step <span class=\"mono\">{2}</span></li>",
-                    HtmlEscape(placeholder),
+                    HtmlEscape(substitution.Placeholder),
                     HtmlEscape(origin),
                     HtmlEscape(step.StepId)));
             }
@@ -879,20 +968,12 @@ public sealed class HtmlRenderer
             output.WriteLine("<h4>Secret references</h4><ul>");
             foreach (var reference in envelope.SecretReferences)
             {
-                if (reference.ValueKind != JsonValueKind.Object)
-                {
-                    continue;
-                }
-
-                var source = GetStrFromObject(reference, "source") ?? "(unknown)";
-                var hash = GetStrFromObject(reference, "referenceHash") ?? "(unknown)";
-
                 // The source id and the reference HASH are surfaced — never a value.
                 output.WriteLine(string.Format(
                     CultureInfo.InvariantCulture,
                     "<li>source <span class=\"mono\">{0}</span> reference-hash <span class=\"mono\">{1}</span></li>",
-                    HtmlEscape(source),
-                    HtmlEscape(hash)));
+                    HtmlEscape(reference.Source),
+                    HtmlEscape(reference.ReferenceHash)));
             }
 
             output.WriteLine("</ul>");
@@ -900,42 +981,11 @@ public sealed class HtmlRenderer
             output.WriteLine("<h4>Fixtures</h4><ul>");
             foreach (var fixture in envelope.Fixtures)
             {
-                if (fixture.ValueKind != JsonValueKind.Object)
-                {
-                    continue;
-                }
-
-                var reference = GetStrFromObject(fixture, "reference") ?? "(unknown)";
-
-                // CAUSE-NEUTRAL BY CONSTRUCTION (issue #484). The token names what the
-                // envelope KNOWS — that this row carries no hash — and deliberately not
-                // why, because the wire record does not carry a why. FixtureDigest has
-                // two fields, and a null ContentHash is the whole of what the producer
-                // recorded; any word here about the file's state would be this renderer
-                // inventing a cause from an absence.
-                //
-                // The token this replaced, "(absent)", named one: it read as a claim
-                // about the FILE. Five causes reach this branch since #466 widened
-                // ScenarioRunner.HashFixtureOrNull's catch to the IO family, and "(absent)"
-                // was FALSE for three — a locked file, a permission denial, and a path the
-                // filesystem rejects. It stayed true for the other two: a file that was never
-                // there, and one deleted between the existence check and the read, which IS
-                // absent by the time the read fails. Right about two cases in five is still a
-                // token that lies to a reader.
-                //
-                // Do not "improve" this by rendering a cause; the envelope carries none. The
-                // alternative — a Reason field on FixtureDigest — is deliberately NOT taken
-                // yet, and the reasoning lives at HashFixtureOrNull. Two things it does not
-                // rest on, because both are wrong: the §14 freeze (which permits an additive
-                // field), and "no consumer exists" (this event's charter is diffing by
-                // out-of-process consumers). It is simply cheap to reverse later.
-                var contentHash = GetStrFromObject(fixture, "contentHash") ?? "(no hash recorded)";
-
                 output.WriteLine(string.Format(
                     CultureInfo.InvariantCulture,
                     "<li><span class=\"mono\">{0}</span> content-hash <span class=\"mono\">{1}</span></li>",
-                    HtmlEscape(reference),
-                    HtmlEscape(contentHash)));
+                    HtmlEscape(fixture.Reference),
+                    HtmlEscape(fixture.ContentHash)));
             }
 
             output.WriteLine("</ul>");
@@ -1137,7 +1187,11 @@ public sealed class HtmlRenderer
         };
 
     // -------------------------------------------------------------------------
-    // Extra-field accessors — all defensive; never throw.  Ported from the
+    // Extra-field accessors.  An absent or wrong-kind field returns the accessor's
+    // default (null, 0, false or an empty array).  A value that cannot be decoded — a
+    // lone-surrogate escape in a string GetStr / GetStrFromObject reads, or in a
+    // property name TryGetProperty scans — throws, by design: every call runs inside
+    // BuildModel's per-line try, which counts the line (issue #588).  Ported from the
     // terminal renderer so both renderers read the flat wire shape identically.
     // -------------------------------------------------------------------------
 
@@ -1151,15 +1205,14 @@ public sealed class HtmlRenderer
     /// correction): a string VALUE carrying a lone / unpaired UTF-16 surrogate parses
     /// fine but throws <see cref="InvalidOperationException"/> at <c>GetString()</c>.
     /// Every call site of this method sits inside <c>BuildModel</c>'s per-line
-    /// try/catch, so letting that exception propagate means the WHOLE line is skipped
-    /// and counted there — exactly like <c>TerminalRenderer</c>/<c>JunitXmlRenderer</c>'s
-    /// own <c>GetStr</c>. An earlier version of this method caught the exception here
-    /// and returned <see langword="null"/> instead, which silently degraded the
-    /// offending field to a missing value (e.g. a poisoned <c>stepId</c> made a step
-    /// vanish from its scenario with no line rejected and no count raised) — the exact
-    /// silent drop issue #588 exists to end. This is DIFFERENT from
-    /// <see cref="GetStrFromObject"/>, whose call sites run at EMIT time outside any
-    /// per-line guard and therefore keep their own catch.
+    /// try/catch, so letting that exception propagate stops reading the line and counts
+    /// it there — exactly like <c>TerminalRenderer</c>/<c>JunitXmlRenderer</c>'s own
+    /// <c>GetStr</c>. Catching the exception here and returning <see langword="null"/>
+    /// instead would silently degrade the offending field to a missing value (e.g. a
+    /// poisoned <c>stepId</c> would make a step vanish from its scenario with no line
+    /// rejected and no count raised) — the exact silent drop issue #588 exists to end.
+    /// <see cref="GetStrFromObject"/> and
+    /// <see cref="GetBoolFromObject"/> follow the same rule.
     /// </remarks>
     private static string? GetStr(EventEnvelope envelope, string key)
     {
@@ -1242,51 +1295,32 @@ public sealed class HtmlRenderer
     /// <summary>
     /// Reads a string sub-property from a <see cref="JsonElement"/> of kind
     /// <see cref="JsonValueKind.Object"/>.  Returns <see langword="null"/> if the
-    /// property is absent or not a JSON string, OR if reading it throws (see remarks).
+    /// property is absent or not a JSON string.
     /// </summary>
     /// <remarks>
-    /// Defensive read — kept DELIBERATELY, unlike GetStr above (issue #588, MAJOR-1):
-    /// all 8 call sites of THIS method (provenance name/path/placeholder/originStepId,
-    /// reproducibility source/referenceHash/reference/contentHash) are read at EMIT
-    /// time inside WriteDocument — OUTSIDE BuildModel's per-line try/catch — because
-    /// the renderer stores the whole step-completed / envelope and defers their reads
-    /// to write time; by the time this runs, the LINE itself already parsed and was
-    /// counted successfully (or not at all) by BuildModel.
-    /// <para>
-    /// TWO distinct failure shapes reach here, both from a lone / unpaired UTF-16
-    /// surrogate (the JSON escape <c>"\uD800"</c> with no low-surrogate partner), and
-    /// BOTH are guarded by the SAME try — issue #588 security MINOR widened this
-    /// guard's scope after the gatekeeper measured the second one: (1) a poisoned
-    /// property VALUE parses fine but throws <see cref="InvalidOperationException"/> at
-    /// <c>GetString()</c>; (2) a poisoned property NAME elsewhere in the SAME object
-    /// (not necessarily <paramref name="propertyName"/> itself) makes
-    /// <c>obj.TryGetProperty</c> throw the SAME exception while scanning — MEASURED to
-    /// fire even when <paramref name="propertyName"/> is present and clean, because the
-    /// scan can reach the poisoned key before it can report the match. Either failure,
-    /// left unguarded, would abort WriteDocument mid-stream and leave a TRUNCATED HTML
-    /// file (the writer streams straight to the output) — there is no per-line catch
-    /// left to run at this point, so this genuinely needs its own. Treat either failure
-    /// EXACTLY like a missing field — return null — so the single affected provenance
-    /// row / reproducibility entry is OMITTED while the rest of the document renders to
-    /// completion (all closing tags present); this is NOT counted as a skipped LINE,
-    /// because the line itself was read. Per §17 an omitted-because-unreadable field
-    /// leaks nothing: it simply disappears. JsonException is caught for safety though
-    /// no read here parses fresh JSON.
-    /// </para>
+    /// Deliberately does NOT catch a read failure, for the reason <see cref="GetStr"/>
+    /// gives (issue #588): every call runs inside <c>BuildModel</c>'s per-line try, via
+    /// <see cref="ReadProvenance"/> and <see cref="ReadEnvelopeEntries"/>, so a failure
+    /// counts the line.  Two failure shapes reach here, both from a lone / unpaired UTF-16
+    /// surrogate (the JSON escape <c>"\uD800"</c> with no low-surrogate partner): (1) a
+    /// poisoned property VALUE parses fine but throws
+    /// <see cref="InvalidOperationException"/> at <c>GetString()</c>; (2) a poisoned
+    /// property NAME elsewhere in the SAME object CAN make <c>obj.TryGetProperty</c>
+    /// throw the same exception, even when <paramref name="propertyName"/> is present and
+    /// clean — it does when the lookup reaches that key before it finds a match and the
+    /// key is shaped to be unescaped for comparison (see
+    /// <c>HtmlRendererTests.PoisonedKey_IsReachedOnlyByTheLookupItTargets</c>).
+    /// Catching either here and returning <see langword="null"/> would render the entry
+    /// with that field's absent-value default (<c>(unknown)</c>,
+    /// <c>(no hash recorded)</c> or <c>(variables/untraced)</c>) in place of a value the
+    /// stream carried, and count nothing.
     /// </remarks>
     private static string? GetStrFromObject(JsonElement obj, string propertyName)
     {
-        try
+        if (obj.TryGetProperty(propertyName, out var prop)
+            && prop.ValueKind == JsonValueKind.String)
         {
-            if (obj.TryGetProperty(propertyName, out var prop)
-                && prop.ValueKind == JsonValueKind.String)
-            {
-                return prop.GetString();
-            }
-        }
-        catch (Exception ex) when (ex is InvalidOperationException or JsonException)
-        {
-            return null;
+            return prop.GetString();
         }
 
         return null;
@@ -1295,30 +1329,25 @@ public sealed class HtmlRenderer
     /// <summary>
     /// Reads a boolean sub-property from a <see cref="JsonElement"/> of kind
     /// <see cref="JsonValueKind.Object"/>.  Returns <see langword="false"/> if the
-    /// property is absent or not a JSON boolean, OR if reading it throws.
+    /// property is absent or not a JSON boolean (so an omitted <c>secretDerived</c> /
+    /// <c>matched</c> defaults to <see langword="false"/>, as in the terminal renderer).
     /// </summary>
     /// <remarks>
-    /// Same guard, same reason, as <see cref="GetStrFromObject"/> (issue #588 security
-    /// MINOR): <c>obj.TryGetProperty</c> can throw <see cref="InvalidOperationException"/>
-    /// while scanning past an UNRELATED poisoned property NAME elsewhere in the same
-    /// object, even when <paramref name="propertyName"/> itself is absent or clean —
-    /// this call runs at EMIT time (WriteProvenanceThread), outside any per-line guard,
-    /// so an uncaught throw here would truncate the HTML file mid-write. Treated exactly
-    /// like an absent/non-boolean property: <see langword="false"/>.
+    /// Deliberately does NOT catch a read failure, for the reason <see cref="GetStr"/>
+    /// gives (issue #588): <c>obj.TryGetProperty</c> can throw
+    /// <see cref="InvalidOperationException"/> when its lookup reaches a poisoned property
+    /// NAME elsewhere in the same object, and every call runs inside
+    /// <c>BuildModel</c>'s per-line try, which counts the line.  Catching that here and
+    /// returning <see langword="false"/> would render a capture that matched as
+    /// <c>(no match)</c> and a secret-derived substitution in its plain, non-redacted
+    /// form.
     /// </remarks>
     private static bool GetBoolFromObject(JsonElement obj, string propertyName)
     {
-        try
+        if (obj.TryGetProperty(propertyName, out var prop)
+            && prop.ValueKind is JsonValueKind.True or JsonValueKind.False)
         {
-            if (obj.TryGetProperty(propertyName, out var prop)
-                && prop.ValueKind is JsonValueKind.True or JsonValueKind.False)
-            {
-                return prop.GetBoolean();
-            }
-        }
-        catch (Exception ex) when (ex is InvalidOperationException or JsonException)
-        {
-            return false;
+            return prop.GetBoolean();
         }
 
         return false;
@@ -1350,15 +1379,13 @@ public sealed class HtmlRenderer
 
         /// <summary>
         /// The number of event-stream lines <see cref="BuildModel"/>'s per-line
-        /// tolerance catch skipped (issue #588) — a malformed-JSON parse failure, a
-        /// <c>FromLine</c> refusal (e.g. a null runId/type, #571), or an unreadable
-        /// string value read by <c>GetStr</c> during BuildModel's own extraction (e.g. a
-        /// lone surrogate in ANY field BuildModel reads — GetStr does not catch this
-        /// itself, so it propagates here).  Does NOT count an unreadable value read by
-        /// <c>GetStrFromObject</c> at EMIT time (WriteDocument): that field is omitted
-        /// from an otherwise-complete document instead, because the LINE it came from
-        /// was already read successfully here.  Surfaced by <see cref="WriteRunSummary"/>
-        /// only when greater than zero.
+        /// tolerance catch fired for (issue #588) — a malformed-JSON parse failure, a
+        /// <c>FromLine</c> refusal (e.g. a null runId/type, #571), or a read of the line
+        /// that threw: a value that cannot be decoded (e.g. a lone surrogate) in any field
+        /// this renderer reads, provenance and reproducibility entries included, or an
+        /// <see cref="InvalidOperationException"/> / <see cref="JsonException"/> from the
+        /// diff lookup.  Counted once per line.  Surfaced by
+        /// <see cref="WriteRunSummary"/> only when greater than zero.
         /// </summary>
         public int SkippedEventLines { get; set; }
 
@@ -1445,18 +1472,49 @@ public sealed class HtmlRenderer
 
         public long? DurationMs { get; set; }
 
-        public EventEnvelope? Completed { get; set; }
-
         public List<AttemptRow> Attempts { get; } = new();
+
+        /// <summary>The provider diff for this step, if any (see <see cref="ComputeStepDiff"/>).</summary>
+        public string? Diff { get; set; }
+
+        /// <summary>
+        /// Whether the step-completed line the provenance rows were read from carried a
+        /// non-empty <c>captured</c> or <c>substitutions</c> array — the condition for
+        /// drawing the provenance section.
+        /// </summary>
+        public bool HasProvenance { get; set; }
+
+        public List<CaptureRow> Captures { get; } = new();
+
+        public List<SubstitutionRow> Substitutions { get; } = new();
     }
 
     private sealed record AttemptRow(int Attempt, long? TMs, string? Outcome, string ObservationSummary);
 
+    private sealed record CaptureRow(string Name, string Path, bool Matched);
+
+    private sealed record SubstitutionRow(string Placeholder, bool SecretDerived, string? OriginStepId);
+
     private sealed record EnvironmentErrorRow(string ResourceName, string ErrorKind, string? RegistryHost, string? Detail);
 
-    private sealed record EnvelopeRow(
-        string ScenarioId,
-        string? EnvSchemaVersion,
-        JsonElement[] SecretReferences,
-        JsonElement[] Fixtures);
+    private sealed class EnvelopeRow
+    {
+        public EnvelopeRow(string scenarioId, string? envSchemaVersion)
+        {
+            ScenarioId = scenarioId;
+            EnvSchemaVersion = envSchemaVersion;
+        }
+
+        public string ScenarioId { get; }
+
+        public string? EnvSchemaVersion { get; }
+
+        public List<SecretReferenceRow> SecretReferences { get; } = new();
+
+        public List<FixtureRow> Fixtures { get; } = new();
+    }
+
+    private sealed record SecretReferenceRow(string Source, string ReferenceHash);
+
+    private sealed record FixtureRow(string Reference, string ContentHash);
 }

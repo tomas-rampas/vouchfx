@@ -44,11 +44,31 @@ public sealed class TelemetryAllowlistTests
     };
 
     /// <summary>
-    /// The v2 allowlist (issue #588): v1 plus <see cref="TelemetryEvent.SkippedEventLines"/>.
-    /// A backend above version 1 parses leniently, so an ADDITIVE field is safe there.
+    /// The v2 allowlist (issue #588): the fourteen v1 properties plus
+    /// <see cref="TelemetryEvent.SkippedEventLines"/>, written out in full rather than
+    /// derived from the v1 row.  The reference backend parses the schema versions it knows
+    /// strictly, and only versions above the highest it knows leniently
+    /// (vouchfx-telemetry-backend#30).  A shipped version-2 row is therefore frozen
+    /// exactly as version 1 is.
     /// </summary>
     private static readonly string[] AllowlistV2 =
-        AllowlistV1.Append(nameof(TelemetryEvent.SkippedEventLines)).ToArray();
+    {
+        nameof(TelemetryEvent.SchemaVersion),
+        nameof(TelemetryEvent.Timestamp),
+        nameof(TelemetryEvent.InstallId),
+        nameof(TelemetryEvent.ToolVersion),
+        nameof(TelemetryEvent.EngineVersion),
+        nameof(TelemetryEvent.DotnetVersion),
+        nameof(TelemetryEvent.RunCount),
+        nameof(TelemetryEvent.ScenarioCount),
+        nameof(TelemetryEvent.StepVerdicts),
+        nameof(TelemetryEvent.ScenarioVerdicts),
+        nameof(TelemetryEvent.StepFamilies),
+        nameof(TelemetryEvent.StepProviders),
+        nameof(TelemetryEvent.StartupMs),
+        nameof(TelemetryEvent.TimeToFirstTestMs),
+        nameof(TelemetryEvent.SkippedEventLines),
+    };
 
     /// <summary>
     /// THE versioned allowlist table — one row per <see cref="TelemetryEvent.SchemaVersion"/>

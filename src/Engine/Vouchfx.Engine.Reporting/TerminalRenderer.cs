@@ -320,9 +320,8 @@ public sealed class TerminalRenderer
                 // line and continue with the rest of the stream.  This ALSO tolerates a line
                 // whose EventStreamJson.FromLine itself throws InvalidOperationException — the
                 // line was the JSON literal null, or a null runId/type (#571) — which is
-                // skipped here just like malformed JSON.  A diagnostic comment is intentionally
-                // omitted here to keep the stub output clean; a future production renderer may
-                // write one.  Issue #588: this IS the tolerance catch the skip count measures.
+                // skipped here just like malformed JSON.  Issue #588: this IS the tolerance
+                // catch the skip count measures.
                 skippedEventLines++;
                 continue;
             }
@@ -863,7 +862,11 @@ public sealed class TerminalRenderer
     }
 
     // -------------------------------------------------------------------------
-    // Extra-field accessors — all defensive; never throw.
+    // Extra-field accessors.  An absent or wrong-kind field returns the accessor's
+    // default (null, 0, false or an empty array).  A value that cannot be decoded — a
+    // lone-surrogate escape in a string GetStr / GetStrFromObject reads, or in a
+    // property name TryGetProperty scans — throws, by design: every call runs inside
+    // Render's per-line try, which counts the line (issue #588).
     // -------------------------------------------------------------------------
 
     /// <summary>

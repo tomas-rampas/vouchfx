@@ -593,8 +593,12 @@ public sealed class JunitXmlRenderer
            || ch is (char)0xFFFE or (char)0xFFFF;
 
     // -------------------------------------------------------------------------
-    // Extra-field accessors — all defensive; never throw.  Ported from the sibling
-    // renderers so all three read the flat wire shape identically.
+    // Extra-field accessors.  An absent or wrong-kind field returns the accessor's
+    // default (null or 0).  A value that cannot be decoded — a lone-surrogate escape in
+    // a string GetStr reads, or in a property name TryGetProperty scans — throws, by
+    // design: every call runs inside BuildModel's per-line try, which counts the line
+    // (issue #588).  Ported from the sibling renderers so all three read the flat wire
+    // shape identically.
     // -------------------------------------------------------------------------
 
     private static string? GetStr(EventEnvelope envelope, string key)

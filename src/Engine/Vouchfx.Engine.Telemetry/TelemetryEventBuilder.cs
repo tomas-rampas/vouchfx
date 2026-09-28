@@ -21,6 +21,15 @@
 //                            for stepFamilies)
 //   • startupMs            = (earliest VALID scenario-started ts) − runStartedAt
 //   • timeToFirstTestMs    = (earliest VALID step-completed ts) − runStartedAt
+//   • skippedEventLines    = number of lines this builder could not read, counted once
+//                            per line: the untyped envelope parse failed or FromLine
+//                            refused the line (malformed JSON, a null runId/type —
+//                            #571), or the typed FromLine<T> read of a scenario-started,
+//                            scenario-completed, step-started or step-completed line was
+//                            refused.  NOT counted: a blank line, which is skipped
+//                            unread; nor a line that was read but carries an event type
+//                            this builder does not measure, a default (absent) `ts`, or a
+//                            blank `kind`
 // where runStartedAt is a CALLER-SUPPLIED anchor (#568): the instant `vouchfx run`
 // began its pipeline, captured once via DateTimeOffset.UtcNow before discovery
 // (RunCommand.ExecuteRunPipelineAsync) and threaded through TelemetryRunHook.EmitAsync.
@@ -73,8 +82,10 @@ namespace Vouchfx.Engine.Telemetry;
 /// real name while any custom/non-Core provider's author-chosen <c>kind</c> is counted
 /// under the constant <c>"custom"</c> bucket (so it never leaves the machine), and the
 /// per-verdict counts — never a captured value, a URL, an image name, a scenario name,
-/// or a step id's data.  Lines that fail to parse are skipped (forward-compatible with
-/// unknown event types).
+/// or a step id's data.  A line this builder cannot read is skipped and counted in
+/// <see cref="TelemetryEvent.SkippedEventLines"/>; a line of an event type this builder
+/// does not measure is ignored and not counted (forward compatibility with unknown
+/// event types).
 /// </para>
 /// </remarks>
 public static class TelemetryEventBuilder
@@ -84,12 +95,14 @@ public static class TelemetryEventBuilder
     /// </summary>
     /// <remarks>
     /// 1 -> 2 (issue #588): the event gained <see cref="TelemetryEvent.SkippedEventLines"/>.
-    /// The reference backend (vouchfx-telemetry-backend, Ingestion/AllowlistParser.cs)
-    /// parses schemaVersion 1 with <c>UnmappedMemberHandling.Disallow</c> and refuses
-    /// the WHOLE batch at the first unrecognised field, while any version above 1 is
-    /// parsed leniently by design — so sending the new field under version 1 would get
-    /// every drained batch containing this event refused by an older backend, whereas
-    /// version 2 lets that same backend accept the event and drop the unknown field.
+    /// A backend that predates tomas-rampas/vouchfx-telemetry-backend#30 (the reference
+    /// backend, Ingestion/AllowlistParser.cs) parses schemaVersion 1 with
+    /// <c>UnmappedMemberHandling.Disallow</c> and refuses the WHOLE batch at the first
+    /// unrecognised field, while it parses any later version leniently — so sending the
+    /// new field under version 1 would get every drained batch containing this event
+    /// refused by such a backend, whereas version 2 lets it accept the event and drop
+    /// the unknown field. vouchfx-telemetry-backend#30 tracks the backend change that
+    /// parses version 2 strictly and stores the count.
     /// </remarks>
     public const int CurrentSchemaVersion = 2;
 
