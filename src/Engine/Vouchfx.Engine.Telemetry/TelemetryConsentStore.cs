@@ -293,10 +293,10 @@ public sealed class TelemetryConsentStore
     /// </summary>
     public const string FirstRunNoticeText =
         "vouchfx can collect anonymous, aggregate usage telemetry (tool/engine/.NET\n"
-        + "versions, step + scenario verdict counts, which built-in step kinds ran, and\n"
-        + "startup timings) to help prioritise the engine. It NEVER collects your test\n"
-        + "contents, captured values, secrets, URLs, image names, scenario names, or step\n"
-        + "ids.\n"
+        + "versions, step + scenario verdict counts, which built-in step kinds ran,\n"
+        + "startup timings, and a count of unreadable event-stream lines) to help\n"
+        + "prioritise the engine. It NEVER collects your test contents, captured values,\n"
+        + "secrets, URLs, image names, scenario names, or step ids.\n"
         + "\n"
         + "Telemetry is OFF by default and NOTHING is sent unless you opt in:\n"
         + "  enable  : vouchfx telemetry enable\n"

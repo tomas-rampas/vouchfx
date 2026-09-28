@@ -366,9 +366,13 @@ on GitLab — so artefacts are available precisely when a suite does not pass:
   surfaced natively in the pipeline and merge-request test-report UI. Each `<testcase>` `time` is
   the scenario's wall-clock duration from its `scenario-started` to its `scenario-completed` event,
   script compilation included and topology startup excluded, and the suite `time` is their sum, so
-  it is not the run's elapsed time.
+  it is not the run's elapsed time. When the JUnit renderer could not read a line of the event
+  stream, the `<testsuite>` carries a `vouchfx.skippedEventLines` property with the number of such
+  lines.
 - **`report.html`** — a self-contained HTML report with polling timelines, captured-variable
   provenance, failed-step diffs and the reproducibility envelope, with no secret values embedded.
+  When the HTML renderer could not read a line, the report states how many after its run summary
+  and warns that it may be incomplete.
 
 ### Installation model
 

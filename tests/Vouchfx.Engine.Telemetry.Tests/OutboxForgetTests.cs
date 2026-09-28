@@ -124,5 +124,6 @@ public sealed class OutboxForgetTests
         StepProviders = new Dictionary<string, int>(),
         StartupMs = 0,
         TimeToFirstTestMs = 0,
+        SkippedEventLines = 0,
     };
 }

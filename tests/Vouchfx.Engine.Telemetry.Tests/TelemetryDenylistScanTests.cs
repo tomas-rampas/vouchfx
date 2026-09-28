@@ -54,6 +54,13 @@ public sealed class TelemetryDenylistScanTests
                 ScenarioName = ScenarioName,
                 RawStepText = RawStepText,
             }),
+
+            // Issue #588 (security MINOR-5): a genuinely UNREADABLE line that ALSO
+            // carries a sensitive marker in its raw text — the envelope parse fails
+            // (JsonException), so it is counted via SkippedEventLines (a plain int),
+            // never copied.  Proves the count itself is the ONLY trace this line
+            // leaves: the marker text must still never reach the serialised JSON.
+            RawStepText + " not-json",
         };
 
         var telemetryEvent = TelemetryEventBuilder.Build(
@@ -83,6 +90,10 @@ public sealed class TelemetryDenylistScanTests
         Assert.Contains("\"stepProviders\"", json, StringComparison.Ordinal);
         Assert.Contains("http.rest", json, StringComparison.Ordinal);
         Assert.Contains("\"scenarioCount\":1", json, StringComparison.Ordinal);
+
+        // The one malformed, sensitive-marker-carrying line IS counted — the count is
+        // the only trace it leaves, and it carries no content of its own.
+        Assert.Equal(1, telemetryEvent.SkippedEventLines);
     }
 
     [Fact]

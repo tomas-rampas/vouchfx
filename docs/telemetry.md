@@ -16,6 +16,7 @@ The telemetry allowlist is small and intentionally aggregate-only. When telemetr
 - **Step family counts** — only the eleven built-in Core families (`http`, `db-assert`, `mq-publish`, `mq-expect`, `cache-assert`, `mail-expect`, `webhook-listen`, `metrics-assert`, `storage-assert`, `trace-expect`, `script`) are emitted as count keys. Any custom or non-Core provider's family is bucketed under the constant key `"custom"`, so an author-chosen family id is never written into the telemetry event.
 - **Step provider counts** — only the twenty-five built-in Core provider ids (the frozen v1 Core catalogue, `http.rest` through `script.csharp` — the [project README's provider list](project-readme.md) is the authoritative enumeration) are emitted as count keys. Any custom or non-Core provider's full id — including Community providers such as `rpc.json-rpc` — is bucketed under `"custom"`, so an author-chosen provider id never leaves the machine. *(Engines released up to `v1.0.0-alpha.5` counted only the original six provider ids — later Core ids appear under `"custom"`, and steps in the five newer families under `"custom"` for their family count too.)*
 - **Startup and time-to-first-test durations** — wall-clock milliseconds from when `vouchfx run` starts its run (after parsing its arguments, before discovering the `.e2e.yaml` files) to the first scenario starting, and to the first scenario finishing its steps.
+- **Count of unreadable event-stream lines** — the number of lines the event stream carried that the telemetry builder could not parse or read (a count only, never which line or what it contained).
 - **Anonymous install identifier** — a random GUID minted only when you opt in; it identifies this installation only, never the user, machine, or any test content.
 - **Telemetry schema version** — to allow future backends to evolve the data shape.
 - **UTC timestamp** — when the event was recorded.
@@ -54,7 +55,8 @@ This opts you in and mints a unique, anonymous install identifier (a GUID) if on
 
 ```
 Telemetry ENABLED. Anonymous, aggregate usage data (versions, verdict counts,
-which built-in step kinds ran, startup timings) will be collected on each run.
+which built-in step kinds ran, startup timings, and a count of unreadable
+event-stream lines) will be collected on each run.
 Your test contents, captured values, secrets, URLs, image names, scenario
 names and step ids are NEVER collected.
 Install id: 12345678... (anonymous; identifies this install only).
@@ -159,10 +161,10 @@ When consent is undecided (i.e. you have not yet run `vouchfx telemetry enable` 
 
 ```
 vouchfx can collect anonymous, aggregate usage telemetry (tool/engine/.NET
-versions, step + scenario verdict counts, which built-in step kinds ran, and
-startup timings) to help prioritise the engine. It NEVER collects your test
-contents, captured values, secrets, URLs, image names, scenario names, or step
-ids.
+versions, step + scenario verdict counts, which built-in step kinds ran,
+startup timings, and a count of unreadable event-stream lines) to help
+prioritise the engine. It NEVER collects your test contents, captured values,
+secrets, URLs, image names, scenario names, or step ids.
 
 Telemetry is OFF by default and NOTHING is sent unless you opt in:
   enable  : vouchfx telemetry enable

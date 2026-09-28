@@ -37,6 +37,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Text.Json;
 using System.Xml.Linq;
 using Vouchfx.Engine.Abstractions;
 using Vouchfx.Engine.Abstractions.Events;
@@ -1015,6 +1016,495 @@ public sealed class RendererParityTests
         Assert.Equal(expectedSurvivingVerdicts, ExtractTerminalVerdicts(terminalOutput, expectedSurvivingVerdicts.Keys));
         Assert.Equal(expectedSurvivingVerdicts, ExtractHtmlVerdicts(htmlOutput, expectedSurvivingVerdicts.Keys));
         Assert.Equal(expectedSurvivingVerdicts, ExtractJunitVerdicts(junitOutput, expectedSurvivingVerdicts.Keys));
+
+        // Issue #588: BOTH null-runId lines (scenario-started + scenario-completed) are
+        // individually unreadable, so all three renderers surface a count of 2 — the
+        // SAME count, on the SAME stream.
+        var terminalTrailing = SplitLines(terminalOutput).Where(l => l.Length > 0).ToArray();
+        Assert.Equal(
+            "2 event-stream lines could not be read, so the output above may be incomplete.",
+            terminalTrailing[^1]);
+
+        Assert.Contains(
+            "<p class=\"skipped-lines\">2 event-stream lines could not be read, so this report may be incomplete.</p>",
+            htmlOutput,
+            StringComparison.Ordinal);
+
+        var junitDoc = XDocument.Parse(junitOutput);
+        var junitSkipped = junitDoc.Root!.Element("testsuite")!.Element("properties")!
+            .Elements("property")
+            .Single(p => (string?)p.Attribute("name") == "vouchfx.skippedEventLines");
+        Assert.Equal("2", (string?)junitSkipped.Attribute("value"));
+    }
+
+    // -------------------------------------------------------------------------
+    // Issue #588: every renderer reads the event stream only inside its per-line guard,
+    // so a renderer counts a line when a read it makes on that line throws.  The
+    // counts therefore agree for a line that fails where every renderer reads it, and
+    // differ only by which values each renderer reads:
+    //   • a malformed-JSON line, or a FromLine refusal (e.g. a null runId/type, #571),
+    //     fails in the untyped envelope parse and FromLine's own guard — common code
+    //     every renderer's per-line loop shares — so all three count it (the
+    //     malformed-JSON row below is the simplest case);
+    //   • an undecodable VALUE is counted by every renderer that reads it: `scenarioId`
+    //     by all three (AllRenderers_MixedUnreadableLines_..., further down, where all
+    //     three count 4); `file` on scenario-started by JunitXmlRenderer alone
+    //     (OnlyJunitRenderer_...); a step-completed line's `captured` entries, and the
+    //     `observation` a diff lookup reads, by the terminal and HTML renderers but not
+    //     by JunitXmlRenderer, which reads no step event (TerminalAndHtml_...).
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void AllRenderers_PlainMalformedJsonLines_SurfaceTheSameSkippedCount()
+    {
+        var buffer = new List<string>
+        {
+            "{ not valid json 1",
+            "{ not valid json 2",
+            Line(new ScenarioStartedEvent { RunId = "run-clean", ScenarioId = "clean-flow" }),
+            Line(new ScenarioCompletedEvent
+            {
+                RunId = "run-clean",
+                ScenarioId = "clean-flow",
+                Verdict = Verdict.Pass,
+                Counts = new VerdictCounts { Pass = 1 },
+            }),
+        };
+
+        using var terminalWriter = new StringWriter();
+        using var htmlWriter = new StringWriter();
+        using var junitWriter = new StringWriter();
+
+        TerminalRenderer.Render(buffer, terminalWriter, diffLookup: null);
+        HtmlRenderer.Render(buffer, htmlWriter, diffLookup: null);
+        JunitXmlRenderer.Render(buffer, junitWriter);
+
+        var terminalTrailing = SplitLines(terminalWriter.ToString()).Where(l => l.Length > 0).ToArray();
+        Assert.Equal(
+            "2 event-stream lines could not be read, so the output above may be incomplete.",
+            terminalTrailing[^1]);
+
+        Assert.Contains(
+            "<p class=\"skipped-lines\">2 event-stream lines could not be read, so this report may be incomplete.</p>",
+            htmlWriter.ToString(),
+            StringComparison.Ordinal);
+
+        var junitDoc = XDocument.Parse(junitWriter.ToString());
+        var junitSkipped = junitDoc.Root!.Element("testsuite")!.Element("properties")!
+            .Elements("property")
+            .Single(p => (string?)p.Attribute("name") == "vouchfx.skippedEventLines");
+        Assert.Equal("2", (string?)junitSkipped.Attribute("value"));
+    }
+
+    [Fact]
+    public void AllRenderers_MixedUnreadableLines_SurfaceTheSameCount_AndNeverLeakTheMarker()
+    {
+        // Four independently-unreadable lines, each exercising a DIFFERENT branch of
+        // the per-line tolerance catch: two plain malformed-JSON lines (one carrying a
+        // distinctive marker the buffer must never leak — malformed text is never
+        // parsed, so the marker can never reach any renderer's output), one
+        // "runId": null line (#571's typed-envelope guard), and one lone-surrogate
+        // scenarioId line (parses, throws on GetString — RendererSurrogateToleranceTests).
+        //
+        // scenarioId is read by ALL THREE renderers' per-line-guarded extraction (issue
+        // #588, MAJOR-1 correction: HtmlRenderer.GetStr no longer catches its own read
+        // failure — see its remarks), so this particular poison line is one every
+        // renderer rejects identically: all three surface 4 (2 malformed + 1 null-runId
+        // + 1 lone-surrogate). This is the "value all three read" case from this
+        // section's header comment, NOT a counter-example to it — a scenario-started
+        // line with an unreadable FIELD ONLY JunitXmlRenderer READS (e.g. `file`) would
+        // instead diverge, which this buffer does not exercise.
+        const string Marker = "HOSTILE_MARKER_9f3a2";
+        const string NullRunIdLine =
+            """{"v":1,"schemaVersion":"v1","type":"scenario-started","ts":"2026-01-01T00:00:00Z","runId":null,"scenarioId":"poisoned-null-runid"}""";
+        const string LoneSurrogateLine =
+            "{\"v\":1,\"schemaVersion\":\"v1\",\"type\":\"scenario-completed\","
+            + "\"ts\":\"2026-01-01T00:00:00Z\",\"runId\":\"run-bad\","
+            + "\"scenarioId\":\"bad\\uD800scn\",\"verdict\":\"FAIL\","
+            + "\"counts\":{\"pass\":0,\"fail\":1,\"envError\":0,\"inconclusive\":0}}";
+
+        var buffer = new List<string>
+        {
+            Line(new ScenarioStartedEvent { RunId = "run-before", ScenarioId = "before-flow" }),
+            Line(new ScenarioCompletedEvent
+            {
+                RunId = "run-before",
+                ScenarioId = "before-flow",
+                Verdict = Verdict.Pass,
+                Counts = new VerdictCounts { Pass = 1 },
+            }),
+
+            "{ malformed with no marker",
+            "{ malformed carrying " + Marker,
+            NullRunIdLine,
+            LoneSurrogateLine,
+
+            Line(new ScenarioStartedEvent { RunId = "run-after", ScenarioId = "after-flow" }),
+            Line(new ScenarioCompletedEvent
+            {
+                RunId = "run-after",
+                ScenarioId = "after-flow",
+                Verdict = Verdict.Pass,
+                Counts = new VerdictCounts { Pass = 1 },
+            }),
+        };
+
+        using var terminalWriter = new StringWriter();
+        using var htmlWriter = new StringWriter();
+        using var junitWriter = new StringWriter();
+
+        TerminalRenderer.Render(buffer, terminalWriter, diffLookup: null);
+        HtmlRenderer.Render(buffer, htmlWriter, diffLookup: null);
+        JunitXmlRenderer.Render(buffer, junitWriter);
+
+        var terminalOutput = terminalWriter.ToString();
+        var htmlOutput = htmlWriter.ToString();
+        var junitOutput = junitWriter.ToString();
+
+        // The marker is inside MALFORMED text — it is never parsed, so it can never
+        // reach any renderer's output.
+        Assert.DoesNotContain(Marker, terminalOutput, StringComparison.Ordinal);
+        Assert.DoesNotContain(Marker, htmlOutput, StringComparison.Ordinal);
+        Assert.DoesNotContain(Marker, junitOutput, StringComparison.Ordinal);
+
+        // Terminal: 4 (2 malformed + 1 null-runId + 1 lone-surrogate).
+        var terminalTrailing = SplitLines(terminalOutput).Where(l => l.Length > 0).ToArray();
+        Assert.Equal(
+            "4 event-stream lines could not be read, so the output above may be incomplete.",
+            terminalTrailing[^1]);
+        Assert.Single(terminalTrailing, l => l.Contains("event-stream line", StringComparison.Ordinal));
+
+        // JUnit: 4, same four lines — every renderer's untyped-envelope parse and
+        // FromLine's own guard are shared code, and scenarioId is read by all three.
+        var junitDoc = XDocument.Parse(junitOutput);
+        var junitSkipped = junitDoc.Root!.Element("testsuite")!.Element("properties")!
+            .Elements("property")
+            .Single(p => (string?)p.Attribute("name") == "vouchfx.skippedEventLines");
+        Assert.Equal("4", (string?)junitSkipped.Attribute("value"));
+
+        // HTML: also 4 — GetStr propagates the lone-surrogate scenarioId failure to
+        // BuildModel's own per-line catch exactly like its siblings (MAJOR-1).
+        Assert.Contains(
+            "<p class=\"skipped-lines\">4 event-stream lines could not be read, so this report may be incomplete.</p>",
+            htmlOutput,
+            StringComparison.Ordinal);
+
+        // The two surrounding valid scenarios still render on every surface.
+        Assert.Contains("before-flow", terminalOutput, StringComparison.Ordinal);
+        Assert.Contains("after-flow", terminalOutput, StringComparison.Ordinal);
+        Assert.DoesNotContain("poisoned-null-runid", terminalOutput, StringComparison.Ordinal);
+    }
+
+    // -------------------------------------------------------------------------
+    // Issue #588: a VALUE-level failure — a field unreadable inside an otherwise-valid
+    // envelope — is counted only by a renderer that actually reads that field.  This is
+    // the genuine divergence this section's header comment describes, distinct from the
+    // line-level rejection cases above (which all three renderers share).
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void OnlyJunitRenderer_CountsAScenarioStartedLine_WhoseUnreadableFileFieldOnlyItReads()
+    {
+        // scenarioId is clean; `file` carries a lone-surrogate escape.  JunitXmlRenderer
+        // reads `file` (for classname) inside its per-line-guarded BuildModel
+        // (`scenario.File ??= GetStr(envelope, "file")`), so the read failure propagates
+        // to ITS per-line catch and the line is counted. Neither TerminalRenderer nor
+        // HtmlRenderer reads `file` on a scenario-started event AT ALL — the field simply
+        // never gets extracted — so the line parses and renders normally for both, and
+        // neither counts it as skipped.
+        const string PoisonedFileLine =
+            "{\"v\":1,\"schemaVersion\":\"v1\",\"type\":\"scenario-started\","
+            + "\"ts\":\"2026-01-01T00:00:00Z\",\"runId\":\"run-file\","
+            + "\"scenarioId\":\"file-poisoned\",\"file\":\"bad\\uD800.e2e.yaml\"}";
+
+        var buffer = new List<string>
+        {
+            PoisonedFileLine,
+            Line(new ScenarioCompletedEvent
+            {
+                RunId = "run-file",
+                ScenarioId = "file-poisoned",
+                Verdict = Verdict.Pass,
+                Counts = new VerdictCounts { Pass = 1 },
+            }),
+        };
+
+        using var terminalWriter = new StringWriter();
+        using var htmlWriter = new StringWriter();
+        using var junitWriter = new StringWriter();
+
+        TerminalRenderer.Render(buffer, terminalWriter, diffLookup: null);
+        HtmlRenderer.Render(buffer, htmlWriter, diffLookup: null);
+        JunitXmlRenderer.Render(buffer, junitWriter);
+
+        // Terminal and HTML: neither reads `file` on scenario-started, so this line is
+        // fully readable to both — 0 skipped, no note/paragraph surfaced.
+        Assert.DoesNotContain("could not be read", terminalWriter.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain("skipped-lines", htmlWriter.ToString(), StringComparison.Ordinal);
+        Assert.Contains("file-poisoned", terminalWriter.ToString(), StringComparison.Ordinal);
+
+        // JUnit: DOES read `file`, so the poisoned value propagates to its per-line
+        // catch and this scenario-started line is counted skipped.  The FOLLOWING
+        // scenario-completed line for the same (runId, scenarioId) still supplies the
+        // testcase's verdict independently (GetOrAddScenario resolves to the SAME
+        // ScenarioModel by key regardless of which line first touched it) — this test
+        // pins only the skip COUNT, not the testcase's own verdict.
+        var junitDoc = XDocument.Parse(junitWriter.ToString());
+        var junitSkipped = junitDoc.Root!.Element("testsuite")!.Element("properties")!
+            .Elements("property")
+            .Single(p => (string?)p.Attribute("name") == "vouchfx.skippedEventLines");
+        Assert.Equal("1", (string?)junitSkipped.Attribute("value"));
+    }
+
+    [Fact]
+    public void TerminalAndHtml_CountAStepCompletedLine_WhoseCapturedNameIsUnreadable_JunitDoesNot()
+    {
+        // captured[0].name carries a lone-surrogate escape in its VALUE. The terminal and
+        // HTML renderers both read a step-completed line's captured entries inside their
+        // per-line guard, so both count the line. JunitXmlRenderer reads no step event at
+        // all (its BuildModel handles scenario-started and scenario-completed only), so
+        // the line is never read there and nothing is counted.
+        const string PoisonedCaptureLine =
+            """{"v":1,"schemaVersion":"v1","type":"step-completed","ts":"2026-01-01T00:00:01Z","runId":"run-cap","stepId":"cap-step","verdict":"PASS","durationMs":3,"captured":[{"name":"bad\uD800var","path":"$.id","matched":true}]}""";
+
+        var buffer = new List<string>
+        {
+            Line(new ScenarioStartedEvent { RunId = "run-cap", ScenarioId = "cap-flow" }),
+            PoisonedCaptureLine,
+            Line(new ScenarioCompletedEvent
+            {
+                RunId = "run-cap",
+                ScenarioId = "cap-flow",
+                Verdict = Verdict.Pass,
+                Counts = new VerdictCounts { Pass = 1 },
+            }),
+        };
+
+        using var terminalWriter = new StringWriter();
+        using var htmlWriter = new StringWriter();
+        using var junitWriter = new StringWriter();
+
+        TerminalRenderer.Render(buffer, terminalWriter, diffLookup: null);
+        HtmlRenderer.Render(buffer, htmlWriter, diffLookup: null);
+        JunitXmlRenderer.Render(buffer, junitWriter);
+
+        var terminalTrailing = SplitLines(terminalWriter.ToString()).Where(l => l.Length > 0).ToArray();
+        Assert.Equal(
+            "1 event-stream line could not be read, so the output above may be incomplete.",
+            terminalTrailing[^1]);
+
+        Assert.Contains(
+            "<p class=\"skipped-lines\">1 event-stream line could not be read, so this report may be incomplete.</p>",
+            htmlWriter.ToString(),
+            StringComparison.Ordinal);
+
+        Assert.DoesNotContain("vouchfx.skippedEventLines", junitWriter.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TerminalAndHtml_CountAFailedStepLine_WhoseDiffLookupCannotReadTheObservation()
+    {
+        // The same diff lookup, handed to both renderers, calls GetString() on an
+        // observation value carrying a lone-surrogate escape, as a real IStepDiffRenderer
+        // does. Both renderers call the lookup inside their per-line guard, so both count
+        // the line. JunitXmlRenderer takes no diff lookup and is not part of this row.
+        const string StepStartedLine =
+            """{"v":1,"schemaVersion":"v1","type":"step-started","ts":"2026-01-01T00:00:01Z","runId":"run-diff","stepId":"diff-step","kind":"db-assert.postgres"}""";
+        const string PoisonedObservationLine =
+            """{"v":1,"schemaVersion":"v1","type":"step-completed","ts":"2026-01-01T00:00:02Z","runId":"run-diff","stepId":"diff-step","verdict":"FAIL","durationMs":3,"observation":{"actual":"x\uD800"}}""";
+
+        var buffer = new List<string>
+        {
+            Line(new ScenarioStartedEvent { RunId = "run-diff", ScenarioId = "diff-flow" }),
+            StepStartedLine,
+            PoisonedObservationLine,
+            Line(new ScenarioCompletedEvent
+            {
+                RunId = "run-diff",
+                ScenarioId = "diff-flow",
+                Verdict = Verdict.Fail,
+                Counts = new VerdictCounts { Fail = 1 },
+            }),
+        };
+
+        static string? DiffLookup(string kind, JsonElement observation)
+            => "observed " + observation.GetProperty("actual").GetString();
+
+        using var terminalWriter = new StringWriter();
+        using var htmlWriter = new StringWriter();
+
+        TerminalRenderer.Render(buffer, terminalWriter, DiffLookup);
+        HtmlRenderer.Render(buffer, htmlWriter, DiffLookup);
+
+        var terminalTrailing = SplitLines(terminalWriter.ToString()).Where(l => l.Length > 0).ToArray();
+        Assert.Equal(
+            "1 event-stream line could not be read, so the output above may be incomplete.",
+            terminalTrailing[^1]);
+
+        Assert.Contains(
+            "<p class=\"skipped-lines\">1 event-stream line could not be read, so this report may be incomplete.</p>",
+            htmlWriter.ToString(),
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TerminalAndHtml_KeepTheSamePrefix_OfAStepCompletedLineWhoseSecondCaptureIsUnreadable()
+    {
+        // The SECOND capture's name carries a lone-surrogate escape. Both renderers read
+        // the provenance in the same order — captures, then substitutions — and keep what
+        // they read before the failing read: the first capture renders in both, and the
+        // capture and substitution after the poisoned one are never read by either. Both
+        // count the line exactly once.
+        const string PoisonedSecondCaptureLine =
+            """{"v":1,"schemaVersion":"v1","type":"step-completed","ts":"2026-01-01T00:00:01Z","runId":"run-pfx","stepId":"pfx-step","verdict":"PASS","durationMs":3,"captured":[{"name":"good1","path":"$.g1","matched":true},{"name":"bad\uD800","path":"$.b","matched":true},{"name":"later2","path":"$.l2","matched":true}],"substitutions":[{"placeholder":"latersub","secretDerived":false,"originStepId":"s0"}]}""";
+
+        var buffer = new List<string>
+        {
+            Line(new ScenarioStartedEvent { RunId = "run-pfx", ScenarioId = "pfx-flow" }),
+            PoisonedSecondCaptureLine,
+            Line(new ScenarioCompletedEvent
+            {
+                RunId = "run-pfx",
+                ScenarioId = "pfx-flow",
+                Verdict = Verdict.Pass,
+                Counts = new VerdictCounts { Pass = 1 },
+            }),
+        };
+
+        using var terminalWriter = new StringWriter();
+        using var htmlWriter = new StringWriter();
+
+        TerminalRenderer.Render(buffer, terminalWriter, diffLookup: null);
+        HtmlRenderer.Render(buffer, htmlWriter, diffLookup: null);
+
+        var terminalOutput = terminalWriter.ToString();
+        var htmlOutput = htmlWriter.ToString();
+
+        foreach (var output in new[] { terminalOutput, htmlOutput })
+        {
+            Assert.Contains("good1", output, StringComparison.Ordinal);
+            Assert.DoesNotContain("later2", output, StringComparison.Ordinal);
+            Assert.DoesNotContain("latersub", output, StringComparison.Ordinal);
+        }
+
+        var terminalTrailing = SplitLines(terminalOutput).Where(l => l.Length > 0).ToArray();
+        Assert.Equal(
+            "1 event-stream line could not be read, so the output above may be incomplete.",
+            terminalTrailing[^1]);
+        Assert.Single(terminalTrailing, l => l.Contains("event-stream line", StringComparison.Ordinal));
+
+        Assert.Contains(
+            "<p class=\"skipped-lines\">1 event-stream line could not be read, so this report may be incomplete.</p>",
+            htmlOutput,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TerminalAndHtml_DrawNoDiff_ForAStepCompletedLineReadBeforeItsStepStarted()
+    {
+        // Both renderers resolve a step's kind from the step-started lines read BEFORE
+        // the step-completed line. Here the FAIL step-completed (with an observation)
+        // arrives first, so neither renderer has a kind for it yet, neither calls the
+        // lookup, and neither draws the marker — even though the kind is known by the end
+        // of the stream.
+        const string Marker = "KIND_RESOLVED_DIFF_MARKER";
+        const string StepCompletedFirst =
+            """{"v":1,"schemaVersion":"v1","type":"step-completed","ts":"2026-01-01T00:00:01Z","runId":"run-ooo","stepId":"ooo-step","verdict":"FAIL","durationMs":3,"observation":{"actual":"x"}}""";
+        const string StepStartedAfter =
+            """{"v":1,"schemaVersion":"v1","type":"step-started","ts":"2026-01-01T00:00:02Z","runId":"run-ooo","stepId":"ooo-step","kind":"db-assert.postgres"}""";
+
+        var buffer = new List<string>
+        {
+            Line(new ScenarioStartedEvent { RunId = "run-ooo", ScenarioId = "ooo-flow" }),
+            StepCompletedFirst,
+            StepStartedAfter,
+            Line(new ScenarioCompletedEvent
+            {
+                RunId = "run-ooo",
+                ScenarioId = "ooo-flow",
+                Verdict = Verdict.Fail,
+                Counts = new VerdictCounts { Fail = 1 },
+            }),
+        };
+
+        static string? DiffLookup(string kind, JsonElement observation) => Marker + " " + kind;
+
+        using var terminalWriter = new StringWriter();
+        using var htmlWriter = new StringWriter();
+
+        TerminalRenderer.Render(buffer, terminalWriter, DiffLookup);
+        HtmlRenderer.Render(buffer, htmlWriter, DiffLookup);
+
+        // The step itself renders in both, so the absence of the marker is not an
+        // absence of the step.
+        Assert.Contains("ooo-step", terminalWriter.ToString(), StringComparison.Ordinal);
+        Assert.Contains("ooo-step", htmlWriter.ToString(), StringComparison.Ordinal);
+
+        Assert.DoesNotContain(Marker, terminalWriter.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain(Marker, htmlWriter.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AllRenderers_BlankLinesAndUnknownEventType_RenderByteIdentical_ToStreamWithoutThem()
+    {
+        // Blank lines and an unknown-but-VALID event type are not "unreadable" — they
+        // must not be counted or surfaced, and the rendered output must be
+        // byte-identical to the same stream with those lines simply absent.
+        const string UnknownLine =
+            """{"v":1,"schemaVersion":"v1","type":"future-event-2099","ts":"2025-01-01T00:00:00Z","runId":"run-x","somethingNew":{"x":1}}""";
+
+        var cleanBuffer = new List<string>
+        {
+            Line(new ScenarioStartedEvent { RunId = "run-clean", ScenarioId = "clean-flow" }),
+            Line(new ScenarioCompletedEvent
+            {
+                RunId = "run-clean",
+                ScenarioId = "clean-flow",
+                Verdict = Verdict.Pass,
+                Counts = new VerdictCounts { Pass = 1 },
+            }),
+        };
+
+        var noisyBuffer = new List<string>
+        {
+            string.Empty,
+            "   ",
+            UnknownLine,
+            cleanBuffer[0],
+            cleanBuffer[1],
+            string.Empty,
+        };
+
+        AssertByteIdentical(TerminalRenderer.Render, cleanBuffer, noisyBuffer);
+        AssertByteIdentical(HtmlRenderer.Render, cleanBuffer, noisyBuffer);
+        AssertJunitByteIdentical(cleanBuffer, noisyBuffer);
+    }
+
+    private static void AssertByteIdentical(
+        Action<IEnumerable<string>, TextWriter> render, List<string> cleanBuffer, List<string> noisyBuffer)
+    {
+        using var cleanWriter = new StringWriter();
+        using var noisyWriter = new StringWriter();
+
+        render(cleanBuffer, cleanWriter);
+        render(noisyBuffer, noisyWriter);
+
+        Assert.Equal(cleanWriter.ToString(), noisyWriter.ToString());
+
+        // No skipped-lines surfacing on either rendering — nothing was unreadable.
+        Assert.DoesNotContain("could not be read", cleanWriter.ToString(), StringComparison.Ordinal);
+    }
+
+    private static void AssertJunitByteIdentical(List<string> cleanBuffer, List<string> noisyBuffer)
+    {
+        using var cleanWriter = new StringWriter();
+        using var noisyWriter = new StringWriter();
+
+        JunitXmlRenderer.Render(cleanBuffer, cleanWriter);
+        JunitXmlRenderer.Render(noisyBuffer, noisyWriter);
+
+        Assert.Equal(cleanWriter.ToString(), noisyWriter.ToString());
+        Assert.DoesNotContain("vouchfx.skippedEventLines", cleanWriter.ToString(), StringComparison.Ordinal);
     }
 
     // -------------------------------------------------------------------------

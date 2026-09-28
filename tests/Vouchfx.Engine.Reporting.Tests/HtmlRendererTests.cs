@@ -862,5 +862,408 @@ public sealed class HtmlRendererTests
         Assert.Contains("after-flow", output, StringComparison.Ordinal);
         Assert.Contains("after-step", output, StringComparison.Ordinal);
         Assert.DoesNotContain("poisoned-flow", output, StringComparison.Ordinal);
+
+        // Issue #588: both null-runId lines (scenario-started + scenario-completed) are
+        // individually unreadable (#571's typed guard refuses each), so the run-summary
+        // paragraph surfaces PLURAL wording with count 2.
+        Assert.Contains(
+            "<p class=\"skipped-lines\">2 event-stream lines could not be read, so this report may be incomplete.</p>",
+            output,
+            StringComparison.Ordinal);
+    }
+
+    // -------------------------------------------------------------------------
+    // Issue #588: the run-summary skipped-event-lines paragraph.
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void Render_OneUnreadableLine_SurfacesSingularSkippedLinesParagraph()
+    {
+        var lines = new[]
+        {
+            "{ this is not json",
+            Line(new ScenarioStartedEvent { RunId = "run-z", ScenarioId = "flow-z" }),
+            Line(new ScenarioCompletedEvent
+            {
+                RunId = "run-z",
+                ScenarioId = "flow-z",
+                Verdict = Verdict.Pass,
+                Counts = new VerdictCounts { Pass = 1 },
+            }),
+        };
+
+        using var writer = new StringWriter();
+        HtmlRenderer.Render(lines, writer);
+
+        var output = writer.ToString();
+        Assert.Contains(
+            "<p class=\"skipped-lines\">1 event-stream line could not be read, so this report may be incomplete.</p>",
+            output,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Render_NoUnreadableLines_OmitsSkippedLinesParagraph()
+    {
+        var lines = new[]
+        {
+            string.Empty,
+            "   ",
+            """{"v":1,"schemaVersion":"v1","type":"future-event-2099","ts":"2025-01-01T00:00:00Z","runId":"run-x","somethingNew":{"x":1}}""",
+            Line(new ScenarioStartedEvent { RunId = "run-z", ScenarioId = "flow-z" }),
+            Line(new ScenarioCompletedEvent
+            {
+                RunId = "run-z",
+                ScenarioId = "flow-z",
+                Verdict = Verdict.Pass,
+                Counts = new VerdictCounts { Pass = 1 },
+            }),
+        };
+
+        using var writer = new StringWriter();
+        HtmlRenderer.Render(lines, writer);
+
+        var output = writer.ToString();
+
+        // Byte-identical claim: a stream with no unreadable line must render EXACTLY the
+        // same document as before this feature existed — no stylesheet rule, no
+        // paragraph, no trace of the string "skipped-lines" anywhere in the document at
+        // all when the count is 0.  (WriteStyle emits no ".skipped-lines" CSS rule
+        // unconditionally — only the paragraph itself carries the "skipped-lines" class,
+        // and only when SkippedEventLines > 0.)
+        Assert.DoesNotContain("skipped-lines", output, StringComparison.Ordinal);
+        Assert.DoesNotContain("could not be read", output, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Render_NoUnreadableLines_ProducesByteIdenticalDocument_ToTheSameStreamWithoutTheNoisyLines()
+    {
+        // Issue #588 (post-review fix): WriteStyle must NEVER emit anything related to
+        // skipped-event-lines unconditionally — a normal report (nothing unreadable) has
+        // to be byte-identical to what this renderer produced before the feature existed.
+        // Proven here by comparing against a buffer with the blank lines and the
+        // unknown-but-valid event type simply removed: since those lines contribute
+        // nothing observable either way, the two renders must match byte-for-byte.
+        var cleanLines = new[]
+        {
+            Line(new ScenarioStartedEvent { RunId = "run-z", ScenarioId = "flow-z" }),
+            Line(new ScenarioCompletedEvent
+            {
+                RunId = "run-z",
+                ScenarioId = "flow-z",
+                Verdict = Verdict.Pass,
+                Counts = new VerdictCounts { Pass = 1 },
+            }),
+        };
+
+        var noisyLines = new[]
+        {
+            string.Empty,
+            "   ",
+            """{"v":1,"schemaVersion":"v1","type":"future-event-2099","ts":"2025-01-01T00:00:00Z","runId":"run-x","somethingNew":{"x":1}}""",
+            cleanLines[0],
+            cleanLines[1],
+        };
+
+        using var cleanWriter = new StringWriter();
+        using var noisyWriter = new StringWriter();
+        HtmlRenderer.Render(cleanLines, cleanWriter);
+        HtmlRenderer.Render(noisyLines, noisyWriter);
+
+        var cleanOutput = cleanWriter.ToString();
+        Assert.Equal(cleanOutput, noisyWriter.ToString());
+        Assert.DoesNotContain("skipped-lines", cleanOutput, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Render_ScenarioCompletedWithUnreadableMessage_StillStoresCountsAndDuration_BeforeAbortingTheLine()
+    {
+        // Issue #588 (gatekeeper MINOR, probe P4): BuildModel's ScenarioCompleted case
+        // used to read scenario.Message BEFORE scenario.Counts / scenario.DurationMs.
+        // Now that GetStr throws on an unreadable value (MAJOR-1), keeping that order
+        // would let an unreadable `message` abort the line before the counts were ever
+        // stored — the run-summary FAIL row would undercount to 0 and the duration would
+        // be lost, even though the line IS still (correctly) counted as skipped. Message
+        // is read LAST so only the optional message itself is lost when it is unreadable.
+        const string PoisonedMessageLine =
+            "{\"v\":1,\"schemaVersion\":\"v1\",\"type\":\"scenario-completed\","
+            + "\"ts\":\"2026-01-01T00:00:05Z\",\"runId\":\"run-bad\",\"scenarioId\":\"bad-message\","
+            + "\"durationMs\":1234,"
+            + "\"verdict\":\"FAIL\",\"message\":\"boom\\uD800\","
+            + "\"counts\":{\"pass\":0,\"fail\":1,\"envError\":0,\"inconclusive\":0}}";
+
+        var lines = new[]
+        {
+            Line(new ScenarioStartedEvent { RunId = "run-good", ScenarioId = "good-flow" }),
+            Line(new ScenarioCompletedEvent
+            {
+                RunId = "run-good",
+                ScenarioId = "good-flow",
+                Verdict = Verdict.Pass,
+                Counts = new VerdictCounts { Pass = 1 },
+            }),
+            PoisonedMessageLine,
+        };
+
+        using var writer = new StringWriter();
+        HtmlRenderer.Render(lines, writer);
+
+        var output = writer.ToString();
+
+        // The run-summary FAIL row must show 1 (from the poisoned scenario's counts) —
+        // not 0 — proving the counts were stored BEFORE the message read aborted the
+        // line.
+        Assert.Contains(
+            "<tr class=\"verdict-fail\"><th scope=\"row\"><span class=\"verdict\">FAIL</span></th><td>1</td></tr>",
+            output,
+            StringComparison.Ordinal);
+
+        // The wire durationMs was stored before the message read aborted the line too.
+        // The run summary cannot show this (it tallies counts only), so the scenario's
+        // own heading carries the pin: no scenario-started exists for run-bad, so without
+        // the wire value the heading would carry no duration suffix at all.
+        Assert.Contains(
+            "bad-message <span class=\"verdict\">FAIL</span> (1234 ms)",
+            output,
+            StringComparison.Ordinal);
+
+        // The line is still counted as skipped — the message itself IS unreadable.
+        Assert.Contains(
+            "<p class=\"skipped-lines\">1 event-stream line could not be read, so this report may be incomplete.</p>",
+            output,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Render_CapturedEntryWithLoneSurrogateKey_CountsTheLine_AndRendersNoFabricatedCapture()
+    {
+        // Issue #588: JsonElement.TryGetProperty can throw InvalidOperationException when
+        // an escaped lone/unpaired UTF-16 surrogate appears among an object's PROPERTY
+        // NAMES (not just a value) — here on the very FIRST extraction,
+        // GetStrFromObject(capture, "name"), even though "name" itself is present and
+        // clean: the lookup scans the poisoned key (last in the object) before it reaches
+        // "name". That read runs inside BuildModel's per-line guard, so the line is
+        // COUNTED and the capture is not rendered at all. Read outside that guard, the
+        // throw would escape Render and cut the report off mid-document; caught and
+        // turned into a missing value instead, the capture would render as "(unknown)" /
+        // "(unknown)" / " (no match)", three values the stream never carried, with
+        // nothing counted.
+        // The poisoned key's LENGTH is deliberate: TryGetProperty skips unescaping a raw
+        // candidate name no longer than the name being looked up, so a bare "\uD800" (6
+        // raw bytes) is too short to be reached by "matched" (7 bytes). Padded to 18 raw
+        // bytes so it is reachable by every lookup a capture makes.
+        const string PoisonedCapturedKeyLine =
+            "{\"v\":1,\"schemaVersion\":\"v1\",\"type\":\"step-completed\","
+            + "\"ts\":\"2026-01-01T00:00:00Z\",\"runId\":\"run-good\","
+            + "\"stepId\":\"poison-step\",\"verdict\":\"PASS\",\"durationMs\":3,"
+            + "\"captured\":[{\"name\":\"n\",\"path\":\"p\",\"\\uD800padpadpadpad\":1}]}";
+
+        var lines = new[]
+        {
+            Line(new ScenarioStartedEvent { RunId = "run-good", ScenarioId = "host-scenario" }),
+            PoisonedCapturedKeyLine,
+            Line(new ScenarioCompletedEvent
+            {
+                RunId = "run-good",
+                ScenarioId = "host-scenario",
+                Verdict = Verdict.Pass,
+                Counts = new VerdictCounts { Pass = 1 },
+            }),
+        };
+
+        using var writer = new StringWriter();
+        var ex = Record.Exception(() => HtmlRenderer.Render(lines, writer));
+        Assert.Null(ex);
+
+        var output = writer.ToString();
+        Assert.Contains("<!DOCTYPE html>", output, StringComparison.Ordinal);
+        Assert.EndsWith("</html>", output.TrimEnd(), StringComparison.Ordinal);
+
+        // The line is counted, singular.
+        Assert.Contains(
+            "<p class=\"skipped-lines\">1 event-stream line could not be read, so this report may be incomplete.</p>",
+            output,
+            StringComparison.Ordinal);
+
+        // No capture row is rendered for the poisoned entry, so none of the defaults a
+        // swallowed read would have substituted appears. The step itself (read before
+        // the capture) still renders.
+        Assert.Contains("poison-step", output, StringComparison.Ordinal);
+        Assert.DoesNotContain("<li>captured", output, StringComparison.Ordinal);
+        Assert.DoesNotContain("(unknown)", output, StringComparison.Ordinal);
+        Assert.DoesNotContain("(no match)", output, StringComparison.Ordinal);
+    }
+
+    // -------------------------------------------------------------------------
+    // Issue #588 (peer review M1): EVERY event-stream read HtmlRenderer makes sits inside
+    // BuildModel's per-line guard. One row per read that once ran while the document was
+    // being written, outside that guard: the provenance thread (captured
+    // name/path/matched, substitution placeholder/secretDerived/originStepId), the
+    // reproducibility envelope (secret-reference source/referenceHash, fixture
+    // reference/contentHash) and the provider diff. Each row asserts the three outcomes
+    // an unguarded or swallowed read cannot all meet: the line is COUNTED, the document
+    // is complete, and the poisoned entry is not rendered with a value the stream never
+    // carried.
+    //
+    // A string field is poisoned in its VALUE. A bool cannot carry a surrogate, so
+    // matched and secretDerived are poisoned through a KEY in the same object, shaped so
+    // the lookup of THAT field is the first one to reach it (measured by
+    // PoisonedKey_IsReachedOnlyByTheLookupItTargets below): the key sits last in the
+    // object, and the two characters before its escape match only the targeted name.
+    // -------------------------------------------------------------------------
+
+    [Theory]
+    [InlineData("captured", """{"name":"n\uD800","path":"$.m1","matched":true}""", "(unknown)")]
+    [InlineData("captured", """{"name":"m1var","path":"$.m1\uD800","matched":true}""", "(unknown)")]
+    [InlineData("captured", """{"name":"m1var","path":"$.m1","matched":true,"ma\uD800pad":1}""", "(no match)")]
+    [InlineData("substitutions", """{"placeholder":"ph\uD800","secretDerived":false,"originStepId":"s0"}""", "(unknown)")]
+    [InlineData("substitutions", """{"placeholder":"env/TOKEN","secretDerived":true,"originStepId":"s0","se\uD800padpadpad":1}""", "(from ")]
+    [InlineData("substitutions", """{"placeholder":"ph","secretDerived":false,"originStepId":"s0\uD800"}""", "(variables/untraced)")]
+    [InlineData("secretReferences", """{"source":"env\uD800","referenceHash":"h1"}""", "(unknown)")]
+    [InlineData("secretReferences", """{"source":"env","referenceHash":"h1\uD800"}""", "(unknown)")]
+    [InlineData("fixtures", """{"reference":"seed\uD800.sql","contentHash":"c1"}""", "(unknown)")]
+    [InlineData("fixtures", """{"reference":"seed.sql","contentHash":"c1\uD800"}""", "(no hash recorded)")]
+    [InlineData("observation", """{"actual":"x\uD800"}""", "<div class=\"diff\">")]
+    public void Render_UnreadableValueInAMaterialisedRead_CountsTheLine_AndRendersNoFabricatedValue(
+        string readClass, string poisonedJson, string fabricatedFragment)
+    {
+        const string ScenarioStarted =
+            """{"v":1,"schemaVersion":"v1","type":"scenario-started","ts":"2026-01-01T00:00:00Z","runId":"run-m1","scenarioId":"m1-flow"}""";
+        const string StepStarted =
+            """{"v":1,"schemaVersion":"v1","type":"step-started","ts":"2026-01-01T00:00:01Z","runId":"run-m1","stepId":"m1-step","kind":"db-assert.postgres"}""";
+        const string ScenarioCompleted =
+            """{"v":1,"schemaVersion":"v1","type":"scenario-completed","ts":"2026-01-01T00:00:03Z","runId":"run-m1","scenarioId":"m1-flow","verdict":"PASS","counts":{"pass":1,"fail":0,"envError":0,"inconclusive":0}}""";
+
+        var poisonedLine = readClass switch
+        {
+            "captured" or "substitutions" =>
+                """{"v":1,"schemaVersion":"v1","type":"step-completed","ts":"2026-01-01T00:00:02Z","runId":"run-m1","stepId":"m1-step","verdict":"PASS","durationMs":3,"""
+                + "\"" + readClass + "\":[" + poisonedJson + "]}",
+            "secretReferences" or "fixtures" =>
+                """{"v":1,"schemaVersion":"v1","type":"reproducibility-envelope","ts":"2026-01-01T00:00:02Z","runId":"run-m1","scenarioId":"m1-flow","envSchemaVersion":"1","""
+                + "\"" + readClass + "\":[" + poisonedJson + "]}",
+
+            // A FAIL step whose observation the diff lookup reads: the step-started above
+            // supplies the kind, exactly as the engine's own stream does.
+            "observation" =>
+                """{"v":1,"schemaVersion":"v1","type":"step-completed","ts":"2026-01-01T00:00:02Z","runId":"run-m1","stepId":"m1-step","verdict":"FAIL","durationMs":3,"observation":"""
+                + poisonedJson + "}",
+            _ => throw new ArgumentOutOfRangeException(nameof(readClass), readClass, null),
+        };
+
+        var lines = new[] { ScenarioStarted, StepStarted, poisonedLine, ScenarioCompleted };
+
+        // Reads the observation the way a real IStepDiffRenderer does: GetString() on a
+        // string value, which throws on the lone surrogate.
+        static string? ReadActual(string kind, JsonElement observation)
+            => "expected <ok>, observed <" + observation.GetProperty("actual").GetString() + ">";
+
+        using var writer = new StringWriter();
+        var ex = Record.Exception(() => HtmlRenderer.Render(lines, writer, ReadActual));
+        Assert.Null(ex);
+
+        var output = writer.ToString();
+
+        Assert.Contains(
+            "<p class=\"skipped-lines\">1 event-stream line could not be read, so this report may be incomplete.</p>",
+            output,
+            StringComparison.Ordinal);
+        Assert.EndsWith("</html>", output.TrimEnd(), StringComparison.Ordinal);
+        Assert.DoesNotContain(fabricatedFragment, output, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("""{"name":"m1var","path":"$.m1","matched":true,"ma\uD800pad":1}""", "name,path", "matched")]
+    [InlineData("""{"placeholder":"env/TOKEN","secretDerived":true,"originStepId":"s0","se\uD800padpadpad":1}""", "placeholder", "secretDerived")]
+    public void PoisonedKey_IsReachedOnlyByTheLookupItTargets(
+        string objectJson, string cleanLookups, string throwingLookup)
+    {
+        // The measurement behind the two key-poisoned rows above: the lookups the
+        // renderer makes BEFORE the targeted one succeed, and the targeted lookup is the
+        // one that throws — so the row fails at the read it is named for.
+        using var document = JsonDocument.Parse(objectJson);
+        var element = document.RootElement;
+
+        foreach (var name in cleanLookups.Split(','))
+        {
+            Assert.True(element.TryGetProperty(name, out _), name);
+        }
+
+        var ex = Record.Exception(() => element.TryGetProperty(throwingLookup, out _));
+        Assert.IsType<InvalidOperationException>(ex);
+    }
+
+    // -------------------------------------------------------------------------
+    // Issue #588: a later step-completed line for the same step REPLACES the diff and
+    // provenance an earlier one recorded (last line wins), rather than adding to them.
+    // The third row's second line is FAIL with an observation the lookup cannot read:
+    // the lookup throws, so the diff is never assigned and the provenance is never read
+    // for that line — only the reset before them keeps the first line's diff and
+    // provenance box from being drawn under the second line's verdict.
+    // -------------------------------------------------------------------------
+
+    [Theory]
+    [InlineData("PASS", null, null, false)]
+    [InlineData("FAIL", """{"actual":"two"}""", "DIFF-two", false)]
+    [InlineData("FAIL", """{"actual":"x\uD800"}""", null, true)]
+    public void Render_DuplicateStepCompletedLines_RenderOnlyTheLastLinesDiffAndProvenance(
+        string secondVerdict, string? secondObservationJson, string? expectedDiff, bool secondLineUnreadable)
+    {
+        const string ScenarioStarted =
+            """{"v":1,"schemaVersion":"v1","type":"scenario-started","ts":"2026-01-01T00:00:00Z","runId":"run-dup","scenarioId":"dup-flow"}""";
+        const string StepStarted =
+            """{"v":1,"schemaVersion":"v1","type":"step-started","ts":"2026-01-01T00:00:01Z","runId":"run-dup","stepId":"dup-step","kind":"db-assert.postgres"}""";
+        const string FirstCompleted =
+            """{"v":1,"schemaVersion":"v1","type":"step-completed","ts":"2026-01-01T00:00:02Z","runId":"run-dup","stepId":"dup-step","verdict":"FAIL","durationMs":3,"observation":{"actual":"one"},"captured":[{"name":"firstcap","path":"$.f","matched":true}],"substitutions":[{"placeholder":"firstsub","secretDerived":false,"originStepId":"s0"}]}""";
+        var secondCompleted =
+            """{"v":1,"schemaVersion":"v1","type":"step-completed","ts":"2026-01-01T00:00:03Z","runId":"run-dup","stepId":"dup-step","verdict":"@VERDICT@","durationMs":4,@OBSERVATION@"captured":[{"name":"secondcap","path":"$.s","matched":true}]}"""
+                .Replace("@VERDICT@", secondVerdict, StringComparison.Ordinal)
+                .Replace(
+                    "@OBSERVATION@",
+                    secondObservationJson is null ? string.Empty : "\"observation\":" + secondObservationJson + ",",
+                    StringComparison.Ordinal);
+
+        var lines = new[] { ScenarioStarted, StepStarted, FirstCompleted, secondCompleted };
+
+        static string? DiffLookup(string kind, JsonElement observation)
+            => "DIFF-" + observation.GetProperty("actual").GetString();
+
+        using var writer = new StringWriter();
+        HtmlRenderer.Render(lines, writer, DiffLookup);
+        var output = writer.ToString();
+
+        // The first line's provenance never survives.
+        Assert.DoesNotContain("firstcap", output, StringComparison.Ordinal);
+        Assert.DoesNotContain("firstsub", output, StringComparison.Ordinal);
+
+        // The first line's diff never survives: a PASS second line clears it, a FAIL
+        // second line replaces it with its own, and an unreadable one leaves none.
+        Assert.DoesNotContain("DIFF-one", output, StringComparison.Ordinal);
+        if (expectedDiff is null)
+        {
+            Assert.DoesNotContain("<div class=\"diff\">", output, StringComparison.Ordinal);
+        }
+        else
+        {
+            Assert.Contains("<div class=\"diff\">" + expectedDiff + "</div>", output, StringComparison.Ordinal);
+        }
+
+        if (secondLineUnreadable)
+        {
+            // The lookup threw before the second line's provenance was read: no
+            // provenance section at all, and the line is counted.
+            Assert.DoesNotContain("<div class=\"provenance\">", output, StringComparison.Ordinal);
+            Assert.DoesNotContain("secondcap", output, StringComparison.Ordinal);
+            Assert.Contains(
+                "<p class=\"skipped-lines\">1 event-stream line could not be read, so this report may be incomplete.</p>",
+                output,
+                StringComparison.Ordinal);
+        }
+        else
+        {
+            // Only the second line's provenance renders.
+            Assert.Contains("secondcap", output, StringComparison.Ordinal);
+            Assert.DoesNotContain("skipped-lines", output, StringComparison.Ordinal);
+        }
     }
 }

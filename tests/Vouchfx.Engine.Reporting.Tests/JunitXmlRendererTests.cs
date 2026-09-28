@@ -393,6 +393,81 @@ public sealed class JunitXmlRendererTests
         var doc = XDocument.Parse(writer.ToString());
         var testcase = doc.Descendants("testcase").Single();
         Assert.Equal("only-survivor", (string?)testcase.Attribute("name"));
+
+        // Issue #588: exactly one line ("{ this is not valid json") was unreadable —
+        // the blank lines and the unknown event type are NOT counted — so a
+        // suite-level <properties> carries vouchfx.skippedEventLines="1" as the FIRST
+        // child of <testsuite>.
+        var testsuite = doc.Root!.Element("testsuite")!;
+        var firstChild = testsuite.Elements().First();
+        Assert.Equal("properties", firstChild.Name.LocalName);
+
+        var skippedProperty = firstChild.Elements("property")
+            .Single(p => (string?)p.Attribute("name") == "vouchfx.skippedEventLines");
+        Assert.Equal("1", (string?)skippedProperty.Attribute("value"));
+    }
+
+    // -------------------------------------------------------------------------
+    // Issue #588: the suite-level skippedEventLines <properties> block.
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void Render_NoUnreadableLines_OmitsSuiteLevelProperties()
+    {
+        var lines = new[]
+        {
+            string.Empty,
+            "   ",
+            "{\"v\":1,\"schemaVersion\":\"v1\",\"type\":\"future-unknown-event\",\"ts\":\"2026-01-01T00:00:00Z\",\"runId\":\"run-6\"}",
+            Line(new ScenarioCompletedEvent
+            {
+                RunId = "run-6",
+                ScenarioId = "clean-flow",
+                Verdict = Verdict.Pass,
+                Counts = new VerdictCounts { Pass = 1 },
+            }),
+        };
+
+        using var writer = new StringWriter();
+        JunitXmlRenderer.Render(lines, writer);
+
+        var doc = XDocument.Parse(writer.ToString());
+        var testsuite = doc.Root!.Element("testsuite")!;
+
+        // No suite-level <properties> at all when nothing was skipped — the ONLY
+        // <properties> elements present are the existing per-testcase ones.
+        Assert.Empty(testsuite.Elements("properties"));
+        Assert.Contains("vouchfx.verdict", writer.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain("vouchfx.skippedEventLines", writer.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Render_TwoUnreadableLines_SuiteLevelPropertyUsesCorrectCount()
+    {
+        var lines = new[]
+        {
+            "{ not json 1",
+            "{ not json 2",
+            Line(new ScenarioCompletedEvent
+            {
+                RunId = "run-7",
+                ScenarioId = "clean-flow",
+                Verdict = Verdict.Pass,
+                Counts = new VerdictCounts { Pass = 1 },
+            }),
+        };
+
+        using var writer = new StringWriter();
+        JunitXmlRenderer.Render(lines, writer);
+
+        var doc = XDocument.Parse(writer.ToString());
+        var testsuite = doc.Root!.Element("testsuite")!;
+        var firstChild = testsuite.Elements().First();
+        Assert.Equal("properties", firstChild.Name.LocalName);
+
+        var skippedProperty = firstChild.Elements("property")
+            .Single(p => (string?)p.Attribute("name") == "vouchfx.skippedEventLines");
+        Assert.Equal("2", (string?)skippedProperty.Attribute("value"));
     }
 
     // -------------------------------------------------------------------------

@@ -34,6 +34,7 @@ public sealed class DrainingTelemetrySinkTests
         StepProviders = new Dictionary<string, int>(),
         StartupMs = 0,
         TimeToFirstTestMs = 0,
+        SkippedEventLines = 0,
     };
 
     [Fact]

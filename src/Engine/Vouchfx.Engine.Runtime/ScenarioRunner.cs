@@ -5300,15 +5300,15 @@ public static class ScenarioRunner
     /// <para>
     /// <strong>THE GUARD LIVES HERE BECAUSE THE BRIDGE DOES (issue #485).</strong>  Both members
     /// were called unguarded, and a throw from either destroyed EVERY report artefact for the
-    /// whole run, after the verdict was already known.  TWO CALL SITES, AND ON AN IN-ORDER BUFFER
-    /// ONLY ONE OF THEM THROWS FIRST — the distinction matters to anyone re-deriving this, and the
-    /// next paragraph says what "in-order" is doing in that sentence.  Both sites filter the SAME
+    /// whole run, after the verdict was already known.  TWO CALL SITES, AND ONLY ONE OF THEM
+    /// THROWS FIRST — the distinction matters to anyone re-deriving this, and the next paragraph
+    /// says how the two sites resolve the kind they call it with.  Both sites filter the SAME
     /// two types — <c>TerminalRenderer.Render</c>'s per-envelope catch takes
-    /// <c>JsonException or InvalidOperationException</c> and <c>HtmlRenderer</c>'s diff-site catch
-    /// takes <c>InvalidOperationException or JsonException</c> — and the terminal render always
-    /// runs FIRST, on the same buffer with the same closure, at every one of the three
-    /// <c>WriteFileReports</c> call sites.  So anything the HTML site would miss had already
-    /// escaped the terminal one: a <see cref="NullReferenceException"/>,
+    /// <c>JsonException or InvalidOperationException</c>, and the per-line catch in
+    /// <c>HtmlRenderer</c>'s <c>BuildModel</c> that its diff call runs inside takes the same two
+    /// — and the terminal render always runs FIRST, on the same buffer with the same closure, at
+    /// every one of the three <c>WriteFileReports</c> call sites.  So anything the HTML site
+    /// would miss had already escaped the terminal one: a <see cref="NullReferenceException"/>,
     /// <see cref="FormatException"/> or <see cref="KeyNotFoundException"/> escaped the terminal
     /// render, which runs BEFORE the HTML / JUnit / <c>--events</c> writes, and took all three
     /// artefacts with it.  The HTML artefact was COLLATERAL of that one throw rather than a second
@@ -5317,18 +5317,12 @@ public static class ScenarioRunner
     /// re-added per consumer and could drift.
     /// </para>
     /// <para>
-    /// <strong>That equivalence is a property of an IN-ORDER buffer, not of the renderers</strong>,
-    /// which resolve a step's kind by different means.  <c>TerminalRenderer.Render</c> is
-    /// SINGLE-PASS: it fills its <c>stepKinds</c> map inline as it streams, so a
-    /// <c>step-completed</c> line arriving BEFORE its own <c>step-started</c> resolves no kind and
-    /// never reaches this closure at all.  <c>HtmlRenderer.Render</c> is TWO-PASS —
-    /// <c>BuildModel</c> completes, filling the same map, before <c>WriteDocument</c> renders
-    /// anything — so for that ordering the HTML site genuinely would be a first invocation.  Both
-    /// in-tree producers emit the two lines in order (<c>CsxAssembler</c> emits the
-    /// <c>OnStepStarted</c> call at the top of each step block and the <c>OnStepCompleted</c> call
-    /// at the bottom; this runner's reconstruction loop appends <c>StepStartedLine</c> then
-    /// <c>StepCompletedLine</c> per step), which is the ordering the equivalence needs.  None of
-    /// this changes where the guard belongs: the closure is upstream of both sites either way.
+    /// <strong>Both renderers resolve a step's kind the same way</strong> (for
+    /// <c>HtmlRenderer</c>, since issue #588): each fills its <c>stepKinds</c> map from the
+    /// <c>step-started</c> lines as it reads the stream, and looks the kind up when it reads the
+    /// <c>step-completed</c> line.  So a <c>step-completed</c> line arriving BEFORE its own
+    /// <c>step-started</c> resolves no kind and reaches this closure from neither renderer.  None
+    /// of this changes where the guard belongs: the closure is upstream of both sites either way.
     /// </para>
     /// <para>
     /// <strong>Both members are guarded SEPARATELY because they are different signals.</strong>

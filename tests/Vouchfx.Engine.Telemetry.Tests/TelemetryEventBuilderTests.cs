@@ -633,6 +633,228 @@ public sealed class TelemetryEventBuilderTests
         Assert.False(ev.StepProviders.ContainsKey("acme.widget"));
     }
 
+    // -------------------------------------------------------------------------
+    // SkippedEventLines (issue #588): the builder counts a line it could not read —
+    // an envelope parse failure, or a refused typed read on any of its four typed
+    // accumulators (scenario-started / scenario-completed / step-started /
+    // step-completed) — counted ONCE per line.  Blank lines, unknown event types, and
+    // a timing line that parses but carries a default (absent) `ts` are NOT counted.
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void Build_MalformedJsonLine_CountsOneSkippedEventLine()
+    {
+        var lines = new List<string>
+        {
+            "this is not json",
+            SyntheticEvents.ScenarioStarted("A", T0.AddMilliseconds(10)),
+            SyntheticEvents.ScenarioCompleted(
+                "A", Verdict.Pass, new VerdictCounts { Pass = 1 }, T0.AddMilliseconds(20)),
+        };
+
+        var ev = Build(lines);
+
+        Assert.Equal(1, ev.SkippedEventLines);
+    }
+
+    [Fact]
+    public void Build_ScenarioStartedRefused_CountsOneSkippedEventLine()
+    {
+        // A "scenarioId": null scenario-started line refuses EventStreamJson.FromLine's
+        // typed guard — AccumulateScenarioStartedTimestamp's own try/catch.
+        var refused = SyntheticEvents.ScenarioStarted("X", T0.AddMilliseconds(10))
+            .Replace("\"scenarioId\":\"X\"", "\"scenarioId\":null", StringComparison.Ordinal);
+
+        var lines = new List<string>
+        {
+            refused,
+            SyntheticEvents.ScenarioStarted("A", T0.AddMilliseconds(40)),
+            SyntheticEvents.ScenarioCompleted(
+                "A", Verdict.Pass, new VerdictCounts { Pass = 1 }, T0.AddMilliseconds(50)),
+        };
+
+        var ev = Build(lines);
+
+        Assert.Equal(1, ev.SkippedEventLines);
+    }
+
+    [Fact]
+    public void Build_ScenarioCompletedWithNullCounts_CountsOneSkippedEventLine()
+    {
+        // `required` enforces presence only, not non-nullness, so "counts": null still
+        // satisfies `required VerdictCounts Counts` and refuses at the typed parse
+        // inside AccumulateScenarioCompleted.
+        var lines = new List<string>
+        {
+            """{"v":1,"schemaVersion":"v1","type":"scenario-completed","ts":"2024-01-15T10:00:00+00:00","runId":"run-null-counts","scenarioId":"S","verdict":"PASS","counts":null}""",
+            SyntheticEvents.ScenarioStarted("A", T0.AddMilliseconds(10)),
+            SyntheticEvents.ScenarioCompleted(
+                "A", Verdict.Pass, new VerdictCounts { Pass = 1 }, T0.AddMilliseconds(20)),
+        };
+
+        var ev = Build(lines);
+
+        Assert.Equal(1, ev.SkippedEventLines);
+        Assert.Equal(1, ev.ScenarioCount);
+    }
+
+    [Fact]
+    public void Build_StepStartedWithNullStepId_CountsOneSkippedEventLine()
+    {
+        var lines = new List<string>
+        {
+            """{"v":1,"schemaVersion":"v1","type":"step-started","ts":"2024-01-15T10:00:00+00:00","runId":"run-null-stepid","stepId":null,"kind":"http.rest"}""",
+            SyntheticEvents.ScenarioStarted("A", T0.AddMilliseconds(10)),
+            SyntheticEvents.StepStarted("a1", "http.rest", T0.AddMilliseconds(20)),
+            SyntheticEvents.ScenarioCompleted(
+                "A", Verdict.Pass, new VerdictCounts { Pass = 1 }, T0.AddMilliseconds(30)),
+        };
+
+        var ev = Build(lines);
+
+        Assert.Equal(1, ev.SkippedEventLines);
+    }
+
+    [Fact]
+    public void Build_StepCompletedRefused_CountsOneSkippedEventLine()
+    {
+        var refused = SyntheticEvents.StepCompleted("s0", Verdict.Pass, 1, T0.AddMilliseconds(20))
+            .Replace("\"stepId\":\"s0\"", "\"stepId\":null", StringComparison.Ordinal);
+
+        var lines = new List<string>
+        {
+            SyntheticEvents.ScenarioStarted("A", T0),
+            refused,
+            SyntheticEvents.StepCompleted("a1", Verdict.Pass, 5, T0.AddMilliseconds(90)),
+            SyntheticEvents.ScenarioCompleted(
+                "A", Verdict.Pass, new VerdictCounts { Pass = 1 }, T0.AddMilliseconds(100)),
+        };
+
+        var ev = Build(lines);
+
+        Assert.Equal(1, ev.SkippedEventLines);
+    }
+
+    [Fact]
+    public void Build_BlankLinesAndUnknownEventType_AreNotCountedAsSkipped()
+    {
+        var unknownLine =
+            """{"v":1,"schemaVersion":"v1","type":"future-event-2099","ts":"2025-01-01T00:00:00Z","runId":"run-x","somethingNew":{"x":1}}""";
+
+        var lines = new List<string>
+        {
+            string.Empty,
+            "   ",
+            unknownLine,
+            SyntheticEvents.ScenarioStarted("A", T0.AddMilliseconds(10)),
+            SyntheticEvents.ScenarioCompleted(
+                "A", Verdict.Pass, new VerdictCounts { Pass = 1 }, T0.AddMilliseconds(20)),
+        };
+
+        var ev = Build(lines);
+
+        Assert.Equal(0, ev.SkippedEventLines);
+    }
+
+    [Fact]
+    public void Build_TimingLineWithDefaultTimestamp_IsNotCountedAsSkipped()
+    {
+        // A scenario-started line whose typed record PARSES but whose `ts` is absent
+        // (deserialises to default(DateTimeOffset)) is read, just unused for timing —
+        // it must not be counted as unreadable.
+        var noTs = Regex.Replace(
+            SyntheticEvents.ScenarioStarted("X", T0.AddMilliseconds(5)),
+            "\"ts\":\"[^\"]*\",",
+            string.Empty);
+
+        var lines = new List<string>
+        {
+            noTs,
+            SyntheticEvents.ScenarioStarted("A", T0.AddMilliseconds(40)),
+            SyntheticEvents.ScenarioCompleted(
+                "A", Verdict.Pass, new VerdictCounts { Pass = 1 }, T0.AddMilliseconds(50)),
+        };
+
+        var ev = Build(lines);
+
+        Assert.Equal(0, ev.SkippedEventLines);
+    }
+
+    [Fact]
+    public void Build_StepCompletedWithDefaultTimestamp_IsNotCountedAsSkipped()
+    {
+        // The step-completed twin of the scenario-started case above (gatekeeper MINOR:
+        // the "read but unused" rule was pinned only for scenario-started before this).
+        // A line whose typed record PARSES but whose `ts` is absent (deserialises to
+        // default(DateTimeOffset)) is read, just unused for timeToFirstTestMs — it must
+        // not be counted as unreadable.
+        var noTs = Regex.Replace(
+            SyntheticEvents.StepCompleted("s0", Verdict.Pass, 1, T0.AddMilliseconds(20)),
+            "\"ts\":\"[^\"]*\",",
+            string.Empty);
+
+        var lines = new List<string>
+        {
+            SyntheticEvents.ScenarioStarted("A", T0),
+            noTs,
+            SyntheticEvents.StepCompleted("a1", Verdict.Pass, 5, T0.AddMilliseconds(90)),
+            SyntheticEvents.ScenarioCompleted(
+                "A", Verdict.Pass, new VerdictCounts { Pass = 1 }, T0.AddMilliseconds(100)),
+        };
+
+        var ev = Build(lines);
+
+        Assert.Equal(0, ev.SkippedEventLines);
+    }
+
+    [Fact]
+    public void Build_StepStartedWithBlankKind_IsNotCountedAsSkipped()
+    {
+        // A step-started line whose typed record PARSES but whose `kind` is blank is
+        // read, just not tallied into stepFamilies/stepProviders — it must not be
+        // counted as unreadable (gatekeeper MINOR: this branch of the "read but unused"
+        // rule was unpinned before this).
+        var lines = new List<string>
+        {
+            SyntheticEvents.ScenarioStarted("A", T0),
+            SyntheticEvents.StepStarted("a1", string.Empty, T0.AddMilliseconds(10)),
+            SyntheticEvents.ScenarioCompleted(
+                "A", Verdict.Pass, new VerdictCounts { Pass = 1 }, T0.AddMilliseconds(20)),
+        };
+
+        var ev = Build(lines);
+
+        Assert.Equal(0, ev.SkippedEventLines);
+    }
+
+    [Fact]
+    public void Build_SeveralUnreadableLinesAcrossKinds_CountsEachOnce()
+    {
+        // One malformed-JSON line, one refused scenario-started, one refused
+        // step-started, one refused step-completed — four distinct unreadable lines
+        // across four different code paths, each contributing exactly 1.
+        var refusedScenarioStarted = SyntheticEvents.ScenarioStarted("X", T0.AddMilliseconds(1))
+            .Replace("\"scenarioId\":\"X\"", "\"scenarioId\":null", StringComparison.Ordinal);
+        var refusedStepCompleted = SyntheticEvents.StepCompleted("s0", Verdict.Pass, 1, T0.AddMilliseconds(2))
+            .Replace("\"stepId\":\"s0\"", "\"stepId\":null", StringComparison.Ordinal);
+
+        var lines = new List<string>
+        {
+            "not json at all",
+            refusedScenarioStarted,
+            """{"v":1,"schemaVersion":"v1","type":"step-started","ts":"2024-01-15T10:00:00+00:00","runId":"run-null-stepid","stepId":null,"kind":"http.rest"}""",
+            refusedStepCompleted,
+            SyntheticEvents.ScenarioStarted("A", T0.AddMilliseconds(10)),
+            SyntheticEvents.StepStarted("a1", "http.rest", T0.AddMilliseconds(20)),
+            SyntheticEvents.ScenarioCompleted(
+                "A", Verdict.Pass, new VerdictCounts { Pass = 1 }, T0.AddMilliseconds(30)),
+        };
+
+        var ev = Build(lines);
+
+        Assert.Equal(4, ev.SkippedEventLines);
+    }
+
     private static HashSet<string> GetCoreTaxonomyField(string fieldName)
     {
         var field = typeof(TelemetryEventBuilder).GetField(

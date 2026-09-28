@@ -2004,7 +2004,7 @@ internal static class RunCommand
         // STATED AS CONTAINMENT, NOT AS AN EXIT CODE, BECAUSE THE EXIT-CODE FORM IS FALSE. An
         // earlier revision of this paragraph claimed the surface "is NOT a route to exit 0",
         // reasoning that both invocation sites (TerminalRenderer.RenderStepDiff,
-        // HtmlRenderer.WriteStepDiff) gate on the step's verdict being FAIL while
+        // HtmlRenderer.ComputeStepDiff) gate on the step's verdict being FAIL while
         // ExitCodes.FromVerdict maps Verdict.Fail to TestFailure unconditionally. Both clauses are
         // true; the inference between them — a FAIL step means the run exits 1 — is not, on two
         // measured routes. `--watch` renders diffs and returns only ExitCodes.UsageError or

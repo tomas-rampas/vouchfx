@@ -9,9 +9,9 @@
 //     ArgumentException, KeyNotFoundException — escaped it, and the terminal render runs BEFORE
 //     the HTML / JUnit / `--events` writes in `ParallelSuiteRunner.RenderAndAggregate`, so ALL
 //     THREE artefacts were lost with it.
-//   • `HtmlRenderer`'s own diff-site catch filters `InvalidOperationException or JsonException`
-//     over a `FileReportWriter` catch that adds only the IO/path family, so the same throw
-//     arriving through the HTML renderer killed the HTML artefact too.
+//   • the catch around `HtmlRenderer`'s diff call filters `InvalidOperationException or
+//     JsonException` over a `FileReportWriter` catch that adds only the IO/path family, so the
+//     same throw arriving through the HTML renderer killed the HTML artefact too.
 // The verdict was already computed when this ran, so nothing was falsified — the loss was the
 // evidence, after the answer, which is why this is an ARTEFACT-LOSS bug and not a taxonomy one.
 //
