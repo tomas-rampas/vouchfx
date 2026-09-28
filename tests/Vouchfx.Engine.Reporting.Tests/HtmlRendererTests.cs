@@ -1196,13 +1196,18 @@ public sealed class HtmlRendererTests
     // -------------------------------------------------------------------------
     // Issue #588: a later step-completed line for the same step REPLACES the diff and
     // provenance an earlier one recorded (last line wins), rather than adding to them.
+    // The third row's second line is FAIL with an observation the lookup cannot read:
+    // the lookup throws, so the diff is never assigned and the provenance is never read
+    // for that line — only the reset before them keeps the first line's diff and
+    // provenance box from being drawn under the second line's verdict.
     // -------------------------------------------------------------------------
 
     [Theory]
-    [InlineData("PASS", null, null)]
-    [InlineData("FAIL", """{"actual":"two"}""", "DIFF-two")]
+    [InlineData("PASS", null, null, false)]
+    [InlineData("FAIL", """{"actual":"two"}""", "DIFF-two", false)]
+    [InlineData("FAIL", """{"actual":"x\uD800"}""", null, true)]
     public void Render_DuplicateStepCompletedLines_RenderOnlyTheLastLinesDiffAndProvenance(
-        string secondVerdict, string? secondObservationJson, string? expectedDiff)
+        string secondVerdict, string? secondObservationJson, string? expectedDiff, bool secondLineUnreadable)
     {
         const string ScenarioStarted =
             """{"v":1,"schemaVersion":"v1","type":"scenario-started","ts":"2026-01-01T00:00:00Z","runId":"run-dup","scenarioId":"dup-flow"}""";
@@ -1227,13 +1232,12 @@ public sealed class HtmlRendererTests
         HtmlRenderer.Render(lines, writer, DiffLookup);
         var output = writer.ToString();
 
-        // Only the second line's provenance renders.
-        Assert.Contains("secondcap", output, StringComparison.Ordinal);
+        // The first line's provenance never survives.
         Assert.DoesNotContain("firstcap", output, StringComparison.Ordinal);
         Assert.DoesNotContain("firstsub", output, StringComparison.Ordinal);
 
-        // The first line's diff never survives: a PASS second line clears it, and a FAIL
-        // second line replaces it with its own.
+        // The first line's diff never survives: a PASS second line clears it, a FAIL
+        // second line replaces it with its own, and an unreadable one leaves none.
         Assert.DoesNotContain("DIFF-one", output, StringComparison.Ordinal);
         if (expectedDiff is null)
         {
@@ -1244,6 +1248,22 @@ public sealed class HtmlRendererTests
             Assert.Contains("<div class=\"diff\">" + expectedDiff + "</div>", output, StringComparison.Ordinal);
         }
 
-        Assert.DoesNotContain("skipped-lines", output, StringComparison.Ordinal);
+        if (secondLineUnreadable)
+        {
+            // The lookup threw before the second line's provenance was read: no
+            // provenance section at all, and the line is counted.
+            Assert.DoesNotContain("<div class=\"provenance\">", output, StringComparison.Ordinal);
+            Assert.DoesNotContain("secondcap", output, StringComparison.Ordinal);
+            Assert.Contains(
+                "<p class=\"skipped-lines\">1 event-stream line could not be read, so this report may be incomplete.</p>",
+                output,
+                StringComparison.Ordinal);
+        }
+        else
+        {
+            // Only the second line's provenance renders.
+            Assert.Contains("secondcap", output, StringComparison.Ordinal);
+            Assert.DoesNotContain("skipped-lines", output, StringComparison.Ordinal);
+        }
     }
 }

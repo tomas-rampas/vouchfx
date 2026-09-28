@@ -1400,6 +1400,51 @@ public sealed class RendererParityTests
     }
 
     [Fact]
+    public void TerminalAndHtml_DrawNoDiff_ForAStepCompletedLineReadBeforeItsStepStarted()
+    {
+        // Both renderers resolve a step's kind from the step-started lines read BEFORE
+        // the step-completed line. Here the FAIL step-completed (with an observation)
+        // arrives first, so neither renderer has a kind for it yet, neither calls the
+        // lookup, and neither draws the marker — even though the kind is known by the end
+        // of the stream.
+        const string Marker = "KIND_RESOLVED_DIFF_MARKER";
+        const string StepCompletedFirst =
+            """{"v":1,"schemaVersion":"v1","type":"step-completed","ts":"2026-01-01T00:00:01Z","runId":"run-ooo","stepId":"ooo-step","verdict":"FAIL","durationMs":3,"observation":{"actual":"x"}}""";
+        const string StepStartedAfter =
+            """{"v":1,"schemaVersion":"v1","type":"step-started","ts":"2026-01-01T00:00:02Z","runId":"run-ooo","stepId":"ooo-step","kind":"db-assert.postgres"}""";
+
+        var buffer = new List<string>
+        {
+            Line(new ScenarioStartedEvent { RunId = "run-ooo", ScenarioId = "ooo-flow" }),
+            StepCompletedFirst,
+            StepStartedAfter,
+            Line(new ScenarioCompletedEvent
+            {
+                RunId = "run-ooo",
+                ScenarioId = "ooo-flow",
+                Verdict = Verdict.Fail,
+                Counts = new VerdictCounts { Fail = 1 },
+            }),
+        };
+
+        static string? DiffLookup(string kind, JsonElement observation) => Marker + " " + kind;
+
+        using var terminalWriter = new StringWriter();
+        using var htmlWriter = new StringWriter();
+
+        TerminalRenderer.Render(buffer, terminalWriter, DiffLookup);
+        HtmlRenderer.Render(buffer, htmlWriter, DiffLookup);
+
+        // The step itself renders in both, so the absence of the marker is not an
+        // absence of the step.
+        Assert.Contains("ooo-step", terminalWriter.ToString(), StringComparison.Ordinal);
+        Assert.Contains("ooo-step", htmlWriter.ToString(), StringComparison.Ordinal);
+
+        Assert.DoesNotContain(Marker, terminalWriter.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain(Marker, htmlWriter.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void AllRenderers_BlankLinesAndUnknownEventType_RenderByteIdentical_ToStreamWithoutThem()
     {
         // Blank lines and an unknown-but-VALID event type are not "unreadable" — they
