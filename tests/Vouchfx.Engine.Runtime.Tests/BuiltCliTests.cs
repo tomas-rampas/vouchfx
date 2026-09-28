@@ -76,11 +76,12 @@ public sealed class BuiltCliTests
         var repoRoot = BuiltCli.ResolveRepoRoot();
         var outside = Path.Combine(Path.GetPathRoot(repoRoot)!, "vouchfx-drill-4711", "deployment.e2e.yaml");
 
-        // The premise, asserted rather than assumed: a checkout at a volume root would put the
-        // probe INSIDE the repository.
+        // The premise, asserted rather than assumed: a checkout at a path root (/, a drive or a
+        // share root) would put the probe INSIDE the repository, so this row fails there by
+        // design; no path outside the repository shares its root.
         Assert.True(
             Path.GetRelativePath(repoRoot, outside).StartsWith("..", StringComparison.Ordinal),
-            "the probe is not outside the repository (is the checkout at a volume root?)");
+            "the probe is not outside the repository (is the checkout at a path root?)");
 
         var rendered = BuiltCli.RelativeToRepoRoot(outside);
 
@@ -120,8 +121,8 @@ public sealed class BuiltCliTests
     // Whether `rendered` spells the repository root as whole path segments. A plain substring
     // test fails falsely on some checkout layouts: a checkout at /vouchfx "occurs" inside
     // ../vouchfx-drill-4711/..., and a checkout at / occurs in every path with a separator.
-    // Neither is a leak. For a checkout at / nothing is compared; the IsPathRooted assertion
-    // beside each call is the guard there.
+    // Neither is a leak. For a checkout at / nothing is compared: the temp-directory row's
+    // IsPathRooted assertion is the guard there, and the other row's premise already fails.
     private static bool SpellsRepositoryRoot(string rendered, string repoRoot)
     {
         var root = repoRoot.Replace('\\', '/').TrimEnd('/');
