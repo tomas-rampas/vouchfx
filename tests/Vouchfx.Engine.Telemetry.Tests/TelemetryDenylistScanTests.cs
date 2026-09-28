@@ -62,6 +62,7 @@ public sealed class TelemetryDenylistScanTests
             toolVersion: "1.0.0",
             engineVersion: "1.0.0",
             dotnetVersion: ".NET 8.0.7",
+            runStartedAt: t0,
             timestamp: t0.AddSeconds(1));
 
         var json = JsonSerializer.Serialize(telemetryEvent);
@@ -157,6 +158,7 @@ public sealed class TelemetryDenylistScanTests
             toolVersion: "1.0.0",
             engineVersion: "1.0.0",
             dotnetVersion: ".NET 8.0.7",
+            runStartedAt: t0,
             timestamp: t0.AddSeconds(1));
 
         var json = JsonSerializer.Serialize(telemetryEvent);
@@ -218,6 +220,7 @@ public sealed class TelemetryDenylistScanTests
             toolVersion: "1.0.0",
             engineVersion: "1.0.0",
             dotnetVersion: ".NET 8.0.7",
+            runStartedAt: t0,
             timestamp: t0.AddSeconds(1));
 
         var json = JsonSerializer.Serialize(telemetryEvent);

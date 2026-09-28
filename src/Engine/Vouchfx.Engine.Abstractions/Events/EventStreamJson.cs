@@ -353,7 +353,7 @@ public static class EventStreamJson
     /// </remarks>
     // No path the CLI engine takes reaches any of the three hardenings today: no project here
     // sets PublishTrimmed, PublishAot or NullabilityInfoContextSupport, and the only typed
-    // FromLine<T> calls under src/ (two in EventHistoryReader, two in TelemetryEventBuilder)
+    // FromLine<T> calls under src/ (in EventHistoryReader and TelemetryEventBuilder)
     // pass non-collectible Abstractions records whose required members are auto-properties.
     // The collectible branch is reachable only through a host that loads its own assembly into
     // a collectible context (e.g. via RoslynScriptCompiler's collectibleProbingPaths, which

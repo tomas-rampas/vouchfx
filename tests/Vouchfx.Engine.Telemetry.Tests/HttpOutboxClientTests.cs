@@ -176,6 +176,7 @@ public sealed class HttpOutboxClientTests
             toolVersion: "1.0.0",
             engineVersion: "1.0.0",
             dotnetVersion: ".NET 8.0.7",
+            runStartedAt: t0,
             timestamp: t0.AddSeconds(1));
 
         // Serialise to a single outbox line exactly as the local sink does, then write it to
