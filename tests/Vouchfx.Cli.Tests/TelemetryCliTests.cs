@@ -463,21 +463,15 @@ public sealed class TelemetryCliTests
             + "DateTimeOffset.UtcNow too (§14); capturing the anchor from a different clock "
             + "corrupts the startupMs/timeToFirstTestMs comparison.");
 
-        // (2) Nothing in the method reassigns runStartedAt after its initial declaration.
-        var reassignments = method.DescendantNodes()
-            .OfType<AssignmentExpressionSyntax>()
-            .Where(a => a.Left is IdentifierNameSyntax { Identifier.ValueText: "runStartedAt" })
-            .ToList();
-        Assert.True(
-            reassignments.Count == 0,
-            $"ExecuteRunPipelineAsync reassigns runStartedAt {reassignments.Count} time(s) after "
-            + "its initial declaration. #568's fix depends on this value staying fixed at the "
-            + "pipeline's very first instant; any later reassignment (e.g. re-captured just "
-            + "before EmitAsync) silently reproduces the original bug under a different guise.");
-
-        // (3) Exactly one EmitAsync call, and its THIRD argument (index 2) is the identifier
-        // runStartedAt — not a fresh DateTimeOffset.UtcNow captured at the call site, and not
-        // some other value.
+        // (2) EXACTLY ONE reference to runStartedAt exists anywhere in the method (besides its
+        // own declaration above), and that ONE reference is the THIRD argument (index 2) of
+        // the single EmitAsync call. A plain IdentifierNameSyntax census, deliberately NOT
+        // restricted to AssignmentExpressionSyntax: an out/ref use (`Foo(out runStartedAt)`,
+        // `ref runStartedAt`) or a deconstruction (`(runStartedAt, _) = ...`) all still write
+        // an IdentifierNameSyntax wherever `runStartedAt` appears, so this catches every form
+        // a reassignment-only scan would miss. The declaration site itself is naturally
+        // excluded: `var runStartedAt = ...`'s name is a VariableDeclaratorSyntax token, never
+        // an IdentifierNameSyntax reference expression, so it is never counted here.
         var emitCalls = method.DescendantNodes()
             .OfType<InvocationExpressionSyntax>()
             .Where(i => i.Expression is MemberAccessExpressionSyntax { Name.Identifier.ValueText: "EmitAsync" })
@@ -488,6 +482,20 @@ public sealed class TelemetryCliTests
             + $"{emitCalls.Count}. Zero means this census stopped matching and guards nothing; "
             + "more than one means a second call site could pass a different (or missing) "
             + "runStartedAt undetected.");
+
+        var references = method.DescendantNodes()
+            .OfType<IdentifierNameSyntax>()
+            .Where(id => id.Identifier.ValueText == "runStartedAt")
+            .ToList();
+        Assert.True(
+            references.Count == 1,
+            $"Expected exactly 1 reference to runStartedAt in ExecuteRunPipelineAsync (besides "
+            + $"its own declaration), found {references.Count}. Zero means the capture is now "
+            + "unused - dead code, and the fix does nothing. More than one means runStartedAt "
+            + "is read, reassigned (via =, out, ref, or a deconstruction), or passed somewhere "
+            + "else in addition to EmitAsync - any of which could move its effective value away "
+            + "from the run's true start, or silently reproduce the #568 bug under a different "
+            + "guise (e.g. re-captured and reassigned just before EmitAsync).");
 
         var args = emitCalls[0].ArgumentList.Arguments;
         Assert.True(

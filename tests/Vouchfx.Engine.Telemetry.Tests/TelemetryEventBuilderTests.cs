@@ -181,6 +181,37 @@ public sealed class TelemetryEventBuilderTests
     }
 
     [Fact]
+    public void Build_MultipleValidTimingLines_OutOfBufferOrder_PicksEarliestByTimestamp_NotByListingPosition()
+    {
+        // #568 critic MINOR (measured): swapping Min for last-wins (plain unconditional
+        // assignment) or first-wins (??=, keep-the-first-processed) in either fold left
+        // Telemetry.Tests 139/139 green, because every prior timing test has exactly ONE
+        // valid line of each type - "earliest wins" was unpinned. It matters in production:
+        // ParallelSuiteRunner joins per-scenario event buffers in DECLARATION order, not time
+        // order, so the archive can list a LATER scenario-started/step-completed line before
+        // an EARLIER one.
+        //
+        // THREE valid lines per type, with the minimum listed in the MIDDLE (scenario-started:
+        // 60, 30, 90; step-completed: 120, 80, 150). Min sits in the middle of each listing, so
+        // it differs from both the first-listed and the last-listed value in each fold, and a
+        // first-wins or last-wins fold in either helper fails this test.
+        var lines = new List<string>
+        {
+            SyntheticEvents.ScenarioStarted("A", T0.AddMilliseconds(60)),
+            SyntheticEvents.ScenarioStarted("B", T0.AddMilliseconds(30), runId: "run-b"),
+            SyntheticEvents.ScenarioStarted("C", T0.AddMilliseconds(90), runId: "run-c"),
+            SyntheticEvents.StepCompleted("s1", Verdict.Pass, 5, T0.AddMilliseconds(120)),
+            SyntheticEvents.StepCompleted("s2", Verdict.Pass, 5, T0.AddMilliseconds(80), runId: "run-b"),
+            SyntheticEvents.StepCompleted("s3", Verdict.Pass, 5, T0.AddMilliseconds(150), runId: "run-c"),
+        };
+
+        var ev = Build(lines, runStartedAt: T0);
+
+        Assert.Equal(30, ev.StartupMs);
+        Assert.Equal(80, ev.TimeToFirstTestMs);
+    }
+
+    [Fact]
     public void Build_ScenarioStartedWithNoTs_DeserialisesToDefaultTimestamp_AndIsSkippedForTiming()
     {
         // An absent `ts` on the wire deserialises ScenarioStartedEvent.Timestamp to
