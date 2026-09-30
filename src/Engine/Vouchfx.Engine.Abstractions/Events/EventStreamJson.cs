@@ -7,12 +7,17 @@
 //     line; embedded newlines would break every line-oriented consumer.
 //   • DefaultIgnoreCondition = WhenWritingNull: null optional fields (e.g.
 //     CorrelationIds) are omitted from the wire, matching the §14.4 examples.
-//   • No naming policy is applied.  The EventEnvelope properties that need
-//     non-default wire names carry explicit [JsonPropertyName] attributes.
-//     Applying a CamelCase policy would re-rename those properties a second time
-//     (e.g. RunId → "runId" before the attribute, then the attribute wins, but
-//     the Extra bag would also be affected), so the safest and most explicit
-//     approach is no policy at all.
+//   • No PropertyNamingPolicy is applied.  The EventEnvelope properties that need
+//     non-default wire names carry explicit [JsonPropertyName] attributes, and a
+//     PropertyNamingPolicy only ever transforms a PROPERTY name lacking one — every
+//     property here has one, so it would be pure redundancy (measured, STJ 8.0.0.0:
+//     applying JsonNamingPolicy.CamelCase here produces a byte-identical wire line to
+//     today's). A DictionaryKeyPolicy, by contrast, WOULD
+//     matter: it rewrites the KEYS of a Dictionary<string,TValue>-typed property such
+//     as CorrelationIds, but — measured — does NOT touch the Extra bag's own keys,
+//     because [JsonExtensionData] is exempt from it. Neither policy is set, so this is
+//     recorded as a reason to keep reviewing a future policy addition against BOTH
+//     Dictionary-typed members, not as a claim that Extra is at risk from either.
 
 using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
