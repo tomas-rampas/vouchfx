@@ -1144,8 +1144,29 @@ public sealed class EventStreamJsonRequiredReferenceNullTests
     /// <summary>
     /// Parses <c>record &lt;Name&gt;</c> / <c>property ... [required] ...</c> lines out of
     /// the frozen golden text, matching <c>EventContractFreezeTests.FormatProperty</c>'s
-    /// output shape: <c>property {CLR-type} {PropertyName} [wire={json}] [required] [init|get-only|set]</c>.
+    /// output shape: <c>property {CLR-type} {PropertyName} [wire={json}] [required]
+    /// [init|get-only|set]</c>, OPTIONALLY followed by one or more #586 representation markers
+    /// — <c>[converter=…] [numberHandling=…] [order=…] [objectCreationHandling=…]
+    /// [ignoreCondition=…]</c> — when the property carries the corresponding attribute. This
+    /// parser selects a <c>property</c> line when <c>[required]</c> appears ANYWHERE on it (a
+    /// substring test, not a positional one), takes the property name from the third
+    /// space-delimited token, and takes the wire name from the first token, at any position,
+    /// that starts with <c>[wire=</c> (falling back to the property name when there is none).
+    /// Nothing it reads depends on which tokens follow the name or in what order, so it needs no
+    /// change when a new marker is appended; the marker list is documented here only so a
+    /// reader comparing this shape against the golden is not misled into thinking
+    /// <c>[init|get-only|set]</c> is always the last token on the line.
     /// </summary>
+    /// <remarks>
+    /// #586: a <c>record &lt;Name&gt;</c> HEADER line can carry type-level representation
+    /// markers after the bare name — e.g. <c>"record VerdictCounts
+    /// [polymorphicDerivedTypes=…]"</c> (see <c>EventContractFreezeTests.FormatRecordHeader</c>)
+    /// — so this parser takes ONLY the first whitespace-delimited token after
+    /// <c>"record "</c> as the record name, never everything up to the line's end. A record
+    /// NAME itself never contains a space (it is a bare C# type name), so the first token is
+    /// always the whole name and nothing more.
+    /// Probed by <see cref="ParseRequiredProperties_HeaderWithTypeLevelMarker_ParsesBareName"/>.
+    /// </remarks>
     private static Dictionary<string, List<GoldenRequiredProperty>> ParseRequiredProperties(string golden)
     {
         var byRecord = new Dictionary<string, List<GoldenRequiredProperty>>(StringComparer.Ordinal);
@@ -1157,7 +1178,7 @@ public sealed class EventStreamJsonRequiredReferenceNullTests
 
             if (line.StartsWith("record ", StringComparison.Ordinal))
             {
-                currentRecord = line["record ".Length..].Trim();
+                currentRecord = line["record ".Length..].Trim().Split(' ', 2)[0];
                 byRecord[currentRecord] = new List<GoldenRequiredProperty>();
                 continue;
             }
@@ -1186,6 +1207,26 @@ public sealed class EventStreamJsonRequiredReferenceNullTests
         }
 
         return byRecord;
+    }
+
+    /// <summary>
+    /// Probe (#586): a synthetic golden with a <c>record</c> header carrying a
+    /// type-level marker after the bare name must still parse to the bare name, not to
+    /// the whole remainder of the header line including the marker.
+    /// </summary>
+    [Fact]
+    public void ParseRequiredProperties_HeaderWithTypeLevelMarker_ParsesBareName()
+    {
+        const string synthetic =
+            "record Probe [polymorphicDerivedTypes=Some.Namespace.Derived:\"tag\"]\n"
+            + "  property System.String RunId [wire=runId] [required] [init]\n";
+
+        var byRecord = ParseRequiredProperties(synthetic);
+
+        Assert.True(byRecord.ContainsKey("Probe"));
+        Assert.False(byRecord.ContainsKey("Probe [polymorphicDerivedTypes=Some.Namespace.Derived:\"tag\"]"));
+        Assert.Single(byRecord["Probe"]);
+        Assert.Equal("RunId", byRecord["Probe"][0].PropertyName);
     }
 
     private static string ReadGolden()
