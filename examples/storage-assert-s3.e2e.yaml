@@ -4,19 +4,20 @@ metadata:
     Example showing how to assert against an object the system under test writes to
     an S3-compatible object store.  storage-assert is a brand-new family — the
     dotted form storage-assert.s3 is required (there is no bare storage-assert
-    alias).  The engine provisions a real MinIO container for the "reports" minio
-    dependency; storage-assert.s3 HEADs the object (and, only if sha256 or
-    contentContains is declared, GETs a bounded — 16 MiB cap — copy of the body).
+    alias).  The engine provisions a real S3-compatible object store (RustFS) for
+    the "reports" s3 dependency; storage-assert.s3 HEADs the object (and, only if
+    sha256 or contentContains is declared, GETs a bounded — 16 MiB cap — copy of
+    the body).  The same step also accepts a "minio" dependency.
 
     HONEST-EXAMPLE NOTE: the placeholder SUT below (whoami) does not itself write to
-    S3, and MinIO starts with no bucket and no object. In production usage, the
+    S3, and the store starts with no bucket and no object. In production usage, the
     SUT's own report-export handler is the thing that would PUT the object this
     provider observes. This example instead SIMULATES that write with a
     script.csharp step that parses the staged connection string, creates the
     bucket, and PUTs the object the assertion below expects — exactly the same
     HONEST-disclosure approach trace-expect-otlp.e2e.yaml uses to simulate the
     SUT's own OTLP export (see its KNOWN LIMITATION note). It still exercises the
-    full MinIO topology + HEAD + RETRY + assertion path end to end.
+    full object-store topology + HEAD + RETRY + assertion path end to end.
 
 environment:
   services:
@@ -24,7 +25,7 @@ environment:
     app:
       image: traefik/whoami:latest
   dependencies:
-    reports: { type: minio }
+    reports: { type: s3 }
 
 variables:
   reportKey: "exports/daily-report.csv"
@@ -44,8 +45,8 @@ steps:
     type: script.csharp
     description: >
       SIMULATES the SUT's own write path (see the HONEST-EXAMPLE NOTE in the suite
-      description above): parses the minio dependency's staged connection string
-      (the "ServiceURL=…;AccessKey=…;SecretKey=…" form EnvironmentMapper's "minio"
+      description above): parses the s3 dependency's staged connection string
+      (the "ServiceURL=…;AccessKey=…;SecretKey=…" form EnvironmentMapper's "s3"
       registration produces), creates the "reports" bucket on demand, then PUTs the
       object the assertion below expects. A real suite would delete this step
       entirely — its SUT already does this write.

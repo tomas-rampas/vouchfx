@@ -1493,13 +1493,13 @@ internal static class SchemaErrorCollector
                 // IProjectContext.DeclaredDependencies and reject a target that is not a declared
                 // dependency of their own kind (DbAssertPostgresProvider.Validate,
                 // CacheAssertRedisProvider.Validate, MqPublishRabbitmqProvider.Validate, …),
-                // and those 17 cover all twelve excluded kinds — so an author who follows
+                // and those 17 cover every excluded kind — so an author who follows
                 // that advice for a TLS-secured postgres trades this rejection for a
                 // step-validation rejection and still has no working suite. Only http.rest,
                 // http.soap and metrics-assert.prometheus resolve 'target' through
                 // DeclaredServices (they read DeclaredDependencies solely to phrase a better
                 // rejection), so the service form works solely for an HTTP system under test —
-                // never for the twelve kinds this branch fires on. (Kafka is the one kind
+                // never for the kinds this branch fires on. (Kafka is the one kind
                 // that reaches a security block through BOTH surfaces, and it is already legal as
                 // a dependency, so this message never fires for it at all. Its service-target path
                 // is a WORKING one, not a stub: REQ-023 has both Kafka providers accept a declared
@@ -1510,7 +1510,7 @@ internal static class SchemaErrorCollector
                 // substitute declaration because this clause never refuses it, NOT because no
                 // working alternative exists for it.)
                 // The message therefore states the accepted surface and the release position, and
-                // offers no substitute declaration, because for the twelve kinds it fires on none
+                // offers no substitute declaration, because for the kinds it fires on none
                 // exists. REQ-013 widens the set in 1.1 — said explicitly so an author reads a
                 // roadmap position, not a permanent refusal. This text is about to enter a frozen
                 // surface: verify any future edit against what a provider does at step-execution
@@ -1917,8 +1917,8 @@ internal static class SchemaErrorCollector
     /// <summary>
     /// The maximum number of accepted values <see cref="FormatEnumError"/>
     /// lists inline before truncating with a "… and N more" tail. Chosen so
-    /// the real 13-member dependency-<c>type</c> enum (the largest in the
-    /// current schema) exercises truncation, proving the cap is live rather
+    /// the real dependency-<c>type</c> enum (the largest in the current
+    /// schema, longer than this cap) exercises truncation, proving the cap is live rather
     /// than merely theoretical.
     /// </summary>
     private const int MaxListedEnumValues = 8;

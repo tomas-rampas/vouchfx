@@ -13,19 +13,19 @@
 //   • DisableDashboard = true path is enforced by HeadlessTopology; EnvironmentMapper is topology-agnostic.
 //
 // Provider registration table (s_dependencyRegistry):
-//   Thirteen dependency types are supported.  Each entry supplies:
+//   One entry per supported dependency type.  Each entry supplies:
 //   • Build — called inside the configure delegate; mutates the Aspire builder, populates
 //     serviceEndpoints for sidecar containers (kafka schema-registry, mailpit SMTP) AND for
 //     plain single-endpoint containers that need env: host/port access (mailpit, dynamodb,
-//     minio), populates depConnBuilders for dependencies that need custom connection-string
-//     construction (azureservicebus, dynamodb, minio — all plain containers, not Aspire typed
-//     resources, so none implements IResourceWithConnectionString), and returns
+//     minio, s3), populates depConnBuilders for dependencies that need custom connection-string
+//     construction (azureservicebus, dynamodb, minio, s3 — all plain containers, not Aspire
+//     typed resources, so none implements IResourceWithConnectionString), and returns
 //     (Retained, MostSpecific) IResourceBuilder<IResource> pairs:
 //     - Retained    → stored in dependencyBuilders[name]; used for connection-string resolution.
 //     - MostSpecific → added to mostSpecificDependencyResources; services WaitFor these.
 //     For database-backed types (postgres/sqlserver/mysql/mongodb) both are the *database* resource.
 //     For server-only types (redis/elasticsearch/rabbitmq/nats/kafka/azureservicebus) both are the server resource.
-//     For plain-container types (mailpit/azureservicebus/dynamodb/minio) both are the container itself.
+//     For plain-container types (mailpit/azureservicebus/dynamodb/minio/s3) both are the container itself.
 //   • HealthGateNames — produces the ordered gate-name sequence for the topology fixture to await.
 //   Adding a new dependency type = add one entry; Map() is unchanged.
 
@@ -190,11 +190,11 @@ public sealed record MappedTopology(
 /// </para>
 /// <para>
 /// <b>Dependency mapping</b> (each logical name → <see cref="DependencySpec"/>):
-/// Thirteen types are supported via the internal registration table.  Database-backed types
+/// The supported types are the keys of the internal registration table.  Database-backed types
 /// (postgres, sqlserver, mysql, mongodb) gate on the <em>database</em> resource; server-only
 /// types (redis, elasticsearch, rabbitmq, nats, kafka, azureservicebus) gate on the server itself;
 /// plain-container types with no dedicated Aspire integration (mailpit, azureservicebus,
-/// dynamodb, minio) gate on the container resource itself.
+/// dynamodb, minio, s3) gate on the container resource itself.
 /// </para>
 /// <para>
 /// <b>WaitFor rule (§4)</b>: every service resource calls <c>WaitFor</c> on every dependency's
@@ -205,10 +205,10 @@ public sealed record MappedTopology(
 public static class EnvironmentMapper
 {
     /// <summary>
-    /// Registry set on four of the <c>AddContainer</c>-based defaults with no Aspire helper of
-    /// their own — the Kafka schema-registry sidecar, <c>mailpit</c>, <c>dynamodb</c> and
-    /// <c>minio</c> (#582; the <c>azureservicebus</c> pair already embeds its registry in the
-    /// image string). <c>AddContainer(name, image, tag)</c> leaves
+    /// Registry set on the <c>AddContainer</c>-based defaults with no Aspire helper of their
+    /// own — the Kafka schema-registry sidecar, <c>mailpit</c>, <c>dynamodb</c> and <c>minio</c>
+    /// (#582), and <c>s3</c> (#581; the <c>azureservicebus</c> pair already embeds its registry
+    /// in the image string). <c>AddContainer(name, image, tag)</c> leaves
     /// <c>ContainerImageAnnotation.Registry</c> null, so DCP handed the runtime an unqualified
     /// short name, which Podman resolves through its <c>registries.conf</c> search list; every
     /// Aspire-provided kind's <c>AddXxx</c> helper already sets its registry. Only the annotation's
@@ -216,6 +216,21 @@ public static class EnvironmentMapper
     /// <c>imageRegistry</c> override, which decides from the string, still replaces it.
     /// </summary>
     private const string DockerHubRegistry = "docker.io";
+
+    /// <summary>
+    /// The <c>s3</c> kind's default image repository (#581): RustFS, unqualified so that an
+    /// env-level <c>imageRegistry</c> still applies (see <see cref="DockerHubRegistry"/>).
+    /// </summary>
+    internal const string S3RustfsImage = "rustfs/rustfs";
+
+    /// <summary>
+    /// The multi-arch index digest of <c>rustfs/rustfs:1.0.0</c>, as the BARE hex that
+    /// <c>WithImageSHA256</c> expects (see <see cref="ApplyImageOverrides{T}"/>'s digest branch).
+    /// The registration pins by this digest rather than by the <c>1.0.0</c> tag; its remarks say
+    /// why the annotation cannot carry both.
+    /// </summary>
+    internal const string S3RustfsImageDigest =
+        "8cc9801755448b71a786705ce76692c77e14936cccd87cf2fc31842e58f4d1ff";
 
     // -----------------------------------------------------------------------
     // Registration table — one entry per supported dependency type.
@@ -685,7 +700,8 @@ public static class EnvironmentMapper
                     // build bitnamilegacy/minio:2025.7.23-debian-12-r5 (index digest
                     // sha256:6dabb4a2088c9a79908de3bc05f4586c23ad2182c8908e7e3acbf61c1467fb20;
                     // MinIO DEVELOPMENT.2025-07-23T15-54-02Z; repository last pushed 2025-08-19
-                    // and never updated since; #581 tracks a maintained default). Credentials,
+                    // and never updated since; #581 added the maintained "s3" kind below rather
+                    // than moving this one). Credentials,
                     // port 9000 and /minio/health/cluster behave as before (measured against
                     // this tag).
                     // The data dir is '/tmp/minio-data': not '/data', and not Bitnami's own
@@ -747,6 +763,93 @@ public static class EnvironmentMapper
                         .WithEnvironment("MINIO_ROOT_PASSWORD", secretKey)
                         .WithHttpEndpoint(targetPort: 9000, name: "http")
                         .WithHttpHealthCheck(path: "/minio/health/cluster", endpointName: "http");
+
+                    var httpEndpoint = containerBuilder.GetEndpoint("http");
+                    serviceEndpoints[name] = httpEndpoint;
+
+                    depConnBuilders[name] = _ =>
+                    {
+                        var url = httpEndpoint.Url;
+                        var connStr = $"ServiceURL={url};AccessKey={accessKey};SecretKey={secretKey}";
+                        return Task.FromResult<string?>(connStr);
+                    };
+
+                    var retained = (IResourceBuilder<IResource>)(object)containerBuilder;
+                    return (retained, retained);
+                },
+                HealthGateNames: (name, _) => new[] { name }),
+
+            // ---- s3: an S3-API-compatible object store backed by RustFS, plain container ----
+            // #581: an ADDITIVE kind beside "minio", not a replacement. "minio" keeps its own
+            // meaning (the MinIO server on the frozen Bitnami legacy pin above); "s3" names the
+            // protocol instead of a product, so the engine can move its default backend without
+            // renaming the kind. Both kinds hand storage-assert.s3 the same connection string.
+            //
+            // Like minio, a plain container with no IResourceWithConnectionString, so its
+            // connection string is synthesised via depConnBuilders in the same key=value;… form:
+            //   ServiceURL=http://<host>:<port>;AccessKey=<key>;SecretKey=<secret>
+            // RUSTFS_ACCESS_KEY/RUSTFS_SECRET_KEY are fixed LOCAL TEST credentials, as minio's are.
+            // The values are the ones minio uses, so a suite moved from 'type: minio' to 'type: s3'
+            // sees the same AccessKey/SecretKey in its connection string. RustFS also reads alias
+            // variables, which are not reserved; an author's env: cannot use them to displace these
+            // two. With MINIO_ROOT_USER/MINIO_ROOT_PASSWORD, RUSTFS_ROOT_USER/RUSTFS_ROOT_PASSWORD
+            // and MINIO_ACCESS_KEY/MINIO_SECRET_KEY all set to other values, only the
+            // RUSTFS_ACCESS_KEY pair authenticates and every alias pair is refused with 403
+            // (pinned on the Docker lane by
+            // StorageAssertS3DockerS3KindTests.Execute_AliasCredentialVariablesInEnv_DoNotDisplaceEngineCredentials).
+            // RUSTFS_ACCESS_KEY_FILE beside RUSTFS_ACCESS_KEY makes the entrypoint exit 1 before
+            // the server starts (measured with plain docker run).
+            //
+            // Health gate: RustFS separates readiness from liveness. GET /health/ready answers 503
+            // until storage, IAM and locking report ready, then 200 (measured: 503 then 200 about
+            // half a second later on a fresh container), while GET /health answers 200 as soon as
+            // the listener is up. Readiness is the correct gate, and the default 200-status
+            // WithHttpHealthCheck applies unchanged, as it does for minio.
+            ["s3"] = new DependencyRegistration(
+                Build: (builder, name, spec, serviceEndpoints, depConnBuilders, imageRegistry, pullPolicy, _) =>
+                {
+                    // PINNED BY DIGEST, not by tag. The default is rustfs/rustfs 1.0.0 (Apache-2.0),
+                    // whose multi-arch index digest is S3RustfsImageDigest (measured with
+                    // 'docker buildx imagetools inspect rustfs/rustfs:1.0.0'; the index carries
+                    // linux/amd64 and linux/arm64 manifests, and only amd64 has been run). The tag
+                    // cannot ride along: Aspire 13.4.2's ContainerImageAnnotation holds Tag and
+                    // SHA256 as mutually exclusive fields (measured: setting SHA256 clears Tag, and
+                    // setting Tag clears SHA256), so the pull reference DCP receives is
+                    // "docker.io/rustfs/rustfs@sha256:<digest>". That exclusivity is also what
+                    // keeps the author's overrides working: 'version:' reaches WithImageTag, which
+                    // replaces the digest with the author's tag, and 'image:' replaces the whole
+                    // reference (Map_S3Dependency_VersionOverride_ReplacesDigestWithTag and
+                    // Map_S3Dependency_ImageOverride_ReplacesDigestedDefault pin both).
+                    //
+                    // Qualified the #582 way: WithImageRegistry(DockerHubRegistry) sets only the
+                    // annotation's Registry field, so the image STRING "rustfs/rustfs" stays
+                    // unqualified and an env-level 'imageRegistry' still replaces docker.io
+                    // (Map_S3Dependency_ImageRegistry_AppliesToUnqualifiedDefault).
+                    //
+                    // Data directory '/data', and NOT minio's '/tmp/minio-data'. The image's
+                    // entrypoint creates only the directories named by RUSTFS_VOLUMES, which the
+                    // image sets to '/data' (and which it also declares as a VOLUME, owned by the
+                    // image's uid 10001 'rustfs' user); it never creates a path given as an
+                    // argument, and the rustfs binary does not create its own disk root. So
+                    // 'rustfs /tmp/minio-data' exits "[FATAL] Server runtime failed: Volume not
+                    // found" (measured with plain docker run), while 'rustfs /data' starts. The
+                    // entrypoint maps a first argument that is neither an option nor 'rustfs' to
+                    // '/usr/bin/rustfs <args>', so WithArgs("/data") starts exactly
+                    // '/usr/bin/rustfs /data' (measured from the container's own start log).
+                    const string accessKey = "vouchfx-minio";
+                    const string secretKey = "vouchfx-minio-secret";
+                    var containerBuilder = ApplyImageOverrides(
+                        builder.AddContainer(name, S3RustfsImage)
+                            .WithImageSHA256(S3RustfsImageDigest)
+                            .WithImageRegistry(DockerHubRegistry),
+                        spec,
+                        imageRegistry,
+                        pullPolicy)
+                        .WithArgs("/data")
+                        .WithEnvironment("RUSTFS_ACCESS_KEY", accessKey)
+                        .WithEnvironment("RUSTFS_SECRET_KEY", secretKey)
+                        .WithHttpEndpoint(targetPort: 9000, name: "http")
+                        .WithHttpHealthCheck(path: "/health/ready", endpointName: "http");
 
                     var httpEndpoint = containerBuilder.GetEndpoint("http");
                     serviceEndpoints[name] = httpEndpoint;
@@ -1473,7 +1576,8 @@ public static class EnvironmentMapper
         //
         // Why a refusal and not an ordering. Aspire's WithEnvironment is LAST-WRITE-WINS, so
         // applying the author's map after the registration lambda would let it replace an engine
-        // value the engine also advertises to every OTHER scenario through `${conn:...}`. The
+        // value every OTHER scenario also relies on (for minio and s3, the credentials in the
+        // step-facing connection string). The
         // interim shipped in T3 delivered engine-wins by silently dropping the key with a warning;
         // an author who writes ES_JAVA_OPTS and gets a green suite in which nothing happened is
         // the schema-acceptance-is-not-execution failure this feature exists to avoid reproducing,
@@ -1500,39 +1604,45 @@ public static class EnvironmentMapper
                         continue;
                     }
 
-                    // The author's VALUE is deliberately absent from this message: two of the
-                    // nine reserved names are passwords, and a diagnostic that echoed the
+                    // The author's VALUE is deliberately absent from this message: some of the
+                    // reserved names are passwords or secret keys (MINIO_ROOT_PASSWORD,
+                    // MSSQL_SA_PASSWORD, RUSTFS_SECRET_KEY), and a diagnostic that echoed the
                     // rejected value would put author-supplied credential material into every
                     // log and report that carries the failure.
                     //
-                    // The credential clause is SCOPED TO minio, and that scope is measured, not
-                    // stylistic. Only MINIO_ROOT_USER/MINIO_ROOT_PASSWORD are spliced into a
-                    // connection string `${conn:...}` hands to other scenarios (see the "minio"
-                    // registration's depConnBuilders lambda above). elasticsearch's four names are
-                    // host/port-only (s_hostPortOnlyParts), and the azureservicebus emulator's
-                    // connection string is a fixed
+                    // The credential clause is SCOPED TO minio and s3, and that scope is measured,
+                    // not stylistic. Only MINIO_ROOT_USER/MINIO_ROOT_PASSWORD and
+                    // RUSTFS_ACCESS_KEY/RUSTFS_SECRET_KEY are spliced into a connection string:
+                    // the step-facing one the "minio" and "s3" registrations' depConnBuilders
+                    // lambdas build, which the runner stages for every scenario's steps. A
+                    // service's `${conn:<dependency>}` for these kinds carries only host:port
+                    // (s_hostPortOnlyParts and ResolveDependencyEnvAccess), which is why the
+                    // message says so rather than naming `${conn:}` as the credentials' route.
+                    // elasticsearch's four names are configuration, not credentials, and the
+                    // azureservicebus emulator's connection string is a fixed
                     // 'Endpoint=sb://…;SharedAccessKey=SAS_KEY_VALUE;…' in which none of ACCEPT_EULA
                     // / MSSQL_SA_PASSWORD / SQL_SERVER appears. An unscoped "some of them carry the
                     // credentials" handed an elasticsearch author refused for ES_JAVA_OPTS an
                     // argument with no bearing on their case. The load-bearing clause — "the shape
-                    // every scenario shares" — is true for all nine and carries the message alone.
-                    // Matches the wording shipped in the DSL spec, common-patterns and CHANGELOG.
+                    // every scenario shares" — is true for every reserved name and carries the
+                    // message alone. The DSL spec, common-patterns and CHANGELOG quote this wording.
                     throw new ArgumentException(
                         $"Dependency '{name}' (type '{spec.Type}') declares env entry '{key}', " +
                         "which the engine sets itself for this dependency type. That entry is " +
                         "REFUSED: the engine relies on its engine-set variables to bring this " +
-                        "dependency up in the shape every scenario shares - and on 'minio' they " +
-                        "are the credentials ${conn:<dependency>} advertises to every other " +
-                        "scenario consuming it - so honouring an override would break other " +
-                        "scenarios rather than only this one. Remove the entry, or declare the " +
-                        "backend as a service with 'image:' if you need full control of its " +
-                        "environment.",
+                        "dependency up in the shape every scenario shares - and on 'minio' and " +
+                        "'s3' they are the credentials in the connection string the engine hands " +
+                        "the steps of every scenario that targets it (for those two kinds, a " +
+                        "service's ${conn:<dependency>} carries only host and port) - so honouring an " +
+                        "override would break other scenarios rather than only this one. Remove " +
+                        "the entry, or declare the backend as a service with 'image:' if you need " +
+                        "full control of its environment.",
                         nameof(env));
                 }
             }
 
             // Nothing is dropped any more: every key that survives the refusal above is applied
-            // verbatim, on the ten types with no reserved names and the three with them alike.
+            // verbatim, on the types with no reserved names and the types with them alike.
             dependencyEnvToApply[name] = spec.Env;
         }
 
@@ -2523,10 +2633,11 @@ public static class EnvironmentMapper
     /// plain container with none; elasticsearch provisions a password but this registration
     /// disables security (<c>xpack.security.enabled=false</c>), so it is never enforced;
     /// dynamodb-local ignores credentials entirely (any AccessKey/SecretKey is accepted); minio
-    /// DOES enforce MINIO_ROOT_USER/MINIO_ROOT_PASSWORD, but those are fixed values this
-    /// registration sets itself (not per-instance generated parameters), so they are exposed to
-    /// providers only via the synthesised <c>depConnBuilders</c> connection string, not as a
-    /// separate <c>${conn:name.username/password}</c> part.
+    /// DOES enforce MINIO_ROOT_USER/MINIO_ROOT_PASSWORD, and s3 (RustFS) DOES enforce
+    /// RUSTFS_ACCESS_KEY/RUSTFS_SECRET_KEY, but those are fixed values each registration sets
+    /// itself (not per-instance generated parameters), so they are exposed to providers only via
+    /// the synthesised <c>depConnBuilders</c> connection string, not as a separate
+    /// <c>${conn:name.username/password}</c> part.
     /// </summary>
     private static readonly string[] s_hostPortOnlyParts = { "host", "port" };
 
@@ -2546,14 +2657,14 @@ public static class EnvironmentMapper
             "rabbitmq" => s_rabbitmqParts,
             "nats" => s_natsParts,
             "redis" => s_redisParts,
-            "kafka" or "elasticsearch" or "mailpit" or "dynamodb" or "minio" => s_hostPortOnlyParts,
+            "kafka" or "elasticsearch" or "mailpit" or "dynamodb" or "minio" or "s3" => s_hostPortOnlyParts,
             _ => Array.Empty<string>(),
         };
 
     /// <summary>
     /// The environment-variable NAMES this mapper's own dependency registrations set, keyed by
     /// dependency <c>type:</c> — the author-addressable half of the dependency-env spec's
-    /// "The reserved set" table (nine names across three types).  A dependency <c>env:</c> key
+    /// "The reserved set" table.  A dependency <c>env:</c> key
     /// listed here for its own type is REFUSED (REQ-004): <see cref="Map"/> throws before any
     /// container starts, naming the variable, the dependency and the type.
     /// </summary>
@@ -2563,8 +2674,9 @@ public static class EnvironmentMapper
     /// <c>EnvironmentCallbackAnnotation</c>; the callbacks run in registration order and write
     /// into ONE dictionary, so the LAST write wins.  Applying the author's map after
     /// <c>DependencyRegistration.Build</c> therefore lets the author silently replace an engine
-    /// value that the engine also advertises to every other scenario through
-    /// <c>${conn:...}</c>, and no ordering of the two writes can deliver "engine wins".  T3
+    /// value every other scenario also relies on (for <c>minio</c> and <c>s3</c>, the credentials
+    /// in the step-facing connection string), and no ordering of the two writes can deliver
+    /// "engine wins".  T3
     /// delivered it by never writing the key (a warned skip); REQ-004 tightened that to a refusal,
     /// because a variable an author declared and the engine silently discarded is the
     /// schema-acceptance-is-not-execution shape this feature exists to avoid reproducing.
@@ -2576,8 +2688,8 @@ public static class EnvironmentMapper
     /// </para>
     /// <para>
     /// <b>Per type, not global.</b>  A name reserved for <c>elasticsearch</c> is unreserved on
-    /// <c>postgres</c>.  The ten types with no entry here reserve nothing, and every one of the
-    /// nine names is asserted APPLIED on a type that does not reserve it — without that half the
+    /// <c>postgres</c>.  The types with no entry here reserve nothing, and every one of the
+    /// reserved names is asserted APPLIED on a type that does not reserve it — without that half the
     /// check would degrade to a global denylist.
     /// </para>
     /// <para>
@@ -2621,6 +2733,11 @@ public static class EnvironmentMapper
             {
                 "MINIO_ROOT_USER",
                 "MINIO_ROOT_PASSWORD",
+            },
+            ["s3"] = new HashSet<string>(StringComparer.Ordinal)
+            {
+                "RUSTFS_ACCESS_KEY",
+                "RUSTFS_SECRET_KEY",
             },
             ["azureservicebus"] = new HashSet<string>(StringComparer.Ordinal)
             {
@@ -2957,9 +3074,10 @@ public static class EnvironmentMapper
         }
 
         if (string.Equals(dependencyType, "dynamodb", StringComparison.Ordinal)
-            || string.Equals(dependencyType, "minio", StringComparison.Ordinal))
+            || string.Equals(dependencyType, "minio", StringComparison.Ordinal)
+            || string.Equals(dependencyType, "s3", StringComparison.Ordinal))
         {
-            // Both are plain containers (§4) whose Build lambda stages its single HTTP
+            // All three are plain containers (§4) whose Build lambda stages its single HTTP
             // endpoint into serviceEndpoints[name] for exactly this purpose — mirrors the
             // mailpit branch above, minus the "-smtp" suffix (one endpoint, not two).
             var http = serviceEndpoints[name];
@@ -3392,14 +3510,15 @@ public static class EnvironmentMapper
     /// <c>IResourceBuilder&lt;out T&gt;</c> is covariant, so it converts UP and never back down.
     /// </para>
     /// <para>
-    /// <b>Why by name.</b>  Measured across all thirteen dependency types: the resource named
-    /// exactly the declared dependency name is a <see cref="ContainerResource"/> implementing
+    /// <b>Why by name.</b>  Measured across every dependency type, and re-measured for each type
+    /// the schema accepts by <c>DependencyEnvCensusTests</c>: the resource named exactly the
+    /// declared dependency name is a <see cref="ContainerResource"/> implementing
     /// <see cref="IResourceWithEnvironment"/>, and there is exactly one of it.  The two sidecars
     /// carry distinct names (<c>&lt;name&gt;-sr</c>, <c>&lt;name&gt;-sqledge</c>), so name
     /// equality cannot reach them.  The alternative — a third element on
-    /// <c>DependencyRegistration.Build</c>'s tuple — is thirteen more hand-maintained entries with
-    /// no compiler check that any of them names a container, on a tuple whose EXISTING two
-    /// elements are already the wrong resource for four of the thirteen.
+    /// <c>DependencyRegistration.Build</c>'s tuple — is one more hand-maintained entry per type
+    /// with no compiler check that any of them names a container, on a tuple whose EXISTING two
+    /// elements are already the wrong resource for the four database-backed types.
     /// </para>
     /// <para>
     /// <b>Call it INSIDE the dependency loop.</b>  That loop runs before the services loop, so no
@@ -3412,7 +3531,7 @@ public static class EnvironmentMapper
     /// </para>
     /// <para>
     /// The <c>SingleOrDefault(...) ?? throw</c> asserts the name→resource invariant rather than
-    /// assuming it, so a fourteenth dependency type whose registration breaks it fails loudly at
+    /// assuming it, so a new dependency type whose registration breaks it fails loudly at
     /// topology-build time instead of silently no-op'ing the author's <c>env:</c> or artefact
     /// copies.  The <c>DependencyEnvCensusTests</c> gate catches it earlier still, in CI.
     /// </para>
@@ -4099,7 +4218,7 @@ public static class EnvironmentMapper
     /// <see cref="DependencySpec.Version"/>) plus the env-level <c>imageRegistry</c>/pull-policy
     /// overrides to a container-backed Aspire resource builder.  Collapses the
     /// <c>if (!string.IsNullOrEmpty(spec.Version)) ... WithImageTag(...)</c> duplication
-    /// that used to appear in every one of the 13 dependency registrations, and additionally
+    /// that used to appear in every dependency registration, and additionally
     /// wires up <see cref="DependencySpec.Image"/>/<c>imageRegistry</c>/<c>pullPolicy</c> support.
     /// </summary>
     /// <remarks>

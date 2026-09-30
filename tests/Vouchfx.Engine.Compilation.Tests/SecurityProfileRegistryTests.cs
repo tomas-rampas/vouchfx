@@ -235,13 +235,13 @@ public sealed class SecurityProfileRegistryTests
     private static readonly string[] s_dependencyKinds =
     {
         "postgres", "sqlserver", "mysql", "mongodb", "redis", "elasticsearch",
-        "rabbitmq", "nats", "kafka", "mailpit", "azureservicebus", "dynamodb", "minio",
+        "rabbitmq", "nats", "kafka", "mailpit", "azureservicebus", "dynamodb", "minio", "s3",
     };
 
     /// <summary>
     /// Every <c>(profile, kind)</c> pair the schema permits — derived from ACTUAL schema
-    /// validation via <see cref="DocumentValidator"/> against every one of the thirteen
-    /// dependency kinds plus the service sentinel, both profiles — resolves to a registered
+    /// validation via <see cref="DocumentValidator"/> against every dependency kind plus the
+    /// service sentinel, both profiles — resolves to a registered
     /// wiring in <see cref="SecurityProfileRegistry.BuiltIn"/>. This is the enumeration
     /// REQ-022's acceptance criterion names, built from the schema itself rather than a
     /// hand-maintained parallel list that could silently drift from REQ-021's own narrowing.
@@ -360,10 +360,10 @@ public sealed class SecurityProfileRegistryTests
     /// <summary>
     /// G-MAJOR-2 (gatekeeper): the missing coverage FLOOR. Both theories above silently
     /// <c>return</c> (asserting nothing) whenever the schema rejects a given combination — so a
-    /// template typo that made EVERY document invalid would leave all 28 theory cases green
+    /// template typo that made EVERY document invalid would leave every theory case green
     /// without ever exercising a single registry resolution, the exact "vacuously passes"
-    /// failure mode this file otherwise guards against. This walks the SAME 26
-    /// dependency-kind/profile combinations (the thirteen <see cref="s_dependencyKinds"/> entries
+    /// failure mode this file otherwise guards against. This walks the SAME
+    /// dependency-kind/profile combinations (every <see cref="s_dependencyKinds"/> entry
     /// × two profiles — the ENUMERATED space, not the permitted subset) plus the 2
     /// service/profile combinations directly and asserts EXACTLY WHICH ONES the schema permits,
     /// so a validator regression that silently starts accepting or rejecting a combination it
@@ -374,8 +374,7 @@ public sealed class SecurityProfileRegistryTests
     /// n3 + M1 (peer review, fix round 2). The PERMITTED count was 16 (<c>tls</c> on all 13
     /// dependency kinds, <c>mtls</c> on kafka only, both profiles on a service) and is now 4 —
     /// measured, by running this method against the tightened schema, not derived on paper. The
-    /// 26/28 figures above are the enumerated SPACE this method walks and are unaffected by that
-    /// tightening. The permitted count is no longer baked into the method NAME: the old name
+    /// enumerated SPACE this method walks is unaffected by that tightening. The permitted count is no longer baked into the method NAME: the old name
     /// (<c>…IsExactlySixteen</c>) forced a RENAME on top of an edit every time the permitted set
     /// moved, and a stale name that disagrees with its own assertion is worse than no name at
     /// all. The assertion also moved from a bare COUNT to the explicit SET of permitted pairs —
@@ -423,7 +422,7 @@ public sealed class SecurityProfileRegistryTests
     /// <summary>
     /// n2 (peer review, fix round 2): <see cref="SecurityProfileRegistry.ServiceTargetKind"/> is a
     /// stringly-typed sentinel sharing one value space with the dependency <c>type</c> enum. A
-    /// fourteenth dependency kind literally named <c>service</c> would alias it silently — every
+    /// future dependency kind literally named <c>service</c> would alias it silently — every
     /// service-scoped wiring would begin claiming that dependency kind — and
     /// <see cref="DependencyKindsEnumerated_MatchesSchemasOwnTypeEnum"/> below would NOT catch it:
     /// that guard compares SETS of kind names between the schema and this file's own array, and

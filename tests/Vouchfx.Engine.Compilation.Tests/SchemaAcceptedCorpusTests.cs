@@ -20,7 +20,7 @@
 //   • Corpus/Accepted/regression-*   — the ten documents 29f910b and 66aef95
 //     actually broke (seeded from their commit messages, not summarised).
 //   • Corpus/Accepted/surface-*      — adversarial-but-legal documents across
-//     surfaces (environment.services, all thirteen dependency kinds, capture,
+//     surfaces (environment.services, every dependency kind, capture,
 //     timeout, and — since the T2a scalar-coercion widening tranche
 //     (feat/fragment-completeness) — the scalar/map fields the ENGINE always
 //     accepted via raw-scalar-text binding but the schema used to reject:
@@ -495,7 +495,7 @@ public sealed class SchemaAcceptedCorpusTests
                 "(a satisfied oneOf/anyOf's non-matching sibling branch is exploration noise, not a genuine " +
                 "defect); only the unevaluatedProperties finding above survives from this step. ALSO now fails " +
                 "independently (services/dependencies schema closure, branch feat/close-environment-surface): " +
-                "'legacy-cache' declares 'type: cassandra', not one of the thirteen kinds $defs/dependency's new " +
+                "'legacy-cache' declares 'type: cassandra', not one of the kinds $defs/dependency's new " +
                 "'type' enum recognises (this fixture's own name — 'unknown-kind' — is exactly the shape that enum " +
                 "now catches at schema time) — at /environment/dependencies/legacy-cache/type: [enum] 'cassandra' " +
                 "does not match one of the values in the enumeration.",

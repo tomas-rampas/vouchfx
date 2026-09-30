@@ -2,10 +2,9 @@
 # (docs/02 §3.2.6 parts table; EnvironmentMapper's DependencyRegistration map),
 # declared in one document, including Kafka's schemaRegistry sidecar flag and
 # Azure Service Bus's queues/topics/subscriptions nesting — so a narrowing on
-# $defs/dependency is caught here regardless of which one of the thirteen
-# kinds it happens to touch.
+# $defs/dependency is caught here regardless of which kind it happens to touch.
 metadata:
-  name: surface-dependencies-all-thirteen-kinds
+  name: surface-dependencies-all-kinds
 environment:
   dependencies:
     orders-db:     { type: postgres }
@@ -30,6 +29,7 @@ environment:
     outbound-mail: { type: mailpit }
     orders-ledger: { type: dynamodb }
     uploads:       { type: minio }
+    exports:       { type: s3 }
 steps:
   - id: noop
     type: script.csharp

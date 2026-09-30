@@ -2,7 +2,7 @@
 # expected-keyword: enum
 #
 # Pre-GA schema tightening (services/dependencies closure): 'type' now
-# carries a closed enum of the thirteen kinds EnvironmentMapper's own
+# carries a closed enum of the kinds EnvironmentMapper's own
 # s_dependencyRegistry recognises. Before this change, an unrecognised value
 # such as 'cassandra' validated cleanly here and only failed later, at
 # suite-build time, with EnvironmentMapper's "Unsupported dependency type"

@@ -226,22 +226,38 @@ public sealed class ListCommandTests
         // types — mq-publish.* are absent from it by design, not by omission here).
         var byType = ListJson().StepTypes.ToDictionary(st => st.Type, StringComparer.Ordinal);
 
-        var checkedTypes = 0;
-        foreach (var (kind, stepTypes) in DependencyKindStepMap.CandidateStepTypes)
-        {
-            foreach (var stepType in stepTypes)
-            {
-                var root = LoadYamlMapping(byType[stepType].Example!);
-                var dependencies = (YamlMappingNode)((YamlMappingNode)root.Children[new YamlScalarNode("environment")])
-                    .Children[new YamlScalarNode("dependencies")];
-                var dependency = Assert.Single(dependencies.Children);
-                var step = (YamlMappingNode)Assert.Single(((YamlSequenceNode)root.Children[new YamlScalarNode("steps")]).Children);
+        // Several kinds may map to ONE step type (#581: both 's3' and 'minio' map to
+        // storage-assert.s3), and an example declares exactly one dependency, so the example's
+        // kind must be one of the kinds the planner maps its type to — not every one of them.
+        var kindsByStepType = DependencyKindStepMap.CandidateStepTypes
+            .SelectMany(entry => entry.Value.Select(stepType => (StepType: stepType, Kind: entry.Key)))
+            .GroupBy(pair => pair.StepType, StringComparer.Ordinal)
+            .ToDictionary(
+                group => group.Key,
+                group => group.Select(pair => pair.Kind).ToHashSet(StringComparer.Ordinal),
+                StringComparer.Ordinal);
 
-                Assert.Equal(kind, Scalar((YamlMappingNode)dependency.Value, "type"));
-                Assert.Equal(((YamlScalarNode)dependency.Key).Value, Scalar(step, "target"));
-                checkedTypes++;
-            }
+        var checkedTypes = 0;
+        foreach (var (stepType, kinds) in kindsByStepType)
+        {
+            var root = LoadYamlMapping(byType[stepType].Example!);
+            var dependencies = (YamlMappingNode)((YamlMappingNode)root.Children[new YamlScalarNode("environment")])
+                .Children[new YamlScalarNode("dependencies")];
+            var dependency = Assert.Single(dependencies.Children);
+            var step = (YamlMappingNode)Assert.Single(((YamlSequenceNode)root.Children[new YamlScalarNode("steps")]).Children);
+
+            var declaredKind = Scalar((YamlMappingNode)dependency.Value, "type");
+            Assert.NotNull(declaredKind);
+            Assert.Contains(declaredKind!, kinds);
+            Assert.Equal(((YamlScalarNode)dependency.Key).Value, Scalar(step, "target"));
+            checkedTypes++;
         }
+
+        // The storage example scaffolds the protocol-named kind for new suites (#581).
+        var storageRoot = LoadYamlMapping(byType["storage-assert.s3"].Example!);
+        var storageDependencies = (YamlMappingNode)((YamlMappingNode)storageRoot.Children[new YamlScalarNode("environment")])
+            .Children[new YamlScalarNode("dependencies")];
+        Assert.Equal("s3", Scalar((YamlMappingNode)Assert.Single(storageDependencies.Children).Value, "type"));
 
         // Never vacuous: the map is non-empty today (and DependencyKindStepMapDriftTests holds
         // every entry it names to the current registration).

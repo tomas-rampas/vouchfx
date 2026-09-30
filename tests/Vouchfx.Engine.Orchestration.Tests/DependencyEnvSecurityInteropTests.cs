@@ -159,9 +159,9 @@ public sealed class DependencyEnvSecurityInteropTests
     /// census test's second direction polices.
     /// </para>
     /// <para>
-    /// <b>The reserved table is read by reflection, not respelled.</b> The nine names have ONE
+    /// <b>The reserved table is read by reflection, not respelled.</b> The reserved names have ONE
     /// declaration and this test must not become a second one — so the loop below is driven by
-    /// whatever the table actually holds. A tenth name added under any type is automatically
+    /// whatever the table actually holds. A name added under any type is automatically
     /// asserted not to be refused on <c>kafka</c>.
     /// </para>
     /// <para>
@@ -185,7 +185,7 @@ public sealed class DependencyEnvSecurityInteropTests
             + "EDGE-008's second clause and the census test's second direction.");
 
         // Nothing reserved for ANY other type is refused on kafka: the guard is per type, not a
-        // global denylist. Driven off the table itself so a tenth name is covered on the day it
+        // global denylist. Driven off the table itself so a new name is covered on the day it
         // is added.
         foreach (var reservedElsewhere in reserved.Values.SelectMany(names => names))
         {

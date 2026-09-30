@@ -150,8 +150,8 @@ internal static class PlanPipeline
 
         // REQ-007: a dependency kind with no candidate step type is recorded here as
         // unmappable (never as a hint-less gap finding). DependencyKindStepMap is the real,
-        // shipped mapping table (every one of the thirteen KnownDependencyKinds.All entries
-        // maps to at least one candidate today), so this narrows to the genuine REQ-007
+        // shipped mapping table (every KnownDependencyKinds.All entry maps to at least one
+        // candidate today), so this narrows to the genuine REQ-007
         // case-(b) kind (unknown to the engine entirely) with no edit here. The reason text
         // itself lives in DependencyKindStepMap.DescribeUnmappable (T3's file), not here, so
         // the mapping table and its prose stay in the same place.

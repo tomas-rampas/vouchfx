@@ -1,19 +1,26 @@
 // StorageAssertS3Provider Docker-gated end-to-end execution tests.
 //
 // Mirrors DbAssertDynamodbDockerTests.cs / MetricsAssertPrometheusDockerTests.cs.  Proves that
-// the emitted CSX fragment executes correctly against a real MinIO container started via
-// SuiteTopology (the AppHost fixture with Aspire.AppHost.Sdk), using EnvironmentMapper's new
-// "minio" dependency registration (Phase B).
+// the emitted CSX fragment executes correctly against a real object store started via
+// SuiteTopology (the AppHost fixture with Aspire.AppHost.Sdk). The scenarios live once, in
+// StorageAssertS3DockerTestsBase, and run once per S3-compatible dependency kind:
+//   • StorageAssertS3DockerTests        — the "minio" kind (MinIO, bitnamilegacy/minio).
+//   • StorageAssertS3DockerS3KindTests  — the "s3" kind (RustFS, #581), in its own file.
 //
-// Scenarios exercised:
-//   1. Pass    — object exists; size/contentType/metadata all match.
-//   2. Fail    — size mismatch.
-//   3. Pass    — sha256 digest matches (triggers the bounded GET body path).
-//   4. Fail    — contentContains substring not found in the body (bounded GET path).
-//   5. Fail    — key does not exist (expect.exists defaults to true).
-//   6. Pass    — key does not exist AND expect.exists:false.
-//   7. EnvironmentError — connection key absent from Vars.
-//   8. RETRY convergence — the step starts against an ABSENT object (first attempts Fail),
+// The provider issues exactly two S3 operations: HEAD Object (GetObjectMetadataAsync) on every
+// attempt, and GET Object (GetObjectAsync) only when sha256 or contentContains is declared.
+// Scenarios exercised, and the operation each one drives:
+//   1. Pass    — object exists; size/contentType/metadata all match (HEAD 200; etag capture).
+//   2. Fail    — size mismatch (HEAD 200).
+//   3. Pass    — sha256 digest matches (HEAD, then the bounded GET body path).
+//   4. Fail    — contentContains substring not found in the body (HEAD, then GET).
+//   5. Pass    — contentContains substring found in the body (HEAD, then GET).
+//   6. Fail    — key does not exist (HEAD 404; expect.exists defaults to true).
+//   7. Pass    — key does not exist AND expect.exists:false (HEAD 404).
+//   8. EnvironmentError — connection key absent from Vars (no operation issued).
+//   9. EnvironmentError — the store refuses a wrong secret key (HEAD 403), proving the
+//      backend enforces the credentials the engine sets rather than accepting any.
+//  10. RETRY convergence — the step starts against an ABSENT object (first attempts Fail),
 //      a concurrent PUT lands the object shortly after, and the engine-owned RETRY wrapper
 //      (StepCompilePlan Retry:true) converges to Pass — proving verifyMode: RETRY's
 //      eventually-consumed idiom round-trips against a live container end to end.
@@ -35,22 +42,48 @@ using Xunit.Abstractions;
 namespace Vouchfx.Engine.Orchestration.Tests;
 
 /// <summary>
-/// Docker-gated end-to-end execution tests for <see cref="StorageAssertS3Provider"/>.
-/// Requires a running Docker daemon with the <c>bitnamilegacy/minio</c> image available.
-/// The reference moved off quay.io (#580): quay.io, Docker Hub's own <c>minio/minio</c>
-/// repository, and ghcr.io all stopped serving MinIO images, so the engine now pins Bitnami's
-/// frozen legacy archive on Docker Hub instead.
+/// Docker-gated end-to-end execution tests for <see cref="StorageAssertS3Provider"/> against
+/// the <c>minio</c> dependency kind. Requires a running Docker daemon with the
+/// <c>bitnamilegacy/minio</c> image available. The reference moved off quay.io (#580): quay.io,
+/// Docker Hub's own <c>minio/minio</c> repository, and ghcr.io all stopped serving MinIO images,
+/// so the engine now pins Bitnami's frozen legacy archive on Docker Hub instead.
 /// </summary>
-public sealed class StorageAssertS3DockerTests
+public sealed class StorageAssertS3DockerTests : StorageAssertS3DockerTestsBase
+{
+    public StorageAssertS3DockerTests(ITestOutputHelper output)
+        : base(output)
+    {
+    }
+
+    /// <inheritdoc />
+    protected override string DependencyType => "minio";
+
+    /// <inheritdoc />
+    protected override string DependencyName => "testminio";
+}
+
+/// <summary>
+/// The storage-assert.s3 scenarios, run once per S3-compatible dependency kind by the sealed
+/// subclasses (see the file header). Every scenario is a <c>requires=docker</c> fact.
+/// </summary>
+public abstract class StorageAssertS3DockerTestsBase
 {
     private readonly ITestOutputHelper _output;
 
-    private const string AppHostAssemblyName = "Vouchfx.Engine.Orchestration.Tests";
-    private static readonly TimeSpan StartupTimeout = TimeSpan.FromSeconds(120);
-    private const string DepName = "testminio";
-    private const string BucketName = "reports";
+    protected const string AppHostAssemblyName = "Vouchfx.Engine.Orchestration.Tests";
+    protected static readonly TimeSpan StartupTimeout = TimeSpan.FromSeconds(120);
+    protected const string BucketName = "reports";
 
-    public StorageAssertS3DockerTests(ITestOutputHelper output) => _output = output;
+    protected StorageAssertS3DockerTestsBase(ITestOutputHelper output) => _output = output;
+
+    /// <summary>The test output sink, for scenarios a subclass adds.</summary>
+    protected ITestOutputHelper Output => _output;
+
+    /// <summary>The <c>environment.dependencies.&lt;name&gt;.type</c> under test.</summary>
+    protected abstract string DependencyType { get; }
+
+    /// <summary>The dependency's logical name, which is also its Aspire resource name.</summary>
+    protected abstract string DependencyName { get; }
 
     private static readonly IReadOnlyList<string> s_additionalRefs = new[]
     {
@@ -82,18 +115,24 @@ public sealed class StorageAssertS3DockerTests
         public IReadOnlyDictionary<string, CaptureExpr> CaptureExprs { get; }
     }
 
-    private static EnvironmentSpec BuildEnv() =>
+    /// <summary>
+    /// One dependency of the kind under test, optionally with an author <c>env:</c> map.
+    /// </summary>
+    protected EnvironmentSpec BuildEnv(IReadOnlyDictionary<string, string>? dependencyEnv = null) =>
         new EnvironmentSpec(
             Services: null,
             Dependencies: new Dictionary<string, DependencySpec>
             {
-                [DepName] = new DependencySpec(Type: "minio", Version: null, Extra: null),
+                [DependencyName] = new DependencySpec(Type: DependencyType, Version: null, Extra: null)
+                {
+                    Env = dependencyEnv,
+                },
             },
             Seed: null,
             ImageRegistry: null,
             ImagePullPolicy: null);
 
-    private static (string ServiceUrl, string AccessKey, string SecretKey) ParseConnectionString(string connStr)
+    protected static (string ServiceUrl, string AccessKey, string SecretKey) ParseConnectionString(string connStr)
     {
         string serviceUrl = string.Empty, accessKey = string.Empty, secretKey = string.Empty;
         foreach (var part in connStr.Split(';', StringSplitOptions.RemoveEmptyEntries))
@@ -109,7 +148,7 @@ public sealed class StorageAssertS3DockerTests
         return (serviceUrl, accessKey, secretKey);
     }
 
-    private static AmazonS3Client BuildClient(string connStr)
+    protected static AmazonS3Client BuildClient(string connStr)
     {
         var (serviceUrl, accessKey, secretKey) = ParseConnectionString(connStr);
         return new AmazonS3Client(
@@ -117,7 +156,7 @@ public sealed class StorageAssertS3DockerTests
             new AmazonS3Config { ServiceURL = serviceUrl, ForcePathStyle = true });
     }
 
-    private static async Task EnsureBucketAsync(AmazonS3Client client)
+    protected static async Task EnsureBucketAsync(AmazonS3Client client)
     {
         try
         {
@@ -131,7 +170,7 @@ public sealed class StorageAssertS3DockerTests
         }
     }
 
-    private static async Task PutObjectAsync(
+    protected static async Task PutObjectAsync(
         AmazonS3Client client, string key, string body, string contentType = "text/plain",
         IReadOnlyDictionary<string, string>? metadata = null)
     {
@@ -150,7 +189,7 @@ public sealed class StorageAssertS3DockerTests
         await client.PutObjectAsync(request).ConfigureAwait(false);
     }
 
-    private static async Task<StepOutcome> RunStepAsync(
+    protected static async Task<StepOutcome> RunStepAsync(
         StorageAssertS3Model model,
         string stepId,
         Dictionary<string, object?> vars,
@@ -205,7 +244,7 @@ public sealed class StorageAssertS3DockerTests
         await using var suite = await SuiteTopology.StartAsync(
             environment: env, appHostAssemblyName: AppHostAssemblyName, startupTimeout: StartupTimeout);
 
-        var connStr = suite.DiscoveredServices[DepName] as string;
+        var connStr = suite.DiscoveredServices[DependencyName] as string;
         Assert.False(string.IsNullOrWhiteSpace(connStr));
 
         const string body = "order-export-contents";
@@ -222,7 +261,7 @@ public sealed class StorageAssertS3DockerTests
         }
 
         var model = new StorageAssertS3Model(
-            DepName, BucketName, "exports/report.csv",
+            DependencyName, BucketName, "exports/report.csv",
             new StorageExpectation(
                 Exists: true,
                 Size: body.Length.ToString(System.Globalization.CultureInfo.InvariantCulture),
@@ -232,7 +271,7 @@ public sealed class StorageAssertS3DockerTests
 
         var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
         {
-            [VarKeys.Connection(DepName)] = connStr,
+            [VarKeys.Connection(DependencyName)] = connStr,
         };
 
         var captures = new Dictionary<string, CaptureExpr>(StringComparer.Ordinal)
@@ -256,7 +295,7 @@ public sealed class StorageAssertS3DockerTests
         await using var suite = await SuiteTopology.StartAsync(
             environment: env, appHostAssemblyName: AppHostAssemblyName, startupTimeout: StartupTimeout);
 
-        var connStr = suite.DiscoveredServices[DepName] as string;
+        var connStr = suite.DiscoveredServices[DependencyName] as string;
         Assert.False(string.IsNullOrWhiteSpace(connStr));
 
         var client = BuildClient(connStr!);
@@ -271,12 +310,12 @@ public sealed class StorageAssertS3DockerTests
         }
 
         var model = new StorageAssertS3Model(
-            DepName, BucketName, "exports/size-check.csv",
+            DependencyName, BucketName, "exports/size-check.csv",
             new StorageExpectation(true, "999", null, null, null, null, null));
 
         var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
         {
-            [VarKeys.Connection(DepName)] = connStr,
+            [VarKeys.Connection(DependencyName)] = connStr,
         };
 
         var outcome = await RunStepAsync(model, "assert-s3-size-fail", vars);
@@ -294,7 +333,7 @@ public sealed class StorageAssertS3DockerTests
         await using var suite = await SuiteTopology.StartAsync(
             environment: env, appHostAssemblyName: AppHostAssemblyName, startupTimeout: StartupTimeout);
 
-        var connStr = suite.DiscoveredServices[DepName] as string;
+        var connStr = suite.DiscoveredServices[DependencyName] as string;
         Assert.False(string.IsNullOrWhiteSpace(connStr));
 
         const string body = "sha256-fixture-body";
@@ -313,12 +352,12 @@ public sealed class StorageAssertS3DockerTests
         }
 
         var model = new StorageAssertS3Model(
-            DepName, BucketName, "exports/hash-check.csv",
+            DependencyName, BucketName, "exports/hash-check.csv",
             new StorageExpectation(true, null, null, expectedHash, null, null, null));
 
         var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
         {
-            [VarKeys.Connection(DepName)] = connStr,
+            [VarKeys.Connection(DependencyName)] = connStr,
         };
 
         var outcome = await RunStepAsync(model, "assert-s3-sha256-pass", vars);
@@ -335,7 +374,7 @@ public sealed class StorageAssertS3DockerTests
         await using var suite = await SuiteTopology.StartAsync(
             environment: env, appHostAssemblyName: AppHostAssemblyName, startupTimeout: StartupTimeout);
 
-        var connStr = suite.DiscoveredServices[DepName] as string;
+        var connStr = suite.DiscoveredServices[DependencyName] as string;
         Assert.False(string.IsNullOrWhiteSpace(connStr));
 
         var client = BuildClient(connStr!);
@@ -350,12 +389,12 @@ public sealed class StorageAssertS3DockerTests
         }
 
         var model = new StorageAssertS3Model(
-            DepName, BucketName, "exports/contains-check.csv",
+            DependencyName, BucketName, "exports/contains-check.csv",
             new StorageExpectation(true, null, null, null, "lazy dog", null, null));
 
         var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
         {
-            [VarKeys.Connection(DepName)] = connStr,
+            [VarKeys.Connection(DependencyName)] = connStr,
         };
 
         var outcome = await RunStepAsync(model, "assert-s3-contains-fail", vars);
@@ -368,6 +407,95 @@ public sealed class StorageAssertS3DockerTests
         Assert.DoesNotContain("quick brown fox", outcome.Observation, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// The GET path's success branch for contentContains: the substring is in the body, so the
+    /// step passes. Scenario 4 proves only the mismatch branch of the same read.
+    /// </summary>
+    [Fact]
+    [Trait("requires", "docker")]
+    public async Task Execute_ContentContainsMatch_ReturnsPass()
+    {
+        var env = BuildEnv();
+        await using var suite = await SuiteTopology.StartAsync(
+            environment: env, appHostAssemblyName: AppHostAssemblyName, startupTimeout: StartupTimeout);
+
+        var connStr = suite.DiscoveredServices[DependencyName] as string;
+        Assert.False(string.IsNullOrWhiteSpace(connStr));
+
+        var client = BuildClient(connStr!);
+        try
+        {
+            await EnsureBucketAsync(client);
+            await PutObjectAsync(client, "exports/contains-pass.csv", "the quick brown fox");
+        }
+        finally
+        {
+            client.Dispose();
+        }
+
+        var model = new StorageAssertS3Model(
+            DependencyName, BucketName, "exports/contains-pass.csv",
+            new StorageExpectation(true, null, null, null, "brown fox", null, null));
+
+        var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            [VarKeys.Connection(DependencyName)] = connStr,
+        };
+
+        var outcome = await RunStepAsync(model, "assert-s3-contains-pass", vars);
+
+        _output.WriteLine($"Verdict: {outcome.Verdict}, Observation: {outcome.Observation}");
+        Assert.Equal(Verdict.Pass, outcome.Verdict);
+    }
+
+    /// <summary>
+    /// The store must ENFORCE the credentials the engine sets, not accept any signature: the
+    /// step is handed the real endpoint and access key with a wrong secret key, the HEAD is
+    /// refused, and the provider reports an EnvironmentError naming only the exception type.
+    /// Without this, a backend that ignored its credential variables would pass every other
+    /// scenario here unnoticed.
+    /// </summary>
+    [Fact]
+    [Trait("requires", "docker")]
+    public async Task Execute_WrongSecretKey_ReturnsEnvironmentError()
+    {
+        var env = BuildEnv();
+        await using var suite = await SuiteTopology.StartAsync(
+            environment: env, appHostAssemblyName: AppHostAssemblyName, startupTimeout: StartupTimeout);
+
+        var connStr = suite.DiscoveredServices[DependencyName] as string;
+        Assert.False(string.IsNullOrWhiteSpace(connStr));
+
+        var client = BuildClient(connStr!);
+        try
+        {
+            await EnsureBucketAsync(client);
+            await PutObjectAsync(client, "exports/credential-check.csv", "credential-check");
+        }
+        finally
+        {
+            client.Dispose();
+        }
+
+        var (serviceUrl, accessKey, _) = ParseConnectionString(connStr!);
+        var tamperedConnStr = $"ServiceURL={serviceUrl};AccessKey={accessKey};SecretKey=not-the-engine-secret";
+
+        var model = new StorageAssertS3Model(
+            DependencyName, BucketName, "exports/credential-check.csv",
+            new StorageExpectation(true, null, null, null, null, null, null));
+
+        var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            [VarKeys.Connection(DependencyName)] = tamperedConnStr,
+        };
+
+        var outcome = await RunStepAsync(model, "assert-s3-wrong-secret", vars);
+
+        _output.WriteLine($"Verdict: {outcome.Verdict}, Observation: {outcome.Observation}");
+        Assert.Equal(Verdict.EnvironmentError, outcome.Verdict);
+        Assert.Equal("{\"error\":\"AmazonS3Exception\"}", outcome.Observation);
+    }
+
     [Fact]
     [Trait("requires", "docker")]
     public async Task Execute_AbsentObject_ExistsDefaultTrue_ReturnsFail()
@@ -376,7 +504,7 @@ public sealed class StorageAssertS3DockerTests
         await using var suite = await SuiteTopology.StartAsync(
             environment: env, appHostAssemblyName: AppHostAssemblyName, startupTimeout: StartupTimeout);
 
-        var connStr = suite.DiscoveredServices[DepName] as string;
+        var connStr = suite.DiscoveredServices[DependencyName] as string;
         Assert.False(string.IsNullOrWhiteSpace(connStr));
 
         var client = BuildClient(connStr!);
@@ -390,12 +518,12 @@ public sealed class StorageAssertS3DockerTests
         }
 
         var model = new StorageAssertS3Model(
-            DepName, BucketName, "exports/does-not-exist.csv",
+            DependencyName, BucketName, "exports/does-not-exist.csv",
             new StorageExpectation(null, null, null, null, null, null, null));
 
         var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
         {
-            [VarKeys.Connection(DepName)] = connStr,
+            [VarKeys.Connection(DependencyName)] = connStr,
         };
 
         var outcome = await RunStepAsync(model, "assert-s3-absent-fail", vars);
@@ -413,7 +541,7 @@ public sealed class StorageAssertS3DockerTests
         await using var suite = await SuiteTopology.StartAsync(
             environment: env, appHostAssemblyName: AppHostAssemblyName, startupTimeout: StartupTimeout);
 
-        var connStr = suite.DiscoveredServices[DepName] as string;
+        var connStr = suite.DiscoveredServices[DependencyName] as string;
         Assert.False(string.IsNullOrWhiteSpace(connStr));
 
         var client = BuildClient(connStr!);
@@ -427,12 +555,12 @@ public sealed class StorageAssertS3DockerTests
         }
 
         var model = new StorageAssertS3Model(
-            DepName, BucketName, "exports/still-does-not-exist.csv",
+            DependencyName, BucketName, "exports/still-does-not-exist.csv",
             new StorageExpectation(false, null, null, null, null, null, null));
 
         var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
         {
-            [VarKeys.Connection(DepName)] = connStr,
+            [VarKeys.Connection(DependencyName)] = connStr,
         };
 
         var outcome = await RunStepAsync(model, "assert-s3-existsfalse-pass", vars);
@@ -473,7 +601,7 @@ public sealed class StorageAssertS3DockerTests
         await using var suite = await SuiteTopology.StartAsync(
             environment: env, appHostAssemblyName: AppHostAssemblyName, startupTimeout: StartupTimeout);
 
-        var connStr = suite.DiscoveredServices[DepName] as string;
+        var connStr = suite.DiscoveredServices[DependencyName] as string;
         Assert.False(string.IsNullOrWhiteSpace(connStr));
 
         const string key = "exports/eventually-written.csv";
@@ -512,12 +640,12 @@ public sealed class StorageAssertS3DockerTests
         });
 
         var model = new StorageAssertS3Model(
-            DepName, BucketName, key,
+            DependencyName, BucketName, key,
             new StorageExpectation(true, null, null, null, null, null, null));
 
         var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
         {
-            [VarKeys.Connection(DepName)] = connStr,
+            [VarKeys.Connection(DependencyName)] = connStr,
         };
 
         var outcome = await RunStepWithRetryAsync(model, "assert-s3-retry-convergence", vars, timeoutMs: 10000);

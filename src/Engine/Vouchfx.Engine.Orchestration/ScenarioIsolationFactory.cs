@@ -14,7 +14,8 @@
 //   redis                             → RedisScenarioIsolation.
 //   elasticsearch                     → ElasticsearchScenarioIsolation.
 //   kafka, rabbitmq, nats, mailpit,
-//   azureservicebus, dynamodb, minio  → SKIPPED — no mutable dependency state to
+//   azureservicebus, dynamodb, minio,
+//   s3                                → SKIPPED — no mutable dependency state to
 //                                        reset between scenarios.
 //   (no declared type / no discovered
 //    connection string)               → SKIPPED defensively (mirrors the pre-existing
@@ -134,7 +135,7 @@ public static class ScenarioIsolationFactory
             return new ElasticsearchScenarioIsolation(name, connectionString);
         }
 
-        // kafka / rabbitmq / nats / mailpit / azureservicebus / dynamodb / minio:
+        // kafka / rabbitmq / nats / mailpit / azureservicebus / dynamodb / minio / s3:
         // no mutable dependency state to reset between scenarios.
         return null;
     }

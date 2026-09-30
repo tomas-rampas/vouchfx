@@ -54,7 +54,7 @@ public sealed record StorageExpectation(
 /// only) provider of the new <c>storage-assert</c> family.
 /// </summary>
 /// <param name="Target">
-/// Logical name of the <c>minio</c> dependency to query, as declared under
+/// Logical name of the <c>s3</c> or <c>minio</c> dependency to query, as declared under
 /// <c>environment.dependencies</c>.
 /// </param>
 /// <param name="Bucket">

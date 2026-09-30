@@ -26,7 +26,7 @@ four-technology reference scenario (REST, Kafka, PostgreSQL, webhook):
   authors never write `Thread.Sleep`.
 - **Automatic state reset between sequential scenarios** — PostgreSQL, SQL Server, MySQL, MongoDB, Redis and
   Elasticsearch dependencies are automatically reset (data cleared, structure preserved) after each scenario
-  completes; broker and DynamoDB/MinIO dependencies are not reset; a failed reset surfaces as an environment
+  completes; broker, DynamoDB, MinIO and S3 (`s3`) dependencies are not reset; a failed reset surfaces as an environment
   error naming the dependency.
 - **Transport security for authenticated infrastructure** — a `security:` block declares TLS or mutual TLS
   per target: on any `environment.services` entry, and on a `kafka` dependency. The HTTP family

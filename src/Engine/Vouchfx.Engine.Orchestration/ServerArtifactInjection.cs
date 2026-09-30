@@ -26,7 +26,7 @@
 //   • `IResourceBuilder<out T>` is COVARIANT — it converts UP and never back down. A widened
 //     `IResourceBuilder<IResource>` therefore converts to `IResourceBuilder<ContainerResource>`
 //     ONLY when the runtime builder's own type argument IS, or derives from, `ContainerResource`
-//     (the four `AddContainer`-backed registrations — mailpit, azureservicebus, dynamodb, minio —
+//     (the `AddContainer`-backed registrations — mailpit, azureservicebus, dynamodb, minio, s3 —
 //     are the identity case; `AddKafka` is the derived case, its runtime type being
 //     `DistributedApplicationResourceBuilder<KafkaServerResource>`), and yields null otherwise —
 //     e.g. for an `AddDatabase` child. That is why `Apply` takes a container-typed builder and

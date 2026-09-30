@@ -174,7 +174,7 @@ public sealed class ClosureProbeCoverageGuardTests
     ///   </description></item>
     ///   <item><description>
     ///     <c>storage-assert.s3</c> → <c>Amazon.S3.AmazonS3Client</c>: the provider HEADs/GETs
-    ///     an S3-compatible (MinIO) object via the AWS SDK; the probe builds a real client and
+    ///     an S3-compatible (RustFS or MinIO) object via the AWS SDK; the probe builds a real client and
     ///     disposes it in <c>finally</c>.
     ///   </description></item>
     ///   <item><description>
@@ -283,7 +283,7 @@ public sealed class ClosureProbeCoverageGuardTests
             ProbeMarker: "Amazon.DynamoDBv2.AmazonDynamoDBClient"),
         new CoreProviderCoverage(
             StepKind: "storage-assert.s3",
-            CanonicalClient: "Amazon.S3.AmazonS3Client (S3-compatible / MinIO client)",
+            CanonicalClient: "Amazon.S3.AmazonS3Client (S3-compatible client: RustFS / MinIO)",
             ProbeMarker: "Amazon.S3.AmazonS3Client"),
         new CoreProviderCoverage(
             StepKind: "trace-expect.otlp",

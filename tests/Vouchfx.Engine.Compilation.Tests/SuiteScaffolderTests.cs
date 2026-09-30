@@ -339,6 +339,7 @@ public sealed class SuiteScaffolderTests
     {
         Assert.True(KnownDependencyKinds.Contains("postgres"));
         Assert.True(KnownDependencyKinds.Contains("minio"));
+        Assert.True(KnownDependencyKinds.Contains("s3"));
         Assert.True(KnownDependencyKinds.Contains("mailpit"));
         Assert.False(KnownDependencyKinds.Contains("not-a-real-dep"));
     }

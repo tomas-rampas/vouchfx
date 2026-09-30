@@ -132,8 +132,8 @@ public static class DocumentValidator
     /// The registry reaches <see cref="CollectUnknownSecurityProfileErrors"/> and nowhere else.
     /// It is deliberately NOT threaded into <see cref="SchemaErrorCollector"/>: that class used to
     /// consult <c>SecurityProfileRegistry.BuiltIn</c> directly from a REQ-021 <c>const</c> branch,
-    /// so an injected registry would have left the two paths disagreeing on 12 of 13 dependency
-    /// kinds (a profile registered HERE but absent from <c>BuiltIn</c> would have been reported as
+    /// so an injected registry would have left the two paths disagreeing on every dependency
+    /// kind but kafka (a profile registered HERE but absent from <c>BuiltIn</c> would have been reported as
     /// "unknown" by the schema path while being genuinely registered). M1's schema tightening
     /// deleted that branch outright — no <c>const</c> on <c>security.profile</c> survives anywhere
     /// in the composed schema — so there is now exactly ONE path that consults a registry, and the

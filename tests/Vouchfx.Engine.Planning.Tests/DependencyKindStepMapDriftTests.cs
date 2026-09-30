@@ -133,10 +133,25 @@ public sealed class DependencyKindStepMapDriftTests
     [InlineData("POSTGRES")]
     [InlineData("Kafka")]
     [InlineData("MongoDB")]
+    [InlineData("S3")]
     public void TryGetCandidates_WrongCaseKind_ReturnsFalse(string wrongCaseKind)
     {
         Assert.False(DependencyKindStepMap.TryGetCandidates(wrongCaseKind, out var candidates));
         Assert.Empty(candidates);
+    }
+
+    /// <summary>
+    /// #581: both S3-compatible dependency kinds are asserted by the one provider that speaks
+    /// the protocol, so a declared <c>s3</c> dependency with no <c>storage-assert.s3</c> step is
+    /// reported by the vocabulary-gap analysis exactly as a <c>minio</c> one is.
+    /// </summary>
+    [Theory]
+    [InlineData("s3")]
+    [InlineData("minio")]
+    public void S3CompatibleKinds_MapToStorageAssertS3(string kind)
+    {
+        Assert.True(DependencyKindStepMap.TryGetCandidates(kind, out var candidates));
+        Assert.Equal(new[] { "storage-assert.s3" }, candidates);
     }
 
     [Fact]

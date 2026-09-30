@@ -4,14 +4,14 @@
 //   1.  Bind: full YAML step (target/bucket/key/expect) → correct model.
 //   2.  Bind: non-mapping node → safe empty model.
 //   3.  Bind: expect absent → all-null expectation (exists defaults to true downstream).
-//   4.  Validate: valid model → IsValid.
+//   4.  Validate: valid model → IsValid (target declared as minio, and as s3).
 //   5.  Validate: empty target/bucket/key → invalid.
 //   6.  Validate: exists:false + a content expectation → invalid (coherence rule 1).
 //   7.  Validate: size + minSize together → invalid (coherence rule 2, mutually exclusive).
 //   8.  Validate: target not declared / wrong dependency type → invalid.
 //   9.  Registry: provider discoverable via StepKindRegistry with key "storage-assert.s3".
 //   10. Registry: SchemaFragment contains "bucket".
-//   11. Resources: yields a minio ResourceRequirement whose Name equals model.Target.
+//   11. Resources: yields an s3 ResourceRequirement whose Name equals model.Target.
 //   12. CompileReferenceAssemblies: contains AWSSDK.S3 + JsonPath.Net assemblies.
 //
 // All tests are non-docker.
@@ -137,6 +137,23 @@ public sealed class StorageAssertS3ProviderTests
         Assert.True(result.IsValid, string.Join("; ", result.Errors));
     }
 
+    /// <summary>
+    /// #581: a target declared with the <c>s3</c> dependency type (RustFS) is accepted exactly
+    /// as a <c>minio</c> one is — both registrations produce the same connection string.
+    /// </summary>
+    [Fact]
+    public void Validate_TargetDeclaredAsS3_IsValid()
+    {
+        var model = new StorageAssertS3Model(
+            "uploads", "reports", "exports/report.csv",
+            new StorageExpectation(true, "128", null, null, null, "text/csv", null));
+
+        var result = _provider.Validate(model, new StubProjectContext(
+            new Dictionary<string, string>(StringComparer.Ordinal) { ["uploads"] = "s3" }));
+
+        Assert.True(result.IsValid, string.Join("; ", result.Errors));
+    }
+
     // ── 5. Validate: empty target/bucket/key ──────────────────────────────────
 
     [Fact]
@@ -227,7 +244,10 @@ public sealed class StorageAssertS3ProviderTests
             new Dictionary<string, string>(StringComparer.Ordinal) { ["uploads"] = "postgres" }));
 
         Assert.False(result.IsValid);
-        Assert.Contains(result.Errors, e => e.Contains("target"));
+        // The rejection names both accepted dependency types, so an author reading it learns
+        // that 's3' is an option as well as 'minio'.
+        var error = Assert.Single(result.Errors);
+        Assert.Contains("'target' 'uploads' is not an s3 or minio dependency", error, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -244,6 +264,23 @@ public sealed class StorageAssertS3ProviderTests
 
         var result = _provider.Validate(model, new StubProjectContext(
             new Dictionary<string, string>(StringComparer.Ordinal) { ["uploads"] = "Minio" }));
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e => e.Contains("target"));
+    }
+
+    /// <summary>
+    /// The same case-sensitivity holds for the <c>s3</c> type: "S3" is not the canonical "s3".
+    /// </summary>
+    [Fact]
+    public void Validate_TargetWrongCaseS3DependencyType_IsInvalid()
+    {
+        var model = new StorageAssertS3Model(
+            "uploads", "reports", "exports/report.csv",
+            new StorageExpectation(true, null, null, null, null, null, null));
+
+        var result = _provider.Validate(model, new StubProjectContext(
+            new Dictionary<string, string>(StringComparer.Ordinal) { ["uploads"] = "S3" }));
 
         Assert.False(result.IsValid);
         Assert.Contains(result.Errors, e => e.Contains("target"));
@@ -270,10 +307,14 @@ public sealed class StorageAssertS3ProviderTests
         Assert.Contains("\"bucket\"", _provider.SchemaFragment.Json, StringComparison.Ordinal);
     }
 
-    // ── 11. Resources: yields minio ResourceRequirement ────────────────────────
+    // ── 11. Resources: yields an s3 ResourceRequirement ────────────────────────
 
+    /// <summary>
+    /// <c>Family</c> is the protocol, <c>"s3"</c>, for either accepted dependency type:
+    /// <c>Resources</c> sees only the model, never the target's declared type (#581).
+    /// </summary>
     [Fact]
-    public void Resources_YieldsMinioRequirementWithCorrectName()
+    public void Resources_YieldsS3RequirementWithCorrectName()
     {
         var model = new StorageAssertS3Model(
             "uploads", "reports", "exports/report.csv",
@@ -281,7 +322,7 @@ public sealed class StorageAssertS3ProviderTests
         var resources = _provider.Resources(model).ToList();
 
         Assert.Single(resources);
-        Assert.Equal("minio", resources[0].Family);
+        Assert.Equal("s3", resources[0].Family);
         Assert.Equal("uploads", resources[0].Name);
     }
 

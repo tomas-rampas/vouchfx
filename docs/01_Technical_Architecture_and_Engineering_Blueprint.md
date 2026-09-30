@@ -209,7 +209,7 @@ Isolation between tests is achieved by per-store cleanup invoked during the runn
 | Redis | FLUSHDB against the database designated by the discovered connection string; other databases on the same instance are untouched. |
 | Elasticsearch | Delete via `_delete_by_query` matching all documents across open indices with `conflicts=proceed&refresh=true&expand_wildcards=open`. Mappings and settings are preserved; hidden and system indices are excluded. Per-document failures or timeout fail the reset. |
 | Kafka, RabbitMQ, NATS, Azure Service Bus | Not applicable — messages are consumed per step; scope topics/queues/subjects per suite. |
-| DynamoDB, MinIO | Not reset — add explicit cleanup steps. |
+| DynamoDB, MinIO, S3 (`s3`) | Not reset — add explicit cleanup steps. |
 
 All of these resets are invoked through the same runner hook and produce the same verdict-taxonomy classification on failure (a reset failure is an environment error, never a test failure). The architectural point is that **container lifetime** and **state lifetime** are separately managed, and conflating them — for example, recreating containers to get a clean database — destroys the latency optimisation and is explicitly disallowed.
 
