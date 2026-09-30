@@ -1144,7 +1144,7 @@ public sealed class EventStreamJsonRequiredReferenceNullTests
     /// <summary>
     /// Parses <c>record &lt;Name&gt;</c> / <c>property ... [required] ...</c> lines out of
     /// the frozen golden text, matching <c>EventContractFreezeTests.FormatProperty</c>'s
-    /// current output shape: <c>property {CLR-type} {PropertyName} [wire={json}] [required]
+    /// output shape: <c>property {CLR-type} {PropertyName} [wire={json}] [required]
     /// [init|get-only|set]</c>, OPTIONALLY followed by one or more #586 representation markers
     /// — <c>[converter=…] [numberHandling=…] [order=…] [objectCreationHandling=…]
     /// [ignoreCondition=…]</c> — when the property carries the corresponding attribute. This
@@ -1218,13 +1218,13 @@ public sealed class EventStreamJsonRequiredReferenceNullTests
     public void ParseRequiredProperties_HeaderWithTypeLevelMarker_ParsesBareName()
     {
         const string synthetic =
-            "record Probe [polymorphicDerivedTypes=Some.Namespace.Derived:tag]\n"
+            "record Probe [polymorphicDerivedTypes=Some.Namespace.Derived:\"tag\"]\n"
             + "  property System.String RunId [wire=runId] [required] [init]\n";
 
         var byRecord = ParseRequiredProperties(synthetic);
 
         Assert.True(byRecord.ContainsKey("Probe"));
-        Assert.False(byRecord.ContainsKey("Probe [polymorphicDerivedTypes=Some.Namespace.Derived:tag]"));
+        Assert.False(byRecord.ContainsKey("Probe [polymorphicDerivedTypes=Some.Namespace.Derived:\"tag\"]"));
         Assert.Single(byRecord["Probe"]);
         Assert.Equal("RunId", byRecord["Probe"][0].PropertyName);
     }

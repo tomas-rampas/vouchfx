@@ -35,14 +35,27 @@
 // Canonicalization / inclusion rule (mirror this when regenerating the golden):
 //   • Records are emitted in declared list order (the order below), each as a
 //     "record <Name>" header followed by its public instance properties.
-//   • Properties: public instance properties DECLARED on the record, sorted
-//     ordinally by property NAME so reflection order never matters.  Each line is:
-//       "property <CLR-type> <PropertyName> [wire=<json-name>] [required] [init|get-only]"
-//     where <json-name> is the [JsonPropertyName] value (the WIRE contract) and the
-//     CLR type is rendered by a deterministic formatter (generics as Name<Arg>,
-//     nullable reference / value types preserved).  The synthesised record
-//     value-equality surface (Equals/GetHashCode/ToString/Deconstruct/Clone/
-//     EqualityContract/op_*) is not emitted — it adds no wire information.
+//   • A header line is "record <Name>", followed — ONLY when present, in this order —
+//     by the type-level markers
+//       [converter=<declared converter type>] [numberHandling=<value>]
+//       [unmappedMemberHandling=<value>] [objectCreationHandling=<value>]
+//       [polymorphicDerivedTypes=<type>:<discriminator>;…] [polymorphicDiscriminator=<name>]
+//       [polymorphicUnknownHandling=<value>] [polymorphicIgnoreUnrecognized=<bool>]
+//     (the four polymorphic markers appear together, whenever the record declares a
+//     derived type; a string discriminator renders quoted, an int discriminator bare).
+//   • Properties: public instance properties (Type.GetProperties(Public | Instance)),
+//     sorted ordinally by property NAME so reflection order never matters.  Each line is:
+//       "property <CLR-type> <PropertyName> [wire=<json-name>] [required] [init|get-only|set]"
+//     followed — ONLY when present, in this order — by the member-level markers
+//       [converter=<declared converter type>] [numberHandling=<value>] [order=<n>]
+//       [objectCreationHandling=<value>] [ignoreCondition=<value>]
+//     where [wire=<json-name>] is the [JsonPropertyName] value (the WIRE contract; absent
+//     when the property carries no such attribute), [required] marks the C# `required`
+//     modifier, and every CLR type — property and converter alike — is rendered by the
+//     deterministic FormatType formatter (generics as Name<Arg>, Nullable<T> as T?, no
+//     assembly qualification; reference-type nullability is not rendered).  The
+//     synthesised record value-equality surface (Equals/GetHashCode/ToString/Deconstruct/
+//     Clone/EqualityContract/op_*) is not emitted — it adds no wire information.
 //
 // DELIBERATE DECISION ENCODED HERE (T1):
 //   The step events — StepStartedEvent / StepAttemptEvent / StepCompletedEvent —
@@ -52,200 +65,150 @@
 //   step event later is a CONSCIOUS, REVIEWED change (it will fail this gate).  A
 //   dedicated assertion below also pins the decision independently of the golden.
 //
-// CENSUS (#578) — what the golden CANNOT show: the golden above renders each
-// frozen record's PUBLIC INSTANCE PROPERTIES only (Type.GetProperties(Public |
-// Instance)). System.Text.Json maps more than that: a public field carrying
-// [JsonInclude], and a non-public property or field carrying [JsonInclude], are
-// both wire members to STJ but invisible to the property-only scan above — such a
-// member could be added to a frozen record and change the wire shape without
-// moving the golden, leaving this gate green.
-// EventWireContract_Census_MatchesStjMappedMembers (below) closes that gap:
-// for every record in s_eventRecords it computes the STJ-mapped member set
-// from EventStreamJson.Options.GetTypeInfo(type).Properties (the same
-// contract FromLine<T> itself already reflects over) and asserts it is
-// IDENTICAL — by (wire name, CLR type, required, extension-data, and — #586 —
-// converter, number handling, property order, object-creation handling and
-// conditional-ignore; see the MEMBER-LEVEL REPRESENTATION CENSUS note below) — to
-// the rendered set from the same public-property enumeration the golden uses.
-// A [JsonInclude] field or non-public [JsonInclude] member therefore fails
-// THIS gate with the member named, even though it cannot appear in the
-// golden text itself. STJ lists an unconditional [JsonIgnore] member with neither
-// getter nor setter; the census drops those from the mapped set, so [JsonIgnore]
-// on a rendered property is reported as rendered-but-unmapped (a conditional
-// ignore keeps both accessors and stays a wire member; see #586). A NEW
-// unconditional [JsonIgnore] public property on a frozen record therefore fails
-// this census permanently, by design: frozen records carry wire members only —
-// put helpers in extension methods, not on the record.
+// CENSUS (#578) — what the golden CANNOT show: the golden renders each frozen record's
+// PUBLIC INSTANCE PROPERTIES only. System.Text.Json maps more than that: a public field
+// carrying [JsonInclude], and a non-public property or field carrying [JsonInclude], are
+// both wire members to STJ but invisible to the property-only scan — such a member could
+// be added to a frozen record and change the wire without moving the golden.
+// EventWireContract_Census_MatchesStjMappedMembers closes that gap: for every record in
+// s_eventRecords it computes the STJ-mapped member set from
+// EventStreamJson.Options.GetTypeInfo(type).Properties (the same contract FromLine<T>
+// reflects over) and asserts it is IDENTICAL — by wire name, CLR type, required,
+// extension-data and the MEMBER-LEVEL REPRESENTATION fields below — to the rendered set
+// from the same public-property enumeration the golden uses. A [JsonInclude] field or
+// non-public [JsonInclude] member therefore fails THIS test with the member named. An
+// unconditional [JsonIgnore] property is reported as rendered-but-unmapped (MEASURED (e)),
+// so a NEW one on a frozen record fails this census permanently, by design: frozen
+// records carry wire members only — put helpers in extension methods, not on the record.
+// So does every property of a frozen record that gains a type-level [JsonConverter]:
+// STJ then maps no members at all (MEASURED (g)).
 //
-// MEMBER-LEVEL REPRESENTATION CENSUS (#586) — the #578 census closed the "member
-// present or not" gap but did NOT pin HOW a mapped member is represented: a
-// property-level [JsonConverter], [JsonNumberHandling], [JsonPropertyOrder] (an
-// EXPLICIT [JsonPropertyOrder] attribute is pinned because its presence is itself a
-// deliberate, reviewable signal that a member's wire position was overridden — NOT
-// because this gate pins wire member order in general (#586): the golden's OWN
-// property list is sorted ALPHABETICALLY by CLR name (BuildSignature/FormatProperty),
-// so a reordered DECLARATION, or a reordered set of members inherited from a base
-// record, changes nothing this gate can see; #600 tracks a proposed byte-level golden
-// that WOULD see it. [JsonPropertyOrder]'s byte-visibility is NOT because of the
-// telemetry backend's parity fixtures — measured: those fixtures pin
-// Vouchfx.Engine.Telemetry.TelemetryEvent, an unrelated type this gate never
-// freezes), [JsonObjectCreationHandling], or a CONDITIONAL [JsonIgnore]
-// (Condition = WhenWritingDefault / WhenWritingNull / Never — as opposed to the
-// unconditional Condition = Always the #578 census already drops from the mapped
-// set) on a frozen member changes the wire while moving neither the golden text nor
-// the #578 census. MemberSignature (below) now carries more fields —
-// ConverterTypeName, NumberHandling, Order, ObjectCreationHandling,
-// ConditionalIgnore — each populated two ways and asserted equal:
+// MEMBER-LEVEL REPRESENTATION CENSUS (#586) — the #578 census pins whether a member is
+// mapped, not HOW it is represented: a member-level [JsonConverter], [JsonNumberHandling],
+// [JsonPropertyOrder], [JsonObjectCreationHandling], or a CONDITIONAL [JsonIgnore]
+// (Condition = WhenWritingDefault / WhenWritingNull / Never) changes the wire without
+// changing a member's name, type or wire name. Each renders as a marker on the golden
+// line (see the canonicalisation rule above) and is compared by the census through a
+// MemberSignature field — HasCustomConverter, NumberHandling, Order,
+// ObjectCreationHandling, ConditionalIgnore — populated two ways and asserted equal:
 //   • RENDERED side (GetDeclaredJsonConverterType / GetJsonNumberHandling /
 //     GetJsonPropertyOrder / GetJsonObjectCreationHandling / GetJsonIgnoreCondition):
-//     reads the .NET attribute directly off the PropertyInfo, mirroring what
-//     FormatProperty renders into the golden (shared helpers — the golden and the
-//     rendered-signature side cannot independently drift on what counts as present).
-//     The converter is the one field whose golden text and census value differ by design:
-//     both read the same declared attribute, but the golden shows the declared type while
-//     the census resolves it the way System.Text.Json does (see the CONVERTER NAMES note).
-//   • STJ side (GetStjMappedMemberSignatures, extended): reads the SAME fact off
-//     the shared EventStreamJson.Options' own JsonPropertyInfo — p.CustomConverter,
-//     p.NumberHandling, p.Order, p.ObjectCreationHandling, p.ShouldSerialize.
-// [JsonRequired] needs NO new field: it was ALREADY caught by the existing Required
-// comparison the day #578 shipped it — GetJsonPropertyName/IsRequiredMember's
-// "Required" only tests RequiredMemberAttribute (the C# `required` keyword), while
-// STJ's p.IsRequired is true for EITHER `required` or a bare [JsonRequired]; a member
-// carrying only [JsonRequired] therefore already renders unrequired but census-maps
-// required, a signature mismatch the existing intersection loop already flags.
-// (Proven by CensusProbeRecord.Tightened, pre-dating this task.)
+//     reads the attribute directly off the PropertyInfo with inherit: false (MEASURED
+//     (h)). The same helpers feed FormatProperty, so the golden and the census cannot
+//     drift on what counts as present.
+//   • STJ side (GetStjMappedMemberSignatures): reads the same fact off the shared
+//     Options' own JsonPropertyInfo — p.CustomConverter != null (MEASURED (a)),
+//     p.NumberHandling, p.Order, p.ObjectCreationHandling, p.ShouldSerialize != null
+//     (MEASURED (d)).
+// [JsonPropertyOrder] moves where STJ writes a member. The golden's own property list is
+// sorted alphabetically by CLR name, so this pins the attribute, not wire member order in
+// general: a reordered declaration changes nothing here (#600 proposes a byte-level golden
+// that would see it).
+// [JsonRequired] needs no field of its own: STJ's p.IsRequired is true for EITHER the C#
+// `required` modifier or a bare [JsonRequired], while the rendered side's Required tests
+// only the modifier, so a bare [JsonRequired] is already a Required mismatch
+// (CensusProbeRecord.Tightened).
+// [JsonConstructor] is out of scope: it selects the BINDING constructor, which changes how
+// members are READ (see the required-reference-member guard in EventStreamJson.FromLine{T}),
+// not what JsonPropertyInfo reports for a member's wire shape.
 //
-// MEASURED (STJ 8.0.0.0, the in-box net8.0 reflection resolver this project actually
-// runs against — see EventStreamJsonOptions_RunsAgainstMeasuredSystemTextJsonVersion;
-// neither this test project nor Vouchfx.Engine.Abstractions references a System.Text.Json
-// package, so no Directory.Packages.props pin applies to either):
-//   • p.CustomConverter is populated ONLY by a member-level [JsonConverter]; a
-//     converter reached via the GLOBALLY REGISTERED EventStreamJson.Options.Converters
-//     list (as VerdictJsonConverter is, for the Verdict-typed members below) leaves
-//     p.CustomConverter null. So today's Verdict/Verdict? members correctly compare
-//     ConverterTypeName=null on both sides — global registration is invisible to, and
-//     therefore cannot be confused with, this per-member pin.
-//   • p.ShouldSerialize is POPULATED ONLY by a member's OWN [JsonIgnore(Condition=…)]
-//     attribute (WhenWritingDefault, WhenWritingNull, or Never) — NOT by the shared
-//     Options' global DefaultIgnoreCondition = WhenWritingNull. Measured directly: a
-//     nullable member with no per-member attribute, under a global
-//     DefaultIgnoreCondition = WhenWritingNull, reports ShouldSerialize = null; only a
-//     member carrying its own [JsonIgnore(Condition=…)] — even one that merely repeats
-//     the global setting — reports a non-null ShouldSerialize. This is what makes
-//     ConditionalIgnore a safe per-member signal: it does not fire for the (many)
-//     ordinary nullable members that rely solely on the shared global default.
-//   • Condition = Always is excluded from ConditionalIgnore on the rendered side (and
-//     never reaches the STJ side at all: an Always-ignored member has both p.Get and
-//     p.Set null, so the pre-existing #578 "no accessors" skip drops it from the STJ
-//     map before any new field is compared) — it stays covered exactly as #578 left
-//     it, via the rendered-but-unmapped path in DescribeMemberSetDifferences.
-//   • [JsonObjectCreationHandling(Populate)] on a member throws NotSupportedException
-//     from JsonTypeInfo.Configure when the declaring type binds through a parameterized
-//     constructor (a positional record — CapturedVar, SubstitutionRef,
-//     SecretReferenceDigest, FixtureDigest); it is supported on a property-syntax
-//     record (every other frozen record). This is a real STJ 8 constraint on a future
-//     member-level Populate attribute on one of the positional records above, not a gap
-//     in this gate — the golden+census comparison for such a member would never get
-//     as far as being compared, because the process fails to construct the JsonTypeInfo
-//     at all (documented; CensusProbeRecord.Populated below deliberately uses a
-//     property-syntax host — CensusProbeRecord itself — to stay constructible).
-//   • [JsonConstructor] and [JsonInclude] are member-affecting but out of THIS census's
-//     new scope: [JsonInclude] is already the #578 census's reason for existing (a
-//     mapped-but-unrendered member); [JsonConstructor] selects a BINDING constructor —
-//     it changes how a member is READ during deserialisation (interacting with the
-//     required-reference-member guard in EventStreamJson.FromLine{T}), not what
-//     JsonPropertyInfo reports for that member's wire shape, so it is not a
-//     representation-affecting attribute in the sense this file freezes.
+// CONVERTERS (#586): the golden renders the converter type a [JsonConverter] attribute
+// DECLARES, never what System.Text.Json creates from it, and the census compares PRESENCE
+// only. Presence is enough because STJ instantiates the declared type whenever it is
+// non-null (MEASURED (b)): the declared type names exactly the converter, or factory, STJ
+// uses, so replacing it moves the golden line. Two factories that create converters of the
+// same type still write different bytes (MEASURED (c)), which is why the golden shows the
+// declared factory rather than the created converter
+// (Golden_RendersDeclaredFactory_SoAFactorySwapIsVisible). The one attribute shape with no
+// declared type — a JsonConverterAttribute subclass whose ConverterType is null and which
+// supplies its converter from CreateConverter — renders no marker, and the presence
+// comparison reports it
+// (Census_Detects_JsonConverterAttributeSubclass_ConverterTypeNull_AsGenuineMismatch).
 //
-// TYPE-LEVEL REPRESENTATION CENSUS (#586) — the same gap exists one level up: a
-// type-level [JsonConverter] (replaces the WHOLE per-property contract),
-// [JsonNumberHandling], [JsonUnmappedMemberHandling], [JsonPolymorphic] and/or
-// [JsonDerivedType] (polymorphism — see the POLYMORPHISM note below), or
-// [JsonObjectCreationHandling] on a frozen RECORD TYPE itself changes the wire while
-// moving neither the golden nor either census above, both of which are scoped to
-// MEMBERS. TypeSignature (below) is compared the same two ways:
-//   • RENDERED side (GetRenderedTypeSignature): reads the attribute directly off the
-//     record Type WITH inherit: false (see the INHERITANCE note below), and is
-//     rendered onto the SAME "record <Name>" golden header line — present only when
-//     at least one is — via the same helper FormatRecordHeader shares with the
-//     renderer, so the golden and the rendered signature cannot drift.
+// EXTENSION DATA: the census's ExtensionData field compares the [JsonExtensionData]
+// attribute with STJ's reading of that same attribute, so the two sides cannot disagree,
+// and the golden renders no marker for it. The set of extension-data members is therefore
+// pinned by name: EventWireContract_ExtensionDataMembers_AreExactlyEnvelopeExtra.
+//
+// TYPE-LEVEL REPRESENTATION CENSUS (#586) — the same gap one level up: a type-level
+// [JsonConverter] (which replaces the whole per-property contract), [JsonNumberHandling],
+// [JsonUnmappedMemberHandling], [JsonPolymorphic]/[JsonDerivedType], or
+// [JsonObjectCreationHandling] on a frozen RECORD TYPE changes the wire while moving
+// neither the golden's member lines nor the member census. Each renders as a marker on the
+// "record <Name>" header line and is compared through a TypeSignature field:
+//   • RENDERED side (GetRenderedTypeSignature): reads the attributes off the record type
+//     with inherit: false (MEASURED (h)), through the same helpers FormatRecordHeader uses.
+//     Polymorphism is keyed on [JsonDerivedType] presence and the settings default to
+//     STJ's own resolved defaults (MEASURED (i)).
 //   • STJ side (GetStjTypeSignature): reads EventStreamJson.Options.GetTypeInfo(type)'s
-//     own type-level facts — NumberHandling, UnmappedMemberHandling,
-//     PolymorphismOptions, PreferredPropertyObjectCreationHandling — plus Converter,
-//     gated on Kind == JsonTypeInfoKind.None.
-// MEASURED: EVERY reflected Object-shaped type — including every frozen record, and
-// even the polymorphic TypePolymorphicBaseProbeRecord below — reports a NON-NULL
-// ti.Converter (STJ's own internal ObjectDefaultConverter<T> or
-// SmallObjectWithParameterizedConstructorConverter<...>, chosen per whether the type
-// binds through a parameterless or parameterized constructor); only a type carrying an
-// explicit type-level [JsonConverter] reports ti.Kind == JsonTypeInfoKind.None (with
-// ti.Properties left EMPTY — the converter owns the whole contract, so there is nothing
-// left to enumerate). Gating the STJ-side ConverterTypeName on Kind == None is what
-// lets ti.Converter's near-universal non-nullness be ignored everywhere else; no
-// frozen record shows Kind == None today.
+//     NumberHandling, UnmappedMemberHandling, PolymorphismOptions and
+//     PreferredPropertyObjectCreationHandling, and HasCustomConverter as
+//     Kind == JsonTypeInfoKind.None (MEASURED (g)).
+// A frozen record's declared derived types must themselves be frozen records
+// (EventWireContract_DerivedTypesAreThemselvesFrozen); otherwise a derived type's OWN
+// members are invisible to every test here.
 //
-// INHERITANCE (#586 — measured, STJ 8.0.0.0): every type-level attribute read in this
-// file passes inherit: false. STJ 8 ignores a base type's attributes when resolving a
-// DERIVED type's contract, regardless of what C# reflection's own inherit parameter
-// would otherwise find (the default, inherit: true, would pick up an attribute that
-// STJ itself never applies to the derived type, reporting a false representation
-// marker that STJ does not honour).
-//
-// POLYMORPHISM (#586 — measured, STJ 8.0.0.0): STJ treats [JsonDerivedType] ALONE,
-// with NO [JsonPolymorphic] attribute present at all, as making a type polymorphic —
-// JsonTypeInfo.PolymorphismOptions is populated IDENTICALLY whether [JsonPolymorphic]
-// is present or not, including its settings beyond the derived-type list:
-// TypeDiscriminatorPropertyName, UnknownDerivedTypeHandling,
-// IgnoreUnrecognizedTypeDiscriminators. GetDeclaredDerivedTypeTokens therefore gates on
-// [JsonDerivedType] PRESENCE, not [JsonPolymorphic] presence, and
-// GetDeclaredPolymorphicSettings defaults each of the other settings to STJ's OWN
-// measured default when reading them off an absent or under-specified [JsonPolymorphic]
-// attribute — critically, "$type" for TypeDiscriminatorPropertyName, NOT the bare
-// attribute class's own null default (measured divergence: see
-// GetDeclaredPolymorphicSettings' remarks). A frozen record's own declared derived
-// types must themselves be frozen records too — see
-// EventWireContract_DerivedTypesAreThemselvesFrozen — otherwise a derived type's OWN
-// members are invisible to every gate here.
-//
-// CONVERTER NAMES, FACTORIES AND NULLABLE-CONVERTER UNWRAPPING (#586): every converter-name
-// rendering site (member and type level, both the attribute-Type and the STJ-instance
-// side) goes through the shared FormatType formatter, not Type.FullName directly —
-// Type.FullName on a GENERIC converter type embeds assembly-qualified generic
-// arguments (Version=…, Culture=…, PublicKeyToken=…), which FormatType strips,
-// matching how every other rendered CLR type name in this file is already formatted.
-// The GOLDEN renders the converter type the [JsonConverter] attribute DECLARES, never the
-// converter System.Text.Json creates from it (FormatDeclaredConverterTypeName). Two
-// different factories can create converters of the SAME type that write different bytes —
-// measured: on a Nullable<TEnum> member, JsonStringEnumConverter and a subclass whose
-// constructor passes JsonNamingPolicy.CamelCase both create the internal EnumConverter<TEnum>,
-// yet for the same value one writes "B" and the other "b" (the bytes
-// Golden_RendersDeclaredFactory_SoAFactorySwapIsVisible asserts on CensusProbeEnum.B) — so only
-// the declared type makes such a swap visible (ConverterFactorySwapProbeRecord). The census's RENDERED side, by contrast, mirrors
-// System.Text.Json's own [JsonConverter] resolution, so that it compares like with like
-// against what JsonPropertyInfo.CustomConverter and JsonTypeInfo.Converter actually hold.
-// MEASURED (STJ 8.0.0.0), one bullet per branch ResolveMemberConverterTypeName and
-// ResolveTypeConverterTypeName reproduce:
-//   • member, declared converter's CanConvert(property type) is true: CustomConverter is the
-//     declared converter itself — a JsonConverterFactory UNEXPANDED (e.g.
-//     JsonStringEnumConverter on a plain enum member reports JsonStringEnumConverter);
-//   • member of type Nullable<T>, declared converter cannot convert T? but can convert T: STJ
-//     expands a factory against T first, then wraps the result (or the declared non-factory
-//     converter, e.g. a JsonConverter<int> on an int? member) in its internal
-//     NullableConverter<T>. CustomConverter reports the WRAPPER, whose wrapped converter is
-//     reachable only via its PRIVATE _elementConverter field (see UnwrapNullableConverter);
-//     unwrapped, it is the factory's CREATED converter (e.g. the internal EnumConverter<TEnum>)
-//     or the declared non-factory converter;
-//   • type level: JsonTypeInfo.Converter is a factory's CREATED converter, or the declared
-//     converter for a non-factory (Kind == None either way).
+// MEASURED — System.Text.Json 8.0.0.0, the in-box net8.0 assembly THIS TEST PROCESS loads
+// (EventStreamJsonOptions_RunsAgainstMeasuredSystemTextJsonVersion pins it; the version
+// the CLI ships is pinned separately there too). Each fact is stated once here; comments
+// elsewhere refer to it by letter.
+//   (a) p.CustomConverter is non-null ONLY for a member carrying its own [JsonConverter]. A
+//       converter in the Options' global Converters list (VerdictJsonConverter) leaves it
+//       null, and a member attribute takes precedence over that list: a Verdict member with
+//       [JsonConverter(typeof(JsonStringEnumConverter))] writes "Pass" where an unattributed
+//       Verdict member writes "PASS".
+//   (b) When a [JsonConverter] attribute's ConverterType is non-null, STJ instantiates that
+//       type: a JsonConverterAttribute subclass that sets ConverterType AND overrides
+//       CreateConverter has its override ignored. Only a null ConverterType routes through
+//       CreateConverter.
+//   (c) On a Nullable<TEnum> member, JsonStringEnumConverter and a subclass whose
+//       constructor passes JsonNamingPolicy.CamelCase both create the internal
+//       EnumConverter<TEnum>, yet write "B" and "b" for the same value
+//       (ConverterFactorySwapProbeRecord).
+//   (d) p.ShouldSerialize is non-null ONLY for a member carrying its own
+//       [JsonIgnore(Condition = …)] — WhenWritingDefault, WhenWritingNull or Never, even
+//       one that repeats the global setting — and stays null under the Options' global
+//       DefaultIgnoreCondition = WhenWritingNull alone, so ConditionalIgnore does not fire
+//       for the ordinary nullable members.
+//   (e) A [JsonIgnore] (Condition = Always) member is still listed in
+//       JsonTypeInfo.Properties, with both Get and Set null; the census drops such members
+//       from the STJ-mapped set.
+//   (f) [JsonObjectCreationHandling(Populate)] on a member throws NotSupportedException
+//       from JsonTypeInfo.Configure when the declaring type binds through a parameterized
+//       constructor (the positional records CapturedVar, SubstitutionRef,
+//       SecretReferenceDigest, FixtureDigest); it is supported on a property-syntax record.
+//       Such a member on a positional record fails every test that builds that type's
+//       JsonTypeInfo, before any comparison.
+//   (g) JsonTypeInfo.Converter is non-null for every reflected type (STJ's internal
+//       ObjectDefaultConverter<T> or SmallObjectWithParameterizedConstructorConverter<…>),
+//       so it is not compared directly. Only a type carrying a type-level [JsonConverter]
+//       reports Kind == JsonTypeInfoKind.None, with Properties EMPTY; no frozen record does.
+//   (h) STJ reads representation attributes without inheritance: a base type's type-level
+//       attributes do not apply to a derived type, and a base property's member-level
+//       attributes do not apply to its override (a [JsonNumberHandling] on a virtual base
+//       property is absent from the override's JsonPropertyInfo), although the default
+//       GetCustomAttribute<T>(member) finds the base's. Every attribute read in this file
+//       therefore passes inherit: false.
+//   (i) [JsonDerivedType] ALONE, with no [JsonPolymorphic], makes a type polymorphic, and
+//       PolymorphismOptions is identical either way. TypeDiscriminatorPropertyName defaults
+//       to "$type" although the bare JsonPolymorphicAttribute's own property is null;
+//       UnknownDerivedTypeHandling (FailSerialization) and
+//       IgnoreUnrecognizedTypeDiscriminators (false) match the attribute's own defaults.
+//       [JsonPolymorphic] with no [JsonDerivedType] makes GetTypeInfo throw
+//       InvalidOperationException.
+//   (j) A discriminator is an int or a string, and the two write differently:
+//       [JsonDerivedType(typeof(D), 1)] writes "$type":1 and
+//       [JsonDerivedType(typeof(D), "1")] writes "$type":"1".
+//   (k) Neither PropertyNamingPolicy nor DictionaryKeyPolicy changes the keys STJ writes
+//       from EventEnvelope.Extra, the [JsonExtensionData] member.
 //
 // OPTIONS-LEVEL PINS (#586) — EventStreamJsonOptions_PinnedSettings_MatchMeasuredExpectations
-// (below) adds one NAMED assertion per JsonSerializerOptions setting that affects what
-// EventStreamJson.Options writes or parses, so a future edit to CreateOptions() that
-// changes one of these (rather than a member/type attribute) is caught the same way.
-// Named, not reflective: a reflective golden over JsonSerializerOptions would not
-// survive an STJ version bump (STJ 9 adds AllowOutOfOrderMetadataProperties, STJ 10 adds
-// AllowDuplicateProperties — neither exists on the STJ 8 this project runs against;
-// measured: referencing either by name here is a compile error under STJ 8).
+// adds one NAMED assertion per JsonSerializerOptions setting that affects what
+// EventStreamJson.Options writes or parses, so an edit to CreateOptions() that changes one
+// is caught the same way. Named, not reflective: a reflective snapshot of every settable
+// option would not survive an STJ version bump (STJ 9 adds
+// AllowOutOfOrderMetadataProperties and STJ 10 adds AllowDuplicateProperties; measured:
+// referencing either by name here is a compile error under STJ 8).
 //
 // REGENERATION (when the event wire contract legitimately changes — additive only
 // for v1.x, e.g. a namespace-qualified CLR type name changes but no wire name does):
@@ -256,6 +219,7 @@
 //   then commit.  Mirror of SchemaFreezeTests.IsRegenRequested / VOUCHFX_REGEN_SCHEMA.
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -350,7 +314,10 @@ public sealed class EventContractFreezeTests
             string.Equals(actualNormalised, goldenNormalised, StringComparison.Ordinal),
             "The v1 event-stream wire contract (§14 JSON Lines) has DRIFTED. The event "
             + "records are FROZEN for the v1.x engine series — a property name, type, or "
-            + "[JsonPropertyName] wire name change breaks every renderer and the Healer. "
+            + "[JsonPropertyName] wire name change, or a changed representation marker "
+            + "([converter=…], [numberHandling=…], [order=…], [objectCreationHandling=…], "
+            + "[ignoreCondition=…] on a property; the type-level and polymorphic markers on a "
+            + "record header), breaks every renderer and the Healer. "
             + "If this change is intentional, regenerate "
             + "Golden/event-stream-wire-contract.v1.txt with VOUCHFX_REGEN_EVENT_CONTRACT=1 "
             + "and get it reviewed."
@@ -520,14 +487,12 @@ public sealed class EventContractFreezeTests
             _ => " [set]",
         };
 
-        // #586: representation-affecting member attributes, rendered ONLY when present
-        // (measured: no frozen record carries any of these today, so the
-        // golden is unaffected — see the file header's MEMBER-LEVEL REPRESENTATION
-        // CENSUS note). Each getter is shared with GetRenderedMemberSignatures so the
-        // golden and the census cannot independently drift on what counts as present. The
-        // converter marker is the DECLARED type, unexpanded, so swapping one converter or
-        // factory for another always changes this line (see the file header's CONVERTER
-        // NAMES note).
+        // #586: representation-affecting member attributes, rendered ONLY when present (no
+        // frozen record carries any today — see the file header's MEMBER-LEVEL
+        // REPRESENTATION CENSUS note). Each getter is shared with GetRenderedMemberSignatures
+        // so the golden and the census cannot drift on what counts as present. The converter
+        // marker is the DECLARED type, so replacing one converter or factory with another
+        // changes this line (see the file header's CONVERTERS note).
         var converter = FormatDeclaredConverterTypeName(GetDeclaredJsonConverterType(prop));
         var converterPart = converter is null ? string.Empty : $" [converter={converter}]";
 
@@ -554,18 +519,16 @@ public sealed class EventContractFreezeTests
 
     /// <summary>
     /// Renders the <c>"record &lt;Name&gt;"</c> golden header line for <paramref name="record"/>,
-    /// appending #586's type-level representation markers ONLY when present (measured:
-    /// no frozen record carries any today — see the file header's
+    /// appending #586's type-level representation markers ONLY when present (no frozen
+    /// record carries any today — see the file header's
     /// TYPE-LEVEL REPRESENTATION CENSUS note). Shared with
     /// <see cref="GetRenderedTypeSignature"/> so the golden and the type-level census
     /// cannot independently drift on what counts as present.
     /// </summary>
     private static string FormatRecordHeader(Type record)
     {
-        // #586: attribute reads use inherit: false (mirrors STJ 8 — see the file header's
-        // INHERITANCE note) and the converter marker is the DECLARED type through the shared
-        // FormatType formatter, never expanded and never the raw, assembly-qualified
-        // Type.FullName (see the file header's CONVERTER NAMES note).
+        // #586: attribute reads use inherit: false (MEASURED (h) in the file header) and the
+        // converter marker is the DECLARED type (see the file header's CONVERTERS note).
         var converter = FormatDeclaredConverterTypeName(GetDeclaredTypeConverterType(record));
         var converterPart = converter is null ? string.Empty : $" [converter={converter}]";
 
@@ -587,11 +550,9 @@ public sealed class EventContractFreezeTests
             ? string.Empty
             : $" [polymorphicDerivedTypes={string.Join(";", derivedTypes)}]";
 
-        // #586: the settings a [JsonPolymorphic] attribute can carry
-        // alongside its derived-type list — rendered whenever the record is polymorphic at
-        // all (derivedTypes is non-null), not only when a [JsonPolymorphic] attribute is
-        // literally present, because [JsonDerivedType] alone already makes the type
-        // polymorphic under System.Text.Json (see GetDeclaredDerivedTypeTokens).
+        // #586: the settings a [JsonPolymorphic] attribute can carry alongside its
+        // derived-type list — rendered whenever the record is polymorphic at all (derivedTypes
+        // is non-null), not only when a [JsonPolymorphic] attribute is present (MEASURED (i)).
         var polymorphicSettingsPart = derivedTypes is null
             ? string.Empty
             : FormatPolymorphicSettingsPart(GetDeclaredPolymorphicSettings(record));
@@ -608,25 +569,15 @@ public sealed class EventContractFreezeTests
         + $" [polymorphicIgnoreUnrecognized={settings.IgnoreUnrecognized}]";
 
     /// <summary>
-    /// The sorted <c>"&lt;DerivedTypeFullName&gt;:&lt;discriminator&gt;"</c> tokens declared via
-    /// <c>[JsonDerivedType]</c> on <paramref name="record"/> (read with <c>inherit: false</c> —
-    /// see the file header's INHERITANCE note), or <see langword="null"/> when
-    /// <paramref name="record"/> declares none.
+    /// The sorted derived-type tokens (<see cref="FormatDerivedTypeToken"/>) declared via
+    /// <c>[JsonDerivedType]</c> on <paramref name="record"/> (read with <c>inherit: false</c>),
+    /// or <see langword="null"/> when <paramref name="record"/> declares none.
     /// </summary>
     /// <remarks>
-    /// MEASURED (STJ 8.0.0.0): System.Text.Json treats <c>[JsonDerivedType]</c> ALONE — with NO
-    /// <c>[JsonPolymorphic]</c> attribute present at all — as making the type polymorphic;
-    /// <c>JsonTypeInfo.PolymorphismOptions</c> is populated IDENTICALLY (same discriminator
-    /// property name, same unknown-derived-type handling, same ignore-unrecognized flag, same
-    /// derived-type list) whether <c>[JsonPolymorphic]</c> is present or not.
-    /// <c>EventStreamJson.FromLine{T}</c>'s own remarks already document the same fact
-    /// ("driven by [JsonPolymorphic] or [JsonDerivedType]"). Gating on <c>[JsonDerivedType]</c>
-    /// PRESENCE — mirroring System.Text.Json, rather than gating on <c>[JsonPolymorphic]</c>'s
-    /// presence — is what lets a frozen record that carries ONLY <c>[JsonDerivedType]</c> render
-    /// a golden marker and participate in the type-level census: gating on
-    /// <c>[JsonPolymorphic]</c> instead would leave such a record silently unrenderable and
-    /// unpinnable, because a regenerated golden could never catch up to what the record actually
-    /// does on the wire.
+    /// Keyed on <c>[JsonDerivedType]</c> PRESENCE rather than <c>[JsonPolymorphic]</c>
+    /// presence, because <c>[JsonDerivedType]</c> alone makes the type polymorphic (MEASURED
+    /// (i) in the file header): keying on <c>[JsonPolymorphic]</c> would leave a record carrying
+    /// only <c>[JsonDerivedType]</c> with no marker and no type-level comparison.
     /// Shared by <see cref="FormatRecordHeader"/> and <see cref="GetRenderedTypeSignature"/>.
     /// </remarks>
     private static List<string>? GetDeclaredDerivedTypeTokens(Type record)
@@ -638,9 +589,32 @@ public sealed class EventContractFreezeTests
         }
 
         return derivedTypeAttrs
-            .Select(a => $"{a.DerivedType.FullName}:{a.TypeDiscriminator}")
+            .Select(a => FormatDerivedTypeToken(a.DerivedType, a.TypeDiscriminator))
             .OrderBy(s => s, StringComparer.Ordinal)
             .ToList();
+    }
+
+    /// <summary>
+    /// #586: one <c>"&lt;derived type&gt;:&lt;discriminator&gt;"</c> token, shared by the
+    /// rendered side (<see cref="GetDeclaredDerivedTypeTokens"/>) and the STJ side
+    /// (<see cref="GetStjTypeSignature"/>). The derived type goes through
+    /// <see cref="FormatType"/>, so a generic derived type carries no assembly-qualified
+    /// arguments. The discriminator's KIND is rendered, because an int and a string
+    /// discriminator write differently (MEASURED (j) in the file header): a string renders
+    /// quoted (<c>"1"</c>), an int bare (<c>1</c>), and an absent discriminator as
+    /// <c>(none)</c>.
+    /// </summary>
+    private static string FormatDerivedTypeToken(Type derivedType, object? discriminator)
+    {
+        var renderedDiscriminator = discriminator switch
+        {
+            null => "(none)",
+            string s => $"\"{s}\"",
+            int i => i.ToString(CultureInfo.InvariantCulture),
+            _ => $"({FormatType(discriminator.GetType())}){discriminator}",
+        };
+
+        return $"{FormatType(derivedType)}:{renderedDiscriminator}";
     }
 
     /// <summary>
@@ -652,25 +626,12 @@ public sealed class EventContractFreezeTests
     /// CLASS's own property defaults.
     /// </summary>
     /// <remarks>
-    /// MEASURED (STJ 8.0.0.0) divergence this guards against: a freshly-constructed
-    /// <c>JsonPolymorphicAttribute</c>'s own <c>TypeDiscriminatorPropertyName</c> property is
-    /// <see langword="null"/>, but System.Text.Json's RESOLVED
-    /// <c>JsonPolymorphismOptions.TypeDiscriminatorPropertyName</c> — for every polymorphic
-    /// type that does not explicitly override it, including one with no
-    /// <c>[JsonPolymorphic]</c> attribute at all — is the literal string <c>"$type"</c>.
-    /// Defaulting to the attribute's own <see langword="null"/> here, instead of to the
-    /// measured <c>"$type"</c>, would make this signature permanently disagree with the STJ
-    /// side for every polymorphic record that does not override the discriminator — including
-    /// every polymorphism probe below. <c>UnknownDerivedTypeHandling</c>
-    /// (<c>FailSerialization</c>) and <c>IgnoreUnrecognizedTypeDiscriminators</c>
-    /// (<see langword="false"/>) do not have this gap: the attribute class's own defaults
-    /// already match System.Text.Json's resolved defaults for both (measured).
-    /// Only called when <see cref="GetDeclaredDerivedTypeTokens"/> already returned non-null —
-    /// these settings are meaningless without at least one declared derived type, and
-    /// System.Text.Json itself refuses to build a <c>JsonTypeInfo</c> at all for a type
-    /// carrying <c>[JsonPolymorphic]</c> with ZERO <c>[JsonDerivedType]</c> attributes
-    /// (measured: throws <see cref="InvalidOperationException"/>, "should specify at least one
-    /// derived type").
+    /// The defaults are STJ's resolved ones (MEASURED (i) in the file header) — in particular
+    /// <c>"$type"</c>, where the bare attribute's own <c>TypeDiscriminatorPropertyName</c> is
+    /// <see langword="null"/>; defaulting to <see langword="null"/> would make every polymorphic
+    /// record that does not override the discriminator disagree with the STJ side. Only called
+    /// when <see cref="GetDeclaredDerivedTypeTokens"/> returned non-null: the settings mean
+    /// nothing without a declared derived type.
     /// </remarks>
     private static (string Discriminator, JsonUnknownDerivedTypeHandling UnknownHandling, bool IgnoreUnrecognized)
         GetDeclaredPolymorphicSettings(Type record)
@@ -692,185 +653,38 @@ public sealed class EventContractFreezeTests
     /// (<see cref="FormatProperty"/>, <see cref="FormatRecordHeader"/>).
     /// </summary>
     /// <remarks>
-    /// Deliberately NEVER expanded, even for a <see cref="JsonConverterFactory"/>: the
-    /// declared type is the author's intent, and it is what distinguishes two factories that
-    /// create converters of the SAME type but write different bytes (measured — see the file
-    /// header's CONVERTER NAMES note and <see cref="Golden_RendersDeclaredFactory_SoAFactorySwapIsVisible"/>).
-    /// Rendering the created converter here instead would let such a swap change the wire with
-    /// the golden unchanged. The census compares the RESOLVED converter instead
-    /// (<see cref="ResolveMemberConverterTypeName"/>, <see cref="ResolveTypeConverterTypeName"/>).
+    /// Never expanded, even for a <see cref="JsonConverterFactory"/>: STJ instantiates exactly
+    /// the declared type (MEASURED (b) in the file header), and the declared type is what
+    /// distinguishes two factories that create converters of the SAME type but write different
+    /// bytes (MEASURED (c); <see cref="Golden_RendersDeclaredFactory_SoAFactorySwapIsVisible"/>).
+    /// Rendering the created converter instead would let such a swap change the wire with the
+    /// golden unchanged.
     /// </remarks>
     private static string? FormatDeclaredConverterTypeName(Type? converterType) =>
         converterType is null ? null : FormatType(converterType);
 
     /// <summary>
-    /// #586: the census's RENDERED-side converter name for a member whose
-    /// <c>[JsonConverter]</c> declares <paramref name="converterType"/> — mirroring System.Text.Json's
-    /// own member-level attribute resolution, so it equals what
-    /// <c>JsonPropertyInfo.CustomConverter</c> holds once <see cref="UnwrapNullableConverter"/>
-    /// has removed any <c>NullableConverter&lt;T&gt;</c> wrapper. <see langword="null"/> when the
-    /// attribute is absent.
-    /// </summary>
-    /// <remarks>
-    /// MEASURED (STJ 8.0.0.0), one branch each:
-    /// <list type="bullet">
-    /// <item>The declared converter's <c>CanConvert(propertyType)</c> is true: System.Text.Json
-    /// keeps the declared instance as-is — a <see cref="JsonConverterFactory"/> UNEXPANDED
-    /// (<see cref="JsonStringEnumConverter"/> on a plain enum member reports
-    /// <see cref="JsonStringEnumConverter"/>) — so the DECLARED type is returned.</item>
-    /// <item>Otherwise, when <paramref name="propertyType"/> is <c>Nullable&lt;T&gt;</c> and the
-    /// declared converter can convert <c>T</c>: a factory is expanded against <c>T</c> with
-    /// <c>CreateConverter(T, EventStreamJson.Options)</c> and the CREATED converter's type is
-    /// returned (<see cref="JsonStringEnumConverter"/> on a nullable enum member reports the
-    /// internal <c>EnumConverter&lt;TEnum&gt;</c>); a non-factory's DECLARED type is returned.
-    /// System.Text.Json then wraps either in <c>NullableConverter&lt;T&gt;</c>, which the STJ side
-    /// unwraps.</item>
-    /// <item>Otherwise System.Text.Json refuses the attribute (it throws while building the
-    /// <c>JsonTypeInfo</c>), so the census never compares this value; a descriptive
-    /// placeholder is returned rather than throwing here.</item>
-    /// </list>
-    /// The declared type is instantiated through its public parameterless constructor, as
-    /// System.Text.Json itself instantiates a <c>[JsonConverter]</c>-declared type. A factory
-    /// that returns <see langword="null"/> is reported as such, so a mismatch stays visible
-    /// rather than silently falling back to the factory's own name.
-    /// </remarks>
-    private static string? ResolveMemberConverterTypeName(Type? converterType, Type propertyType)
-    {
-        if (converterType is null)
-        {
-            return null;
-        }
-
-        if (Activator.CreateInstance(converterType) is not JsonConverter converter)
-        {
-            return $"(declared type {FormatType(converterType)} is not a JsonConverter)";
-        }
-
-        if (converter.CanConvert(propertyType))
-        {
-            return FormatType(converterType);
-        }
-
-        if (Nullable.GetUnderlyingType(propertyType) is { } underlying && converter.CanConvert(underlying))
-        {
-            return converter is JsonConverterFactory factory
-                ? FormatCreatedConverterTypeName(factory, underlying)
-                : FormatType(converterType);
-        }
-
-        return $"(declared converter {FormatType(converterType)} cannot convert {FormatType(propertyType)})";
-    }
-
-    /// <summary>
-    /// #586: the census's RENDERED-side converter name for a record whose type-level
-    /// <c>[JsonConverter]</c> declares <paramref name="converterType"/> — mirroring what
-    /// System.Text.Json reports as <c>JsonTypeInfo.Converter</c> for such a type.
-    /// <see langword="null"/> when the attribute is absent.
-    /// </summary>
-    /// <remarks>
-    /// MEASURED (STJ 8.0.0.0): unlike a plain MEMBER, a type-level factory IS expanded —
-    /// <c>JsonTypeInfo.Converter</c> reports the factory's CREATED converter (with
-    /// <c>Kind == None</c>), so a factory is expanded here with
-    /// <c>CreateConverter(record, EventStreamJson.Options)</c>; a non-factory's DECLARED type is
-    /// returned unchanged. Proven by <see cref="Census_Detects_TypeLevelRepresentationAttributes"/>.
-    /// </remarks>
-    private static string? ResolveTypeConverterTypeName(Type? converterType, Type record)
-    {
-        if (converterType is null)
-        {
-            return null;
-        }
-
-        return Activator.CreateInstance(converterType) switch
-        {
-            JsonConverterFactory factory => FormatCreatedConverterTypeName(factory, record),
-            JsonConverter => FormatType(converterType),
-            _ => $"(declared type {FormatType(converterType)} is not a JsonConverter)",
-        };
-    }
-
-    /// <summary>
-    /// #586: the formatted type of the converter <paramref name="factory"/> creates for
-    /// <paramref name="typeToConvert"/> under the shared <see cref="EventStreamJson.Options"/>,
-    /// or a descriptive placeholder when the factory declines (returns <see langword="null"/>).
-    /// </summary>
-    private static string FormatCreatedConverterTypeName(JsonConverterFactory factory, Type typeToConvert) =>
-        factory.CreateConverter(typeToConvert, EventStreamJson.Options) is { } created
-            ? FormatType(created.GetType())
-            : $"(factory {FormatType(factory.GetType())} declined to convert {FormatType(typeToConvert)})";
-
-    /// <summary>
-    /// #586: the member-level <c>[JsonConverter]</c> attribute's declared converter type, or
-    /// <see langword="null"/> when <paramref name="prop"/> carries none. Read ONCE, by both
-    /// <see cref="FormatProperty"/> (the golden, which renders it as declared) and
-    /// <see cref="GetRenderedMemberSignatures"/> (the census, which resolves it through
-    /// <see cref="ResolveMemberConverterTypeName"/>), so the two cannot drift on whether a
-    /// converter is present. Deliberately distinct from a converter reached through the shared
-    /// <see cref="EventStreamJson.Options"/>' GLOBALLY registered <c>Converters</c> list (e.g.
-    /// <c>VerdictJsonConverter</c>) — that path never sets this attribute and is invisible here
-    /// by construction, matching STJ's own <c>JsonPropertyInfo.CustomConverter</c> (measured
-    /// null for a globally-registered converter; see the file header).
+    /// #586: the member-level <c>[JsonConverter]</c> attribute's declared converter type (read
+    /// with <c>inherit: false</c>, MEASURED (h)), or <see langword="null"/> when the attribute
+    /// is absent OR declares no type (a subclass supplying its converter from
+    /// <c>CreateConverter</c>). Shared by <see cref="FormatProperty"/>, which renders it, and
+    /// <see cref="GetRenderedMemberSignatures"/>, whose HasCustomConverter is its presence — so
+    /// the census holds exactly when the golden line carries a converter marker if and only if
+    /// System.Text.Json uses a member converter. A converter in the Options' global
+    /// <c>Converters</c> list never sets it, matching STJ's own
+    /// <c>JsonPropertyInfo.CustomConverter</c> (MEASURED (a)).
     /// </summary>
     private static Type? GetDeclaredJsonConverterType(PropertyInfo prop) =>
-        prop.GetCustomAttribute<JsonConverterAttribute>()?.ConverterType;
+        prop.GetCustomAttribute<JsonConverterAttribute>(inherit: false)?.ConverterType;
 
     /// <summary>
     /// #586: the type-level <c>[JsonConverter]</c> attribute's declared converter type (read
-    /// with <c>inherit: false</c> — see the file header's INHERITANCE note), or
-    /// <see langword="null"/> when <paramref name="record"/> carries none. Shared by
-    /// <see cref="FormatRecordHeader"/> and <see cref="GetRenderedTypeSignature"/>.
+    /// with <c>inherit: false</c>, MEASURED (h)), or <see langword="null"/> when the attribute
+    /// is absent or declares no type. Shared by <see cref="FormatRecordHeader"/>, which renders
+    /// it, and <see cref="GetRenderedTypeSignature"/>, which compares its presence.
     /// </summary>
     private static Type? GetDeclaredTypeConverterType(Type record) =>
         record.GetCustomAttribute<JsonConverterAttribute>(inherit: false)?.ConverterType;
-
-    /// <summary>
-    /// #586: the STJ-side counterpart of <see cref="FormatDeclaredConverterTypeName"/> —
-    /// formats an actual converter INSTANCE's runtime type the same way, for the same reason.
-    /// Shared by <see cref="GetStjMappedMemberSignatures"/> and <see cref="GetStjTypeSignature"/>.
-    /// </summary>
-    private static string? FormatConverterInstanceTypeName(object? converterInstance) =>
-        converterInstance is null ? null : FormatType(converterInstance.GetType());
-
-    /// <summary>
-    /// #586: unwraps System.Text.Json's own internal <c>NullableConverter&lt;T&gt;</c> wrapper.
-    /// </summary>
-    /// <remarks>
-    /// MEASURED (STJ 8.0.0.0): when a member-level <c>[JsonConverter]</c> names a converter for
-    /// a value type's NON-nullable underlying type (e.g. a <c>JsonConverter&lt;int&gt;</c>, or a
-    /// <see cref="JsonConverterFactory"/> such as <see cref="JsonStringEnumConverter"/>, which
-    /// System.Text.Json expands to its created converter BEFORE this wrapping) but the member
-    /// itself is <c>Nullable&lt;T&gt;</c> (<c>int?</c>), System.Text.Json wraps it:
-    /// <c>JsonPropertyInfo.CustomConverter</c> reports
-    /// <c>System.Text.Json.Serialization.Converters.NullableConverter&lt;Int32&gt;</c> — NOT the
-    /// attribute-named (or factory-created) converter — so comparing that wrapper's type name
-    /// against the rendered side (<see cref="ResolveMemberConverterTypeName"/>, which names the
-    /// declared or factory-created converter, never the wrapper) could never agree for any
-    /// nullable-value-typed member using this pattern. The
-    /// wrapped converter is reachable only through System.Text.Json's PRIVATE instance field
-    /// <c>_elementConverter</c> (measured by reflecting over the wrapper's own field list; there
-    /// is no public API for this). If a future STJ version renames or removes that field, the
-    /// lookup degrades to returning the WRAPPER unchanged rather than throwing, so a version
-    /// drift surfaces as a renewed (investigable) mismatch rather than a crashed test run.
-    /// </remarks>
-    private static object? UnwrapNullableConverter(object? converter)
-    {
-        if (converter is null)
-        {
-            return null;
-        }
-
-        var converterType = converter.GetType();
-        if (!converterType.IsGenericType
-            || converterType.Namespace != "System.Text.Json.Serialization.Converters"
-            || converterType.Name != "NullableConverter`1")
-        {
-            return converter;
-        }
-
-        var elementConverterField =
-            converterType.GetField("_elementConverter", BindingFlags.Instance | BindingFlags.NonPublic);
-        return elementConverterField?.GetValue(converter) ?? converter;
-    }
 
     // ── Census (#578): STJ-mapped vs. golden-rendered member sets ────────────
 
@@ -883,7 +697,7 @@ public sealed class EventContractFreezeTests
     /// independently drift on what counts as a property's wire name.
     /// </summary>
     private static string? GetJsonPropertyName(PropertyInfo prop) =>
-        prop.GetCustomAttribute<JsonPropertyNameAttribute>()?.Name;
+        prop.GetCustomAttribute<JsonPropertyNameAttribute>(inherit: false)?.Name;
 
     /// <summary>
     /// <see langword="true"/> when <paramref name="prop"/> carries the C#
@@ -891,7 +705,7 @@ public sealed class EventContractFreezeTests
     /// Shared by <see cref="FormatProperty"/> and <see cref="GetRenderedMemberSignatures"/>.
     /// </summary>
     private static bool IsRequiredMember(PropertyInfo prop) =>
-        prop.GetCustomAttribute<RequiredMemberAttribute>() is not null;
+        prop.GetCustomAttribute<RequiredMemberAttribute>(inherit: false) is not null;
 
     /// <summary>
     /// #586: the member-level <c>[JsonNumberHandling]</c> value, or <see langword="null"/>
@@ -899,64 +713,45 @@ public sealed class EventContractFreezeTests
     /// <see cref="GetRenderedMemberSignatures"/>.
     /// </summary>
     private static JsonNumberHandling? GetJsonNumberHandling(PropertyInfo prop) =>
-        prop.GetCustomAttribute<JsonNumberHandlingAttribute>()?.Handling;
+        prop.GetCustomAttribute<JsonNumberHandlingAttribute>(inherit: false)?.Handling;
 
     /// <summary>
     /// #586: the member-level <c>[JsonPropertyOrder]</c> value, defaulted to <c>0</c> when
-    /// absent — the same default STJ's own <c>JsonPropertyInfo.Order</c> reports for an
-    /// unattributed member (measured), so the two sides compare on the EFFECTIVE order
-    /// rather than on attribute presence (an explicit <c>[JsonPropertyOrder(0)]</c> is
-    /// indistinguishable from no attribute at the wire level, since 0 is already the
-    /// default). Shared by <see cref="FormatProperty"/> and
-    /// <see cref="GetRenderedMemberSignatures"/>; the golden itself renders the marker
-    /// only when this is non-zero.
+    /// absent — the default STJ's own <c>JsonPropertyInfo.Order</c> reports for an
+    /// unattributed member (measured), so the two sides compare the EFFECTIVE order; an
+    /// explicit <c>[JsonPropertyOrder(0)]</c> is the default and changes nothing on the wire.
+    /// Shared by <see cref="FormatProperty"/>, which renders the marker only when this is
+    /// non-zero, and <see cref="GetRenderedMemberSignatures"/>.
     /// </summary>
     private static int GetJsonPropertyOrder(PropertyInfo prop) =>
-        prop.GetCustomAttribute<JsonPropertyOrderAttribute>()?.Order ?? 0;
+        prop.GetCustomAttribute<JsonPropertyOrderAttribute>(inherit: false)?.Order ?? 0;
 
     /// <summary>
     /// #586: the member-level <c>[JsonObjectCreationHandling]</c> value, or
     /// <see langword="null"/> when absent. Shared by <see cref="FormatProperty"/> and
-    /// <see cref="GetRenderedMemberSignatures"/>. Measured: STJ 8 refuses (throws
-    /// <see cref="NotSupportedException"/> while building the <c>JsonTypeInfo</c>) this
-    /// attribute's <c>Populate</c> value on a member of a type bound through a
-    /// parameterized constructor — the positional nested records among the frozen types
-    /// (CapturedVar, SubstitutionRef, SecretReferenceDigest, FixtureDigest) —
-    /// so such a member never reaches this comparison at all; see the file header.
+    /// <see cref="GetRenderedMemberSignatures"/>. On a positional frozen record,
+    /// <c>Populate</c> fails before any comparison (MEASURED (f) in the file header).
     /// </summary>
     private static JsonObjectCreationHandling? GetJsonObjectCreationHandling(PropertyInfo prop) =>
-        prop.GetCustomAttribute<JsonObjectCreationHandlingAttribute>()?.Handling;
+        prop.GetCustomAttribute<JsonObjectCreationHandlingAttribute>(inherit: false)?.Handling;
 
     /// <summary>
-    /// #586: <paramref name="prop"/>'s own <c>[JsonIgnore(Condition=…)]</c> condition, when
-    /// it is one that keeps the member mapped (<c>WhenWritingDefault</c>,
-    /// <c>WhenWritingNull</c>, or <c>Never</c>) — or <see langword="null"/> when the
-    /// attribute is absent, OR when it is present with <c>Condition = Always</c> (that
-    /// case drops both <c>Get</c> and <c>Set</c> from STJ's own map and is already covered
-    /// by the pre-existing #578 "no accessors" skip — see the file header). Shared by
-    /// <see cref="FormatProperty"/> and <see cref="GetRenderedMemberSignatures"/>; compared
-    /// against STJ's own <c>JsonPropertyInfo.ShouldSerialize != null</c> signal (see
-    /// <see cref="GetStjMappedMemberSignatures"/>), which — measured — reflects ONLY a
-    /// member's own attribute and never the shared Options' global
-    /// <c>DefaultIgnoreCondition</c>; see the file header for the full measurement.
+    /// #586: <paramref name="prop"/>'s own <c>[JsonIgnore(Condition=…)]</c> condition when
+    /// it keeps the member mapped (<c>WhenWritingDefault</c>, <c>WhenWritingNull</c> or
+    /// <c>Never</c>), or <see langword="null"/> when the attribute is absent or its condition
+    /// is <c>Always</c>. Shared by <see cref="FormatProperty"/> and
+    /// <see cref="GetRenderedMemberSignatures"/>; compared against STJ's
+    /// <c>JsonPropertyInfo.ShouldSerialize != null</c> (MEASURED (d) in the file header).
     /// </summary>
+    /// <remarks>
+    /// <c>Always</c> is excluded because such a member is not a wire member at all (MEASURED
+    /// (e)): the census reports it as rendered-but-unmapped. Excluding it here is what keeps
+    /// an <c>[ignoreCondition=Always]</c> marker off its golden line and keeps its rendered
+    /// ConditionalIgnore false — <see cref="CensusProbeRecord.Dropped"/> is such a member.
+    /// </remarks>
     private static JsonIgnoreCondition? GetJsonIgnoreCondition(PropertyInfo prop)
     {
-        var attr = prop.GetCustomAttribute<JsonIgnoreAttribute>();
-
-        // The `attr.Condition == Always` half of this check is BELT-AND-BRACES, not
-        // load-bearing on its own (measured: a mutant that drops
-        // it entirely is behaviourally equivalent today, because the ONLY member on any
-        // probe or frozen record actually carrying Condition = Always is
-        // CensusProbeRecord.Dropped, whose Get and Set are BOTH already null — the
-        // pre-existing #578 "no accessors" skip in GetStjMappedMemberSignatures excludes
-        // it from the STJ-mapped set before this method is ever consulted for it, so
-        // removing the check changes no test's outcome). Kept anyway: it documents the
-        // Always case explicitly at the one call site that decides "is this member
-        // conditionally ignored", rather than relying on a reader to independently
-        // rediscover, from the #578 skip alone, that Always could otherwise slip through
-        // as a false "conditionally ignored" positive if a FUTURE Always-ignored member
-        // ever gained a getter or setter STJ could map.
+        var attr = prop.GetCustomAttribute<JsonIgnoreAttribute>(inherit: false);
         return attr is null || attr.Condition == JsonIgnoreCondition.Always ? null : attr.Condition;
     }
 
@@ -964,19 +759,18 @@ public sealed class EventContractFreezeTests
     /// A member's wire-relevant signature, comparable between the golden's rendered
     /// (public-property-only) view and System.Text.Json's own mapped-member view
     /// under the shared <see cref="EventStreamJson.Options"/>.
-    /// #586 adds five representation fields (ConverterTypeName, NumberHandling, Order,
+    /// #586 adds five representation fields (HasCustomConverter, NumberHandling, Order,
     /// ObjectCreationHandling, ConditionalIgnore) alongside the #578 fields; see the
-    /// file header for what each pins and how it was measured. ConverterTypeName names the
-    /// resolved converter's TYPE, not its configuration: two factories creating converters of
-    /// the same type are equal here, and the golden's declared-type marker is what tells them
-    /// apart (see the file header's CONVERTER NAMES note).
+    /// file header for what each pins. HasCustomConverter compares PRESENCE only; the golden
+    /// line's declared-type marker pins which converter (see the file header's CONVERTERS
+    /// note).
     /// </summary>
     private readonly record struct MemberSignature(
         string Wire,
         Type ClrType,
         bool Required,
         bool ExtensionData,
-        string? ConverterTypeName,
+        bool HasCustomConverter,
         JsonNumberHandling? NumberHandling,
         int Order,
         JsonObjectCreationHandling? ObjectCreationHandling,
@@ -1000,8 +794,8 @@ public sealed class EventContractFreezeTests
                     Wire: GetJsonPropertyName(p) ?? p.Name,
                     ClrType: p.PropertyType,
                     Required: IsRequiredMember(p),
-                    ExtensionData: p.GetCustomAttribute<JsonExtensionDataAttribute>() is not null,
-                    ConverterTypeName: ResolveMemberConverterTypeName(GetDeclaredJsonConverterType(p), p.PropertyType),
+                    ExtensionData: p.GetCustomAttribute<JsonExtensionDataAttribute>(inherit: false) is not null,
+                    HasCustomConverter: GetDeclaredJsonConverterType(p) is not null,
                     NumberHandling: GetJsonNumberHandling(p),
                     Order: GetJsonPropertyOrder(p),
                     ObjectCreationHandling: GetJsonObjectCreationHandling(p),
@@ -1029,11 +823,10 @@ public sealed class EventContractFreezeTests
         foreach (var p in typeInfo.Properties)
         {
             // A [JsonIgnore] member is still listed here with both Get and Set null
-            // (measured, STJ 8; the same observation as
-            // EventStreamJson.ComputeRequiredReferenceMembers). STJ never reads or
-            // writes it, so it is not a wire member; keeping it would let
-            // [JsonIgnore] on a frozen property drop it from the wire with both
-            // gates green.
+            // (MEASURED (e) in the file header; the same observation as
+            // EventStreamJson.ComputeRequiredReferenceMembers). STJ never reads or writes
+            // it, so it is not a wire member; keeping it would let [JsonIgnore] on a frozen
+            // property drop it from the wire with this census still passing.
             if (p.Get is null && p.Set is null)
             {
                 continue;
@@ -1044,22 +837,17 @@ public sealed class EventContractFreezeTests
             // same observation EventStreamJson.ComputeRequiredReferenceMembers relies on).
             var memberName = (p.AttributeProvider as MemberInfo)?.Name ?? p.Name;
 
-            // #586: p.CustomConverter/.NumberHandling/.Order/.ObjectCreationHandling are
-            // STJ's own per-member representation facts under the shared Options; p.ShouldSerialize
-            // is non-null ONLY when the member carries its own [JsonIgnore(Condition=…)] (measured
-            // NOT to fire for the shared Options' global DefaultIgnoreCondition alone — see the
-            // file header). Each mirrors what GetRenderedMemberSignatures reads off the same
-            // member's .NET attributes. ConverterTypeName goes through UnwrapNullableConverter
-            // then the shared FormatType formatter; whether it is the declared converter or a
-            // factory's created one is System.Text.Json's own decision, which
-            // ResolveMemberConverterTypeName mirrors on the rendered side — see the file
-            // header's CONVERTER NAMES note.
+            // #586: STJ's own per-member representation facts under the shared Options, each
+            // compared with what GetRenderedMemberSignatures reads off the same member's
+            // attributes: p.CustomConverter is non-null only for a member-level [JsonConverter]
+            // (MEASURED (a) in the file header), p.ShouldSerialize only for a member's own
+            // [JsonIgnore(Condition = …)] (MEASURED (d)).
             var signature = new MemberSignature(
                 p.Name,
                 p.PropertyType,
                 p.IsRequired,
                 p.IsExtensionData,
-                ConverterTypeName: FormatConverterInstanceTypeName(UnwrapNullableConverter(p.CustomConverter)),
+                HasCustomConverter: p.CustomConverter is not null,
                 NumberHandling: p.NumberHandling,
                 Order: p.Order,
                 ObjectCreationHandling: p.ObjectCreationHandling,
@@ -1110,7 +898,9 @@ public sealed class EventContractFreezeTests
             differences.Add(
                 $"{recordName}.{memberName}: the golden renders this public property "
                 + $"(wire={rendered[memberName].Wire}) but System.Text.Json does not map it to "
-                + "the wire under the shared Options — e.g. [JsonIgnore].");
+                + "the wire under the shared Options — e.g. [JsonIgnore] on the property, or a "
+                + "type-level [JsonConverter] on the record, under which System.Text.Json maps no "
+                + "members at all.");
         }
 
         foreach (var memberName in rendered.Keys.Intersect(stj.Keys, StringComparer.Ordinal)
@@ -1156,8 +946,9 @@ public sealed class EventContractFreezeTests
             "The v1 event-wire census (#578/#586) found a member System.Text.Json maps that the "
             + "golden's public-property-only render cannot show (or vice versa), or a member whose "
             + "MemberSignature differs between the two views on ANY field — wire name, CLR type, "
-            + "required-ness, extension-data (#578), or converter, number handling, property order, "
-            + "object-creation handling, conditional-ignore (#586). This means a [JsonInclude] field, "
+            + "required-ness, extension-data (#578), or custom-converter presence, number handling, "
+            + "property order, object-creation handling, conditional-ignore (#586). This means a "
+            + "[JsonInclude] field, "
             + "a non-public [JsonInclude] member, a [JsonIgnore] on a rendered property, a "
             + "required-flag change, or a representation-affecting attribute (converter/number "
             + "handling/order/object-creation handling/conditional ignore) could change the wire "
@@ -1166,6 +957,36 @@ public sealed class EventContractFreezeTests
             + "stay green while the wire contract drifted."
             + Environment.NewLine
             + string.Join(Environment.NewLine, differences));
+    }
+
+    /// <summary>
+    /// Extension-data pin (#586): across <see cref="s_eventRecords"/>, the members
+    /// System.Text.Json treats as extension data (<c>JsonPropertyInfo.IsExtensionData</c>, its
+    /// own resolution) are exactly <c>EventEnvelope.Extra</c>. The golden renders no marker for
+    /// <c>[JsonExtensionData]</c>, and the census's ExtensionData field compares the attribute
+    /// with STJ's reading of that same attribute, so neither can see the attribute removed
+    /// from Extra or added to another member; Extra is where every consumer reads the fields
+    /// it does not know (§14).
+    /// </summary>
+    [Fact]
+    public void EventWireContract_ExtensionDataMembers_AreExactlyEnvelopeExtra()
+    {
+        var extensionDataMembers = s_eventRecords
+            .SelectMany(record => EventStreamJson.Options.GetTypeInfo(record).Properties
+                .Where(p => p.IsExtensionData)
+                .Select(p => $"{record.Name}.{(p.AttributeProvider as MemberInfo)?.Name ?? p.Name}"))
+            .OrderBy(name => name, StringComparer.Ordinal)
+            .ToList();
+
+        var expected = new[] { $"{nameof(EventEnvelope)}.{nameof(EventEnvelope.Extra)}" };
+        Assert.True(
+            extensionDataMembers.SequenceEqual(expected, StringComparer.Ordinal),
+            "The v1 event-wire extension-data members (#586) must be exactly EventEnvelope.Extra: "
+            + "the attribute decides where an EventEnvelope reads and writes the fields it does not "
+            + "know, and neither removing it from Extra nor adding it to another member moves the "
+            + "golden. Found: ["
+            + string.Join(", ", extensionDataMembers)
+            + "].");
     }
 
     /// <summary>
@@ -1185,9 +1006,9 @@ public sealed class EventContractFreezeTests
     /// #586 adds one member per new representation branch — see
     /// <see cref="Census_Detects_MemberLevelRepresentationAttributes"/>, which proves each is
     /// rendered AND independently detected by System.Text.Json under the shared
-    /// <see cref="EventStreamJson.Options"/>, and that the two sides agree — plus one member per
-    /// converter-resolution shape, proven by <see cref="Census_Detects_NullableConverters"/> and
-    /// <see cref="Census_Detects_ConverterFactories_OnPlainAndNullableMembers"/>.
+    /// <see cref="EventStreamJson.Options"/>, and that the two sides agree — plus a converter
+    /// factory on a plain and on a nullable member, proven by
+    /// <see cref="Census_Detects_ConverterFactoryPresence_OnPlainAndNullableMembers"/>.
     /// </remarks>
     private sealed record CensusProbeRecord
     {
@@ -1220,36 +1041,12 @@ public sealed class EventContractFreezeTests
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
         public string? ConditionallyIgnored { get; init; }
 
-        // #586: a NON-factory converter declared for the member's own NULLABLE VALUE TYPE
-        // directly (JsonConverter<int?>, not JsonConverter<int>) — measured (file header,
-        // CONVERTER NAMES note) to need NO unwrapping: STJ reports it on
-        // JsonPropertyInfo.CustomConverter unwrapped, because the converter already matches the
-        // member's own type. Proves ResolveMemberConverterTypeName/UnwrapNullableConverter
-        // agree for the COMMON case, distinct
-        // from NullableUnderlyingTypeConverted below (a converter for the UNDERLYING type,
-        // which DOES get wrapped).
-        [JsonConverter(typeof(CensusProbeNullableIntConverter))]
-        public int? NullableConverted { get; init; }
-
-        // #586: a NON-factory converter declared for the member's NON-nullable UNDERLYING type
-        // (JsonConverter<int>) applied to a Nullable<int> member — measured (file header,
-        // CONVERTER NAMES note) to be WRAPPED by STJ in
-        // NullableConverter<Int32>, requiring UnwrapNullableConverter to agree with the
-        // rendered side.
-        [JsonConverter(typeof(CensusProbeNonNullableIntConverter))]
-        public int? NullableUnderlyingTypeConverted { get; init; }
-
-        // #586: a JsonConverterFactory (JsonStringEnumConverter) applied to a PLAIN enum member —
-        // measured (file header, CONVERTER NAMES note) to be kept UNEXPANDED by STJ, because the
-        // factory's CanConvert(CensusProbeEnum) is already true: CustomConverter is the factory
-        // itself, so ResolveMemberConverterTypeName must NOT expand it.
+        // #586: a JsonConverterFactory on a plain enum member and on a nullable one — the two
+        // shapes whose JsonPropertyInfo.CustomConverter differs (the factory itself, and an
+        // internal wrapper around the converter it creates); presence must agree on both.
         [JsonConverter(typeof(JsonStringEnumConverter))]
         public CensusProbeEnum PlainFactoryConverted { get; init; }
 
-        // #586: the same factory applied to a NULLABLE enum member — measured (file header,
-        // CONVERTER NAMES note) to be EXPANDED by STJ against the underlying enum to its created
-        // converter (the internal EnumConverter<TEnum>), then wrapped in NullableConverter<T>, so
-        // ResolveMemberConverterTypeName MUST expand it to agree with the unwrapped STJ side.
         [JsonConverter(typeof(JsonStringEnumConverter))]
         public CensusProbeEnum? NullableFactoryConverted { get; init; }
     }
@@ -1280,42 +1077,6 @@ public sealed class EventContractFreezeTests
     }
 
     /// <summary>
-    /// A converter FOR <see cref="Nullable{T}"/> (<c>int?</c>) directly — the NON-wrapped case;
-    /// see <see cref="CensusProbeRecord.NullableConverted"/>.
-    /// </summary>
-    private sealed class CensusProbeNullableIntConverter : JsonConverter<int?>
-    {
-        public override int? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) =>
-            reader.TokenType == JsonTokenType.Null ? null : reader.GetInt32();
-
-        public override void Write(Utf8JsonWriter writer, int? value, JsonSerializerOptions options)
-        {
-            if (value is null)
-            {
-                writer.WriteNullValue();
-            }
-            else
-            {
-                writer.WriteNumberValue(value.Value);
-            }
-        }
-    }
-
-    /// <summary>
-    /// A converter for <c>int</c> (the NON-nullable underlying type) applied to a
-    /// <see cref="Nullable{T}"/> member — the WRAPPED case; see
-    /// <see cref="CensusProbeRecord.NullableUnderlyingTypeConverted"/>.
-    /// </summary>
-    private sealed class CensusProbeNonNullableIntConverter : JsonConverter<int>
-    {
-        public override int Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) =>
-            reader.GetInt32();
-
-        public override void Write(Utf8JsonWriter writer, int value, JsonSerializerOptions options) =>
-            writer.WriteNumberValue(value);
-    }
-
-    /// <summary>
     /// Probe test (#586): proves the new #586 <see cref="MemberSignature"/> fields are both
     /// rendered into the golden (<see cref="FormatProperty"/>) and independently detected by
     /// System.Text.Json under the shared <see cref="EventStreamJson.Options"/>
@@ -1333,8 +1094,9 @@ public sealed class EventContractFreezeTests
         var stj = GetStjMappedMemberSignatures(typeof(CensusProbeRecord));
 
         var converterProp = typeof(CensusProbeRecord).GetProperty(nameof(CensusProbeRecord.Converted))!;
-        Assert.Equal(typeof(CensusProbeUpperCaseConverter).FullName, rendered["Converted"].ConverterTypeName);
-        Assert.Equal(rendered["Converted"].ConverterTypeName, stj["Converted"].ConverterTypeName);
+        Assert.True(rendered["Converted"].HasCustomConverter);
+        Assert.Equal(rendered["Converted"].HasCustomConverter, stj["Converted"].HasCustomConverter);
+        Assert.False(stj["RunId"].HasCustomConverter);
         Assert.Contains(
             $"[converter={typeof(CensusProbeUpperCaseConverter).FullName}]",
             FormatProperty(converterProp),
@@ -1362,7 +1124,7 @@ public sealed class EventContractFreezeTests
         Assert.Contains("[ignoreCondition=WhenWritingNull]", FormatProperty(conditionallyIgnoredProp), StringComparison.Ordinal);
 
         // Neither side sees ANY of these as a rendered-vs-stj mismatch — both sides agree,
-        // which is the outcome the real gate depends on for every frozen record.
+        // which is the outcome the census depends on for every frozen record.
         var differences = DescribeMemberSetDifferences(nameof(CensusProbeRecord), rendered, stj);
         Assert.DoesNotContain(differences, d => d.StartsWith($"{nameof(CensusProbeRecord)}.Converted", StringComparison.Ordinal));
         Assert.DoesNotContain(differences, d => d.StartsWith($"{nameof(CensusProbeRecord)}.NumberHandled", StringComparison.Ordinal));
@@ -1373,92 +1135,36 @@ public sealed class EventContractFreezeTests
     }
 
     /// <summary>
-    /// Probe (#586): proves the census agrees on both non-factory nullable-converter shapes —
-    /// <see cref="CensusProbeRecord.NullableConverted"/> (a converter FOR the nullable type,
-    /// never wrapped) and <see cref="CensusProbeRecord.NullableUnderlyingTypeConverted"/> (a
-    /// converter for the underlying type, WRAPPED by System.Text.Json in
-    /// <c>NullableConverter&lt;Int32&gt;</c> — needs <see cref="UnwrapNullableConverter"/> to
-    /// agree, so disabling the unwrap turns this probe red). The factory shapes are proven by
-    /// <see cref="Census_Detects_ConverterFactories_OnPlainAndNullableMembers"/>.
+    /// Probe (#586): a <see cref="JsonConverterFactory"/> on a plain enum member
+    /// (<see cref="CensusProbeRecord.PlainFactoryConverted"/>) and on a nullable one
+    /// (<see cref="CensusProbeRecord.NullableFactoryConverted"/>). System.Text.Json reports a
+    /// different <c>CustomConverter</c> for each (the factory itself; an internal wrapper around
+    /// the converter it creates), and presence must agree on both. The golden line shows the
+    /// DECLARED factory on both.
     /// </summary>
     [Fact]
-    public void Census_Detects_NullableConverters()
-    {
-        var rendered = GetRenderedMemberSignatures(typeof(CensusProbeRecord));
-        var stj = GetStjMappedMemberSignatures(typeof(CensusProbeRecord));
-        var differences = DescribeMemberSetDifferences(nameof(CensusProbeRecord), rendered, stj);
-
-        // Non-factory converter FOR the nullable type itself — never wrapped.
-        Assert.Equal(
-            typeof(CensusProbeNullableIntConverter).FullName, rendered["NullableConverted"].ConverterTypeName);
-        Assert.Equal(rendered["NullableConverted"].ConverterTypeName, stj["NullableConverted"].ConverterTypeName);
-        Assert.DoesNotContain(
-            differences, d => d.StartsWith($"{nameof(CensusProbeRecord)}.NullableConverted", StringComparison.Ordinal));
-
-        // Non-factory converter for the UNDERLYING type — WRAPPED by STJ; needs unwrapping to agree.
-        Assert.Equal(
-            typeof(CensusProbeNonNullableIntConverter).FullName,
-            rendered["NullableUnderlyingTypeConverted"].ConverterTypeName);
-        Assert.Equal(
-            rendered["NullableUnderlyingTypeConverted"].ConverterTypeName,
-            stj["NullableUnderlyingTypeConverted"].ConverterTypeName);
-        Assert.DoesNotContain(
-            differences,
-            d => d.StartsWith($"{nameof(CensusProbeRecord)}.NullableUnderlyingTypeConverted", StringComparison.Ordinal));
-    }
-
-    /// <summary>
-    /// The formatted name of System.Text.Json's internal <c>EnumConverter&lt;CensusProbeEnum&gt;</c>
-    /// — the converter <see cref="JsonStringEnumConverter"/> (and any subclass of it) creates for
-    /// <see cref="CensusProbeEnum"/>. Spelled out rather than reflected, because the type is
-    /// internal to System.Text.Json: measured (STJ 8.0.0.0) as
-    /// <c>System.Text.Json.Serialization.Converters.EnumConverter`1[TEnum]</c>.
-    /// </summary>
-    private static readonly string s_createdEnumConverterName =
-        $"System.Text.Json.Serialization.Converters.EnumConverter<{typeof(CensusProbeEnum).FullName}>";
-
-    /// <summary>
-    /// Probe (#586): proves the census mirrors System.Text.Json's own resolution of a
-    /// <see cref="JsonConverterFactory"/> on BOTH member shapes, and that the golden line shows
-    /// the DECLARED factory on both:
-    /// <see cref="CensusProbeRecord.PlainFactoryConverted"/> (plain enum member — System.Text.Json
-    /// keeps the factory UNEXPANDED, so a rendered side that always expands turns this red) and
-    /// <see cref="CensusProbeRecord.NullableFactoryConverted"/> (nullable enum member —
-    /// System.Text.Json expands the factory, then wraps; a rendered side that never expands, or
-    /// an STJ side that does not unwrap, turns this red).
-    /// </summary>
-    [Fact]
-    public void Census_Detects_ConverterFactories_OnPlainAndNullableMembers()
+    public void Census_Detects_ConverterFactoryPresence_OnPlainAndNullableMembers()
     {
         var rendered = GetRenderedMemberSignatures(typeof(CensusProbeRecord));
         var stj = GetStjMappedMemberSignatures(typeof(CensusProbeRecord));
         var differences = DescribeMemberSetDifferences(nameof(CensusProbeRecord), rendered, stj);
         var declaredFactoryMarker = $"[converter={typeof(JsonStringEnumConverter).FullName}]";
 
-        // Plain member: the factory itself, on both sides.
-        Assert.Equal(typeof(JsonStringEnumConverter).FullName, stj["PlainFactoryConverted"].ConverterTypeName);
-        Assert.Equal(stj["PlainFactoryConverted"].ConverterTypeName, rendered["PlainFactoryConverted"].ConverterTypeName);
-        Assert.DoesNotContain(
-            differences,
-            d => d.StartsWith($"{nameof(CensusProbeRecord)}.PlainFactoryConverted", StringComparison.Ordinal));
-        Assert.Contains(
-            declaredFactoryMarker,
-            FormatProperty(typeof(CensusProbeRecord).GetProperty(nameof(CensusProbeRecord.PlainFactoryConverted))!),
-            StringComparison.Ordinal);
-
-        // Nullable member: the factory's created converter, on both sides (the STJ side after
-        // unwrapping NullableConverter<T>) — yet the golden line still shows the declared factory.
-        Assert.Equal(s_createdEnumConverterName, stj["NullableFactoryConverted"].ConverterTypeName);
-        Assert.Equal(
-            stj["NullableFactoryConverted"].ConverterTypeName,
-            rendered["NullableFactoryConverted"].ConverterTypeName);
-        Assert.DoesNotContain(
-            differences,
-            d => d.StartsWith($"{nameof(CensusProbeRecord)}.NullableFactoryConverted", StringComparison.Ordinal));
-        Assert.Contains(
-            declaredFactoryMarker,
-            FormatProperty(typeof(CensusProbeRecord).GetProperty(nameof(CensusProbeRecord.NullableFactoryConverted))!),
-            StringComparison.Ordinal);
+        foreach (var member in new[]
+        {
+            nameof(CensusProbeRecord.PlainFactoryConverted),
+            nameof(CensusProbeRecord.NullableFactoryConverted),
+        })
+        {
+            Assert.True(stj[member].HasCustomConverter);
+            Assert.True(rendered[member].HasCustomConverter);
+            Assert.DoesNotContain(
+                differences, d => d.StartsWith($"{nameof(CensusProbeRecord)}.{member}", StringComparison.Ordinal));
+            Assert.Contains(
+                declaredFactoryMarker,
+                FormatProperty(typeof(CensusProbeRecord).GetProperty(member)!),
+                StringComparison.Ordinal);
+        }
     }
 
     /// <summary>
@@ -1477,8 +1183,8 @@ public sealed class EventContractFreezeTests
 
     /// <summary>
     /// Probe record (#586): the same nullable enum member shape under two different factories
-    /// that create converters of the same type — the swap a census comparing resolved converter
-    /// types alone cannot see.
+    /// that create converters of the same type (MEASURED (c) in the file header) — a swap
+    /// neither presence nor the created converter's type can see.
     /// </summary>
     private sealed record ConverterFactorySwapProbeRecord
     {
@@ -1493,8 +1199,8 @@ public sealed class EventContractFreezeTests
     /// Probe (#586): swapping one converter factory for another that creates a converter of the
     /// SAME type changes the bytes on the wire while leaving both census sides unchanged, so the
     /// golden line — which renders the DECLARED factory — must be what makes the swap visible.
-    /// A golden that rendered the created converter instead would show identical markers for
-    /// both members, and this probe turns red.
+    /// Pins that each line names its own declared factory and never the created converter,
+    /// whose type is the same for both members.
     /// </summary>
     [Fact]
     public void Golden_RendersDeclaredFactory_SoAFactorySwapIsVisible()
@@ -1510,21 +1216,21 @@ public sealed class EventContractFreezeTests
             EventStreamJson.Options);
         Assert.Equal("{\"Standard\":\"B\",\"CamelCase\":\"b\"}", line);
 
-        // Both census sides report the same created converter type for both members, and agree.
+        // Both census sides agree on both members: the census cannot tell them apart.
         var rendered = GetRenderedMemberSignatures(typeof(ConverterFactorySwapProbeRecord));
         var stj = GetStjMappedMemberSignatures(typeof(ConverterFactorySwapProbeRecord));
-        Assert.Equal(s_createdEnumConverterName, stj["Standard"].ConverterTypeName);
-        Assert.Equal(s_createdEnumConverterName, stj["CamelCase"].ConverterTypeName);
+        Assert.Equal(stj["Standard"] with { Wire = "CamelCase" }, stj["CamelCase"]);
         Assert.Empty(DescribeMemberSetDifferences(nameof(ConverterFactorySwapProbeRecord), rendered, stj));
 
-        // So only the golden can tell them apart: each line names its own DECLARED factory.
+        // So only the golden can tell them apart: each line names its own DECLARED factory,
+        // never the internal EnumConverter<TEnum> both factories create.
         var standardLine = FormatProperty(standardProp);
         var camelCaseLine = FormatProperty(camelCaseProp);
         Assert.Contains($"[converter={typeof(JsonStringEnumConverter).FullName}]", standardLine, StringComparison.Ordinal);
         Assert.Contains(
             $"[converter={typeof(CensusProbeCamelCaseEnumConverter).FullName}]", camelCaseLine, StringComparison.Ordinal);
-        Assert.DoesNotContain(s_createdEnumConverterName, standardLine, StringComparison.Ordinal);
-        Assert.DoesNotContain(s_createdEnumConverterName, camelCaseLine, StringComparison.Ordinal);
+        Assert.DoesNotContain("EnumConverter<", standardLine, StringComparison.Ordinal);
+        Assert.DoesNotContain("EnumConverter<", camelCaseLine, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -1544,33 +1250,73 @@ public sealed class EventContractFreezeTests
     }
 
     /// <summary>
-    /// Probe (#586): a member carrying <see cref="NullConverterTypePassthroughAttribute"/>
-    /// (above). Proves <see cref="DescribeMemberSetDifferences"/> reports a GENUINE, NATURALLY
-    /// OCCURRING mismatch — no synthetic perturbation needed — and catches a mutant that reads
-    /// the STJ side's converter name back off the same attribute instead of off System.Text.Json's
-    /// own resolved <c>JsonPropertyInfo.CustomConverter</c>, which would make BOTH sides read
-    /// the same null and never disagree.
+    /// A <see cref="JsonConverterAttribute"/> SUBCLASS that declares a converter type through
+    /// the base constructor AND overrides <see cref="JsonConverterAttribute.CreateConverter(Type)"/>
+    /// to return a different one. Used ONLY by
+    /// <see cref="Census_Detects_JsonConverterAttributeSubclass_ConverterTypeNull_AsGenuineMismatch"/>
+    /// to pin MEASURED (b) in the file header: System.Text.Json instantiates the declared type
+    /// and ignores the override.
+    /// </summary>
+    private sealed class DeclaredTypeWithOverrideAttribute : JsonConverterAttribute
+    {
+        public DeclaredTypeWithOverrideAttribute()
+            : base(typeof(CensusProbeUpperCaseConverter))
+        {
+        }
+
+        public override JsonConverter? CreateConverter(Type typeToConvert) => new CensusProbeOverrideConverter();
+    }
+
+    /// <summary>
+    /// The converter <see cref="DeclaredTypeWithOverrideAttribute"/>'s ignored override returns.
+    /// </summary>
+    private sealed class CensusProbeOverrideConverter : JsonConverter<string>
+    {
+        public override string Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) =>
+            reader.GetString() ?? string.Empty;
+
+        public override void Write(Utf8JsonWriter writer, string value, JsonSerializerOptions options) =>
+            writer.WriteStringValue(value);
+    }
+
+    /// <summary>
+    /// Probe record (#586): <see cref="Passthrough"/> carries
+    /// <see cref="NullConverterTypePassthroughAttribute"/> (no declared type), and
+    /// <see cref="DeclaredWins"/> carries <see cref="DeclaredTypeWithOverrideAttribute"/>.
     /// </summary>
     private sealed record ConverterAttributeNullTypeProbeRecord
     {
         [NullConverterTypePassthrough]
         public string Passthrough { get; init; } = string.Empty;
+
+        [DeclaredTypeWithOverride]
+        public string DeclaredWins { get; init; } = string.Empty;
     }
 
+    /// <summary>
+    /// Probe (#586): the two premises the presence-only converter comparison rests on.
+    /// A member whose attribute declares NO converter type renders no golden marker while
+    /// System.Text.Json still uses a converter, so the census reports a genuine mismatch for it
+    /// — the STJ side must read <c>JsonPropertyInfo.CustomConverter</c>, not the attribute, or
+    /// both sides would read "absent" and agree. And a member whose attribute declares a type
+    /// is converted by exactly that type, even when the attribute overrides
+    /// <c>CreateConverter</c>, so the declared type the golden renders is the converter in use.
+    /// </summary>
     [Fact]
     public void Census_Detects_JsonConverterAttributeSubclass_ConverterTypeNull_AsGenuineMismatch()
     {
         var prop = typeof(ConverterAttributeNullTypeProbeRecord)
             .GetProperty(nameof(ConverterAttributeNullTypeProbeRecord.Passthrough))!;
-        var attr = prop.GetCustomAttribute<JsonConverterAttribute>();
+        var attr = prop.GetCustomAttribute<JsonConverterAttribute>(inherit: false);
         Assert.NotNull(attr);
         Assert.Null(attr!.ConverterType);
 
         var rendered = GetRenderedMemberSignatures(typeof(ConverterAttributeNullTypeProbeRecord));
         var stj = GetStjMappedMemberSignatures(typeof(ConverterAttributeNullTypeProbeRecord));
 
-        Assert.Null(rendered["Passthrough"].ConverterTypeName);
-        Assert.NotNull(stj["Passthrough"].ConverterTypeName);
+        Assert.False(rendered["Passthrough"].HasCustomConverter);
+        Assert.True(stj["Passthrough"].HasCustomConverter);
+        Assert.DoesNotContain("[converter=", FormatProperty(prop), StringComparison.Ordinal);
 
         var differences = DescribeMemberSetDifferences(
             nameof(ConverterAttributeNullTypeProbeRecord), rendered, stj);
@@ -1579,6 +1325,14 @@ public sealed class EventContractFreezeTests
             differences,
             d => d.StartsWith($"{nameof(ConverterAttributeNullTypeProbeRecord)}.Passthrough", StringComparison.Ordinal)
                 && d.Contains("does not match", StringComparison.Ordinal));
+
+        // The declared type wins over the attribute's CreateConverter override.
+        var declaredWins = EventStreamJson.Options.GetTypeInfo(typeof(ConverterAttributeNullTypeProbeRecord))
+            .Properties.Single(p => p.Name == nameof(ConverterAttributeNullTypeProbeRecord.DeclaredWins));
+        Assert.IsType<CensusProbeUpperCaseConverter>(declaredWins.CustomConverter);
+        Assert.DoesNotContain(
+            differences,
+            d => d.StartsWith($"{nameof(ConverterAttributeNullTypeProbeRecord)}.DeclaredWins", StringComparison.Ordinal));
     }
 
     /// <summary>
@@ -1627,11 +1381,9 @@ public sealed class EventContractFreezeTests
 
     /// <summary>
     /// A record TYPE's wire-relevant representation signature — as opposed to
-    /// <see cref="MemberSignature"/>, which is per-MEMBER. Like
-    /// <see cref="MemberSignature.ConverterTypeName"/>, <see cref="ConverterTypeName"/> names the
-    /// resolved converter's TYPE, not its configuration; the golden header's declared-type
-    /// marker is what distinguishes two factories creating converters of the same type.
-    /// <see cref="PolymorphicDerivedTypes"/> is the same <c>"Type:tag;Type:tag"</c> joined,
+    /// <see cref="MemberSignature"/>, which is per-MEMBER. <see cref="HasCustomConverter"/>
+    /// compares presence only, as at member level; the golden header's declared-type marker
+    /// pins which converter. <see cref="PolymorphicDerivedTypes"/> is the same <c>"Type:tag;Type:tag"</c> joined,
     /// sorted string <see cref="FormatRecordHeader"/> renders — not a list — because
     /// <c>record struct</c> equality on a reference-type member (a <see cref="List{T}"/> or
     /// similar) would compare by REFERENCE, not content, making two independently-built
@@ -1641,7 +1393,7 @@ public sealed class EventContractFreezeTests
     /// joining — <c>record struct</c> equality on them is exact by construction.
     /// </summary>
     private readonly record struct TypeSignature(
-        string? ConverterTypeName,
+        bool HasCustomConverter,
         JsonNumberHandling? NumberHandling,
         JsonUnmappedMemberHandling? UnmappedMemberHandling,
         JsonObjectCreationHandling? ObjectCreationHandling,
@@ -1653,9 +1405,9 @@ public sealed class EventContractFreezeTests
     /// <summary>
     /// The rendered type-level signature for <paramref name="record"/>: reads the same
     /// type-level attributes <see cref="FormatRecordHeader"/> renders, directly off
-    /// <paramref name="record"/>'s own attributes (<c>inherit: false</c> — #586;
-    /// see the file header's INHERITANCE note). Shared getters keep the golden
-    /// header and this signature from independently drifting on what counts as present.
+    /// <paramref name="record"/>'s own attributes (<c>inherit: false</c>, MEASURED (h) in the
+    /// file header). Shared getters keep the golden header and this signature from
+    /// independently drifting on what counts as present.
     /// </summary>
     private static TypeSignature GetRenderedTypeSignature(Type record)
     {
@@ -1664,7 +1416,7 @@ public sealed class EventContractFreezeTests
             derived is null ? null : GetDeclaredPolymorphicSettings(record);
 
         return new TypeSignature(
-            ConverterTypeName: ResolveTypeConverterTypeName(GetDeclaredTypeConverterType(record), record),
+            HasCustomConverter: GetDeclaredTypeConverterType(record) is not null,
             NumberHandling: record.GetCustomAttribute<JsonNumberHandlingAttribute>(inherit: false)?.Handling,
             UnmappedMemberHandling:
                 record.GetCustomAttribute<JsonUnmappedMemberHandlingAttribute>(inherit: false)?.UnmappedMemberHandling,
@@ -1681,26 +1433,16 @@ public sealed class EventContractFreezeTests
     /// <see cref="EventStreamJson.Options"/>'s own <c>JsonTypeInfo</c>.
     /// </summary>
     /// <remarks>
-    /// MEASURED (STJ 8.0.0.0): <c>JsonTypeInfo.Converter</c> is NON-NULL for every reflected
-    /// type — including every frozen record, which reports STJ's own internal
-    /// <c>ObjectDefaultConverter&lt;T&gt;</c> or
-    /// <c>SmallObjectWithParameterizedConstructorConverter&lt;…&gt;</c> depending on whether the
-    /// type binds through a parameterless or parameterized constructor — so it cannot be
-    /// compared unconditionally without reporting a false positive on every frozen record. Only
-    /// a type carrying an explicit type-level <c>[JsonConverter]</c> (or an equally-scoped
-    /// GLOBAL converter registration, though none of <see cref="EventStreamJson.Options"/>'
-    /// <c>Converters</c> targets a record type today) reports
-    /// <c>Kind == JsonTypeInfoKind.None</c>, with <c>Properties</c> left EMPTY — the converter
-    /// owns the whole contract. Gating on <c>Kind == None</c> is what makes the comparison safe:
-    /// no frozen record reports it today.
+    /// HasCustomConverter is <c>Kind == JsonTypeInfoKind.None</c>, not
+    /// <c>Converter != null</c>: every reflected type has a non-null converter, and only a
+    /// custom one leaves the type with no object contract (MEASURED (g) in the file header). A
+    /// converter for a record type added to the Options' global <c>Converters</c> list would
+    /// report the same, with no attribute on the rendered side — a mismatch this comparison
+    /// then reports.
     /// </remarks>
     private static TypeSignature GetStjTypeSignature(Type record)
     {
         var typeInfo = EventStreamJson.Options.GetTypeInfo(record);
-
-        var converterTypeName = typeInfo.Kind == JsonTypeInfoKind.None
-            ? FormatConverterInstanceTypeName(typeInfo.Converter)
-            : null;
 
         var poly = typeInfo.PolymorphismOptions;
         var polymorphicDerivedTypes = poly is null
@@ -1708,11 +1450,11 @@ public sealed class EventContractFreezeTests
             : string.Join(
                 ";",
                 poly.DerivedTypes
-                    .Select(dt => $"{dt.DerivedType.FullName}:{dt.TypeDiscriminator}")
+                    .Select(dt => FormatDerivedTypeToken(dt.DerivedType, dt.TypeDiscriminator))
                     .OrderBy(s => s, StringComparer.Ordinal));
 
         return new TypeSignature(
-            ConverterTypeName: converterTypeName,
+            HasCustomConverter: typeInfo.Kind == JsonTypeInfoKind.None,
             NumberHandling: typeInfo.NumberHandling,
             UnmappedMemberHandling: typeInfo.UnmappedMemberHandling,
             ObjectCreationHandling: typeInfo.PreferredPropertyObjectCreationHandling,
@@ -1728,13 +1470,11 @@ public sealed class EventContractFreezeTests
     /// agree. Mirrors <see cref="DescribeMemberSetDifferences"/> at the type level.
     /// </summary>
     /// <remarks>
-    /// #586: the comparison is a plain
-    /// <c>record struct</c> equality check (<c>!rendered.Equals(stj)</c>) — not an
-    /// always-true or always-false expression. A mutation that widens this condition with a
-    /// tautological <c>|| rendered != stj</c> (making it unconditionally
-    /// <see langword="true"/> and this method unconditionally return an EMPTY list) is exactly
-    /// the class of defect <see cref="DescribeTypeSignatureDifferences_ReportsAGenuineMismatch"/>
-    /// below exists to catch: that probe fails red under it.
+    /// #586: the comparison is plain <c>record struct</c> equality over every
+    /// <see cref="TypeSignature"/> field. Every frozen record agrees today, so the census test
+    /// alone cannot show that this method reports anything;
+    /// <see cref="DescribeTypeSignatureDifferences_ReportsAGenuineMismatch"/> pins that it
+    /// reports a difference in a single field.
     /// </remarks>
     private static List<string> DescribeTypeSignatureDifferences(
         string recordName, TypeSignature rendered, TypeSignature stj)
@@ -1788,13 +1528,11 @@ public sealed class EventContractFreezeTests
     /// <summary>
     /// #586: every derived type <paramref name="record"/> declares via
     /// <c>[JsonPolymorphic]</c>/<c>[JsonDerivedType]</c> must ITSELF be a member of
-    /// <paramref name="frozenSet"/>, or its own members are invisible to every gate in this
-    /// file. MEASURED: making a frozen record polymorphic freezes the LIST of derived-type
-    /// names and discriminators (via <c>PolymorphicDerivedTypes</c> in
-    /// <see cref="TypeSignature"/>) but nothing here separately walks INTO a derived type and
-    /// freezes ITS OWN members — renaming a wire name on a derived type's own property passes
-    /// every existing gate, because the derived type was never added to <c>s_eventRecords</c> in
-    /// the first place. Returns one message per unfrozen derived type, or an empty list when
+    /// <paramref name="frozenSet"/>, or its own members are invisible to every test in this
+    /// file: the type-level census pins the LIST of derived types and discriminators
+    /// (<c>PolymorphicDerivedTypes</c> in <see cref="TypeSignature"/>), but nothing walks INTO a
+    /// derived type that is not itself in <c>s_eventRecords</c>, so a wire-name rename on one of
+    /// its own properties would move neither the golden nor either census. Returns one message per unfrozen derived type, or an empty list when
     /// <paramref name="record"/> is not polymorphic or every derived type is already frozen.
     /// </summary>
     private static List<string> DescribeUnfrozenDerivedTypes(Type record, HashSet<Type> frozenSet)
@@ -1825,8 +1563,8 @@ public sealed class EventContractFreezeTests
     /// record declares is itself frozen. Without this, a polymorphic frozen record's own
     /// derived-type LIST is pinned (by <see cref="EventWireContract_Census_MatchesStjTypeLevelSettings"/>'s
     /// <c>PolymorphicDerivedTypes</c> field), but the derived type's OWN members are not: a
-    /// wire-name rename on one of them changes the wire with every gate in this file staying
-    /// green, because the derived type was never separately added to <see cref="s_eventRecords"/>.
+    /// wire-name rename on one of them changes the wire with every other test in this file
+    /// passing, because the derived type was never separately added to <see cref="s_eventRecords"/>.
     /// </summary>
     [Fact]
     public void EventWireContract_DerivedTypesAreThemselvesFrozen()
@@ -1863,9 +1601,8 @@ public sealed class EventContractFreezeTests
     /// Probe (#586): proves <see cref="DescribeUnfrozenDerivedTypes"/> reports a derived type
     /// missing from the frozen set, and reports nothing once it is added — the same comparison
     /// <see cref="EventWireContract_DerivedTypesAreThemselvesFrozen"/> makes for every frozen
-    /// record every day. If the <c>!frozenSet.Contains(...)</c> check in
-    /// <see cref="DescribeUnfrozenDerivedTypes"/> is removed, this probe's first assertion goes
-    /// red.
+    /// record. No frozen record is polymorphic today, so this probe is what pins that the
+    /// <c>!frozenSet.Contains(...)</c> check reports a missing derived type at all.
     /// </summary>
     [Fact]
     public void DescribeUnfrozenDerivedTypes_ReportsDerivedTypeMissingFromFrozenSet()
@@ -1884,8 +1621,9 @@ public sealed class EventContractFreezeTests
         Assert.Empty(DescribeUnfrozenDerivedTypes(typeof(UnfrozenDerivedProbeBase), completeFrozenSet));
     }
 
-    // #586 type-level probe types — test-only, never produced by production code, exercised
-    // solely to prove Census_Detects_TypeLevelRepresentationAttributes below is load-bearing.
+    // #586 type-level probe types — test-only, used only by
+    // Census_Detects_TypeLevelRepresentationAttributes and
+    // Census_Detects_DiscriminatorKind_IntVersusString below.
 
     [JsonConverter(typeof(TypeLevelProbeConverter))]
     private sealed record TypeConverterProbeRecord(string A);
@@ -1942,6 +1680,55 @@ public sealed class EventContractFreezeTests
     private sealed record TypePolymorphicDerivedProbeRecord(string A, string B)
         : TypePolymorphicBaseProbeRecord(A);
 
+    [JsonDerivedType(typeof(IntDiscriminatorProbeDerived), 1)]
+    private abstract record IntDiscriminatorProbeBase(string A);
+
+    private sealed record IntDiscriminatorProbeDerived(string A) : IntDiscriminatorProbeBase(A);
+
+    [JsonDerivedType(typeof(StringDiscriminatorProbeDerived), "1")]
+    private abstract record StringDiscriminatorProbeBase(string A);
+
+    private sealed record StringDiscriminatorProbeDerived(string A) : StringDiscriminatorProbeBase(A);
+
+    /// <summary>
+    /// Probe (#586): an int discriminator and a string discriminator with the same text write
+    /// differently (MEASURED (j) in the file header), so both the golden header and the
+    /// type-level census must render the discriminator's KIND — the string quoted, the int bare
+    /// — and each side must agree with System.Text.Json.
+    /// </summary>
+    [Fact]
+    public void Census_Detects_DiscriminatorKind_IntVersusString()
+    {
+        Assert.Equal(
+            "{\"$type\":1,\"A\":\"a\"}",
+            JsonSerializer.Serialize<IntDiscriminatorProbeBase>(new IntDiscriminatorProbeDerived("a"), EventStreamJson.Options));
+        Assert.Equal(
+            "{\"$type\":\"1\",\"A\":\"a\"}",
+            JsonSerializer.Serialize<StringDiscriminatorProbeBase>(
+                new StringDiscriminatorProbeDerived("a"), EventStreamJson.Options));
+
+        var intRendered = GetRenderedTypeSignature(typeof(IntDiscriminatorProbeBase));
+        var intStj = GetStjTypeSignature(typeof(IntDiscriminatorProbeBase));
+        var stringRendered = GetRenderedTypeSignature(typeof(StringDiscriminatorProbeBase));
+        var stringStj = GetStjTypeSignature(typeof(StringDiscriminatorProbeBase));
+
+        var intToken = $"{typeof(IntDiscriminatorProbeDerived).FullName}:1";
+        var stringToken = $"{typeof(StringDiscriminatorProbeDerived).FullName}:\"1\"";
+        Assert.Equal(intToken, intStj.PolymorphicDerivedTypes);
+        Assert.Equal(stringToken, stringStj.PolymorphicDerivedTypes);
+        Assert.Empty(DescribeTypeSignatureDifferences("probe", intRendered, intStj));
+        Assert.Empty(DescribeTypeSignatureDifferences("probe", stringRendered, stringStj));
+
+        Assert.Contains(
+            $"[polymorphicDerivedTypes={intToken}]",
+            FormatRecordHeader(typeof(IntDiscriminatorProbeBase)),
+            StringComparison.Ordinal);
+        Assert.Contains(
+            $"[polymorphicDerivedTypes={stringToken}]",
+            FormatRecordHeader(typeof(StringDiscriminatorProbeBase)),
+            StringComparison.Ordinal);
+    }
+
     /// <summary>
     /// Probe test (#586): proves each <see cref="TypeSignature"/> field is both
     /// rendered onto the golden's <c>"record &lt;Name&gt;"</c> header
@@ -1956,19 +1743,20 @@ public sealed class EventContractFreezeTests
     {
         var converterRendered = GetRenderedTypeSignature(typeof(TypeConverterProbeRecord));
         var converterStj = GetStjTypeSignature(typeof(TypeConverterProbeRecord));
-        Assert.Equal(typeof(TypeLevelProbeConverter).FullName, converterRendered.ConverterTypeName);
-        Assert.Equal(converterRendered.ConverterTypeName, converterStj.ConverterTypeName);
+        Assert.True(converterStj.HasCustomConverter);
+        Assert.Equal(converterRendered.HasCustomConverter, converterStj.HasCustomConverter);
+        Assert.False(GetStjTypeSignature(typeof(TypeNumberHandlingProbeRecord)).HasCustomConverter);
         Assert.Contains(
             $"[converter={typeof(TypeLevelProbeConverter).FullName}]",
             FormatRecordHeader(typeof(TypeConverterProbeRecord)),
             StringComparison.Ordinal);
 
-        // A type-level FACTORY: System.Text.Json reports its CREATED converter (measured), so the
-        // census expands it — while the golden header still shows the DECLARED factory.
+        // A type-level FACTORY: present on both sides, and the golden header shows the DECLARED
+        // factory, not the converter it creates.
         var factoryRendered = GetRenderedTypeSignature(typeof(TypeFactoryConverterProbeRecord));
         var factoryStj = GetStjTypeSignature(typeof(TypeFactoryConverterProbeRecord));
-        Assert.Equal(typeof(TypeLevelProbeFactoryCreatedConverter).FullName, factoryStj.ConverterTypeName);
-        Assert.Equal(factoryStj.ConverterTypeName, factoryRendered.ConverterTypeName);
+        Assert.True(factoryStj.HasCustomConverter);
+        Assert.Equal(factoryStj.HasCustomConverter, factoryRendered.HasCustomConverter);
         var factoryHeader = FormatRecordHeader(typeof(TypeFactoryConverterProbeRecord));
         Assert.Contains(
             $"[converter={typeof(TypeLevelProbeConverterFactory).FullName}]", factoryHeader, StringComparison.Ordinal);
@@ -2004,7 +1792,7 @@ public sealed class EventContractFreezeTests
 
         var polyRendered = GetRenderedTypeSignature(typeof(TypePolymorphicBaseProbeRecord));
         var polyStj = GetStjTypeSignature(typeof(TypePolymorphicBaseProbeRecord));
-        var expectedDerived = $"{typeof(TypePolymorphicDerivedProbeRecord).FullName}:derived";
+        var expectedDerived = $"{typeof(TypePolymorphicDerivedProbeRecord).FullName}:\"derived\"";
         Assert.Equal(expectedDerived, polyRendered.PolymorphicDerivedTypes);
         Assert.Equal(polyRendered.PolymorphicDerivedTypes, polyStj.PolymorphicDerivedTypes);
         Assert.Contains(
@@ -2012,9 +1800,8 @@ public sealed class EventContractFreezeTests
             FormatRecordHeader(typeof(TypePolymorphicBaseProbeRecord)),
             StringComparison.Ordinal);
 
-        // Both sides agree on every one of these — the outcome the real gate
-        // (EventWireContract_Census_MatchesStjTypeLevelSettings) depends on for every
-        // frozen record every day.
+        // Both sides agree on every one of these — the outcome
+        // EventWireContract_Census_MatchesStjTypeLevelSettings depends on for every frozen record.
         Assert.Empty(DescribeTypeSignatureDifferences("probe", converterRendered, converterStj));
         Assert.Empty(DescribeTypeSignatureDifferences("probe", factoryRendered, factoryStj));
         Assert.Empty(DescribeTypeSignatureDifferences("probe", numberHandlingRendered, numberHandlingStj));
@@ -2022,10 +1809,8 @@ public sealed class EventContractFreezeTests
         Assert.Empty(DescribeTypeSignatureDifferences("probe", creationRendered, creationStj));
         Assert.Empty(DescribeTypeSignatureDifferences("probe", polyRendered, polyStj));
 
-        // #586: the settings beyond the derived-type list agree too, using
-        // System.Text.Json's OWN measured defaults ("$type" / FailSerialization / false) rather
-        // than the bare [JsonPolymorphic] attribute's own (different) property defaults — see
-        // GetDeclaredPolymorphicSettings' remarks for the measured discrepancy this guards.
+        // #586: the settings beyond the derived-type list agree too, using System.Text.Json's
+        // own resolved defaults (MEASURED (i) in the file header).
         Assert.Equal("$type", polyRendered.PolymorphicTypeDiscriminatorPropertyName);
         Assert.Equal(polyRendered.PolymorphicTypeDiscriminatorPropertyName, polyStj.PolymorphicTypeDiscriminatorPropertyName);
         Assert.Equal(JsonUnknownDerivedTypeHandling.FailSerialization, polyRendered.PolymorphicUnknownDerivedTypeHandling);
@@ -2050,12 +1835,11 @@ public sealed class EventContractFreezeTests
         : JsonDerivedTypeAloneProbeBase(A);
 
     /// <summary>
-    /// Probe (#586): proves <see cref="GetDeclaredDerivedTypeTokens"/>'s
-    /// — <c>[JsonDerivedType]</c> PRESENCE, not <c>[JsonPolymorphic]</c> PRESENCE — is correct:
-    /// <see cref="JsonDerivedTypeAloneProbeBase"/> carries ONLY <c>[JsonDerivedType]</c>, and both
-    /// the rendered and the STJ views must still recognise it as polymorphic and agree on every
-    /// polymorphism setting, using System.Text.Json's OWN measured defaults for the settings an
-    /// explicit <see cref="JsonPolymorphicAttribute"/> would otherwise carry.
+    /// Probe (#586): <see cref="JsonDerivedTypeAloneProbeBase"/> carries ONLY
+    /// <c>[JsonDerivedType]</c>; both the rendered and the STJ views must recognise it as
+    /// polymorphic and agree on every polymorphism setting (MEASURED (i) in the file header),
+    /// which pins that <see cref="GetDeclaredDerivedTypeTokens"/> keys on
+    /// <c>[JsonDerivedType]</c> presence.
     /// </summary>
     [Fact]
     public void Census_Detects_DerivedTypeAloneAsPolymorphic_WithoutJsonPolymorphicAttribute()
@@ -2063,7 +1847,7 @@ public sealed class EventContractFreezeTests
         var rendered = GetRenderedTypeSignature(typeof(JsonDerivedTypeAloneProbeBase));
         var stj = GetStjTypeSignature(typeof(JsonDerivedTypeAloneProbeBase));
 
-        var expectedDerived = $"{typeof(JsonDerivedTypeAloneProbeDerived).FullName}:tag";
+        var expectedDerived = $"{typeof(JsonDerivedTypeAloneProbeDerived).FullName}:\"tag\"";
         Assert.Equal(expectedDerived, rendered.PolymorphicDerivedTypes);
         Assert.Equal("$type", rendered.PolymorphicTypeDiscriminatorPropertyName);
         Assert.Equal(JsonUnknownDerivedTypeHandling.FailSerialization, rendered.PolymorphicUnknownDerivedTypeHandling);
@@ -2077,16 +1861,12 @@ public sealed class EventContractFreezeTests
     }
 
     /// <summary>
-    /// Probe (#586): proves <see cref="DescribeTypeSignatureDifferences"/> DOES
-    /// report a difference for genuinely different inputs, guarding against a mutant that widens
-    /// the equality check to an always-<see langword="true"/> tautology — such a mutant would
-    /// report no difference for anything, ever, no matter how many test records pass through it.
-    /// Takes a REAL STJ-reflected
-    /// <see cref="TypeSignature"/> (from <see cref="JsonDerivedTypeAloneProbeBase"/> above, already
-    /// proven non-trivial by <see cref="Census_Detects_DerivedTypeAloneAsPolymorphic_WithoutJsonPolymorphicAttribute"/>)
-    /// and perturbs ONE field, so the "rendered" and "stj" arguments are two concretely different,
-    /// independently meaningful signatures — not a synthetic default-vs-default comparison a
-    /// vacuous-in-a-different-way comparator could also pass by accident.
+    /// Probe (#586): pins that <see cref="DescribeTypeSignatureDifferences"/> reports a
+    /// difference when two signatures differ in a single field. Every frozen record agrees
+    /// today, so without this probe a comparator that never reports anything would leave the
+    /// type-level census passing. Takes a real STJ-reflected <see cref="TypeSignature"/> (from
+    /// <see cref="JsonDerivedTypeAloneProbeBase"/>, whose polymorphism fields are populated) and
+    /// changes only its discriminator property name.
     /// </summary>
     [Fact]
     public void DescribeTypeSignatureDifferences_ReportsAGenuineMismatch()
@@ -2104,29 +1884,19 @@ public sealed class EventContractFreezeTests
     // ── Options-level pins (#586) ─────────────────────────────────────────────
 
     /// <summary>
-    /// A RE-MEASURE TRIPWIRE, not a silent observation: this DOES fail the build when the
-    /// System.Text.Json version moves off the one every other assertion in this file was
-    /// measured against, printing the version via <see cref="ITestOutputHelper"/> either way so
-    /// it is visible in test output too. MEASURED: 8.0.0.0 — the in-box net8.0 reflection
-    /// resolver, because neither this test project nor <c>Vouchfx.Engine.Abstractions</c>
-    /// references a <c>System.Text.Json</c> package (confirmed: no <c>PackageReference</c> to
-    /// it anywhere in the solution), so the <c>Directory.Packages.props</c> 10.0.8 security pin
-    /// — which applies only to a project graph that actually references the package — never
-    /// reaches either assembly.
+    /// Pins the System.Text.Json assembly THIS TEST PROCESS loads — the version the file
+    /// header's MEASURED facts were taken on — at major version 8, printing its version and
+    /// location either way. It is the in-box net8.0 assembly (8.0.0.0), because neither this
+    /// test project nor <c>Vouchfx.Engine.Abstractions</c> references a <c>System.Text.Json</c>
+    /// package; its assembly version does not move with net8.0 servicing, so this fails a test
+    /// only if the test project starts referencing the package or moves target framework.
+    /// It is NOT the version the CLI ships: that is the central <c>PackageVersion</c>, pinned by
+    /// <see cref="CentralSystemTextJsonPackageVersion_IsTheMajorTheNotesWereCheckedAgainst"/>.
     /// </summary>
     /// <remarks>
-    /// A version bump is not ITSELF a wire-contract change — measured: running under STJ 10.0.8
-    /// (the version <c>Vouchfx.Cli</c> resolves), every OTHER assertion in this file still held;
-    /// only this one pin failed. It fails on purpose anyway, rather than only logging: this
-    /// file's own MEASURED comments
-    /// (member <c>CustomConverter</c>/<c>ShouldSerialize</c> behaviour, where a converter factory
-    /// is and is not expanded, the "$type" polymorphic default, the private
-    /// <c>_elementConverter</c> field name, the Options members that STJ 9+
-    /// (<c>AllowOutOfOrderMetadataProperties</c>) and STJ 10+ (<c>AllowDuplicateProperties</c>)
-    /// add) are claims about THIS version, not eternal STJ facts, and nothing else forces a
-    /// human to re-verify them when the version moves. The failure message names exactly which
-    /// notes to re-check, so a future STJ bump is a deliberate re-measurement, never a silent
-    /// drift.
+    /// The MEASURED facts are claims about one version, not eternal STJ behaviour, and nothing
+    /// else makes anyone re-check them when the version moves; the failure message says which
+    /// notes to re-check.
     /// </remarks>
     [Fact]
     public void EventStreamJsonOptions_RunsAgainstMeasuredSystemTextJsonVersion()
@@ -2138,25 +1908,44 @@ public sealed class EventContractFreezeTests
         Assert.NotNull(version);
         Assert.True(
             version!.Major == 8,
-            $"System.Text.Json moved to major version {version.Major} (was 8.0.0.0 when this file's "
-            + "MEASURED comments were written). Re-measure and update, in this file's header and "
-            + "inline comments, every claim tied to that version: (1) p.CustomConverter is null for a "
-            + "GLOBALLY-registered converter; (2) p.ShouldSerialize is non-null ONLY for a member's own "
-            + "[JsonIgnore(Condition=…)], never for the shared Options' DefaultIgnoreCondition alone; "
-            + "(3) [JsonObjectCreationHandling(Populate)] throws NotSupportedException on a "
-            + "parameterized-constructor type; (4) a type-level [JsonConverter] reports "
-            + "JsonTypeInfoKind.None with empty Properties, while every other reflected type reports a "
-            + "non-null ti.Converter; (5) [JsonDerivedType] alone (no [JsonPolymorphic]) makes STJ treat "
-            + "a type as polymorphic, defaulting TypeDiscriminatorPropertyName to the literal \"$type\" "
-            + "(NOT the bare attribute's own null default); (6) STJ 8 ignores base-type attributes on a "
-            + "derived type regardless of the inherit: parameter passed; (7) NullableConverter<T>'s "
-            + "wrapped converter is reachable only via the PRIVATE instance field _elementConverter — "
-            + "confirm that field still exists and is still named that; (8) AllowOutOfOrderMetadataProperties "
-            + "(STJ 9+) and AllowDuplicateProperties (STJ 10+) remain absent here — confirm they still do "
-            + "not compile against this version, or add named assertions for them if they now do; "
-            + "(9) a member-level JsonConverterFactory is reported UNEXPANDED on a member it can convert "
-            + "directly, but expanded against T and then NullableConverter<T>-wrapped on a Nullable<T> "
-            + "member, while a type-level factory is reported as its CREATED converter.");
+            $"The System.Text.Json this test process loads moved to major version {version.Major} "
+            + "(8.0.0.0 when this file's MEASURED facts were taken). Re-measure MEASURED (a)-(k) in the "
+            + "file header on the new version and update every note and probe that relies on them, and "
+            + "check whether AllowOutOfOrderMetadataProperties (STJ 9+) and AllowDuplicateProperties "
+            + "(STJ 10+) now compile here and need named pins in "
+            + "EventStreamJsonOptions_PinnedSettings_MatchMeasuredExpectations.");
+    }
+
+    /// <summary>
+    /// Pins the MAJOR version of the central <c>System.Text.Json</c> <c>PackageVersion</c> in
+    /// <c>Directory.Packages.props</c> — the version the CLI ships, through central transitive
+    /// pinning — at 10, the major the file header's MEASURED facts were re-checked against
+    /// (running this file with the package referenced from the test project). A bump of that
+    /// line to a new major fails this test, so the notes are re-measured on the version that
+    /// actually ships rather than left describing an older one.
+    /// </summary>
+    [Fact]
+    public void CentralSystemTextJsonPackageVersion_IsTheMajorTheNotesWereCheckedAgainst()
+    {
+        var propsPath = Path.Combine(FindRepoRoot(), "Directory.Packages.props");
+        var document = System.Xml.Linq.XDocument.Load(propsPath);
+        var versions = document
+            .Descendants("PackageVersion")
+            .Where(e => string.Equals((string?)e.Attribute("Include"), "System.Text.Json", StringComparison.Ordinal))
+            .Select(e => (string?)e.Attribute("Version"))
+            .ToList();
+
+        var versionText = Assert.Single(versions);
+        _output.WriteLine($"Central System.Text.Json PackageVersion: {versionText}");
+        Assert.True(
+            Version.TryParse(versionText, out var version),
+            $"Directory.Packages.props: the System.Text.Json PackageVersion '{versionText}' is not a plain version.");
+        Assert.True(
+            version!.Major == 10,
+            $"The central System.Text.Json PackageVersion moved to {versionText}; the CLI ships that "
+            + "version. Re-measure MEASURED (a)-(k) in EventContractFreezeTests' file header on it "
+            + "(reference the package from this test project in a scratch copy and run this file), "
+            + "update any note that no longer holds, then update this pin.");
     }
 
     /// <summary>
@@ -2193,9 +1982,8 @@ public sealed class EventContractFreezeTests
         // property added without an explicit wire name, not about anything at risk today.
         // DictionaryKeyPolicy is null too: unlike PropertyNamingPolicy, one WOULD matter —
         // measured to rewrite the KEYS of a Dictionary<string,TValue>-typed property such
-        // as CorrelationIds — but measured NOT to touch Extra's own extension-data keys,
-        // which STJ exempts from it. See EventStreamJson.cs's own remarks for the same
-        // measurement.
+        // as CorrelationIds. Neither policy touches Extra's extension-data keys (MEASURED (k)
+        // in the file header).
         Assert.Null(options.PropertyNamingPolicy);
         Assert.Null(options.DictionaryKeyPolicy);
 
@@ -2261,19 +2049,16 @@ public sealed class EventContractFreezeTests
         // Replace (STJ's own default) is what makes every frozen collection-typed member
         // (Captured, Substitutions, SecretReferences, Fixtures, …) get a FRESH collection
         // instance on deserialisation rather than being populated into (Populate) whatever the
-        // init-only property's own default-value expression already constructed — relevant
-        // because #586 measured that a member/type [JsonObjectCreationHandling(Populate)]
-        // attribute changes this per-property/per-type, which is exactly what the new census
-        // fields above pin; this assertion pins the GLOBAL default the census fields diff
-        // against.
+        // init-only property's own default-value expression already constructed. A member- or
+        // type-level [JsonObjectCreationHandling] overrides this per property or per type, and
+        // the censuses pin those attributes; this assertion pins the global default they
+        // override.
         Assert.Equal(JsonObjectCreationHandling.Replace, options.PreferredObjectCreationHandling);
 
-        // #586: an `object`-typed value (e.g. a member declared as `object`,
-        // which no frozen record has today) deserialises to a JsonElement rather than a boxed
-        // CLR primitive — JsonElement is STJ's own default and is what the rest of this file
-        // already assumes JsonElement-typed members (StepAttemptEvent.Observation,
-        // StepCompletedEvent.Observation) receive; pinned so a change here — which would start
-        // boxing `object` members as CLR primitives instead — is deliberate.
+        // #586: decides what STJ produces when it parses a value into an `object`-typed member
+        // — a JsonElement (STJ's default) or a boxed CLR primitive. No frozen record has an
+        // `object`-typed member today (Observation and Extra are typed JsonElement, so nothing
+        // relies on this); it is pinned because every setting that affects parsing is pinned.
         Assert.Equal(JsonUnknownTypeHandling.JsonElement, options.UnknownTypeHandling);
 
         // DefaultBufferSize is NOT pinned: it only tunes the internal buffer STJ grows from
@@ -2284,7 +2069,9 @@ public sealed class EventContractFreezeTests
         // Exactly one converter, and it is VerdictJsonConverter — not, e.g., a default enum
         // string converter that would emit "Pass" instead of the canonical "PASS" token. Order
         // matters if a second converter for an overlapping type were ever added (STJ tries
-        // converters in list order), so the count is pinned alongside the identity.
+        // converters in list order), so the count is pinned alongside the identity. A
+        // member-level [JsonConverter] takes precedence over this list (MEASURED (a) in the file
+        // header), and the member census pins those.
         Assert.Single(options.Converters);
         Assert.IsType<VerdictJsonConverter>(options.Converters[0]);
 
@@ -2309,20 +2096,18 @@ public sealed class EventContractFreezeTests
         //     appended to this specific instance, by this file or by anything else in the
         //     process.
         //   • A PRIVATE `new DefaultJsonTypeInfoResolver()`, by contrast, keeps
-        //     Modifiers.IsReadOnly == false EVEN AFTER the JsonSerializerOptions that references
-        //     it has itself been through MakeReadOnly() — measured: a modifier appended to such
-        //     a resolver AFTER MakeReadOnly() still took effect on the NEXT Serialize call,
-        //     renaming a property from the wire ("Value") to "renamed" in the output.
-        // Assert.Same below is therefore what makes this pin meaningful: it proves CreateOptions
-        // installed the resolver that cannot be mutated, not one that only happens to carry no
-        // modifiers RIGHT NOW but remains just as mutable, after MakeReadOnly, as the renaming
-        // example above.
+        //     Modifiers.IsReadOnly == false after the JsonSerializerOptions that references it
+        //     has been through MakeReadOnly(), UNTIL ITS FIRST USE: a modifier appended in that
+        //     window took effect on the first Serialize call (renaming the wire property "Value"
+        //     to "renamed"), after which Modifiers.IsReadOnly is true and Modifiers.Add throws
+        //     InvalidOperationException.
+        // Assert.Same below therefore proves CreateOptions installed a resolver no code can
+        // append a modifier to, rather than one that carries no modifiers now but would accept
+        // one from any caller that reaches Options.TypeInfoResolver before the first
+        // (de)serialisation.
         Assert.Same(JsonSerializerOptions.Default.TypeInfoResolver, options.TypeInfoResolver);
 
-        // Belt-and-braces, now implied by Assert.Same above (the shared default resolver is
-        // never observed with a non-empty Modifiers list, since nothing can append to it) —
-        // kept because it fails with a more specific message ("Modifiers was not empty") if a
-        // future STJ version ever changes that behaviour.
+        // No modifier rewrites any type's contract: the resolver's Modifiers list is empty.
         Assert.Empty(resolver.Modifiers);
     }
 
