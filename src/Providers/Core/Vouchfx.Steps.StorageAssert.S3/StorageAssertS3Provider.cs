@@ -4,19 +4,20 @@
 // This is the FIRST provider of the storage-assert family. Steps always name the dotted form
 // (`storage-assert.s3`) — bare family names are not part of the language.
 //
-// Intent: observe the SUT's outbound file drop into an S3-compatible object store (MinIO,
-// provisioned as the "minio" dependency type — see EnvironmentMapper) and assert on object
-// existence, size, content type, user metadata, and (optionally) the body's SHA-256 digest or
-// a body substring. This is how a suite proves a business transaction actually WROTE a file —
-// an export, a generated report, an uploaded attachment — the same "did the system actually do
-// the thing" signal metrics-assert provides for counters/gauges.
+// Intent: observe the SUT's outbound file drop into an S3-compatible object store (provisioned
+// as the "s3" dependency type, backed by RustFS, or the "minio" dependency type, backed by
+// MinIO — see EnvironmentMapper) and assert on object existence, size, content type, user
+// metadata, and (optionally) the body's SHA-256 digest or a body substring. This is how a suite
+// proves a business transaction actually WROTE a file — an export, a generated report, an
+// uploaded attachment — the same "did the system actually do the thing" signal metrics-assert
+// provides for counters/gauges.
 //
-// Connection-string form (produced by EnvironmentMapper's "minio" registration):
+// Connection-string form (produced by both EnvironmentMapper registrations, "s3" and "minio"):
 //   ServiceURL=http://<host>:<port>;AccessKey=<user>;SecretKey=<password>
 // ParseConnectionString (in the emitted helper) splits this key=value;… form and builds an
 // AmazonS3Config { ServiceURL, ForcePathStyle = true } + BasicAWSCredentials pair.
-// ForcePathStyle=true is REQUIRED for MinIO (virtual-hosted-style bucket addressing does not
-// resolve against a plain host:port endpoint).
+// ForcePathStyle=true is REQUIRED for both backends (virtual-hosted-style bucket addressing does
+// not resolve against a plain host:port endpoint).
 //
 // Behaviour per attempt (idempotent — HEAD then, only if declared, a bounded GET; fully
 // RETRY-compatible with no special-case code, exactly like every other assert/expect provider):
@@ -115,7 +116,7 @@ public sealed class StorageAssertS3Provider
           "required": ["target", "bucket", "key", "expect"],
           "properties": {
             "target": {
-              "description": "Logical name of the minio dependency to query, as declared under environment.dependencies.",
+              "description": "Logical name of the s3 or minio dependency to query, as declared under environment.dependencies.",
               "type": "string",
               "minLength": 1
             },
@@ -296,21 +297,18 @@ public sealed class StorageAssertS3Provider
                 "— declare an exact size or a lower bound, not both.");
         }
 
-        // Dependency reconciliation: target must name a declared minio dependency (the only
-        // S3-compatible dependency type this provider supports in v1).
+        // Dependency reconciliation: target must name a declared dependency of one of the two
+        // S3-compatible dependency types — "s3" (RustFS, #581) or "minio". Both registrations
+        // produce the same connection-string form, so the emitted helper needs no per-type code.
         if (!string.IsNullOrWhiteSpace(model.Target))
         {
-            if (!ctx.DeclaredDependencies.TryGetValue(model.Target, out var depType))
+            if (!ctx.DeclaredDependencies.TryGetValue(model.Target, out var depType)
+                || !(string.Equals(depType, "s3", StringComparison.Ordinal)
+                    || string.Equals(depType, "minio", StringComparison.Ordinal)))
             {
                 errors.Add(
-                    $"storage-assert.s3: 'target' '{model.Target}' is not a " +
-                    "minio dependency declared in environment.dependencies.");
-            }
-            else if (!string.Equals(depType, "minio", StringComparison.Ordinal))
-            {
-                errors.Add(
-                    $"storage-assert.s3: 'target' '{model.Target}' is not a " +
-                    "minio dependency declared in environment.dependencies.");
+                    $"storage-assert.s3: 'target' '{model.Target}' is not an s3 or minio " +
+                    "dependency declared in environment.dependencies.");
             }
         }
 
@@ -348,7 +346,7 @@ public sealed class StorageAssertS3Provider
 
             /// <summary>
             /// Parses the "ServiceURL=…;AccessKey=…;SecretKey=…" connection-string form
-            /// EnvironmentMapper's "minio" registration produces.
+            /// EnvironmentMapper's "s3" and "minio" registrations produce.
             /// </summary>
             private static void ParseConnectionString(
                 string connStr, out string serviceUrl, out string accessKey, out string secretKey)
@@ -434,7 +432,7 @@ public sealed class StorageAssertS3Provider
                     // (§7); stacking the AWS SDK's own default retries (which can otherwise wait
                     // up to ~100s per attempt against an unreachable endpoint) underneath that
                     // would make a single poll attempt hang far longer than the step's own
-                    // timeout budget. A local MinIO container responds in milliseconds when
+                    // timeout budget. A local MinIO or RustFS container responds in milliseconds when
                     // healthy, so 5s is generous headroom, not a tight race.
                     // Step-timeout convention (#232): a declared step budget governs this call —
                     // lift the transport bound (infinite) and let the step token (ct) be the sole
@@ -876,10 +874,18 @@ public sealed class StorageAssertS3Provider
     // ── IResourceContributor<StorageAssertS3Model> ────────────────────────────
 
     /// <inheritdoc />
+    /// <remarks>
+    /// <c>Family</c> is <c>"s3"</c>, the protocol both accepted dependency types implement, rather
+    /// than a dependency type: this method sees only the model, not the declared type of
+    /// <c>target</c>, so it cannot tell an <c>s3</c> target from a <c>minio</c> one (#581).
+    /// Nothing in the engine branches on the value — <c>ProviderPipeline.Compile</c> records it in
+    /// <c>PipelineResult.ResourcePlan</c>, which no engine component reads; topology comes from
+    /// <c>environment.dependencies</c> through <c>EnvironmentMapper</c>.
+    /// </remarks>
     public IEnumerable<ResourceRequirement> Resources(StorageAssertS3Model model)
     {
         yield return new ResourceRequirement(
-            Family: "minio",
+            Family: "s3",
             Name: model.Target,
             Image: null);
     }

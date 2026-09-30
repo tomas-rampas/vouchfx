@@ -125,6 +125,51 @@ public sealed class SuiteScaffolderTests
             + $"{Environment.NewLine}--- YAML ---{Environment.NewLine}{yaml}");
     }
 
+    private static StepKindRegistry BuildStorageAssertRegistry() =>
+        StepKindRegistry.BuildAndFreeze(new IStepProvider[]
+        {
+            new StorageAssertS3Provider(),
+        });
+
+    private static string ScaffoldStorageStep(params ScaffoldDependencyIntent[] dependencies) =>
+        SuiteScaffolder.Generate(
+            BuildStorageAssertRegistry(),
+            new ScaffoldIntent(
+                Steps: new[] { new ScaffoldStepIntent("check-object", "storage-assert.s3") },
+                Dependencies: dependencies),
+            engineVersion: "test");
+
+    /// <summary>
+    /// With no <c>s3</c> dependency declared, a <c>storage-assert.s3</c> step still targets the
+    /// declared <c>minio</c> one — found by kind preference, not by the first-dependency fallback,
+    /// which here would pick the postgres dependency listed first.
+    /// </summary>
+    [Fact]
+    public void Generate_StorageAssertS3_WithoutS3Dependency_TargetsTheMinioDependency()
+    {
+        var yaml = ScaffoldStorageStep(
+            new ScaffoldDependencyIntent("db", "postgres"),
+            new ScaffoldDependencyIntent("uploads", "minio"));
+
+        Assert.Contains("target: uploads", yaml, StringComparison.Ordinal);
+        Assert.DoesNotContain("target: db", yaml, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// With both S3-compatible kinds declared, the step targets the <c>s3</c> dependency (#581),
+    /// even when the <c>minio</c> one is listed first and would win the first-dependency fallback.
+    /// </summary>
+    [Fact]
+    public void Generate_StorageAssertS3_WithMinioAndS3Dependencies_PrefersTheS3Dependency()
+    {
+        var yaml = ScaffoldStorageStep(
+            new ScaffoldDependencyIntent("legacy", "minio"),
+            new ScaffoldDependencyIntent("exports", "s3"));
+
+        Assert.Contains("target: exports", yaml, StringComparison.Ordinal);
+        Assert.DoesNotContain("target: legacy", yaml, StringComparison.Ordinal);
+    }
+
     private static ScaffoldIntent MultiTypeIntent() => new(
         Steps: new[]
         {
@@ -339,6 +384,7 @@ public sealed class SuiteScaffolderTests
     {
         Assert.True(KnownDependencyKinds.Contains("postgres"));
         Assert.True(KnownDependencyKinds.Contains("minio"));
+        Assert.True(KnownDependencyKinds.Contains("s3"));
         Assert.True(KnownDependencyKinds.Contains("mailpit"));
         Assert.False(KnownDependencyKinds.Contains("not-a-real-dep"));
     }

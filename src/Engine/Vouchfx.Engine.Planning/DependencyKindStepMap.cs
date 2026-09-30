@@ -72,13 +72,17 @@ public static class DependencyKindStepMap
             // S3-compatible test-double image; its asserting provider speaks the S3 protocol,
             // not a "minio" one.
             ["minio"] = new[] { "storage-assert.s3" },
+            // s3 -> storage-assert.s3 (#581): the kind named after the protocol rather than a
+            // product. Its token happens to equal the provider token, but the entry stays
+            // explicit like every other one here — this table is never derived.
+            ["s3"] = new[] { "storage-assert.s3" },
         };
 
     /// <summary>
     /// Dependency kinds explicitly known to have no asserting/observing Core provider yet.
     /// Every entry must carry an inline comment justifying it (REQ-007 case (a)). Empty
-    /// today — every one of the thirteen <c>KnownDependencyKinds.All</c> entries maps to at
-    /// least one candidate step type above. Kept as a real (empty) set, not omitted
+    /// today — every <c>KnownDependencyKinds.All</c> entry maps to at least one candidate step
+    /// type above. Kept as a real (empty) set, not omitted
     /// entirely, so <c>DependencyKindStepMapDriftTests</c>'s exemption branch has somewhere
     /// to register a future dependency kind that ships with no asserting/observing Core
     /// provider yet.

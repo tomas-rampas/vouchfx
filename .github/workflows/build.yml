@@ -327,6 +327,13 @@ jobs:
       #                                            (MySqlContainerImageTags:
       #                                            docker.io/library/mysql:9.7);
       #                                            no test overrides the tag.
+      #   rustfs/rustfs@sha256:8cc98017…         — StorageAssertS3DockerS3KindTests object
+      #                                            store (the `s3` dependency kind, #581).
+      #                                            Pulled by DIGEST, not tag, so the warmed
+      #                                            reference is exactly the one the engine
+      #                                            hands DCP
+      #                                            (EnvironmentMapper.S3RustfsImageDigest,
+      #                                            the rustfs/rustfs:1.0.0 index).
       #
       # Fatal on a missing pin, tolerant of a rate limit (#533) — this step is a
       # PIN CHECK, not just a cache warm
@@ -341,7 +348,7 @@ jobs:
       # MEASURED refutation of that reasoning, and the reason the BLANKET demotion
       # is gone (a warn-and-continue path survives, but only for the one bucket
       # below that earns it): minio/minio stopped being publicly pullable from
-      # Docker Hub. StorageAssertS3DockerTests carries EIGHT [Fact] rows, all
+      # Docker Hub. StorageAssertS3DockerTests then carried EIGHT [Fact] rows, all
       # docker-trait; SEVEN then failed on EVERY run of this lane. The eighth
       # (Execute_AbsentConnKey_ReturnsEnvironmentError) survived because it starts
       # no topology and so never pulls. What the log showed for the seven was not a
@@ -386,11 +393,11 @@ jobs:
       # WHAT RETRYING COSTS, stated per image because that is the honest unit.
       # An earlier version of this comment claimed "at most ~45s on a run"; that
       # was simply wrong. The backoff is 15s + 30s = 45s PER FAILING IMAGE, and the
-      # loop walks all 18 entries serially, so 48s (that backoff plus three refused
-      # attempts) is the cost of ONE doomed image and the run-level figure is 18x
+      # loop walks all 19 entries serially, so 48s (that backoff plus three refused
+      # attempts) is the cost of ONE doomed image and the run-level figure is 19x
       # that. Combined with the per-pull bound
       # below, a run in which every pin fails would otherwise spend
-      # 18 x (3 x 120s + 45s) = 2h 1m before aborting. That is why the step carries
+      # 19 x (3 x 120s + 45s) = 2h 8m before aborting. That is why the step carries
       # a declarative `timeout-minutes` budget — see the arithmetic at the
       # per-pull-bound comment below, which is where the two numbers are reconciled.
       #
@@ -497,9 +504,9 @@ jobs:
       # is actually bought is diagnosis, not gating — a named annotation in a few
       # minutes instead of a 44-minute run that never says which image. Be precise
       # about that number rather than saying "within seconds": the pulls run
-      # serially in list order, and the minio pin is LAST of
-      # eighteen, so on a cold cache its annotation arrives only after the other
-      # seventeen. The measured cold sweep is 164.4s of per-image pulls; substitute
+      # serially in list order, and the minio pin is eighteenth of
+      # nineteen, so on a cold cache its annotation arrives only after the
+      # seventeen before it. The measured cold sweep is 164.4s of per-image pulls; substitute
       # a small image's few-second success (the pre-#580 minio pin measured 3.8s)
       # for the 48s a failing image costs, giving 164.4 - 3.8 + 48 = 208.6s, about
       # 3.5 minutes. The gain over a 44-minute anonymous health-gate timeout is an
@@ -511,9 +518,9 @@ jobs:
         # of our own. Neither this job nor this step previously set one, so the
         # effective bound was GitHub's 360-minute job default. Derivation of the 25
         # is in the `per_pull_timeout` comment inside the script and is driven by
-        # the MIXED failure case — one stalling image plus seventeen fail-fast ones
-        # is 1,221s, so the budget must exceed 20m 21s for a fully misconfigured
-        # list to finish being read. A registry-wide stall (2h 1m) deliberately does
+        # the MIXED failure case — one stalling image plus eighteen fail-fast ones
+        # is 1,269s, so the budget must exceed 21m 9s for a fully misconfigured
+        # list to finish being read. A registry-wide stall (2h 8m) deliberately does
         # NOT fit; see that comment for what the operator sees when it truncates.
         timeout-minutes: 25
         run: |
@@ -683,7 +690,7 @@ jobs:
           #
           # 120s is chosen from MEASURED data, not intuition. In the last fully
           # green run of this lane (34883024632, 2026-09-14), the whole step took
-          # 165s for all 18 images from a cold cache, and the slowest SINGLE pull
+          # 165s for all 18 images then on the list from a cold cache, and the slowest SINGLE pull
           # was confluentinc/cp-schema-registry:7.6.1 at 28.9s — not the SQL Server
           # image, which was third at 19.1s behind elasticsearch's 21.1s. 120s is
           # therefore ~4x the slowest observed cold pull, which leaves room for a
@@ -708,49 +715,52 @@ jobs:
           # `bitnamilegacy/minio`, so the list now has 3 non-Hub images; that image's
           # own cold-pull time is UNMEASURED (compressed size ~99 MB, measured
           # locally), so the 165s/30.2s totals above describe the pre-#580 run only
-          # and are not re-derived for the current list here.
+          # and are not re-derived for the current list here. #581 added a
+          # nineteenth pin, rustfs/rustfs, also on Docker Hub; its cold-pull time on
+          # a runner is UNMEASURED too (its linux/amd64 layers total 104.6 MiB
+          # compressed, measured from the registry manifest).
           #
-          #   * Mixed, and the binding case: one stall plus seventeen fail-fast
-          #     absents = 405s + 17 x 48s = 1,221s = 20m 21s. This MUST fit —
+          #   * Mixed, and the binding case: one stall plus eighteen fail-fast
+          #     absents = 405s + 18 x 48s = 1,269s = 21m 9s. This MUST fit —
           #     "reports every pin it reaches" is worth little if a genuinely
           #     misconfigured list cannot finish being read.
           #   * Rate-limit sweep, AFTER the aggregate cap above: the first Hub image
-          #     spends a full 48s, the remaining 14 Hub images each take all three
-          #     attempts back to back with no sleeps (~3s each = 42s), and the 3
+          #     spends a full 48s, the remaining 15 Hub images each take all three
+          #     attempts back to back with no sleeps (~3s each = 45s), and the 3
           #     non-Hub images pull normally (26.4s: the 30.2s measured pre-#580,
           #     less minio's own 3.8s, which moved into the Hub group above).
-          #     48 + 42 + 26.4 = 116.4s, under 2 minutes. The like-for-like
-          #     comparison is against the SAME 18 images without the cap:
-          #     15 x 48s + 26.4s = 746.4s.
-          #   * Registry-wide stall: 18 x 405s = 2h 1m. THIS CANNOT BE BUDGETED and
+          #     48 + 45 + 26.4 = 119.4s, under 2 minutes. The like-for-like
+          #     comparison is against the SAME 19 images without the cap:
+          #     16 x 48s + 26.4s = 794.4s.
+          #   * Registry-wide stall: 19 x 405s = 2h 8m. THIS CANNOT BE BUDGETED and
           #     is not meant to be. At 25 minutes the step reaches its first three
           #     or four images, annotates each as a named stall, and is then killed
           #     by the runner. What the operator sees is three stall annotations and
           #     NO tally line — which is the intended signal, because the tally's
           #     absence is what says "this list was truncated" (see its own comment
           #     below). Three annotations naming a registry outage are the whole
-          #     diagnosis; the remaining fifteen identical timeouts would add 101
-          #     minutes (15 x 405s) and no information.
+          #     diagnosis; the remaining sixteen identical timeouts would add 108
+          #     minutes (16 x 405s) and no information.
           #
           # THE ONE ASSUMPTION THIS BUDGET RESTS ON, named because everything above
           # leans on it implicitly: that TWO OR MORE SIMULTANEOUS STALLS ARE A
           # REGISTRY OUTAGE rather than a coincidence, and so are not worth
           # budgeting for. The arithmetic is unforgiving about it — two stalls plus
-          # sixteen fail-fast absents is 2 x 405s + 16 x 48s = 1,578s, which exceeds
+          # seventeen fail-fast absents is 2 x 405s + 17 x 48s = 1,626s, which exceeds
           # this 1,500s budget, and that scenario need not be a registry-wide
           # outage at all; it is only the assumption above that treats it as one. If
           # the assumption is wrong, the symptom is precisely the truncated list
           # described above: annotations for the images reached, no tally, and the
           # operator re-runs to see the rest. Raising the budget to cover N
           # simultaneous stalls is possible but self-defeating — each one costs
-          # 405s, so covering three pushes it past 32 minutes, and the whole point
+          # 405s, so covering three pushes it past 33 minutes, and the whole point
           # of a declarative budget is to abort an outage quickly. The trade made
           # here is: cover every single-stall shape completely, accept truncation
           # beyond that, and make the truncation legible.
           #
-          # `timeout-minutes: 25` therefore comes from the mixed case: 1,221s plus
-          # ~23% for runner variance is ~1,500s. It still aborts a registry outage
-          # in 25 minutes rather than the 2h 1m the loop would otherwise take, or
+          # `timeout-minutes: 25` therefore comes from the mixed case: 1,269s plus
+          # ~18% for runner variance is ~1,500s. It still aborts a registry outage
+          # in 25 minutes rather than the 2h 8m the loop would otherwise take, or
           # the 6h the runner's own default allowed before this step declared one.
           #
           # IF `timeout` IS MISSING the bound degrades, but not to nothing: the
@@ -779,26 +789,27 @@ jobs:
           # quay.io or mcr.microsoft.com, and capping those would remove a real
           # defence against an unrelated blip while saving nothing, since they were
           # never going to be limited. MEASURED composition of the list below (#580
-          # moved minio onto the unqualified Docker Hub path): 15 of the 18 pins
-          # are Docker Hub, 1 quay.io, 2 mcr.microsoft.com.
+          # moved minio onto the unqualified Docker Hub path, and #581 added the
+          # rustfs pin there): 16 of the 19 pins are Docker Hub, 1 quay.io,
+          # 2 mcr.microsoft.com.
           #
           # SCOPED TO THE BACKOFF, not to the attempts — and the arithmetic is the
           # argument, not a preference. For a RATE-LIMITED failure, on this file's
           # one cost assumption (~1s per refused attempt, plus 15s + 30s of backoff)
-          # and over the 15 Hub pins:
-          #   no cap ..................... 15 x 48s = 720s
-          #   cap the ATTEMPTS to 1 ...... 48s + 14 x  1s =  62s   (saves 658s)
-          #   cap the BACKOFF to 0 ....... 48s + 14 x  3s =  90s   (saves 630s)
+          # and over the 16 Hub pins:
+          #   no cap ..................... 16 x 48s = 768s
+          #   cap the ATTEMPTS to 1 ...... 48s + 15 x  1s =  63s   (saves 705s)
+          #   cap the BACKOFF to 0 ....... 48s + 15 x  3s =  93s   (saves 675s)
           # The backoff is essentially the whole saving; for a rate-limited failure
-          # keeping all three attempts costs 28s, which is 1.9% of the step's 1500s
+          # keeping all three attempts costs 30s, which is 2.0% of the step's 1500s
           # budget. Note the limit of that figure: the cap bounds SLEEP time, not
           # wall time, and it arms on a `transient` classification but then applies
           # to every later failure on that registry — so a capped image that STALLS
           # costs 3 x 120s = 360s where the retired attempt-cap would have bounded
           # it at one 120s attempt. That case is covered by the outage assumption
-          # above, not by the 28s figure. An earlier version
-          # of this block capped the ATTEMPTS instead, and bought that 1.9% by
-          # disarming the retry defence for the fourteen remaining Hub pins: the
+          # above, not by the 30s figure. An earlier version
+          # of this block capped the ATTEMPTS instead, and bought that 2.0% by
+          # disarming the retry defence for the fifteen remaining Hub pins: the
           # next one to fail for any unclassifiable reason — a TLS handshake
           # timeout, say — went straight to the fatal `unknown` bucket with no
           # second try, re-introducing exactly the intermittent red the retry-first
@@ -864,8 +875,8 @@ jobs:
           # image burns a full 405s cycle and the budget therefore reaches only the
           # first few. That truncation is BY DESIGN, not an oversight — two
           # simultaneous stalls are a registry outage, which the first stall's own
-          # annotation already names, and grinding through sixteen more identical
-          # timeouts would add 108 minutes (16 x 405s) and no information.
+          # annotation already names, and grinding through seventeen more identical
+          # timeouts would add 115 minutes (17 x 405s) and no information.
           #
           # WHAT AN OPERATOR SHOULD CONCLUDE FROM A TRUNCATED LIST: the tally line
           # printed after the loop is the marker, and its absence has more than one
@@ -892,7 +903,8 @@ jobs:
             mcr.microsoft.com/azure-messaging/servicebus-emulator:1.1.2 \
             quay.io/prometheus/node-exporter:v1.8.2 \
             amazon/dynamodb-local:2.5.2 \
-            bitnamilegacy/minio:2025.7.23-debian-12-r5 ; do
+            bitnamilegacy/minio:2025.7.23-debian-12-r5 \
+            rustfs/rustfs@sha256:8cc9801755448b71a786705ce76692c77e14936cccd87cf2fc31842e58f4d1ff ; do
             # FENCE THE RAW PULL OUTPUT. The two printf sites below echo the
             # registry's (or the local daemon's) response into the log verbatim,
             # and the runner parses `::`-prefixed workflow commands out of ORDINARY

@@ -1327,6 +1327,7 @@ public sealed class EnvironmentMapperTests : IDisposable
     [InlineData("MongoDB", "mongodb")]
     [InlineData("SqlServer", "sqlserver")]
     [InlineData("Redis", "redis")]
+    [InlineData("S3", "s3")]
     public void Map_DependencyTypeWrongCase_Throws_NamingCorrectSpelling(
         string wrongCaseType, string canonicalType)
     {
@@ -1350,8 +1351,8 @@ public sealed class EnvironmentMapperTests : IDisposable
     }
 
     /// <summary>
-    /// Every one of the thirteen canonical, exact-case dependency kind spellings must keep
-    /// working — this change narrows accepted case, it must never narrow the accepted vocabulary.
+    /// Every canonical, exact-case dependency kind spelling must keep working — this change
+    /// narrows accepted case, it must never narrow the accepted vocabulary.
     /// </summary>
     [Theory]
     [InlineData("postgres")]
@@ -1367,7 +1368,8 @@ public sealed class EnvironmentMapperTests : IDisposable
     [InlineData("azureservicebus")]
     [InlineData("dynamodb")]
     [InlineData("minio")]
-    public void Map_AllThirteenCanonicalDependencyTypes_Succeed(string canonicalType)
+    [InlineData("s3")]
+    public void Map_AllCanonicalDependencyTypes_Succeed(string canonicalType)
     {
         // Arrange
         var env = new EnvironmentSpec(
@@ -1798,6 +1800,255 @@ public sealed class EnvironmentMapperTests : IDisposable
         }
 
         Assert.Equal(new object[] { "server", "/tmp/minio-data" }, args);
+    }
+
+    // -----------------------------------------------------------------------
+    // Map_S3Dependency (#581) — the RustFS-backed, protocol-named kind beside minio.
+    // -----------------------------------------------------------------------
+
+    private const string S3Digest = "8cc9801755448b71a786705ce76692c77e14936cccd87cf2fc31842e58f4d1ff";
+
+    private static (IDistributedApplicationBuilder Builder, MappedTopology Mapped, IResource Resource) MapSingleS3(
+        DependencySpec spec, string? imageRegistry = null)
+    {
+        var env = new EnvironmentSpec(
+            Services: null,
+            Dependencies: new Dictionary<string, DependencySpec> { ["exports"] = spec },
+            Seed: null,
+            ImageRegistry: imageRegistry,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+        mapped.Configure(builder);
+        return (builder, mapped, builder.Resources.Single(r => r.Name == "exports"));
+    }
+
+    /// <summary>
+    /// An <c>s3</c> dependency is a plain container pinned by DIGEST to RustFS 1.0.0, qualified
+    /// with docker.io in the annotation's Registry field, and health-gated on itself. The tag is
+    /// absent because Aspire's ContainerImageAnnotation holds Tag and SHA256 as mutually exclusive
+    /// fields, so the reference DCP pulls is the digest form.
+    /// </summary>
+    [Fact]
+    public void Map_S3Dependency_AddsDigestPinnedRustfsContainer_GateOnSelf()
+    {
+        var (_, mapped, resource) = MapSingleS3(new DependencySpec(Type: "s3", Version: null, Extra: null));
+
+        Assert.Contains("exports", mapped.HealthGateResourceNames);
+        Assert.Contains("exports", mapped.DependencyNames);
+        Assert.IsType<ContainerResource>(resource);
+
+        var image = resource.Annotations.OfType<ContainerImageAnnotation>().Single();
+        Assert.Equal("rustfs/rustfs", image.Image);
+        Assert.Equal(S3Digest, image.SHA256);
+        Assert.Null(image.Tag);
+        Assert.Equal("docker.io", image.Registry);
+
+        Assert.True(resource.TryGetContainerImageName(out var reference));
+        Assert.Equal($"docker.io/rustfs/rustfs@sha256:{S3Digest}", reference);
+    }
+
+    /// <summary>
+    /// The engine's pinned digest is the one this test file pins, so a digest bump in the mapper
+    /// is a deliberate two-place edit (the CI pre-pull list names the same digest).
+    /// </summary>
+    [Fact]
+    public void Map_S3Dependency_DigestConstantMatchesPinnedRelease()
+    {
+        Assert.Equal("rustfs/rustfs", EnvironmentMapper.S3RustfsImage);
+        Assert.Equal(S3Digest, EnvironmentMapper.S3RustfsImageDigest);
+        Assert.Matches("^[0-9a-f]{64}$", EnvironmentMapper.S3RustfsImageDigest);
+    }
+
+    /// <summary>
+    /// RustFS takes its data path as the single argument, and it must be '/data': the image's
+    /// entrypoint creates only the directories named by its own RUSTFS_VOLUMES (/data), and the
+    /// server does not create a path given as an argument.
+    /// </summary>
+    [Fact]
+    public async Task Map_S3Dependency_StartsOnDataVolume()
+    {
+        var (_, _, resource) = MapSingleS3(new DependencySpec(Type: "s3", Version: null, Extra: null));
+
+        var args = new List<object>();
+        var argsContext = new CommandLineArgsCallbackContext(args, resource, CancellationToken.None);
+        foreach (var argsCallback in resource.Annotations.OfType<CommandLineArgsCallbackAnnotation>())
+        {
+            await argsCallback.Callback(argsContext);
+        }
+
+        Assert.Equal(new object[] { "/data" }, args);
+    }
+
+    /// <summary>
+    /// The credentials are set through RustFS's own variable names, with the same fixed local
+    /// test values minio uses, and nothing else is set by the engine on this container.
+    /// </summary>
+    [Fact]
+    public async Task Map_S3Dependency_SetsRustfsCredentials()
+    {
+        var (_, _, resource) = MapSingleS3(new DependencySpec(Type: "s3", Version: null, Extra: null));
+
+        var vars = await ResolveEnvVarsAsync(resource);
+
+        Assert.Equal("vouchfx-minio", EnvValueText(vars["RUSTFS_ACCESS_KEY"]));
+        Assert.Equal("vouchfx-minio-secret", EnvValueText(vars["RUSTFS_SECRET_KEY"]));
+        Assert.DoesNotContain("MINIO_ROOT_USER", vars.Keys);
+        Assert.DoesNotContain("MINIO_ROOT_PASSWORD", vars.Keys);
+    }
+
+    /// <summary>
+    /// One http endpoint on container port 9000, gated by an HTTP check on the readiness path
+    /// '/health/ready' expecting 200 — not '/health', which answers 200 before storage is ready.
+    /// </summary>
+    [Fact]
+    public void Map_S3Dependency_ExposesPort9000_GatesOnReadinessPath()
+    {
+        var (_, _, resource) = MapSingleS3(new DependencySpec(Type: "s3", Version: null, Extra: null));
+
+        var endpoint = Assert.Single(resource.Annotations.OfType<EndpointAnnotation>());
+        Assert.Equal("http", endpoint.Name);
+        Assert.Equal(9000, endpoint.TargetPort);
+
+        var healthCheck = Assert.Single(resource.Annotations.OfType<HealthCheckAnnotation>());
+        Assert.Equal("exports_http_/health/ready_200_check", healthCheck.Key);
+    }
+
+    /// <summary>
+    /// The connection string has the same ServiceURL/AccessKey/SecretKey shape as minio's, so
+    /// storage-assert.s3 reads either kind with one parser. Resolved without Docker by giving the
+    /// endpoint an allocation by hand: the mapper's ResolveServices reads only the endpoint.
+    /// </summary>
+    [Fact]
+    public async Task Map_S3Dependency_ConnectionString_HasMinioShape()
+    {
+        var (_, mapped, resource) = MapSingleS3(new DependencySpec(Type: "s3", Version: null, Extra: null));
+
+        var endpoint = resource.Annotations.OfType<EndpointAnnotation>().Single();
+        endpoint.AllocatedEndpoint = new AllocatedEndpoint(endpoint, "localhost", 49152);
+
+        var resolved = await mapped.ResolveServices(null!, CancellationToken.None);
+
+        Assert.Equal(
+            "ServiceURL=http://localhost:49152;AccessKey=vouchfx-minio;SecretKey=vouchfx-minio-secret",
+            resolved["exports"]);
+    }
+
+    /// <summary>
+    /// An env-level 'imageRegistry' reaches the unqualified default: the Registry field moves
+    /// from docker.io to the mirror while the digest pin is kept.
+    /// </summary>
+    [Fact]
+    public void Map_S3Dependency_ImageRegistry_AppliesToUnqualifiedDefault()
+    {
+        var (_, _, resource) = MapSingleS3(
+            new DependencySpec(Type: "s3", Version: null, Extra: null),
+            imageRegistry: "artifactory.mycompany.com");
+
+        var image = resource.Annotations.OfType<ContainerImageAnnotation>().Single();
+        Assert.Equal("rustfs/rustfs", image.Image);
+        Assert.Equal("artifactory.mycompany.com", image.Registry);
+        Assert.Equal(S3Digest, image.SHA256);
+
+        Assert.True(resource.TryGetContainerImageName(out var reference));
+        Assert.Equal($"artifactory.mycompany.com/rustfs/rustfs@sha256:{S3Digest}", reference);
+    }
+
+    /// <summary>
+    /// 'version:' on an s3 dependency is a tag on the built-in repository, and setting it
+    /// replaces the digest: a digest left in place would silently win over the author's tag.
+    /// </summary>
+    [Fact]
+    public void Map_S3Dependency_VersionOverride_ReplacesDigestWithTag()
+    {
+        var (_, _, resource) = MapSingleS3(new DependencySpec(Type: "s3", Version: "1.0.1", Extra: null));
+
+        var image = resource.Annotations.OfType<ContainerImageAnnotation>().Single();
+        Assert.Equal("rustfs/rustfs", image.Image);
+        Assert.Equal("1.0.1", image.Tag);
+        Assert.Null(image.SHA256);
+
+        Assert.True(resource.TryGetContainerImageName(out var reference));
+        Assert.Equal("docker.io/rustfs/rustfs:1.0.1", reference);
+    }
+
+    /// <summary>
+    /// 'image:' replaces the whole default reference — repository, registry and the default's
+    /// digest — while the engine's '/data' argument still applies under the override.
+    /// </summary>
+    [Fact]
+    public async Task Map_S3Dependency_ImageOverride_ReplacesDigestedDefault()
+    {
+        var (_, _, resource) = MapSingleS3(
+            new DependencySpec(Type: "s3", Version: null, Extra: null)
+            {
+                Image = "registry.example/mirror/rustfs:1.0.0",
+            });
+
+        var image = resource.Annotations.OfType<ContainerImageAnnotation>().Single();
+        Assert.Equal("registry.example/mirror/rustfs", image.Image);
+        Assert.Equal("1.0.0", image.Tag);
+        Assert.Null(image.SHA256);
+        Assert.Null(image.Registry);
+
+        Assert.True(resource.TryGetContainerImageName(out var reference));
+        Assert.Equal("registry.example/mirror/rustfs:1.0.0", reference);
+
+        var args = new List<object>();
+        var argsContext = new CommandLineArgsCallbackContext(args, resource, CancellationToken.None);
+        foreach (var argsCallback in resource.Annotations.OfType<CommandLineArgsCallbackAnnotation>())
+        {
+            await argsCallback.Callback(argsContext);
+        }
+
+        Assert.Equal(new object[] { "/data" }, args);
+    }
+
+    /// <summary>
+    /// A digest-form 'image:' on an s3 dependency pins the author's digest, not the default's.
+    /// </summary>
+    [Fact]
+    public void Map_S3Dependency_DigestImageOverride_PinsTheAuthorsDigest()
+    {
+        const string authorDigest = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+        var (_, _, resource) = MapSingleS3(
+            new DependencySpec(Type: "s3", Version: null, Extra: null)
+            {
+                Image = $"registry.example/mirror/rustfs@sha256:{authorDigest}",
+            });
+
+        Assert.True(resource.TryGetContainerImageName(out var reference));
+        Assert.Equal($"registry.example/mirror/rustfs@sha256:{authorDigest}", reference);
+    }
+
+    /// <summary>
+    /// The minio registration is untouched by #581: same image, tag, arguments and registry.
+    /// </summary>
+    [Fact]
+    public void Map_MinioDependency_IsUnchangedBySiblingS3Kind()
+    {
+        var env = new EnvironmentSpec(
+            Services: null,
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["artefacts"] = new DependencySpec(Type: "minio", Version: null, Extra: null),
+                ["exports"] = new DependencySpec(Type: "s3", Version: null, Extra: null),
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+        mapped.Configure(builder);
+
+        Assert.True(builder.Resources.Single(r => r.Name == "artefacts").TryGetContainerImageName(out var minioRef));
+        Assert.Equal("docker.io/bitnamilegacy/minio:2025.7.23-debian-12-r5", minioRef);
+        Assert.True(builder.Resources.Single(r => r.Name == "exports").TryGetContainerImageName(out var s3Ref));
+        Assert.Equal($"docker.io/rustfs/rustfs@sha256:{S3Digest}", s3Ref);
+        Assert.Contains("artefacts", mapped.HealthGateResourceNames);
+        Assert.Contains("exports", mapped.HealthGateResourceNames);
     }
 
     // -----------------------------------------------------------------------
@@ -2357,6 +2608,55 @@ public sealed class EnvironmentMapperTests : IDisposable
         var envVars = await ResolveEnvVarsAsync(apiResource);
         var resolved = ValueExpressionOf(envVars["SMTP_ADDR"]);
         Assert.Equal("{mail.bindings.smtp.host}:{mail.bindings.smtp.port}", resolved);
+    }
+
+    /// <summary>
+    /// The plain single-endpoint containers (<c>dynamodb</c>, <c>minio</c>, <c>s3</c>) expose
+    /// <c>${conn:dep}</c>, <c>${conn:dep.host}</c> and <c>${conn:dep.port}</c> to a service, all
+    /// read from the http endpoint the registration stages. For these kinds the full form is
+    /// <c>host:port</c> only: the object-store credentials reach steps through the step-facing
+    /// connection string, never through <c>${conn:}</c>. Each kind needs an entry both in the
+    /// accessor table (<c>GetSupportedEnvParts</c>) and in <c>ResolveDependencyEnvAccess</c>;
+    /// dropping it from either turns its row red.
+    /// </summary>
+    [Theory]
+    [InlineData("dynamodb")]
+    [InlineData("minio")]
+    [InlineData("s3")]
+    public async Task Map_ServiceEnv_ConnReferences_PlainHttpContainer_UseHttpEndpoint(string kind)
+    {
+        var env = new EnvironmentSpec(
+            Services: new Dictionary<string, ServiceSpec>
+            {
+                ["api"] = new ServiceSpec(
+                    Image: "myorg/api:1.0",
+                    Project: null,
+                    ImagePullPolicy: null,
+                    HttpPort: null,
+                    Env: new Dictionary<string, string>
+                    {
+                        ["STORE_ADDR"] = "${conn:store}",
+                        ["STORE_HOST"] = "${conn:store.host}",
+                        ["STORE_PORT"] = "${conn:store.port}",
+                    }),
+            },
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["store"] = new DependencySpec(Type: kind, Version: null, Extra: null),
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+        mapped.Configure(builder);
+
+        var apiResource = builder.Resources.OfType<ContainerResource>().Single(r => r.Name == "api");
+        var envVars = await ResolveEnvVarsAsync(apiResource);
+        Assert.Equal("{store.bindings.http.host}:{store.bindings.http.port}", ValueExpressionOf(envVars["STORE_ADDR"]));
+        Assert.Equal("{store.bindings.http.host}", ValueExpressionOf(envVars["STORE_HOST"]));
+        Assert.Equal("{store.bindings.http.port}", ValueExpressionOf(envVars["STORE_PORT"]));
     }
 
     [Fact]
@@ -5348,7 +5648,7 @@ public sealed class EnvironmentMapperTests : IDisposable
     // dependency-env (spec REQ-003 / REQ-004 / REQ-005 / EDGE-005 / EDGE-006): a
     // managed dependency's own `env:` mapping.
     //
-    // The all-thirteen merge gate and the engine-set-name census both live in their
+    // The every-type merge gate and the engine-set-name census both live in their
     // own file, DependencyEnvCensusTests, because they read the schema and this
     // mapper's own source. What follows is everything those cannot say: which
     // construction SHAPE each of the two named cases stands for, the three refusals
@@ -5422,10 +5722,10 @@ public sealed class EnvironmentMapperTests : IDisposable
 
     /// <summary>
     /// <b>Shape 2 of 2 — the <c>AddContainer</c>-backed shape</b>, for which <c>minio</c> stands
-    /// (so do <c>mailpit</c>, <c>dynamodb</c> and <c>azureservicebus</c>).  Here the retained
-    /// builder IS the container, so the naive implementation happens to work — which is exactly
-    /// why the postgres case above is the other half of the pair rather than a second example of
-    /// the same thing.  minio is also one of the three types that carries engine-set names, and
+    /// (so do <c>mailpit</c>, <c>dynamodb</c>, <c>s3</c> and <c>azureservicebus</c>).  Here the
+    /// retained builder IS the container, so the naive implementation happens to work — which is
+    /// exactly why the postgres case above is the other half of the pair rather than a second
+    /// example of the same thing.  minio is also one of the types that carries engine-set names, and
     /// this row is the proof that carrying them does not make the whole type inert: a
     /// non-reserved key on minio is applied like any other.  The refusal half is pinned
     /// separately below.
@@ -5805,12 +6105,12 @@ public sealed class EnvironmentMapperTests : IDisposable
     /// state would be worse than saying so.
     /// </para>
     /// <para>
-    /// <b>One row per reserved name — all nine</b>, so a canonicalisation that silently drops one
-    /// goes red.  Two of the nine are <c>MINIO_ROOT_PASSWORD</c> and <c>MSSQL_SA_PASSWORD</c>, the
-    /// credential-bearing pair the whole engine-wins argument is about.
+    /// <b>One row per reserved name</b>, so a canonicalisation that silently drops one goes red.
+    /// <c>MINIO_ROOT_PASSWORD</c>, <c>RUSTFS_SECRET_KEY</c> and <c>MSSQL_SA_PASSWORD</c> are among
+    /// them: the credential-bearing names the whole engine-wins argument is about.
     /// </para>
     /// <para>
-    /// <b>The refusal must not echo the author's VALUE.</b>  Two of these nine names carry a
+    /// <b>The refusal must not echo the author's VALUE.</b>  Some of these names carry a
     /// password, so a future edit that appended the rejected value "for helpfulness" would put
     /// author-supplied credential material into every log and report that carries the failure.
     /// Nothing else in this file pins that, so the <c>DoesNotContain</c> below does.
@@ -5826,16 +6126,22 @@ public sealed class EnvironmentMapperTests : IDisposable
     /// a rename and never a missed leak.
     /// </para>
     /// <para>
-    /// <b>The credential clause is SCOPED to <c>minio</c>, and this theory holds it there.</b>
-    /// Only <c>MINIO_ROOT_USER</c>/<c>MINIO_ROOT_PASSWORD</c> are spliced into a connection string
-    /// <c>${conn:...}</c> hands to other scenarios.  <c>elasticsearch</c>'s four names are
-    /// host/port-only, and the <c>azureservicebus</c> emulator's connection string is a fixed
+    /// <b>The credential clause is SCOPED to <c>minio</c> and <c>s3</c>, and this theory holds it
+    /// there.</b> Only <c>MINIO_ROOT_USER</c>/<c>MINIO_ROOT_PASSWORD</c> and
+    /// <c>RUSTFS_ACCESS_KEY</c>/<c>RUSTFS_SECRET_KEY</c> are spliced into a connection string: the
+    /// step-facing one the engine stages for every scenario's steps. A service's
+    /// <c>${conn:...}</c> for those two kinds carries only host and port
+    /// (<see cref="Map_ServiceEnv_ConnReferences_PlainHttpContainer_UseHttpEndpoint"/>), and the
+    /// message says so for those two kinds only — elasticsearch's <c>${conn:}</c> is Aspire's own
+    /// connection-string expression, and azureservicebus refuses <c>${conn:}</c> outright.
+    /// <c>elasticsearch</c>'s four names are configuration, not credentials,
+    /// and the <c>azureservicebus</c> emulator's connection string is a fixed
     /// <c>Endpoint=sb://…;SharedAccessKey=SAS_KEY_VALUE;…</c> containing none of its three — so an
-    /// unscoped "some of them carry the credentials" was untrue for SEVEN of these nine names and
-    /// handed an <c>elasticsearch</c> author refused for <c>ES_JAVA_OPTS</c> an argument with no
-    /// bearing on their case.  Both clauses are asserted on every row: the scoped credential
-    /// aside, and the load-bearing one — "the shape every scenario shares" — which is what is
-    /// actually true for all nine and carries the message alone.
+    /// unscoped "some of them carry the credentials" is untrue for the elasticsearch and
+    /// azureservicebus names and hands an <c>elasticsearch</c> author refused for
+    /// <c>ES_JAVA_OPTS</c> an argument with no bearing on their case.  Both clauses are asserted
+    /// on every row: the scoped credential aside, and the load-bearing one — "the shape every
+    /// scenario shares" — which is true for every reserved name and carries the message alone.
     /// </para>
     /// </remarks>
     [Theory]
@@ -5845,6 +6151,8 @@ public sealed class EnvironmentMapperTests : IDisposable
     [InlineData("elasticsearch", "cluster.routing.allocation.disk.threshold_enabled", "true")]
     [InlineData("minio", "MINIO_ROOT_USER", "attacker")]
     [InlineData("minio", "MINIO_ROOT_PASSWORD", "attacker-password")]
+    [InlineData("s3", "RUSTFS_ACCESS_KEY", "attacker")]
+    [InlineData("s3", "RUSTFS_SECRET_KEY", "attacker-secret-key")]
     [InlineData("azureservicebus", "ACCEPT_EULA", "AUTHOR_DECLINED")]
     [InlineData("azureservicebus", "MSSQL_SA_PASSWORD", "attacker-sa-password")]
     [InlineData("azureservicebus", "SQL_SERVER", "attacker-sql-host")]
@@ -5867,39 +6175,41 @@ public sealed class EnvironmentMapperTests : IDisposable
         Assert.Contains(
             "declare the backend as a service with 'image:'", ex.Message, StringComparison.Ordinal);
 
-        // The clause that is true for all nine, and carries the refusal on its own.
+        // The clause that is true for every reserved name, and carries the refusal on its own.
         Assert.Contains(
             "bring this dependency up in the shape every scenario shares",
             ex.Message,
             StringComparison.Ordinal);
 
-        // The credential aside, SCOPED to minio — see the remarks. Asserted verbatim so a future
-        // edit that re-broadens it to "some of them carry the credentials" goes red on all nine
-        // rows rather than shipping a claim untrue for seven of them.
+        // The credential aside, SCOPED to minio and s3 — see the remarks. Asserted verbatim so a
+        // future edit that re-broadens it to "some of them carry the credentials" goes red on
+        // every row rather than shipping a claim untrue for the elasticsearch and azureservicebus
+        // names.
         Assert.Contains(
-            "and on 'minio' they are the credentials ${conn:<dependency>} advertises to every "
-                + "other scenario consuming it",
+            "and on 'minio' and 's3' they are the credentials in the connection string the engine "
+                + "hands the steps of every scenario that targets it (for those two kinds, a "
+                + "service's ${conn:<dependency>} carries only host and port)",
             ex.Message,
             StringComparison.Ordinal);
 
-        // The NAME and the fact of the refusal, never the VALUE — see the remarks above.  Two of
-        // these nine reserved names are passwords.
+        // The NAME and the fact of the refusal, never the VALUE — see the remarks above.  Some of
+        // these reserved names are passwords.
         Assert.DoesNotContain(authorValue, ex.Message, StringComparison.Ordinal);
     }
 
     /// <summary>
-    /// REQ-004, the other direction — <b>the full per-type matrix</b>.  Every one of the nine
-    /// reserved names is applied normally on every type that does NOT reserve it: the three
-    /// reserved-bearing types against each other, plus <c>postgres</c> standing for the ten types
-    /// that reserve nothing.
+    /// REQ-004, the other direction — <b>the full per-type matrix</b>.  Every reserved name is
+    /// applied normally on every type that does NOT reserve it: the reserved-bearing types
+    /// against each other, plus <c>postgres</c> standing for the types that reserve nothing.
     /// </summary>
     /// <remarks>
     /// Without this direction the check degrades to a global denylist, which is a different and
     /// wrong feature: <c>MSSQL_SA_PASSWORD</c> is the <c>azureservicebus</c> emulator's SQL
     /// wiring and means nothing to <c>elasticsearch</c>, and an author configuring the latter has
-    /// every right to a variable of that name.  Twenty-seven rows rather than nine for a narrower
-    /// reason than "proving the table is per-type": ONE non-reserving type per name already does
-    /// that, because under a global denylist the single row
+    /// every right to a variable of that name.  Each name gets a row on every OTHER kind that
+    /// reserves names, plus <c>postgres</c>, rather than a single row, for a narrower reason than
+    /// "proving the table is per-type": ONE non-reserving type per name already does that,
+    /// because under a global denylist the single row
     /// <c>[postgres, "discovery.type"]</c> expects the key applied, gets it refused, and goes red.
     /// What the full matrix buys is detection of a PARTIALLY over-broad table — a name reserved
     /// for its own type and, by a copy-paste slip, for one other as well, which any single
@@ -5907,31 +6217,48 @@ public sealed class EnvironmentMapperTests : IDisposable
     /// </remarks>
     [Theory]
     [InlineData("minio", "discovery.type")]
+    [InlineData("s3", "discovery.type")]
     [InlineData("azureservicebus", "discovery.type")]
     [InlineData("postgres", "discovery.type")]
     [InlineData("minio", "xpack.security.enabled")]
+    [InlineData("s3", "xpack.security.enabled")]
     [InlineData("azureservicebus", "xpack.security.enabled")]
     [InlineData("postgres", "xpack.security.enabled")]
     [InlineData("minio", "ES_JAVA_OPTS")]
+    [InlineData("s3", "ES_JAVA_OPTS")]
     [InlineData("azureservicebus", "ES_JAVA_OPTS")]
     [InlineData("postgres", "ES_JAVA_OPTS")]
     [InlineData("minio", "cluster.routing.allocation.disk.threshold_enabled")]
+    [InlineData("s3", "cluster.routing.allocation.disk.threshold_enabled")]
     [InlineData("azureservicebus", "cluster.routing.allocation.disk.threshold_enabled")]
     [InlineData("postgres", "cluster.routing.allocation.disk.threshold_enabled")]
     [InlineData("elasticsearch", "MINIO_ROOT_USER")]
+    [InlineData("s3", "MINIO_ROOT_USER")]
     [InlineData("azureservicebus", "MINIO_ROOT_USER")]
     [InlineData("postgres", "MINIO_ROOT_USER")]
     [InlineData("elasticsearch", "MINIO_ROOT_PASSWORD")]
+    [InlineData("s3", "MINIO_ROOT_PASSWORD")]
     [InlineData("azureservicebus", "MINIO_ROOT_PASSWORD")]
     [InlineData("postgres", "MINIO_ROOT_PASSWORD")]
+    [InlineData("elasticsearch", "RUSTFS_ACCESS_KEY")]
+    [InlineData("minio", "RUSTFS_ACCESS_KEY")]
+    [InlineData("azureservicebus", "RUSTFS_ACCESS_KEY")]
+    [InlineData("postgres", "RUSTFS_ACCESS_KEY")]
+    [InlineData("elasticsearch", "RUSTFS_SECRET_KEY")]
+    [InlineData("minio", "RUSTFS_SECRET_KEY")]
+    [InlineData("azureservicebus", "RUSTFS_SECRET_KEY")]
+    [InlineData("postgres", "RUSTFS_SECRET_KEY")]
     [InlineData("elasticsearch", "ACCEPT_EULA")]
     [InlineData("minio", "ACCEPT_EULA")]
+    [InlineData("s3", "ACCEPT_EULA")]
     [InlineData("postgres", "ACCEPT_EULA")]
     [InlineData("elasticsearch", "MSSQL_SA_PASSWORD")]
     [InlineData("minio", "MSSQL_SA_PASSWORD")]
+    [InlineData("s3", "MSSQL_SA_PASSWORD")]
     [InlineData("postgres", "MSSQL_SA_PASSWORD")]
     [InlineData("elasticsearch", "SQL_SERVER")]
     [InlineData("minio", "SQL_SERVER")]
+    [InlineData("s3", "SQL_SERVER")]
     [InlineData("postgres", "SQL_SERVER")]
     public async Task Map_DependencyEnv_ReservedNameOnATypeThatDoesNotReserveIt_IsStillApplied(
         string type,
@@ -5945,12 +6272,13 @@ public sealed class EnvironmentMapperTests : IDisposable
 
     /// <summary>
     /// The other half of the refusal, without which it degrades to "dependency <c>env:</c> does
-    /// nothing on these three types": an ordinary, non-reserved key on one of the three types
-    /// that carries reserved names is applied like any other.
+    /// nothing on these types": an ordinary, non-reserved key on each type that carries reserved
+    /// names is applied like any other.
     /// </summary>
     [Theory]
     [InlineData("elasticsearch")]
     [InlineData("minio")]
+    [InlineData("s3")]
     [InlineData("azureservicebus")]
     public async Task Map_DependencyEnv_NonReservedKey_IsStillApplied(string type)
     {

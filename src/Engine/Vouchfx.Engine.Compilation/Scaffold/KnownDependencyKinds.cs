@@ -36,6 +36,7 @@ public static class KnownDependencyKinds
         "azureservicebus",
         "dynamodb",
         "minio",
+        "s3",
     };
 
     private static readonly HashSet<string> s_set =

@@ -1,11 +1,11 @@
 // Census gate for the dependency-env feature (spec REQ-003, and REQ-004 / EDGE-007 below).
 //
-// REQ-003 promoted this to a MERGE GATE: T2 made `env` legal on all thirteen dependency types in a
+// REQ-003 promoted this to a MERGE GATE: T2 made `env` legal on every dependency type in a
 // frozen, additive-only schema, which is correct only if every type is container-backed. `env`
 // cannot be narrowed off a type inside v1.x, so a type that cannot take it would become a
 // permanent no-op the schema is obliged to keep accepting. This test is the measurement.
 //
-// It enumerates the type list from the SCHEMA, not from a literal here, so adding a fourteenth
+// It enumerates the type list from the SCHEMA, not from a literal here, so adding a new
 // dependency type without wiring the env seam turns this red rather than leaving it silently
 // unmeasured.
 //
@@ -172,8 +172,8 @@ public sealed class DependencyEnvCensusTests
     /// <para>
     /// <b>Both directions are asserted as set equality per type</b>, which is what makes a vacuous
     /// census unreachable.  An attribution engine that resolved nothing at all would not "pass with
-    /// an empty set": every one of the nine reserved names would then be reserved-but-not-set, and
-    /// the test reports nine failures.
+    /// an empty set": every reserved name would then be reserved-but-not-set, and the test reports
+    /// one failure per reserved name.
     /// </para>
     /// <para>
     /// <b>A census that fails OPEN defeats its own purpose</b>, so every step below is arranged to
@@ -201,7 +201,7 @@ public sealed class DependencyEnvCensusTests
     ///     the initialiser's elements, so an entry ends exactly where its object-creation
     ///     expression ends.  No text scanning is involved, which removes two ways a splitter
     ///     loses entries: bounding the LAST entry at end-of-file (sweeping every later
-    ///     <c>WithEnvironment</c> in the file into <c>minio</c>'s block), and matching
+    ///     <c>WithEnvironment</c> in the file into the last registration's block), and matching
     ///     <c>= new DependencyRegistration(</c> as text, which an IDE0090 "use target-typed new"
     ///     refactor to <c>= new(</c> silently reduces to no match at all.
     ///   </description></item>
@@ -978,7 +978,7 @@ public sealed class DependencyEnvCensusTests
 
     /// <summary>
     /// Reads the mapper's own reserved table by reflection, so this census and the refusal it
-    /// polices share ONE declaration.  Spelling the nine names again here would make the census a
+    /// polices share ONE declaration.  Spelling the reserved names again here would make the census a
     /// second source of truth, which is the drift it exists to prevent.
     /// </summary>
     private static IReadOnlyDictionary<string, IReadOnlySet<string>> ReservedEnvKeys()

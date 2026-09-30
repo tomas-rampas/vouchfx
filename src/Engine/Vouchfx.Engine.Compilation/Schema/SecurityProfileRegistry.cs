@@ -15,8 +15,8 @@
 //     resolve to an actual wiring? REQ-021's schema-level narrowing ($defs/dependency's own
 //     final allOf clause) and this registry's built-in wirings are deliberately kept in sync:
 //     BOTH now permit a security block only on a kafka dependency or on any declared service
-//     (M1, fix round 2 — the schema forbids the block outright on the other twelve dependency
-//     kinds, and WiredTargetKindsAtV1 below is the registry's own statement of the same set).
+//     (the schema forbids the block outright on every other dependency
+//     kind, and WiredTargetKindsAtV1 below is the registry's own statement of the same set).
 //     The registry is the one that is actually CHECKED at validation time — closing the gap
 //     REQ-021's narrowing alone cannot: REQ-005's probe is engine-side and generic (it can only
 //     confirm an endpoint SPEAKS TLS), while the actual client connection is provider-emitted,
@@ -63,7 +63,7 @@ namespace Vouchfx.Engine.Compilation.Schema;
 /// </summary>
 /// <remarks>
 /// <para>
-/// A "target kind" is either one of the thirteen <c>environment.dependencies.&lt;name&gt;.type</c>
+/// A "target kind" is either one of the <c>environment.dependencies.&lt;name&gt;.type</c>
 /// values (e.g. <c>"kafka"</c>, <c>"redis"</c>), or the fixed sentinel
 /// <see cref="SecurityProfileRegistry.ServiceTargetKind"/> for any <c>environment.services.&lt;name&gt;</c>
 /// entry — services carry no per-kind discriminator of their own, and REQ-021's schema
@@ -154,7 +154,7 @@ internal sealed class SecurityProfileRegistry
     /// </summary>
     /// <remarks>
     /// n2 (peer review, fix round 2): this is a STRINGLY-TYPED sentinel sharing one value space
-    /// with the thirteen dependency <c>type</c> values. A fourteenth dependency kind literally
+    /// with the dependency <c>type</c> values. A future dependency kind literally
     /// named <c>service</c> would alias this sentinel silently — every service-scoped wiring
     /// would start claiming that dependency kind, and the enum-derived guard in
     /// <c>SecurityProfileRegistryTests.DependencyKindsEnumerated_MatchesSchemasOwnTypeEnum</c>
@@ -460,7 +460,7 @@ internal sealed class SecurityProfileRegistry
 /// </para>
 /// <para>
 /// The distinction is not pedantry, because the two directions carry
-/// asymmetric risk. Rejecting the twelve excluded dependency kinds is safe even if the forecast
+/// asymmetric risk. Rejecting the excluded dependency kinds is safe even if the forecast
 /// is wrong, since widening a validation-time gate after the freeze is permitted. ACCEPTING
 /// <c>{kafka, service}</c> is NOT safe if the forecast is wrong: shrinking after 1.0 would
 /// invalidate suites that already validated — the forbidden direction, and precisely the failure
@@ -497,7 +497,7 @@ internal sealed class SecurityProfileRegistry
 /// amendment — by the service member too: a broker authored under <c>environment.services</c> is
 /// staged as the bootstrap authority its clients consume and the two Kafka providers emit the
 /// <c>svc::</c> key for it, so "reachable as a declared service" is now true of a working suite
-/// and not of validation alone. For the twelve excluded dependency kinds the cost is
+/// and not of validation alone. For the excluded dependency kinds the cost is
 /// real and total — every one of them is served by providers that resolve <c>target</c> only
 /// through <c>DeclaredDependencies</c>, so there is no re-declaration that buys transport
 /// security back, and that is a deliberate 1.0 position, not an oversight to paper over with

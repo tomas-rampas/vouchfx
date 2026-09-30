@@ -141,7 +141,7 @@ Every Core provider, and what it can reach.
 | `db-assert.mongodb` | `mongodb` dependency | No | Server-side TLS deferred to 1.1; mutual TLS further out |
 | `db-assert.dynamodb` | `dynamodb` dependency | No | Reaches the engine-provisioned local double only |
 | `cache-assert.elasticsearch` | `elasticsearch` dependency | No | Out of scope — see below |
-| `storage-assert.s3` | `minio` dependency | No | Reaches the engine-provisioned MinIO only |
+| `storage-assert.s3` | `s3` or `minio` dependency | No | Reaches the engine-provisioned RustFS or MinIO only |
 | `mail-expect.smtp` | `mailpit` dependency | No | Deferred; not in 1.1's named set |
 | `webhook-listen.http` | — (engine-hosted listener) | No — plaintext inbound | See *Inbound listeners*, below |
 | `trace-expect.otlp` | — (engine-hosted receiver) | No — plaintext inbound | See *Inbound listeners*, below |
@@ -149,8 +149,8 @@ Every Core provider, and what it can reach.
 
 ## Matrix by dependency kind
 
-The `security:` block is accepted on exactly one of the thirteen dependency kinds. On the other
-twelve it is rejected outright — the *block*, not merely a particular profile value, and `tls` and
+The `security:` block is accepted on exactly one dependency kind, `kafka`. On every other
+kind it is rejected outright — the *block*, not merely a particular profile value, and `tls` and
 `mtls` are refused identically.
 
 | `environment.dependencies` kind | Accepts `security:` | Status |
@@ -168,6 +168,7 @@ twelve it is rejected outright — the *block*, not merely a particular profile 
 | `azureservicebus` | No | Emulator only |
 | `dynamodb` | No | Local double only |
 | `minio` | No | Local double only |
+| `s3` | No | Local double only |
 
 An `environment.services` entry accepts `security:` unconditionally — but only in its `image:` form.
 A `project:`-form service cannot declare it: its endpoints come from its own launch profile, so the
@@ -202,7 +203,7 @@ advisory above is on the event stream as well as the terminal: a run archiving `
 pipeline still archives a green report with nothing in it about the transport. Securing the system
 under test, in the sense the rest of this page uses, still requires the `image:` form.
 
-## What "not reachable" actually means for the twelve excluded kinds
+## What "not reachable" actually means for the excluded kinds
 
 This distinction matters, because "the client library cannot do it" and "vouchfx does not wire it
 yet" are very different problems for an adopter to plan around. For these kinds it is the second.
@@ -223,7 +224,7 @@ TLS-enabled connection string for a dependency in 1.0.
 There is also **no substitute declaration** that buys transport security back. Re-declaring the
 technology under `environment.services` does not work: of the twenty-five Core providers, seventeen
 resolve `target` exclusively against declared dependencies and reject a target that is not a
-declared dependency of their own kind, and those seventeen cover all twelve excluded kinds. Moving
+declared dependency of their own kind, and those seventeen cover every excluded kind. Moving
 the declaration trades a schema rejection for a step-validation rejection and still leaves you
 without a working suite. Only the three HTTP-family providers resolve `target` through declared
 services (and the two Kafka providers accept either), so the service form is a working path for an
@@ -248,8 +249,8 @@ Rather than leaving blanks in the tables:
 - **Secured Elasticsearch is out of scope**, not deferred. The engine provisions Elasticsearch with
   its security subsystem disabled, and enabling it requires an initialisation/setup container that
   this design does not add.
-- **`mailpit`, `azureservicebus`, `dynamodb` and `minio`** address engine-provisioned test doubles —
-  an SMTP capture server, the Service Bus emulator, DynamoDB Local, MinIO — reached at fixed,
+- **`mailpit`, `azureservicebus`, `dynamodb`, `minio` and `s3`** address engine-provisioned test doubles —
+  an SMTP capture server, the Service Bus emulator, DynamoDB Local, MinIO, RustFS — reached at fixed,
   engine-supplied local credentials. Pointing these providers at a real, secured, credentialed
   service is not supported in 1.0 and is not part of 1.1's named set.
 - **Mutual TLS on the engine's own inbound listeners** is out of scope; see below.

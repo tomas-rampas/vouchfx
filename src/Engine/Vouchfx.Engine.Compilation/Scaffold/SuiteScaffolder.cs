@@ -949,9 +949,11 @@ public static partial class SuiteScaffolder
             _ = stepType;
             if (string.Equals(provider, "smtp", StringComparison.Ordinal))
                 return new[] { "mailpit" };
+            // s3 first (#581): a new suite scaffolds the protocol-named kind, while a target
+            // search still finds an existing minio dependency when no s3 one is declared.
             if (string.Equals(provider, "s3", StringComparison.Ordinal)
                 || string.Equals(family, "storage-assert", StringComparison.Ordinal))
-                return new[] { "minio" };
+                return new[] { "s3", "minio" };
             if (string.Equals(provider, "azureservicebus", StringComparison.Ordinal))
                 return new[] { "azureservicebus" };
 
@@ -968,7 +970,7 @@ public static partial class SuiteScaffolder
                 },
                 "cache-assert" => new[] { "redis", "elasticsearch" },
                 "mail-expect" => new[] { "mailpit" },
-                "storage-assert" => new[] { "minio" },
+                "storage-assert" => new[] { "s3", "minio" },
                 _ => Array.Empty<string>(),
             };
         }

@@ -486,7 +486,7 @@ Set `type: storage-assert.s3` to use this step.
 | `bucket` | `string` | The S3 bucket name. May contain {placeholder} and ${secret:source/path} tokens. |
 | `expect` | `object` | The assertion block declaring the expected object state. exists:false excludes every content expectation; size and minSize are mutually exclusive. |
 | `key` | `string` | The S3 object key. May contain {placeholder} and ${secret:source/path} tokens. |
-| `target` | `string` | Logical name of the minio dependency to query, as declared under environment.dependencies. |
+| `target` | `string` | Logical name of the s3 or minio dependency to query, as declared under environment.dependencies. |
 
 ### `trace-expect.otlp`
 

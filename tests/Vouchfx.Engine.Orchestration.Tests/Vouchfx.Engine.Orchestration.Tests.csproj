@@ -46,7 +46,7 @@
     <PackageReference Include="Azure.Messaging.ServiceBus" />
     <!-- AWSSDK.DynamoDBv2: required by DbAssertDynamodbDockerTests (compile-ref + seed). -->
     <PackageReference Include="AWSSDK.DynamoDBv2" />
-    <!-- AWSSDK.S3: required by StorageAssertS3DockerTests (compile-ref + seed). -->
+    <!-- AWSSDK.S3: required by StorageAssertS3DockerTests and StorageAssertS3DockerS3KindTests (compile-ref + seed). -->
     <PackageReference Include="AWSSDK.S3" />
     <!-- Microsoft.CodeAnalysis.CSharp: HeadlessTopologySelfHealTests compiles tiny synthetic
          host assemblies at test time to pin the DCP-path self-heal GLUE (fix/packaged-tool-dcp-resolution,
@@ -115,7 +115,7 @@
     <!-- Core batch B (21→23): db-assert.dynamodb provider: used by DbAssertDynamodbDockerTests. -->
     <ProjectReference Include="..\..\src\Providers\Core\Vouchfx.Steps.DbAssert.Dynamodb\Vouchfx.Steps.DbAssert.Dynamodb.csproj"
                       IsAspireProjectResource="false" />
-    <!-- storage-assert.s3 provider (new family): used by StorageAssertS3DockerTests. -->
+    <!-- storage-assert.s3 provider (new family): used by StorageAssertS3DockerTests and StorageAssertS3DockerS3KindTests. -->
     <ProjectReference Include="..\..\src\Providers\Core\Vouchfx.Steps.StorageAssert.S3\Vouchfx.Steps.StorageAssert.S3.csproj"
                       IsAspireProjectResource="false" />
     <!-- Phase C: trace-expect.otlp (new family) + http.soap (second http-family provider):

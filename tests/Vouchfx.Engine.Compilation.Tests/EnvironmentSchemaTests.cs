@@ -16,7 +16,7 @@
 //     'Extra' bucket, unlike dependencies — every other key vanishes at parse
 //     time and reaches nothing).
 //   PART 2 — $defs/dependency gains 'required: ["type"]', 'additionalProperties:
-//     false', a closed 'type' enum (the thirteen kinds EnvironmentMapper's own
+//     false', a closed 'type' enum (the kinds EnvironmentMapper's own
 //     s_dependencyRegistry recognises), and a statically-authored allOf/if/then
 //     chain restricting 'schemaRegistry' to kafka and 'queues'/'topics' to
 //     azureservicebus — mirroring (but not sharing runtime machinery with)
@@ -1156,9 +1156,10 @@ public sealed class EnvironmentSchemaTests
             // Map-call) message — see the brief's exact worked example.
             e.Message.Contains("Value 'Postgres' is not one of the accepted values for 'type'", System.StringComparison.Ordinal) &&
             e.Message.Contains("write 'postgres'", System.StringComparison.Ordinal) &&
-            // The 13-member enum exceeds MaxListedEnumValues (8): pins that
-            // truncation is actually live, not merely implemented.
-            e.Message.Contains("... and 5 more", System.StringComparison.Ordinal));
+            // The enum is longer than MaxListedEnumValues (8): pins that
+            // truncation is actually live, not merely implemented. The tail
+            // count is the enum's length less the eight listed values.
+            e.Message.Contains("... and 6 more", System.StringComparison.Ordinal));
     }
 
     [Theory]
@@ -1175,6 +1176,7 @@ public sealed class EnvironmentSchemaTests
     [InlineData("azureservicebus")]
     [InlineData("dynamodb")]
     [InlineData("minio")]
+    [InlineData("s3")]
     public void Dependency_EachRegisteredKind_IsAccepted(string kind)
     {
         var yaml = $$"""
@@ -1194,11 +1196,11 @@ public sealed class EnvironmentSchemaTests
     }
 
     /// <summary>
-    /// Binds <see cref="Dependency_EachRegisteredKind_IsAccepted"/>'s 13
+    /// Binds <see cref="Dependency_EachRegisteredKind_IsAccepted"/>'s
     /// hardcoded <c>[InlineData]</c> cases to
     /// <see cref="Vouchfx.Engine.Compilation.Scaffold.KnownDependencyKinds"/> — the canonical kind list — via
     /// reflection over the Theory's own attributes, rather than duplicating
-    /// the 13 literals a second time (which would itself be a THIRD place to
+    /// the literals a second time (which would itself be a THIRD place to
     /// keep in sync, alongside the schema's own enum and
     /// EnvironmentMapper's s_dependencyRegistry). A kind added to
     /// <see cref="Vouchfx.Engine.Compilation.Scaffold.KnownDependencyKinds"/> without a matching new
@@ -1344,8 +1346,8 @@ public sealed class EnvironmentSchemaTests
 
     /// <summary>
     /// The trap the brief calls out by name: a per-kind allOf/if/then chain of
-    /// thirteen clauses must not surface twelve spurious "if"-mismatch entries
-    /// alongside the one genuine defect. Mirrors how
+    /// one clause per dependency kind must not surface a spurious "if"-mismatch
+    /// entry for every other kind alongside the one genuine defect. Mirrors how
     /// SchemaErrorCollectorTests/SchemaErrorCollectionAtScaleTests pin the same
     /// invariant for the (unrelated, much larger) step-type discriminator
     /// chain — this proves IsIfDiscriminatorNoise's suppression generalises,
@@ -1353,7 +1355,7 @@ public sealed class EnvironmentSchemaTests
     /// $defs/dependency rather than $defs/step.
     /// </summary>
     [Fact]
-    public void Dependency_OneBadDependency_YieldsOneErrorNotThirteen()
+    public void Dependency_OneBadDependency_YieldsOneErrorNotOnePerKind()
     {
         const string yaml = """
             environment:
@@ -1371,7 +1373,7 @@ public sealed class EnvironmentSchemaTests
         Assert.False(result.IsValid);
 
         // Exactly one error, at the offending field's own location, carrying
-        // the genuine false-schema failure — none of the other twelve
+        // the genuine false-schema failure — none of the other kinds'
         // if/then clauses' non-matching 'if' sub-evaluations (each of which
         // would carry its own '[const] Expected "<other-kind>"' message) may
         // leak through as separate "noise" errors.

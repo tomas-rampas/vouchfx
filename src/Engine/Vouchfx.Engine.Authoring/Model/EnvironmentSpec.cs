@@ -305,8 +305,8 @@ public sealed record DependencySpec(
     /// Optional transport security declaration (TLS/mTLS) for this dependency's
     /// endpoint (authenticated-infrastructure-mtls spec, REQ-001). <see langword="null"/>
     /// when the dependency declares no <c>security:</c> block — today's
-    /// unauthenticated-by-default behaviour is unchanged. Kind-generic: every one of
-    /// the thirteen dependency kinds accepts this field, unlike <see cref="Extra"/>'s
+    /// unauthenticated-by-default behaviour is unchanged. Kind-generic: every
+    /// dependency kind accepts this field, unlike <see cref="Extra"/>'s
     /// per-kind-restricted siblings (<c>schemaRegistry</c>, <c>queues</c>, <c>topics</c>).
     /// </summary>
     /// <remarks>

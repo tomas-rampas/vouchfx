@@ -289,7 +289,7 @@ public sealed class ServerArtifactInjectionTests : IDisposable
         mapped.Configure(builder);
 
         // The resource named EXACTLY the dependency name is a container. This RE-ASSERTS, for two
-        // types, an invariant already gated across all thirteen by
+        // types, an invariant already gated across every type by
         // DependencyEnvCensusTests.EveryDependencyType_AppliesAuthorEnvToItsOwnContainer, whose
         // Assert.Single over every ContainerResource is the stronger form; it does not pin it.
         var target_ = Assert.Single(builder.Resources, r => r.Name == name);

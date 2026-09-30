@@ -2,7 +2,8 @@
 // (non-docker; no S3-compatible endpoint is reachable in these tests, so only the
 // EnvironmentError / secret-reference paths are exercised here — the full HEAD/GET
 // exists/size/sha256/contentContains/capture behaviour is covered by
-// StorageAssertS3DockerTests against a real MinIO container).
+// StorageAssertS3DockerTests against a real MinIO container and by
+// StorageAssertS3DockerS3KindTests against a real RustFS container).
 //
 // Covers:
 //   1.  Emit: StatementBlock begins and ends with a brace.
