@@ -6206,9 +6206,10 @@ public sealed class EnvironmentMapperTests : IDisposable
     /// Without this direction the check degrades to a global denylist, which is a different and
     /// wrong feature: <c>MSSQL_SA_PASSWORD</c> is the <c>azureservicebus</c> emulator's SQL
     /// wiring and means nothing to <c>elasticsearch</c>, and an author configuring the latter has
-    /// every right to a variable of that name.  Every non-reserving type per name rather than one
-    /// for a narrower reason than "proving the table is per-type": ONE non-reserving type per name already does
-    /// that, because under a global denylist the single row
+    /// every right to a variable of that name.  Each name gets a row on every OTHER kind that
+    /// reserves names, plus <c>postgres</c>, rather than a single row, for a narrower reason than
+    /// "proving the table is per-type": ONE non-reserving type per name already does that,
+    /// because under a global denylist the single row
     /// <c>[postgres, "discovery.type"]</c> expects the key applied, gets it refused, and goes red.
     /// What the full matrix buys is detection of a PARTIALLY over-broad table — a name reserved
     /// for its own type and, by a copy-paste slip, for one other as well, which any single

@@ -17,6 +17,9 @@ v1.0.0-rc.5 is released. `environment.dependencies` accepts an `env:` map, so a 
 
 <!-- more -->
 
+!!! note "Update, 30 September 2026"
+    This post records rc.5 as it shipped, and three things in it have since changed. The refusal wording quoted below has been reworded. For `minio`, the credentials travel in the connection string the engine hands the steps of every scenario that targets it, not in a service's `${conn:<dependency>}`, which carries only host and port. And the `s3` kind added in #581 reserves names too (`RUSTFS_ACCESS_KEY` and `RUSTFS_SECRET_KEY`), so the list of reserved names below is no longer complete. The [changelog](https://github.com/tomas-rampas/vouchfx/blob/main/CHANGELOG.md) and the DSL specification carry the current wording.
+
 ```yaml
 environment:
   dependencies:
