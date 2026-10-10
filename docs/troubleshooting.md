@@ -9,7 +9,7 @@ This guide covers real failure modes, what they mean, and how to fix them.
 - [Every port-publishing container fails at startup ("should have valid address at this point")](#every-port-publishing-container-fails-at-startup-should-have-valid-address-at-this-point)
 - [Private registry and air-gapped operation](#private-registry-and-air-gapped-operation)
 - [Discovery root does not exist (dotnet run path resolution gotcha)](#discovery-root-does-not-exist-dotnet-run-path-resolution-gotcha)
-- [Script body and document size limits](#script-body-and-document-size-limits)
+- [Script body, document, and YAML expansion limits](#script-body-document-and-yaml-expansion-limits)
 - [Understanding the four verdicts](#understanding-the-four-verdicts)
 - [Secret leakage in exception messages](#secret-leakage-in-exception-messages)
 - [Build fails with warnings-as-errors](#build-fails-with-warnings-as-errors)

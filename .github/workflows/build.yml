@@ -1,4 +1,4 @@
-# .github/workflows/build.yml — vouchfx CI pipeline skeleton
+# .github/workflows/build.yml — vouchfx CI pipeline
 #
 # Jobs
 # ----
@@ -17,9 +17,12 @@
 #               Exit non-zero iff NetDelta > threshold-bytes (2 MB) or context
 #               not reclaimed; a failure here blocks merge.
 #
-#  integration  Forward-looking stub for Docker-dependent Aspire spike tests
-#               (requires=docker trait).  Non-blocking until tests exist.
+#  integration  Blocking gate for Docker-dependent Aspire integration tests
+#               (requires=docker trait).
 #               ubuntu-latest runners include Docker out of the box.
+#
+#  docs-build   Blocking documentation build and publication gate on every PR.
+#               Uses the Pages build inputs without publishing or dispatching.
 #
 #  vuln-scan    ADVISORY, NON-BLOCKING dependency-vulnerability scan
 #               (continue-on-error: true).  Surfaces known-vulnerable
@@ -237,21 +240,14 @@ jobs:
   # ── Docker / Aspire integration — topology and provider tests ───────────────────
   # ubuntu-latest runners include Docker Engine, which is required for the
   # Aspire topology (Testcontainers, §4).  Tests decorated with
-  # [Trait("requires","docker")] run here, isolated from the blocking `build`
-  # job, so a topology failure never blocks a clean unit-test run.
+  # [Trait("requires","docker")] run here after the `build` job. Failures in
+  # either lane fail CI.
   #
-  # This job is NON-BLOCKING (continue-on-error: true) as a deliberate policy
-  # for infrastructure-flaky Docker tests. It includes crash-dump capture
-  # (mini in CI; the README's local command uses full) to aid diagnosis of
-  # #378-class intermittencies.
-  #
-  # The display name below still says "forward-looking" — a check rename would
-  # break any branch-protection expectation pinned to the current string, so
-  # the name is kept and this comment records that it is stale on purpose.
+  # Crash-dump capture (mini in CI; the README's local command uses full)
+  # aids diagnosis of #378-class intermittencies without demoting failures.
   integration:
-    name: Integration tests — Docker / Aspire (forward-looking, non-blocking)
+    name: Integration tests — Docker / Aspire
     runs-on: ubuntu-latest
-    continue-on-error: true
     needs: build
 
     steps:
@@ -1299,6 +1295,40 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
+  # ── Documentation build and publication gate — BLOCKING ─────────────────────
+  # Keep the Python pin, dependency install and build/gate commands aligned
+  # with pages.yml. No paths filter or job condition: this check must exist
+  # on every PR, including changes to generated facts or example references.
+  docs-build:
+    name: Documentation build & publication gate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The git-revision-date-localized plugin requires full history.
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+
+      - name: Install build dependencies
+        run: python -m pip install -r requirements-docs.txt
+
+      - name: Build site (MkDocs Material)
+        env:
+          # Read-only token provides rate-limit headroom for facts API reads.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: mkdocs build --strict
+
+      - name: Verify publication gate
+        run: python scripts/check_site.py _site
+
   # ── Site tools (Python) — BLOCKING ────────────────────────────────────────────
   # Regression-tests scripts/site-tools' `vouchfx_site_tools` package — the
   # shared static-site generator four satellite repositories (vouchfx-
@@ -1356,8 +1386,7 @@ jobs:
   #
   # Runs only for main pushes and the weekly schedule — PR runs must never move
   # the published badge.  The badge reflects UNIT coverage only (the blocking
-  # `build` job); folding in the non-blocking docker `integration` job would
-  # make the number fluctuate with an advisory job's availability.  A red
+  # `build` job); Docker integration coverage is reported separately. A red
   # `build` skips this job via `needs`, so the last good badge is retained.
   coverage-badge:
     name: Coverage badge (main only)

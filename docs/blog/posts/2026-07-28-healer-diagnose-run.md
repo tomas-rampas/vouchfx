@@ -83,5 +83,5 @@ I care more about one correct “this is EnvironmentError, do not edit the asser
 
 - [vouchfx-mcp tools reference](https://vouchfx-mcp.vouchfx.io/docs/tools-and-resources.html)
 - [Overview (Generator + Healer)](https://vouchfx-mcp.vouchfx.io/docs/overview.html)
-- [Earlier post: the longer agentic day](https://vouchfx.io/blog/2026/07/28/agentic-path-m0-m2/)
+- [Earlier post: the longer agentic day](2026-07-28-agentic-path-m0-m2.md)
 - [MCP repository](https://github.com/tomas-rampas/vouchfx-mcp)

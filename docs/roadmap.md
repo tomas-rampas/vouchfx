@@ -1,17 +1,17 @@
 # vouchfx public roadmap
 
-This is the public, capability-level roadmap for vouchfx. It is updated at every minor release. Work is
-sequenced by **risk, not visibility** — the hardest problems (the dynamic-compilation memory model and
-health-gated container orchestration) were solved and CI-gated first, before any surface features.
-Milestones, not dates, are the measure of progress; where dates appear they are quarters, deliberately.
+This is the public, capability-level roadmap for vouchfx. Progress is measured by implemented
+capabilities and passing release checks, rather than a calendar target. Published release candidates
+are available; 1.0.0 still requires the environment extension and release validation described below.
 
 For what changed when, see the [changelog](changelog.md). For how project decisions are made, see
 [governance](governance.md).
 
 ## Delivered
 
-The engine is feature-complete for v1.0. Everything below is on `main`, CI-gated, and exercised by the
-four-technology reference scenario (REST, Kafka, PostgreSQL, webhook):
+The following capabilities are implemented on `main`. The reference scenario combines REST, Kafka,
+PostgreSQL and webhooks; individual providers have their own tests. This catalogue describes the
+implementation, not a claim that every release requirement or open defect is resolved:
 
 - **The compile-once memory model** — `.e2e.yaml` compiles through Roslyn exactly once into a collectible
   `AssemblyLoadContext`; a memory-leak regression test over the full provider closure is a permanent CI gate.
@@ -43,8 +43,9 @@ four-technology reference scenario (REST, Kafka, PostgreSQL, webhook):
   refused at a provider- or engine-surface guard; see
   [CI integration](ci-integration.md)). Which technologies this reaches, and which it does not, is set out per integration in the
   [security compatibility matrix](security-matrix.md).
-- **Frozen v1 contracts** — the language schema, the provider SDK surface and the event-wire contract are
-  frozen byte-for-byte, each enforced by a golden-file CI gate. Evolution within v1.x is additive only.
+- **Frozen public contracts** — golden files guard the language schema, provider SDK surface and
+  event-wire contract. Environment extensions must preserve frozen provider APIs, helper bodies and
+  event fields; evolution within v1.x is additive only.
 - **The Provider SDK** (`Vouchfx.Sdk`) with worked example providers, a conformance test harness, and the
   [community provider hub](https://github.com/tomas-rampas/vouchfx-providers).
 - **Secrets as references** — `${secret:env/…}` and `${secret:vault/…}`, resolved at execution time, redacted
@@ -70,10 +71,11 @@ four-technology reference scenario (REST, Kafka, PostgreSQL, webhook):
 - **A signed release pipeline** — keyless cosign signatures, SLSA provenance attestations, CycloneDX SBOMs,
   and NuGet.org publication via Trusted Publishing (no long-lived keys).
 
-## Pre-releases are live; v1.0 GA targeted Q4 2026
+## Release candidates and the remaining 1.0.0 requirements
 
 The first public releases shipped on 2026-07-08. The `v1.0.0-alpha` series ran to `v1.0.0-alpha.10`
-and the line has since moved to a release candidate, currently <code>v1.0.0-rc.5</code>. Every
+and the line has since moved to release candidates. Consult
+[GitHub Releases](https://github.com/tomas-rampas/vouchfx/releases) for the current version. Every
 pre-release is published with signed artefacts (cosign, SLSA provenance, CycloneDX SBOMs), and the
 `vouchfx` dotnet global tool is live on NuGet.org via Trusted Publishing (every pre-release has both a
 NuGet.org package and a published GitHub release page):
@@ -82,8 +84,24 @@ NuGet.org package and a published GitHub release page):
 dotnet tool install --global vouchfx --prerelease
 ```
 
-The pre-releases exist for real-world validation. What remains for GA is validation and packaging, not
-construction:
+The pre-releases support real-world validation. The remaining GA work includes implementation,
+defect resolution, documentation and packaging:
+
+- **User-supplied environments** — Docker Compose is the first additional environment format. An
+  environment-driver boundary must separate provisioning, readiness, logical endpoint bindings and
+  resource ownership from assertion providers. Existing inline environments remain supported;
+  additional formats must fit that boundary without rewriting the runner or provider SDK. Compose
+  support is planned and is not accepted by the current suite schema.
+- **Release-blocking defects and execution evidence** — resolve failures in verdict reporting,
+  secrets, lifecycle cleanup, supported security paths and consumer compatibility. Required runtime
+  checks must prove that assertions executed; unavailable prerequisites or skipped probes do not
+  establish release readiness.
+- **Installed-package and fleet compatibility** — validate the actual candidate CLI, MCP tool,
+  provider SDK/community provider, samples and telemetry backend together. Source-build success alone
+  does not establish clean-install compatibility.
+- **Current documentation** — run the documented quickstarts against the candidate versions and
+  validate all five built sites. Supported behaviour, prerequisites and known limits must match the
+  implementation before release.
 
 - Validation of the end-to-end experience in real use — gathered in the open through the published
   [sample applications](https://samples.vouchfx.io/), the
@@ -97,8 +115,8 @@ construction:
 
 ## The v1.x series — additive only
 
-The three frozen contracts are a trust commitment for the whole v1.x series: nothing that works today breaks
-within v1.x. Within that constraint, the near-term direction is:
+After 1.0.0, the three public contracts carry an additive-only compatibility commitment for v1.x.
+Within that constraint, the near-term direction is:
 
 - **Provider breadth through the community pathway** — the Provider SDK is the mechanism by which new
   technologies arrive (gRPC, Oracle, SQS and the long tail) as Community providers — with the Vouched badge
