@@ -148,8 +148,8 @@ plugins:
   - git-revision-date-localized:
       enable_creation_date: true
 
-# Mirrors scripts/build_site.py's DOCS list: same groups, same order,
-# same labels. Keep the two in step until build_site.py is retired.
+# Navigation for the current MkDocs site. The retired build_site.py DOCS
+# list remains the input for legacy URL redirects, not a list of new guides.
 nav:
   - Design docs:
       - 01 · Architecture Blueprint: 01_Technical_Architecture_and_Engineering_Blueprint.md
@@ -160,6 +160,7 @@ nav:
       - Recipes: recipes.md
       - Common patterns: common-patterns.md
       - Owned Docker Compose environments: compose-environments.md
+      - S3 and MinIO application access: object-storage-sut.md
       - Security compatibility matrix: security-matrix.md
       - "Planner: coverage and gap analysis": planner.md
       - Troubleshooting: troubleshooting.md
