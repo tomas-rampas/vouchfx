@@ -1,13 +1,11 @@
 # vouchfx-site-tools
 
-Shared static-site generator for the vouchfx ecosystem's four GitHub Pages
-sites (`vouchfx`, `vouchfx-providers`, `vouchfx-samples`,
-`vouchfx-telemetry-backend`). Each repository publishes a site that is the
-same shape — a static landing page in `site/`, plus the repository's own
-markdown rendered to matching styled HTML on every push — and previously
-carried four near-identical copies of the rendering machinery in its own
-`scripts/build_site.py`. This package is that machinery, consolidated once
-(vouchfx issue [#200](https://github.com/tomas-rampas/vouchfx/issues/200)).
+Shared static-site generator for the four Vouchfx satellite sites:
+`vouchfx-providers`, `vouchfx-samples`, `vouchfx-telemetry-backend` and
+`vouchfx-mcp`. Each combines a static landing page in `site/` with its
+repository's Markdown guides, rendered by its `scripts/build_site.py`
+wrapper. The engine site uses Material for MkDocs and imports this package's
+fact helpers.
 
 Each repository keeps its own thin `scripts/build_site.py` wrapper: it
 supplies a `SiteConfig` (the doc set, the page/portal HTML templates, the
@@ -188,9 +186,9 @@ cannot silently break every satellite site's next build.
 
 Two operational rules for the pin:
 
-- Validate before merging: satellite `pages.yml` has no `pull_request`
-  trigger, so run its `workflow_dispatch` on the PR branch and confirm a
-  green build before merging any pin bump.
+- Validate a pin bump before merging: build the satellite site with the
+  pinned package and run the social-card command below. A successful package
+  installation alone does not prove the site's output is valid.
 - If engine history is ever rewritten, re-pin all four satellites to
   surviving commits immediately — a GC'd pinned commit fails every
   satellite's next `git+` install at once (fail-loud; the previously
@@ -204,6 +202,30 @@ land in the SAME satellite PR: setting `llms_curated=True` against an
 older pin (from before this field existed) raises `TypeError:
 SiteConfig.__init__() got an unexpected keyword argument 'llms_curated'`
 at build time, not a graceful no-op.
+
+## Social-card validation
+
+After building a satellite site, check its rendered landing page and card:
+
+```sh
+python scripts/build_site.py _site
+python -m vouchfx_site_tools.check_social_card _site https://providers.vouchfx.io/
+```
+
+Use that site's configured canonical URL. The command returns `0` on success
+and `1` on refusal. It requires unique image metadata, nonempty alternative
+text, a `summary_large_image` Twitter card and matching `1200x630` dimensions.
+Both image URLs must resolve inside the built directory on the configured
+origin and base path. Each distinct asset must have a complete PNG signature
+and first IHDR chunk, a valid header checksum, and size at most 307,200 bytes.
+
+Lossy numeric character references in required metadata are refused. Standard
+HTML escaping remains supported.
+
+The checker reads the PNG header; it does not decode pixels, validate the
+entire image stream or check the literal accent colour. It makes no network
+requests and leaves renderer output unchanged. Include it before uploading a
+Pages artefact and in the pull request's site-validation job.
 
 ## Local development
 
