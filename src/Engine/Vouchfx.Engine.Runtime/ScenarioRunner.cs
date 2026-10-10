@@ -6055,10 +6055,10 @@ public static class ScenarioRunner
     /// <remarks>
     /// This pass is engine-level and provider-uniform — it does not require any
     /// change to the frozen <c>IStepValidator&lt;T&gt;</c> interface. It reuses
-    /// <see cref="CollectSubstitutableTexts"/> so the set of validated fields stays
-    /// in lock-step with the set of fields the providers actually substitute.
+    /// <see cref="StepTemplateCensus"/>, whose secret-aware field coverage is checked
+    /// against actual provider Bind/Emit outputs by the independent emission census.
     /// internal (not private, #260): this pass is entirely topology-free (it scans
-    /// AST text only, never resolves a secret), so <see cref="ScenarioValidator"/>
+    /// authored text and bounded REST-body JSON only, never resolves a secret), so <see cref="ScenarioValidator"/>
     /// reuses it verbatim rather than duplicating the scan.
     /// <para>
     /// <strong>Two scans, not one (EDGE-003, #387):</strong> steps first, then every declared
@@ -6126,18 +6126,29 @@ public static class ScenarioRunner
         // printed on its own.
         foreach (var node in ast.Steps)
         {
-            foreach (var text in CollectSubstitutableTexts(node))
+            var collection = StepTemplateCensus.Collect(node);
+            foreach (var field in collection.Fields)
             {
-                if (!SecretReference.ValidateField(text, s_knownSecretSources, out var fieldError))
+                if (!SecretReference.ValidateField(field.Text, s_knownSecretSources, out var fieldError))
                 {
                     // "\n", never Environment.NewLine: this string reaches the schema-versioned
                     // `validate --json` document, where a platform-dependent separator would make
                     // one document differ between a Windows and a Linux runner for the same input.
                     // The terminal path is unaffected either way — DisplaySanitiser strips '\r'.
                     var stepError = $"step '{node.Id}': {fieldError}";
+                    // Preserve existing REST/PostgreSQL diagnostics; new field coverage also
+                    // identifies its selector without printing a potentially sensitive map key.
+                    if (node.CanonicalType is not ("http.rest" or "db-assert.postgres"))
+                        stepError += $" (field '{field.Location}')";
                     error = securityFault ? stepError + "\n" + securityError : stepError;
                     return true;
                 }
+            }
+            if (collection.Failure is { } collectionFailure)
+            {
+                var stepError = $"step '{node.Id}': {collectionFailure}";
+                error = securityFault ? stepError + "\n" + securityError : stepError;
+                return true;
             }
         }
 
@@ -6624,163 +6635,17 @@ public static class ScenarioRunner
     }
 
     /// <summary>
-    /// Returns the set of raw field values from <paramref name="node"/> that are
-    /// subject to <c>{placeholder}</c> substitution at runtime (B-03).  These are
-    /// the fields whose emitted CSX wraps the value in
-    /// <c>Substitute_Helpers.Resolve(Vars, …)</c>.
+    /// Collects runtime secret-template inputs and PostgreSQL's retained legacy inputs.
     /// </summary>
     /// <remarks>
-    /// The implementation uses the raw YAML mapping node to extract the same fields
-    /// that the provider emitters wrap.  For <c>http.rest</c> this is <c>path</c>
-    /// (and header values when present), a scalar <c>body</c>, and the expected values
-    /// of <c>expect.json</c> and <c>expect.bodyContains</c>; for <c>db-assert.postgres</c> this is
-    /// <c>query</c>, each parameter value, AND each <c>expect.row</c> value — every
-    /// text the <c>DbAssertPostgresProvider.Emit</c> path resolves at runtime via
-    /// <c>Substitute_Helpers.Resolve</c>/<c>ResolveIdentifier</c>.  Keeping this set
-    /// in lock-step with the provider is load-bearing: a field the provider
-    /// substitutes but this scan omits would let a malformed/unknown-source secret
-    /// reference reach execution un-caught, defeating the compile-time guarantee.
-    /// <para>
-    /// This is a best-effort compile-time scan: it reads the known substitutable
-    /// YAML keys for recognised step types.  Unknown provider types are skipped.
-    /// </para>
-    /// <para>
-    /// <c>script.csharp</c> is intentionally absent: its <c>code</c> body is spliced
-    /// into the CSX submission verbatim (it is Turing-complete C#, not a substitutable
-    /// template) — the engine performs NO <c>{placeholder}</c> or <c>${secret:…}</c>
-    /// substitution on it, so there is nothing here to collect or validate.  A future
-    /// reviewer should not re-flag this as a gap.
-    /// </para>
+    /// The independent Core emission census gates this explicit field selection. Other
+    /// placeholder-only and literal fields, including script code, remain opaque. Structured
+    /// REST body uses the binder's bounded JSON representation, including its mapping keys.
+    /// Validation consumes collection failures before acquisition; provenance and the receipt
+    /// only read its available reference text and never invoke a secret resolver.
     /// </remarks>
     private static List<string> CollectSubstitutableTexts(StepNode node)
-    {
-        var texts = new List<string>();
-        var raw = node.RawNode;
-
-        // http.rest: 'path', each header value, AND the request 'body' are substitutable.
-        // path/headers since B-03; 'body' since S07-B-02a, when HttpRestProvider.Emit began
-        // routing the body through Secret_Helpers.ResolveTemplate at runtime.  S07-B-02b:
-        // the body was previously OMITTED from this scan, so a ${secret:…} in an http.rest
-        // body was resolved at runtime but invisible to provenance, the pre-compile secret-
-        // validation pass, AND the reproducibility envelope — the exact "field the provider
-        // substitutes but this scan omits" hazard this method's remarks warn against.  A
-        // scalar body is collected here; a structured (mapping/sequence) body is bound to a
-        // serialised JSON string by the provider — its placeholders/secrets live inside that
-        // string, which this scan does not reconstruct (a structured-body secret remains a
-        // known, narrower follow-up, but the common scalar/inline-JSON body is now covered).
-        if (string.Equals(node.CanonicalType, "http.rest", StringComparison.Ordinal))
-        {
-            if (TryGetScalar(raw, "path", out var path) && !string.IsNullOrEmpty(path))
-                texts.Add(path);
-
-            if (raw.Children.TryGetValue(
-                    new YamlDotNet.RepresentationModel.YamlScalarNode("headers"),
-                    out var headersNode)
-                && headersNode is YamlDotNet.RepresentationModel.YamlMappingNode headersMap)
-            {
-                foreach (var kv in headersMap.Children)
-                {
-                    if (kv.Value is YamlDotNet.RepresentationModel.YamlScalarNode sv
-                        && !string.IsNullOrEmpty(sv.Value))
-                    {
-                        texts.Add(sv.Value);
-                    }
-                }
-            }
-
-            // 'body' as a scalar (raw string / inline JSON): the provider keeps it verbatim
-            // as a template and resolves it via Secret_Helpers.ResolveTemplate at runtime, so
-            // its {placeholder}/${secret:…} tokens must be recognised here too.
-            if (TryGetScalar(raw, "body", out var body) && !string.IsNullOrEmpty(body))
-                texts.Add(body);
-
-            // Response-body assertions (#558): each expect.json scalar VALUE and
-            // expect.bodyContains are expected-value templates the provider resolves through
-            // Secret_Helpers.ResolveTemplate at runtime, exactly like the fields above, so they
-            // belong to this scan — or a ${secret:…} there would be resolved at run time while
-            // invisible to the pre-compile secret validation, provenance and the reproducibility
-            // envelope. The JSONPath KEYS are not collected: the provider uses them verbatim and
-            // never resolves them. A { exists: … } value carries no template.
-            if (raw.Children.TryGetValue(
-                    new YamlDotNet.RepresentationModel.YamlScalarNode("expect"),
-                    out var restExpectNode)
-                && restExpectNode is YamlDotNet.RepresentationModel.YamlMappingNode restExpectMap)
-            {
-                if (restExpectMap.Children.TryGetValue(
-                        new YamlDotNet.RepresentationModel.YamlScalarNode("json"),
-                        out var jsonNode)
-                    && jsonNode is YamlDotNet.RepresentationModel.YamlMappingNode jsonMap)
-                {
-                    foreach (var kv in jsonMap.Children)
-                    {
-                        if (kv.Value is YamlDotNet.RepresentationModel.YamlScalarNode sv
-                            && !string.IsNullOrEmpty(sv.Value))
-                        {
-                            texts.Add(sv.Value);
-                        }
-                    }
-                }
-
-                if (TryGetScalar(restExpectMap, "bodyContains", out var bodyContains)
-                    && !string.IsNullOrEmpty(bodyContains))
-                {
-                    texts.Add(bodyContains);
-                }
-            }
-        }
-        // db-assert.postgres: 'query', each parameter value, AND each expect.row
-        // value are substitutable (B-03).  DbAssertPostgresProvider.Emit wraps all
-        // three in Substitute_Helpers.Resolve/ResolveIdentifier at runtime, so all
-        // three must be collected here (the expect.row values were the under-collected
-        // gap fixed in S05-B-01: a ${secret:…} there is resolved at runtime but was
-        // previously invisible to both this scan and the secret-validation pass).
-        else if (string.Equals(
-            node.CanonicalType, "db-assert.postgres", StringComparison.Ordinal))
-        {
-            if (TryGetScalar(raw, "query", out var query) && !string.IsNullOrEmpty(query))
-                texts.Add(query);
-
-            if (raw.Children.TryGetValue(
-                    new YamlDotNet.RepresentationModel.YamlScalarNode("parameters"),
-                    out var paramsNode)
-                && paramsNode is YamlDotNet.RepresentationModel.YamlMappingNode paramsMap)
-            {
-                foreach (var kv in paramsMap.Children)
-                {
-                    if (kv.Value is YamlDotNet.RepresentationModel.YamlScalarNode sv
-                        && !string.IsNullOrEmpty(sv.Value))
-                    {
-                        texts.Add(sv.Value);
-                    }
-                }
-            }
-
-            // expect.row: a map of column name → expected value.  The provider binds
-            // this from RawNode["expect"]["row"] and wraps each VALUE (not the column
-            // name) in Substitute_Helpers.Resolve — mirror that traversal exactly so
-            // the collected set never drifts from what the provider resolves.
-            if (raw.Children.TryGetValue(
-                    new YamlDotNet.RepresentationModel.YamlScalarNode("expect"),
-                    out var expectNode)
-                && expectNode is YamlDotNet.RepresentationModel.YamlMappingNode expectMap
-                && expectMap.Children.TryGetValue(
-                    new YamlDotNet.RepresentationModel.YamlScalarNode("row"),
-                    out var rowNode)
-                && rowNode is YamlDotNet.RepresentationModel.YamlMappingNode rowMap)
-            {
-                foreach (var kv in rowMap.Children)
-                {
-                    if (kv.Value is YamlDotNet.RepresentationModel.YamlScalarNode sv
-                        && !string.IsNullOrEmpty(sv.Value))
-                    {
-                        texts.Add(sv.Value);
-                    }
-                }
-            }
-        }
-
-        return texts;
-    }
+        => StepTemplateCensus.Collect(node).Fields.Select(field => field.Text).ToList();
 
     /// <summary>
     /// Tries to read a scalar string value from <paramref name="mapping"/> for
