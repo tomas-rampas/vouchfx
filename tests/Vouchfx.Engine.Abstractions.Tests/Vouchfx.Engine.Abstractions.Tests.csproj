@@ -28,4 +28,9 @@
     <ProjectReference Include="..\..\src\Engine\Vouchfx.Engine.Abstractions\Vouchfx.Engine.Abstractions.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Compile Include="..\Shared\GoldenRegenerationPolicyTests.cs" Link="GoldenRegenerationPolicyTests.cs" />
+    <ProjectReference Include="..\Vouchfx.TestSupport\Vouchfx.TestSupport.csproj" />
+  </ItemGroup>
+
 </Project>

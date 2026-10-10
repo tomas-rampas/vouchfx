@@ -2194,9 +2194,7 @@ public sealed class EventContractFreezeTests
 
     private static bool IsRegenRequested()
     {
-        var value = Environment.GetEnvironmentVariable(RegenEnvVar);
-        return !string.IsNullOrEmpty(value)
-            && (value == "1" || string.Equals(value, "true", StringComparison.OrdinalIgnoreCase));
+        return Vouchfx.TestSupport.GoldenRegeneration.IsRequested(RegenEnvVar);
     }
 
     /// <summary>

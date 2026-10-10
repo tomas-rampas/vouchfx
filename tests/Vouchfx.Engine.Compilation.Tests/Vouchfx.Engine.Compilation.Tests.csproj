@@ -138,4 +138,9 @@
     <ProjectReference Include="..\..\src\Providers\Core\Vouchfx.Steps.Http.Soap\Vouchfx.Steps.Http.Soap.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Compile Include="..\Shared\GoldenRegenerationPolicyTests.cs" Link="GoldenRegenerationPolicyTests.cs" />
+    <ProjectReference Include="..\Vouchfx.TestSupport\Vouchfx.TestSupport.csproj" />
+  </ItemGroup>
+
 </Project>

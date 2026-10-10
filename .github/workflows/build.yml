@@ -188,6 +188,14 @@ jobs:
           --collect:"XPlat Code Coverage"
           --results-directory TestResults
 
+      - name: Verify tracked checkout is unchanged after tests
+        if: always()
+        run: |
+          status=0
+          git diff --exit-code || status=1
+          git diff --cached --exit-code || status=1
+          exit "$status"
+
       # Upload coverage artefacts.  On main pushes and the weekly schedule the
       # `coverage-badge` job downloads this artifact and turns it into the
       # README's self-hosted coverage badge; the artifact also remains handy
@@ -232,6 +240,14 @@ jobs:
           --no-build
           --filter "requires!=docker"
           --results-directory TestResults/Windows
+
+      - name: Verify tracked checkout is unchanged after tests
+        if: always()
+        run: |
+          git diff --exit-code
+          $workingTreeExit = $LASTEXITCODE
+          git diff --cached --exit-code
+          if ($workingTreeExit -ne 0 -or $LASTEXITCODE -ne 0) { exit 1 }
 
       - name: Upload Windows unit test results
         if: always()

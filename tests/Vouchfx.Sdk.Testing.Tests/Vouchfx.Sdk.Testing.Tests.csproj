@@ -37,4 +37,8 @@
     <ProjectReference Include="..\Vouchfx.TestSupport\Vouchfx.TestSupport.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Compile Include="..\Shared\GoldenRegenerationPolicyTests.cs" Link="GoldenRegenerationPolicyTests.cs" />
+  </ItemGroup>
+
 </Project>
