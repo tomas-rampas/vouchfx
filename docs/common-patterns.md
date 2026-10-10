@@ -501,11 +501,17 @@ Placeholders are substituted at **execution time** (after the earlier step compl
 
 ### Placeholder and secret syntax
 
-Within any string field (path, headers, body, query parameters, etc.), you can use:
+Fields documented as templates in the [Language Reference](language-reference.md) accept:
 
 - **`{placeholder}`** — Replaced with a captured value or a variable.
 - **`${secret:env/VAR}`** — Replaced with the value of the environment variable `VAR`, resolved at execution time and redacted from output.
 - **`${secret:vault/path}`** — Replaced with a secret from a Vault backend, resolved at execution time and redacted from output.
+
+`vouchfx validate` and `run` reject malformed or unknown-source secret references in every Core field that resolves secret templates, before acquiring an environment. An authoring refusal cannot exit **0**, including beside a passing scenario: it yields **4** unless another policy already selected a nonzero code (for example, an assertion failure yields **1**). Validation checks references and never reads their values. Step-completion provenance records reference labels, and the reproducibility envelope hashes references, not resolved credentials.
+
+Template support is field-specific. Message payloads, resolved match values, SOAP envelope/action, HTTP request and response expectation values, S3 assertion values, Prometheus values and OTLP match values support secrets. Map names, JSONPath/XPath expressions, capture expressions and logical target IDs remain literal. The exception is a structured HTTP REST `body`: the whole bound JSON is resolved, including its keys, with depth **64** and **50000** node limits.
+
+Kafka publish ignores plain `payload` when `avro` is a mapping; only the active encoding's inputs enter validation, provenance and reference hashes. Kafka-expect `topic`, RabbitMQ-expect `queue`, Avro schema/subject/registry references and script `code`/`file` do not resolve secret templates. Azure Service Bus addresses and the database/cache fields documented with `{placeholder}` support only placeholder substitution. PostgreSQL retains its historical secret-reference validation, provenance and hashing; this does **not** make its placeholder-only helper resolve secret values. Use the provider's documented field mode rather than placing `${secret:…}` in arbitrary strings.
 
 **Example:**
 

@@ -533,7 +533,7 @@ An `http` step issues an HTTP request to one of the services declared in the env
 | method | The HTTP verb: GET, POST, PUT, PATCH, or DELETE. |
 | path | The request path, which may contain `{placeholder}` and `${secret:…}` tokens resolved at execution time. |
 | headers | An optional map of request headers. Each header value may contain `{placeholder}` and `${secret:…}` tokens. |
-| body | An optional request body. A YAML scalar is treated as a template string; a YAML mapping or sequence is serialised to JSON and then used as a template. All `{placeholder}` and `${secret:…}` tokens are resolved at step-execution time. |
+| body | An optional request body. A YAML scalar is treated as a template string; a YAML mapping or sequence is serialised to JSON and then used as a template, including mapping keys. The exact bound text is checked for secret-reference syntax before acquisition; secret values are read only at step execution. Structured bodies are bounded to depth 64 and 50000 nodes. All `{placeholder}` and `${secret:…}` tokens are resolved at step-execution time. |
 | expect | An optional assertion block. `status` is the expected status code (any 2xx when omitted); `json` maps a JSONPath to an expected value or to `{ exists: true }` / `{ exists: false }`; `bodyContains` is a substring the decoded body must contain. See *Response-body assertions* below. Response headers are not asserted on. |
 
 ```yaml
