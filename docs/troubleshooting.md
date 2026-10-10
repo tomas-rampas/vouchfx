@@ -257,19 +257,23 @@ The capture is written whenever a topology **fails to become ready** — the sta
 
 **The reported Environment error names the capture file on most of those paths, but not on all of them, and it is worth knowing which.** When the failure is one the engine classifies itself — the topology start, a health gate, or service discovery — the error names the file as a platform token and quotes the last few warning lines inline, so the evidence survives in a CI log even when the runner's filesystem does not. A failure in the **secured-endpoint probe** or the **seed** reports its own message instead: those two build their error where they raise it, before the capture is written, so the file exists but nothing in the error points at it. If a run fails at either and you want the DCP traffic, look in the directory above — the newest capture is that run's.
 
-**On CI, redirect the captures or you will never see them.** A build agent's filesystem is discarded when the job ends, so a capture written to the per-user directory is destroyed unread — and CI is exactly where this fault is hardest to reproduce. Set `VOUCHFX_DCP_CAPTURE_DIR` to a directory inside the workspace, **and add an upload step for it** — the reusable `vouchfx-run.yml` workflow uploads `results.xml` and `report.html` only, so captures are not carried out unless you upload them yourself:
+**On CI, retain and upload captures before the runner disappears.** A build agent's filesystem is discarded when the job ends. For your own suites, set `VOUCHFX_DCP_CAPTURE_DIR` to a directory inside the workspace, **and add an upload step for it** — the reusable `vouchfx-run.yml` workflow uploads `results.xml` and `report.html` only, so captures are not carried out unless you upload them yourself:
 
 ```yaml
 env:
   VOUCHFX_DCP_CAPTURE_DIR: ${{ github.workspace }}/vouchfx-captures
 
 # ... and, after the run:
-- uses: actions/upload-artifact@v4
+- uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
   if: always()
   with:
     name: vouchfx-dcp-captures
     path: vouchfx-captures/
+    if-no-files-found: ignore
+    retention-days: 7
 ```
+
+This repository's Docker/Aspire CI keeps the default per-user root so its READY-path guard remains meaningful. It snapshots before the test, then collects new matching captures even after a failed test and uploads them as `integration-dcp-captures` with seven-day retention. Existing files are excluded; a zero-capture run uploads only its count manifest. Collection refuses unsafe paths, links and excessive payload, and upload requires successful collection. This does not recover captures the engine has already pruned.
 
 **A CI artefact is as public as an issue comment.** Actions does not mask secrets inside uploaded artefact *contents*, and on a public repository anyone can download them. Read the section below on what a capture can contain before uploading one from a job whose suite routes any credential in via `${env:NAME}`.
 

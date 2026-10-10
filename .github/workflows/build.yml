@@ -104,6 +104,9 @@ jobs:
       - name: Exercise the actual Docker pre-pull script
         run: python -B -m unittest discover -s scripts/ci -p test_docker_ci_contract.py -v
 
+      - name: Exercise DCP capture artefact contracts
+        run: python -B -m unittest discover -s scripts/ci -p test_dcp_capture_artifacts.py -v
+
   build:
     name: Build & unit tests
     runs-on: ubuntu-latest
@@ -342,6 +345,11 @@ jobs:
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: "8.0.x"
+
+      - name: Set up Python for capture collection
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
 
       - name: Restore dependencies
         run: dotnet restore vouchfx.sln
@@ -1222,7 +1230,20 @@ jobs:
       # repository credential. Adding a secret to this job — a registry login, a token for a
       # private image — would put that value inside a publicly downloadable dump. If one is ever
       # needed here, gate the upload on a non-fork condition or drop it.
+      # Keep the recorder armed at its DEFAULT root. A job-wide capture-directory
+      # override would weaken the READY-path Docker guard's real-root assertion.
+      # Snapshot before the test, then collect only newly appearing captures;
+      # neither step deletes or changes files in the per-user directory.
+      - name: Snapshot default-root DCP captures
+        if: always()
+        timeout-minutes: 2
+        run: |
+          python -B scripts/ci/collect_dcp_captures.py snapshot \
+            --source "${XDG_DATA_HOME:-$HOME/.local/share}/vouchfx" \
+            --state "$RUNNER_TEMP/dcp-capture-baseline.json"
+
       - name: Integration tests (requires=docker)
+        id: docker-tests
         run: >
           dotnet test vouchfx.sln
           -m:1
@@ -1233,6 +1254,37 @@ jobs:
           --blame-crash-dump-type mini
           --collect:"XPlat Code Coverage"
           --results-directory TestResults
+
+      - name: Collect new default-root DCP captures
+        id: dcp-captures
+        if: always()
+        timeout-minutes: 2
+        env:
+          VOUCHFX_CI_TEST_OUTCOME: ${{ steps.docker-tests.outcome }}
+        run: |
+          python -B scripts/ci/collect_dcp_captures.py collect \
+            --source "${XDG_DATA_HOME:-$HOME/.local/share}/vouchfx" \
+            --state "$RUNNER_TEMP/dcp-capture-baseline.json" \
+            --destination "$RUNNER_TEMP/vouchfx-dcp-captures" \
+            --test-outcome "$VOUCHFX_CI_TEST_OUTCOME"
+
+      # Captures are VERBATIM Aspire logging, not redacted: ephemeral dependency
+      # passwords, fixed local test credentials, host values routed via ${env:NAME}
+      # and absolute paths may be present.
+      # Public Actions artefact contents are not secret-masked. This job must keep
+      # mapping NO secrets or credential-bearing host values into its suites.
+      # Always collect/upload after a failed test, preserving that test's failure.
+      # Upload only after successful collection: a refused/pre-existing output
+      # directory must never publish unrelated files. A zero-capture run uploads
+      # only the safe run/count manifest; missing promised output is an error.
+      - name: Upload DCP capture artefact
+        if: always() && steps.dcp-captures.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: integration-dcp-captures
+          path: ${{ runner.temp }}/vouchfx-dcp-captures
+          if-no-files-found: error
+          retention-days: 7
 
       # Upload the blame output so the next crash arrives WITH its dump. `if: always()` because
       # the interesting case is the failing one; a crash aborts the step above.
