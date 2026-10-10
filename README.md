@@ -348,8 +348,9 @@ To decline the sweep — when deliberately holding a CLI host under a debugger, 
 recorded in the same log.
 
 CI (`.github/workflows/build.yml`) runs a blocking **build** job (build + format + unit tests), a
-blocking **memory-leak** job over 5,000 load-unload cycles, and a forward-looking **integration**
-(Docker) job.
+blocking **memory-leak** job over 5,000 load-unload cycles, a blocking **integration** job for
+Docker/Aspire tests, and a blocking **documentation** job that builds the site and checks its
+publication boundary.
 
 <details>
 <summary><strong>Repository layout</strong></summary>

@@ -1,6 +1,14 @@
 # vouchfxai — AI Companion Feasibility and Design
 
-**Status:** Design document for phase-one delivery; retained here for its feasibility analysis and phasing rationale, not as a live tool reference. All three phases sketched below have since shipped on the MCP server at [vouchfx-mcp.vouchfx.io](https://vouchfx-mcp.vouchfx.io/): Generator (`validate_suite`, `list_step_types`, `describe_step_type`, `search_docs`, `scaffold_suite`, `run_suite`), Healer (`explain_run`, `diagnose_run`), and Planner (`plan_coverage`) — nine tools and two resources in total today, several named differently from this document's original §4 sketch. See [Ecosystem → the MCP companion](ecosystem.md#the-mcp-companion) and the server's own [tool reference](https://vouchfx-mcp.vouchfx.io/docs/tools-and-resources.html) for the authoritative, current surface; §§4–5 below are kept unchanged as the original design record, annotated in §4.8 and §5 where delivery has since caught up with or diverged from the sketch.
+**Status:** Historical design record for the local companion's feasibility and phasing rationale,
+not a live tool reference. The Generator, Healer and Planner capability groups are implemented
+in the local [MCP companion](https://vouchfx-mcp.vouchfx.io/). Its current surface has eighteen
+tools, four prompts, four concrete resources and seven URI templates; release validation remains
+outstanding and the MCP tool is not yet published on NuGet. The hosted service described as
+Phase Two in §8 remains future design. See [Ecosystem → the MCP companion](ecosystem.md#the-mcp-companion)
+and the server's [tool reference](https://vouchfx-mcp.vouchfx.io/docs/tools-and-resources.html) for
+current behaviour. §§4–5 retain the original design sketch, with delivery differences annotated
+in §4.8 and §5; their historical counts and names do not define the current interface.
 
 **Date:** 2026-07-20
 
@@ -163,7 +171,11 @@ Tenancy, account model, consumption accounting and the operational design of hos
 
 ## 9. What Changes in vouchfx Itself
 
-vouchfxai requires no change to vouchfx. Four small additions would nonetheless sharpen the boundary, and each is worth shipping on its own merits. All are additive: the v1 schema, the v1 event-wire contract and the v1 provider interfaces are untouched, and the existing golden-file freeze gates (`SdkContractFreezeTests`, `EventContractFreezeTests`) remain the proof.
+The original design proposed four additions to sharpen the engine/companion boundary.
+Validation, composed-schema export and rich catalogue export are now delivered; the
+`healer-suggestion` event remains future design. These additions preserve the v1 provider
+interfaces and event-wire contract, whose existing golden-file freeze gates
+(`SdkContractFreezeTests`, `EventContractFreezeTests`) remain in place.
 
 ### 9.1 A `validate` CLI subcommand
 
@@ -171,11 +183,23 @@ vouchfxai requires no change to vouchfx. Four small additions would nonetheless 
 
 ### 9.2 A `schema` export command
 
-`vouchfx schema` — emit the composed v1 schema as an artefact, so any consumer (vouchfxai, editor tooling, documentation pipelines) obtains it from the installed engine version rather than embedding a copy.
+**Delivered.** `vouchfx schema` emits the engine's composed v1 JSON Schema to stdout;
+`vouchfx schema --output <path>` writes it to a file whose parent directory already exists.
+The export includes the root language schema and registered provider fragments, without
+starting a topology or resolving secrets. Consumers can obtain the installed engine's
+schema for compatibility checks; MCP also retains its pinned embedded copy for offline
+validation. See [Getting Started](getting-started.md) for export commands and exit codes.
 
 ### 9.3 A machine-readable provider catalogue
 
-**Partially delivered.** `vouchfx list --step-types --json` emits the sealed Core step-type catalogue — every registered dotted `family.provider` key, sorted by type, with separate family and provider fields. The frozen JSON wire contract is pinned by golden-file tests (`ListJsonDocument`, `ListJsonStepType`). The richer metadata envisioned in section 4.3 — field shapes, capture support, and family intent — remains future work, but the command is consumable by editor tooling and can be integrated into the vouchfxai generator's vocabulary lookup.
+**Delivered.** `vouchfx list --step-types --json` emits the registered dotted
+`family.provider` catalogue, sorted by type, with separate family and provider fields.
+Entries include `requiredFields` and `optionalFields` (type-specific field names),
+`captureSupported`, `familyIntent`, mutually constrained field groups and supported verify
+modes. Catalogue export fails on incomplete provider metadata instead of silently omitting
+entries. The MCP catalogue tools and VSCode authoring extension already consume this rich
+export; it needs no topology or Docker startup. See [Getting Started](getting-started.md)
+for the current catalogue wire shape and consumer guidance.
 
 ### 9.4 Formalising the `healer-suggestion` event
 
