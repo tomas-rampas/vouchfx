@@ -7,6 +7,10 @@
 #               `requires!=docker` trait filter; they run in the `integration`
 #               job.
 #
+#  windows-unit Blocking Windows gate: restore → build (0-warning) → unit tests.
+#               Uses the same `requires!=docker` filter; Docker stays on Linux.
+#               Uploads per-project TRX results even when a step fails.
+#
 #  memory-leak  BLOCKING permanent gate: runs the 5,000-iteration
 #               provider-closure memory-leak harness over the full Core-provider
 #               client closure (Npgsql, Confluent.Kafka, MongoDB.Driver,
@@ -123,8 +127,8 @@ jobs:
       # SystemProcessRunnerTests.TheGuardsAnchors_StayInTheOrderARealChildProduces
       # measures the skew between Process.StartTime and a pid file's write time and
       # writes it to ITestOutputHelper; the console logger prints captured output for
-      # FAILED tests only, so without a trx that figure existed nowhere on this lane —
-      # which is the only lane that can report it, the maintainer developing on Windows.
+      # FAILED tests only, so without a trx that figure existed nowhere on this lane.
+      # Both unit lanes now preserve it for comparison across Linux and Windows.
       # The trx lands in TestResults/ and therefore inside the coverage artifact the
       # step below already uploads with if: always().  Not console;verbosity=detailed,
       # which would print a line for every test in the solution.
@@ -162,11 +166,10 @@ jobs:
       # are public; a trx carries runUser and computerName, so the question is fair.  The
       # answer is that they are different values.  #498 is about the MAINTAINER's host
       # layout — a developer's account name and directory tree, reached through
-      # Path.GetTempPath() on a machine that is not disposable.  Every `runs-on` in this
-      # file is ubuntu-latest (seven of seven; the "self-hosted" strings here are about
-      # the coverage badge having no third-party service, and one is about a hypothetical
-      # minimal image), so on this lane those attributes are the ephemeral GitHub runner
+      # Path.GetTempPath() on a machine that is not disposable.  This build job runs on
+      # ubuntu-latest, so on this lane those attributes are the ephemeral GitHub runner
       # identity — `runner` on an `fv-az…` host that ceases to exist when the job ends.
+      # The Windows unit job also uses a disposable GitHub-hosted runner.
       # A green run's TRX carries no repository paths; a failing one can carry source
       # paths in PDB-resolved stack traces, which is the same exposure the job log
       # already has and is not what #498 restricts.  The ARTIFACT is not path-free
@@ -195,6 +198,47 @@ jobs:
         with:
           name: coverage
           path: TestResults/
+          retention-days: 7
+
+  windows-unit:
+    name: Windows build & unit tests
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up .NET 8 SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Restore dependencies
+        run: dotnet restore vouchfx.sln
+
+      # Directory.Build.props sets TreatWarningsAsErrors=true.
+      - name: Build (Release, 0-warning gate)
+        run: dotnet build vouchfx.sln -c Release --no-restore
+
+      # Retain the project-specific VSTestLogger from Directory.Build.props;
+      # a CLI --logger override would erase its unique per-project prefix.
+      - name: Unit tests (requires!=docker)
+        run: >
+          dotnet test vouchfx.sln
+          -c Release
+          --no-build
+          --filter "requires!=docker"
+          --results-directory TestResults/Windows
+
+      - name: Upload Windows unit test results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-unit-test-results
+          path: TestResults/Windows/*.trx
           retention-days: 7
 
   # ── Memory-leak regression — BLOCKING permanent gate ─────────────────────────

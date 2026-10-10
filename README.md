@@ -347,9 +347,10 @@ To decline the sweep — when deliberately holding a CLI host under a debugger, 
 `VOUCHFX_DRILL_SWEEP=0`. Nothing is then inspected or killed at either end of the lane, and that is
 recorded in the same log.
 
-CI (`.github/workflows/build.yml`) runs a blocking **build** job (build + format + unit tests), a
-blocking **memory-leak** job over 5,000 load-unload cycles, a blocking **integration** job for
-Docker/Aspire tests, and a blocking **documentation** job that builds the site and checks its
+CI (`.github/workflows/build.yml`) defines a blocking Linux **build** job (build + format + unit
+tests), a blocking **windows-unit** job (restore + Release build + Docker-free unit tests), a
+blocking **memory-leak** job over 5,000 load-unload cycles, a blocking Linux **integration** job
+for Docker/Aspire tests, and a blocking **documentation** job that builds the site and checks its
 publication boundary.
 
 <details>
