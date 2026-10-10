@@ -155,7 +155,18 @@ public static class YamlDocumentParser
         var dependencies = ParseDependencyMap(node);
         var seed = ParseSeed(node);
 
-        return new EnvironmentSpec(services, dependencies, seed, imageRegistry, imagePullPolicy);
+        EnvironmentSourceSpec? source = null;
+        if (TryGetMapping(node, "source", out var sourceNode))
+        {
+            source = new EnvironmentSourceSpec(
+                GetScalar(sourceNode, "driver") ?? string.Empty,
+                GetScalar(sourceNode, "config") ?? string.Empty);
+        }
+
+        return new EnvironmentSpec(services, dependencies, seed, imageRegistry, imagePullPolicy)
+        {
+            Source = source,
+        };
     }
 
     /// <summary>

@@ -50,6 +50,9 @@ namespace Vouchfx.Engine.Orchestration;
 /// </remarks>
 public interface IKeptTopology : IAsyncDisposable
 {
+    /// <summary>Ownership and state permissions; dependency names remain available regardless.</summary>
+    Environments.EnvironmentStatePolicy StatePolicy => Environments.EnvironmentStatePolicy.Inline;
+
     /// <summary>
     /// Gets the declared-versus-observed security confirmations REQ-005's probe produced when this
     /// topology was built. See <see cref="SuiteTopology.SecurityConfirmations"/> for the invariant

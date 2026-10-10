@@ -37,6 +37,10 @@
       {
         "fileMatch": "*.e2e.yaml",
         "url": "./src/schema/composed-schema.v1.json"
+      },
+      {
+        "fileMatch": "*.compose.yaml",
+        "url": "./src/schema/compose-environment-schema.v1.json"
       }
     ],
     "grammars": [

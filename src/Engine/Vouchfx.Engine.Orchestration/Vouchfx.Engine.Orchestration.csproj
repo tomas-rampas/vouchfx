@@ -3,6 +3,9 @@
   <PropertyGroup>
     <RootNamespace>Vouchfx.Engine.Orchestration</RootNamespace>
   </PropertyGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Environments/compose-environment-schema.json" />
+  </ItemGroup>
 
   <!-- Expose internal helpers (e.g. SeedApplier, S05-A-01) to the Orchestration
        test project so the no-docker tests can exercise them directly. -->

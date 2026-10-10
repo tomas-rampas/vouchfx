@@ -2,7 +2,8 @@
 
 This is the public, capability-level roadmap for vouchfx. Progress is measured by implemented
 capabilities and passing release checks, rather than a calendar target. Published release candidates
-are available; 1.0.0 still requires the environment extension and release validation described below.
+are available; current source includes the environment extension, while installed-package and fleet
+validation remain requirements for 1.0.0.
 
 For what changed when, see the [changelog](changelog.md). For how project decisions are made, see
 [governance](governance.md).
@@ -87,11 +88,13 @@ dotnet tool install --global vouchfx --prerelease
 The pre-releases support real-world validation. The remaining GA work includes implementation,
 defect resolution, documentation and packaging:
 
-- **User-supplied environments** — Docker Compose is the first additional environment format. An
-  environment-driver boundary must separate provisioning, readiness, logical endpoint bindings and
-  resource ownership from assertion providers. Existing inline environments remain supported;
-  additional formats must fit that boundary without rewriting the runner or provider SDK. Compose
-  support is planned and is not accepted by the current suite schema.
+- **Releasing user-supplied environments** — current source supports owned, fresh-per-scenario
+  HTTP/PostgreSQL Docker Compose environments through a format-neutral registered-driver boundary.
+  Pure binding supplies logical targets; acquisition supplies a ready lease and owns resource cleanup,
+  without changing assertion providers. Existing inline environments remain supported. Published
+  `1.0.0-rc.6` does not accept `environment.source`; installed-package and fleet acceptance of a
+  Compose-capable candidate remain release gates. See [the Compose guide](compose-environments.md)
+  for supported modes, prerequisites and recovery.
 - **Release-blocking defects and execution evidence** — resolve failures in verdict reporting,
   secrets, lifecycle cleanup, supported security paths and consumer compatibility. Required runtime
   checks must prove that assertions executed; unavailable prerequisites or skipped probes do not

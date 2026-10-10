@@ -78,6 +78,11 @@ internal sealed class WatchCompileResult
     /// already rendered the refusal itself.
     /// </summary>
     public string? Error { get; }
+    /// <summary>Pure authoring inputs to observe, including source configuration after a refusal.</summary>
+    public IReadOnlyList<string> InputFiles { get; init; } = Array.Empty<string>();
+
+    internal WatchCompileResult WithInputFiles(IReadOnlyList<string> files)
+        => new(IsSuccess, TopologyFingerprint, Compiled, Error) { InputFiles = Array.AsReadOnly(files.ToArray()) };
 
     /// <summary>
     /// Builds a successful result carrying the topology fingerprint and the opaque planned payload.

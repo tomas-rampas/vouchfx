@@ -208,8 +208,8 @@ internal static class RunCommand
 
     /// <summary>
     /// The <c>--parallel</c> option: run up to N scenarios concurrently, each owning its own
-    /// topology (S08-T1).  When absent, scenarios run sequentially against ONE shared topology
-    /// (the default — explicit opt-in keeps the container cost a deliberate choice).
+    /// topology (S08-T1). When absent, scenarios run sequentially; sharing or recreation follows
+    /// the selected environment driver's state policy.
     /// </summary>
     /// <remarks>
     /// Parallelism is an explicit opt-in because each concurrent scenario stands up its OWN
@@ -222,31 +222,31 @@ internal static class RunCommand
             "Run up to N scenarios concurrently, each owning its OWN container topology (S08). "
             + "Must be 1 or greater. CAVEAT: each concurrent scenario stands up its own topology, "
             + "so --parallel N uses up to N times the containers at once. Omit to run sequentially "
-            + "against a single shared topology (the default).",
+            + "with sharing or recreation determined by the environment driver (inline reuses; "
+            + "Compose recreates).",
     };
 
     /// <summary>
     /// The <c>--watch</c> flag (S08-C-01): run the suite once, then watch the <c>.e2e.yaml</c>
-    /// file and re-run automatically on save, re-using the already-built topology while the
-    /// <c>environment</c> block is unchanged (and rebuilding it only when it changes).
+    /// file and referenced environment inputs, then re-run automatically on save. Reuse requires
+    /// unchanged inputs and an environment driver whose state policy permits it.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Watch mode targets the local edit-run loop for a SINGLE file: it keeps one topology alive
-    /// across re-runs and skips the expensive container rebuild whenever only <c>steps</c> change.
+    /// Watch mode targets the local edit-run loop for a SINGLE file. Inline environments can keep
+    /// a topology across step-only edits; recreate policies acquire a fresh topology for every run.
     /// </para>
     /// <para>
-    /// <c>--watch</c> is mutually exclusive with <c>--parallel</c>: the former keeps ONE topology
-    /// alive for one file, the latter fans MANY scenarios across MANY topologies — combining them
-    /// is incoherent, so the combination is rejected as a usage error.
+    /// <c>--watch</c> is mutually exclusive with <c>--parallel</c>: watch executes one selected
+    /// scenario at a time, while parallel execution schedules multiple scenarios concurrently.
     /// </para>
     /// </remarks>
     internal static Option<bool> BuildWatchOption() => new("--watch")
     {
         Description =
-            "Run once, then watch the .e2e.yaml file and re-run automatically on save, re-using "
-            + "the already-built topology while the `environment` block is unchanged (rebuilding "
-            + "it only when it changes). For local iteration on a single file; press Ctrl-C to "
+            "Run once, then watch the .e2e.yaml file and referenced environment inputs and re-run "
+            + "on save. Reuse requires unchanged inputs and a driver policy that permits it "
+            + "(inline reuses; Compose recreates). For local iteration on a single file; press Ctrl-C to "
             + "stop. Cannot be combined with --parallel.",
     };
 

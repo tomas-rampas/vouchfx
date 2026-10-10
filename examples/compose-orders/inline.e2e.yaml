@@ -1,0 +1,36 @@
+metadata:
+  name: inline-orders
+environment:
+  services:
+    api:
+      image: vouchfx-compose-orders-example:local
+      imagePullPolicy: Never
+      httpPort: 8080
+      env:
+        DATABASE_CONNECTION_STRING: "${conn:db}"
+  dependencies:
+    db:
+      type: postgres
+steps:
+  - id: fresh-database
+    type: db-assert.postgres
+    target: db
+    query: SELECT order_id FROM orders
+    verifyMode: IMMEDIATE
+    expect: { rowCount: 0 }
+  - id: create-order
+    type: http.rest
+    target: api
+    method: POST
+    path: /orders
+    body: { id: compose-order-1 }
+    expect: { status: 201 }
+  - id: stored-order
+    type: db-assert.postgres
+    target: db
+    query: SELECT status FROM orders WHERE order_id = @id
+    parameters: { id: compose-order-1 }
+    verifyMode: IMMEDIATE
+    expect:
+      rowCount: 1
+      row: { status: CREATED }

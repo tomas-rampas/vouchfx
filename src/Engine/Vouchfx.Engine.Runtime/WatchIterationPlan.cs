@@ -42,6 +42,7 @@ using Vouchfx.Engine.Abstractions.Events;
 using Vouchfx.Engine.Authoring.Ast;
 using Vouchfx.Engine.Compilation.Schema;
 using Vouchfx.Engine.Orchestration;
+using Vouchfx.Engine.Orchestration.Environments;
 using Vouchfx.Engine.Reporting;
 using Vouchfx.Sdk;
 
@@ -134,6 +135,18 @@ public sealed class WatchIterationPlan
 
     /// <summary>Gets the one argument list the topology for this save would be built from.</summary>
     public TopologyRequest Request { get; }
+    public EnvironmentStatePolicy StatePolicy => Pipeline?.EnvironmentPlan?.StatePolicy ?? EnvironmentStatePolicy.Inline;
+    /// <summary>Watch inputs from the neutral plan, or the source configuration when binding was refused.</summary>
+    public IReadOnlyList<string> InputFiles
+    {
+        get
+        {
+            if (Pipeline?.EnvironmentPlan is { } plan) return plan.InputFiles;
+            if (Ast.Environment?.Source is not { } source) return Array.Empty<string>();
+            try { return new[] { Path.GetFullPath(source.Config, SeedBaseDirectory ?? Directory.GetCurrentDirectory()) }; }
+            catch (ArgumentException) { return Array.Empty<string>(); }
+        }
+    }
 
     /// <summary>Gets the parsed scenario this plan was computed for.</summary>
     public ScenarioAst Ast { get; }
@@ -170,7 +183,8 @@ public sealed class WatchIterationPlan
         string scenarioName,
         StepKindRegistry registry,
         string? appHostAssemblyName,
-        string? suiteDirectory)
+        string? suiteDirectory,
+        EnvironmentDriverRegistry? environmentDrivers = null)
     {
         ArgumentNullException.ThrowIfNull(ast);
         ArgumentNullException.ThrowIfNull(yamlText);
@@ -217,11 +231,14 @@ public sealed class WatchIterationPlan
         // ProviderPipeline.Compile AND the secret-reference walk, both run, both reported, in the
         // run path's order — the same helper `run` and `--parallel` call.
         var (pipeline, authoringFault) =
-            ScenarioRunner.RunPreTopologyAuthoringDoor(ast, registry, suiteDirectory);
+            ScenarioRunner.RunPreTopologyAuthoringDoor(ast, registry, suiteDirectory, environmentDrivers);
         if (authoringFault is not null)
         {
             return Refused(authoringFault);
         }
+
+        request = request.WithPlan(pipeline.EnvironmentPlan!);
+        fingerprint = ScenarioRunner.ComputeTopologyFingerprint(request);
 
         return new WatchIterationPlan(
             runId,

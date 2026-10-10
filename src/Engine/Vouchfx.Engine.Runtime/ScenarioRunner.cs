@@ -45,6 +45,7 @@ using Vouchfx.Engine.Authoring.Model;
 using Vouchfx.Engine.Compilation;
 using Vouchfx.Engine.Compilation.Schema;
 using Vouchfx.Engine.Orchestration;
+using Vouchfx.Engine.Orchestration.Environments;
 using Vouchfx.Engine.Orchestration.HostResources;
 using Vouchfx.Engine.Reporting;
 using Vouchfx.Engine.Runtime.Secrets;
@@ -510,6 +511,7 @@ public static class ScenarioRunner
     /// The aggregate <see cref="Verdict"/> for the scenario, aggregated with
     /// precedence <c>EnvironmentError &gt; Fail &gt; Inconclusive &gt; Pass</c>.
     /// </returns>
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1068:CancellationToken parameters must come last", Justification = "Keep existing positional cancellation arguments compatible while adding optional engine driver injection.")]
     public static async Task<Verdict> RunAsync(
         string yamlText,
         string scenarioName,
@@ -517,7 +519,8 @@ public static class ScenarioRunner
         string? appHostAssemblyName,
         TextWriter output,
         string? seedBaseDirectory = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        EnvironmentDriverRegistry? environmentDrivers = null)
     {
         ArgumentNullException.ThrowIfNull(yamlText);
         ArgumentNullException.ThrowIfNull(scenarioName);
@@ -570,7 +573,7 @@ public static class ScenarioRunner
             output,
             seedBaseDirectory,
             livePump: null,
-            cancellationToken).ConfigureAwait(false);
+            cancellationToken, environmentDrivers).ConfigureAwait(false);
 
         TerminalRenderer.Render(buffer, output, diffLookup);
         return verdict;
@@ -743,7 +746,8 @@ public static class ScenarioRunner
         TextWriter output,
         string? seedBaseDirectory,
         LiveEventPump? livePump,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        EnvironmentDriverRegistry? environmentDrivers = null)
     {
         ArgumentNullException.ThrowIfNull(declaredTargets);
 
@@ -998,7 +1002,7 @@ public static class ScenarioRunner
         // a step-secret-only document pays for, is recorded on RunPreTopologyAuthoringDoor. What is
         // local to THIS site is only what it does with the answer, below.
         var (pipelineResult, authoringFault) =
-            RunPreTopologyAuthoringDoor(ast, registry, seedBaseDirectory);
+            RunPreTopologyAuthoringDoor(ast, registry, seedBaseDirectory, environmentDrivers);
         if (authoringFault is not null)
         {
             var nowAuthoring = DateTimeOffset.UtcNow;
@@ -1088,7 +1092,7 @@ public static class ScenarioRunner
         // deliberately does.
         var probeSecrets = CreateSecretAccessorScope(runSecretLedger);
         ISecurityConfigurationAccessor probeSecurity = NullSecurityConfigurationAccessor.Instance;
-        SuiteTopology suite;
+        IKeptTopology suite;
         try
         {
             probeSecurity = SecurityConfigurationAccessor.Build(
@@ -1105,9 +1109,10 @@ public static class ScenarioRunner
             // reference, not merely an equal value: AstBuilder.Build carries `doc.Environment`
             // straight onto the ScenarioAst it returns (AstBuilder.cs — `new ScenarioAst(doc.
             // Metadata, doc.Environment, …)`), and this `ast` was built from this `doc`.
-            suite = await TopologyRequest
-                .ForScenario(ast, appHostAssemblyName, seedBaseDirectory)
-                .StartAsync(probeSecurity, runPathLedger, cancellationToken)
+            var request = TopologyRequest.ForScenario(ast, appHostAssemblyName, seedBaseDirectory)
+                .WithPlan(pipelineResult.EnvironmentPlan!);
+            suite = await request
+                .AcquireAsync(probeSecurity, runPathLedger, cancellationToken, output.WriteLine, probeSecrets.Accessor)
                 .ConfigureAwait(false);
         }
         catch (ArgumentException aex)
@@ -1541,6 +1546,7 @@ public static class ScenarioRunner
     /// because subsequent scenarios would run against an unknown DB state.
     /// </para>
     /// </remarks>
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1068:CancellationToken parameters must come last", Justification = "Keep existing positional cancellation arguments compatible while adding optional engine driver injection.")]
     public static async Task<SuiteResult> RunSuiteAsync(
         IReadOnlyList<ScenarioAst> scenarios,
         IReadOnlyList<string> scenarioNames,
@@ -1556,13 +1562,30 @@ public static class ScenarioRunner
         string? eventsStreamPath = null,
         bool decorate = false,
         IReadOnlyList<UnbuiltDocument>? unbuiltDocuments = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        EnvironmentDriverRegistry? environmentDrivers = null)
     {
         ArgumentNullException.ThrowIfNull(scenarios);
         ArgumentNullException.ThrowIfNull(scenarioNames);
         ArgumentNullException.ThrowIfNull(yamlTexts);
         ArgumentNullException.ThrowIfNull(providerAssemblies);
         ArgumentNullException.ThrowIfNull(output);
+
+        // Recreate is a driver-independent policy. Each ordinary scenario core compiles once,
+        // acquires a fresh lease and disposes it before the next slot (concurrency one).
+        if (scenarioBaseDirectories is not null && scenarioBaseDirectories.Count != scenarios.Count)
+            throw new ArgumentException("scenarioBaseDirectories must have the same length as scenarios.", nameof(scenarioBaseDirectories));
+        if (scenarios.Select((ast, index) => RequiresRecreation(ast.Environment,
+            environmentDrivers ?? EnvironmentDriverRegistry.BuiltIn,
+            scenarioBaseDirectories?[index] ?? seedBaseDirectory)).Any(recreate => recreate))
+        {
+            return await ParallelSuiteRunner.RunParallelAsync(scenarios, scenarioNames, yamlTexts,
+                providerAssemblies, appHostAssemblyName, output, maxConcurrency: 1,
+                seedBaseDirectory: seedBaseDirectory, seedBaseDirectories: scenarioBaseDirectories,
+                htmlReportPath: htmlReportPath, junitReportPath: junitReportPath, eventsReportPath: eventsReportPath,
+                eventsStreamPath: eventsStreamPath, decorate: decorate, unbuiltDocuments: unbuiltDocuments,
+                cancellationToken: cancellationToken, environmentDrivers: environmentDrivers).ConfigureAwait(false);
+        }
 
         // THIS ARM RETURNS BEFORE THE ASSURANCE WALK BELOW, SO IT ANSWERS THE SAME QUESTION HERE
         // (Copilot, PR #416). It used to DISCARD `unbuiltDocuments` and return a bare
@@ -2053,7 +2076,7 @@ public static class ScenarioRunner
             // `--watch` iteration plan. The two clauses above and the ordering they describe are
             // properties of RunPreTopologyAuthoringDoor now, not of this loop.
             var (pipelineResult, authoringFault) =
-                RunPreTopologyAuthoringDoor(ast, registry, scenarioBaseDirectory);
+                RunPreTopologyAuthoringDoor(ast, registry, scenarioBaseDirectory, environmentDrivers);
             if (authoringFault is not null)
             {
                 assurance = assurance.Refusing(SecurityAbortKind.AuthoringFault);
@@ -2431,7 +2454,7 @@ public static class ScenarioRunner
         var probeSecrets = CreateSecretAccessorScope(runSecretLedger);
         ISecurityConfigurationAccessor probeSecurity = NullSecurityConfigurationAccessor.Instance;
 
-        SuiteTopology suite;
+        IKeptTopology suite;
         try
         {
             probeSecurity = SecurityConfigurationAccessor.Build(
@@ -2449,13 +2472,15 @@ public static class ScenarioRunner
             // local. See that guard's own note (m7) for why scenarios carrying an early verdict are
             // excluded: one executes nothing, so it stages nothing, and it must not be able to make
             // a project-form service look targeted (#348) for a step that was never going to run.
-            suite = await TopologyRequest
-                .ForSuite(
+            var request = TopologyRequest.ForSuite(
                     scenarios[topologyIndex].Environment,
                     runnableScenarios,
                     appHostAssemblyName,
-                    seedBaseDirectory)
-                .StartAsync(probeSecurity, runPathLedger, cancellationToken)
+                    // The document-valid baseline can be refused by a later authoring gate and
+                    // therefore have no pipeline. Only a runnable compilation owns an acquisition plan.
+                    seedBaseDirectory).WithPlan(compilations.First(c => c.EarlyVerdict is null).Pipeline!.EnvironmentPlan!);
+            suite = await request
+                .AcquireAsync(probeSecurity, runPathLedger, cancellationToken, output.WriteLine, probeSecrets.Accessor)
                 .ConfigureAwait(false);
         }
         catch (ArgumentException aex)
@@ -3447,9 +3472,11 @@ public static class ScenarioRunner
     /// </para>
     /// </remarks>
     internal static (PipelineResult Pipeline, string? Fault) RunPreTopologyAuthoringDoor(
-        ScenarioAst ast, StepKindRegistry registry, string? baseDirectory)
+        ScenarioAst ast, StepKindRegistry registry, string? baseDirectory,
+        EnvironmentDriverRegistry? environmentDrivers = null)
     {
-        var pipelineResult = ProviderPipeline.Compile(ast, registry, SuiteNamespace, baseDirectory);
+        var pipelineResult = ProviderPipeline.Compile(ast, registry, SuiteNamespace, baseDirectory,
+            environmentDrivers: environmentDrivers);
         var stepSecretFault = TryValidateSecretReferences(ast, out var secretError, out _)
             ? secretError
             : null;
@@ -5190,10 +5217,16 @@ public static class ScenarioRunner
     /// rather than sniffing the shape of a discovered connection string.
     /// </summary>
     private static IScenarioIsolation BuildIsolation(IKeptTopology topology) =>
-        ScenarioIsolationFactory.Create(
+        topology.StatePolicy.CanReset ? ScenarioIsolationFactory.Create(
             topology.DependencyNames,
             topology.DependencyTypes,
-            topology.DiscoveredServices);
+            topology.DiscoveredServices) : new NullScenarioIsolation();
+
+    private static bool RequiresRecreation(EnvironmentSpec? environment, EnvironmentDriverRegistry drivers, string? directory)
+    {
+        try { return drivers.Bind(environment, directory).StatePolicy.Reuse == EnvironmentReusePolicy.Recreate; }
+        catch (ArgumentException) { return false; } // The normal authoring gate reports the located refusal.
+    }
 
     /// <summary>
     /// <see cref="JsonSerializerOptions"/> used by <see cref="SerialiseEnvironment"/>.

@@ -39,6 +39,7 @@ using Vouchfx.Engine.Authoring.Model;
 using Vouchfx.Engine.Compilation;
 using Vouchfx.Engine.Compilation.Schema;
 using Vouchfx.Engine.Orchestration;
+using Vouchfx.Engine.Orchestration.Environments;
 using Vouchfx.Sdk;
 
 namespace Vouchfx.Engine.Runtime;
@@ -270,7 +271,10 @@ internal sealed record PipelineResult(
     IReadOnlyList<ResourcePlanEntry> ResourcePlan,
     IReadOnlyList<string> CompileReferencePaths,
     IReadOnlyList<HostResourcePlanEntry> HostResourcePlan,
-    ValidationFailure? Failure);
+    ValidationFailure? Failure)
+{
+    public EnvironmentPlan? EnvironmentPlan { get; init; }
+}
 
 /// <summary>
 /// Provider-mediated CSX generation pipeline.
@@ -334,7 +338,8 @@ internal static class ProviderPipeline
         StepKindRegistry registry,
         string suiteNamespace,
         string? suiteDirectory = null,
-        SecurityProfileRegistry? securityProfileRegistry = null)
+        SecurityProfileRegistry? securityProfileRegistry = null,
+        EnvironmentDriverRegistry? environmentDrivers = null)
     {
         var resolvedSuiteDirectory = suiteDirectory ?? Directory.GetCurrentDirectory();
         var fragments = new List<StepCompilePlan>(ast.Steps.Count);
@@ -342,6 +347,17 @@ internal static class ProviderPipeline
         var hostResourcePlan = new List<HostResourcePlanEntry>();
         var compileRefLocations = new HashSet<string>(StringComparer.Ordinal);
         var compileRefPaths = new List<string>();
+
+        EnvironmentPlan environmentPlan;
+        try
+        {
+            environmentPlan = (environmentDrivers ?? EnvironmentDriverRegistry.BuiltIn)
+                .Bind(ast.Environment, resolvedSuiteDirectory);
+        }
+        catch (ArgumentException ex)
+        {
+            return Refuse(ex.Message);
+        }
 
         // Environment-level security-artefact validation (authenticated-infrastructure-
         // mtls, PR A): path containment (REQ-003, EDGE-006) then existence (REQ-004) for
@@ -435,7 +451,8 @@ internal static class ProviderPipeline
         // Build the declared-services/dependencies project context from the retained
         // bindings above — no re-binding, no speculative second Bind call.
         var projectCtx = BuildProjectContext(
-            ast, resolvedSuiteDirectory, boundSteps, out var hostResourceServiceCollision);
+            ast, resolvedSuiteDirectory, boundSteps, out var hostResourceServiceCollision,
+            ast.Environment?.Source is null ? null : environmentPlan.Declarations);
 
         // G5 (gatekeeper MAJOR-5): a step's own host-resource contribution (e.g. a
         // webhook-listen.http listener) named identically to a DECLARED SERVICE must be
@@ -805,7 +822,10 @@ internal static class ProviderPipeline
             ResourcePlan: resourcePlan,
             CompileReferencePaths: compileRefPaths,
             HostResourcePlan: hostResourcePlan,
-            Failure: null);
+            Failure: null)
+        {
+            EnvironmentPlan = environmentPlan,
+        };
     }
 
     // ── Reflection dispatch helpers ────────────────────────────────────────────
@@ -1882,7 +1902,8 @@ internal static class ProviderPipeline
     /// </remarks>
     internal static RunProjectContext BuildProjectContext(
         ScenarioAst ast, string suiteDirectory, IReadOnlyList<BoundStep> boundSteps,
-        out ValidationFailure? collisionFailure)
+        out ValidationFailure? collisionFailure,
+        EnvironmentDeclarations? declarations = null)
     {
         collisionFailure = null;
         var deps = ast.Environment?.Dependencies;
@@ -1943,6 +1964,15 @@ internal static class ProviderPipeline
         // actually stages the way the old, hand-maintained "dependencies never collide"
         // assumption did.
         var reservedSvcNames = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (declarations is not null)
+        {
+            foreach (var (name, type) in declarations.Dependencies) depMap[name] = type;
+            foreach (var (name, info) in declarations.Services)
+            {
+                serviceMap[name] = info;
+                reservedSvcNames[name] = $"a declared environment binding '{name}'";
+            }
+        }
         if (services is not null)
         {
             foreach (var kv in services)
@@ -2084,7 +2114,7 @@ internal static class ProviderPipeline
             }
         }
 
-        if (deps is { Count: > 0 } || serviceMap.Count > 0)
+        if (depMap.Count > 0 || serviceMap.Count > 0)
         {
             return new RunProjectContext(depMap, suiteDirectory, serviceMap);
         }

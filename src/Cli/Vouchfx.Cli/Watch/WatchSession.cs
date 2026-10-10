@@ -86,12 +86,14 @@ internal sealed class WatchSession<TTopology> : IAsyncDisposable
 
     /// <summary>Reports a single human-readable line (status / error) to the user.</summary>
     private readonly Action<string> _report;
+    private readonly Func<object, bool> _allowsReuse;
 
     // The kept topology and the topology fingerprint it was built from.  Both null until the first
     // successful build; cleared together when a topology is disposed.
     private TTopology? _current;
     private string? _currentTopologyFingerprint;
     private bool _disposed;
+    internal IReadOnlyList<string> InputFiles { get; private set; } = Array.Empty<string>();
 
     /// <summary>
     /// Initialises a new <see cref="WatchSession{TTopology}"/> with its injected seams.
@@ -106,7 +108,8 @@ internal sealed class WatchSession<TTopology> : IAsyncDisposable
         Func<object, CancellationToken, Task<TTopology>> buildTopologyAsync,
         Func<TTopology, object, bool, CancellationToken, Task> runAgainstTopologyAsync,
         Func<TTopology, Task> disposeTopologyAsync,
-        Action<string> report)
+        Action<string> report,
+        Func<object, bool>? allowsReuse = null)
     {
         _compile = compile ?? throw new ArgumentNullException(nameof(compile));
         _buildTopologyAsync = buildTopologyAsync
@@ -116,6 +119,7 @@ internal sealed class WatchSession<TTopology> : IAsyncDisposable
         _disposeTopologyAsync = disposeTopologyAsync
             ?? throw new ArgumentNullException(nameof(disposeTopologyAsync));
         _report = report ?? throw new ArgumentNullException(nameof(report));
+        _allowsReuse = allowsReuse ?? (_ => true);
     }
 
     /// <summary>
@@ -146,6 +150,8 @@ internal sealed class WatchSession<TTopology> : IAsyncDisposable
         ArgumentNullException.ThrowIfNull(fileContent);
 
         WatchCompileResult compileResult = _compile(fileContent);
+        InputFiles = compileResult.IsSuccess ? compileResult.InputFiles
+            : InputFiles.Concat(compileResult.InputFiles).Distinct(StringComparer.Ordinal).ToArray();
         if (!compileResult.IsSuccess)
         {
             // Authoring error mid-edit: report and KEEP WATCHING — do not touch the kept
@@ -172,6 +178,7 @@ internal sealed class WatchSession<TTopology> : IAsyncDisposable
         // no TARGET NAME keeps the fingerprint, so the kept topology is re-used and only the cheap
         // scenario re-runs.
         var canReuse = _current is not null
+            && _allowsReuse(compiled)
             && string.Equals(
                 _currentTopologyFingerprint, newTopologyFingerprint, StringComparison.Ordinal);
 
@@ -191,8 +198,14 @@ internal sealed class WatchSession<TTopology> : IAsyncDisposable
         // schema-via-script.csharp DB with no user tables yet).  On the REUSE path (canReuse)
         // the kept topology holds the previous run's writes, so the run seam resets them and
         // re-applies the seed, restoring the freshly-built baseline before this run.
-        await _runAgainstTopologyAsync(_current!, compiled, canReuse, cancellationToken)
-            .ConfigureAwait(false);
+        try
+        {
+            await _runAgainstTopologyAsync(_current!, compiled, canReuse, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            if (!_allowsReuse(compiled)) await DisposeCurrentTopologyAsync().ConfigureAwait(false);
+        }
     }
 
     /// <summary>

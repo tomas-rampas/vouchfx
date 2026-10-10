@@ -31,6 +31,7 @@ using Vouchfx.Engine.Authoring;
 using Vouchfx.Engine.Authoring.Ast;
 using Vouchfx.Engine.Compilation;
 using Vouchfx.Engine.Compilation.Schema;
+using Vouchfx.Engine.Orchestration.Environments;
 using Vouchfx.Sdk;
 
 namespace Vouchfx.Engine.Runtime;
@@ -225,7 +226,8 @@ public static class ScenarioValidator
         string yamlText,
         string path,
         StepKindRegistry registry,
-        string? seedBaseDirectory = null)
+        string? seedBaseDirectory = null,
+        EnvironmentDriverRegistry? environmentDrivers = null)
     {
         ArgumentNullException.ThrowIfNull(yamlText);
         ArgumentNullException.ThrowIfNull(path);
@@ -254,7 +256,8 @@ public static class ScenarioValidator
         }
 
         // ── Stage 3a: provider pipeline — bind / validate / resources / emit ──
-        var pipelineResult = ProviderPipeline.Compile(ast, registry, ScenarioRunner.SuiteNamespace, seedBaseDirectory);
+        var pipelineResult = ProviderPipeline.Compile(ast, registry, ScenarioRunner.SuiteNamespace,
+            seedBaseDirectory, environmentDrivers: environmentDrivers);
         if (pipelineResult.Failure is not null)
         {
             return SingleDiagnostic(path, ValidationStage.Pipeline, pipelineResult.Failure.Message);

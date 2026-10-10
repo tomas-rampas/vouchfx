@@ -16,6 +16,7 @@
 using System.CommandLine;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Vouchfx.Engine.Authoring.Model;
 using Vouchfx.Engine.Compilation.Scaffold;
 using Vouchfx.Engine.Compilation.Schema;
 
@@ -155,6 +156,11 @@ internal static class ScaffoldCommand
             errorOutput.WriteLine("Scaffold intent JSON deserialised to null.");
             return ExitCodes.UsageError;
         }
+        if (dto.Source is not null || dto.Environment is not null)
+        {
+            errorOutput.WriteLine("Scaffold intent supports inline service/dependency outlines only. External environment sources are not scaffolded; author environment.source and its adapter configuration explicitly, then use vouchfx validate/run.");
+            return ExitCodes.UsageError;
+        }
 
         ScaffoldIntent intent;
         try
@@ -289,6 +295,13 @@ internal static class ScaffoldCommand
         public List<ScaffoldStepDto?>? Steps { get; set; }
         public List<ScaffoldServiceDto?>? Services { get; set; }
         public List<ScaffoldDependencyDto?>? Dependencies { get; set; }
+        public EnvironmentSourceSpec? Source { get; set; }
+        public ScaffoldEnvironmentDto? Environment { get; set; }
+    }
+
+    private sealed class ScaffoldEnvironmentDto
+    {
+        public EnvironmentSourceSpec? Source { get; set; }
     }
 
     private sealed class ScaffoldStepDto

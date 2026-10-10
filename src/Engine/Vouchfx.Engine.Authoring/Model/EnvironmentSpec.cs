@@ -43,7 +43,14 @@ public sealed record EnvironmentSpec(
     IReadOnlyDictionary<string, DependencySpec>? Dependencies,
     SeedSpec? Seed,
     string? ImageRegistry,
-    string? ImagePullPolicy);
+    string? ImagePullPolicy)
+{
+    /// <summary>Optional independently authored environment selected by a registered driver.</summary>
+    public EnvironmentSourceSpec? Source { get; init; }
+}
+
+/// <summary>A format identifier and configuration file, resolved relative to the suite.</summary>
+public sealed record EnvironmentSourceSpec(string Driver, string Config);
 
 /// <summary>
 /// Specification for a service under test (§3.2).

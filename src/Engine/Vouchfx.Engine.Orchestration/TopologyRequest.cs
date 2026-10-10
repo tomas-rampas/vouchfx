@@ -104,6 +104,20 @@ public sealed record TopologyRequest(
     IReadOnlySet<string> KafkaSpeakingTargets,
     IReadOnlySet<string> EndpointConsumingTargets)
 {
+    private Environments.EnvironmentPlan? _boundPlan;
+
+    /// <summary>Returns the document request paired with its pure bound acquisition operation.</summary>
+    public TopologyRequest WithPlan(Environments.EnvironmentPlan plan) => this with { _boundPlan = plan };
+
+    public Task<IKeptTopology> AcquireAsync(
+        ISecurityConfigurationAccessor? securityConfiguration,
+        SecurityPathDisclosureLedger? pathDisclosures,
+        CancellationToken cancellationToken,
+        Action<string>? reportCleanup = null,
+        Abstractions.Secrets.ISecretAccessor? secrets = null)
+        => (_boundPlan ?? Environments.EnvironmentDriverRegistry.BuiltIn.Bind(Environment, SeedBaseDirectory))
+            .StartAsync(this, securityConfiguration, pathDisclosures, cancellationToken, reportCleanup, secrets);
+
     /// <summary>
     /// The health-gate budget every production caller uses. Named rather than repeated at each
     /// factory so the two cannot drift.
@@ -234,6 +248,11 @@ public sealed record TopologyRequest(
         AppendFramed(builder, SeedBaseDirectory ?? string.Empty);
         AppendFramedSet(builder, KafkaSpeakingTargets);
         AppendFramedSet(builder, EndpointConsumingTargets);
+        if (_boundPlan is not null)
+        {
+            AppendFramed(builder, _boundPlan.SourceIdentity);
+            AppendFramed(builder, _boundPlan.StatePolicy.ToString());
+        }
         return builder.ToString();
     }
 

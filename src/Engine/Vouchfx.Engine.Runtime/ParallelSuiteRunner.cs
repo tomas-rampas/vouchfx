@@ -43,6 +43,7 @@ using Vouchfx.Engine.Abstractions.Events;
 using Vouchfx.Engine.Authoring.Ast;
 using Vouchfx.Engine.Authoring.Model;
 using Vouchfx.Engine.Reporting;
+using Vouchfx.Engine.Orchestration.Environments;
 using Vouchfx.Sdk;
 
 namespace Vouchfx.Engine.Runtime;
@@ -236,6 +237,7 @@ public static class ParallelSuiteRunner
     /// <exception cref="ArgumentOutOfRangeException">
     /// <paramref name="maxConcurrency"/> is supplied and less than 1.
     /// </exception>
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1068:CancellationToken parameters must come last", Justification = "Keep existing positional cancellation arguments compatible while adding optional engine driver injection.")]
     public static async Task<SuiteResult> RunParallelAsync(
         IReadOnlyList<ScenarioAst> scenarios,
         IReadOnlyList<string> scenarioNames,
@@ -252,7 +254,8 @@ public static class ParallelSuiteRunner
         string? eventsStreamPath = null,
         bool decorate = false,
         IReadOnlyList<UnbuiltDocument>? unbuiltDocuments = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        EnvironmentDriverRegistry? environmentDrivers = null)
     {
         ArgumentNullException.ThrowIfNull(scenarios);
         ArgumentNullException.ThrowIfNull(scenarioNames);
@@ -275,7 +278,9 @@ public static class ParallelSuiteRunner
             diffLookup,
             maxConcurrency,
             // Default seam: the real no-render core that builds/owns/disposes a topology.
-            runScenario: ScenarioRunner.RunScenarioOwningTopologyAsync,
+            runScenario: (kinds, yaml, name, targets, host, writer, directory, pump, ct)
+                => ScenarioRunner.RunScenarioOwningTopologyAsync(kinds, yaml, name, targets, host, writer,
+                    directory, pump, ct, environmentDrivers),
             seedBaseDirectory,
             htmlReportPath,
             junitReportPath,

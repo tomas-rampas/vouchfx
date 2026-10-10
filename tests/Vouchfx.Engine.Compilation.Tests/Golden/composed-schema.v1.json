@@ -67,7 +67,40 @@
       "description": "Declares the infrastructure the test depends on — services under test and managed dependencies.",
       "type": "object",
       "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "source"
+            ]
+          },
+          "then": {
+            "maxProperties": 1
+          }
+        }
+      ],
       "properties": {
+        "source": {
+          "description": "Select a registered environment driver. Absence selects inline Aspire provisioning. Compose is the additional production driver; its own configuration resolves relative to the suite and owns native manifests, logical HTTP/PostgreSQL bindings and readiness.",
+          "type": "object",
+          "required": [
+            "driver",
+            "config"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "driver": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]*$",
+              "description": "Registered driver identifier; unknown identifiers are refused by normal compile validation."
+            },
+            "config": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Driver-owned configuration file relative to this suite."
+            }
+          }
+        },
         "services": {
           "description": "The system-under-test services, each identified by a logical name and brought up via an image or csproj path.",
           "type": "object",

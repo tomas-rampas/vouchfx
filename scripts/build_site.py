@@ -46,6 +46,7 @@ DOCS: list[tuple[str, ...]] = [
     ("docs/getting-started.md", "User guides", "Getting started (60-minute path)"),
     ("docs/recipes.md", "User guides", "Recipes"),
     ("docs/common-patterns.md", "User guides", "Common patterns"),
+    ("docs/compose-environments.md", "User guides", "Owned Docker Compose environments"),
     ("docs/troubleshooting.md", "User guides", "Troubleshooting"),
     ("docs/ci-integration.md", "User guides", "CI integration reference"),
     ("docs/telemetry.md", "User guides", "Telemetry & privacy"),

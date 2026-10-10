@@ -15,6 +15,7 @@
 
 using System.CommandLine;
 using Vouchfx.Engine.Compilation.Schema;
+using Vouchfx.Engine.Orchestration.Environments;
 
 namespace Vouchfx.Cli;
 
@@ -37,11 +38,16 @@ internal static class SchemaCommand
 
         var outputOption = BuildOutputOption();
         command.Add(outputOption);
+        var environmentDriverOption = new Option<string?>("--environment-driver")
+        {
+            Description = "Export an environment driver's separate configuration schema. Supported: compose.",
+        };
+        command.Add(environmentDriverOption);
 
         command.SetAction((parseResult, _) =>
         {
             var outputPath = parseResult.GetValue(outputOption);
-            return Task.FromResult(Execute(outputPath, Console.Out, Console.Error));
+            return Task.FromResult(Execute(outputPath, Console.Out, Console.Error, parseResult.GetValue(environmentDriverOption)));
         });
 
         return command;
@@ -69,13 +75,18 @@ internal static class SchemaCommand
     /// <param name="output">Stdout writer (schema text when not using <c>--output</c>).</param>
     /// <param name="errorOutput">Stderr writer for diagnostics on failure.</param>
     /// <returns>The process exit code (see class header).</returns>
-    internal static int Execute(string? outputPath, TextWriter output, TextWriter errorOutput)
+    internal static int Execute(string? outputPath, TextWriter output, TextWriter errorOutput, string? environmentDriver = null)
     {
+        if (environmentDriver is not null && environmentDriver != "compose")
+        {
+            errorOutput.WriteLine("Unknown environment schema driver. Supported: compose.");
+            return ExitCodes.UsageError;
+        }
         string schemaJson;
         try
         {
-            var registry = ProviderRegistryFactory.BuildCoreRegistry();
-            schemaJson = EngineExport.ComposeSchemaJson(registry);
+            schemaJson = environmentDriver == "compose" ? ComposeEnvironmentDriver.ExportConfigurationSchema()
+                : EngineExport.ComposeSchemaJson(ProviderRegistryFactory.BuildCoreRegistry());
         }
         catch (CatalogueExportException ex)
         {

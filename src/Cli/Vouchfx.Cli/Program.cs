@@ -59,6 +59,7 @@ rootCommand.Add(ScaffoldCommand.Build());
 //                [--stale-days N] [--flaky-min-runs N] [--fragile-min-env-errors N]
 //                [--inconclusive-min N]
 rootCommand.Add(PlanCommand.Build());
+rootCommand.Add(EnvironmentCommand.Build());
 
 // Ctrl-C / SIGTERM teardown budget (S08-T10, S1; widened for vouchfx-mcp#17; 20s→30s AND scoped
 // to `run` only per peer review): System.CommandLine's DEFAULT ProcessTerminationTimeout is ~2s

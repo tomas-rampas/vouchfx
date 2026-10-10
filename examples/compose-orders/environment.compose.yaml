@@ -1,0 +1,19 @@
+version: 1
+files: [./compose.yaml]
+environment:
+  VOUCHFX_COMPOSE_PASSWORD: "${secret:env/VOUCHFX_COMPOSE_PASSWORD}"
+startupTimeoutSeconds: 180
+cleanupTimeoutSeconds: 30
+services:
+  api:
+    service: web
+    port: 8080
+    readiness: { path: /health, status: 200 }
+dependencies:
+  db:
+    type: postgres
+    service: postgres
+    port: 5432
+    database: orders
+    username: orders
+    password: "${secret:env/VOUCHFX_COMPOSE_PASSWORD}"

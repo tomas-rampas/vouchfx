@@ -386,10 +386,14 @@ That is the recommended path for local use. **Both CI integrations deliberately 
 the pinned ref instead, keeping the runner's engine in lock-step with the workflow/template definition
 you pinned — pin a release tag or SHA to track a released engine.
 
-The tool depends on the Aspire orchestration packages being present in the per-user NuGet cache; any
-developer or CI environment that has built an Aspire app or resolved the engine's dependencies has
-them. For machines with only the OS and no .NET SDK, use the self-contained per-OS archives and
-installers attached to each [GitHub release](https://github.com/tomas-rampas/vouchfx/releases).
+Published `1.0.0-rc.6` requires matching Aspire **13.4.2** native DCP tools provisioned separately for
+the host platform, usually through an AppHost restore; set `ASPIRE_DCP_PATH` to their existing tools
+directory. Current source candidates bundle matching native tools for their supported platforms and
+need no warmed NuGet cache after installation. See [version-specific installation prerequisites](getting-started.md#installing-vouchfx).
+The global tool requires the .NET 8 runtime, and source builds require the pinned .NET 8 SDK. For
+machines without that runtime or SDK, use the self-contained per-OS archives and installers attached
+to the selected [GitHub release](https://github.com/tomas-rampas/vouchfx/releases), respecting that
+version's DCP prerequisites.
 
 ### The floating convenience tags
 
@@ -400,7 +404,7 @@ which force-moves them to each published release's commit:
 | Tag | Tracks | State |
 |---|---|---|
 | `v1-alpha` | `v1.0.0-alpha.N` and `v1.0.0-beta.N` | Retired at `v1.0.0-alpha.10` — never deleted, simply no longer moved. |
-| `v1-rc` | `v1.0.0-rc.N` | Current pre-GA tag. Tracks the latest release candidate; currently points at `v1.0.0-rc.5`. Moving to v1 at GA is an explicit edit. |
+| `v1-rc` | `v1.0.0-rc.N` | Current pre-GA tag. Tracks the latest release candidate. Moving to v1 at GA is an explicit edit. |
 | `v1` | `v1.y.z` GA releases only | Starts moving once v1.0.0 ships. |
 
 **Each pre-GA line gets its own tag on purpose.** A consumer who pinned `v1-alpha` chose the alpha

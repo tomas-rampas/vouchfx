@@ -235,6 +235,8 @@ internal static class SuiteSetLoader
         {
             var doc = YamlDocumentParser.Parse(yamlText);
             var ast = AstBuilder.Build(doc, registry);
+            if (ast.Environment?.Source is not null)
+                throw new ArgumentException("environment.source: planner topology analysis is not supported for external drivers. Use vouchfx validate/run to bind the driver's declarations; this suite was not analysed as an empty inline topology.");
             var scenarioId = ComputeScenarioId(ast.Metadata?.Name, absolutePath);
             suites.Add(new PlanSuite(absolutePath, relativePath, scenarioId, ast.Metadata?.Name, ast));
         }

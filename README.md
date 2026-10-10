@@ -11,7 +11,8 @@
 **End-to-end integration testing for distributed systems, authored in YAML.**
 
 vouchfx compiles declarative `.e2e.yaml` tests into Turing-complete C# (CSX), runs them memory-safely
-through Roslyn, and orchestrates the container topology they need with **.NET Aspire + Testcontainers**.
+through Roslyn, and orchestrates inline environments with **.NET Aspire + Testcontainers** or independently
+authored environments with **Docker Compose**.
 It tests one business transaction as it crosses a REST call, a Kafka event, a database mutation and an
 outbound webhook — the seams where distributed systems actually break.
 
@@ -19,10 +20,11 @@ It is **not** a unit-test framework and **not** a UI/browser tool.
 
 > **Status: release candidate.** Published versions are listed on
 > [NuGet.org](https://www.nuget.org/packages/vouchfx/) and
-> [GitHub Releases](https://github.com/tomas-rampas/vouchfx/releases). The current engine provisions
-> inline `environment.services` images/projects and managed dependencies. User-supplied Docker Compose
-> environments are not supported yet. Completing that path, resolving release-blocking defects and
-> validating installed packages across the repository fleet remain requirements for 1.0.0 — see the
+> [GitHub Releases](https://github.com/tomas-rampas/vouchfx/releases). Current source supports inline
+> `environment.services` images/projects and managed dependencies, plus owned HTTP/PostgreSQL
+> [Docker Compose environments](https://vouchfx.io/compose-environments/) through `environment.source`.
+> Published packages gain Compose support only after a new release. Resolving release-blocking defects
+> and validating installed packages across the repository fleet remain requirements for 1.0.0 — see the
 > [roadmap](https://vouchfx.io/roadmap/).
 
 ## Install
@@ -81,7 +83,7 @@ the [Getting Started guide](https://vouchfx.io/getting-started/) walks through i
 | Section | Purpose |
 |---|---|
 | `metadata` | Name, owner, tags, description — drives runner selection and reporting. No execution effect. |
-| `environment` | `services` (the system under test), `dependencies` (managed Aspire resources), an optional `seed`, and registry/pull overrides. |
+| `environment` | Inline `services`, managed `dependencies`, optional `seed` and image defaults; or an exclusive `source` selecting a driver/configuration such as Compose. |
 | `variables` | Constants pre-loaded into the shared context. |
 | `steps` | Ordered; each has an `id`, `type`, and optional `capture`, `verifyMode`, `timeout`, `continueOnFailure`. |
 
@@ -261,7 +263,7 @@ vouchfx scaffold --intent ./intent.json
 vouchfx scaffold --intent ./intent.json --output ./draft.e2e.yaml
 ```
 
-Intent is structured only (step types, ids, optional services/dependencies) — not free text. Free-text goals belong in an MCP host LLM; the engine stays deterministic. See [Getting started — Generator / suite scaffold](https://vouchfx.io/getting-started/#generator--suite-scaffold). Library equivalent: `SuiteScaffolder.Generate` in `Vouchfx.Engine.Compilation`.
+Intent is structured only (step types, ids, optional services/dependencies) — not free text. Free-text goals belong in an MCP host LLM; the engine stays deterministic. See [Getting started — Generator / suite scaffold](https://vouchfx.io/getting-started/#generator-suite-scaffold). Library equivalent: `SuiteScaffolder.Generate` in `Vouchfx.Engine.Compilation`.
 
 ## Telemetry
 
@@ -282,6 +284,7 @@ storage locations.
 | [Getting Started](https://vouchfx.io/getting-started/) | Your first test in 60 minutes. |
 | [vouchfx-samples](https://samples.vouchfx.io/) | Production-grade sample apps (C#, Python, Node.js, Java) with complete suites. |
 | [Recipes](https://vouchfx.io/recipes/) | Task-oriented: SQL seeding, WireMock doubles, secrets, Kafka, CI. |
+| [Owned Docker Compose environments](https://vouchfx.io/compose-environments/) | Bring your own manifests; bind HTTP/PostgreSQL targets, run fresh projects and recover interrupted cleanup. |
 | [Common Patterns](https://vouchfx.io/common-patterns/) | File structure, state threading, scenario selection, multi-step workflows. |
 | [Troubleshooting](https://vouchfx.io/troubleshooting/) | Real failure modes — Docker, the Aspire 20-second cold-start gotcha, captures, verdicts. |
 

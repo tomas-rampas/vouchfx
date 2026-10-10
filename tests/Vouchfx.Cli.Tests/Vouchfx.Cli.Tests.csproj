@@ -2,10 +2,10 @@
 
   <PropertyGroup>
     <RootNamespace>Vouchfx.Cli.Tests</RootNamespace>
-    <!-- This project unit-tests the Docker-free CLI seams only (discovery, registry,
-         exit-code mapping, arg parsing). It does NOT start a topology, so it deliberately
-         does NOT set IsAspireHost — it references Vouchfx.Cli purely to exercise its
-         internal static helpers (exposed via InternalsVisibleTo in the CLI csproj).
+    <!-- This project tests CLI seams (discovery, registry, exit-code mapping, arg parsing)
+         and explicitly Docker-gated Compose acquisition. It does not start Aspire, so it
+         deliberately does NOT set IsAspireHost — Vouchfx.Cli exposes its internal helpers
+         via InternalsVisibleTo for the normal command/watch acceptance paths.
          TargetFramework / IsPackable come from the root + tests Directory.Build.props. -->
   </PropertyGroup>
 

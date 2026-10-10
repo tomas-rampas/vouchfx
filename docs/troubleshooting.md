@@ -429,7 +429,7 @@ Use one of these approaches:
 
 1. **Use the packaged vouchfx CLI (recommended):**
    ```bash
-   # Install (pre-release channel — required whilst published versions are 1.0.0-alpha.x)
+    # Install from the pre-release channel whilst the engine is before 1.0.0 GA
    dotnet tool install --global vouchfx --prerelease
 
    # Already installed? Upgrade instead
@@ -459,7 +459,7 @@ Use one of these approaches:
    ```
    (On Windows: `dotnet run --project src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj -- run $((Get-Location).Path)/tests/e2e`)
 
-**Best practice:** For running vouchfx test suites, use the packaged CLI — it is simpler, requires no path-resolution workarounds, and works on any machine with .NET 8 installed. If you are working on vouchfx itself from source, build the CLI once and run the binary directly — it is faster (skips compilation) and avoids `dotnet run` quirks altogether.
+**Best practice:** For running container-backed vouchfx test suites, use the packaged CLI with the supported .NET 8 runtime, Docker running Linux containers and its [version-specific DCP prerequisites](getting-started.md#installing-vouchfx). Published rc.6 needs externally provisioned matching tools; bundled source candidates supply them. The packaged CLI runs from your current directory without path-resolution workarounds. If you are working on vouchfx itself from source, build the CLI once and run the binary directly — it is faster (skips compilation) and avoids `dotnet run` quirks altogether.
 
 ---
 

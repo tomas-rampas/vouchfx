@@ -467,6 +467,21 @@ Aspire knows about.
 
 When a dependency cannot be exercised for real — a payment gateway that costs money, a third-party API with no sandbox, a service that does not yet exist — the platform's position is that a test double is provisioned like any other dependency: as a container running a stubbing tool such as WireMock or Mountebank, declared in this same section and addressed through the same logical name. The platform ships no built-in mocking; a double is a deliberate, visible entry in the environment rather than a hidden behaviour. Because the double speaks the real protocol, the steps that call it are written identically to steps that call the real service, and swapping one for the other later requires no change to the test logic — only to this declaration.
 
+#### Independently authored environments
+
+Select a registered environment driver instead of inline provisioning:
+
+```yaml
+environment:
+  source:
+    driver: compose
+    config: ./environment.compose.yaml
+```
+
+The source configuration resolves relative to the suite. The source form is exclusive with inline services, dependencies, seed and image defaults. Its adapter owns the configuration schema and supplies normalised logical targets to the same validation, compilation and execution pipeline. Omitting `source` retains inline behaviour.
+
+The Compose driver currently supports owned, fresh-per-scenario HTTP and PostgreSQL environments, native Compose merging, random IPv4 ports and explicit readiness probes. Config/manifest/env-file changes trigger watch reruns; each run recreates its project. Unsupported borrowed resources, reuse, seed and external-driver TLS/mTLS declarations are refused before startup. See [Owned Docker Compose environments](compose-environments.md) for the complete grammar, limitations and recovery command. Export the separate schema with `vouchfx schema --environment-driver compose`; it is not the ordinary suite schema.
+
 ### 3.3 The variables section
 
 The variables section pre-loads the shared context with constants before any step executes. It is the right place for fixed test data — a known tenant identifier, a base path, an expected currency code. Values defined here are visible to every step and can be referenced with the placeholder syntax defined in section 6.

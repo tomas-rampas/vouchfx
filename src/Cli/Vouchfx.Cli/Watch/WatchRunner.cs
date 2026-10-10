@@ -159,7 +159,7 @@ internal static class WatchRunner
 
         await using var session = CreateSession(
             filePath, registry, output, appHostAssemblyName, sessionSecretLedger,
-            sessionPathLedger, StartTopologyAsync);
+            sessionPathLedger);
 
         // Issue #266, Item 4: `filePath` is author/CLI-supplied and reaches a terminal verbatim
         // here. Sanitised, not scrubbed: this line is written BEFORE the first run, so no probe
@@ -167,8 +167,8 @@ internal static class WatchRunner
         // banner's only untrusted component.
         await output.WriteLineAsync(
             DisplaySanitiser.SanitiseForDisplay(
-                $"Watching '{filePath}'.  Saving re-runs the suite (topology re-used while nothing "
-                + "it was built from changes).  Press Ctrl-C to stop.")).ConfigureAwait(false);
+                $"Watching '{filePath}'.  Saving re-runs the suite (topology re-used when the selected "
+                + "environment permits it and its inputs are unchanged).  Press Ctrl-C to stop.")).ConfigureAwait(false);
 
         // ── Initial run ───────────────────────────────────────────────────────
         await RunOnceFromDiskAsync(
@@ -203,9 +203,9 @@ internal static class WatchRunner
     /// </param>
     /// <param name="startTopologyAsync">
     /// Builds a topology from the plan's <see cref="TopologyRequest"/>, the resolved security
-    /// accessor and the session's path-disclosure ledger. The production value is
-    /// <see cref="StartTopologyAsync"/>, which is <c>TopologyRequest.StartAsync</c> and nothing
-    /// else; a test substitutes a starter returning a double, which is what makes everything
+    /// accessor and the session's path-disclosure ledger. Production leaves this null and uses
+    /// the request's normally registered environment plan through <c>AcquireAsync</c>;
+    /// existing inline tests may substitute a starter returning a double, making everything
     /// downstream of this seam — confirmation rendering, transport-notice replay, reset/reseed
     /// ordering, the target sets the request carries — assertable at unit speed for the first
     /// time (#364).
@@ -241,7 +241,8 @@ internal static class WatchRunner
         ResolvedSecretLedger sessionSecretLedger,
         SecurityPathDisclosureLedger sessionPathLedger,
         Func<TopologyRequest, ISecurityConfigurationAccessor, SecurityPathDisclosureLedger,
-            CancellationToken, Task<IKeptTopology>> startTopologyAsync)
+            CancellationToken, Task<IKeptTopology>>? startTopologyAsync = null,
+        Vouchfx.Engine.Orchestration.Environments.EnvironmentDriverRegistry? environmentDrivers = null)
     {
         // The kept-topology isolation is rebuilt by the build seam each time a NEW topology is
         // built (it must bind to the new topology's connection string); held here so the run
@@ -251,7 +252,7 @@ internal static class WatchRunner
         return new WatchSession<IKeptTopology>(
             // Compile seam: re-read happens in OnChangeAsync (file content is passed in); here we
             // parse, run EVERY pre-topology gate, and compute the fingerprint that drives reuse.
-            compile: content => Compile(content, filePath, registry, appHostAssemblyName, output),
+            compile: content => Compile(content, filePath, registry, appHostAssemblyName, output, environmentDrivers),
 
             // Build seam: stand up a fresh topology for the planned scenario's request, and
             // (re)build the matching isolation for it.
@@ -312,9 +313,10 @@ internal static class WatchRunner
                     // in ScenarioRunner. Each of them was dropped from one of those three lists at
                     // some point. The plan's TopologyRequest is now the only list there is, and its
                     // two factories derive both sets from one input.
-                    var topology = await startTopologyAsync(
-                            plan.Request, probeSecurity, sessionPathLedger, ct)
-                        .ConfigureAwait(false);
+                    var topology = startTopologyAsync is null
+                        ? await plan.Request.AcquireAsync(probeSecurity, sessionPathLedger, ct,
+                            output.WriteLine, probeSecrets.Accessor).ConfigureAwait(false)
+                        : await startTopologyAsync(plan.Request, probeSecurity, sessionPathLedger, ct).ConfigureAwait(false);
                     isolation = ScenarioRunner.BuildWatchIsolation(topology);
                     return topology;
                 }
@@ -382,27 +384,10 @@ internal static class WatchRunner
             // whose Error is null, so WatchSession's guarded call prints nothing further. Only a
             // parse/AST failure, which has no events to render, still reaches this sink.
             report: line => output.WriteLine(
-                ScrubThenSanitise(line, sessionSecretLedger, sessionPathLedger)));
+                ScrubThenSanitise(line, sessionSecretLedger, sessionPathLedger)),
+            allowsReuse: planned => ((WatchIterationPlan)planned).StatePolicy.Reuse
+                == Vouchfx.Engine.Orchestration.Environments.EnvironmentReusePolicy.Reuse);
     }
-
-    /// <summary>
-    /// The production topology starter: <c>TopologyRequest.StartAsync</c> and nothing else.
-    /// </summary>
-    /// <remarks>
-    /// A named method rather than a lambda at the call site so its body is one statement a reader
-    /// can check against the census that pins <c>SuiteTopology.StartAsync</c> to exactly one
-    /// production call site — <c>Vouchfx.Engine.Runtime.Tests.SuiteProtocolTargetsTests
-    /// .EverySuiteTopologyStartCallSite_PassesBothTargetSets</c>. That one call site is inside
-    /// <c>TopologyRequest</c>, not here: this method calls <c>request.StartAsync</c>, which is a
-    /// different symbol and does not move the census's count.
-    /// </remarks>
-    private static async Task<IKeptTopology> StartTopologyAsync(
-        TopologyRequest request,
-        ISecurityConfigurationAccessor securityConfiguration,
-        SecurityPathDisclosureLedger sessionPathLedger,
-        CancellationToken cancellationToken)
-        => await request.StartAsync(securityConfiguration, sessionPathLedger, cancellationToken)
-            .ConfigureAwait(false);
 
     /// <summary>
     /// Reads the file from disk and processes one re-run through the session, catching any
@@ -615,25 +600,11 @@ internal static class WatchRunner
         SecurityPathDisclosureLedger sessionPathLedger,
         CancellationToken cancellationToken)
     {
-        var directory = Path.GetDirectoryName(filePath);
-        if (string.IsNullOrEmpty(directory))
-        {
-            directory = Directory.GetCurrentDirectory();
-        }
-
-        var fileName = Path.GetFileName(filePath);
-
         // A SemaphoreSlim(0) acts as a one-shot "a change is pending" signal; the debounce loop
         // waits on it, then drains a quiet window before re-running (coalescing event bursts).
-        using var changeSignal = new SemaphoreSlim(0);
+        using var changeSignal = new SemaphoreSlim(0, 1);
 
-        using var watcher = new FileSystemWatcher(directory, fileName)
-        {
-            NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size
-                | NotifyFilters.FileName | NotifyFilters.CreationTime,
-        };
-
-        void OnEvent(object? _, FileSystemEventArgs __)
+        void OnEvent()
         {
             // Release at most one permit so the waiter wakes exactly once per quiet window.
             try
@@ -647,12 +618,10 @@ internal static class WatchRunner
             {
                 // Already signalled; nothing to do.
             }
+            catch (ObjectDisposedException) { }
         }
-
-        watcher.Changed += OnEvent;
-        watcher.Created += OnEvent;
-        watcher.Renamed += OnEvent;
-        watcher.EnableRaisingEvents = true;
+        using var watcher = new WatchInputFiles(OnEvent);
+        watcher.Refresh(session.InputFiles.Prepend(filePath));
 
         try
         {
@@ -685,11 +654,12 @@ internal static class WatchRunner
                         sessionPathLedger,
                         cancellationToken)
                     .ConfigureAwait(false);
+                watcher.Refresh(session.InputFiles.Prepend(filePath));
             }
         }
         finally
         {
-            watcher.EnableRaisingEvents = false;
+            watcher.Dispose();
         }
     }
 
@@ -725,7 +695,8 @@ internal static class WatchRunner
         string filePath,
         StepKindRegistry registry,
         string? appHostAssemblyName,
-        TextWriter output)
+        TextWriter output,
+        Vouchfx.Engine.Orchestration.Environments.EnvironmentDriverRegistry? environmentDrivers = null)
     {
         ScenarioAst ast;
         try
@@ -744,15 +715,15 @@ internal static class WatchRunner
             ScenarioNameOf(ast, filePath),
             registry,
             appHostAssemblyName,
-            Path.GetDirectoryName(filePath));
+            Path.GetDirectoryName(filePath), environmentDrivers);
 
         if (plan.IsRefused)
         {
             ScenarioRunner.RenderWatchRefusal(plan, registry, output);
-            return WatchCompileResult.Refused();
+            return WatchCompileResult.Refused().WithInputFiles(plan.InputFiles);
         }
 
-        return WatchCompileResult.Success(plan.TopologyFingerprint, plan);
+        return WatchCompileResult.Success(plan.TopologyFingerprint, plan).WithInputFiles(plan.InputFiles);
     }
 
     /// <summary>

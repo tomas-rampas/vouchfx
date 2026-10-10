@@ -79,7 +79,7 @@ If you try scaffold or diagnose and something is wrong, please open an issue. I 
 
 ## Links
 
-- [Getting started — Generator / suite scaffold](https://vouchfx.io/getting-started/#generator--suite-scaffold)
+- [Getting started — Generator / suite scaffold](https://vouchfx.io/getting-started/#generator-suite-scaffold)
 - [vouchfx-mcp documentation](https://vouchfx-mcp.vouchfx.io/)
 - [Engine PRs (recent): schema/catalogue, scaffold](https://github.com/tomas-rampas/vouchfx/pulls?q=is%3Apr+is%3Amerged)
 - [MCP Healer PR](https://github.com/tomas-rampas/vouchfx-mcp/pull/38)
