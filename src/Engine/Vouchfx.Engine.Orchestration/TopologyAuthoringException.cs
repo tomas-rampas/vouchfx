@@ -1,57 +1,30 @@
-// ---------------------------------------------------------------------------
-// TopologyAuthoringException
-//
-// The narrow, taxonomy-safe channel out of EnvironmentMapper.Map's Configure
-// CLOSURE (§12.1).
-//
-// Map validates everything it can EAGERLY — before the closure, before any
-// builder mutation — precisely so an authoring fault surfaces as an
-// ArgumentException that ScenarioRunner classifies as Inconclusive.  A handful
-// of facts are not knowable that early: they exist only once Aspire itself has
-// built the resource inside the closure.  That — not any particular fault — is
-// the membership rule for this type: the author can fix it, and nothing outside
-// Aspire can decide it without reimplementing the discovery.  The standing
-// example is what endpoints a `project:`-form service's launch profile
-// produces, which is the question behind every throw site so far.
-//
-// FOR THE CURRENT SET, GREP `throw new TopologyAuthoringException`.  A roster
-// written out here goes stale the first time one is added, which is exactly
-// what happened to the roster this comment used to carry; the property above
-// does not.  Note in particular that membership implies nothing about step
-// TARGETING: some of these throws are gated on it and some deliberately are
-// not, because a false statement the author wrote is a fault whether or not
-// anything reads the service.
-//
-// Every OTHER throw from inside that closure is an engine defect or an infra
-// fault, and SuiteTopology.StartAsync's `catch (Exception ex)` correctly wraps
-// those as OrchestrationException → EnvironmentError.  This type is how an
-// AUTHORING fault discovered in the closure opts out of that wrap without
-// widening it for anything else.
-// ---------------------------------------------------------------------------
+// Typed refusal channel from explicit pre-mutation authoring/policy guards. Eager Map
+// validation performs no infrastructure I/O; SuiteTopology wraps only that boundary's
+// ArgumentExceptions. Configure may raise it before Build; Compose raises it at named
+// input/ownership/local-daemon guards before journalling/up, even though StartAsync runs.
+// Native output/process errors and post-up failures retain their ordinary taxonomy.
 
 namespace Vouchfx.Engine.Orchestration;
 
 /// <summary>
-/// Thrown from <c>EnvironmentMapper.Map</c>'s <c>Configure</c> closure when a fault that
-/// could only be discovered after Aspire built the resource is nevertheless the AUTHOR's
-/// to fix — not an infrastructure failure (§12.1).
+/// Identifies a deterministic authoring/policy refusal at an explicit mapper or adapter
+/// guard before resource mutation (§12.1).
 /// </summary>
 /// <remarks>
 /// <para>
-/// <strong>The base class is load-bearing, not decoration.</strong> Deriving from
-/// <see cref="ArgumentException"/> is what routes this to <c>ScenarioRunner</c>'s existing
-/// <c>catch (ArgumentException)</c>, which returns <c>Verdict.Inconclusive</c> through
-/// <c>CompleteWithoutTopologyAsync</c> — and therefore, via that path's
-/// <c>ExecutedAnyScenario = false</c>, to a non-zero exit code (#369). Re-base this on
-/// <see cref="System.Exception"/> and the fault silently becomes an
-/// <c>EnvironmentError</c> that exits 0: green CI over a suite that never ran. The
-/// classification is pinned by <c>ProjectServiceEndpointStagingTests</c>.
+/// Deriving from <see cref="ArgumentException"/> preserves the existing Inconclusive
+/// classification. The distinct type additionally proves authoring provenance, so a passing
+/// sibling cannot hide the refusal and a generic driver exception is not assigned the same
+/// no-start security evidence. Invocation of an acquisition method is not proof that a
+/// resource was started. <c>ProjectServiceEndpointStagingTests</c> pins the
+/// existing closure classification.
 /// </para>
 /// <para>
 /// <strong>It is not a general-purpose escape hatch.</strong> <c>SuiteTopology.StartAsync</c>
 /// re-throws this type unwrapped, ahead of the blanket wrap that turns everything else into
 /// an <see cref="OrchestrationException"/>. Throw it only where the fault is deterministic,
-/// reproducible, and fixable by editing the suite (or the project the suite names) — never
+/// reproducible, and fixable by editing authored inputs or selecting a supported local
+/// Docker context — never
 /// for a container, image, network, or engine-internal failure, all of which the taxonomy
 /// reserves for <c>EnvironmentError</c>.
 /// </para>

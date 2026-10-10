@@ -1,8 +1,7 @@
 // Vouchfx.Cli — RunCommand (S07-C-01).
 //
-// The `vouchfx run [<path>]` subcommand. THIS sprint's surface is just the optional
-// <path> argument (default "."). Selection flags (--tag / --owner / --changed / …) are a
-// later task; the command is shaped so they slot in as Options without disturbing this.
+// The `vouchfx run [<path>]` subcommand, including selection, parallel execution,
+// reporting and verdict-to-exit policy.
 //
 // Flow:
 //   1. Build the frozen Core provider registry (ProviderRegistryFactory).
@@ -15,9 +14,8 @@
 //      scenario never ran), aggregated alongside the suite verdict.
 //   6. Map the aggregate verdict to a process exit code (ExitCodes).
 //
-// The full `run` path needs Docker (RunSuiteAsync starts an Aspire topology) and is NOT
-// exercised by the unit tests — the Docker-free seams (discovery, registry, exit-code
-// mapping, verdict aggregation) are factored out as internal statics and tested directly.
+// Inline/Compose infrastructure execution requires Docker. Registered test drivers also
+// exercise the normal discovery, validation, script execution and exit pipeline without Docker.
 
 using System.CommandLine;
 using System.Reflection;
@@ -25,6 +23,7 @@ using Vouchfx.Cli.Selection;
 using Vouchfx.Engine.Abstractions;
 using Vouchfx.Engine.Authoring.Ast;
 using Vouchfx.Engine.Authoring.Model;
+using Vouchfx.Engine.Orchestration.Environments;
 using Vouchfx.Engine.Runtime;
 using Vouchfx.Sdk;
 
@@ -718,7 +717,8 @@ internal static class RunCommand
         TextWriter output,
         TelemetryRunHook? telemetryHook,
         CancellationToken cancellationToken,
-        bool shutdownOnStdinEof = false)
+        bool shutdownOnStdinEof = false,
+        EnvironmentDriverRegistry? environmentDrivers = null)
     {
         ArgumentNullException.ThrowIfNull(output);
 
@@ -739,7 +739,8 @@ internal static class RunCommand
                 output,
                 telemetryHook,
                 cancellationToken,
-                shutdownOnStdinEof).ConfigureAwait(false);
+                shutdownOnStdinEof,
+                environmentDrivers).ConfigureAwait(false);
         }
         // A GENUINE USER CANCELLATION, AND NOTHING ELSE, KEEPS THE PATH IT HAS. The filter is
         // load-bearing: TaskCanceledException IS an OperationCanceledException and is what a
@@ -1127,7 +1128,8 @@ internal static class RunCommand
         TextWriter output,
         TelemetryRunHook? telemetryHook,
         CancellationToken cancellationToken,
-        bool shutdownOnStdinEof = false)
+        bool shutdownOnStdinEof = false,
+        EnvironmentDriverRegistry? environmentDrivers = null)
     {
         // First-run notice (S10-G-04): when telemetry consent is Undecided and the notice has not
         // been shown, print a one-time stderr notice (what's collected, that NOTHING is sent until
@@ -1261,7 +1263,8 @@ internal static class RunCommand
                 decorate,
                 output,
                 telemetryHook,
-                runCancellationToken).ConfigureAwait(false);
+                runCancellationToken,
+                environmentDrivers).ConfigureAwait(false);
         }
         catch (OperationCanceledException ex)
             when (IsStdinEofShutdown(linkedShutdownSource, cancellationToken))
@@ -1310,7 +1313,8 @@ internal static class RunCommand
         bool decorate,
         TextWriter output,
         TelemetryRunHook? telemetryHook,
-        CancellationToken runCancellationToken)
+        CancellationToken runCancellationToken,
+        EnvironmentDriverRegistry? environmentDrivers = null)
     {
         // #568: the run-start anchor for telemetry's startupMs/timeToFirstTestMs — captured
         // as the very first statement, before discovery/Docker/anything else, so the anchor
@@ -1542,6 +1546,7 @@ internal static class RunCommand
         // produces no SuiteResult ran nothing and saw no provider defect, so neither rule fires and
         // the exit code is whatever the rest of this method derives.
         var providerOrEngineFaultObserved = false;
+        var authoringRefusalObserved = false;
         if (parsed.Count > 0)
         {
             var asts = parsed.Select(p => p.Ast!).ToList();
@@ -1636,7 +1641,8 @@ internal static class RunCommand
                     eventsStreamPath: eventsStreamPath,
                     decorate: decorate,
                     unbuiltDocuments: unbuiltDocuments,
-                    cancellationToken: runCancellationToken).ConfigureAwait(false)
+                    cancellationToken: runCancellationToken,
+                    environmentDrivers: environmentDrivers).ConfigureAwait(false)
                 : await ScenarioRunner.RunSuiteAsync(
                     asts,
                     names,
@@ -1652,7 +1658,8 @@ internal static class RunCommand
                     eventsStreamPath: eventsStreamPath,
                     decorate: decorate,
                     unbuiltDocuments: unbuiltDocuments,
-                    cancellationToken: runCancellationToken).ConfigureAwait(false);
+                    cancellationToken: runCancellationToken,
+                    environmentDrivers: environmentDrivers).ConfigureAwait(false);
 
             suiteVerdict = result.Verdict;
 
@@ -1668,6 +1675,7 @@ internal static class RunCommand
             // pipeline that entered the provider, and re-deriving it here from the verdict or from
             // the event stream would be re-deciding it with less evidence.
             providerOrEngineFaultObserved = result.ProviderOrEngineFaultObserved;
+            authoringRefusalObserved = result.AuthoringRefusalObserved;
         }
 
         // Emit telemetry from the SAME buffered event stream the renderers consumed (S10-G-04).
@@ -1721,7 +1729,8 @@ internal static class RunCommand
             executedAnyScenario: executedAnyScenario,
             // #480: true when any scenario was refused at a provider- or engine-surface guard,
             // whatever its siblings did.
-            providerOrEngineFaultObserved: providerOrEngineFaultObserved);
+            providerOrEngineFaultObserved: providerOrEngineFaultObserved,
+            authoringRefusalObserved: authoringRefusalObserved);
 
         // #515: the sibling of the REQ-018 print above, for #480's rule. Printed EXACTLY when that
         // rule is what took `code` off Success — never when an earlier rule already chose the
@@ -1947,7 +1956,8 @@ internal static class RunCommand
         bool failOnInconclusive,
         SecurityAssurance? securityAssurance = null,
         bool executedAnyScenario = true,
-        bool providerOrEngineFaultObserved = false)
+        bool providerOrEngineFaultObserved = false,
+        bool authoringRefusalObserved = false)
     {
         var code = ComputeExitCodeBeforeProviderOrEngineFaultRule(
             parsedCount, parseFailureCount, suiteVerdict, failOnEnvironmentError,
@@ -1983,8 +1993,9 @@ internal static class RunCommand
         // AuthoringFault kind is recorded for ANY document refused at a pre-topology door — a
         // schema error, an unresolvable secret, a malformed dependency `env:`, an unresolvable
         // `script.csharp file:` — so keying on it would redden every mixed suite containing any
-        // refused document. That may well be the right generalisation, and it is issue #514's
-        // question; it is deliberately not answered here.
+        // refused document. #514 now carries that independent fact through
+        // AuthoringRefusalObserved, including the late CompileOnce boundary, without changing
+        // this provider-fault signal or attributing runtime failures to authored compilation.
         //
         // ONE ROUTE REMAINS UNCOVERED, and it is named rather than papered over: an exception that
         // escapes the core entirely reaches ParallelSuiteRunner's per-slot catch-all, which sees a
@@ -2030,6 +2041,13 @@ internal static class RunCommand
         // value from this method — see that method's and ProviderOrEngineFaultNotice's own remarks
         // for why.
         if (providerOrEngineFaultObserved && code == ExitCodes.Success)
+        {
+            return ExitCodes.Inconclusive;
+        }
+
+        // A deterministic authoring refusal cannot be hidden by a passing sibling. Genuine
+        // runtime inconclusive/environment outcomes still use their existing opt-in gates.
+        if (authoringRefusalObserved && code == ExitCodes.Success)
         {
             return ExitCodes.Inconclusive;
         }

@@ -59,9 +59,11 @@
          this repository's own CI, so the cost of an over-broad grant there is a review question
          rather than a design one. The narrow-seam argument is spent where it buys something.
 
-         SCOPED TO THAT ONE USE ANYWAY: this is not a general licence for Vouchfx.Cli.Tests to
-         reach into orchestration internals. A new use needs its own justification recorded here,
-         or it belongs in Vouchfx.Engine.Orchestration.Tests. -->
+         Additional test-only use (#514): ComposeAuthoringRefusalExitTests runs real pure driver
+         binding and ComposeLease acquisition through the normal CLI, substituting IComposeProcess
+         and an isolated journal directory. This measures batch exit provenance and pre-up versus
+         post-up cleanup without Docker or a new production injection API. No additional grant or
+         shipped dependency is added. Other new uses need their own justification recorded here. -->
     <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
       <_Parameter1>Vouchfx.Cli.Tests</_Parameter1>
     </AssemblyAttribute>

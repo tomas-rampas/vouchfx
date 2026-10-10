@@ -438,9 +438,9 @@ public sealed class SuiteTopology : IAsyncDisposable, IKeptTopology
         // ----------------------------------------------------------------
         // Step 1: Map the EnvironmentSpec → Configure callback + gate list + resolver.
         // EnvironmentMapper.Map reads the process environment for ${env:...} references
-        // (REQ-006) but performs no container/network I/O, so exceptions here are still
-        // ArgumentExceptions, not OrchestrationExceptions — let them propagate as-is to
-        // the caller.
+        // (REQ-006) but performs no container/network I/O. Preserve its authored-input
+        // refusals through the typed channel; an arbitrary acquisition ArgumentException
+        // from another driver must not be mistaken for this pre-acquisition boundary.
         // ----------------------------------------------------------------
         // seedBaseDirectory is resolved BEFORE Map (rather than at its own use site further down)
         // because REQ-016's server-artefact paths resolve against the same base, and the two must
@@ -467,12 +467,20 @@ public sealed class SuiteTopology : IAsyncDisposable, IKeptTopology
         // idiom looks for `pathDisclosures:`, which the positional spelling this replaced would
         // never have matched. Naming the argument is what makes it visible to the mechanism that
         // protects it.
-        var mapped = EnvironmentMapper.Map(
-            environment,
-            resolvedSeedBaseDirectory,
-            kafkaTargets,
-            endpointTargets,
-            pathDisclosures: pathDisclosures);
+        MappedTopology mapped;
+        try
+        {
+            mapped = EnvironmentMapper.Map(
+                environment,
+                resolvedSeedBaseDirectory,
+                kafkaTargets,
+                endpointTargets,
+                pathDisclosures: pathDisclosures);
+        }
+        catch (ArgumentException ex) when (ex is not TopologyAuthoringException)
+        {
+            throw new TopologyAuthoringException(ex.Message, ex);
+        }
 
         // EDGE-012's bind pre-flight, AFTER Map's eager validation and before any container. The
         // order matters to the author, not to the outcome: a document that is invalid for a plain

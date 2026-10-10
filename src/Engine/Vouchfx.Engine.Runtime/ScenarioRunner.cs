@@ -85,6 +85,9 @@ public sealed record SuiteResult(
     Verdict Verdict,
     IReadOnlyList<(string ScenarioName, Verdict Verdict)> ScenarioVerdicts)
 {
+    /// <summary>At least one document was refused by an authoring/schema gate or CompileOnce.</summary>
+    public bool AuthoringRefusalObserved { get; init; }
+
     /// <summary>
     /// <see langword="false"/> when no STEP ran (#369) — on the shared-topology path, because the
     /// suite returned through the without-topology completion path; on the parallel path, because
@@ -155,9 +158,8 @@ public sealed record SuiteResult(
     /// error, an unresolvable secret, a protocol conflict — leaves this <see langword="false"/>
     /// even though it too reaches a pre-topology door and records
     /// <c>SecurityAbortKind.AuthoringFault</c>. Whether that shape should also be
-    /// sibling-independent is issue #514, deliberately open; reading the refusal instead of this
-    /// marker would close it silently and redden every mixed suite containing one mistyped
-    /// document.
+    /// sibling-independent is carried separately by <see cref="AuthoringRefusalObserved"/>;
+    /// this provider-fault marker retains its narrower provenance and diagnostic notice.
     /// </para>
     /// <para>
     /// Set on BOTH run paths, by different mechanisms and deliberately so: <c>RunSuiteAsync</c>
@@ -247,6 +249,9 @@ public sealed record SuiteResult(
 /// </param>
 public sealed record ScenarioCoreResult(Verdict Verdict, List<string> Buffer)
 {
+    /// <summary>Typed refusal evidence; runtime inconclusive outcomes and cancellation leave it false.</summary>
+    public bool AuthoringRefusalObserved { get; init; }
+
     /// <summary>
     /// What this scenario established about the <c>security</c> blocks its document declared: all
     /// three halves — what was declared, what REQ-005's probe confirmed, and which door (if any)
@@ -856,6 +861,7 @@ public static class ScenarioRunner
 
             return new ScenarioCoreResult(Verdict.Inconclusive, buffer)
             {
+                AuthoringRefusalObserved = true,
                 Assurance = SecurityAssurance.None
                     .Declaring(declaredTargets)
                     .Refusing(
@@ -931,6 +937,7 @@ public static class ScenarioRunner
             // someone else's decision, so it is written down rather than discovered.
             return new ScenarioCoreResult(Verdict.Inconclusive, buffer)
             {
+                AuthoringRefusalObserved = true,
                 Assurance = SecurityAssurance.None
                     .Declaring(declaredTargets)
                     .Refusing(SecurityAbortKind.AuthoringFault),
@@ -1047,6 +1054,7 @@ public static class ScenarioRunner
             // `Failure` null and this false, which is correct: nothing entered a provider.
             return new ScenarioCoreResult(Verdict.Inconclusive, buffer)
             {
+                AuthoringRefusalObserved = true,
                 Assurance = SecurityAssurance.None
                     .Declaring(declaredTargets)
                     .Refusing(SecurityAbortKind.AuthoringFault),
@@ -1117,42 +1125,14 @@ public static class ScenarioRunner
         }
         catch (ArgumentException aex)
         {
-            // A Map()-time authoring error (malformed env: reference, unknown dependency,
-            // secret-in-env, unsupported .part, etc.) is the SAME class of problem as the
-            // schema-invalid / parse-AST / pipeline-compile / secret-reference failures handled
-            // above (Steps 2–5c): the scenario never ran, so this is Inconclusive (§12.1) — NOT
-            // EnvironmentError, which the taxonomy reserves for genuine infrastructure faults
-            // (container/image/network) an author cannot fix by editing the YAML; misclassifying
-            // a permanent typo as an infra fault could drive auto-retry/alerting that will never
-            // self-heal.
-            //
-            // Scope note: this catches EnvironmentMapper.Map's OWN eager, PRE-Configure
-            // validation (SuiteTopology.StartAsync's Step 1, called before HeadlessTopology.
-            // StartAsync/DCP is ever reached — see that method's Step 1 comment: "Map is pure
-            // ... let them propagate as-is"), PLUS the authoring faults that can only be
-            // discovered inside the Configure closure and opt back onto this side deliberately:
-            // TopologyAuthoringException, an ArgumentException subclass that SuiteTopology.Step 2
-            // re-throws unwrapped. The PROPERTY, which is stable, is that each such fault is one
-            // Aspire alone can determine and only after it has built the resource — a project's
-            // launch-profile endpoints are the standing example. For the current set, grep
-            // `throw new TopologyAuthoringException`; enumerating them here goes stale, which is
-            // how this sentence went wrong once already. Both are the same class of problem as
-            // the schema-invalid / parse-AST / pipeline-compile / secret-reference failures
-            // handled above: an author edits the suite and it goes away.
-            //
-            // Map()'s Configure CLOSURE also carries a few defensive throws of its own, reachable
-            // only by defect (e.g. ResolveDependencyEnvAccess's internal-error fallback,
-            // RequirePasswordParameter, BuildEnvExpression's unresolved-${conn:}
-            // ArgumentException, and ResolveDependencyContainer's InvalidOperationException when
-            // a dependency type registers no container of its own name) — those run LATER, and
-            // SuiteTopology.cs Step 2 wraps every exception except TopologyAuthoringException as
-            // OrchestrationException before it ever reaches this method; they are therefore
-            // unreachable by construction here (ValidateEnvValue's eager checks, the
-            // dependency-env census gate, and the CURRENT Aspire.Hosting.Redis/.Nats behaviour of
-            // always provisioning a password parameter, already prevent them from firing in
-            // practice) and would correctly surface as EnvironmentError via the
-            // OrchestrationException catch below, not this one — a genuine, if never-yet-observed,
-            // infrastructure/engine fault.
+            var topologyAuthoringRefusal = aex is TopologyAuthoringException;
+            var acquisitionAssurance = SecurityAssurance.None.Declaring(declaredTargets);
+            if (topologyAuthoringRefusal)
+                acquisitionAssurance = acquisitionAssurance.Refusing(SecurityAbortKind.AuthoringFault);
+            // Preserve the existing Inconclusive classification. Only the explicit mapper
+            // authoring channel proves refusal before acquisition; another registered driver
+            // may throw ArgumentException after starting work, so its type alone proves neither
+            // authoring provenance nor the no-acquisition security invariant.
             var now = DateTimeOffset.UtcNow;
             buffer.Add(EventStreamJson.ToLine(new ScenarioStartedEvent
             {
@@ -1190,15 +1170,10 @@ public static class ScenarioRunner
                 .ConfigureAwait(false);
             livePump?.PostRange(buffer);
 
-            // THE BOUNDARY IS "NO CONTAINER STARTED", NOT "BEFORE THE StartAsync CALL". Map's
-            // eager validation runs as StartAsync's Step 1, ahead of DCP, so a `${conn:typo}` or
-            // an unknown dependency starts nothing — and this return, which had no way to raise
-            // the old flag at all, was the least defensible of the five that could not.
             return new ScenarioCoreResult(Verdict.Inconclusive, buffer)
             {
-                Assurance = SecurityAssurance.None
-                    .Declaring(declaredTargets)
-                    .Refusing(SecurityAbortKind.AuthoringFault),
+                AuthoringRefusalObserved = topologyAuthoringRefusal,
+                Assurance = acquisitionAssurance,
             };
         }
         catch (OrchestrationException oex)
@@ -1343,7 +1318,7 @@ public static class ScenarioRunner
 
             // Use NullScenarioIsolation for single-scenario RunAsync — no state reset needed.
             IScenarioIsolation isolation = new NullScenarioIsolation();
-            var verdict = await RunScenarioAgainstTopologyAsync(
+            var execution = await RunScenarioExecutionAgainstTopologyAsync(
                 ast,
                 scenarioName,
                 runId,
@@ -1364,8 +1339,9 @@ public static class ScenarioRunner
             // means that (a failure aborts StartAsync). What was confirmed is carried rather than
             // discarded: a boolean could not tell an authenticated round trip from a transport-only
             // confirmation, which is the whole subject of REQ-005.
-            return new ScenarioCoreResult(verdict, buffer)
+            return new ScenarioCoreResult(execution.Verdict, buffer)
             {
+                AuthoringRefusalObserved = execution.AuthoringRefusalObserved,
                 Assurance = SecurityAssurance.None
                     .Declaring(declaredTargets)
                     .Confirming(suite.SecurityConfirmations),
@@ -1782,6 +1758,7 @@ public static class ScenarioRunner
         // pipeline and secret-reference faults, and the guard's rule is specifically "documents
         // that pass the SCHEMA", which is the one thing it can require of a document it compares.
         var schemaValid = new bool[scenarios.Count];
+        var authoringRefusalObserved = false;
 
         // The abort kind Pass A recorded for each scenario it REJECTED, retained per scenario rather
         // than only accumulated into `assurance`. The whole-value fold below needs the kind that
@@ -1811,6 +1788,7 @@ public static class ScenarioRunner
             var validationResult = DocumentValidator.Validate(yaml, registry);
             if (!validationResult.IsValid)
             {
+                authoringRefusalObserved = true;
                 // THREE ADJACENT DOORS USED TO GIVE THREE DIFFERENT ANSWERS TO THE SAME QUESTION,
                 // and this was the widest of them: it asked "does this document declare security,
                 // or is the error inside the block". Its neighbour below asked "is the fault in a
@@ -2018,7 +1996,8 @@ public static class ScenarioRunner
                         eventsStreamPath,
                         runSecretLedger: null,
                         runPathLedger: null,
-                        alreadyPrintedMessage: divergentEnvironment)
+                        alreadyPrintedMessage: divergentEnvironment,
+                        authoringRefusalObserved: true)
                     .ConfigureAwait(false);
             }
         }
@@ -2079,6 +2058,7 @@ public static class ScenarioRunner
                 RunPreTopologyAuthoringDoor(ast, registry, scenarioBaseDirectory, environmentDrivers);
             if (authoringFault is not null)
             {
+                authoringRefusalObserved = true;
                 assurance = assurance.Refusing(SecurityAbortKind.AuthoringFault);
 
                 // ACCUMULATED, NEVER RESET (issue #480). One scenario whose provider threw is
@@ -2128,7 +2108,8 @@ public static class ScenarioRunner
                     eventsStreamPath,
                     runSecretLedger: null,
                     runPathLedger: null,
-                    providerOrEngineFaultObserved: providerOrEngineFaultObserved)
+                    providerOrEngineFaultObserved: providerOrEngineFaultObserved,
+                    authoringRefusalObserved: authoringRefusalObserved)
                 .ConfigureAwait(false);
         }
 
@@ -2216,7 +2197,8 @@ public static class ScenarioRunner
                     runSecretLedger: null,
                     runPathLedger: null,
                     alreadyPrintedMessage: seedRootSplit,
-                    providerOrEngineFaultObserved: providerOrEngineFaultObserved)
+                    providerOrEngineFaultObserved: providerOrEngineFaultObserved,
+                    authoringRefusalObserved: true)
                 .ConfigureAwait(false);
         }
 
@@ -2302,7 +2284,8 @@ public static class ScenarioRunner
                     runSecretLedger: null,
                     runPathLedger: null,
                     alreadyPrintedMessage: divergence,
-                    providerOrEngineFaultObserved: providerOrEngineFaultObserved)
+                    providerOrEngineFaultObserved: providerOrEngineFaultObserved,
+                    authoringRefusalObserved: true)
                 .ConfigureAwait(false);
         }
 
@@ -2417,7 +2400,8 @@ public static class ScenarioRunner
                     runSecretLedger: null,
                     runPathLedger: null,
                     alreadyPrintedMessage: protocolConflict,
-                    providerOrEngineFaultObserved: providerOrEngineFaultObserved)
+                    providerOrEngineFaultObserved: providerOrEngineFaultObserved,
+                    authoringRefusalObserved: true)
                 .ConfigureAwait(false);
         }
 
@@ -2485,17 +2469,10 @@ public static class ScenarioRunner
         }
         catch (ArgumentException aex)
         {
-            // Mirrors RunAsync's classification above (see that catch block's full scope note):
-            // a Map()-time authoring error (malformed env: reference, unknown dependency,
-            // secret-in-env, unsupported .part, etc.) is the SAME class of problem as the
-            // per-scenario secret-reference / pipeline-compile failures already handled as
-            // Inconclusive elsewhere in this loop (via earlyVerdict) — the suite never ran, so
-            // every scenario is Inconclusive, NOT EnvironmentError (reserved for genuine
-            // infrastructure faults an author cannot fix by editing the YAML). This catches Map's
-            // eager, pre-Configure validation, plus the Configure-closure TopologyAuthoringException
-            // that SuiteTopology.Step 2 re-throws unwrapped (#348); Map's Configure-closure
-            // defensive throws (unreachable by construction given that same eager validation)
-            // would surface as OrchestrationException instead, via the catch below.
+            var topologyAuthoringRefusal = aex is TopologyAuthoringException;
+            // Keep ordinary acquisition ArgumentExceptions Inconclusive, without inventing
+            // authoring or pre-acquisition security evidence. Typed mapper refusals carry both;
+            // any authoring refusal observed earlier in the suite remains recorded either way.
             // SCRUBBED here, SANITISED at the print — the same composition, in the same order,
             // as the OrchestrationException sibling below, and it is a BLOCKER fix rather than
             // tidiness. This text is stamped onto every scenario record by the return below, so
@@ -2522,34 +2499,11 @@ public static class ScenarioRunner
                 .ConfigureAwait(false);
 
 
-            // The boundary is "no container started", not "before the StartAsync call": Map is
-            // eager and runs ahead of DCP, and the Configure closure that raises #348's
-            // TopologyAuthoringException runs before builder.Build(), so both refusals start
-            // nothing and are authoring faults like every pre-topology one. It used to carry the
-            // accumulated flag through
-            // UNCHANGED — a return that could observe the fault and had no way to record it.
-            //
-            // The wrap here is pinned by the `EnvironmentMapperArgumentFault` row of the theory
-            // named at the shared-`environment` divergence door above.
-            // RETURNED THROUGH CompleteWithoutTopologyAsync, NOT AS A BARE SuiteResult. This was
-            // the last bare return of the four the #407 family covers, and it needed the same
-            // treatment for the same reason: a bare return skips the ScenarioStarted/Completed
-            // events, the --events-stream pump, the terminal render and
-            // FileReportWriter.WriteFileReports, so a CI job got a verdict with no artefacts
-            // describing it.
-            //
-            // It also carries #369's answer for free. This catch's own boundary — stated two
-            // paragraphs above as "no container started, not before the StartAsync call" — is
-            // exactly ExecutedAnyScenario being false, and the completion path sets it because
-            // that path IS the without-topology route. Nothing here has to remember to.
-            //
-            // Measured before this: `${conn:typo}` exited 0 under a bare `run` and 4 under
-            // `--parallel 1`, because the parallel runner derives the same answer from its event
-            // buffers while this return said nothing at all. A sequential/parallel divergence on
-            // an exit code is a defect class this codebase has been bitten by before.
+            // Complete the existing event/report path even though no scenario executed.
             return await CompleteWithoutTopologyAsync(
                     StampWhereUnjudged(compilations, Verdict.Inconclusive, environmentFault),
-                    WithUnbuiltDocuments(assurance.Refusing(SecurityAbortKind.AuthoringFault)),
+                    WithUnbuiltDocuments(topologyAuthoringRefusal
+                        ? assurance.Refusing(SecurityAbortKind.AuthoringFault) : assurance),
                     output,
                     decorate,
                     diffLookup,
@@ -2560,7 +2514,8 @@ public static class ScenarioRunner
                     runSecretLedger,
                     runPathLedger,
                     alreadyPrintedMessage: environmentFault,
-                    providerOrEngineFaultObserved: providerOrEngineFaultObserved)
+                    providerOrEngineFaultObserved: providerOrEngineFaultObserved,
+                    authoringRefusalObserved: authoringRefusalObserved || topologyAuthoringRefusal)
                 .ConfigureAwait(false);
         }
         catch (OrchestrationException oex)
@@ -2657,7 +2612,8 @@ public static class ScenarioRunner
                     runSecretLedger,
                     runPathLedger,
                     alreadyPrintedMessage: topologyFailure,
-                    providerOrEngineFaultObserved: providerOrEngineFaultObserved)
+                    providerOrEngineFaultObserved: providerOrEngineFaultObserved,
+                    authoringRefusalObserved: authoringRefusalObserved)
                 .ConfigureAwait(false);
         }
         finally
@@ -2882,7 +2838,7 @@ public static class ScenarioRunner
                     // script.csharp file: digest in the reproducibility envelope — matching
                     // the base directory ProviderPipeline.Compile already resolved file:
                     // against, above.
-                    var scenarioVerdict = await RunScenarioAgainstTopologyAsync(
+                    var execution = await RunScenarioExecutionAgainstTopologyAsync(
                         ast,
                         name,
                         runId,
@@ -2900,8 +2856,9 @@ public static class ScenarioRunner
                         sharedLedger: runSecretLedger,
                         sharedPathLedger: runPathLedger).ConfigureAwait(false);
 
-                    results.Add((name, scenarioVerdict));
-                    suiteAggregate = Elevate(suiteAggregate, scenarioVerdict);
+                    authoringRefusalObserved |= execution.AuthoringRefusalObserved;
+                    results.Add((name, execution.Verdict));
+                    suiteAggregate = Elevate(suiteAggregate, execution.Verdict);
                     allBuffers.AddRange(buffer);
                     // Issue #262: NO livePump?.PostRange(buffer) here — RunScenarioAgainstTopologyAsync
                     // (via RunScenarioCoreAsync) already streamed this scenario's lines live, as they
@@ -2974,6 +2931,7 @@ public static class ScenarioRunner
 
             return new SuiteResult(suiteAggregate, results)
             {
+                AuthoringRefusalObserved = authoringRefusalObserved,
                 // Threaded on the normal-completion path too, and REACHABLE carrying a refusal —
                 // corrected in fix round eight (m3, peer-review critic). This note twice claimed
                 // the opposite, and the reasoning is recorded rather than the conclusion, because
@@ -3310,7 +3268,8 @@ public static class ScenarioRunner
         ResolvedSecretLedger? runSecretLedger,
         SecurityPathDisclosureLedger? runPathLedger,
         string? alreadyPrintedMessage = null,
-        bool providerOrEngineFaultObserved = false)
+        bool providerOrEngineFaultObserved = false,
+        bool authoringRefusalObserved = false)
     {
         var results = new List<(string ScenarioName, Verdict Verdict)>(compilations.Count);
         var suiteAggregate = Verdict.Pass;
@@ -3383,6 +3342,7 @@ public static class ScenarioRunner
 
         return new SuiteResult(suiteAggregate, results)
         {
+            AuthoringRefusalObserved = authoringRefusalObserved,
             Assurance = assurance,
 
             // #369: this method IS the without-topology path — no step ran on any route that
@@ -4518,6 +4478,30 @@ public static class ScenarioRunner
         LiveEventPump? livePump = null,
         ResolvedSecretLedger? sharedLedger = null,
         SecurityPathDisclosureLedger? sharedPathLedger = null)
+        => (await RunScenarioExecutionAgainstTopologyAsync(ast, scenarioName, runId, suite,
+            assembled, compileReferencePaths, hostResourcePlan, buffer, isolation, output,
+            seedBaseDirectory, cancellationToken, scriptBaseDirectory, livePump, sharedLedger,
+            sharedPathLedger).ConfigureAwait(false)).Verdict;
+
+    private sealed record ScenarioExecutionOutcome(Verdict Verdict, bool AuthoringRefusalObserved = false);
+
+    private static async Task<ScenarioExecutionOutcome> RunScenarioExecutionAgainstTopologyAsync(
+        ScenarioAst ast,
+        string scenarioName,
+        string runId,
+        IKeptTopology suite,
+        AssembledScript assembled,
+        IReadOnlyList<string> compileReferencePaths,
+        IReadOnlyList<HostResourcePlanEntry> hostResourcePlan,
+        List<string> buffer,
+        IScenarioIsolation isolation,
+        TextWriter output,
+        string? seedBaseDirectory,
+        CancellationToken cancellationToken,
+        string? scriptBaseDirectory = null,
+        LiveEventPump? livePump = null,
+        ResolvedSecretLedger? sharedLedger = null,
+        SecurityPathDisclosureLedger? sharedPathLedger = null)
     {
         // isolation.BeginScenarioAsync is called by the suite loop (or is a no-op for RunAsync).
         _ = isolation;
@@ -4758,7 +4742,7 @@ public static class ScenarioRunner
     /// (<c>KafkaServiceTargetDockerTests</c> and <c>KafkaStepTimeoutBoundDockerTests</c> call the
     /// kept-topology entry point without a ledger), so the null branch is live and not dead code.
     /// </param>
-    private static async Task<Verdict> RunScenarioCoreAsync(
+    private static async Task<ScenarioExecutionOutcome> RunScenarioCoreAsync(
         ScenarioAst ast,
         string scenarioName,
         string runId,
@@ -4932,6 +4916,7 @@ public static class ScenarioRunner
                 .ToList();
 
             CompiledScript compiled;
+            var authoringRefusalObserved = false;
             try
             {
                 // Bound the compile-once call to a fresh token LINKED to this scenario's own
@@ -4959,11 +4944,21 @@ public static class ScenarioRunner
                     CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
                 {
                     compileBudget.CancelAfter(RoslynScriptCompiler.DefaultCompileBudget);
-                    compiled = RoslynScriptCompiler.CompileOnce(
-                        assembled.CsxSource,
-                        additionalOptions: null,
-                        additionalReferencePaths: tpaPaths,
-                        cancellationToken: compileBudget.Token);
+                    try
+                    {
+                        compiled = RoslynScriptCompiler.CompileOnce(
+                            assembled.CsxSource,
+                            additionalOptions: null,
+                            additionalReferencePaths: tpaPaths,
+                            cancellationToken: compileBudget.Token);
+                    }
+                    catch (ScriptCompilationException)
+                    {
+                        // Provenance belongs to this call, not the exception's CLR type at the
+                        // later execution catch. Budget expiry/caller cancellation is not authoring.
+                        authoringRefusalObserved = true;
+                        throw;
+                    }
                 }
 
                 await RoslynScriptCompiler.RunIsolatedAsync(
@@ -5024,7 +5019,7 @@ public static class ScenarioRunner
                     DisplaySanitiser.SanitiseForDisplay(secretFault))
                     .ConfigureAwait(false);
 
-                return Verdict.EnvironmentError;
+                return new ScenarioExecutionOutcome(Verdict.EnvironmentError);
             }
             catch (Exception ex)
             {
@@ -5077,7 +5072,7 @@ public static class ScenarioRunner
                     + DisplaySanitiser.SanitiseForDisplay(scrubbedDiagnosis))
                     .ConfigureAwait(false);
 
-                return Verdict.Inconclusive;
+                return new ScenarioExecutionOutcome(Verdict.Inconclusive, authoringRefusalObserved);
             }
 
             // ── Emit events from outcomes + aggregate verdict ─────────────────────
@@ -5188,7 +5183,7 @@ public static class ScenarioRunner
             livePump?.Post(reproLine);
             livePump?.Post(scenarioCompletedLine);
 
-            return aggregate;
+            return new ScenarioExecutionOutcome(aggregate);
         }
         finally
         {

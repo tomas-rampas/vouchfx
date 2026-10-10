@@ -142,7 +142,7 @@ public sealed class ComposeEnvironmentTests
     {
         var fixture = new Inputs();
         var process = new FakeProcess(1) { ExtraServiceProperty = $"\"{property}\":{value}," };
-        var error = await Assert.ThrowsAsync<ArgumentException>(() => ComposeLease.StartAsync(fixture.Load(), process,
+        var error = await Assert.ThrowsAsync<TopologyAuthoringException>(() => ComposeLease.StartAsync(fixture.Load(), process,
             NullSecretAccessor.Instance, CancellationToken.None, fixture.Journals));
         Assert.Contains(diagnostic, error.Message, StringComparison.Ordinal);
         Assert.DoesNotContain(process.Calls, c => c.Arguments.Contains("up"));
@@ -172,7 +172,7 @@ public sealed class ComposeEnvironmentTests
                 Environment.SetEnvironmentVariable("DOCKER_HOST", fromContext ? null : host);
                 var fixture = new Inputs();
                 var process = new FakeProcess(1) { DockerHost = host };
-                var error = await Assert.ThrowsAsync<ArgumentException>(() => ComposeLease.StartAsync(fixture.Load(), process,
+                var error = await Assert.ThrowsAsync<TopologyAuthoringException>(() => ComposeLease.StartAsync(fixture.Load(), process,
                     NullSecretAccessor.Instance, CancellationToken.None, fixture.Journals));
                 Assert.Contains("local", error.Message, StringComparison.Ordinal);
                 Assert.DoesNotContain(process.Calls, c => c.Arguments[0] == "compose");

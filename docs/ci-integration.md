@@ -27,46 +27,43 @@ a product defect:
 | **1** | **Fail** — one or more scenarios failed (a genuine defect) | **Always** | `run` only |
 | **2** | UsageError — unrecognised option, bad arguments, missing path | Always | All commands |
 | **3** | EnvironmentError (run) or catalogue error (tools) — unhealthy container, image-pull/seed failure, or incomplete provider metadata | Only when opted in (`run`) — **except** an unconfirmable `security:` declaration, which always breaks CI (see below) | `run` with `--fail-on-env-error`; `list`, `schema`, `validate`, `scaffold`, `plan` on metadata failure |
-| **4** | Inconclusive — timeout, partition outlasted grace, unmet capture; or the run hit a parse failure, executed nothing, or hit a provider/engine defect | Only when opted in — **except** all four unconditional rules below (a parse failure, an Inconclusive suite refused before anything ran, a provider/engine-surface refusal, and an unconfirmable `security:` declaration), which always break CI | `run` with `--fail-on-inconclusive`; `run` on any parse failure, on an Inconclusive suite refused before anything ran, or on any scenario refused at a provider- or engine-surface guard, whatever the flags |
+| **4** | Inconclusive or refusal — timeout, unmet capture, parse failure or refused test input | Only when opted in for runtime inconclusive; the five unconditional exceptions below never exit 0 | `run` with `--fail-on-inconclusive`, or an unconditional refusal check |
 | **5** | Gaps found — the Planner detected at least one coverage or vocabulary gap AND the caller opted in | Only when opted in | `plan` with `--fail-on-gap` |
 
 The distinction lets CI systems handle each outcome independently: fail the build on a product `Fail`,
 page on-call for `EnvironmentError`, and escalate `Inconclusive` to reliability engineering.
 
-**Unconditional exceptions.** Four rules break CI whatever the opt-in flags say: a parse failure, an
-Inconclusive suite refused before anything ran, a scenario refused at a provider- or engine-surface
-guard, and a security declaration the engine could not confirm. Each is stated below, in that order,
-as "never exits 0" rather than "exits 4", because none overrides a code another rule already chose —
-a failing scenario still takes the run to 1, and a gated environment error to 3.
+**Unconditional exceptions.** Five checks prevent success whatever the opt-in flags say: parse
+failure, typed authoring/schema/compilation refusal, an Inconclusive suite with no executed scenario,
+provider/engine-surface refusal, and an unconfirmable security declaration. None replaces a code
+already selected: a failing scenario still exits 1 and a gated environment error still exits 3.
 
 **Any parse failure** — a malformed document, a file the runner cannot read, one over the 1 MiB cap.
 This does not require that *every* scenario failed: one unreadable file beside a suite that otherwise
 passes still exits 4, because the engine cannot say what that file would have asserted. It matches
 the behaviour of `vouchfx validate`.
 
-**An Inconclusive suite refused before anything ran** — the suite parsed fine and was then refused
-before any container started: a schema error, an unresolvable secret reference, a malformed
-dependency `env:`, a protocol conflict.
+**Typed authoring, schema or compilation refusal** — an invalid document, missing script source,
+unresolvable source configuration, incompatible shared declarations or invalid generated CSX prevents
+success, even beside a passing sibling. Refusals before acquisition start no topology for that
+scenario. Roslyn compilation still happens after acquisition: its refusal retains completion events
+and disposal, without claiming that an assertion ran or that no resources were acquired.
 
-Read **Inconclusive** in that sentence as load-bearing. A run can execute nothing and still exit 0,
-and one shape does: a refusal carrying an `EnvironmentError` verdict rather than an Inconclusive one
-— a topology that failed to start, or a suite whose scenarios declared divergent `environment`
-blocks. Those keep `EnvironmentError`'s own `--fail-on-env-error` gate and exit 0 without it —
-provided that is the run's *only* fault. A run whose topology failed to start in a suite where a
-sibling's provider had already thrown carries both, and by default the provider-guard rule below
-takes it to 4: the rules are conditioned on the code so far being Success, not on the aggregate
-verdict, so an ungated `EnvironmentError` aggregate does not shield it. Set `--fail-on-env-error`
-and that same run exits **3** — the gate takes the code off Success first, and the provider-guard
-rule then cannot change it. Either way it is non-zero; which non-zero code you get is the gate's
-decision, not the provider-guard rule's. The distinction is deliberate: an authoring fault the
-engine refused is not the same event as an
-environment that never came up, and widening this rule to every no-execution run would silently
-close [issue #390](https://github.com/tomas-rampas/vouchfx/issues/390). (A **secured** suite refused
-by the divergence guard is different again — it exits 3 through the security rule below, whatever
-the flags.)
+Compose's explicit local-daemon, unchanged-input and native ownership policies also prevent success
+when refused before journal creation or `up`. Invoking the driver alone does not mean resources were
+started. Malformed native output, process failure, snapshot-reload incompatibility and post-startup
+readiness/discovery errors retain their existing runtime or infrastructure policy.
 
-A scenario that *did* run and could not conclude — a timeout, a partition outlasting its grace, an
-unmet upstream capture — is not this case either, and stays gated behind `--fail-on-inconclusive`.
+The compilation signal comes only from `CompileOnce`. An identically typed exception raised during
+script execution, a compile-budget cancellation and caller cancellation are not inferred to be
+invalid authored code. Genuine runtime inconclusive results still require `--fail-on-inconclusive`.
+
+**An Inconclusive suite with no executed scenario** retains its existing nonzero check independently.
+An ordinary topology startup failure carrying `EnvironmentError` is outside that check and retains
+`--fail-on-env-error` when it is the only fault ([issue #390](https://github.com/tomas-rampas/vouchfx/issues/390)).
+A suite carrying both an authoring/provider refusal and an ungated environment error exits 4;
+`--fail-on-env-error` selects 3 first. Divergent shared declarations are authoring refusals even when
+the existing aggregate verdict is EnvironmentError. Unconfirmable security keeps its separate rule.
 
 **A scenario refused at a provider- or engine-surface guard** — a provider's `Bind`, `Validate`,
 `Resources`, `HostResources`, `Emit` or `CompileReferenceAssemblies` threw, or the assembler refused
@@ -94,13 +91,9 @@ that outlasted its grace, an unmet upstream capture — is still gated behind
 `--fail-on-inconclusive`, and a genuine infrastructure fault still keeps `--fail-on-env-error`.
 Keying on the verdict instead would have reddened both by default.
 
-Two shapes it deliberately does not cover. An **ordinary authoring** refusal beside a scenario that
-ran — a schema error, an unresolvable `${secret:…}`, a malformed dependency `env:`, a protocol
-conflict — still exits 0, exactly as before; whether that should change is
-[issue #514](https://github.com/tomas-rampas/vouchfx/issues/514). And an exception escaping to
-`--parallel`'s per-slot catch-all is outside the rule, because at that frame the engine holds an
-exception type and nothing else, and cannot tell its own defect from a container falling over — that
-is [issue #486](https://github.com/tomas-rampas/vouchfx/issues/486).
+The provider/engine rule keeps its own narrower provenance marker. Authoring refusals are covered
+independently; an unexpected exception escaping to `--parallel`'s per-slot catch-all is not classified
+as authoring merely from its type or message ([issue #486](https://github.com/tomas-rampas/vouchfx/issues/486)).
 
 A suite that declares a `security:` block the engine **cannot confirm** exits non-zero with no
 `--fail-on-env-error` and no `--fail-on-inconclusive`.
@@ -345,8 +338,8 @@ does not identify the fragment), so one wording serves both arms truthfully.
   hashed is not hashed.
 - **A refusal in a suite the run confirmed anyway.** The rule asks what was *confirmed*, not merely
   what refused, so a scenario refused in a shared-topology suite whose probe went on to confirm every
-  declared target is not by itself unconfirmable — what remains is an ordinary authoring fault, gated
-  by `--fail-on-inconclusive` like any other. Two limits on that. A refusal located **at or inside the
+  declared target is not by itself unconfirmable. The independent authoring-refusal check still
+  prevents exit 0; confirmation does not make an invalid document runnable. Two security limits remain. A refusal located **at or inside the
   declaration itself** raises on its own and no later confirmation forgives it — `security: mtls`
   reddens the run whatever the probe went on to confirm. And confirming *some* of what was declared is
   not confirming it: a suite declaring two secured targets, one confirmed and one not, still breaks CI.

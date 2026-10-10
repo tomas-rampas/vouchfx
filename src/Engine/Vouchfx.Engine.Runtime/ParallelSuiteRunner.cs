@@ -42,8 +42,8 @@ using Vouchfx.Engine.Abstractions;
 using Vouchfx.Engine.Abstractions.Events;
 using Vouchfx.Engine.Authoring.Ast;
 using Vouchfx.Engine.Authoring.Model;
-using Vouchfx.Engine.Reporting;
 using Vouchfx.Engine.Orchestration.Environments;
+using Vouchfx.Engine.Reporting;
 using Vouchfx.Sdk;
 
 namespace Vouchfx.Engine.Runtime;
@@ -444,6 +444,7 @@ public static class ParallelSuiteRunner
         // DescribeProviderFault, and pattern-matching an author-facing diagnostic to decide an
         // exit code is precisely the kind of coupling this codebase refuses elsewhere.
         var slotProviderOrEngineFaults = new bool[count];
+        var slotAuthoringRefusals = new bool[count];
 
         // Each scenario writes its raw early-exit diagnostics to its OWN StringWriter; we flush
         // them to the real output in declaration order AFTER the gather (determinism point 2/3).
@@ -504,6 +505,7 @@ public static class ParallelSuiteRunner
                     slotBuffers,
                     slotAssurances,
                     slotProviderOrEngineFaults,
+                    slotAuthoringRefusals,
                     SecuredTargets.Enumerate(scenarios[index].Environment).ToArray(),
                     livePump,
                     ct);
@@ -523,7 +525,7 @@ public static class ParallelSuiteRunner
         // Determinism tail: flush each slot's raw early-exit text to the real output in declaration
         // order, then render the concatenated slot buffers ONCE and fold the verdicts in order.
         return RenderAndAggregate(
-            scenarioNames, slotVerdicts, slotBuffers, slotAssurances, slotProviderOrEngineFaults,
+            scenarioNames, slotVerdicts, slotBuffers, slotAssurances, slotProviderOrEngineFaults, slotAuthoringRefusals,
             slotRawWriters, output,
             diffLookup, UnbuiltDocument.AssureAll(unbuiltDocuments, registry),
             htmlReportPath, junitReportPath, eventsReportPath, decorate);
@@ -561,6 +563,7 @@ public static class ParallelSuiteRunner
         List<string>[] slotBuffers,
         SecurityAssurance[] slotAssurances,
         bool[] slotProviderOrEngineFaults,
+        bool[] slotAuthoringRefusals,
         IReadOnlyList<SecuredTarget> declared,
         LiveEventPump? livePump,
         CancellationToken ct)
@@ -632,6 +635,7 @@ public static class ParallelSuiteRunner
             // across the fan-out. Assigned rather than OR-ed: each slot is written by exactly one
             // task and read only after the gather has joined.
             slotProviderOrEngineFaults[index] = result.ProviderOrEngineFaultObserved;
+            slotAuthoringRefusals[index] = result.AuthoringRefusalObserved;
 
             // Issue #262: NO livePump?.PostRange(buffer) here. The real core
             // (ScenarioRunner.RunScenarioOwningTopologyAsync) already streamed every one of this
@@ -763,6 +767,7 @@ public static class ParallelSuiteRunner
         List<string>[] slotBuffers,
         SecurityAssurance[] slotAssurances,
         bool[] slotProviderOrEngineFaults,
+        bool[] slotAuthoringRefusals,
         StringWriter[] slotRawWriters,
         TextWriter output,
         Func<string, JsonElement, string?> diffLookup,
@@ -781,6 +786,7 @@ public static class ParallelSuiteRunner
         // written. OR rather than a precedence fold — a defect in one scenario is not outranked by
         // a sibling that passed, which is the entire property #480 restores.
         var providerOrEngineFault = false;
+        var authoringRefusal = false;
 
         // The fold SEEDS from the unbuilt documents' assurance rather than from
         // SecurityAssurance.None (issue #411). `Worse` is what folds each slot in below, and it is
@@ -823,6 +829,7 @@ public static class ParallelSuiteRunner
 
             // (5) #480: fold this slot's provenance, in the same joined-and-single-threaded pass.
             providerOrEngineFault |= slotProviderOrEngineFaults[i];
+            authoringRefusal |= slotAuthoringRefusals[i];
         }
 
         // ONE render over the declaration-order concatenation — never per-scenario.  When
@@ -842,6 +849,7 @@ public static class ParallelSuiteRunner
 
         return new SuiteResult(aggregate, perScenario)
         {
+            AuthoringRefusalObserved = authoringRefusal,
             Assurance = assurance,
 
             // #369, and DERIVED rather than flagged. The sequential path can set this from the

@@ -63,7 +63,7 @@ internal sealed class ComposeLease : IKeptTopology
             try { dockerHost = JsonSerializer.Deserialize<string>(context); }
             catch (JsonException) { throw ComposeProcess.Failure("Could not resolve the selected Docker daemon."); }
         }
-        if (!IsLocalDockerHost(dockerHost)) throw new ArgumentException("Compose bindings currently require a local Unix-socket or Windows named-pipe Docker daemon; remote TCP/SSH contexts are unsupported.");
+        if (!IsLocalDockerHost(dockerHost)) throw new TopologyAuthoringException("Compose bindings currently require a local Unix-socket or Windows named-pipe Docker daemon; remote TCP/SSH contexts are unsupported.");
         environment["DOCKER_HOST"] = dockerHost!;
         environment["DOCKER_CONTEXT"] = string.Empty;
         var project = "vouchfx-" + Guid.NewGuid().ToString("N");
@@ -208,8 +208,17 @@ internal sealed class ComposeLease : IKeptTopology
 
     private static void VerifyInputs(ComposeConfiguration configuration)
     {
-        if (ComposeConfiguration.Load(configuration.ConfigPath).Fingerprint != configuration.Fingerprint)
-            throw new ArgumentException("Compose authoring inputs changed during acquisition. Retry validation/run with the current files; no resources were started.");
+        const string refusal = "Compose authoring inputs changed during acquisition. Retry validation/run with the current files; no resources were started.";
+        ComposeConfiguration current;
+        try { current = ComposeConfiguration.Load(configuration.ConfigPath); }
+        catch (ArgumentException)
+        {
+            // Only this pure authored-input reload is typed. Do not expose its values or infer
+            // authoring provenance from native process/output or post-up failures.
+            throw new TopologyAuthoringException(refusal);
+        }
+        if (current.Fingerprint != configuration.Fingerprint)
+            throw new TopologyAuthoringException(refusal);
     }
 
     private static string ResolveValue(string value, ISecretAccessor secrets)
@@ -276,7 +285,7 @@ internal sealed class ComposeLease : IKeptTopology
     {
         using var document = ParseNativeConfiguration(json);
         var root = document.RootElement;
-        void Refuse(string detail) => throw new ArgumentException("Compose ownership: " + detail + " Use an isolated test override; no resources were started.");
+        void Refuse(string detail) => throw new TopologyAuthoringException("Compose ownership: " + detail + " Use an isolated test override; no resources were started.");
         if (root.TryGetProperty("secrets", out _) || root.TryGetProperty("configs", out _)) Refuse("secrets/config resources are unsupported.");
         foreach (var kind in new[] { "volumes", "networks" })
         {

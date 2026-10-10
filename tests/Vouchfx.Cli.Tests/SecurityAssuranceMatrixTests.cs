@@ -1162,7 +1162,7 @@ public sealed class SecurityAssuranceMatrixTests : IDisposable
     }
 
     // ── Row 11: shared-`environment` divergence across scenarios ──────────────────────────
-    //   secured ○ → 3    unsecured 0, unchanged
+    //   secured → 3    unsecured → 4 (typed authoring refusal, #514)
     //
     // `run` only, and structurally so: the gate exists because ONE shared topology is built from
     // ONE environment block. Under `--parallel` each scenario owns its own topology and there is
@@ -1218,7 +1218,7 @@ public sealed class SecurityAssuranceMatrixTests : IDisposable
     }
 
     [Fact]
-    public async Task Row11_SharedEnvironmentDivergence_Unsecured_ExitsSuccess()
+    public async Task Row11_SharedEnvironmentDivergence_Unsecured_NeverExitsSuccess()
     {
         var dir = WriteDivergentEnvironmentSuite(
             "r11-plain", firstSecurity: null, secondSecurity: null);
@@ -1227,7 +1227,7 @@ public sealed class SecurityAssuranceMatrixTests : IDisposable
         var exitCode = await RunAsync(dir, parallel: null, sw);
 
         Assert.Contains("must share one topology", sw.ToString(), StringComparison.Ordinal);
-        Assert.Equal(ExitCodes.Success, exitCode);
+        Assert.Equal(ExitCodes.Inconclusive, exitCode);
     }
 
     /// <summary>

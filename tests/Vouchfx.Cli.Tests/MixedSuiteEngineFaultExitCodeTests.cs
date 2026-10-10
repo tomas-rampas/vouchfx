@@ -68,11 +68,9 @@
 //
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 // THE T2 DECISION, AND WHAT THE ROWS BELOW NOW HAND IN. The widening described in the paragraph
-// above was CONSIDERED AND DECLINED, and it is filed as issue #514 rather than dropped: whether a
-// schema error, an unresolvable secret, a malformed dependency `env:` or a protocol conflict
-// should ALSO be sibling-independent — the way #425 already makes a parse failure — is a real
-// question with a wider blast radius than #480's, and answering it silently inside #480's fix
-// would have reddened every mixed suite containing one mistyped document.
+// above remains separate from the provider-fault marker. #514 carries authoring refusal evidence
+// explicitly through AuthoringRefusalObserved, including the late CompileOnce boundary; the
+// narrower provider marker still governs the provider-fault notice.
 //
 // So the fix does NOT read `Refusal`. `ProviderPipeline` now marks the failure at the point of
 // the fault instead: `ValidationFailure.IsProviderOrEngineFault` is set at the six
@@ -380,14 +378,12 @@ public sealed class MixedSuiteEngineFaultExitCodeTests
     /// against <see langword="null"/> — and that difference is now decorative at this seam:
     /// <see cref="ExitCodes.FromVerdict"/> consults only <see cref="SecurityAssurance.Unconfirmed"/>,
     /// which is false on both sides, and the #480 guard consults only its own argument. The
-    /// executable form of that is the last row here: hand the DEFECT's assurance in with the marker
-    /// false and the answer is 0, so no rule anywhere in the seam is keying on
-    /// <see cref="SecurityAssurance.Refusal"/>. If a later change makes it do so — closing #514 —
-    /// this row fails and says which claim moved, rather than the widening arriving silently.
+    /// executable form below supplies both typed markers explicitly: authoring provenance reddens
+    /// the run independently, while the assurance alone is not reclassified from its refusal kind.
     /// </para>
     /// </remarks>
     [Fact]
-    public void TheTwoRows_DifferInTheProvenanceMarkerAndNothingElseTheSeamReads()
+    public void TypedAuthoringProvenance_IsIndependentOfUnsecuredRefusalAssurance()
     {
         var refused = PreTopologyRefusalAssurance;
 
@@ -400,11 +396,15 @@ public sealed class MixedSuiteEngineFaultExitCodeTests
         Assert.Empty(refused.Declared);
         Assert.Empty(refused.Confirmed);
 
-        // And the fix keys on the marker, not on the refusal: the defect suite's own assurance,
-        // handed in with the marker false, is a clean exit.
+        // An assurance is not a substitute for typed authoring provenance, especially after
+        // acquisition: CompileOnce failures must not stamp a pre-acquisition security abort.
         Assert.Equal(
             ExitCodes.Success,
             ExitCodeFor(refused, providerOrEngineFaultObserved: false));
+        Assert.Equal(ExitCodes.Inconclusive, RunCommand.ComputeExitCode(
+            parsedCount: 2, parseFailureCount: 0, suiteVerdict: Verdict.Inconclusive,
+            failOnEnvironmentError: false, failOnInconclusive: false, securityAssurance: refused,
+            executedAnyScenario: true, providerOrEngineFaultObserved: false, authoringRefusalObserved: true));
     }
 
     /// <summary>
