@@ -7,6 +7,8 @@
 // parses.  This golden-snapshot test freezes that surface: it reflects over the
 // snapshotted event records and asserts the canonical signature is byte-for-byte
 // (newline-normalised) identical to Golden/event-stream-wire-contract.v1.txt.
+// The companion partial class compares actual generic ToLine output with an exact
+// UTF-8 JSONL golden, including declaration order, escaping and the final LF.
 //
 // Snapshotted records (the §14.4 event payloads + envelope + the NESTED value
 // records reachable from them on the wire):
@@ -102,8 +104,8 @@
 //     (MEASURED (d)).
 // [JsonPropertyOrder] moves where STJ writes a member. The golden's own property list is
 // sorted alphabetically by CLR name, so this pins the attribute, not wire member order in
-// general: a reordered declaration changes nothing here (#600 proposes a byte-level golden
-// that would see it).
+// general: a reordered declaration changes nothing here. The companion exact ToLine byte
+// golden (#600) pins that order, escaping and verdict tokens independently.
 // [JsonRequired] needs no field of its own: STJ's p.IsRequired is true for EITHER the C#
 // `required` modifier or a bare [JsonRequired], while the rendered side's Required tests
 // only the modifier, so a bare [JsonRequired] is already a Required mismatch
@@ -148,9 +150,10 @@
 // (EventWireContract_DerivedTypesAreThemselvesFrozen); otherwise a derived type's OWN
 // members are invisible to every test here.
 //
-// MEASURED — System.Text.Json 8.0.0.0, the in-box net8.0 assembly THIS TEST PROCESS loads
-// (EventStreamJsonOptions_RunsAgainstMeasuredSystemTextJsonVersion pins it; the version
-// the CLI ships is pinned separately there too). Each fact is stated once here; comments
+// MEASURED — System.Text.Json 10.0.0.0 from the centrally pinned 10.0.8 package this process loads
+// (EventStreamJsonOptions_RunsAgainstMeasuredSystemTextJsonVersion pins the major;
+// EventStreamJsonRuntime tests check the actual CLI deps and deployed binary).
+// The probes below re-check each fact on this runtime. Each fact is stated once here; comments
 // elsewhere refer to it by letter.
 //   (a) p.CustomConverter is non-null ONLY for a member carrying its own [JsonConverter]. A
 //       converter in the Options' global Converters list (VerdictJsonConverter) leaves it
@@ -206,16 +209,16 @@
 // adds one NAMED assertion per JsonSerializerOptions setting that affects what
 // EventStreamJson.Options writes or parses, so an edit to CreateOptions() that changes one
 // is caught the same way. Named, not reflective: a reflective snapshot of every settable
-// option would not survive an STJ version bump (STJ 9 adds
-// AllowOutOfOrderMetadataProperties and STJ 10 adds AllowDuplicateProperties; measured:
-// referencing either by name here is a compile error under STJ 8).
+// option would not survive an STJ version bump. Named pins include the STJ 9/10
+// metadata-order, duplicate-property and nullable/constructor-required defaults.
 //
 // REGENERATION (when the event wire contract legitimately changes — additive only
 // for v1.x, e.g. a namespace-qualified CLR type name changes but no wire name does):
 //   VOUCHFX_REGEN_EVENT_CONTRACT=1 dotnet test tests/Vouchfx.Engine.Abstractions.Tests \
 //     --filter "FullyQualifiedName~EventContractFreezeTests"
-//   This rewrites Golden/event-stream-wire-contract.v1.txt from the freshly-reflected
-//   signature.  Review the diff (the [wire=...] JSON property names must NOT change),
+//   This rewrites the metadata .txt and exact ToLine UTF-8 .jsonl goldens. CI markers
+//   refuse the same regeneration leaf before either file writes. Review BOTH diffs
+//   (the [wire=...] JSON property names must NOT change),
 //   then commit.  Mirror of SchemaFreezeTests.IsRegenRequested / VOUCHFX_REGEN_SCHEMA.
 using System;
 using System.Collections.Generic;
@@ -239,7 +242,8 @@ namespace Vouchfx.Engine.Abstractions.Tests.Events;
 /// <summary>
 /// S08-F-02: the frozen-v1-event-wire-contract golden-snapshot gate.
 /// </summary>
-public sealed class EventContractFreezeTests
+[Collection(Vouchfx.Tests.GoldenRegenerationEnvironment.Name)]
+public sealed partial class EventContractFreezeTests
 {
     private readonly ITestOutputHelper _output;
 
@@ -1237,7 +1241,7 @@ public sealed class EventContractFreezeTests
     /// A <see cref="JsonConverterAttribute"/> SUBCLASS that overrides
     /// <see cref="JsonConverterAttribute.CreateConverter(Type)"/> instead of calling the base
     /// constructor with a converter <see cref="Type"/> — a legitimate, documented STJ pattern
-    /// (e.g. for a converter chosen at runtime). MEASURED (STJ 8.0.0.0): such a subclass
+    /// (e.g. for a converter chosen at runtime). MEASURED (STJ 10.0.0.0): such a subclass
     /// instance's own <see cref="JsonConverterAttribute.ConverterType"/> property is
     /// <see langword="null"/> — there is no <see cref="Type"/> to read off the ATTRIBUTE — while
     /// System.Text.Json itself calls <see cref="JsonConverterAttribute.CreateConverter(Type)"/>
@@ -1885,13 +1889,10 @@ public sealed class EventContractFreezeTests
 
     /// <summary>
     /// Pins the System.Text.Json assembly THIS TEST PROCESS loads — the version the file
-    /// header's MEASURED facts were taken on — at major version 8, printing its version and
-    /// location either way. It is the in-box net8.0 assembly (8.0.0.0), because neither this
-    /// test project nor <c>Vouchfx.Engine.Abstractions</c> references a <c>System.Text.Json</c>
-    /// package; its assembly version does not move with net8.0 servicing, so this fails a test
-    /// only if the test project starts referencing the package or moves target framework.
-    /// It is NOT the version the CLI ships: that is the central <c>PackageVersion</c>, pinned by
-    /// <see cref="CentralSystemTextJsonPackageVersion_IsTheMajorTheNotesWereCheckedAgainst"/>.
+    /// header's MEASURED facts were taken on — at major version 10, printing its version and
+    /// location either way. This project explicitly references the central package. The
+    /// companion runtime gate also compares actual CLI/test deps and the deployed/loaded
+    /// assembly identities and SHA-256 hashes, so a declaration alone cannot claim parity.
     /// </summary>
     /// <remarks>
     /// The MEASURED facts are claims about one version, not eternal STJ behaviour, and nothing
@@ -1907,12 +1908,11 @@ public sealed class EventContractFreezeTests
 
         Assert.NotNull(version);
         Assert.True(
-            version!.Major == 8,
+            version!.Major == 10,
             $"The System.Text.Json this test process loads moved to major version {version.Major} "
-            + "(8.0.0.0 when this file's MEASURED facts were taken). Re-measure MEASURED (a)-(k) in the "
+            + "(10.0.0.0 when this file's MEASURED facts were taken). Re-measure MEASURED (a)-(k) in the "
             + "file header on the new version and update every note and probe that relies on them, and "
-            + "check whether AllowOutOfOrderMetadataProperties (STJ 9+) and AllowDuplicateProperties "
-            + "(STJ 10+) now compile here and need named pins in "
+            + "review new options that need named pins in "
             + "EventStreamJsonOptions_PinnedSettings_MatchMeasuredExpectations.");
     }
 
@@ -1944,7 +1944,7 @@ public sealed class EventContractFreezeTests
             version!.Major == 10,
             $"The central System.Text.Json PackageVersion moved to {versionText}; the CLI ships that "
             + "version. Re-measure MEASURED (a)-(k) in EventContractFreezeTests' file header on it "
-            + "(reference the package from this test project in a scratch copy and run this file), "
+            + "(this test project references the same central package), "
             + "update any note that no longer holds, then update this pin.");
     }
 
@@ -1954,9 +1954,8 @@ public sealed class EventContractFreezeTests
     /// Named rather than a reflective golden, because a reflective snapshot of every settable
     /// option would not survive an STJ version bump — STJ 9 adds
     /// <c>AllowOutOfOrderMetadataProperties</c> and STJ 10 adds <c>AllowDuplicateProperties</c>
-    /// (measured: <c>AllowDuplicateProperties</c> is absent from the STJ 9.0.4 package),
-    /// neither of which exists on the STJ 8 this project runs against (measured: referencing
-    /// either by name is a compile error here).
+    /// and this package-backed test host pins both explicitly alongside the nullable and
+    /// required-constructor feature defaults. The runtimeconfig gate refuses overrides.
     /// Each assertion below states, in its own comment, why that setting is wire-relevant.
     /// </summary>
     [Fact]
@@ -2029,6 +2028,13 @@ public sealed class EventContractFreezeTests
         Assert.Equal(JsonCommentHandling.Disallow, options.ReadCommentHandling);
         Assert.False(options.AllowTrailingCommas);
 
+        // STJ 9/10 defaults that the previous inbox-STJ-8 test host could not see.
+        Assert.False(options.AllowOutOfOrderMetadataProperties);
+        Assert.True(options.AllowDuplicateProperties);
+        Assert.False(options.RespectNullableAnnotations);
+        Assert.False(options.RespectRequiredConstructorParameters);
+        Assert.True(JsonSerializer.IsReflectionEnabledByDefault);
+
         // 0 means "use STJ's built-in default (64)" — not "unlimited" and not "reject
         // everything". Pinned as the explicit STJ default rather than a project-chosen depth.
         Assert.Equal(0, options.MaxDepth);
@@ -2086,7 +2092,7 @@ public sealed class EventContractFreezeTests
         // private `new DefaultJsonTypeInfoResolver()` that CreateOptions could install
         // instead.
         //
-        // MEASURED (STJ 8.0.0.0), and the two are NOT symmetric:
+        // MEASURED (STJ 10.0.0.0), and the two are NOT symmetric:
         //   • JsonSerializerOptions.Default.TypeInfoResolver is IMMUTABLE BY CONSTRUCTION.
         //     Its Modifiers.IsReadOnly is already true, and Modifiers.Add throws
         //     InvalidOperationException ("Cannot add callbacks to the 'Modifiers' property

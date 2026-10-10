@@ -2,6 +2,8 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <!-- Exercise the centrally resolved serializer the CLI deploys, not net8.0's inbox copy. -->
+    <PackageReference Include="System.Text.Json" />
     <PackageReference Include="xunit" />
     <PackageReference Include="xunit.runner.visualstudio">
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
@@ -22,15 +24,31 @@
     <Content Include="Golden\event-stream-wire-contract.v1.txt">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+    <Content Include="Golden\event-stream-wire-bytes.v1.jsonl">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Engine\Vouchfx.Engine.Abstractions\Vouchfx.Engine.Abstractions.csproj" />
+    <!-- Build the real CLI so the runtime gate checks its resolved/deployed inputs.
+         Its assembly is not a reference of this test host. -->
+    <ProjectReference Include="..\..\src\Cli\Vouchfx.Cli\Vouchfx.Cli.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
   <ItemGroup>
     <Compile Include="..\Shared\GoldenRegenerationPolicyTests.cs" Link="GoldenRegenerationPolicyTests.cs" />
     <ProjectReference Include="..\Vouchfx.TestSupport\Vouchfx.TestSupport.csproj" />
   </ItemGroup>
+
+  <Target Name="CopyEventContractCliRuntime" AfterTargets="Build">
+    <PropertyGroup>
+      <EventContractCliOutput>$(MSBuildProjectDirectory)\..\..\src\Cli\Vouchfx.Cli\bin\$(Configuration)\$(TargetFramework)</EventContractCliOutput>
+    </PropertyGroup>
+    <ItemGroup>
+      <EventContractCliRuntime Include="$(EventContractCliOutput)\System.Text.Json.dll;$(EventContractCliOutput)\vouchfx.deps.json;$(EventContractCliOutput)\vouchfx.runtimeconfig.json" />
+    </ItemGroup>
+    <Copy SourceFiles="@(EventContractCliRuntime)" DestinationFolder="$(OutDir)EventContractCliRuntime" />
+  </Target>
 
 </Project>

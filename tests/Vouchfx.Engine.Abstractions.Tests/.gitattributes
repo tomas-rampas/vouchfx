@@ -1,0 +1,2 @@
+# This golden is the exact UTF-8 JSON Lines stream, including its final LF.
+Golden/event-stream-wire-bytes.v1.jsonl -text
