@@ -27,9 +27,11 @@ internal sealed record ComposeConfiguration(
 {
     private static readonly string[] s_httpEndpoints = { "http" };
     internal IReadOnlyList<string> InputFiles { get; init; } = Array.Empty<string>();
-    internal static ComposeConfiguration Load(string path)
+    internal static ComposeConfiguration Load(string path, ISet<string>? knownInputs = null)
     {
         var configPath = Path.GetFullPath(path);
+        var inputFiles = knownInputs ?? new HashSet<string>(StringComparer.Ordinal);
+        EnvironmentBindingException.TrackInput(inputFiles, configPath);
         var configDirectory = Path.GetDirectoryName(configPath)!;
         var bytes = ReadInput(configPath);
         var yaml = new YamlStream();
@@ -41,7 +43,13 @@ internal sealed record ComposeConfiguration(
         var reader = new ConfigMapping(root, "compose");
         reader.Only("version", "files", "projectDirectory", "profiles", "envFiles", "environment", "services", "dependencies", "startupTimeoutSeconds", "cleanupTimeoutSeconds");
         if (reader.Integer("version", 1, 1) != 1) throw reader.Error("version", "must be 1");
-        var files = reader.StringList("files", required: true).Select(p => Resolve(configDirectory, p)).ToArray();
+        string ResolveInput(string directory, string value)
+        {
+            var input = Resolve(directory, value);
+            EnvironmentBindingException.TrackInput(inputFiles, input);
+            return input;
+        }
+        var files = reader.StringList("files", required: true).Select(p => ResolveInput(configDirectory, p)).ToArray();
         if (files.Length == 0 || files.Distinct(StringComparer.Ordinal).Count() != files.Length)
             throw reader.Error("files", "requires a nonempty ordered list of distinct manifest paths");
         var projectDirectory = reader.OptionalText("projectDirectory") is { } directory
@@ -49,7 +57,8 @@ internal sealed record ComposeConfiguration(
         if (!Directory.Exists(projectDirectory)) throw reader.Error("projectDirectory", "directory does not exist");
         var profiles = reader.StringList("profiles").ToArray();
         foreach (var profile in profiles) Name(profile, reader, "profiles");
-        var envFiles = reader.StringList("envFiles").Select(p => Resolve(configDirectory, p)).ToArray();
+        var envFiles = reader.StringList("envFiles").Select(p => ResolveInput(configDirectory, p)).ToArray();
+        var implicitEnv = envFiles.Length == 0 ? ResolveInput(projectDirectory, ".env") : null;
         var environment = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var (name, value) in reader.Map("environment"))
         {
@@ -96,24 +105,20 @@ internal sealed record ComposeConfiguration(
         if (services.Count + dependencies.Count == 0) throw reader.Error("services", "declare at least one HTTP or PostgreSQL binding");
 
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-        var inputFiles = new HashSet<string>(StringComparer.Ordinal) { configPath };
         AddHash(hash, configPath, bytes);
         foreach (var input in files.Concat(envFiles).Distinct(StringComparer.Ordinal))
         {
             var inputBytes = ReadInput(input);
-            inputFiles.Add(input);
             AddHash(hash, input, inputBytes);
             if (files.Contains(input, StringComparer.Ordinal))
-                foreach (var referenced in ManifestEnvironmentFiles(inputBytes, projectDirectory).Distinct(StringComparer.Ordinal))
+                foreach (var referenced in ManifestEnvironmentFiles(inputBytes, projectDirectory,
+                    input => EnvironmentBindingException.TrackInput(inputFiles, input)).Distinct(StringComparer.Ordinal))
                 {
-                    inputFiles.Add(referenced);
                     AddHash(hash, referenced, ReadInput(referenced));
                 }
         }
-        if (envFiles.Length == 0)
+        if (implicitEnv is not null)
         {
-            var implicitEnv = Path.Combine(projectDirectory, ".env");
-            inputFiles.Add(implicitEnv);
             AddHash(hash, implicitEnv, File.Exists(implicitEnv) ? ReadInput(implicitEnv) : Array.Empty<byte>());
         }
         return new ComposeConfiguration(configPath, projectDirectory, files, profiles, envFiles,
@@ -129,7 +134,7 @@ internal sealed record ComposeConfiguration(
         Services.ToDictionary(p => p.Key, _ => new DeclaredServiceInfo(s_httpEndpoints), StringComparer.Ordinal),
         Dependencies.ToDictionary(p => p.Key, _ => "postgres", StringComparer.Ordinal));
 
-    private static List<string> ManifestEnvironmentFiles(byte[] bytes, string projectDirectory)
+    private static List<string> ManifestEnvironmentFiles(byte[] bytes, string projectDirectory, Action<string> trackInput)
     {
         var manifest = new YamlStream();
         try { manifest.Load(new StringReader(Encoding.UTF8.GetString(bytes))); }
@@ -153,7 +158,9 @@ internal sealed record ComposeConfiguration(
                 {
                     var path = entry is YamlScalarNode { Value: { Length: > 0 } text } ? text
                         : ConfigMapping.Child(entry, "compose.services.env_file").Text("path");
-                    referenced.Add(Resolve(projectDirectory, path));
+                    var input = Resolve(projectDirectory, path);
+                    trackInput(input);
+                    referenced.Add(input);
                 }
             }
         }

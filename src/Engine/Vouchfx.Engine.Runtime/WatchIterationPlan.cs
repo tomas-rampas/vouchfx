@@ -72,6 +72,8 @@ namespace Vouchfx.Engine.Runtime;
 /// </remarks>
 public sealed class WatchIterationPlan
 {
+    private readonly IReadOnlyList<string> _refusedInputFiles;
+
     private WatchIterationPlan(
         string runId,
         bool isRefused,
@@ -82,7 +84,8 @@ public sealed class WatchIterationPlan
         ScenarioAst ast,
         string scenarioName,
         string? seedBaseDirectory,
-        PipelineResult? pipeline)
+        PipelineResult? pipeline,
+        IReadOnlyList<string>? refusedInputFiles = null)
     {
         RunId = runId;
         IsRefused = isRefused;
@@ -94,6 +97,7 @@ public sealed class WatchIterationPlan
         ScenarioName = scenarioName;
         SeedBaseDirectory = seedBaseDirectory;
         Pipeline = pipeline;
+        _refusedInputFiles = refusedInputFiles ?? Array.Empty<string>();
     }
 
     /// <summary>
@@ -136,12 +140,13 @@ public sealed class WatchIterationPlan
     /// <summary>Gets the one argument list the topology for this save would be built from.</summary>
     public TopologyRequest Request { get; }
     public EnvironmentStatePolicy StatePolicy => Pipeline?.EnvironmentPlan?.StatePolicy ?? EnvironmentStatePolicy.Inline;
-    /// <summary>Watch inputs from the neutral plan, or the source configuration when binding was refused.</summary>
+    /// <summary>Watch inputs from the neutral bound or refused plan, falling back to its source configuration.</summary>
     public IReadOnlyList<string> InputFiles
     {
         get
         {
             if (Pipeline?.EnvironmentPlan is { } plan) return plan.InputFiles;
+            if (_refusedInputFiles.Count != 0) return _refusedInputFiles;
             if (Ast.Environment?.Source is not { } source) return Array.Empty<string>();
             try { return new[] { Path.GetFullPath(source.Config, SeedBaseDirectory ?? Directory.GetCurrentDirectory()) }; }
             catch (ArgumentException) { return Array.Empty<string>(); }
@@ -208,7 +213,7 @@ public sealed class WatchIterationPlan
         var request = TopologyRequest.ForScenario(ast, appHostAssemblyName, suiteDirectory);
         var fingerprint = ScenarioRunner.ComputeTopologyFingerprint(request);
 
-        WatchIterationPlan Refused(string diagnostic) => new(
+        WatchIterationPlan Refused(string diagnostic, IReadOnlyList<string>? inputFiles = null) => new(
             runId,
             isRefused: true,
             diagnostic,
@@ -218,7 +223,8 @@ public sealed class WatchIterationPlan
             ast,
             scenarioName,
             suiteDirectory,
-            pipeline: null);
+            pipeline: null,
+            refusedInputFiles: inputFiles);
 
         // ── Door 1: the schema ────────────────────────────────────────────────
         var validationResult = DocumentValidator.Validate(yamlText, registry);
@@ -234,7 +240,7 @@ public sealed class WatchIterationPlan
             ScenarioRunner.RunPreTopologyAuthoringDoor(ast, registry, suiteDirectory, environmentDrivers);
         if (authoringFault is not null)
         {
-            return Refused(authoringFault);
+            return Refused(authoringFault, pipeline.EnvironmentPlan?.InputFiles ?? pipeline.RefusedEnvironmentInputFiles);
         }
 
         request = request.WithPlan(pipeline.EnvironmentPlan!);

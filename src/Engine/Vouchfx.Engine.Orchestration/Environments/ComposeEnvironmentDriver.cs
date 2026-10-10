@@ -19,10 +19,18 @@ public sealed class ComposeEnvironmentDriver : IEnvironmentDriver
 
     public EnvironmentPlan Bind(EnvironmentSourceSpec source, string suiteDirectory)
     {
-        var configuration = ComposeConfiguration.Load(Path.GetFullPath(source.Config, suiteDirectory));
-        return new EnvironmentPlan(configuration.Declarations(), "compose:" + configuration.Fingerprint,
-            EnvironmentStatePolicy.FreshOwned,
-            (context, ct) => ComposeLease.StartAsync(configuration, new ComposeProcess(), context.Secrets, ct),
-            cleanupTimeout: configuration.CleanupTimeout + TimeSpan.FromSeconds(1), inputFiles: configuration.InputFiles);
+        var knownInputs = new HashSet<string>(StringComparer.Ordinal);
+        try
+        {
+            var configuration = ComposeConfiguration.Load(Path.GetFullPath(source.Config, suiteDirectory), knownInputs);
+            return new EnvironmentPlan(configuration.Declarations(), "compose:" + configuration.Fingerprint,
+                EnvironmentStatePolicy.FreshOwned,
+                (context, ct) => ComposeLease.StartAsync(configuration, new ComposeProcess(), context.Secrets, ct),
+                cleanupTimeout: configuration.CleanupTimeout + TimeSpan.FromSeconds(1), inputFiles: configuration.InputFiles);
+        }
+        catch (ArgumentException ex)
+        {
+            throw new EnvironmentBindingException(ex.Message, knownInputs.ToArray());
+        }
     }
 }

@@ -43,9 +43,9 @@ public sealed class EnvironmentDriverRegistry
 
         var plan = driver.Bind(source, suiteDirectory ?? Directory.GetCurrentDirectory());
         if (plan.DeclaredSecurity.Count != 0)
-            throw new ArgumentException("environment.source: external-driver security declarations are unsupported in this slice. Use an inline environment for confirmed TLS/mTLS; no environment was started.");
+            throw new EnvironmentBindingException("environment.source: external-driver security declarations are unsupported in this slice. Use an inline environment for confirmed TLS/mTLS; no environment was started.", plan.InputFiles);
         if (plan.StatePolicy.Ownership != EnvironmentOwnership.Owned)
-            throw new ArgumentException("environment.source: borrowed infrastructure is unsupported in this slice. Select an owned isolated test environment; no environment was started.");
+            throw new EnvironmentBindingException("environment.source: borrowed infrastructure is unsupported in this slice. Select an owned isolated test environment; no environment was started.", plan.InputFiles);
         return plan;
     }
 }

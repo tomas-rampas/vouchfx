@@ -274,6 +274,7 @@ internal sealed record PipelineResult(
     ValidationFailure? Failure)
 {
     public EnvironmentPlan? EnvironmentPlan { get; init; }
+    public IReadOnlyList<string> RefusedEnvironmentInputFiles { get; init; } = Array.Empty<string>();
 }
 
 /// <summary>
@@ -347,6 +348,14 @@ internal static class ProviderPipeline
         var hostResourcePlan = new List<HostResourcePlanEntry>();
         var compileRefLocations = new HashSet<string>(StringComparer.Ordinal);
         var compileRefPaths = new List<string>();
+        IReadOnlyList<string> environmentInputFiles = Array.Empty<string>();
+
+        // A refused compile exposes no executable/partial resource plan, but known authoring
+        // paths still let watch observe the edit that repairs any later pre-topology gate.
+        PipelineResult Refuse(ValidationFailure failure) => ProviderPipeline.Refuse(failure) with
+        {
+            RefusedEnvironmentInputFiles = environmentInputFiles,
+        };
 
         EnvironmentPlan environmentPlan;
         try
@@ -356,8 +365,10 @@ internal static class ProviderPipeline
         }
         catch (ArgumentException ex)
         {
-            return Refuse(ex.Message);
+            environmentInputFiles = ex is EnvironmentBindingException binding ? binding.InputFiles : Array.Empty<string>();
+            return Refuse(new ValidationFailure(ex.Message));
         }
+        environmentInputFiles = environmentPlan.InputFiles;
 
         // Environment-level security-artefact validation (authenticated-infrastructure-
         // mtls, PR A): path containment (REQ-003, EDGE-006) then existence (REQ-004) for
@@ -433,7 +444,7 @@ internal static class ProviderPipeline
         var protocolConflict = SuiteProtocolTargets.DescribeProtocolConflict(new[] { (ScenarioAst?)ast });
         if (protocolConflict is not null)
         {
-            return Refuse(protocolConflict);
+            return Refuse(new ValidationFailure(protocolConflict));
         }
 
         // ── Pass 1: Bind every step exactly ONCE, retaining the model and its
@@ -549,10 +560,10 @@ internal static class ProviderPipeline
                 // example of a Validate that had to be written carefully to avoid exactly
                 // this), and #357's rule is stated absolutely because nothing downstream can
                 // redact an artefact that has already been uploaded.
-                return Refuse(
+                return Refuse(new ValidationFailure(
                     $"Step '{node.Id}' model validation failed: " +
                     ScrubSuiteDirectory(
-                        string.Join("; ", validResult.Errors), resolvedSuiteDirectory));
+                        string.Join("; ", validResult.Errors), resolvedSuiteDirectory)));
             }
 
             // G-A (gatekeeper, fix round 3): a HostResources() throw captured back in Pass 1
@@ -741,12 +752,12 @@ internal static class ProviderPipeline
             // a path in one - but nothing validates their shape beyond non-empty either, so
             // this closes the category rather than the instance. The scrub is a targeted
             // substitution and a no-op when the directory does not occur.
-            return Refuse(ScrubSuiteDirectory(
+            return Refuse(new ValidationFailure(ScrubSuiteDirectory(
                 $"host resource '{group.Key}' is declared by more than one kind " +
                 $"({string.Join(", ", kinds)}). Each host-resource VarName must be claimed " +
                 "by exactly one kind - a webhook listener and an OTLP receiver (or any two " +
                 "distinct host-resource kinds) cannot share the same name. Rename one of them.",
-                resolvedSuiteDirectory));
+                resolvedSuiteDirectory)));
         }
 
         // SUT configuration surface (point 3): ScenarioRunner ALSO stages a container-reachable
@@ -778,12 +789,12 @@ internal static class ProviderPipeline
             if (distinctListenerVarNames.Contains(containerVarName))
             {
                 // Scrubbed: same provider-supplied VarName provenance as the guard above.
-                return Refuse(ScrubSuiteDirectory(
+                return Refuse(new ValidationFailure(ScrubSuiteDirectory(
                     $"host resource '{containerVarName}' collides with the engine-" +
                     $"synthesised container-reachable alias of host resource '{varName}' (staged at " +
                     $"'{varName}{ScenarioRunner.ContainerVarSuffix}'). Rename one of the two " +
                     "host resources (webhook listeners / OTLP receivers) so the alias is unambiguous.",
-                    resolvedSuiteDirectory));
+                    resolvedSuiteDirectory)));
             }
         }
 
