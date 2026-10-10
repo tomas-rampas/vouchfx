@@ -46,18 +46,14 @@ test('manifest depends on the Red Hat YAML language server', () => {
   );
 });
 
-test('yamlValidation binds *.e2e.yaml to the bundled schema', () => {
+test('yamlValidation binds suite and Compose adapter files to their bundled schemas', () => {
   const manifest = readJson('package.json') as PackageManifest;
   const entries = manifest.contributes?.yamlValidation;
-  assert.ok(Array.isArray(entries) && entries.length === 1, 'exactly one yamlValidation entry');
-
-  const [entry] = entries;
-  assert.equal(entry.fileMatch, '*.e2e.yaml', 'fileMatch must be *.e2e.yaml');
-  assert.equal(
-    entry.url,
-    './src/schema/composed-schema.v1.json',
-    'url must point at the bundled schema',
-  );
+  assert.ok(Array.isArray(entries) && entries.length === 2, 'exactly two yamlValidation entries');
+  assert.deepEqual(entries.map(({ fileMatch, url }) => ({ fileMatch, url })), [
+    { fileMatch: '*.e2e.yaml', url: './src/schema/composed-schema.v1.json' },
+    { fileMatch: '*.compose.yaml', url: './src/schema/compose-environment-schema.v1.json' },
+  ]);
 });
 
 test('the vouchfx.schemaPath override setting is declared', () => {

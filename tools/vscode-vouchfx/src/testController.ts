@@ -35,7 +35,8 @@ import * as path from 'node:path';
 import * as vscode from 'vscode';
 
 import { E2eOutlineStep, parseE2eOutline } from './e2eYamlOutline';
-import { ParsedScenario, parseEvents } from './eventsParse';
+import { parseEventsForTestRun } from './eventsOutput';
+import { ParsedScenario } from './eventsParse';
 import { rollupState } from './rollup';
 import { eventsPathIn, makeTempEventsDir, safeRemoveDir } from './tempDir';
 import { EditorState, mapVerdict } from './verdictMap';
@@ -320,7 +321,7 @@ async function runOneFile(
       // No events file at all.
     }
 
-    const parsed = parseEvents(eventsText);
+    const parsed = parseEventsForTestRun(eventsText, run);
     const scenario = pickScenario(parsed.scenarios, uri);
 
     if (scenario === undefined || scenario.steps.length === 0) {

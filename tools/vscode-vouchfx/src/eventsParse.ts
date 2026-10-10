@@ -4,7 +4,7 @@
 // renderer; this is the Test-Explorer consumer of that stream. It reads only the
 // three event types the Test Explorer needs and is deliberately TOLERANT (§14):
 //   • blank lines are skipped,
-//   • malformed (non-JSON) lines are skipped, never thrown on,
+//   • unreadable lines are skipped and counted, never thrown on,
 //   • unknown event types and unknown fields are ignored.
 //
 // Events consumed (flat wire shape — all fields are siblings at the root object):
@@ -43,6 +43,8 @@ export interface ParsedScenario {
 export interface ParsedEvents {
   /** Scenarios in the order they were started. */
   readonly scenarios: ParsedScenario[];
+  /** Unreadable or unattachable consumed events; excludes blank/unknown types. */
+  readonly skippedEventLines: number;
 }
 
 /** Mutable accumulator mirroring {@link ParsedScenario} during the single pass. */
@@ -60,16 +62,18 @@ const EVENT_SCENARIO_COMPLETED = 'scenario-completed';
 /**
  * Parses a `--events` JSON Lines stream into a per-scenario view.
  *
- * Tolerant by contract (§14): blank, malformed, and unknown-type lines are
- * skipped; unknown fields on a known event are ignored. Never throws.
+ * Tolerant by contract (§14): unreadable lines and consumed events without a
+ * matching scenario are skipped and counted. Blank lines and unknown event
+ * types are ignored without counting; unknown fields are ignored. Never throws.
  *
  * @param jsonl The raw contents of the `--events` file.
- * @returns The scenarios (with their steps and verdicts) in start order.
+ * @returns The scenarios in start order and the number of skipped event lines.
  */
 export function parseEvents(jsonl: string): ParsedEvents {
   const scenarios: ScenarioAccumulator[] = [];
   const byId = new Map<string, ScenarioAccumulator>();
   let active: ScenarioAccumulator | null = null;
+  let skippedEventLines = 0;
 
   // Split on both \n and \r\n; a trailing newline yields a final empty line that
   // the blank-line guard skips.
@@ -82,14 +86,20 @@ export function parseEvents(jsonl: string): ParsedEvents {
 
     const event = tryParseObject(trimmed);
     if (event === null) {
+      skippedEventLines++;
       continue;
     }
 
-    const type = typeof event.type === 'string' ? event.type : undefined;
+    const type = readString(event.type);
+    if (type === null) {
+      skippedEventLines++;
+      continue;
+    }
     switch (type) {
       case EVENT_SCENARIO_STARTED: {
         const scenarioId = readString(event.scenarioId);
         if (scenarioId === null) {
+          skippedEventLines++;
           break;
         }
         const acc: ScenarioAccumulator = {
@@ -114,11 +124,13 @@ export function parseEvents(jsonl: string): ParsedEvents {
         // must key off the event's own runId/scenarioId rather than recency.
         // Drop a `step-completed` that arrives before any scenario-started.
         if (active === null) {
+          skippedEventLines++;
           break;
         }
         const stepId = readString(event.stepId);
         const verdict = readString(event.verdict);
         if (stepId === null || verdict === null) {
+          skippedEventLines++;
           break;
         }
         active.steps.push({ stepId, verdict });
@@ -127,14 +139,18 @@ export function parseEvents(jsonl: string): ParsedEvents {
 
       case EVENT_SCENARIO_COMPLETED: {
         const scenarioId = readString(event.scenarioId);
-        if (scenarioId === null) {
+        const verdict = readString(event.verdict);
+        if (scenarioId === null || verdict === null) {
+          skippedEventLines++;
           break;
         }
         // Match by id so an out-of-order completion lands on the right scenario;
         // an unknown scenarioId is ignored rather than inventing a scenario.
         const target = byId.get(scenarioId);
         if (target) {
-          target.verdict = readString(event.verdict);
+          target.verdict = verdict;
+        } else {
+          skippedEventLines++;
         }
         break;
       }
@@ -146,6 +162,7 @@ export function parseEvents(jsonl: string): ParsedEvents {
   }
 
   return {
+    skippedEventLines,
     scenarios: scenarios.map((s) => ({
       scenarioId: s.scenarioId,
       file: s.file,
