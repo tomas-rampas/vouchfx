@@ -28,6 +28,9 @@
 #  docs-build   Blocking documentation build and publication gate on every PR.
 #               Uses the Pages build inputs without publishing or dispatching.
 #
+#  workflow-contract Blocking workflow lint and actual Docker pre-pull regressions.
+#               Uses fixture commands only; it never pulls or starts containers.
+#
 #  vuln-scan    ADVISORY, NON-BLOCKING dependency-vulnerability scan
 #               (continue-on-error: true).  Surfaces known-vulnerable
 #               transitive packages via `dotnet list package --vulnerable
@@ -80,6 +83,27 @@ env:
 
 # ── Blocking gate ─────────────────────────────────────────────────────────────
 jobs:
+  workflow-contract:
+    name: Workflow lint & Docker pre-pull contract
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+
+      - name: Install pinned workflow tools (verified SHA-256)
+        run: bash scripts/ci/install-workflow-tools.sh
+
+      - name: Lint every workflow
+        run: python -B scripts/ci/lint_workflows.py
+
+      - name: Exercise the actual Docker pre-pull script
+        run: python -B -m unittest discover -s scripts/ci -p test_docker_ci_contract.py -v
+
   build:
     name: Build & unit tests
     runs-on: ubuntu-latest
@@ -1142,13 +1166,13 @@ jobs:
       # The trait selects the docker-gated topology and provider-integration tests
       # (spread across the orchestration, runtime and compilation test assemblies).
       #
-      # Topology startup is serialised WITHIN each assembly, and only within each
-      # assembly, by per-assembly [assembly: CollectionBehavior(
+      # Topology startup is serialised WITHIN each assembly
+      # by per-assembly [assembly: CollectionBehavior(
       # DisableTestParallelization = true)] in Runtime.Tests + Orchestration.Tests.
       # That is aimed at DCP's internal ~20s per-resource startup window on a loaded
       # runner and the intermittent `startup` HealthGate flake.
       #
-      # CROSS-ASSEMBLY OVERLAP DOES OCCUR. This comment used to claim the opposite —
+      # CROSS-ASSEMBLY OVERLAP OCCURRED without an MSBuild scheduling bound. This comment used to claim the opposite —
       # that under the pinned .NET 8 SDK `dotnet test <solution>` runs one test host
       # per project SEQUENTIALLY, so assemblies never overlap — and flagged its own
       # expiry condition. That condition had already fired. MEASURED on run
@@ -1166,17 +1190,15 @@ jobs:
       # them run for 14 and 44 minutes makes sequential per-project execution
       # arithmetically impossible — that, not any single duration, is decisive.
       #
-      # Two consequences, and neither is fixed by anything in this step:
+      # Two consequences, addressed at different boundaries:
       #   • No test may assume exclusive access to a machine-wide or user-wide
       #     resource (a per-user directory, a fixed port, a certificate store).
       #     #489 was that assumption failing on the shared DCP capture directory;
       #     the rows involved now key their claims on a resource they own, or, where
       #     a row owns no named resource, prove the property in-process instead.
-      #   • UNRESOLVED: the ~20s DCP startup-watchdog concern this serialisation was
-      #     added for is only half contained — topologies in different assemblies
-      #     can still start at the same time. Tracked as #525; the lever, if one is
-      #     wanted here, is on the `dotnet test` invocation below, and changing it is
-      #     deliberately NOT part of the #489 fix.
+      #   • -m:1 below serialises solution test projects across assemblies (#525).
+      #     scripts/ci/probe_docker_serialization.py measures this with two real
+      #     .NET 8 test hosts and an overlapping control; it is not hosted Docker proof.
       # (The Sprint08 parallel capstone intentionally runs two topologies at once
       # via the engine's own ParallelSuiteRunner — unaffected by, and orthogonal
       # to, xUnit/VSTest scheduling.)
@@ -1203,6 +1225,7 @@ jobs:
       - name: Integration tests (requires=docker)
         run: >
           dotnet test vouchfx.sln
+          -m:1
           -c Release
           --no-build
           --filter "requires=docker"
