@@ -10,7 +10,10 @@ vouchfx compiles declarative `.e2e.yaml` tests into memory-safe C# (via Roslyn),
 dotnet tool install --global vouchfx --prerelease
 ```
 
-Requires the .NET 8 SDK and a running Docker engine.
+Requires the .NET 8 SDK and a running Docker engine with Linux containers. This package includes
+the matching Aspire DCP tools for Windows x64, Linux x64 (glibc), macOS x64 and macOS ARM64;
+no source checkout or Aspire restore is required. Keep the complete installed payload. An explicit
+`ASPIRE_DCP_PATH` still selects an external matching tools directory.
 
 ## A test, in shape
 

@@ -33,16 +33,12 @@ namespace Vouchfx.Engine.Orchestration;
 /// <c>&lt;IsAspireHost&gt;true&lt;/IsAspireHost&gt;</c> and the <c>Aspire.AppHost.Sdk</c>.
 /// </para>
 /// <para>
-/// Packaged-tool DCP path self-heal: the embedded <c>dcpclipath</c> metadata is an ABSOLUTE,
-/// machine-specific path baked in at build time. A <c>vouchfx</c> global tool packed on CI
-/// carries the CI runner's path, which does not exist on a user's machine even when their
-/// own NuGet cache holds the matching <c>aspire.hosting.orchestration.&lt;their-rid&gt;</c>
-/// package. Before <c>builder.Build()</c>, <see cref="StartAsync"/> probes whether the
-/// embedded path exists here and, if not, overrides <c>DcpPublisher:CliPath</c> with the
-/// equivalent package resolved from the current machine's own cache — UNLESS the user has
-/// set <c>ASPIRE_DCP_PATH</c> themselves, in which case this self-heal steps aside entirely
-/// and lets Aspire's own (higher-precedence-than-metadata) resolution of that variable run
-/// untouched. See <see cref="DcpPathResolver"/> for the full rationale and decision logic.
+/// Installed CLI distributions select the version-matched native bundle beside the
+/// resolved host assembly. This takes precedence over machine-specific build metadata
+/// and a warmed NuGet cache. Source/custom AppHosts retain metadata/cache resolution.
+/// An explicit <c>ASPIRE_DCP_PATH</c> remains authoritative. Resolution and Unix execute
+/// permission repair occur only here, when inline Aspire orchestration starts.
+/// See <see cref="DcpPathResolver"/> for the pure decision policy.
 /// </para>
 /// <para>
 /// This type is intentionally minimal for S01-A-01. The full Postgres / Kafka / service topology
@@ -436,10 +432,9 @@ public sealed class HeadlessTopology : IAsyncDisposable
     /// Applies the packaged-tool DCP path self-heal (see the class remarks and
     /// <see cref="DcpPathResolver"/>). Resolves the same host assembly Aspire itself will
     /// resolve from <paramref name="appHostAssemblyName"/>, reads its <c>DcpCliPath</c>
-    /// metadata, and — only when that path does not exist on THIS machine — overrides
-    /// <c>DcpPublisher:CliPath</c> with the equivalent package found under this machine's
-    /// own NuGet cache, or throws a classified <see cref="OrchestrationException"/> when
-    /// no fallback can be found either.
+    /// metadata and location, then selects an installed native bundle or legacy cache
+    /// fallback. Overrides <c>DcpPublisher:CliPath</c> or throws a classified
+    /// <see cref="OrchestrationException"/> for an unsupported or missing prerequisite.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -489,12 +484,14 @@ public sealed class HeadlessTopology : IAsyncDisposable
 
         static string ResolvePortableRid()
         {
-            var arch = RuntimeInformation.OSArchitecture switch
+            // Select the process architecture: an x64 tool running under emulation on
+            // ARM64 must use its x64 native bundle, including RID-specific archives.
+            var arch = RuntimeInformation.ProcessArchitecture switch
             {
                 Architecture.X64 => "x64",
                 Architecture.X86 => "x86",
                 Architecture.Arm64 => "arm64",
-                _ => RuntimeInformation.OSArchitecture.ToString().ToLowerInvariant(),
+                _ => RuntimeInformation.ProcessArchitecture.ToString().ToLowerInvariant(),
             };
 
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) return $"win-{arch}";
@@ -514,12 +511,18 @@ public sealed class HeadlessTopology : IAsyncDisposable
             // ASPIRE_DCP_PATH is the user's own escape hatch, honoured by Aspire itself at
             // priority 2 — this self-heal must never pre-empt it with an Unresolvable throw
             // nor outrank it with a DcpPublisher:CliPath override. See DcpPathResolver's
-            // "DO NOT SHADOW" remarks.
-            aspireDcpPathEnvironmentVariable: Environment.GetEnvironmentVariable("ASPIRE_DCP_PATH"));
+            // precedence remarks.
+            aspireDcpPathEnvironmentVariable: Environment.GetEnvironmentVariable("ASPIRE_DCP_PATH"),
+            hostAssemblyDirectory: string.IsNullOrEmpty(hostAssembly.Location)
+                ? null : Path.GetDirectoryName(hostAssembly.Location));
 
         switch (resolution.Kind)
         {
             case DcpPathResolutionKind.Override:
+                if (resolution.IsBundled)
+                {
+                    EnsureBundledDcpExecutableModes(resolution.OverridePath!);
+                }
                 // ExtensionsPath is auto-derived by Aspire's own ConfigureDefaultDcpOptions
                 // from CliPath's directory once this key is set — no need to set it here.
                 builder.Configuration["DcpPublisher:CliPath"] = resolution.OverridePath;
@@ -541,6 +544,38 @@ public sealed class HeadlessTopology : IAsyncDisposable
             case DcpPathResolutionKind.UseEmbedded:
             default:
                 break;
+        }
+    }
+
+    /// <summary>
+    /// NuGet tool extraction does not guarantee Unix execute bits on native content.
+    /// Restore them only on the selected installed bundle, never on user overrides/cache.
+    /// Archives/installers carry these permissions already, including read-only installs.
+    /// </summary>
+    internal static void EnsureBundledDcpExecutableModes(string dcpPath)
+    {
+        if (OperatingSystem.IsWindows()) return;
+
+        foreach (var path in new[] { dcpPath, Path.Combine(Path.GetDirectoryName(dcpPath)!, "dcptun_c") })
+        {
+            try
+            {
+                var mode = File.GetUnixFileMode(path);
+                var executableMode = mode | UnixFileMode.UserExecute;
+                if ((mode & UnixFileMode.GroupRead) != 0) executableMode |= UnixFileMode.GroupExecute;
+                if ((mode & UnixFileMode.OtherRead) != 0) executableMode |= UnixFileMode.OtherExecute;
+                if (mode != executableMode) File.SetUnixFileMode(path, executableMode);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                throw new OrchestrationException(new OrchestrationErrorInfo(
+                    Kind: OrchestrationErrorKind.Provision,
+                    ResourceName: "dcp",
+                    RegistryHost: null,
+                    AuthStatus: null,
+                    Detail: $"Cannot enable execution of bundled DCP file '{path}': {ex.Message} "
+                        + "Reinstall with executable permissions or set ASPIRE_DCP_PATH to matching tools."));
+            }
         }
     }
 

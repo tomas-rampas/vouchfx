@@ -104,6 +104,41 @@ public sealed class HeadlessTopologySelfHealTests
     private const string NugetPackagesVariable = "NUGET_PACKAGES";
     private const string AspireDcpPathVariable = "ASPIRE_DCP_PATH";
 
+    [Fact]
+    public void ApplyDcpPathSelfHeal_InstalledHost_UsesAdjacentBundleWithEmptyNugetCache()
+    {
+        using var host = new TempDirectory();
+        using var cache = new TempDirectory();
+        var assemblyName = UniqueFakeAssemblyName();
+        EmitAndLoadFakeHostAssembly(assemblyName, UniqueDeadPath(), host.Path);
+        var bundle = Path.Combine(host.Path, "dcp", ResolveCurrentAspireHostingVersion());
+        var tools = Path.Combine(bundle, ResolveCurrentPortableRid(), "tools");
+        Directory.CreateDirectory(tools);
+        File.WriteAllText(Path.Combine(host.Path, "dcp", "supported-rids.txt"), "fixture manifest");
+        var candidate = Path.Combine(tools, ResolveCurrentDcpExeName());
+        var tunnel = Path.Combine(tools, "dcptun_c");
+        File.WriteAllText(candidate, "fixture DCP");
+        File.WriteAllText(tunnel, "fixture tunnel");
+        if (!OperatingSystem.IsWindows())
+        {
+            File.SetUnixFileMode(candidate, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            File.SetUnixFileMode(tunnel, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        }
+        using var nugetPackages = EnvironmentVariableScope.Set(NugetPackagesVariable, cache.Path);
+        using var aspireDcpPath = EnvironmentVariableScope.Set(AspireDcpPathVariable, null);
+        var builder = CreateBuilder();
+
+        HeadlessTopology.ApplyDcpPathSelfHeal(builder, assemblyName);
+
+        Assert.Equal(candidate, builder.Configuration["DcpPublisher:CliPath"]);
+        Assert.Empty(Directory.EnumerateFileSystemEntries(cache.Path));
+        if (!OperatingSystem.IsWindows())
+        {
+            Assert.True(File.GetUnixFileMode(candidate).HasFlag(UnixFileMode.UserExecute));
+            Assert.True(File.GetUnixFileMode(tunnel).HasFlag(UnixFileMode.UserExecute));
+        }
+    }
+
     // -----------------------------------------------------------------------
     // 1 — Override glue: dead metadata + a matching candidate present under the
     //     current machine's own NUGET_PACKAGES cache -> config is written.
@@ -319,12 +354,12 @@ public sealed class HeadlessTopologySelfHealTests
     /// </summary>
     private static string ResolveCurrentPortableRid()
     {
-        var arch = RuntimeInformation.OSArchitecture switch
+        var arch = RuntimeInformation.ProcessArchitecture switch
         {
             Architecture.X64 => "x64",
             Architecture.X86 => "x86",
             Architecture.Arm64 => "arm64",
-            _ => RuntimeInformation.OSArchitecture.ToString().ToLowerInvariant(),
+            _ => RuntimeInformation.ProcessArchitecture.ToString().ToLowerInvariant(),
         };
 
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) return $"win-{arch}";
@@ -364,7 +399,7 @@ public sealed class HeadlessTopologySelfHealTests
     /// the later by-name <c>Assembly.Load(new AssemblyName(...))</c> lookup inside
     /// <see cref="HeadlessTopology.ApplyDcpPathSelfHeal"/> to find it.
     /// </summary>
-    private static void EmitAndLoadFakeHostAssembly(string assemblySimpleName, string dcpCliPathValue)
+    private static void EmitAndLoadFakeHostAssembly(string assemblySimpleName, string dcpCliPathValue, string? hostDirectory = null)
     {
         var source =
             $$"""[assembly: System.Reflection.AssemblyMetadata("DcpCliPath", @"{{dcpCliPathValue.Replace("\"", "\"\"", StringComparison.Ordinal)}}")]""";
@@ -410,8 +445,17 @@ public sealed class HeadlessTopologySelfHealTests
                 $"Synthetic fake-host assembly '{assemblySimpleName}' did not compile:{Environment.NewLine}{errors}");
         }
 
-        peStream.Position = 0;
-        AssemblyLoadContext.Default.LoadFromStream(peStream);
+        if (hostDirectory is null)
+        {
+            peStream.Position = 0;
+            AssemblyLoadContext.Default.LoadFromStream(peStream);
+        }
+        else
+        {
+            var path = Path.Combine(hostDirectory, assemblySimpleName + ".dll");
+            File.WriteAllBytes(path, peStream.ToArray());
+            AssemblyLoadContext.Default.LoadFromAssemblyPath(path);
+        }
     }
 
     /// <summary>

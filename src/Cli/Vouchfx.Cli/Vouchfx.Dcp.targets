@@ -1,0 +1,67 @@
+<Project>
+  <!-- Aspire's default references contain only the BUILD host's DCP. Explicit private
+       references restore the four advertised platforms; exclude their build targets so a
+       foreign RID cannot overwrite the build host's metadata. Full tools trees retain the
+       tunnel helper, licence, notices and integrity manifests. Ordinary builds do not copy
+       hundreds of MB into every test output; publish/PackAsTool does. -->
+  <ItemGroup>
+    <!-- VersionOverride is scoped to this explicit CLI reference. Central PackageVersion
+         entries would conflict with Aspire's implicit references in other AppHosts. -->
+    <PackageReference Include="Aspire.Hosting.Orchestration.win-x64" VersionOverride="$(VouchfxDcpVersion)" GeneratePathProperty="true" PrivateAssets="all" ExcludeAssets="all" />
+    <PackageReference Include="Aspire.Hosting.Orchestration.linux-x64" VersionOverride="$(VouchfxDcpVersion)" GeneratePathProperty="true" PrivateAssets="all" ExcludeAssets="all" />
+    <PackageReference Include="Aspire.Hosting.Orchestration.osx-x64" VersionOverride="$(VouchfxDcpVersion)" GeneratePathProperty="true" PrivateAssets="all" ExcludeAssets="all" />
+    <PackageReference Include="Aspire.Hosting.Orchestration.osx-arm64" VersionOverride="$(VouchfxDcpVersion)" GeneratePathProperty="true" PrivateAssets="all" ExcludeAssets="all" />
+    <_VouchfxDcpBundle Include="win-x64" PackageRoot="$(PkgAspire_Hosting_Orchestration_win-x64)" Executable="dcp.exe" />
+    <_VouchfxDcpBundle Include="linux-x64" PackageRoot="$(PkgAspire_Hosting_Orchestration_linux-x64)" Executable="dcp" />
+    <_VouchfxDcpBundle Include="osx-x64" PackageRoot="$(PkgAspire_Hosting_Orchestration_osx-x64)" Executable="dcp" />
+    <_VouchfxDcpBundle Include="osx-arm64" PackageRoot="$(PkgAspire_Hosting_Orchestration_osx-arm64)" Executable="dcp" />
+    <_VouchfxSelectedDcpBundle Include="@(_VouchfxDcpBundle)" Condition="'$(RuntimeIdentifier)' == ''" />
+    <_VouchfxSelectedDcpBundle Include="@(_VouchfxDcpBundle->WithMetadataValue('Identity', '$(RuntimeIdentifier)'))" Condition="'$(RuntimeIdentifier)' != ''" />
+    <Content Include="dcp-supported-rids.txt" Link="dcp/supported-rids.txt" CopyToOutputDirectory="Never" CopyToPublishDirectory="PreserveNewest" Pack="false" />
+    <Content Include="$(PkgAspire_Hosting_Orchestration_win-x64)/tools/**/*" Condition="'$(RuntimeIdentifier)' == '' or '$(RuntimeIdentifier)' == 'win-x64'">
+      <Link>dcp/$(VouchfxDcpVersion)/win-x64/tools/%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      <Pack>false</Pack>
+    </Content>
+    <Content Include="$(PkgAspire_Hosting_Orchestration_linux-x64)/tools/**/*" Condition="'$(RuntimeIdentifier)' == '' or '$(RuntimeIdentifier)' == 'linux-x64'">
+      <Link>dcp/$(VouchfxDcpVersion)/linux-x64/tools/%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      <Pack>false</Pack>
+    </Content>
+    <Content Include="$(PkgAspire_Hosting_Orchestration_osx-x64)/tools/**/*" Condition="'$(RuntimeIdentifier)' == '' or '$(RuntimeIdentifier)' == 'osx-x64'">
+      <Link>dcp/$(VouchfxDcpVersion)/osx-x64/tools/%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      <Pack>false</Pack>
+    </Content>
+    <Content Include="$(PkgAspire_Hosting_Orchestration_osx-arm64)/tools/**/*" Condition="'$(RuntimeIdentifier)' == '' or '$(RuntimeIdentifier)' == 'osx-arm64'">
+      <Link>dcp/$(VouchfxDcpVersion)/osx-arm64/tools/%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      <Pack>false</Pack>
+    </Content>
+  </ItemGroup>
+
+  <!-- Set this during evaluation: Aspire's discovery target is conditionally skipped
+       before BeforeTargets callbacks run when DcpDir is empty. Source builds retain
+       their build-host cache metadata; published builds prefer the portable bundle. -->
+  <PropertyGroup>
+    <!-- Aspire 13.4.2 validates DashboardPath as non-empty even when disabled.
+         HeadlessTopology always disables the dashboard; retain that metadata
+         contract without restoring or distributing unused dashboard binaries. -->
+    <AspireDashboardPath>disabled-by-vouchfx-headless-host</AspireDashboardPath>
+    <DcpDir Condition="'$(NETCoreSdkRuntimeIdentifier)' == 'win-x64'">$(PkgAspire_Hosting_Orchestration_win-x64)/tools/</DcpDir>
+    <DcpDir Condition="'$(NETCoreSdkRuntimeIdentifier)' == 'linux-x64'">$(PkgAspire_Hosting_Orchestration_linux-x64)/tools/</DcpDir>
+    <DcpDir Condition="'$(NETCoreSdkRuntimeIdentifier)' == 'osx-x64'">$(PkgAspire_Hosting_Orchestration_osx-x64)/tools/</DcpDir>
+    <DcpDir Condition="'$(NETCoreSdkRuntimeIdentifier)' == 'osx-arm64'">$(PkgAspire_Hosting_Orchestration_osx-arm64)/tools/</DcpDir>
+  </PropertyGroup>
+
+  <Target Name="ValidateVouchfxDcpBundle" BeforeTargets="ComputeFilesToPublish">
+    <Error Condition="'@(_VouchfxSelectedDcpBundle)' == ''" Text="Unsupported vouchfx DCP runtime '$(RuntimeIdentifier)'. Supported: win-x64, linux-x64, osx-x64, osx-arm64." />
+    <Error Condition="!Exists('%(_VouchfxSelectedDcpBundle.PackageRoot)/tools/%(_VouchfxSelectedDcpBundle.Executable)')" Text="Missing DCP $(VouchfxDcpVersion) executable for %(_VouchfxSelectedDcpBundle.Identity). Restore the CLI dependencies before packaging." />
+    <Error Condition="!Exists('%(_VouchfxSelectedDcpBundle.PackageRoot)/tools/dcptun_c')" Text="Missing DCP tunnel helper for %(_VouchfxSelectedDcpBundle.Identity). Refusing an incomplete package." />
+    <Error Condition="!Exists('%(_VouchfxSelectedDcpBundle.PackageRoot)/tools/LICENSE') or !Exists('%(_VouchfxSelectedDcpBundle.PackageRoot)/tools/NOTICE')" Text="Missing DCP licence or notices for %(_VouchfxSelectedDcpBundle.Identity)." />
+  </Target>
+</Project>

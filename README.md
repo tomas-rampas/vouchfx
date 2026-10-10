@@ -37,6 +37,10 @@ are Docker-free, so authoring and checking suites works on a machine without one
 .NET SDK can use the self-contained per-OS archives and MSI/deb/pkg installers attached to each
 [release](https://github.com/tomas-rampas/vouchfx/releases).
 
+Current source candidates bundle matching Aspire DCP tools for Windows x64, Linux x64 (glibc),
+macOS x64 and macOS ARM64. Published `1.0.0-rc.6` still needs matching external DCP tools; see
+[installation and version-specific prerequisites](https://vouchfx.io/getting-started/#installing-vouchfx).
+
 ## A test, in full
 
 ```yaml

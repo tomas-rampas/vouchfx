@@ -1,87 +1,57 @@
-# KB: "The Aspire orchestration component is not installed" — DCP path portability in packaged distributions
+# KB: DCP portability in installed distributions
 
-**Article type:** knowledge base / incident write-up
-**Applies to:** the `vouchfx` dotnet global tool, NuGet.org releases **1.0.0-alpha.5 and earlier** (and the self-contained archives built from the same commits)
-**Status:** fixed in **1.0.0-alpha.6** (2026-07-12, PR [#206](https://github.com/tomas-rampas/vouchfx/pull/206))
-**Severity:** complete failure of the packaged-tool distribution channel — every affected install failed its first `vouchfx run` on every machine other than the CI runner that built the package
+**Applies to:** CLI global tools, archives and installers.
 
-## Symptom
+**Updated:** 2026-10-10. Published `1.0.0-rc.6` is still cache-dependent; current source bundles DCP.
 
-On a freshly installed tool (`dotnet tool install --global vouchfx --prerelease`), the first `vouchfx run` fails before any scenario executes:
+## Symptoms and cause
 
-```
-fail: Microsoft.Extensions.Hosting.Internal.Host[11]
-      Hosting failed to start
-      System.IO.FileNotFoundException: The Aspire orchestration component is not installed
-      at "/home/runner/.nuget/packages/aspire.hosting.orchestration.linux-x64/13.4.2/tools/dcp".
-      The application cannot be run without it.
-```
+A clean installation reports `The Aspire orchestration component is not installed` or
+`could not be located`, often naming a packaging runner's NuGet directory. Aspire.AppHost.Sdk
+embeds an absolute build-machine path; that path and its RID are not portable. Topology never
+starts and no test steps execute. This is an **EnvironmentError**, not a failed product assertion.
 
-Two details make the message diagnostic:
+The original same-machine packaging test passed because its build cache was present. The July
+2026 fallback resolved matching tools from a different user's cache, but the release smoke itself
+restored an AppHost into that cache. It proved relocation, not a fresh installation. A clean
+`1.0.0-rc.6` installation on 2026-10-10 reproduced the missing tools; the same candidate started
+with matching Aspire 13.4.2 tools supplied through `ASPIRE_DCP_PATH`.
 
-- the path begins `/home/runner/…` — a GitHub Actions runner's home directory, not a path that exists on any user machine; and
-- the package RID is `linux-x64` even when the failing machine is Windows or macOS.
+## Current source behaviour
 
-The run reports an **Environment error** (infrastructure), never a test verdict, and — by the engine's four-verdict contract — exits `0` unless `--fail-on-env-error` is passed. Populating your own NuGet cache does **not** help on affected versions: the tool never looks there.
+Newly packed tools carry complete `win-x64`, glibc `linux-x64`, `osx-x64` and `osx-arm64` DCP trees.
+Archives/installers carry their selected RID. Paths are relative to the resolved host assembly,
+not the current directory: `dcp/13.4.2/<rid>/tools/`.
 
-## Root cause
-
-vouchfx orchestrates container topologies through .NET Aspire's DCP (Developer Control Plane). DCP's binaries are not part of Aspire's ordinary NuGet dependency graph; they ship in a platform-specific package, `aspire.hosting.orchestration.<rid>`, and Aspire locates them through metadata that the `Aspire.AppHost.Sdk` **bakes into the host assembly at build time**:
-
-- `DcpCliPath` — the **absolute** path of the `dcp` executable inside the **build machine's** NuGet cache, for the **build machine's** RID;
-- `DcpExtensionsPath`, `aspiredashboardpath` — companions carrying the same build-machine-baked absolute paths.
-
-At run time, Aspire 13.4.2 resolves the DCP location in this precedence order (upstream `Aspire.Hosting/Dcp/DcpOptions.cs`):
-
-1. the `DcpPublisher:CliPath` configuration key;
-2. the `ASPIRE_DCP_PATH` environment variable;
-3. the baked assembly metadata.
-
-For a locally built binary this is invisible: the baked path points into the same machine's cache and simply works. For a **packaged** binary the baked path travels with the package. The NuGet.org tool is packed on `ubuntu-latest`, so every user received a tool that would only ever look at `/home/runner/.nuget/packages/aspire.hosting.orchestration.linux-x64/13.4.2/tools/dcp` — a path (and platform) that cannot exist on their machine. No amount of cache population, restoring, or reinstalling could fix it, because nothing the user does changes the baked metadata.
-
-### Why the release pipeline did not catch it
-
-The packaging decision was validated empirically — pack, install, run, PASS — but **on the same machine that built the package**, where the baked path coincidentally resolved. The same holds on CI: a smoke test running on the runner that packed the tool shares that runner's cache path, so it stays green while every real user is broken. The evidence was true; it just did not generalise across machines.
-
-## Resolution
-
-The engine now self-heals at topology start (`HeadlessTopology.StartAsync`, the single chokepoint through which every topology — CLI, test harnesses, custom runners — passes). A pure decision component, `DcpPathResolver`, is consulted before Aspire builds the application:
-
-| Condition | Action |
+| Condition | Behaviour |
 |---|---|
-| `ASPIRE_DCP_PATH` is set | Do nothing — Aspire's own resolution honours it (priority 2), and writing configuration would silently outrank the user's explicit choice. |
-| Baked metadata path exists on disk | Do nothing — local builds behave exactly as before. |
-| Baked path is dead, and the executing machine's NuGet cache (`NUGET_PACKAGES`, else `~/.nuget/packages`) contains `aspire.hosting.orchestration.<portable-rid>` at the engine's pinned Aspire version | Inject that path via the `DcpPublisher:CliPath` configuration key (priority 1; `ExtensionsPath` derives automatically). |
-| Nothing resolvable | Fail with an actionable **Environment error** naming the exact missing package, the probed path, and the remedy. |
+| Explicit `ASPIRE_DCP_PATH` | Aspire honours that directory; bundle/cache probing cannot override it. |
+| Installed versioned bundle | Select the current process RID before stale metadata or a warmed cache. |
+| Declared bundle lacks DCP/tunnel helper | Actionable provisioning error; reinstall the complete distribution. |
+| Unsupported bundled RID | Report supported RIDs and the explicit-override option. |
+| Source/custom AppHost without a bundle | Preserve existing metadata and exact-version local-cache fallback. |
 
-The RID is normalised to the portable form (`win-x64`, `linux-x64`, `osx-arm64`, …) from the machine's actual OS and architecture, so distro-qualified runtime identifiers such as `ubuntu.22.04-x64` cannot derail the probe.
+On Unix, archives and installers preserve native execute bits. Global-tool startup repairs them
+in the selected bundle only; read-only installs with broken permissions require their owner to
+repair them. DCP resolution remains inside inline Aspire startup for future environment adapters.
 
-### If you are on an affected version
+## Remedy for published legacy packages
 
-- **Upgrade** to 1.0.0-alpha.6 or later: `dotnet tool update --global vouchfx --prerelease`; or
-- **build from source** ([getting started guide](../getting-started.md)) — locally built binaries have never been affected; or
-- set **`ASPIRE_DCP_PATH`** to the directory containing a `dcp` executable if you have one (for example `~/.nuget/packages/aspire.hosting.orchestration.<rid>/13.4.2/tools/`) — honoured by Aspire itself, even on affected versions.
+Use a candidate containing the bundling change or supply exact platform tools through
+`ASPIRE_DCP_PATH`. It names the directory containing `dcp`/`dcp.exe`, not the executable. An
+AppHost restore at Aspire 13.4.2 can populate those tools for legacy/source builds; the retired
+Aspire workload cannot. Do not describe an rc.6 install with this override as a standalone pass.
+See [troubleshooting](../troubleshooting.md#the-aspire-orchestration-component-is-not-installed-could-not-be-located).
 
-On fixed versions the only prerequisite is that the orchestration package exists in your cache; restoring this repository (`dotnet restore vouchfx.sln`) puts it there. Note that `dotnet workload install aspire` is **not** a remedy on any version: the Aspire workload was retired with Aspire 9, installs Aspire 8.2.x packs, and never touches the NuGet cache. See [troubleshooting](../troubleshooting.md#the-aspire-orchestration-component-is-not-installed-could-not-be-located).
+## Regression gates
 
-## How regression is prevented
+Resolver tests cover bundle priority, all advertised RIDs, unsupported/incomplete bundles and
+explicit override. Glue tests verify host-relative configuration and Unix permission repair with
+an empty cache. Packaging checks compare complete native trees against restored exact-version
+NuGet payloads, validate executable hashes/platforms and enforce a 250,000,000-byte tool ceiling.
 
-- **Unit suite** — the `DcpPathResolver` decision table is pinned branch-by-branch by OS-agnostic unit tests that run in every PR build on both Windows and Linux, including the `ASPIRE_DCP_PATH` short-circuit, RID normalisation, quote/separator handling of `NUGET_PACKAGES`, version derivation, and a proof that the unresolvable failure classifies as an Environment error (never a test failure).
-- **Cross-machine release gate** — a `smoke-test-packaged-tool` job in the release pipeline installs the freshly packed nupkg, restores the orchestration package into a *second* cache location, **moves the runner's own `~/.nuget/packages` away** (killing the same-machine coincidence that hid the bug), and runs a real scenario through the installed tool. The job gates `publish-release`, so a portability regression cannot reach NuGet.org.
-- **The gate can genuinely fail** — the smoke run passes `--fail-on-env-error --fail-on-inconclusive` *and* asserts the JUnit output records a real pass. Without those, a regressed tool would report an Environment error and exit `0` — only `Fail` breaks CI by default — and the gate would have been green for exactly the failure class it exists to catch.
-
-## Timeline
-
-| Date | Event |
-|---|---|
-| 2026-06-25 | dotnet-tool packaging decided; validated same-machine (see the [decision record](../decisions/dotnet-tool-packaging.md)) |
-| 2026-07-08 → 07-11 | 1.0.0-alpha.1 … alpha.5 published to NuGet.org — all carrying the baked runner path |
-| 2026-07-12 | Bug found while executing every step of the published getting-started guide on a clean path; reproduced deterministically; engine self-heal, release gate, and documentation truth-up merged (PR #206) |
-| 2026-07-12 | **1.0.0-alpha.6** released with the fix; the new cross-machine smoke gate ran and passed on that release pipeline |
-
-## References
-
-- [Decision record: dotnet tool packaging](../decisions/dotnet-tool-packaging.md) — including the addendum on why the original evidence did not hold cross-machine
-- [Troubleshooting: the Aspire orchestration component is not installed](../troubleshooting.md#the-aspire-orchestration-component-is-not-installed-could-not-be-located)
-- [Getting started — the Aspire orchestration prerequisite](../getting-started.md#installing-vouchfx)
-- Upstream Aspire 13.4.2 `DcpOptions.cs` — the `DcpPublisher:CliPath` / `ASPIRE_DCP_PATH` / assembly-metadata precedence
+Release preflights launch tool/archive binaries on all four RIDs and verify installer payloads.
+The installed-tool Linux Docker smoke restores no source project, hides the default cache, runs
+outside the checkout with an empty alternate cache, requires genuine passing JUnit scenarios and
+rejects new container/network residue. These gates block publication; a preflight alone is not
+live orchestration evidence. See the [packaging decision](../decisions/dotnet-tool-packaging.md).

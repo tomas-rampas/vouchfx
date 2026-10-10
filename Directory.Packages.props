@@ -2,6 +2,7 @@
   <PropertyGroup>
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
     <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
+    <VouchfxDcpVersion>13.4.2</VouchfxDcpVersion>
   </PropertyGroup>
   <ItemGroup Label="Roslyn scripting (memory model, §5)">
     <PackageVersion Include="Microsoft.CodeAnalysis.CSharp.Scripting" Version="4.14.0" />

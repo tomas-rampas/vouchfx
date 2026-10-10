@@ -121,22 +121,34 @@ EnvironmentError: The Aspire DCP orchestration component could not be located. �
 no 'aspire.hosting.orchestration.<rid>' version '13.4.2' package was found at '…'.
 ```
 
-**What it means:** vouchfx orchestrates containers through .NET Aspire's DCP binary, which ships in the `aspire.hosting.orchestration.<rid>` NuGet package and is looked up in your per-user NuGet cache (`NUGET_PACKAGES` if set, otherwise `~/.nuget/packages/`). The message means that package — at the exact pinned Aspire version and for *your* machine's platform — is not in your cache.
+**What it means:** the inline Aspire environment could not locate a matching native DCP tool.
+Current source distributions bundle Aspire 13.4.2 under `dcp/13.4.2/<rid>/tools/`, beside the CLI.
+Supported process platforms are `win-x64`, glibc `linux-x64`, `osx-x64` and `osx-arm64`.
 
-**Fix:** populate the cache once by restoring any project that carries `Aspire.AppHost.Sdk` at the pinned version, most simply this repository:
+**Fix for bundled candidates:** reinstall the complete matching package/archive. Keep the `dcp/`
+tree with the CLI; copying only the executable is insufficient. An incomplete declared bundle
+fails explicitly, even when another DCP happens to exist in a local NuGet cache. On Unix, archives
+and installers must preserve executable permissions on `dcp` and `dcptun_c`; global-tool startup
+repairs those bits in its selected bundle. A read-only installation with missing permissions needs
+repair by its owner. Unsupported RIDs require a supported distribution or an explicit matching
+DCP override.
 
-```bash
-git clone https://github.com/tomas-rampas/vouchfx.git
-dotnet restore vouchfx/vouchfx.sln
+**Published rc.6 and older cache-based builds:** the native tools are not bundled. A fresh-cache
+`1.0.0-rc.6` installation was measured on 2026-10-10 to fail before Docker starts; an earlier cache
+fallback did not eliminate this prerequisite. Supply the exact platform's Aspire 13.4.2 tools and
+set `ASPIRE_DCP_PATH` to their **directory**, or use a candidate containing the bundling change.
+Do not infer the installed version from its error path: even newer legacy packages can display a
+packaging runner's stale path. Restoring an AppHost at the exact version populates tools for source
+builds, but is not a prerequisite for new bundled candidates. The retired Aspire workload does not
+provide these NuGet tools.
+
+```powershell
+$env:ASPIRE_DCP_PATH = "$env:USERPROFILE/.nuget/packages/aspire.hosting.orchestration.win-x64/13.4.2/tools"
 ```
 
-Version exactness matters: having restored some other Aspire version leaves a different version folder in the cache and does not resolve this error. The retired `dotnet workload install aspire` command does **not** help either — it installs Aspire 8.2.x packs outside the NuGet cache. If you keep DCP in a non-standard location, set the `ASPIRE_DCP_PATH` environment variable to the directory containing the `dcp` executable.
-
-**If the message shows a `/home/runner/...` path (first variant above):** you are running `vouchfx` 1.0.0-alpha.5 or earlier from NuGet.org. Those pre-releases only consult a path baked in on the release build machine, so they fail on every other machine even with a fully populated cache. Fixed in 1.0.0-alpha.6 — upgrade (`dotnet tool update --global vouchfx --prerelease`), or build and run from source.
-
-This failure is always classified as an **EnvironmentError** — infrastructure, not a product defect — so by default it does not break CI (see "Understanding the four verdicts" below).
-
-For the full incident write-up — root cause, why the release pipeline missed it, and how regression is prevented — see the knowledge-base article [KB: DCP orchestrator not found](kb/dcp-orchestrator-portability.md).
+The explicit override remains authoritative; unset it to use the installed bundle. DCP provisioning
+failures remain **EnvironmentError**. CI should pass `--fail-on-env-error --fail-on-inconclusive` and
+check that scenarios actually executed. See [the portability incident](kb/dcp-orchestrator-portability.md).
 
 ---
 

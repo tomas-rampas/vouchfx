@@ -61,46 +61,17 @@
 #                           attached to the GitHub Release, and the skip is
 #                           announced loudly in the run log)
 #
-# DCP portability caveat — read before expecting self-contained exes to work
+# DCP distribution contract
 # --------------------------------------------------------------------------
-# The vouchfx CLI carries Aspire.AppHost.Sdk 13.4.2, which embeds the DCP
-# binary path (dcpclipath AssemblyMetadata) at build time from the runner's
-# NuGet cache.  The embedded path is ABSOLUTE and machine-specific — e.g.
-# /home/runner/.nuget/packages/aspire.hosting.orchestration.linux-x64/13.4.2/tools/dcp
-# on this pipeline's runner — and that literal path does NOT exist on a
-# user's machine (wrong absolute root and, on non-Linux, the wrong RID too).
-#
-# FIXED at runtime (fix/packaged-tool-dcp-resolution):
-# HeadlessTopology.StartAsync (Vouchfx.Engine.Orchestration) now self-heals
-# this before DistributedApplication.Build() — it probes whether the embedded
-# path exists on the CURRENT machine and, if not, recomputes the same
-# package/version under the current machine's own NuGet cache (NUGET_PACKAGES,
-# else ~/.nuget/packages) and RuntimeInformation.RuntimeIdentifier, then
-# overrides DcpPublisher:CliPath via IConfiguration. See DcpPathResolver for
-# the decision logic and the smoke-test-packaged-tool job above for the CI
-# proof (installs the packed nupkg, then runs it against a SECOND, non-default
-# NuGet cache with the default cache moved out of the way, to genuinely
-# simulate a different machine rather than coincidentally reusing this
-# runner's own default cache path).
-#
-# - nupkg (primary distribution): now works on ANY machine whose NuGet cache
-#   (NUGET_PACKAGES, or the default ~/.nuget/packages) contains
-#   aspire.hosting.orchestration.<their-rid>/<matching-version> ANYWHERE —
-#   any developer who has previously built/restored an Aspire project. A
-#   machine that has NEVER restored the matching Aspire.AppHost.Sdk package
-#   still needs one restore first (see DcpPathResolver's actionable error
-#   message) or the ASPIRE_DCP_PATH environment variable.
-#
-# - Self-contained exes (secondary): include the .NET runtime but NOT the DCP
-#   binary. The same runtime self-heal applies — the embedded DCP path is
-#   resolved the same way regardless of which distribution channel launched
-#   the assembly.
-#
-# - PublishSingleFile is NEVER set: Assembly.Location returns an empty string
-#   for embedded assemblies; Vouchfx.Engine.Compilation uses it to discover
-#   provider DLLs for Roslyn (hard engine invariant, CLAUDE.md).
-#
-# See docs/decisions/dotnet-tool-packaging.md for the full analysis.
+# The .NET 8 tool carries full native trees for win-x64, linux-x64, osx-x64 and
+# osx-arm64; archives/installers carry only their own RID. At topology start,
+# DcpPathResolver selects the version-matched bundle beside the HOST assembly
+# before stale build-cache metadata. ASPIRE_DCP_PATH remains an explicit override.
+# Source builds and custom AppHosts retain their own metadata/cache resolution.
+# No checkout or Aspire restore is a prerequisite for an installed candidate.
+# Native-tree checks, size checks, platform launch preflights and a clean-cache
+# installed-tool Docker smoke gate publish-release. PublishSingleFile stays off:
+# provider discovery requires usable Assembly.Location values.
 # =============================================================================
 
 name: Release (signed, provenance)
@@ -215,6 +186,14 @@ jobs:
             -p:Version="$VERSION" \
             -o artifacts/nuget
 
+      - name: Validate complete tool payload and conservative NuGet size ceiling
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          python -m unittest discover -s scripts/tests -p test_check_distribution.py -v
+          python scripts/check_distribution.py --package "artifacts/nuget/vouchfx.${VERSION}.nupkg" \
+            --nuget-cache "$HOME/.nuget/packages"
+
       # Pack the SDK-closure nupkgs (provider-authoring surface) so provider
       # authors can restore Vouchfx.Sdk et al. straight from NuGet.org
       # instead of vendoring engine source (mirrors the local-feed pack in
@@ -246,8 +225,7 @@ jobs:
 
       # Self-contained multi-file publish for each RID.
       # PublishSingleFile is NOT used (Assembly.Location → IL3000 build errors).
-      # Each publish embeds the CI runner's NuGet cache path for DCP.
-      # The build-msi job re-publishes win-x64 on Windows for a usable DCP path.
+      # Each publish carries its own RID-specific DCP tools tree beside the CLI.
       - name: Publish self-contained (linux-x64)
         env:
           VERSION: ${{ steps.version.outputs.version }}
@@ -265,8 +243,6 @@ jobs:
             -c Release -r win-x64 --self-contained \
             -p:Version="$VERSION" \
             -o artifacts/publish/win-x64
-        # DCP path baked in here is a Linux path; users on Windows should
-        # install the MSI (build-msi, windows-latest) which re-publishes natively.
 
       - name: Publish self-contained (osx-x64)
         env:
@@ -295,6 +271,12 @@ jobs:
           v="$VERSION"
           mkdir -p artifacts/archives
           for rid in linux-x64 win-x64 osx-x64 osx-arm64; do
+            if [ "$rid" != win-x64 ]; then
+              chmod 755 "artifacts/publish/$rid/vouchfx"
+              find "artifacts/publish/$rid/dcp" -type f \( -name dcp -o -name dcptun_c \) -exec chmod 755 {} +
+            fi
+            python scripts/check_distribution.py --publish "artifacts/publish/$rid" --rid "$rid" \
+              --nuget-cache "$HOME/.nuget/packages"
             tar -czf "artifacts/archives/vouchfx-${v}-${rid}.tar.gz" \
               -C artifacts/publish "${rid}/"
             echo "Archived: vouchfx-${v}-${rid}.tar.gz"
@@ -332,9 +314,7 @@ jobs:
           retention-days: 30
 
       # Separate per-OS publish dirs so installer jobs can grab just their RID.
-      # NOTE: win-x64 dir is NOT uploaded here — build-msi re-publishes win-x64
-      # natively on windows-latest so the embedded DCP path is a Windows absolute
-      # path rather than the Linux runner's NuGet cache path.
+      # build-msi publishes its own win-x64 directory before harvesting the full tree.
       - name: Upload linux-x64 publish dir (for .deb)
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -359,47 +339,89 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  # Native launch preflights cover every advertised RID without assuming Docker
+  # is available on macOS/Windows hosted runners. Real topology proof is below.
+  smoke-test-distribution-platforms:
+    name: Native distribution preflight (${{ matrix.rid }})
+    needs: build-dotnet
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, rid: linux-x64 }
+          - { os: windows-latest, rid: win-x64 }
+          - { os: macos-15-intel, rid: osx-x64 }
+          - { os: macos-15, rid: osx-arm64 }
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ needs.build-dotnet.outputs.version }}
+      RID: ${{ matrix.rid }}
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: "8.0.x"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: nuget-package
+          path: release-nuget/
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: publish-archives
+          path: release-archives/
+      - name: Install exact tool and launch native DCP plus archive CLI
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $feed = (Resolve-Path release-nuget).Path
+          $archive = (Resolve-Path "release-archives/vouchfx-$env:VERSION-$env:RID.tar.gz").Path
+          $scratch = Join-Path $env:RUNNER_TEMP 'distribution-preflight'
+          $toolPath = Join-Path $scratch 'tool'
+          $env:NUGET_PACKAGES = Join-Path $env:RUNNER_TEMP 'distribution-empty-cache'
+          New-Item -ItemType Directory -Path $scratch -Force | Out-Null
+          Set-Location $scratch
+          Remove-Item Env:ASPIRE_DCP_PATH -ErrorAction SilentlyContinue
+          $config = Join-Path $scratch 'candidate-only.config'
+          $source = [System.Security.SecurityElement]::Escape($feed)
+          Set-Content -LiteralPath $config -Encoding utf8 -Value "<configuration><packageSources><clear/><add key='candidate' value='$source'/></packageSources></configuration>"
+          dotnet tool install --tool-path $toolPath --configfile $config --version $env:VERSION vouchfx
+          if ($LASTEXITCODE -ne 0) { throw "Candidate install exited $LASTEXITCODE" }
+          $stored = Join-Path $toolPath ".store/vouchfx/$env:VERSION/vouchfx/$env:VERSION/vouchfx.$env:VERSION.nupkg"
+          $expected = (Get-FileHash (Join-Path $feed "vouchfx.$env:VERSION.nupkg") -Algorithm SHA256).Hash
+          if (-not (Test-Path $stored) -or (Get-FileHash $stored -Algorithm SHA256).Hash -ne $expected) { throw 'Installed package differs from downloaded candidate' }
+          Write-Output "Installed candidate SHA256: $expected"
+          $exe = if ($IsWindows) { 'vouchfx.exe' } else { 'vouchfx' }
+          $dcpExe = if ($IsWindows) { 'dcp.exe' } else { 'dcp' }
+          $toolVersion = & (Join-Path $toolPath $exe) --version
+          if ($LASTEXITCODE -ne 0 -or -not $toolVersion.StartsWith($env:VERSION + '+')) { throw "Wrong installed version: $toolVersion" }
+          $hostDir = Join-Path $toolPath ".store/vouchfx/$env:VERSION/vouchfx/$env:VERSION/tools/net8.0/any"
+          $dcpRoot = Get-ChildItem (Join-Path $hostDir 'dcp') -Directory
+          if (@($dcpRoot).Count -ne 1) { throw 'Expected one pinned DCP version' }
+          $native = Join-Path $dcpRoot.FullName "$env:RID/tools/$dcpExe"
+          # Direct native preflight bypasses topology startup's Unix permission repair.
+          if (-not $IsWindows) { chmod +x $native; if ($LASTEXITCODE -ne 0) { throw 'chmod failed' } }
+          $toolDcp = & $native version
+          if ($LASTEXITCODE -ne 0) { throw "Bundled native DCP exited $LASTEXITCODE" }
+          if (-not ($toolDcp | ConvertFrom-Json).version) { throw 'DCP version evidence missing' }
+          tar -xzf $archive
+          if ($LASTEXITCODE -ne 0) { throw 'Archive extraction failed' }
+          $archiveRoot = Join-Path $scratch $env:RID
+          $archiveVersion = & (Join-Path $archiveRoot $exe) --version
+          if ($LASTEXITCODE -ne 0 -or $archiveVersion -ne $toolVersion) { throw "Wrong archive version: $archiveVersion" }
+          $archiveDcp = & (Join-Path $archiveRoot "dcp/$($dcpRoot.Name)/$env:RID/tools/$dcpExe") version
+          if ($LASTEXITCODE -ne 0 -or $archiveDcp -ne $toolDcp) { throw 'Archive DCP differs from installed tool' }
+          if (Get-ChildItem $env:NUGET_PACKAGES -Directory -Filter 'aspire.hosting.orchestration.*' -ErrorAction SilentlyContinue) { throw 'Unexpected restored Aspire package' }
+          Write-Output "Native preflight: $env:RID, CLI $toolVersion, DCP $toolDcp"
+
   # ===========================================================================
   # smoke-test-packaged-tool
-  # Proves the packaged-tool DCP path self-heal (fix/packaged-tool-dcp-resolution) on a
-  # SIMULATED user machine — not the machine that packed the tool.
-  #
-  # WHY the previous approach proved nothing
-  # -----------------------------------------
-  # There was no job that actually installed the packed nupkg as a `dotnet tool` and ran
-  # it; the closest thing was build-dotnet building/testing from source, which never
-  # exercises the packaging step at all. Even a naive "install the nupkg and run it" smoke
-  # test on ubuntu-latest would still be misleading: build-dotnet ALSO runs on
-  # ubuntu-latest, so the ABSOLUTE dcpclipath baked into the tool
-  # (/home/runner/.nuget/packages/aspire.hosting.orchestration.linux-x64/13.4.2/tools/dcp)
-  # uses the SAME conventional $HOME as every other ubuntu-latest job. A plain `dotnet
-  # restore` anywhere in this job would silently repopulate that exact path and the smoke
-  # test would pass whether or not the self-heal fix worked — the DCP portability bug
-  # (reproduced locally with NUGET_PACKAGES=D:\nuget-alt and the real cache hidden) would
-  # never be caught here.
-  #
-  # WHAT this job actually does
-  # ----------------------------
-  #   1. Installs the EXACT nupkg build-dotnet just packed as a real global tool
-  #      (`dotnet tool install --global`), not `dotnet run --project` (every other
-  #      workflow in this repo builds-from-source, which cannot exercise this bug).
-  #   2. Restores an Aspire.AppHost.Sdk-carrying project into a SECOND, non-default NuGet
-  #      cache (NUGET_PACKAGES=$RUNNER_TEMP/user-cache) — standing in for "the user's own
-  #      machine cache", which DOES hold the matching orchestration package on any machine
-  #      that has ever restored an Aspire project.
-  #   3. Moves the DEFAULT NuGet cache (~/.nuget/packages) out of the way — killing the
-  #      baked-in path for real, so only the runtime fallback (DcpPathResolver, probing
-  #      NUGET_PACKAGES / the user-profile default) can make the run succeed.
-  #   4. Runs the reference suite (examples/ci-reference) through the INSTALLED tool with
-  #      NUGET_PACKAGES pointed at the second cache. Before the fix this reproduced the
-  #      reported FileNotFoundException even though the package WAS present, just at a
-  #      different path than the one baked into the assembly metadata.
-  #   5. Restores the original cache afterwards (defensive; nothing currently follows this
-  #      job on the same runner, but keeps it side-effect-free for future edits).
-  #
-  # Gates the actual publish: added to publish-release's `needs` below, so a packaged-tool
-  # portability regression blocks the NuGet/GitHub Release publish, not just a from-source
-  # build.
+  # Install the exact packed candidate, hide the build-cache path, and run the
+  # reference fixture outside the checkout with an EMPTY alternate NuGet cache.
+  # Do not restore a source AppHost here: that masks a missing native bundle.
+  # Require real passing scenarios and zero new containers/networks; never prune.
   # ===========================================================================
   smoke-test-packaged-tool:
     name: Smoke-test packaged tool on a simulated user machine
@@ -413,8 +435,10 @@ jobs:
       VERSION: ${{ needs.build-dotnet.outputs.version }}
 
     steps:
-      - name: Checkout (for examples/ci-reference and the Aspire.AppHost.Sdk project to restore)
+      - name: Checkout (for reference fixtures only; no source project restore)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: examples/ci-reference
 
       - name: Set up .NET 8 SDK
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
@@ -427,10 +451,8 @@ jobs:
           name: nuget-package
           path: release-nuget/
 
-      # Install the EXACT packed tool as a real end user would — from a local feed built
-      # from the just-packed nupkg. Mirrors the pattern documented and empirically
-      # verified in docs/decisions/dotnet-tool-packaging.md ("dotnet tool install
-      # --tool-path <dir> --add-source <feed> vouchfx").
+      # Install only from the downloaded candidate feed through an isolated config
+      # and fresh cache. Bind tool-store package bytes to the artifact's SHA256.
       #
       # PATH robustness (MINOR 3, gatekeeper review): `dotnet tool install --global` places
       # the shim under ~/.dotnet/tools, which is NOT guaranteed to already be on PATH for
@@ -442,19 +464,33 @@ jobs:
       - name: Install packed vouchfx tool (global, from the release nupkg)
         run: |
           set -euo pipefail
-          dotnet tool install --global --add-source "$PWD/release-nuget" --version "$VERSION" vouchfx
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          root = ET.Element('configuration')
+          sources = ET.SubElement(root, 'packageSources')
+          ET.SubElement(sources, 'clear')
+          ET.SubElement(sources, 'add', key='candidate', value=str(Path('release-nuget').resolve()))
+          ET.ElementTree(root).write(Path(os.environ['RUNNER_TEMP']) / 'candidate-only.config')
+          PY
+          NUGET_PACKAGES="$RUNNER_TEMP/candidate-install-cache" dotnet tool install --global \
+            --configfile "$RUNNER_TEMP/candidate-only.config" --version "$VERSION" vouchfx
+          candidate=$(sha256sum "release-nuget/vouchfx.$VERSION.nupkg" | cut -d' ' -f1)
+          stored="$HOME/.dotnet/tools/.store/vouchfx/$VERSION/vouchfx/$VERSION/vouchfx.$VERSION.nupkg"
+          test "$(sha256sum "$stored" | cut -d' ' -f1)" = "$candidate"
+          echo "Installed candidate SHA256: $candidate"
           echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
           "$HOME/.dotnet/tools/vouchfx" --version
 
-      # Populate the stand-in for "the user's own machine cache" BEFORE hiding the
-      # default cache below — restoring the CLI project (it carries Aspire.AppHost.Sdk)
-      # is sufficient to pull aspire.hosting.orchestration.linux-x64 into this alternate,
-      # non-default location.
-      - name: Restore an Aspire.AppHost.Sdk project into a SECOND NuGet cache
+      - name: Prepare empty user cache and fixtures outside the checkout
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/user-cache"
-          NUGET_PACKAGES="$RUNNER_TEMP/user-cache" dotnet restore src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj
+          mkdir -p "$RUNNER_TEMP/installed-reference"
+          cp -R examples/ci-reference "$RUNNER_TEMP/installed-reference/suite"
+          docker ps -aq | sort > "$RUNNER_TEMP/before-containers"
+          docker network ls -q | sort > "$RUNNER_TEMP/before-networks"
 
       # Kill the baked-in path for real (see the job header comment for why this is
       # necessary even on the "same" runner image as build-dotnet).
@@ -470,30 +506,39 @@ jobs:
         continue-on-error: true
         run: docker pull traefik/whoami:latest
 
-      # Run the reference suite through the INSTALLED global tool — NOT `dotnet run` —
-      # with NUGET_PACKAGES pointed at the second cache. This is what exercises
-      # DcpPathResolver's fallback inside HeadlessTopology.StartAsync: the embedded
-      # dcpclipath metadata is dead (step above), so the tool must recompute the DCP path
-      # from NUGET_PACKAGES and find it there instead.
-      #
-      # --fail-on-env-error / --fail-on-inconclusive (BLOCKER 1, gatekeeper review): by
-      # DEFAULT `vouchfx run` exits 0 for an EnvironmentError or Inconclusive verdict — only
-      # a genuine product Fail breaks CI without opting in (§12.1, ExitCodes.FromVerdict).
-      # Without these flags, a REGRESSED DcpPathResolver (topology never starts → the
-      # suite's own verdict is EnvironmentError, NOT this step failing) would still exit 0,
-      # the gate would stay green, and a broken packaged tool would publish. These flags
-      # make ANY non-Pass verdict fail this step outright, so a DCP-resolution regression
-      # actually blocks the release.
+      # Strict flags and the independent JUnit check reject missing execution,
+      # environment errors and inconclusive results. Resolution must use the bundle.
       - name: Run reference suite via the installed tool (simulated user machine)
         env:
           NUGET_PACKAGES: ${{ runner.temp }}/user-cache
         run: |
           set -euo pipefail
-          vouchfx run examples/ci-reference \
+          unset ASPIRE_DCP_PATH
+          test -z "$(find "$NUGET_PACKAGES" -mindepth 1 -print -quit)"
+          cd "$RUNNER_TEMP/installed-reference"
+          "$HOME/.dotnet/tools/vouchfx" run suite \
             --junit "$RUNNER_TEMP/smoke-results.xml" \
             --html "$RUNNER_TEMP/smoke-report.html" \
             --fail-on-env-error \
             --fail-on-inconclusive
+
+      - name: Verify no restored Aspire packages or new Docker residue
+        if: always()
+        run: |
+          set -euo pipefail
+          if find "$RUNNER_TEMP/user-cache" -maxdepth 1 -name 'aspire.hosting.orchestration.*' -print -quit | grep -q .; then
+            echo "::error::Installed-tool smoke unexpectedly populated an Aspire orchestration cache"
+            exit 1
+          fi
+          docker ps -aq | sort > "$RUNNER_TEMP/after-containers"
+          docker network ls -q | sort > "$RUNNER_TEMP/after-networks"
+          for resource in containers networks; do
+            residue=$(comm -13 "$RUNNER_TEMP/before-$resource" "$RUNNER_TEMP/after-$resource")
+            if [ -n "$residue" ]; then
+              echo "::error::Installed-tool smoke left new Docker $resource: $residue"
+              exit 1
+            fi
+          done
 
       # Independently verify a GENUINE pass (BLOCKER 1, gatekeeper review) — belt-and-braces
       # beyond the exit code above. Two exit-0 paths could otherwise slip through even with
@@ -782,9 +827,7 @@ jobs:
 
   # ===========================================================================
   # build-msi (windows-latest)
-  # Re-publishes win-x64 on Windows so the DCP path baked in by
-  # Aspire.AppHost.Sdk is a Windows NuGet cache path (C:\Users\...), making
-  # the installed binary usable for Windows users who have Aspire packages.
+  # Publishes win-x64 with the complete native bundle for recursive WiX harvesting.
   # Builds a WiX v4 MSI installer.  Optionally signs with Authenticode.
   #
   # Secret-gated Authenticode:
@@ -811,13 +854,11 @@ jobs:
         with:
           dotnet-version: "8.0.x"
 
-      # Re-publish win-x64 natively so the DCP path in AssemblyMetadata is a
-      # Windows absolute path (C:\Users\runneradmin\AppData\Local\...) matching
-      # the standard Windows NuGet package cache used by Aspire on Windows.
+      # Native publish includes DCP; installer users need no NuGet cache.
       - name: Restore dependencies
         run: dotnet restore vouchfx.sln
 
-      - name: Publish win-x64 self-contained (Windows — native DCP path)
+      - name: Publish win-x64 self-contained (Windows — bundled DCP)
         run: |
           dotnet publish src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj `
             -c Release `
@@ -888,6 +929,26 @@ jobs:
             -arch x64 `
             -o "artifacts\installer\vouchfx-$env:VERSION-win-x64.msi"
           Write-Host "Built MSI: vouchfx-$env:VERSION-win-x64.msi"
+
+      - name: Verify extracted MSI native payload and candidate version
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $msi = (Resolve-Path "artifacts/installer/vouchfx-$env:VERSION-win-x64.msi").Path
+          $scratch = Join-Path $env:RUNNER_TEMP 'msi-payload-check'
+          $arguments = '/a "{0}" /qn TARGETDIR="{1}"' -f $msi, $scratch
+          $process = Start-Process msiexec.exe -ArgumentList $arguments -WindowStyle Hidden -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "MSI extraction exited $($process.ExitCode)" }
+          $hosts = @(Get-ChildItem $scratch -Recurse -Filter vouchfx.dll)
+          if ($hosts.Count -ne 1) { throw "Expected one extracted host, found $($hosts.Count)" }
+          $installed = $hosts[0].Directory.FullName
+          python scripts/check_distribution.py --publish $installed --rid win-x64 --nuget-cache "$env:USERPROFILE/.nuget/packages"
+          if ($LASTEXITCODE -ne 0) { throw 'Extracted MSI payload validation failed' }
+          $version = & (Join-Path $installed 'vouchfx.exe') --version
+          if ($LASTEXITCODE -ne 0 -or -not $version.StartsWith($env:VERSION + '+')) { throw "Wrong MSI CLI version: $version" }
+          $native = @(Get-ChildItem (Join-Path $installed 'dcp') -Recurse -Filter dcp.exe)
+          if ($native.Count -ne 1) { throw 'Expected one extracted native DCP' }
+          & $native[0].FullName version
+          if ($LASTEXITCODE -ne 0) { throw 'Extracted MSI DCP failed to launch' }
 
       # Sign the MSI after it is built — SECRET-GATED.
       - name: Sign MSI (Authenticode) — secret-gated
@@ -984,18 +1045,34 @@ jobs:
            Testcontainers, and executes steps covering REST, PostgreSQL, Kafka,
            webhooks, and custom scripting.
            .
-           Prerequisite: aspire.hosting.orchestration.linux-x64 v13.4.2 must be
-           present in ~/.nuget/packages/ to start container topologies.
+           Includes the matching Aspire DCP tools; Docker with Linux containers
+           is required to start container topologies.
           EOF
 
           find "$pkgroot" -type d -exec chmod 755 {} +
           find "$pkgroot" -type f -exec chmod 644 {} +
           chmod 755 "$pkgroot/usr/lib/vouchfx/vouchfx"
+          find "$pkgroot/usr/lib/vouchfx/dcp" -type f \( -name dcp -o -name dcptun_c \) -exec chmod 755 {} +
 
           mkdir -p artifacts/installer
           dpkg-deb --build "$pkgroot" \
             "artifacts/installer/vouchfx-${v}-linux-x64.deb"
           ls -lh "artifacts/installer/vouchfx-${v}-linux-x64.deb"
+
+      - name: Verify extracted Debian native payload and executable permissions
+        run: |
+          set -euo pipefail
+          extracted="$RUNNER_TEMP/deb-payload-check"
+          dpkg-deb --extract "artifacts/installer/vouchfx-${VERSION}-linux-x64.deb" "$extracted"
+          installed="$extracted/usr/lib/vouchfx"
+          diff -rq publish/linux-x64/dcp "$installed/dcp"
+          test -x "$installed/vouchfx"
+          find "$installed/dcp" -type f \( -name dcp -o -name dcptun_c \) | while read -r native; do test -x "$native"; done
+          version=$("$installed/vouchfx" --version)
+          [[ "$version" == "$VERSION+"* ]]
+          native=$(find "$installed/dcp" -type f -name dcp)
+          test -n "$native"
+          "$native" version
 
       - name: Sign .deb (GPG detached signature) — secret-gated
         if: ${{ env.HAS_GPG == 'true' }}
@@ -1046,12 +1123,13 @@ jobs:
           set -euo pipefail
           v="$VERSION"
           pkgroot="pkg-build/vouchfx-arm64"
-          mkdir -p "$pkgroot/usr/lib/vouchfx"
+          mkdir -p "$pkgroot/usr/local/lib/vouchfx"
           mkdir -p "$pkgroot/usr/local/bin"
 
-          cp -r publish/osx-arm64/. "$pkgroot/usr/lib/vouchfx/"
-          chmod +x "$pkgroot/usr/lib/vouchfx/vouchfx"
-          ln -sf /usr/lib/vouchfx/vouchfx "$pkgroot/usr/local/bin/vouchfx"
+          cp -r publish/osx-arm64/. "$pkgroot/usr/local/lib/vouchfx/"
+          chmod +x "$pkgroot/usr/local/lib/vouchfx/vouchfx"
+          find "$pkgroot/usr/local/lib/vouchfx/dcp" -type f \( -name dcp -o -name dcptun_c \) -exec chmod 755 {} +
+          ln -sf /usr/local/lib/vouchfx/vouchfx "$pkgroot/usr/local/bin/vouchfx"
 
           mkdir -p artifacts/installer
           pkgbuild \
@@ -1061,6 +1139,22 @@ jobs:
             --install-location / \
             "artifacts/installer/vouchfx-${v}-osx-arm64.pkg"
           echo "Built: artifacts/installer/vouchfx-${v}-osx-arm64.pkg"
+
+      - name: Verify expanded macOS payload and executable permissions
+        run: |
+          set -euo pipefail
+          expanded="$RUNNER_TEMP/pkg-payload-check"
+          pkgutil --expand-full "artifacts/installer/vouchfx-${VERSION}-osx-arm64.pkg" "$expanded"
+          installed="$expanded/Payload/usr/local/lib/vouchfx"
+          diff -rq publish/osx-arm64/dcp "$installed/dcp"
+          test -x "$installed/vouchfx"
+          find "$installed/dcp" -type f \( -name dcp -o -name dcptun_c \) | while read -r native; do test -x "$native"; done
+          test "$(readlink "$expanded/Payload/usr/local/bin/vouchfx")" = /usr/local/lib/vouchfx/vouchfx
+          version=$("$installed/vouchfx" --version)
+          [[ "$version" == "$VERSION+"* ]]
+          native=$(find "$installed/dcp" -type f -name dcp)
+          test -n "$native"
+          "$native" version
 
       # Apple notarisation — SECRET-GATED.
       # Required secrets: APPLE_ID, APPLE_TEAM_ID, APPLE_APP_SPECIFIC_PASSWORD
@@ -1103,7 +1197,7 @@ jobs:
   publish-release:
     name: Publish artifacts to GitHub Release and NuGet
     runs-on: ubuntu-latest
-    needs: [build-dotnet, sign-and-attest, smoke-test-packaged-tool]
+    needs: [build-dotnet, sign-and-attest, smoke-test-packaged-tool, smoke-test-distribution-platforms]
     # Smoke-test: dispatch runs never publish (every step below is
     # tag/release-gated), but the artifact downloads used to run
     # unconditionally and failed hard because the cosign/GPG steps skip on

@@ -1,67 +1,12 @@
-// Vouchfx.Engine.Orchestration — DcpPathResolver (packaged-tool DCP path self-heal).
-//
-// THE PROBLEM
-// -----------
-// The `vouchfx` dotnet global tool is packed on GitHub Actions. Aspire.AppHost.Sdk
-// (13.4.2) bakes ABSOLUTE, machine-specific DCP paths into AssemblyMetadata attributes
-// on the `vouchfx` assembly at build time, e.g.:
-//   dcpclipath=/home/runner/.nuget/packages/aspire.hosting.orchestration.linux-x64/13.4.2/tools/dcp
-// On ANY other machine that exact path does not exist — the absolute root is wrong AND,
-// for a non-Linux user, so is the RID — so DistributedApplication.StartAsync fails with
-// `FileNotFoundException: The Aspire orchestration component is not installed at "..."`,
-// even when the user's OWN NuGet cache DOES hold the matching
-// `aspire.hosting.orchestration.<their-rid>` package (true of any machine that has
-// previously restored an Aspire project, which is most .NET developer and CI machines).
-//
-// THE FIX
-// -------
-// Verified against the pinned Aspire 13.4.2 source
-// (Aspire.Hosting.Dcp.ConfigureDefaultDcpOptions / ValidateDcpOptions):
-//   • DcpOptions.CliPath resolves with precedence (1) the `DcpPublisher:CliPath`
-//     configuration key — if set, ExtensionsPath is auto-derived as
-//     `Path.Combine(Path.GetDirectoryName(CliPath), "ext")` — (2) the ASPIRE_DCP_PATH
-//     env var, (3) the `DcpCliPath` AssemblyMetadataAttribute (case-insensitive key) on
-//     the resolved host assembly.
-//   • ValidateDcpOptions only requires CliPath and DashboardPath to be non-empty strings;
-//     it does NOT check they exist on disk. Existence is checked later by
-//     DcpDependencyCheck when DCP is actually launched.
-// So overriding `DcpPublisher:CliPath` via IConfiguration BEFORE `builder.Build()` is a
-// legitimate, higher-precedence channel that Aspire itself already exposes — no private
-// API, no reflection into Aspire internals. HeadlessTopology.StartAsync sets this
-// override when (and only when) the embedded metadata path does not exist on the current
-// machine but the equivalent package/version DOES exist under the current machine's own
-// NuGet cache. DashboardPath is deliberately left at its stale-but-non-empty metadata
-// value: it passes ValidateDcpOptions and is never actually read because
-// HeadlessTopology always sets DisableDashboard = true.
-//
-// DO NOT SHADOW THE USER'S OWN ASPIRE_DCP_PATH ESCAPE HATCH
-// -----------------------------------------------------------
-// ASPIRE_DCP_PATH is priority 2 — ABOVE the assembly metadata (priority 3) this self-heal
-// reacts to, but BELOW the `DcpPublisher:CliPath` configuration key (priority 1) this
-// self-heal WRITES. Two ways that ordering can bite if this class is not careful:
-//   • If the self-heal throws Unresolvable whenever the embedded metadata path is dead
-//     and no local-cache fallback exists, it would never give Aspire's own priority-2
-//     ASPIRE_DCP_PATH resolution a chance to run at all — even though it is fully
-//     sufficient on its own.
-//   • If the self-heal instead falls through to the Override branch, its
-//     `DcpPublisher:CliPath` write would silently OUTRANK a user-set ASPIRE_DCP_PATH
-//     (priority 1 beats priority 2), overriding the very escape hatch our own
-//     Unresolvable error message recommends.
-// So <see cref="Resolve"/> checks `aspireDcpPathEnvironmentVariable` FIRST, before even
-// looking at the metadata: when it is set and non-whitespace, this class is a no-op
-// (<see cref="DcpPathResolutionKind.UseEmbedded"/>) regardless of what the metadata or the
-// local cache probe would otherwise have found, and Aspire's own priority-2 resolution
-// runs untouched. Per the pinned ConfigureDefaultDcpOptions source, ASPIRE_DCP_PATH names
-// a BUNDLE DIRECTORY, not the executable file itself — Aspire derives CliPath from it via
-// `BundleDiscovery.GetDcpExecutablePath(dir)` and ExtensionsPath via
-// `Path.Combine(dir, "ext")` — which is why the Unresolvable remedy message below asks the
-// user to set it to "the directory containing the dcp executable", not to the executable.
-//
-// This class is the PURE decision core: every input is an explicit parameter — no
-// Assembly, File, or Environment access happens here — so every branch is exhaustively
-// unit-testable without touching disk, an assembly, or a real environment variable.
-// HeadlessTopology performs the (impure) assembly-metadata read and environment/profile
-// lookups, and applies the DcpPathResolution this class returns.
+// Native DCP resolution stays lazy inside HeadlessTopology's inline Aspire startup.
+// ASPIRE_DCP_PATH is handled by Aspire and must outrank our configuration override.
+// Installed distributions prefer their host-relative, version-matched native bundle
+// (manifest + current process RID) even if the packaging cache happens to exist.
+// An incomplete declared bundle fails without falling back to a warmed cache.
+// Source AppHosts/custom runners without a bundle retain metadata/cache behaviour.
+// Aspire 13.4.2 honours DcpPublisher:CliPath before ASPIRE_DCP_PATH and DcpCliPath
+// metadata; ExtensionsPath derives from the selected executable's directory.
+// Every decision input is explicit so the policy needs neither Docker nor real disk.
 
 namespace Vouchfx.Engine.Orchestration;
 
@@ -81,15 +26,13 @@ internal enum DcpPathResolutionKind
     UseEmbedded,
 
     /// <summary>
-    /// The embedded path does not exist here, but the matching DCP package/version was
-    /// found under this machine's own NuGet cache. The caller should override
+    /// A matching installed bundle or local-cache DCP executable was found. The caller should override
     /// <c>DcpPublisher:CliPath</c> with <see cref="DcpPathResolution.OverridePath"/>.
     /// </summary>
     Override,
 
     /// <summary>
-    /// The embedded path does not exist here, and no matching package could be found
-    /// under this machine's own NuGet cache either. The caller should raise an
+    /// The declared bundle is unsupported/incomplete, or no legacy cache fallback exists. The caller should raise an
     /// actionable, Environment-error-classified failure using
     /// <see cref="DcpPathResolution.UnresolvableDetail"/>.
     /// </summary>
@@ -104,8 +47,7 @@ internal enum DcpPathResolutionKind
 /// <param name="Kind">Which of the three outcomes this instance represents.</param>
 /// <param name="OverridePath">
 /// Populated only when <see cref="Kind"/> is <see cref="DcpPathResolutionKind.Override"/>:
-/// the absolute path to the DCP executable found under the current machine's own NuGet
-/// cache.
+/// the absolute path to the selected bundled or local-cache DCP executable.
 /// </param>
 /// <param name="UnresolvableDetail">
 /// Populated only when <see cref="Kind"/> is <see cref="DcpPathResolutionKind.Unresolvable"/>:
@@ -117,13 +59,16 @@ internal sealed record DcpPathResolution(
     string? OverridePath,
     string? UnresolvableDetail)
 {
+    /// <summary>Whether the override belongs to the host's installed native bundle.</summary>
+    public bool IsBundled { get; init; }
+
     /// <summary>Nothing to self-heal — see <see cref="DcpPathResolutionKind.UseEmbedded"/>.</summary>
     public static DcpPathResolution UseEmbedded() =>
         new(DcpPathResolutionKind.UseEmbedded, OverridePath: null, UnresolvableDetail: null);
 
     /// <summary>A fallback DCP executable was found — see <see cref="DcpPathResolutionKind.Override"/>.</summary>
-    public static DcpPathResolution Override(string overridePath) =>
-        new(DcpPathResolutionKind.Override, overridePath, UnresolvableDetail: null);
+    public static DcpPathResolution Override(string overridePath, bool isBundled = false) =>
+        new(DcpPathResolutionKind.Override, overridePath, UnresolvableDetail: null) { IsBundled = isBundled };
 
     /// <summary>No usable DCP executable could be found anywhere — see <see cref="DcpPathResolutionKind.Unresolvable"/>.</summary>
     public static DcpPathResolution Unresolvable(string detail) =>
@@ -185,10 +130,15 @@ internal static class DcpPathResolver
     /// The value of the <c>ASPIRE_DCP_PATH</c> environment variable, or <see langword="null"/>
     /// when unset. When set and non-whitespace, <see cref="Resolve"/> is a no-op
     /// (<see cref="DcpPathResolutionKind.UseEmbedded"/>) regardless of every other
-    /// parameter — see the file-header "DO NOT SHADOW" remarks for why this must be
+    /// parameter — see the file-header precedence remarks for why this must be
     /// checked before anything else. Optional (defaults to <see langword="null"/>) so
     /// every existing call site that predates this parameter is unaffected, mirroring
     /// <c>OrchestrationErrorClassifier.Classify</c>'s <c>containerNeverCreated</c> parameter.
+    /// </param>
+    /// <param name="hostAssemblyDirectory">
+    /// Directory of the resolved host assembly, never the current working directory.
+    /// A versioned distribution manifest enables bundled resolution before metadata/cache.
+    /// Omit for hosts loaded from bytes or custom runners without a distribution bundle.
     /// </param>
     /// <returns>The resolution the caller must apply — see <see cref="DcpPathResolution"/>.</returns>
     public static DcpPathResolution Resolve(
@@ -198,12 +148,13 @@ internal static class DcpPathResolver
         string userProfileDirectory,
         string runtimeIdentifier,
         string? aspireHostingInformationalVersion,
-        string? aspireDcpPathEnvironmentVariable = null)
+        string? aspireDcpPathEnvironmentVariable = null,
+        string? hostAssemblyDirectory = null)
     {
         ArgumentNullException.ThrowIfNull(fileExists);
 
         // ASPIRE_DCP_PATH short-circuit — MUST be the very first check. See the
-        // file-header "DO NOT SHADOW THE USER'S OWN ASPIRE_DCP_PATH ESCAPE HATCH" remarks:
+        // file-header precedence remarks:
         // Aspire resolves this env var itself at priority 2 (above the dead metadata this
         // class reacts to); this self-heal must neither pre-empt it with an early
         // Unresolvable throw nor outrank it with a DcpPublisher:CliPath override
@@ -211,6 +162,42 @@ internal static class DcpPathResolver
         if (!string.IsNullOrWhiteSpace(aspireDcpPathEnvironmentVariable))
         {
             return DcpPathResolution.UseEmbedded();
+        }
+
+        var version = ResolveVersion(aspireHostingInformationalVersion, metadataDcpCliPath);
+        var rid = NormalizeRid(runtimeIdentifier);
+
+        // Installed distributions own a versioned native bundle beside their host assembly.
+        // Prefer it even when the packaging machine's cache happens to exist here. A declared
+        // but incomplete bundle must not be masked by a developer's warmed NuGet cache.
+        if (!string.IsNullOrWhiteSpace(hostAssemblyDirectory)
+            && fileExists(Path.Combine(hostAssemblyDirectory, "dcp", "supported-rids.txt")))
+        {
+            if (version is null)
+            {
+                return DcpPathResolution.Unresolvable(
+                    "The installed vouchfx bundle's matching Aspire DCP version could not be determined. "
+                    + "Reinstall the complete matching distribution or set ASPIRE_DCP_PATH to matching tools.");
+            }
+
+            var bundleRoot = Path.Combine(hostAssemblyDirectory, "dcp", version);
+            if (rid is not ("win-x64" or "linux-x64" or "osx-x64" or "osx-arm64"))
+            {
+                return DcpPathResolution.Unresolvable(
+                    $"The installed vouchfx DCP bundle does not support runtime '{rid}'. "
+                    + "Supported runtimes: win-x64, linux-x64, osx-x64, osx-arm64. "
+                    + "Use a supported distribution or supply matching tools through ASPIRE_DCP_PATH.");
+            }
+
+            var toolsDirectory = Path.Combine(bundleRoot, rid, "tools");
+            var bundledExecutable = Path.Combine(toolsDirectory, IsWindowsRid(rid) ? "dcp.exe" : "dcp");
+            var missingFile = new[] { bundledExecutable, Path.Combine(toolsDirectory, "dcptun_c") }
+                .FirstOrDefault(path => !fileExists(path));
+            return missingFile is null
+                ? DcpPathResolution.Override(bundledExecutable, isBundled: true)
+                : DcpPathResolution.Unresolvable(
+                    $"The installed vouchfx DCP bundle is incomplete: '{missingFile}' is missing. "
+                    + "Reinstall the matching vouchfx package or archive; no source checkout or Aspire restore is required.");
         }
 
         // No metadata at all — preserve the documented R-1 contract untouched (§"Aspire
@@ -227,7 +214,6 @@ internal static class DcpPathResolver
             return DcpPathResolution.UseEmbedded();
         }
 
-        var version = ResolveVersion(aspireHostingInformationalVersion, metadataDcpCliPath);
         if (version is null)
         {
             return DcpPathResolution.Unresolvable(BuildUnresolvableDetail(
@@ -236,7 +222,17 @@ internal static class DcpPathResolver
 
         var cacheRoot = ResolveCacheRoot(nugetPackagesEnvironmentVariable, userProfileDirectory);
 
-        // Normalize to portable RIDs (RuntimeInformation.RuntimeIdentifier can be OS-version/distro-specific).
+        var packageId = DcpPackageIdPrefix + rid;
+        var exeName = IsWindowsRid(rid) ? "dcp.exe" : "dcp";
+        var candidate = Path.Combine(cacheRoot, packageId, version, "tools", exeName);
+        return fileExists(candidate)
+            ? DcpPathResolution.Override(candidate)
+            : DcpPathResolution.Unresolvable(
+                BuildUnresolvableDetail(packageId, version, candidate, metadataDcpCliPath));
+    }
+
+    private static string NormalizeRid(string runtimeIdentifier)
+    {
         var rid = runtimeIdentifier.Trim().ToLowerInvariant();
         if (rid.StartsWith("win", StringComparison.Ordinal))
         {
@@ -255,13 +251,7 @@ internal static class DcpPathResolver
             rid = rid.EndsWith("-arm64", StringComparison.Ordinal) ? "linux-arm64" : "linux-x64";
         }
 
-        var packageId = DcpPackageIdPrefix + rid;
-        var exeName = IsWindowsRid(rid) ? "dcp.exe" : "dcp";
-        var candidate = Path.Combine(cacheRoot, packageId, version, "tools", exeName);
-        return fileExists(candidate)
-            ? DcpPathResolution.Override(candidate)
-            : DcpPathResolution.Unresolvable(
-                BuildUnresolvableDetail(packageId, version, candidate, metadataDcpCliPath));
+        return rid;
     }
 
     /// <summary>

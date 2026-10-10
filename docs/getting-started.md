@@ -42,7 +42,7 @@ vouchfx is packaged as a `dotnet` global tool and is live on NuGet.org as a pre-
 upgrade it straight from NuGet.org:
 
 ```bash
-# Install (pre-release channel — required while the published versions are 1.0.0-alpha.x)
+# Install (pre-release channel — required while the published versions are pre-releases)
 dotnet tool install --global vouchfx --prerelease
 
 # Upgrade later
@@ -53,18 +53,24 @@ From the v1.0 GA release onwards the plain commands (without `--prerelease`) wor
 
 The installer places the `vouchfx` command in `~/.dotnet/tools` (`%USERPROFILE%\.dotnet\tools` on Windows). If your shell cannot find `vouchfx` afterwards, add that directory to your `PATH` or open a fresh shell — the installer only updates `PATH` for new sessions.
 
-**The Aspire orchestration prerequisite.** The tool drives container topologies through .NET Aspire's DCP orchestrator. At run time the engine locates the DCP binaries in your per-user NuGet package cache (`NUGET_PACKAGES` if set, otherwise `~/.nuget/packages/`), in the `aspire.hosting.orchestration.<rid>` package matching your machine's platform and the engine's pinned Aspire version (currently 13.4.2). Any machine that has restored a project carrying `Aspire.AppHost.Sdk` 13.4.2 already has it. On a completely fresh machine, populate the cache once before your first run — clone this repository and restore it:
+**DCP distribution and supported platforms.** Current source builds package the matching Aspire
+DCP tools with the CLI: `win-x64`, `linux-x64` (glibc), `osx-x64` and `osx-arm64`. The global tool
+contains all four native trees; an archive or installer contains its own platform's tree. Installed
+candidates need no source checkout, Aspire workload or warmed NuGet cache. The engine selects the
+bundle beside its host assembly, so changing directories does not change the executable it uses.
 
-```bash
-git clone https://github.com/tomas-rampas/vouchfx.git
-dotnet restore vouchfx/vouchfx.sln
+**Published-version boundary:** `1.0.0-rc.6` still lacks this bundled payload. On a clean machine its
+container topology fails before Docker starts. Until a release includes this packaging change, use
+a candidate built from current source or supply the exact Aspire 13.4.2 tools through
+`ASPIRE_DCP_PATH`. Set this variable to the directory containing `dcp`/`dcp.exe`, not the executable:
+
+```powershell
+$env:ASPIRE_DCP_PATH = "$env:USERPROFILE/.nuget/packages/aspire.hosting.orchestration.win-x64/13.4.2/tools"
 ```
 
-(Restoring any other project that carries `Aspire.AppHost.Sdk` at the same version works equally well. Do **not** use the retired `dotnet workload install aspire` command — the Aspire workload was discontinued with Aspire 9, installs the wrong version to the wrong location, and cannot satisfy this prerequisite.)
-
-Without the cached orchestration package, `vouchfx run` reports an environment error — never a test verdict — whose message names the exact missing package and this remedy. If you keep DCP somewhere non-standard, point the `ASPIRE_DCP_PATH` environment variable at the directory containing the `dcp` executable instead.
-
-> **Known defect in 1.0.0-alpha.5 and earlier:** those pre-releases resolve DCP only through a path baked in on the release build machine, so the NuGet-installed tool fails with `The Aspire orchestration component is not installed at "/home/runner/..."` on every other machine regardless of your cache. Fixed in **1.0.0-alpha.6** — upgrade (`dotnet tool update --global vouchfx --prerelease`), or run from source (below). Full write-up: [KB: DCP orchestrator not found](kb/dcp-orchestrator-portability.md).
+This override requires those matching tools to exist; setting a path does not install them. Older
+AppHost-based source/custom runners retain their metadata and NuGet-cache fallback. The retired
+`dotnet workload install aspire` command is not a remedy. See [DCP troubleshooting](troubleshooting.md#the-aspire-orchestration-component-is-not-installed-could-not-be-located).
 
 ## Building vouchfx from source
 
