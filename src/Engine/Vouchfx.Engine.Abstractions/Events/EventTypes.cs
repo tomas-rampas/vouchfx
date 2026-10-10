@@ -2,9 +2,8 @@
 // stream (§14.4).  Use these constants at call sites instead of raw string
 // literals to guard against typos and make grep-ability straightforward.
 //
-// New event types introduced by the engine after Sprint 1 should be added here
-// before they appear in production code.  Sprint-1 deliverable: envelope only;
-// full payload types land in Sprint 2.
+// Add new event discriminators here before using them in production code.
+// Suite-level constants below are reserved; they have no v1 runtime emitter.
 
 namespace Vouchfx.Engine.Abstractions.Events;
 
@@ -14,10 +13,10 @@ namespace Vouchfx.Engine.Abstractions.Events;
 /// </summary>
 public static class EventTypes
 {
-    /// <summary>Emitted once when a suite run begins.</summary>
+    /// <summary>Reserved for suite-start notifications; not emitted by the v1 engine.</summary>
     public const string SuiteStarted = "suite-started";
 
-    /// <summary>Emitted once when a suite run finishes.</summary>
+    /// <summary>Reserved for suite-completion notifications; not emitted by the v1 engine.</summary>
     public const string SuiteCompleted = "suite-completed";
 
     /// <summary>Emitted when a scenario begins execution.</summary>
