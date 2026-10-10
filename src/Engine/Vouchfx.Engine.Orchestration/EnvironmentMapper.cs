@@ -35,6 +35,7 @@ using Aspire.Hosting;
 using Aspire.Hosting.ApplicationModel;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Vouchfx.Engine.Abstractions;
 using Vouchfx.Engine.Abstractions.Secrets;
 using Vouchfx.Engine.Authoring.Model;
 using YamlDotNet.RepresentationModel;
@@ -1586,6 +1587,13 @@ public static class EnvironmentMapper
         // ArgumentException out of Map is classified Inconclusive (§12.1: an authoring fault, not
         // an infrastructure one) by ScenarioRunner — the same classification every other eager
         // authoring check in this method gets, and no new machinery.
+        // Values across both maps are checked first. Keep secret/reference refusal priority,
+        // then reject malformed names before reserved-name selection or any Configure mutation.
+        foreach (var (name, spec) in env.Services ?? new Dictionary<string, ServiceSpec>())
+            foreach (var key in spec.Env?.Keys ?? Array.Empty<string>()) ValidateEnvName("Service", name, key);
+        foreach (var (name, spec) in env.Dependencies ?? new Dictionary<string, DependencySpec>())
+            foreach (var key in spec.Env?.Keys ?? Array.Empty<string>()) ValidateEnvName("Dependency", name, key);
+
         var dependencyEnvToApply = new Dictionary<string, IReadOnlyDictionary<string, string>>(
             StringComparer.Ordinal);
         foreach (var (name, spec) in dependencies)
@@ -2832,7 +2840,7 @@ public static class EnvironmentMapper
         if (envValue.Contains(SecretReference.Sigil, StringComparison.OrdinalIgnoreCase))
         {
             throw new ArgumentException(
-                $"{ownerLabel} '{ownerName}' env entry '{envKey}' references a ${{secret:...}} value. " +
+                $"{ownerLabel} '{ownerName}' env entry {DescribeEnvEntry(envKey)} references a ${{secret:...}} value. " +
                 "A container's environment is the wrong PLACE for a secret, whenever it would " +
                 "resolve (section 17): baking a secret into a container's environment would expose it " +
                 "via 'docker inspect' and corrupt the reproducibility envelope (which hashes the " +
@@ -2853,7 +2861,7 @@ public static class EnvironmentMapper
             if (!connectionReferencesSupported)
             {
                 throw new ArgumentException(
-                    $"{ownerLabel} '{ownerName}' env entry '{envKey}' references '{m.Value}'. " +
+                    $"{ownerLabel} '{ownerName}' env entry {DescribeEnvEntry(envKey)} references '{m.Value}'. " +
                     "A managed dependency is a connection SOURCE, not a consumer: " +
                     "'${conn:...}' is supported only in a service's own 'env:' values. Barring " +
                     "it on a dependency removes self-reference and inter-dependency cycles " +
@@ -2866,7 +2874,7 @@ public static class EnvironmentMapper
             if (!dependencies.TryGetValue(depName, out var depSpec))
             {
                 throw new ArgumentException(
-                    $"{ownerLabel} '{ownerName}' env entry '{envKey}' references unknown dependency " +
+                    $"{ownerLabel} '{ownerName}' env entry {DescribeEnvEntry(envKey)} references unknown dependency " +
                     $"'{depName}' via '{m.Value}'. Declared dependencies: " +
                     (dependencies.Count == 0
                         ? "(none)."
@@ -2877,7 +2885,7 @@ public static class EnvironmentMapper
             if (string.Equals(depSpec.Type, "azureservicebus", StringComparison.Ordinal))
             {
                 throw new ArgumentException(
-                    $"{ownerLabel} '{ownerName}' env entry '{envKey}' references dependency " +
+                    $"{ownerLabel} '{ownerName}' env entry {DescribeEnvEntry(envKey)} references dependency " +
                     $"'{depName}' of type 'azureservicebus', which env: references do not support " +
                     "in v1 (the emulator has no stable container-native connection-string " +
                     "resolution path yet). Wire the SUT's Service Bus connection another way.",
@@ -2887,7 +2895,7 @@ public static class EnvironmentMapper
             if (part is not null && !GetSupportedEnvParts(depSpec.Type).Contains(part))
             {
                 throw new ArgumentException(
-                    $"{ownerLabel} '{ownerName}' env entry '{envKey}' references unsupported part " +
+                    $"{ownerLabel} '{ownerName}' env entry {DescribeEnvEntry(envKey)} references unsupported part " +
                     $"'{part}' of dependency '{depName}' (type '{depSpec.Type}'). Supported parts: " +
                     $"{string.Join(", ", GetSupportedEnvParts(depSpec.Type).OrderBy(p => p, StringComparer.Ordinal))}.",
                     nameof(envValue));
@@ -2909,7 +2917,7 @@ public static class EnvironmentMapper
             if (!wellFormed.Success || wellFormed.Index != sigil.Index)
             {
                 throw new ArgumentException(
-                    $"{ownerLabel} '{ownerName}' env entry '{envKey}' contains a '${{env:...}}'-" +
+                    $"{ownerLabel} '{ownerName}' env entry {DescribeEnvEntry(envKey)} contains a '${{env:...}}'-" +
                     $"shaped token at position {sigil.Index} that is not well-formed. An " +
                     "'env:' reference must exactly match '${env:NAME}' - a case-sensitive, " +
                     "lower-case 'env:' sigil (never 'ENV:'/'Env:'), immediately followed by a " +
@@ -2935,7 +2943,7 @@ public static class EnvironmentMapper
             if (Environment.GetEnvironmentVariable(varName) is null)
             {
                 throw new ArgumentException(
-                    $"{ownerLabel} '{ownerName}' env entry '{envKey}' references '{m.Value}', but the " +
+                    $"{ownerLabel} '{ownerName}' env entry {DescribeEnvEntry(envKey)} references '{m.Value}', but the " +
                     $"engine process has no environment variable named '{varName}' (EDGE-008). Set " +
                     $"'{varName}' before running the suite, or set it to an explicit empty value if " +
                     "that is genuinely what the service should receive.",
@@ -3407,7 +3415,7 @@ public static class EnvironmentMapper
                     // whatever ran before it.
                     var envVarValue = Environment.GetEnvironmentVariable(token.Name!)
                         ?? throw new ArgumentException(
-                            $"{ownerLabel} '{ownerName}' env entry '{envKey}' references " +
+                            $"{ownerLabel} '{ownerName}' env entry {DescribeEnvEntry(envKey)} references " +
                             $"'${{env:{token.Name}}}', but the engine process has no environment " +
                             $"variable named '{token.Name}' (EDGE-008). Set '{token.Name}' before " +
                             "running the suite, or set it to an explicit empty value if that is " +
@@ -3444,7 +3452,7 @@ public static class EnvironmentMapper
                     if (!envAccessByDependency.TryGetValue(token.Name!, out var access))
                     {
                         throw new ArgumentException(
-                            $"{ownerLabel} '{ownerName}' env entry '{envKey}' references " +
+                            $"{ownerLabel} '{ownerName}' env entry {DescribeEnvEntry(envKey)} references " +
                             $"'${{conn:{token.Name}}}', but no connection accessor was resolved " +
                             $"for dependency '{token.Name}'. A '${{conn:...}}' reference is " +
                             "supported only in a service's own 'env:' values, and only for a " +
@@ -4539,4 +4547,12 @@ public static class EnvironmentMapper
             $"{subject} has an unrecognised value '{value}'. Accepted values: Always, Missing, Never.",
             nameof(value));
     }
+
+    private static void ValidateEnvName(string ownerLabel, string ownerName, string envKey)
+    {
+        if (!EnvironmentVariableNames.IsValid(envKey))
+            throw new ArgumentException($"{ownerLabel} '{ownerName}' env map: {EnvironmentVariableNames.SyntaxMessage}", nameof(envKey));
+    }
+
+    private static string DescribeEnvEntry(string envKey) => EnvironmentVariableNames.IsValid(envKey) ? $"'{envKey}'" : "with an invalid name";
 }

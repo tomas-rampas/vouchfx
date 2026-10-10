@@ -49,7 +49,7 @@ dependencies:
     password: "${secret:env/TEST_PASSWORD}"
 ```
 
-`files` is an ordered, nonempty list. `projectDirectory` defaults to the first manifest's directory. Optional `envFiles` selects Compose interpolation files; service `env_file` inputs are tracked too. `environment` accepts literal values or whole environment-secret references. Passwords require `${secret:env/NAME}`. Secrets resolve only during acquisition through the run's scrub ledger. Unknown configuration keys are refused.
+`files` is an ordered, nonempty list. `projectDirectory` defaults to the first manifest's directory. Optional `envFiles` selects Compose interpolation files; service `env_file` inputs are tracked too. `environment` accepts literal values or whole environment-secret references. Its names start with an ASCII letter or underscore, followed by ASCII letters, digits, underscores or dots, preserving case; `VOUCHFX_PROBE.key_1` is valid. Malformed names are refused without printing them. `COMPOSE_` and `DOCKER_` names remain reserved for ownership and daemon selection. This configuration rule does not reinterpret native manifest `environment` fields. Passwords require `${secret:env/NAME}`. Secrets resolve only during acquisition through the run's scrub ledger. Unknown configuration keys are refused.
 
 Publish exactly one IPv4 TCP mapping for each selected service/port. Random host ports are supported; fixed host ports are retained and conflicts fail startup. IPv6-only and multiple mappings are refused. HTTP readiness requires the selected status from the specified path. PostgreSQL readiness opens the declared database and executes `SELECT 1`; a running container alone cannot satisfy readiness.
 

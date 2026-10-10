@@ -2,9 +2,11 @@
 //
 // Extracted from YamlSchemaValidator so that SchemaComposer can reuse both the
 // embedded resource loader and the YAML→JsonDocument bridge without duplication.
+using System.Collections;
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
+using Vouchfx.Engine.Abstractions;
 using YamlDotNet.Core.Events;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
@@ -202,6 +204,11 @@ internal static class SchemaResources
             throw new InvalidOperationException("The YAML document is empty.");
         }
 
+        // Only recognized root environment maps are inspected, at fixed depth, on the
+        // already-deserialized graph. Values and arbitrary aliases are never traversed.
+        // Shared env-map aliases are checked once; the existing emission budget remains intact.
+        RefuseMalformedEnvironmentNames(graph);
+
         // Step 2 — re-serialise the object graph to a JSON string using
         // YamlDotNet's JSON-compatible emitter, which correctly renders
         // Dictionary<object,object> entries as JSON object properties and
@@ -226,6 +233,29 @@ internal static class SchemaResources
 
         // Step 3 — parse the JSON string into a System.Text.Json JsonDocument.
         return JsonDocument.Parse(json);
+    }
+
+    private static void RefuseMalformedEnvironmentNames(object graph)
+    {
+        if (graph is not IDictionary root || root["environment"] is not IDictionary environment) return;
+        var visited = new HashSet<object>(ReferenceEqualityComparer.Instance);
+        foreach (var kind in new[] { "services", "dependencies" })
+        {
+            if (environment[kind] is not IDictionary owners) continue;
+            foreach (DictionaryEntry owner in owners)
+            {
+                if (owner.Key is not string ownerName || owner.Value is not IDictionary entity
+                    || entity["env"] is not IDictionary names || !visited.Add(names)) continue;
+                foreach (DictionaryEntry entry in names)
+                {
+                    // Non-string YAML keys retain the bridge's existing shape/conversion
+                    // semantics; e.g. plain true can be type-inferred before this boundary.
+                    if (entry.Key is not string name || EnvironmentVariableNames.IsValid(name)) continue;
+                    var escapedOwner = ownerName.Replace("~", "~0", StringComparison.Ordinal).Replace("/", "~1", StringComparison.Ordinal);
+                    throw new EnvironmentNameConversionException($"/environment/{kind}/{escapedOwner}/env");
+                }
+            }
+        }
     }
 
     // ── BudgetedJsonWriter — the step-2 output budget ────────────────────────

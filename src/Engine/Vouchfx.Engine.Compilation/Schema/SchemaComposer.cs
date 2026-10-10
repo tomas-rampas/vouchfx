@@ -217,6 +217,10 @@ public static class SchemaComposer
         {
             doc = SchemaResources.ConvertYamlToJsonDocument(yamlText);
         }
+        catch (EnvironmentNameConversionException ex)
+        {
+            return SchemaValidationResult.Invalid(new SchemaValidationError(ex.Location, ex.Message));
+        }
         catch (Exception ex)
         {
             return SchemaValidationResult.Invalid(

@@ -187,6 +187,7 @@ using System.Globalization;
 using System.Linq;
 using System.Text.Json;
 using Json.Schema;
+using Vouchfx.Engine.Abstractions;
 
 namespace Vouchfx.Engine.Compilation.Schema;
 
@@ -362,8 +363,20 @@ internal static class SchemaErrorCollector
         var survivors = SuppressUnevaluatedPropertiesCascade(afterForbiddenContainerSubsumption);
 
         var errors = new List<SchemaValidationError>(survivors.Count);
+        var invalidEnvMaps = FindInvalidEnvMaps(instance);
+        var reportedEnvMaps = new HashSet<string>(StringComparer.Ordinal);
         foreach (var error in survivors)
         {
+            // Internal raw pointers remain available to the grouping/suppression passes above.
+            // Redact EVERY public error below a malformed name, including value/type errors,
+            // and aggregate map errors which could enumerate that name.
+            if (TryGetEnvMap(error.InstanceLocation, out var map, out var name)
+                && (name is not null && !EnvironmentVariableNames.IsValid(name)
+                    || name is null && invalidEnvMaps.Contains(map)))
+            {
+                if (reportedEnvMaps.Add(map)) errors.Add(new SchemaValidationError(map, EnvironmentVariableNames.SyntaxMessage));
+                continue;
+            }
             errors.Add(new SchemaValidationError(error.InstanceLocation, error.Message));
         }
 
@@ -375,6 +388,38 @@ internal static class SchemaErrorCollector
         }
 
         return errors;
+    }
+
+    private static HashSet<string> FindInvalidEnvMaps(JsonElement? instance)
+    {
+        var maps = new HashSet<string>(StringComparer.Ordinal);
+        if (instance is not { ValueKind: JsonValueKind.Object } root
+            || !root.TryGetProperty("environment", out var environment) || environment.ValueKind != JsonValueKind.Object) return maps;
+        foreach (var kind in new[] { "services", "dependencies" })
+        {
+            if (!environment.TryGetProperty(kind, out var owners) || owners.ValueKind != JsonValueKind.Object) continue;
+            foreach (var owner in owners.EnumerateObject())
+            {
+                if (owner.Value.ValueKind != JsonValueKind.Object || !owner.Value.TryGetProperty("env", out var env)
+                    || env.ValueKind != JsonValueKind.Object) continue;
+                if (env.EnumerateObject().Any(entry => !EnvironmentVariableNames.IsValid(entry.Name)))
+                    maps.Add("/environment/" + kind + "/" + owner.Name.Replace("~", "~0", StringComparison.Ordinal).Replace("/", "~1", StringComparison.Ordinal) + "/env");
+            }
+        }
+        return maps;
+    }
+
+    private static bool TryGetEnvMap(string pointer, out string map, out string? name)
+    {
+        // Preserve empty final tokens and the owner's original escaping; decode the name once.
+        var tokens = pointer.Split('/');
+        map = string.Empty;
+        name = null;
+        if (tokens.Length < 5 || tokens[0].Length != 0 || tokens[1] != "environment"
+            || tokens[2] is not ("services" or "dependencies") || tokens[4] != "env") return false;
+        map = string.Join("/", tokens.Take(5));
+        if (tokens.Length > 5) name = DecodePointerSegment(tokens[5]);
+        return true;
     }
 
     /// <summary>
@@ -1173,6 +1218,7 @@ internal static class SchemaErrorCollector
 
         if (IsPropertyNamesPatternShape(keyword, evaluationPath))
         {
+            if (TryGetEnvMap(instanceLocation, out _, out _)) return EnvironmentVariableNames.SyntaxMessage;
             return FormatReservedPrefixError(instanceLocation);
         }
 
@@ -1232,9 +1278,9 @@ internal static class SchemaErrorCollector
 
     /// <summary>
     /// True for a <c>propertyNames</c> sub-schema's own <c>pattern</c>
-    /// keyword failure — the shape both <c>capture</c>'s and top-level
-    /// <c>variables</c>'s reserved-bookkeeping-prefix guard produce (a
-    /// negative-lookahead regex, see VarKeys). Unlike the blank-keyword
+    /// keyword failure — used by the env-name grammar and by <c>capture</c>'s and
+    /// top-level <c>variables</c>'s reserved-bookkeeping-prefix guard (see VarKeys).
+    /// Unlike the blank-keyword
     /// shapes above, this node's OWN keyword is genuinely <c>pattern</c> (a
     /// real, non-boolean sub-schema), so EvaluationPath is what disambiguates
     /// this SPECIFIC pattern failure from any other <c>pattern</c> keyword
@@ -1242,9 +1288,9 @@ internal static class SchemaErrorCollector
     /// httpPort's range pattern, …).
     /// </summary>
     /// <remarks>
-    /// Every <c>propertyNames</c> declaration in the current schema exists
-    /// SOLELY for the reserved-prefix guard, so this shape is treated as
-    /// exactly that without needing to inspect the regex text itself — see
+    /// FormatError distinguishes recognized environment maps by their instance scope;
+    /// other current property-name guards retain the reserved-prefix reason. Neither
+    /// dispatch infers the rule from human regex error text — see
     /// <see cref="FormatReservedPrefixError"/>'s own generic-but-specific
     /// message, which deliberately never hardcodes the prefix list (MINOR-7:
     /// that list already lives in one place, VarKeys, and the schema's own

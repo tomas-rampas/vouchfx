@@ -16,6 +16,7 @@
 //     Unknown top-level keys are silently ignored to support forward compatibility.
 
 using System.Globalization;
+using Vouchfx.Engine.Abstractions;
 using Vouchfx.Engine.Authoring.Model;
 using Vouchfx.Sdk;
 using YamlDotNet.Core;
@@ -802,6 +803,13 @@ public static class YamlDocumentParser
                     $"environment-variable name, but found {key.NodeType}.",
                     key.Start.Line,
                     key.Start.Column);
+            }
+
+            if (!EnvironmentVariableNames.IsValid(keyScalar.Value))
+            {
+                throw new YamlParseException(
+                    $"{ownerLabel} '{ownerName}' env map: {EnvironmentVariableNames.SyntaxMessage}",
+                    key.Start.Line, key.Start.Column);
             }
 
             if (value is not YamlScalarNode valueScalar || valueScalar.Value is null)

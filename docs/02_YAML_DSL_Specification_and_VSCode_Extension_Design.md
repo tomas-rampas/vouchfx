@@ -114,6 +114,8 @@ The `owner` and `tags` fields are not decoration: the test runner's selection la
 
 ### 3.2 The environment section
 
+Service and dependency `env` map names use the full-string grammar `^[A-Za-z_][A-Za-z0-9_.]*(?![\s\S])`: an ASCII letter or underscore first, then ASCII letters, digits, underscores or dots. `VOUCHFX_PROBE.key_1` keeps its exact case, spelling and value. Empty names, `=`, slashes, whitespace and control characters are refused before topology configuration, without printing the malformed name; names are never trimmed or split. Existing reserved names remain specific to their dependency kind, and eager mapper value/secret refusals keep their existing priority.
+
 The environment section names the infrastructure the test depends on. Each entry maps a logical name — the name the steps will use — to a resource specification. The orchestration layer reads this section to decide which containers to provision and in what order, and it is also the information the VSCode extension cross-references to know which logical names are valid elsewhere in the file. Declaring a dependency here is what makes `orders-db` a resolvable target in a later database assertion.
 
 Both services and dependencies must have a mapping (YAML `{ … }`) value; a bare scalar (e.g. an unquoted service name or type) is malformed and rejected by the parser at load time with a line/column error.

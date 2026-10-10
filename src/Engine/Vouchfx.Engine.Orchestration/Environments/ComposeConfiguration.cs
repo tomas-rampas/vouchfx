@@ -2,6 +2,7 @@ using System.Collections.Frozen;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
+using Vouchfx.Engine.Abstractions;
 using Vouchfx.Engine.Authoring.Model;
 using Vouchfx.Sdk;
 using YamlDotNet.RepresentationModel;
@@ -62,7 +63,7 @@ internal sealed record ComposeConfiguration(
         var environment = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var (name, value) in reader.Map("environment"))
         {
-            if (!Regex.IsMatch(name, "^[A-Za-z_][A-Za-z0-9_]*$")) throw reader.Error("environment", "requires environment variable identifiers");
+            if (!EnvironmentVariableNames.IsValid(name)) throw reader.Error("environment", EnvironmentVariableNames.SyntaxMessage);
             if (name.StartsWith("COMPOSE_", StringComparison.Ordinal) || name.StartsWith("DOCKER_", StringComparison.Ordinal))
                 throw reader.Error("environment", "cannot override Compose ownership selections or Docker daemon configuration");
             environment[name] = ConfigMapping.Scalar(value, reader, "environment." + name);

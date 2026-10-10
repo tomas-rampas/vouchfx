@@ -18,7 +18,7 @@
     "envFiles": { "type": "array", "items": { "$ref": "#/$defs/path" } },
     "environment": {
       "type": "object",
-      "propertyNames": { "pattern": "^(?!COMPOSE_)(?!DOCKER_)[A-Za-z_][A-Za-z0-9_]*$" },
+      "propertyNames": { "pattern": "^(?!COMPOSE_)(?!DOCKER_)[A-Za-z_][A-Za-z0-9_.]*(?![\\s\\S])" },
       "additionalProperties": { "$ref": "#/$defs/environmentValue" }
     },
     "startupTimeoutSeconds": { "type": "integer", "minimum": 1, "maximum": 600, "default": 120 },

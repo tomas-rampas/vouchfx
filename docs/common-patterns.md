@@ -147,6 +147,8 @@ environment:
 
 Some managed dependencies are configured through environment variables — a case-sensitive collation on SQL Server, for instance. Use the `env` map on a dependency to pass container-level configuration:
 
+Service and dependency `env` names must start with an ASCII letter or underscore, followed by ASCII letters, digits, underscores or dots. Names such as `VOUCHFX_PROBE.key_1` retain their exact case and spelling. Empty names, `=`, slashes, whitespace and control characters are refused before topology configuration; names are never trimmed or split. Existing engine-owned names remain reserved only for their dependency kind.
+
 ```yaml
 environment:
   dependencies:
