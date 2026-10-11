@@ -161,6 +161,7 @@ nav:
       - Common patterns: common-patterns.md
       - Owned Docker Compose environments: compose-environments.md
       - S3 and MinIO application access: object-storage-sut.md
+      - SQL seed fixtures: seed-fixtures.md
       - Security compatibility matrix: security-matrix.md
       - Managed Kafka TLS and mutual TLS: managed-kafka-security.md
       - "Planner: coverage and gap analysis": planner.md

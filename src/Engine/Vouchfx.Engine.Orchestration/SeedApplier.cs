@@ -40,14 +40,7 @@
 //   • Dependencies are applied in declared order; within a dependency, files are
 //     applied in declared order.  Each SQL file's text is executed as one batch.
 //
-// Multi-scenario note (documented for A-01, out of scope to fix):
-//   Suite-startup seeding runs ONCE.  For a SINGLE-scenario run (the M2 case)
-//   seeded rows are present for step 1.  For a MULTI-scenario suite sharing one
-//   topology, the per-store isolation resets data between scenarios
-//   (structure — schema/tables/indexes/mappings — persists) — so seeded
-//   REFERENCE rows are also cleared after the first scenario.  Persisting
-//   reference data across scenarios (Respawn TablesToIgnore, or re-seeding in
-//   BeginScenarioAsync) is a future enhancement and is OUT OF SCOPE for A-01.
+// Kept-topology reuse resets seeded relational schemas before this applier runs again.
 
 using System.Data.Common;
 using Vouchfx.Engine.Authoring.Model;
@@ -103,10 +96,8 @@ internal static class SeedApplier
     /// </param>
     /// <param name="pathDisclosures">
     /// The run's <see cref="SecurityPathDisclosureLedger"/>, or <see langword="null"/> for a
-    /// caller that has none (#473). Every diagnostic THIS type raises names the author's declared
-    /// file by construction, but two of them splice a caught exception's own message after it, and
-    /// that half is written by the BCL and the ADO.NET driver rather than by this engine — see
-    /// <see cref="ApplySqlSeedAsync"/> for the recording site and what it closes.
+    /// caller that has none. Accepted fixture paths are recorded as resolved/declared pairs;
+    /// diagnostics name declared paths and safe error types/codes, never raw driver messages.
     /// </param>
     /// <param name="ct">
     /// Propagated to all async I/O.  Must be the last parameter (CA1068).
@@ -136,6 +127,8 @@ internal static class SeedApplier
         ArgumentNullException.ThrowIfNull(discoveredServices);
         ArgumentNullException.ThrowIfNull(dependencyTypes);
         ArgumentException.ThrowIfNullOrEmpty(seedBaseDirectory);
+
+        ct.ThrowIfCancellationRequested();
 
         // Apply dependencies in declared order.
         foreach (var (dependencyName, dependencySeed) in seed.Dependencies)
@@ -234,56 +227,25 @@ internal static class SeedApplier
                 detail: $"seed references unknown dependency '{dependencyName}'.");
         }
 
-        // Resolve every SQL file path and verify existence BEFORE opening any
-        // connection — a missing file is an Environment error that must not require
-        // a live database to detect (the no-docker test relies on this).
-        //
-        // THE DECLARED NAME IS CARRIED ALONGSIDE THE RESOLVED PATH, and that is the whole reason
-        // this is a pair rather than a bare path (#357's rule, extended). A ProvisionError's
-        // detail becomes an OrchestrationException message, which reaches the §14
-        // environment-error event and — on the suite path — is stamped onto every scenario's
-        // ScenarioCompletedEvent.message, so it lands in the event stream, the JUnit `message`
-        // attribute and the HTML report. `resolvedPath` is an absolute host path. Diagnostics
-        // below therefore name the DECLARED file; only the filesystem calls take the resolved one.
-        //
-        // #473 CORRECTS THE LAST SENTENCE OF THAT PARAGRAPH — "no scrubber covers one" was true
-        // when it was written and is not true now — AND CLOSES THE HALF THE PARAGRAPH MISSED.
-        // Naming the declared file is only half of each message: two of the three diagnostics on
-        // this path splice `TrimDetail(ex.Message)` after it, and THAT half is written by the BCL,
-        // which quotes the path it was actually given. Measured shapes, both reachable after the
-        // File.Exists below has already agreed the file is there:
-        //
-        //   UnauthorizedAccessException  "Access to the path '<resolved>' is denied."
-        //   IOException                  "The process cannot access the file '<resolved>' because
-        //                                 it is being used by another process."
-        //
-        // Recording the pair here is what lets the three scrub chokepoints put the author's own
-        // text back — the same net, for the same reason, as `security.serverArtifacts[].source`.
-        // It also covers the execution-failure message further down, which interpolates a driver's
-        // text this engine equally does not write.
+        // Share security artefacts' lexical suite-relative policy. This does not resolve
+        // symlinks/junctions: suite authors already have unrestricted script.csharp access.
+        // Refuse rooted/base-escaping paths before existence, reads or driver construction.
+        var resolvedBaseDirectory = Path.GetFullPath(seedBaseDirectory);
         var files = new List<(string Declared, string Resolved)>(sqlFiles.Count);
         foreach (var sqlFile in sqlFiles)
         {
-            var resolvedPath = Path.GetFullPath(Path.Combine(seedBaseDirectory, sqlFile));
+            if (SecurityArtifactPath.TryResolveContained(sqlFile, resolvedBaseDirectory, out var resolvedPath) is not null)
+            {
+                // Do not relay the helper's exception-derived diagnostic tail. Only the
+                // declared path is safe to name, including for invalid-path failures.
+                throw ProvisionError(
+                    resourceName: dependencyName,
+                    detail: $"seed SQL file '{sqlFile}' must be a path relative to the suite directory " +
+                            "and cannot resolve outside the suite directory.");
+            }
 
-            // Recorded BEFORE the existence check, for the reason ServerArtifactInjection.Plan's
-            // own recording site states: the not-found throw already names the declared text
-            // alone, so the ledger buys nothing there, while every path that SURVIVES this check
-            // is one whose resolved form is about to be handed to File.ReadAllTextAsync. Recording
-            // at the resolution keeps "the ledger holds every resolved path this method opened"
-            // true by construction.
-            //
-            // AN AUTHOR WHO DECLARED AN ABSOLUTE PATH IS RECORDED, NOT SKIPPED - do not read the
-            // equal-halves short-circuit as covering that case. `Record` compares ORDINALLY, and
-            // `Path.GetFullPath(Path.Combine(...))` normalises separators and `..`/`.` segments,
-            // so `C:/data/seed.sql` resolves to `C:\data\seed.sql` and is not ordinal-equal to
-            // what the author wrote. Nothing refuses a rooted seed path either: `seedDependency.
-            // sql` carries no pattern in the schema, and no containment check runs on this path -
-            // "relative to the suite" is prose, not a constraint. So the pair IS recorded and the
-            // replacement is an absolute path. Harmless, and the ledger's own severity note says
-            // why: the single-pass never-rescan scan absorbs it, and the worst outcome is a
-            // MISNAMED path in a diagnostic, never a wider disclosure.
-            pathDisclosures?.Record(resolvedPath, sqlFile);
+            // Retain the privacy ledger for every accepted fixture, including reseeding.
+            pathDisclosures?.Record(resolvedPath!, sqlFile);
 
             if (!File.Exists(resolvedPath))
             {
@@ -292,7 +254,7 @@ internal static class SeedApplier
                     detail: $"seed SQL file not found: '{sqlFile}', relative to the suite directory.");
             }
 
-            files.Add((sqlFile, resolvedPath));
+            files.Add((sqlFile, resolvedPath!));
         }
 
         await ApplyDependencyAsync(dependencyName, relationalKind, connectionString, files, ct)
@@ -326,12 +288,16 @@ internal static class SeedApplier
             {
                 await connection.OpenAsync(ct).ConfigureAwait(false);
             }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
             catch (Exception ex)
             {
                 throw ProvisionError(
                     resourceName: dependencyName,
                     detail: $"seed could not open a connection to dependency " +
-                            $"'{dependencyName}': {TrimDetail(ex.Message)}",
+                            $"'{dependencyName}': {SeedFailureDetails.Describe(ex)}",
                     inner: ex);
             }
 
@@ -342,12 +308,16 @@ internal static class SeedApplier
                 {
                     sqlText = await File.ReadAllTextAsync(resolvedPath, ct).ConfigureAwait(false);
                 }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    throw;
+                }
                 catch (Exception ex)
                 {
                     throw ProvisionError(
                         resourceName: dependencyName,
                         detail: $"seed could not read SQL file '{declaredPath}': " +
-                                $"{TrimDetail(ex.Message)}",
+                                $"{SeedFailureDetails.Describe(ex)}",
                         inner: ex);
                 }
 
@@ -382,11 +352,9 @@ internal static class SeedApplier
                 // MySQL: the table survives AND so does the first row (row count 1,
                 // not 0).  The plausible half of that theory was wrong.
                 //
-                // Author guidance: a MySQL seed fixture must be idempotent
-                // THROUGHOUT, not merely in its DDL — CREATE TABLE IF NOT EXISTS and
-                // INSERT … ON DUPLICATE KEY UPDATE — because a fixture that fails
-                // part-way leaves everything before the failure applied, and the next
-                // scenario will run on top of it.
+                // A direct retry of a failed MySQL fixture sees that partial state.
+                // Kept-topology ReseedAsync instead resets the seeded database before
+                // reapplying the fixtures; that does not make an individual file atomic.
                 var tx = await connection.BeginTransactionAsync(ct).ConfigureAwait(false);
                 var command = connection.CreateCommand();
                 try
@@ -396,12 +364,16 @@ internal static class SeedApplier
                     await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
                     await tx.CommitAsync(ct).ConfigureAwait(false);
                 }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    throw;
+                }
                 catch (Exception ex)
                 {
                     throw ProvisionError(
                         resourceName: dependencyName,
                         detail: $"seed SQL file '{declaredPath}' failed against dependency " +
-                                $"'{dependencyName}': {TrimDetail(ex.Message)}",
+                                $"'{dependencyName}': {SeedFailureDetails.Describe(ex)}",
                         inner: ex);
                 }
                 finally
@@ -424,7 +396,7 @@ internal static class SeedApplier
     /// drivers), so a dependency seeded here and reset between scenarios there is
     /// always dialled the same way.
     /// </summary>
-    private static DbConnection CreateRelationalConnection(RelationalStoreKind relationalKind, string connectionString) =>
+    internal static DbConnection CreateRelationalConnection(RelationalStoreKind relationalKind, string connectionString) =>
         relationalKind switch
         {
             RelationalStoreKind.Postgres => new Npgsql.NpgsqlConnection(connectionString),
@@ -469,13 +441,4 @@ internal static class SeedApplier
         return new OrchestrationException(info, inner);
     }
 
-    /// <summary>
-    /// Returns a trimmed, single-line summary of <paramref name="message"/>
-    /// capped at 200 characters for display in event streams and logs.
-    /// </summary>
-    private static string TrimDetail(string message)
-    {
-        var collapsed = message.ReplaceLineEndings(" ").Trim();
-        return collapsed.Length > 200 ? collapsed[..200] : collapsed;
-    }
 }

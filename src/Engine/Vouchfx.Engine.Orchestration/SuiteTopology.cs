@@ -763,49 +763,21 @@ public sealed class SuiteTopology : IAsyncDisposable, IKeptTopology
     }
 
     /// <summary>
-    /// Returns this <strong>already-running</strong> topology's seeded dependencies to
-    /// the freshly-built-and-seeded baseline (S08-T10, watch-mode reuse path).  For seeded
-    /// Postgres dependencies, each database's <c>public</c> schema is reset to empty, then
-    /// the declarative <c>environment.seed</c> is re-applied — exactly reproducing the
-    /// fresh-container-then-seed sequence a plain <c>vouchfx run</c> performs. Non-Postgres
-    /// stores (including a seeded sqlserver/mysql dependency — 'sql' applies to all three
-    /// relational kinds, but this schema-reset step is currently Postgres-only) are skipped,
-    /// and the caller's preceding isolation reset has already cleared their data.
+    /// Returns this already-running topology's seeded relational dependencies to the
+    /// freshly-built-and-seeded baseline. Ordinary isolation clears rows while retaining
+    /// structure; this reuse path also clears seeded schema objects before applying SQL again.
     /// </summary>
-    /// <param name="cancellationToken">Propagated to the schema reset and the seed applier.</param>
-    /// <returns>A task that completes once the seed has been re-applied (a no-op when the
-    /// scenario declares no seed).</returns>
+    /// <param name="cancellationToken">Propagated to the schema reset and seed applier.</param>
+    /// <returns>A task completing after reseeding, or a no-op when no seed is declared.</returns>
     /// <exception cref="OrchestrationException">
-    /// Thrown (Provision kind) when the schema reset or re-seed fails — always an Environment
-    /// error (§12.1), never a test <c>Fail</c>.  Unlike the initial seed in
-    /// <see cref="StartAsync"/>, the topology is <em>not</em> disposed here: the kept topology
-    /// survives a re-seed failure so the watch loop can report it and continue (the caller owns
-    /// the topology lifetime).
+    /// A schema reset or seed failure is a Provision environment error. The kept topology is
+    /// retained for the caller to report the failure and manage its lifetime.
     /// </exception>
     /// <remarks>
-    /// <para>
-    /// Watch mode keeps ONE topology alive across re-runs.  Between reuse runs the kept topology
-    /// carries the previous run's writes. A plain <c>vouchfx run</c> always starts from a fresh,
-    /// EMPTY container and then applies the seed — so the seed SQL is written assuming an empty
-    /// database (bare <c>CREATE TABLE</c>, not <c>CREATE TABLE IF NOT EXISTS</c>).  To match that
-    /// initial state without rebuilding the container:
-    /// </para>
-    /// <para>
-    /// For <strong>Postgres</strong> dependencies, this method first DROPS the <c>public</c> schema
-    /// of each seeded database and recreates it empty (clearing both the prior run's writes and the
-    /// prior seed's tables), then re-applies the seed against the now-empty schema — so the
-    /// author's non-idempotent seed SQL re-runs cleanly, exactly as on a fresh build. This is
-    /// necessary because Respawn preserves the schema (keeping the seed's tables), so a re-applied
-    /// <c>CREATE TABLE</c> would collide.
-    /// </para>
-    /// <para>
-    /// <strong>Non-Postgres stores</strong> (SQL Server, MySQL, MongoDB, Redis, Elasticsearch)
-    /// are skipped here: the preceding per-store isolation reset has already cleared their data
-    /// (real deletes — Respawn, <c>DeleteMany</c>, <c>FLUSHDB</c>, <c>_delete_by_query</c>), and
-    /// there is no row-applied non-Postgres seed state to restore — document-store and broker
-    /// seeds are content-recorded via deferred seams (no actual write in M2), and Redis has no
-    /// seed path at all.
-    /// </para>
+    /// Only dependencies with SQL fixtures are reset. Postgres recreates public; SQL Server
+    /// removes user tables, foreign keys, views, routines, synonyms, sequences and types in the
+    /// selected database; MySQL recreates the selected database with its existing definition.
+    /// Database/server configuration is retained. Non-relational stores use ordinary isolation.
     /// </remarks>
     public async Task ReseedAsync(CancellationToken cancellationToken = default)
     {
@@ -819,24 +791,17 @@ public sealed class SuiteTopology : IAsyncDisposable, IKeptTopology
             return;
         }
 
-        // Return each seeded Postgres dependency's public schema to EMPTY before re-seeding, so
-        // the seed's bare CREATE TABLE re-runs cleanly (mirrors a fresh container).  Only seeded
-        // dependencies are reset — an unseeded dependency is left exactly as the run left it.
+        cancellationToken.ThrowIfCancellationRequested();
+
+        // Use exactly the same kind mapping as SQL application. Reset every seeded relational
+        // dependency before reapplying any fixture; unseeded/empty entries are untouched.
         var dependencyTypes = BuildDependencyTypeMap(_environment);
-        foreach (var dependencyName in seed.Dependencies.Keys)
+        foreach (var (dependencyName, dependencySeed) in seed.Dependencies)
         {
-            // Case-sensitive (Ordinal) — pre-GA decision, feat/case-sensitive-kinds: a
-            // declaredType reaching here has already passed EnvironmentMapper.Map's eager,
-            // case-sensitive validation, so it is always the exact-case canonical spelling.
-            if (!dependencyTypes.TryGetValue(dependencyName, out var declaredType) ||
-                !string.Equals(declaredType, "postgres", StringComparison.Ordinal))
+            if (dependencySeed.Sql is not { Count: > 0 } ||
+                !dependencyTypes.TryGetValue(dependencyName, out var declaredType) ||
+                ScenarioIsolationFactory.MapRelationalKind(declaredType) is not { } relationalKind)
             {
-                // Non-Postgres (or undeclared) seed dependency: SeedApplier validates/dispatches
-                // it; no schema reset happens here. A seeded sqlserver/mysql dependency's rows
-                // are therefore NOT reset by this method before ApplySeedAsync below re-applies
-                // its (non-idempotent) seed SQL — this schema-reset step is currently
-                // Postgres-only, unlike SeedApplier's own 'sql' dispatch, which applies to all
-                // three relational kinds (pre-existing scope gap, not touched here).
                 continue;
             }
 
@@ -844,8 +809,8 @@ public sealed class SuiteTopology : IAsyncDisposable, IKeptTopology
                 value is string connectionString &&
                 !string.IsNullOrWhiteSpace(connectionString))
             {
-                await ResetPostgresSchemaAsync(dependencyName, connectionString, cancellationToken)
-                    .ConfigureAwait(false);
+                await RelationalSeedSchemaReset.ResetAsync(
+                    dependencyName, relationalKind, connectionString, cancellationToken).ConfigureAwait(false);
             }
         }
 
@@ -856,68 +821,6 @@ public sealed class SuiteTopology : IAsyncDisposable, IKeptTopology
                 _pathDisclosures,
                 cancellationToken)
             .ConfigureAwait(false);
-    }
-
-    /// <summary>
-    /// Resets a Postgres database's <c>public</c> schema to empty — <c>DROP SCHEMA public CASCADE;
-    /// CREATE SCHEMA public;</c> — so the kept topology's database matches a freshly-built
-    /// container before the seed is re-applied (S08-T10).  Any failure is wrapped as an
-    /// <see cref="OrchestrationException"/> (Provision kind, §12.1: Environment error, never a
-    /// test Fail).
-    /// </summary>
-    private static async Task ResetPostgresSchemaAsync(
-        string dependencyName,
-        string connectionString,
-        CancellationToken cancellationToken)
-    {
-        var connection = new Npgsql.NpgsqlConnection(connectionString);
-        try
-        {
-            await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
-
-            var command = connection.CreateCommand();
-            try
-            {
-                // DROP … CASCADE removes every table/sequence/type the prior run + prior seed
-                // created; CREATE SCHEMA restores an empty `public` schema (Postgres DDL is
-                // transactional, so this is atomic).  Equivalent to a fresh container's DB.
-                command.CommandText = "DROP SCHEMA public CASCADE; CREATE SCHEMA public;";
-                await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-            }
-            finally
-            {
-                await command.DisposeAsync().ConfigureAwait(false);
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            var info = new OrchestrationErrorInfo(
-                Kind: OrchestrationErrorKind.Provision,
-                ResourceName: dependencyName,
-                RegistryHost: null,
-                AuthStatus: null,
-                Detail: $"watch re-seed could not reset the '{dependencyName}' schema: "
-                        + TrimDetail(ex.Message));
-            throw new OrchestrationException(info, ex);
-        }
-        finally
-        {
-            await connection.DisposeAsync().ConfigureAwait(false);
-        }
-    }
-
-    /// <summary>
-    /// Returns a trimmed, single-line summary of <paramref name="message"/> capped at 200
-    /// characters for display in event streams and logs.
-    /// </summary>
-    private static string TrimDetail(string message)
-    {
-        var collapsed = (message ?? string.Empty).ReplaceLineEndings(" ").Trim();
-        return collapsed.Length > 200 ? collapsed[..200] : collapsed;
     }
 
     /// <summary>

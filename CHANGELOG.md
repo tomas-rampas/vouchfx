@@ -185,6 +185,8 @@ to published pre-releases on 2026-07-14.
 
 ### Fixed
 
+- Seed SQL fixture paths now share the lexical suite-relative containment policy used by security artefacts; rooted and base-escaping entries are refused before filesystem or driver access. Seed report details identify driver error types/codes without echoing raw SQL errors. Kept-topology reseeding resets supported SQL Server/MySQL schema objects as well as Postgres, allowing ordinary non-idempotent table fixtures to run again; MySQL database charset/collation are retained. See `docs/seed-fixtures.md` for reset scope and the symlink/DDL limitations.
+
 - **Unicode across redirected CLI streams.** Redirected stdin, stdout and stderr use UTF-8, without an output BOM, before command dispatch. Scaffold labels such as `Café — naïve §1` round-trip through file or stdin intents and stdout or file output on non-UTF-8 Windows consoles. Interactive handles, shared console pages, JSON escaping, output bounds and shutdown budgets remain unchanged. MCP decoding must ship with the matching engine pin; published pre-releases may predate this source change.
 
 - **S3 absence assertions confirm the bucket before accepting object404.** A failed bucket HEAD is an environment error for either existence expectation; an existing object needs no extra bucket request. Confirmation shares the existing client, cancellation token and retry budget. Mismatch observations omit resolved expected values and returned metadata/content-type strings while retaining byte counts, calculated digests and supported captures. Historical diff observations remain readable.
