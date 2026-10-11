@@ -19,8 +19,8 @@
 // A behavioural test can prove the helper kills (ChildProcessKillTreeTests does). It cannot prove
 // that the NEXT launch site somebody adds calls it, and "the next one" is how all four of these
 // arrived — nobody wrote a site intending to leak. So the property that needs a gate is
-// syntactic: every child-process launch in every censused tree sits in a member with a `finally`
-// that kills.
+// syntactic: every child-process launch in every censused tree names a local, and its member has
+// a `finally` whose kill names that same local (#482).
 //
 // ROSLYN, NOT A REGEX, for the reason the house idiom gives (see
 // Vouchfx.Engine.Runtime.Tests/DrillHostSweepCallSiteCensusTests and
@@ -41,8 +41,8 @@
 // Vouchfx.Cli.Tests (added by #548 — see below).
 //
 // WHY src/ JOINED, AND WHAT ITS ABSENCE COST — issue #481. Until then this census read the two test
-// projects and nothing else, so the production tree had never been censused at all. src/ holds
-// exactly ONE child-process launch, Vouchfx.Cli.Selection.SystemProcessRunner, on the
+// projects and nothing else, so the production tree had never been censused at all. Its original
+// child-process launch, Vouchfx.Cli.Selection.SystemProcessRunner, was on the
 // customer-facing `--changed-since` path — and it carried the defect this file exists to catch,
 // with additions. It disposed the Process on no path; the launch sat outside any try that owned
 // cleanup, so a throw out of the output capture abandoned a live child with nothing left holding a
@@ -73,11 +73,8 @@
 // reachable by walking up from this project's own directory to the repository root. Roslyn is a
 // dependency of this project, which is the only assembly that has to load at all.
 //
-// This is also what makes the `new Process` half of the detection worth its lines: the ONLY such
-// launch in the repository is Sprint11ReferenceCapstoneTests, in the drill lane. Over the
-// Orchestration project alone that branch never fired, and neither src/ nor Vouchfx.Cli.Tests fires
-// it either — both the production launch and all three Cli.Tests launches use the static
-// `Process.Start` spelling.
+// The `new Process` half also covers Sprint11ReferenceCapstoneTests in the drill lane and
+// ComposeProcess in src/. Construction alone is not a launch: the same local must be started.
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -92,7 +89,7 @@ namespace Vouchfx.Engine.Orchestration.Tests;
 /// <summary>
 /// Pins that every child-process launch in the four censused trees — <c>src/</c> and the three test
 /// projects named in the header — is paired with a <c>finally</c> that calls a member named
-/// <c>KillTreeQuietly</c>.
+/// <c>KillTreeQuietly</c> with the launch's named local as its first argument.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -204,23 +201,15 @@ public sealed class ChildProcessKillCallSiteCensusTests
     /// nothing verifies.)
     /// </para>
     /// <para>
-    /// <strong>What this does and does not prove.</strong> It proves a killing <c>finally</c> is
-    /// present in the member that launches. It does not prove the finally covers the launch, or
-    /// that it kills the right variable — a determined author can satisfy this gate and still leak.
-    /// That is the limit of keying on the MEMBER, and NOT a limit of syntax: a strictly stronger
-    /// purely syntactic rule exists — require the <c>finally</c>'s kill to name the same local the
-    /// launch was assigned to, which is identifier matching <c>AssignedLocalName</c> already does
-    /// for the <c>new Process</c> path, with no dataflow. It reddens the case this one clears: a
-    /// SECOND, unguarded launch added to a member that already kills a first — which is how three
-    /// of the four original sites accreted. Deferred (issue #482) because a launch not assigned to
-    /// a named local needs a fallback to this member-level rule, so the gate becomes two rules
-    /// rather than one. Do not read this paragraph as "syntax cannot do it"; it can, and the
-    /// reason it does not yet is the two-rules cost. It is aimed at the accident (several sites,
-    /// several authors, none intending to leak), not at an adversary. The behavioural half lives in
-    /// <c>ChildProcessKillTreeTests</c>. Kill-versus-dispose ORDERING is deliberately absent from
-    /// that list: the prescribed shape puts the <c>Dispose</c> in <c>using</c>'s own enclosing
-    /// <c>finally</c>, so it is the compiler that orders them and there is nothing left for a gate
-    /// to check.
+    /// <strong>What this does and does not prove.</strong> Each launch must name a local, and a
+    /// killing <c>finally</c> in the same member must name that local as its first argument. An
+    /// unnamed launch fails closed: name it before handing it to a helper or using statement.
+    /// This catches a second, unguarded launch in a member that already kills its first (#482).
+    /// It does not prove control flow, distinguish shadowed identifiers or repeated assignments
+    /// to the same local, or prove the kill resolves to the intended symbol. It is a syntactic
+    /// accident guard, not dataflow analysis. The behavioural half lives in
+    /// <c>ChildProcessKillTreeTests</c>. Kill-versus-dispose ordering is guaranteed by the house
+    /// <c>using</c> shape's enclosing finally rather than checked by this census.
     /// </para>
     /// <para>
     /// <strong>Spellings it CANNOT see. Not an exhaustive list — a sample, and read it that way.</strong>
@@ -269,16 +258,10 @@ public sealed class ChildProcessKillCallSiteCensusTests
     /// it cannot be satisfied by the fixtures the census brought with it.
     /// </para>
     /// <para>
-    /// <strong>Over <c>src/</c> that guard is load-bearing rather than incidental.</strong> Each
-    /// test root holds several launch sites, so its guard would survive any one of them moving. The
-    /// production root holds exactly ONE — <c>SystemProcessRunner</c> — so its guard is satisfied by
-    /// a single site, and the day that launch moves behind a helper this census cannot see, the
-    /// <c>src/</c> root reddens on the vacuity assertion instead of passing over an empty
-    /// population. That is the intended behaviour, and it is why the guard is asserted per root
-    /// rather than over the union: a production tree whose only launch has become invisible is
-    /// precisely the state issue #481 found, and it must not be able to hide behind three healthy
-    /// test lanes. The correct response to that red is to teach the census the new spelling, or to
-    /// move the root, never to delete the assertion.
+    /// <strong>The production root is guarded independently.</strong> Its launches cannot hide
+    /// behind healthy test lanes if they move behind a spelling this census cannot see. The
+    /// response to a vacuity failure is to teach the census the new spelling or move the root,
+    /// never to delete the assertion.
     /// </para>
     /// </remarks>
     [Fact]
@@ -326,15 +309,16 @@ public sealed class ChildProcessKillCallSiteCensusTests
         Assert.True(
             offenders.Count == 0,
             $"Starting a child gives you a {ProcessType} object whose lifetime is not the child's. "
-            + $"Disposing it releases a handle and stops nothing, so a launch whose member has no "
-            + $"`finally` calling `{KillMethod}` orphans its child on every path that is not a clean "
+            + $"Disposing it releases a handle and stops nothing, so a launch without a named local and "
+            + $"a `finally` calling `{KillMethod}` on that local can orphan its child on a non-clean "
             + "completion - a cancelled `docker build` keeps building (issue #475), a CLI child "
             + "keeps DCP, its containers and its network alive (issue #378), and a `--changed-since` "
             + "git call abandons a child the caller was never handed a way to reclaim (issue #481). "
             + "Unguarded launch site(s):\n"
             + string.Join("\n", offenders.Select(site => $"  {site.Display}"))
             + "\n\nFix shape (the house shape - it makes the ordering a compiler guarantee rather "
-            + "than something you have to remember). `using var proc = ...;` at method scope with "
+            + "than something you have to remember). Give every launch a named local. "
+            + "`using var proc = ...;` at method scope with "
             + "the kill in an inner `finally` earns the same guarantee and is what most drill-lane "
             + "sites use; what is NOT acceptable is a kill and a `Dispose()` written next to each "
             + "other, where the order is yours to get wrong:\n\n"
@@ -349,6 +333,70 @@ public sealed class ChildProcessKillCallSiteCensusTests
             + "Do NOT write the kill and a `Dispose()` next to each other in one finally: `using` "
             + "already emits the dispose in an enclosing finally, which is what puts the kill first "
             + $"and keeps it there. See the remarks on `{KillMethod}`.");
+    }
+
+    [Theory]
+    [InlineData("var first = Process.Start(psi); var second = Process.Start(psi); try { } finally { ChildProcess.KillTreeQuietly(first); }", true, false)]
+    [InlineData("var first = Process.Start(psi); var second = Process.Start(psi); try { } finally { ChildProcess.KillTreeQuietly(second); }", false, true)]
+    [InlineData("Process? first = null; Process? second = null; first = Process.Start(psi)!; second = (Process.Start(psi) ?? throw new Exception()); try { } finally { KillTreeQuietly(first); }", true, false)]
+    [InlineData("var first = new Process(); first.Start(); Process? second = null; second = new Process(); second.Start(); try { } finally { KillTreeQuietly(first); }", true, false)]
+    [InlineData("var first = Process.Start(psi)!; var second = (Process.Start(psi) ?? throw new Exception()); try { } finally { ChildProcess.KillTreeQuietly(first); KillTreeQuietly(second); }", true, true)]
+    [InlineData("Process? first = null; Process? second = null; first = Process.Start(psi); second = Process.Start(psi); try { } finally { KillTreeQuietly(first); KillTreeQuietly(second); }", true, true)]
+    [InlineData("var first = new Process(); first.Start(); Process? second = null; second = new Process(); second.Start(); try { } finally { KillTreeQuietly(first); KillTreeQuietly(second); }", true, true)]
+    public void FindLaunchSites_EachLaunchRequiresItsOwnNamedCleanup(string body, bool firstGuarded, bool secondGuarded)
+    {
+        var launches = ParseFixture(body);
+
+        Assert.Equal(2, launches.Count);
+        Assert.Equal(firstGuarded, launches[0].HasKillingFinally);
+        Assert.Equal(secondGuarded, launches[1].HasKillingFinally);
+        Assert.All(launches, site => Assert.Equal("Fixture.Run", site.Member));
+    }
+
+    [Theory]
+    [InlineData("using (Process.Start(psi)) { try { } finally { KillTreeQuietly(other); } }")]
+    [InlineData("Take(Process.Start(psi)); try { } finally { KillTreeQuietly(other); }")]
+    [InlineData("Take(new Process()); other.Start(); try { } finally { KillTreeQuietly(other); }")]
+    [InlineData("var process = Process.Start(psi); try { } finally { KillTreeQuietly(other, process); }")]
+    [InlineData("var process = Process.Start(psi); try { } finally { KillTreeQuietly(); }")]
+    [InlineData("var process = Process.Start(psi); try { } finally { Action cleanup = () => KillTreeQuietly(process); }")]
+    [InlineData("var process = Process.Start(psi); void Cleanup() { try { } finally { KillTreeQuietly(process); } }")]
+    [InlineData("var process = Process.Start(psi); Action cleanup = () => { try { } finally { KillTreeQuietly(process); } };")]
+    public void FindLaunchSites_UnnamedOrUnrelatedCleanup_FailsClosed(string body)
+    {
+        var launch = Assert.Single(ParseFixture(body));
+
+        Assert.False(launch.HasKillingFinally);
+    }
+
+    [Theory]
+    [InlineData("Action launch = () => { var process = Process.Start(psi); try { } finally { KillTreeQuietly(process); } };", "Fixture.Run (lambda)")]
+    [InlineData("void Launch() { var process = Process.Start(psi); try { } finally { KillTreeQuietly(process); } }", "Fixture.Launch")]
+    [InlineData("Action launch = () => { var process = new Process(); process.Start(); try { } finally { KillTreeQuietly(process); } };", "Fixture.Run (lambda)")]
+    [InlineData("var process = Process.Start(psi) ?? throw new Exception(); try { Take(process); } finally { if (!transferred) KillTreeQuietly(process); }", "Fixture.Run")]
+    public void FindLaunchSites_LegitimateCorrelatedGuards_AreAccepted(string body, string expectedMember)
+    {
+        var launch = Assert.Single(ParseFixture(body));
+
+        Assert.True(launch.HasKillingFinally);
+        Assert.Equal(expectedMember, launch.Member);
+    }
+
+    [Fact]
+    public void FindLaunchSites_CommentsStringsAndUnstartedProcesses_AreNotLaunches()
+    {
+        const string body = "// Process.Start(psi);\nvar text = \"Process.Start(psi)\"; var process = new Process(); stopwatch.Start();";
+
+        Assert.Empty(ParseFixture(body));
+    }
+
+    private static List<LaunchSite> ParseFixture(string body)
+    {
+        var source = "class Fixture { void Run() { " + body + " } }";
+        var tree = CSharpSyntaxTree.ParseText(source);
+
+        Assert.DoesNotContain(tree.GetDiagnostics(), diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
+        return FindLaunchSites("synthetic-root", "Fixture.cs", tree).ToList();
     }
 
     /// <summary>One child-process launch, and whether its member kills the tree in a finally.</summary>
@@ -429,10 +477,11 @@ public sealed class ChildProcessKillCallSiteCensusTests
     /// exists precisely to prove the helper tolerates a Process with no child attached, from being
     /// reported as an unguarded launch.
     /// </remarks>
-    private static IEnumerable<LaunchSite> FindLaunchSites(string root, string path)
-    {
-        var tree = CSharpSyntaxTree.ParseText(File.ReadAllText(path), path: path);
+    private static IEnumerable<LaunchSite> FindLaunchSites(string root, string path) =>
+        FindLaunchSites(root, path, CSharpSyntaxTree.ParseText(File.ReadAllText(path), path: path));
 
+    private static IEnumerable<LaunchSite> FindLaunchSites(string root, string path, SyntaxTree tree)
+    {
         foreach (var node in tree.GetRoot().DescendantNodes(descendIntoTrivia: false))
         {
             var member = EnclosingMemberBody(node);
@@ -455,7 +504,7 @@ public sealed class ChildProcessKillCallSiteCensusTests
                 Path.GetFileName(path),
                 node.GetLocation().GetLineSpan().StartLinePosition.Line + 1,
                 EnclosingMemberName(node),
-                member is not null && KillsTheTreeInAFinally(member));
+                member is not null && AssignedLocalName(node) is { } local && KillsTheTreeInAFinally(member, local));
         }
     }
 
@@ -512,7 +561,8 @@ public sealed class ChildProcessKillCallSiteCensusTests
     /// inline — falls back to "any <c>.Start()</c> in this member", which is the conservative
     /// direction: it can over-report inside a member that both builds a Process and starts
     /// something else, and over-reporting an unguarded launch costs a reviewer a minute, while
-    /// under-reporting one costs a session.
+    /// under-reporting one costs a session. Such an unnamed result then fails the named-local
+    /// cleanup rule; it never falls back to accepting another local's kill.
     /// </para>
     /// </remarks>
     private static bool IsStarted(ObjectCreationExpressionSyntax creation, SyntaxNode memberBody)
@@ -520,7 +570,7 @@ public sealed class ChildProcessKillCallSiteCensusTests
         var local = AssignedLocalName(creation);
 
         return memberBody
-            .DescendantNodes(descendIntoTrivia: false)
+            .DescendantNodes(descendIntoChildren: child => child == memberBody || !IsNestedMemberBody(child))
             .OfType<InvocationExpressionSyntax>()
             .Any(invocation =>
                 invocation.Expression is MemberAccessExpressionSyntax access
@@ -530,16 +580,30 @@ public sealed class ChildProcessKillCallSiteCensusTests
                         && receiver.Identifier.ValueText == local)));
     }
 
-    /// <summary>The local this creation is assigned to, or <see langword="null"/> when it is not.</summary>
-    private static string? AssignedLocalName(ObjectCreationExpressionSyntax creation) =>
-        creation.Parent switch
+    /// <summary>The local this launch or construction is assigned to, or null for an unnamed result.</summary>
+    private static string? AssignedLocalName(SyntaxNode expression)
+    {
+        // These wrappers preserve the process returned by Start: the null-checking and
+        // null-forgiving house shapes are not separate launch results.
+        while (expression.Parent is ParenthesizedExpressionSyntax
+            || expression.Parent is PostfixUnaryExpressionSyntax postfix
+                && postfix.IsKind(SyntaxKind.SuppressNullableWarningExpression)
+            || expression.Parent is BinaryExpressionSyntax binary
+                && binary.IsKind(SyntaxKind.CoalesceExpression) && binary.Left == expression)
+        {
+            expression = expression.Parent;
+        }
+
+        return expression.Parent switch
         {
             EqualsValueClauseSyntax { Parent: VariableDeclaratorSyntax declarator } =>
                 declarator.Identifier.ValueText,
             AssignmentExpressionSyntax { Left: IdentifierNameSyntax left } assignment
-                when assignment.Right == creation => left.Identifier.ValueText,
+                when assignment.IsKind(SyntaxKind.SimpleAssignmentExpression) && assignment.Right == expression =>
+                left.Identifier.ValueText,
             _ => null,
         };
+    }
 
     /// <summary>
     /// The body of the smallest member-like construct the launch sits in — the scope whose
@@ -578,25 +642,28 @@ public sealed class ChildProcessKillCallSiteCensusTests
     /// Nested member-like bodies are NOT descended into: a killing finally inside a lambda declared
     /// in this method guards that lambda's own child, not this method's.
     /// </remarks>
-    private static bool KillsTheTreeInAFinally(SyntaxNode memberBody) =>
+    private static bool KillsTheTreeInAFinally(SyntaxNode memberBody, string local) =>
         memberBody
             .DescendantNodes(descendIntoChildren: child => child == memberBody || !IsNestedMemberBody(child))
             .OfType<FinallyClauseSyntax>()
-            .Any(NamesTheKill);
+            .Any(clause => NamesTheKill(clause, local));
 
     private static bool IsNestedMemberBody(SyntaxNode node) =>
         node is AnonymousFunctionExpressionSyntax or LocalFunctionStatementSyntax;
 
-    private static bool NamesTheKill(FinallyClauseSyntax clause) =>
+    private static bool NamesTheKill(FinallyClauseSyntax clause, string local) =>
         clause
-            .DescendantNodes(descendIntoTrivia: false)
+            .DescendantNodes(descendIntoChildren: child => !IsNestedMemberBody(child))
             .OfType<InvocationExpressionSyntax>()
-            .Any(invocation => invocation.Expression switch
-            {
-                MemberAccessExpressionSyntax access => access.Name.Identifier.ValueText == KillMethod,
-                IdentifierNameSyntax name => name.Identifier.ValueText == KillMethod,
-                _ => false,
-            });
+            .Any(invocation =>
+                invocation.ArgumentList.Arguments.FirstOrDefault()?.Expression is IdentifierNameSyntax argument
+                && argument.Identifier.ValueText == local
+                && (invocation.Expression switch
+                {
+                    MemberAccessExpressionSyntax access => access.Name.Identifier.ValueText == KillMethod,
+                    IdentifierNameSyntax name => name.Identifier.ValueText == KillMethod,
+                    _ => false,
+                }));
 
     /// <summary>The member a launch sits in, qualified by its namespace and type path.</summary>
     /// <remarks>

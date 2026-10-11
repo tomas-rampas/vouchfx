@@ -74,7 +74,7 @@ internal static class BuiltCli
     /// "where is the repo" every test project in the solution now shares — rather than deriving
     /// its own fixed-depth walk from this assembly's build output, which is what this method used
     /// to do. Kept as a named wrapper (rather than inlining the call at each of
-    /// <see cref="Resolve"/> and <see cref="RelativeToRepoRoot"/>) purely so neither of those two
+    /// <see cref="Resolve"/> and <see cref="RelativeToRepoRoot(string)"/>) purely so neither of those two
     /// — nor <c>BuiltCliTests</c>, which calls this directly — needed to change when the walk
     /// itself moved.
     /// </remarks>
@@ -90,27 +90,52 @@ internal static class BuiltCli
     /// probed path, never spelled a second time, so the message can never name somewhere other than
     /// where the probe looked. Forward slashes so it reads identically on both platforms.
     /// <para>
-    /// Also correct for a path OUTSIDE the repository (for example one under the system temp
-    /// directory, where every drill's materialised suite lands): <see cref="Path.GetRelativePath"/>
-    /// climbs back up to the nearest common ancestor with content-free <c>..</c> segments — they
-    /// never spell out the repository's own ancestry — and prints only <paramref name="absolutePath"/>'s
-    /// tail beyond that ancestor.
+    /// A path inside the repository keeps its useful repository-relative form, even when the
+    /// checkout itself is under the system temp directory. Otherwise a path under that directory
+    /// renders as <c>&lt;temp&gt;/</c> followed by its normalised tail: climbing to a common ancestor
+    /// could otherwise expose the user profile containing temp (#591).
     /// </para>
     /// <para>
-    /// One case has no common ancestor at all: on Windows, a temp artefact on a different volume
-    /// from the checkout. There <see cref="Path.GetRelativePath"/> returns the target path UNCHANGED
-    /// (its documented answer for two paths that share no root), which is the one absolute path this
-    /// helper exists to withhold. <see cref="Render"/> detects that answer and prints the path's
-    /// last segment behind <see cref="OutsideRepositoryVolumeMarker"/> instead. Cannot arise on the
-    /// Linux lane, where a single root means every path relativises; the rendering step is a pure
-    /// function so <c>BuiltCliTests</c> can still drive that answer on any platform.
+    /// Other paths outside the repository keep the tail <see cref="Path.GetRelativePath"/> can
+    /// produce, without spelling the repository's ancestry. A rooted answer, including a normalised
+    /// cross-volume answer, is withheld behind <see cref="OutsideRepositoryVolumeMarker"/>.
+    /// <see cref="Render"/> retains the equality guard too, so Windows-style answers can be tested
+    /// on Linux, where those strings are not rooted.
     /// </para>
     /// </remarks>
     internal static string RelativeToRepoRoot(string absolutePath) =>
-        Render(absolutePath, Path.GetRelativePath(ResolveRepoRoot(), absolutePath));
+        RelativeToRepoRoot(absolutePath, ResolveRepoRoot(), Path.GetTempPath());
+
+    /// <summary>The same rendering with explicit roots, for host-independent privacy fixtures.</summary>
+    internal static string RelativeToRepoRoot(string absolutePath, string repoRoot, string tempRoot)
+    {
+        var relative = Path.GetRelativePath(repoRoot, absolutePath);
+        if (IsWithinRoot(absolutePath, relative))
+        {
+            return Render(absolutePath, relative);
+        }
+
+        var tempRelative = Path.GetRelativePath(tempRoot, absolutePath);
+        if (IsWithinRoot(absolutePath, tempRelative))
+        {
+            return TempDirectoryMarker + "/" + tempRelative.Replace('\\', '/');
+        }
+
+        return Render(absolutePath, relative);
+    }
+
+    private static bool IsWithinRoot(string absolutePath, string relative) =>
+        !string.Equals(relative, absolutePath, StringComparison.Ordinal)
+        && !Path.IsPathRooted(relative)
+        && relative != ".."
+        && !relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal)
+        && !relative.StartsWith(".." + Path.AltDirectorySeparatorChar, StringComparison.Ordinal);
+
+    /// <summary>The system temp directory's withheld host prefix.</summary>
+    internal const string TempDirectoryMarker = "<temp>";
 
     /// <summary>
-    /// What <see cref="RelativeToRepoRoot"/> prints for a path <see cref="Path.GetRelativePath"/>
+    /// What <see cref="RelativeToRepoRoot(string)"/> prints for a path <see cref="Path.GetRelativePath"/>
     /// could not relativise (a different volume from the checkout, Windows only).
     /// </summary>
     internal const string OutsideRepositoryVolumeMarker = "<outside the repository volume>";
@@ -118,22 +143,22 @@ internal static class BuiltCli
     private static readonly SearchValues<char> s_separators = SearchValues.Create("\\/");
 
     /// <summary>
-    /// The rendering step of <see cref="RelativeToRepoRoot"/>: <paramref name="relative"/> is
+    /// The rendering step of <see cref="RelativeToRepoRoot(string)"/>: <paramref name="relative"/> is
     /// <see cref="Path.GetRelativePath"/>'s answer for <paramref name="absolutePath"/> against the
     /// repository root. Pure, so the cross-volume answer can be tested where it cannot be produced.
     /// </summary>
     internal static string Render(string absolutePath, string relative)
     {
-        if (!string.Equals(relative, absolutePath, StringComparison.Ordinal))
+        if (!string.Equals(relative, absolutePath, StringComparison.Ordinal) && !Path.IsPathRooted(relative))
         {
             return relative.Replace('\\', '/');
         }
 
-        // GetRelativePath handed the target back unchanged: no shared root, so nothing it could
-        // return would be free of the absolute prefix. Print only the last segment, behind a
-        // marker that says why. Both separators are split on deliberately: on Linux the
-        // backslash is not a separator, and this branch is the Windows answer being rendered.
-        var trimmed = absolutePath.TrimEnd('\\', '/');
+        // GetRelativePath returned a rooted target (possibly normalised), or the unchanged
+        // Windows-style answer on Linux: no shared root can produce a relative prefix. Print only
+        // the last segment, behind a marker that says why. Both separators are split on deliberately:
+        // on Linux the backslash is not a separator, and this branch renders the Windows answer.
+        var trimmed = relative.TrimEnd('\\', '/');
         var lastSeparator = trimmed.AsSpan().LastIndexOfAny(s_separators);
         var leaf = lastSeparator < 0 ? trimmed : trimmed[(lastSeparator + 1)..];
 

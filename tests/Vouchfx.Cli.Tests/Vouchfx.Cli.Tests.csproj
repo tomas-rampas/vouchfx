@@ -53,6 +53,18 @@
     <ProjectReference Include="..\Vouchfx.Kafka.Security.Probe\Vouchfx.Kafka.Security.Probe.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
+  <!-- Isolated console fixture; never changes the test host's console code page. -->
+  <ItemGroup>
+    <ProjectReference Include="..\Vouchfx.Cli.Encoding.Probe\Vouchfx.Cli.Encoding.Probe.csproj" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+  <Target Name="CopyEncodingProbe" AfterTargets="Build">
+    <ItemGroup>
+      <EncodingProbeFiles Include="..\Vouchfx.Cli.Encoding.Probe\bin\$(Configuration)\net8.0\**\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(EncodingProbeFiles)"
+          DestinationFiles="@(EncodingProbeFiles->'$(OutDir)EncodingProbe\%(RecursiveDir)%(Filename)%(Extension)')" />
+  </Target>
+
   <Target Name="CopyKafkaSecurityProbe" AfterTargets="Build">
     <ItemGroup>
       <KafkaSecurityProbeFiles Include="..\Vouchfx.Kafka.Security.Probe\bin\$(Configuration)\net8.0\**\*" />

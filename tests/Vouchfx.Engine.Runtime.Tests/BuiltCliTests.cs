@@ -6,12 +6,9 @@
 // probed path and GetRelativePath's answer, and the rows below drive it with the exact answer that
 // API documents for two paths that share no root: the target path, returned unchanged.
 //
-// The two RelativeToRepoRoot rows that probe outside the repository split on that same fact
-// (#567). One probes under the checkout's own path root (its volume, on Windows), so it always
-// takes the relativised branch and can assert the path's whole tail. The other probes the system
-// temp directory, where the drills really write, and asserts only what holds on either branch:
-// on a Windows host whose temp directory is on another volume it takes the cross-volume branch
-// instead.
+// Paths under the system temp directory use a separate marker (#591), keeping the tail below
+// temp without exposing the host profile. Explicit-root fixtures are synthetic; current-host
+// probes use fixed failure messages so a failed privacy guard cannot print the path it protects.
 
 using System;
 using System.IO;
@@ -100,9 +97,8 @@ public sealed class BuiltCliTests
     [Fact]
     public void RelativeToRepoRoot_PathUnderTheTempDirectory_NeverSpellsTheRepositoryRoot()
     {
-        // Where every drill's materialised suite lands. Which branch Render takes depends on the
-        // host: relativised when the temp directory shares the checkout's volume, the marker plus
-        // the last segment when it does not. Only what holds on both is asserted.
+        // Where every drill's materialised suite lands. Temp gets a withheld prefix on any volume;
+        // a checkout under temp still takes precedence for its own repository-relative paths.
         var repoRoot = BuiltCli.ResolveRepoRoot();
         var underTemp = Path.Combine(Path.GetTempPath(), "vouchfx-drill-4711", "deployment.e2e.yaml");
 
@@ -116,6 +112,83 @@ public sealed class BuiltCliTests
         Assert.True(
             rendered.EndsWith("/deployment.e2e.yaml", StringComparison.Ordinal),
             "a temp-directory path lost its own file name");
+    }
+
+    [Theory]
+    [InlineData("/tmp/a/../x/deployment.e2e.yaml", "/tmp/x/deployment.e2e.yaml")]
+    [InlineData("/tmp/x/deployment.e2e.yaml", "/private/x/deployment.e2e.yaml")]
+    public void Render_RootedNormalisedResult_OnlyRendersTheMarkerAndLeaf(string original, string relative)
+    {
+        Assert.Equal(
+            BuiltCli.OutsideRepositoryVolumeMarker + "/deployment.e2e.yaml",
+            BuiltCli.Render(original, relative));
+    }
+
+    [Theory]
+    [InlineData("vouchfx-drill-4711/deployment.e2e.yaml")]
+    [InlineData("discard/../vouchfx-drill-4711/deployment.e2e.yaml")]
+    public void RelativeToRepoRoot_SyntheticSameVolumeTempPath_RedactsProfilePrefix(string tail)
+    {
+        var root = Path.GetPathRoot(Path.GetTempPath())!;
+        var repo = Path.Combine(root, "src", "private-checkout");
+        var temp = Path.Combine(root, "Users", "private-profile", "AppData", "Local", "Temp");
+        var probe = Path.Combine(temp, tail.Replace('/', Path.DirectorySeparatorChar));
+
+        Assert.Equal(BuiltCli.TempDirectoryMarker + "/vouchfx-drill-4711/deployment.e2e.yaml",
+            BuiltCli.RelativeToRepoRoot(probe, repo, temp));
+    }
+
+    [Fact]
+    public void RelativeToRepoRoot_RepositoryInsideTemp_PreservesUsefulRepositoryRelativePath()
+    {
+        var temp = Path.GetTempPath();
+        var repo = Path.Combine(temp, "synthetic-checkout");
+        var probe = Path.Combine(repo, "tests", "Fixture.cs");
+
+        Assert.True(string.Equals("tests/Fixture.cs",
+            BuiltCli.RelativeToRepoRoot(probe, repo, temp), StringComparison.Ordinal),
+            "a repository path under temp lost its repository-relative form");
+    }
+
+    [Fact]
+    public void RelativeToRepoRoot_TempPrefixSibling_IsNotMistakenForTemp()
+    {
+        var root = Path.GetPathRoot(Path.GetTempPath())!;
+        var repo = Path.Combine(root, "src", "checkout");
+        var temp = Path.Combine(root, "synthetic-temp");
+        var probe = Path.Combine(root, "synthetic-temp-sibling", "Fixture.cs");
+
+        Assert.Equal("../../synthetic-temp-sibling/Fixture.cs",
+            BuiltCli.RelativeToRepoRoot(probe, repo, temp));
+    }
+
+    [Fact]
+    public void RelativeToRepoRoot_CurrentTempPath_UsesTheTempMarkerWithoutHostPrefixes()
+    {
+        var temp = Path.GetTempPath();
+        var syntheticRepo = Path.Combine(Path.GetPathRoot(temp)!, "synthetic-repo");
+        var probe = Path.Combine(temp, "vouchfx-drill-4711", "deployment.e2e.yaml");
+
+        Assert.True(string.Equals(BuiltCli.TempDirectoryMarker + "/vouchfx-drill-4711/deployment.e2e.yaml",
+            BuiltCli.RelativeToRepoRoot(probe, syntheticRepo, temp), StringComparison.Ordinal),
+            "a real temp-directory path did not use the temp marker and relative tail");
+    }
+
+    [Fact]
+    public void RelativeToRepoRoot_WindowsDifferentVolumeNormalisedPath_WithholdsTheAbsolutePrefix()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var repo = BuiltCli.ResolveRepoRoot();
+        var drive = string.Equals(Path.GetPathRoot(repo), @"Z:\", StringComparison.OrdinalIgnoreCase) ? "Y:" : "Z:";
+        var probe = drive + "/private-profile/a/../deployment.e2e.yaml";
+
+        Assert.True(string.Equals(BuiltCli.OutsideRepositoryVolumeMarker + "/deployment.e2e.yaml",
+            BuiltCli.RelativeToRepoRoot(probe, repo, Path.GetTempPath()), StringComparison.Ordinal),
+            "a normalised cross-volume path did not withhold its absolute prefix");
     }
 
     // Whether `rendered` spells the repository root as whole path segments. A plain substring

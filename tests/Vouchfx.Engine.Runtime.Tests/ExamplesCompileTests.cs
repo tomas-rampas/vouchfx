@@ -356,7 +356,7 @@ public sealed class ExamplesCompileTests
         }
     }
 
-    /// <summary>How long the timeout path waits for whatever the pipes already hold.</summary>
+    /// <summary>Upper bound for a pipe drain after a script exits or is killed.</summary>
     private static readonly TimeSpan s_drainGrace = TimeSpan.FromSeconds(5);
 
     /// <summary>Whatever the two pipes produce within a short grace, or nothing.</summary>
@@ -450,11 +450,18 @@ public sealed class ExamplesCompileTests
     /// printed nothing, when in truth its output was never read. An empty stream and an
     /// unreadable one are different facts and are now spelled differently.
     /// </para>
+    /// <para>
+    /// Child exit does not guarantee pipe EOF: a descendant may still hold a handle. Each
+    /// success-path read therefore uses the same bounded drain grace, and reports a still-open
+    /// stream instead of hanging. The timeout path keeps its distinct policy: both reads share
+    /// one grace and may yield no text because its timeout sentence already explains the failure.
+    /// Eventual read faults remain observed after either path abandons its wait.
+    /// </para>
     /// </remarks>
-    private static async Task<string> ReadTextOrExplainAsync(Task<string> read, string streamName)
+    private static async Task<string> ReadTextOrExplainAsync(Task<string> read, string streamName, TimeSpan? grace = null)
     {
         ObserveIfItEverFaults(read);
-        await Task.WhenAny(read).ConfigureAwait(false);
+        await Task.WhenAny(read, Task.Delay(grace ?? s_drainGrace)).ConfigureAwait(false);
 
         if (read.Status == TaskStatus.RanToCompletion)
         {
@@ -463,17 +470,19 @@ public sealed class ExamplesCompileTests
 
         // GetBaseException: the platform wraps a pipe failure a layer or two deep, and the
         // outer text is usually "One or more errors occurred".
-        var reason = read.Exception?.GetBaseException().Message ?? read.Status.ToString();
+        var reason = !read.IsCompleted
+            ? "stream is still open after the drain grace"
+            : read.Exception?.GetBaseException().Message ?? read.Status.ToString();
         return $"<{streamName} could not be read: {reason}>";
     }
 
     // ── The failure paths of the setup-script runner ───────────────────────────────────
     //
-    // These are kept permanently, and the reason is the record rather than a preference:
-    // this helper has needed two correctness fixes and BOTH were in its failure handling —
-    // first a deadlock from draining the pipes sequentially, then a rethrow from treating
-    // Task.WhenAny's "completed" as "succeeded". The happy path has never been wrong. Tests
-    // that only exercise a working script would have caught neither.
+    // Keep these controls: pipe handling has needed fixes for sequential-drain deadlocks,
+    // faulted reads mistaken for successful reads, and an unbounded drain after a child
+    // exited (#392). Successful, faulted, cancelled and still-open reads are distinct
+    // outcomes. A working-script test alone cannot protect them. The timeout path may
+    // stay quiet; the success path must explain an unreadable or still-open stream.
     //
     // They are also cheap: no containers, no repository files, and the one that starts a
     // process bounds it to a couple of seconds.
@@ -550,6 +559,52 @@ public sealed class ExamplesCompileTests
         var text = await ReadTextOrExplainAsync(Task.FromResult("the script said this"), "stdout");
 
         Assert.Equal("the script said this", text);
+    }
+
+    /// <summary>A successful child can leave a descendant holding a pipe open (#392).</summary>
+    [Fact]
+    public async Task ReadTextOrExplain_WhenTheReadStaysOpen_ReportsTheStreamWithinTheDrainGrace()
+    {
+        var pending = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        try
+        {
+            // The default production grace is five seconds. Ten seconds bounds the test
+            // independently and makes the original unbounded helper fail without a process.
+            var text = await ReadTextOrExplainAsync(pending.Task, "stdout")
+                .WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.Contains("stdout could not be read", text, StringComparison.Ordinal);
+            Assert.Contains("still open", text, StringComparison.Ordinal);
+        }
+        finally
+        {
+            pending.TrySetResult("released after the test");
+        }
+    }
+
+    /// <summary>The optional private grace permits a fast pending-stream control.</summary>
+    [Fact]
+    public async Task ReadTextOrExplain_WhenTheReadStaysOpen_UsesTheSuppliedGrace()
+    {
+        var pending = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        try
+        {
+            var text = await ReadTextOrExplainAsync(pending.Task, "stderr", TimeSpan.FromMilliseconds(50))
+                .WaitAsync(TimeSpan.FromSeconds(2));
+            Assert.Equal("<stderr could not be read: stream is still open after the drain grace>", text);
+        }
+        finally
+        {
+            pending.TrySetResult("released after the test");
+        }
+    }
+
+    /// <summary>Cancellation remains an explained read, never a propagated exception.</summary>
+    [Fact]
+    public async Task ReadTextOrExplain_WhenTheReadIsCancelled_ReportsCancellation()
+    {
+        var read = Task.FromCanceled<string>(new CancellationToken(canceled: true));
+        var text = await ReadTextOrExplainAsync(read, "stderr");
+        Assert.Equal("<stderr could not be read: Canceled>", text);
     }
 
     /// <summary>

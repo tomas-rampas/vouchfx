@@ -385,6 +385,20 @@ There is deliberately no `vouched` field. The Vouched badge is an endorsement of
 
 This shape is the contract for integration with tooling such as [vouchfx-mcp](https://vouchfx-mcp.vouchfx.io/) and the VS Code extension. Incomplete metadata fails the entire export rather than omitting fields silently. Within `schemaVersion` 1 the document only ever gains fields, so a consumer should ignore members it does not recognise.
 
+## Redirected text and Unicode
+
+The current source CLI reads redirected stdin and writes redirected stdout and stderr as UTF-8.
+Output has no byte-order mark (BOM), including help, diagnostics, schema exports and scaffold YAML.
+Send UTF-8 JSON with `vouchfx scaffold --intent -`; a label such as `Café — naïve §1` remains
+identical whether the intent comes from stdin or a file, and whether YAML goes to stdout or `--output`.
+Decode captured streams as UTF-8. File output keeps its existing UTF-8 format.
+
+Interactive terminal handles retain their existing encoding. The CLI replaces only its own
+redirected text wrappers; it does not change a shared Windows console's input or output page.
+No `chcp` workaround is needed. JSON commands retain their existing non-ASCII escaping and keys.
+Hosts must use an MCP release pinned to this engine's UTF-8 contract; an older MCP decoder must
+not be paired with this source build. Published pre-releases may predate this change.
+
 ## Exporting the composed JSON Schema
 
 The `vouchfx schema` command emits the **composed** v1 JSON Schema that the engine uses for validation: the root language grammar merged with every registered provider fragment. Default output is stdout (pipe-friendly); use `--output` to write a file.
