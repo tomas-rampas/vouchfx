@@ -47,6 +47,14 @@ The engine stages that connection for the test step. Do not put this whole strin
 
 The dependency owns its authentication variables: `MINIO_ROOT_USER`/`MINIO_ROOT_PASSWORD` for `minio`, and `RUSTFS_ACCESS_KEY`/`RUSTFS_SECRET_KEY` for `s3`. Authoring those keys in the dependency's `env` map is refused. Put the application client settings in the application's service `env` map instead.
 
+## Object absence and diagnostics
+
+An object HEAD returning 404 does not establish that its bucket exists. The assertion sends one bucket HEAD through the same client and cancellation budget before treating the object as absent. A successful bucket HEAD permits ordinary absence: `expect.exists: true` (the default) fails, while `expect.exists: false` passes. An unavailable, missing or forbidden bucket is an environment error; it cannot satisfy an absence assertion. RETRY confirms absence on every attempt.
+
+This confirmation may require bucket-list permission on an ambiguous 404. An existing object that passes HEAD needs no bucket HEAD or additional bucket-list permission. The provider does not list buckets, cache bucket confirmation or add an independent retry budget.
+
+Mismatch observations identify the field and `matched: false`. They omit resolved expected values and returned metadata or content-type strings. Actual byte counts and calculated SHA-256 digests remain available, and the existing `etag`, `versionId`, `size` and `exists` captures retain their meanings. Body content and searched substrings are never included in observations. Historical expected/actual diff observations still render.
+
 ## Architecture coverage
 
 The default RustFS image index contains Linux amd64 and arm64 manifests. The repository records runtime checks for amd64 only; arm64 runtime acceptance remains unverified. This limitation concerns the default `s3` backend, not a claim about every image override or all dependency kinds.

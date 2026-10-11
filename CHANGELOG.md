@@ -185,6 +185,8 @@ to published pre-releases on 2026-07-14.
 
 ### Fixed
 
+- **S3 absence assertions confirm the bucket before accepting object404.** A failed bucket HEAD is an environment error for either existence expectation; an existing object needs no extra bucket request. Confirmation shares the existing client, cancellation token and retry budget. Mismatch observations omit resolved expected values and returned metadata/content-type strings while retaining byte counts, calculated digests and supported captures. Historical diff observations remain readable.
+
 - **Kafka retained-log assertions no longer depend on consumer-group rebalance timing.** Each bounded attempt discovers and manually assigns every topic partition from the beginning, so retained matches in any partition can be read within the existing drain window. Plain and Avro matching retain their existing observations, capture behaviour and retry budgets.
 
 - **Caller cancellation reaches generated steps and wins before final-result promotion.** Isolated and reused delegates supply the caller token to IMMEDIATE bodies and RETRY attempts/backoff. A provider returning normally after cancellation cannot forge a completion or timeout verdict. Invocation services preserve the caller map's lookup semantics and live updates without modifying it; caller cancellation remains distinct from a step-budget timeout.

@@ -21,19 +21,21 @@
 //
 // Behaviour per attempt (idempotent — HEAD then, only if declared, a bounded GET; fully
 // RETRY-compatible with no special-case code, exactly like every other assert/expect provider):
-//   1. HEAD the object (GetObjectMetadataAsync). A 404 AmazonS3Exception means "absent" — this
-//      is NOT an EnvironmentError; it is the expected, observable "not written yet" state the
-//      RETRY eventually-consumed idiom polls for.
+//   1. HEAD the object (GetObjectMetadataAsync). After 404, HEAD the same bucket to
+//      confirm it exists and is accessible. Only a successful bucket HEAD means "absent";
+//      bucket confirmation errors are EnvironmentError. Successful object HEADs need no
+//      bucket HEAD or bucket-list permission. RETRY confirms absence on every attempt.
 //   2. absent + expect.exists:true (the default)  → Fail, {"exists":false}.
 //      present + expect.exists:false               → Fail, {"exists":true}.
-//   3. Otherwise verify size/minSize/contentType/metadata from the HEAD response (each mismatch
-//      uses the SAME {"field":…,"expected":…,"actual":…} shape db-assert.mongodb/dynamodb use,
-//      so the same table-rendering IStepDiffRenderer logic applies unchanged).
+//   3. Otherwise verify size/minSize/contentType/metadata from the HEAD response. Mismatches
+//      report the field and matched:false, never resolved expected values or returned content
+//      strings. Size observations retain actual byte counts; historical expected/actual
+//      observations remain supported by IStepDiffRenderer.
 //   4. Only if sha256 or contentContains is declared, and only once every HEAD-based check has
 //      passed, GET the body — capped at 16 MiB (mirrors http.rest's / metrics-assert's own
 //      MaxResponseContentBufferSize precedent): an oversize object is a Fail noting the cap,
-//      the body is never fetched. SHA-256 digests are safe to report verbatim (a one-way,
-//      fixed-length hash cannot leak body content); a contentContains mismatch reports ONLY a
+//      the body is never fetched. SHA mismatches retain the calculated digest but never the
+//      expected text; a contentContains mismatch reports ONLY a
 //      boolean match flag and the body length — the substring and the body are NEVER echoed
 //      into the observation (§17 spirit: no content in observations, exactly as
 //      webhook-listen.http/mail-expect.smtp never echo captured bodies verbatim).
@@ -463,8 +465,14 @@ public sealed class StorageAssertS3Provider
                     }
                     catch (Amazon.S3.AmazonS3Exception notFoundEx) when (notFoundEx.StatusCode == System.Net.HttpStatusCode.NotFound)
                     {
-                        // Absent is an expected, observable outcome (the RETRY
-                        // eventually-consumed idiom) — never an EnvironmentError.
+                        // An object HEAD 404 is ambiguous: a missing/unavailable bucket
+                        // must not satisfy an absence assertion. Confirm this same bucket
+                        // through the same client/token/budget before treating it as absent.
+                        // Bucket-probe failures retain the EnvironmentError path below.
+                        await client.HeadBucketAsync(new Amazon.S3.Model.HeadBucketRequest
+                        {
+                            BucketName = bucket,
+                        }, ct).ConfigureAwait(false);
                         head = null;
                     }
 
@@ -498,10 +506,8 @@ public sealed class StorageAssertS3Provider
                                 System.Globalization.CultureInfo.InvariantCulture);
                             if (actualSize != expectedSize)
                             {
-                                failObservation = "{\"field\":\"size\",\"expected\":" +
-                                    System.Text.Json.JsonSerializer.Serialize(expectedSize.ToString(System.Globalization.CultureInfo.InvariantCulture)) +
-                                    ",\"actual\":" +
-                                    System.Text.Json.JsonSerializer.Serialize(actualSize.ToString(System.Globalization.CultureInfo.InvariantCulture)) + "}";
+                                failObservation = "{\"field\":\"size\",\"matched\":false,\"actualBytes\":" +
+                                    actualSize.ToString(System.Globalization.CultureInfo.InvariantCulture) + "}";
                             }
                         }
 
@@ -512,10 +518,8 @@ public sealed class StorageAssertS3Provider
                                 System.Globalization.CultureInfo.InvariantCulture);
                             if (actualSize < expectedMinSize)
                             {
-                                failObservation = "{\"field\":\"minSize\",\"expected\":" +
-                                    System.Text.Json.JsonSerializer.Serialize(expectedMinSize.ToString(System.Globalization.CultureInfo.InvariantCulture)) +
-                                    ",\"actual\":" +
-                                    System.Text.Json.JsonSerializer.Serialize(actualSize.ToString(System.Globalization.CultureInfo.InvariantCulture)) + "}";
+                                failObservation = "{\"field\":\"minSize\",\"matched\":false,\"actualBytes\":" +
+                                    actualSize.ToString(System.Globalization.CultureInfo.InvariantCulture) + "}";
                             }
                         }
 
@@ -525,10 +529,7 @@ public sealed class StorageAssertS3Provider
                             var actualContentType = head.Headers.ContentType ?? "null";
                             if (!string.Equals(actualContentType, expectedContentType, System.StringComparison.Ordinal))
                             {
-                                failObservation = "{\"field\":\"contentType\",\"expected\":" +
-                                    System.Text.Json.JsonSerializer.Serialize(expectedContentType) +
-                                    ",\"actual\":" +
-                                    System.Text.Json.JsonSerializer.Serialize(actualContentType) + "}";
+                                failObservation = "{\"field\":\"contentType\",\"matched\":false}";
                             }
                         }
 
@@ -557,8 +558,7 @@ public sealed class StorageAssertS3Provider
                                 if (!string.Equals(actualVal, expectedVal, System.StringComparison.Ordinal))
                                 {
                                     failObservation = "{\"field\":" + System.Text.Json.JsonSerializer.Serialize("metadata." + fieldName) +
-                                        ",\"expected\":" + System.Text.Json.JsonSerializer.Serialize(expectedVal) +
-                                        ",\"actual\":" + System.Text.Json.JsonSerializer.Serialize(actualVal) + "}";
+                                        ",\"matched\":false}";
                                 }
                             }
                         }
@@ -631,11 +631,10 @@ public sealed class StorageAssertS3Provider
                                     var actualHash = System.Convert.ToHexString(actualHashBytes).ToLowerInvariant();
                                     if (!string.Equals(actualHash, expectedHash, System.StringComparison.Ordinal))
                                     {
-                                        // SHA-256 digests are safe to report verbatim: a one-way,
-                                        // fixed-length hash cannot leak body content.
-                                        failObservation = "{\"field\":\"sha256\",\"expected\":" +
-                                            System.Text.Json.JsonSerializer.Serialize(expectedHash) +
-                                            ",\"actual\":" + System.Text.Json.JsonSerializer.Serialize(actualHash) + "}";
+                                        // Keep the calculated digest, never the author-supplied
+                                        // expected text: a resolved secret need not be a digest.
+                                        failObservation = "{\"field\":\"sha256\",\"matched\":false,\"actualSha256\":" +
+                                            System.Text.Json.JsonSerializer.Serialize(actualHash) + "}";
                                     }
                                 }
 
@@ -920,10 +919,11 @@ public sealed class StorageAssertS3Provider
     /// <summary>
     /// Determines whether <paramref name="observation"/> is the
     /// <c>{"field":…,"expected":…,"actual":…}</c> mismatch shape this provider can render as an
-    /// expected-vs-observed diff (size/minSize/contentType/metadata.*/sha256 mismatches all
-    /// share this shape — mirrors <c>DbAssertMongodbProvider</c>/<c>DbAssertDynamodbProvider</c>
-    /// exactly). Other Fail shapes (exists mismatch, bodyCap, contentContains) fall back to the
-    /// renderer's plain verdict line, per <see cref="IStepDiffRenderer"/>'s documented contract.
+    /// expected-vs-observed diff in historical event streams. Current mismatch observations
+    /// omit caller-supplied expected/actual content and carry a field plus matched:false,
+    /// with non-sensitive byte counts or the calculated SHA where applicable. These safe
+    /// shapes, like exists mismatch, bodyCap and contentContains, fall back to the renderer's
+    /// plain verdict line, per <see cref="IStepDiffRenderer"/>'s documented contract.
     /// </summary>
     public bool CanRender(JsonElement observation) =>
         TryReadFieldDiff(observation, out _, out _, out _);

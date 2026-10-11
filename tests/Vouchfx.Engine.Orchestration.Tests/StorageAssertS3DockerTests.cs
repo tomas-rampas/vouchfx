@@ -7,8 +7,8 @@
 //   • StorageAssertS3DockerTests        — the "minio" kind (MinIO, bitnamilegacy/minio).
 //   • StorageAssertS3DockerS3KindTests  — the "s3" kind (RustFS, #581), in its own file.
 //
-// The provider issues exactly two S3 operations: HEAD Object (GetObjectMetadataAsync) on every
-// attempt, and GET Object (GetObjectAsync) only when sha256 or contentContains is declared.
+// The provider HEADs the object on every attempt, confirms its bucket after object404,
+// and GETs the body only when sha256 or contentContains is declared.
 // Scenarios exercised, and the operation each one drives:
 //   1. Pass    — object exists; size/contentType/metadata all match (HEAD 200; etag capture).
 //   2. Fail    — size mismatch (HEAD 200).
@@ -235,6 +235,29 @@ public abstract class StorageAssertS3DockerTestsBase
     }
 
     // ── Test cases ────────────────────────────────────────────────────────────
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    [Trait("requires", "docker")]
+    public async Task Execute_MissingBucket_ReturnsEnvironmentError_ForEitherExistenceExpectation(bool exists)
+    {
+        await using var suite = await SuiteTopology.StartAsync(
+            environment: BuildEnv(), appHostAssemblyName: AppHostAssemblyName, startupTimeout: StartupTimeout);
+        var connStr = Assert.IsType<string>(suite.DiscoveredServices[DependencyName]);
+        var model = new StorageAssertS3Model(
+            DependencyName, "missing-bucket-" + Guid.NewGuid().ToString("N"), "object",
+            new StorageExpectation(exists, null, null, null, null, null, null));
+        var vars = new Dictionary<string, object?>
+        {
+            [VarKeys.Connection(DependencyName)] = connStr,
+        };
+
+        var outcome = await RunStepAsync(model, "assert-s3-missing-bucket", vars);
+        _output.WriteLine($"Verdict: {outcome.Verdict}, Observation: {outcome.Observation}");
+        Assert.Equal(Verdict.EnvironmentError, outcome.Verdict);
+        Assert.Equal("{\"error\":\"AmazonS3Exception\"}", outcome.Observation);
+    }
 
     [Fact]
     [Trait("requires", "docker")]
