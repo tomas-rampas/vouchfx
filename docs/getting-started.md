@@ -124,7 +124,7 @@ metadata:
 environment:
   services:
     whoami:
-      image: traefik/whoami
+      image: traefik/whoami:v1.11.0
       httpPort: 80
 
 steps:
@@ -236,7 +236,7 @@ On an interactive terminal, the verdict is colour-coded and prefixed with a shap
 
 **If something goes wrong:**
 
-- **ENV_ERROR — HealthGate timeout:** the `whoami` container failed to become healthy. Check that Docker is running and can pull `traefik/whoami`. Run `docker pull traefik/whoami:latest` to warm the cache. Note that a cold image pull can trip a shorter internal DCP per-resource startup window (120 seconds is our outer gate, but DCP has internal timeouts — so pre-pulling and warming images helps on first run).
+- **ENV_ERROR — HealthGate timeout:** the `whoami` container failed to become healthy. Check that Docker is running and can pull `traefik/whoami`. Run `docker pull traefik/whoami:v1.11.0` to warm the cache. Note that a cold image pull can trip a shorter internal DCP per-resource startup window (120 seconds is our outer gate, but DCP has internal timeouts — so pre-pulling and warming images helps on first run).
 - **FAIL — assertion error:** a step assertion failed (e.g., the HTTP status was 500, not 200). You will see a diff of expected vs. actual beneath the step line. Verify the service is running and the path `/api` is correct.
 - **INCONCLUSIVE — timeout or unmet condition:** the step took longer than its timeout, or a capture expression did not match the response. Unlikely on localhost; more common with slow networks or overloaded machines.
 
@@ -503,7 +503,7 @@ Example intent JSON:
     { "id": "get-api", "type": "http.rest", "label": "GET api" },
     { "id": "check-db", "type": "db-assert.postgres" }
   ],
-  "services": [ { "name": "api", "image": "traefik/whoami" } ],
+  "services": [ { "name": "api", "image": "traefik/whoami:v1.11.0" } ],
   "dependencies": [ { "name": "db", "type": "postgres" } ]
 }
 ```

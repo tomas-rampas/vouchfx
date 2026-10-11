@@ -157,6 +157,9 @@ public sealed class ScenarioValidatorTests
         // part of the Pipeline stage: an unknown source ("bogus") must be rejected here,
         // topology-free, exactly as the run path rejects it before starting Aspire.
         const string yaml = """
+            environment:
+              services:
+                svc: { image: example/svc:1 }
             steps:
               - id: bad-secret
                 type: http.rest
@@ -172,6 +175,7 @@ public sealed class ScenarioValidatorTests
         Assert.False(result.IsValid);
         var diagnostic = Assert.Single(result.Diagnostics);
         Assert.Equal(ValidationStage.Pipeline, diagnostic.Stage);
+        Assert.Contains("unknown source 'bogus'", diagnostic.Message, StringComparison.Ordinal);
     }
 
     // ── Roslyn stage failure (script.csharp — the one real-provider route, see file header) ──

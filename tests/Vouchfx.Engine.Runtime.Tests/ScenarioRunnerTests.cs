@@ -433,7 +433,7 @@ public sealed class ScenarioRunnerTests
             environment:
               services:
                 whoami:
-                  image: traefik/whoami
+                  image: traefik/whoami:v1.11.0
             steps:
               - id: get-root
                 type: http.rest
@@ -476,7 +476,7 @@ public sealed class ScenarioRunnerTests
             environment:
               services:
                 whoami:
-                  image: traefik/whoami
+                  image: traefik/whoami:v1.11.0
             steps:
               - id: get-root-418
                 type: http.rest

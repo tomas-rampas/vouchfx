@@ -149,6 +149,7 @@ public static class ParallelSuiteRunner
     /// <param name="maxConcurrency">
     /// The maximum number of scenarios to run at once.  When <see langword="null"/> the default
     /// (<see cref="DefaultMaxConcurrency"/>) is used.  Must be ≥ 1 when supplied.
+    /// A value of 1 executes scenarios in declaration order.
     /// </param>
     /// <param name="seedBaseDirectory">
     /// Base directory for relative <c>environment.seed</c> / <c>script.csharp</c> <c>file:</c>
@@ -471,7 +472,8 @@ public static class ParallelSuiteRunner
             ? new LiveEventPump(eventsStreamPath, output)
             : null;
 
-        // Launch every scenario as a task; the gate (not the launch loop) bounds concurrency.
+        // Degree one executes slots in declaration order, including fresh-owned sequential suites.
+        // Higher degrees launch every slot; the gate bounds concurrent execution.
         // We do NOT pass `ct` to Task.Run / the launch loop in a way that would abandon tasks:
         // every launched task is included in WhenAll so its topology disposes (complete-all).
         var tasks = new Task[count];
@@ -509,6 +511,10 @@ public static class ParallelSuiteRunner
                     SecuredTargets.Enumerate(scenarios[index].Environment).ToArray(),
                     livePump,
                     ct);
+                if (degree == 1)
+                {
+                    await tasks[index].ConfigureAwait(false);
+                }
             }
 
             // Await ALL launched tasks (never fail-fast): every topology must dispose, even when
@@ -668,51 +674,11 @@ public static class ParallelSuiteRunner
         }
         catch (Exception ex)
         {
-            // Defence-in-depth: the core already maps its known failure modes to per-scenario
-            // verdicts and never throws on them.  A genuine exception ESCAPING the core is an
-            // engine/infra fault, not a product defect → synthesise an EnvironmentError slot so
-            // the gather never crashes and a real Fail is never manufactured from an infra fault.
-            //
-            // WHAT THIS CATCH CANNOT TELL APART, TRACKED AS ISSUE #466. `EnvironmentError` is the
-            // RIGHT classification for a genuine infrastructure fault and the WRONG one for an
-            // engine or provider defect, which — on a run that executed nothing — exits 0. This
-            // frame cannot distinguish the two: it sees only an exception type. Reclassifying
-            // every escape would move `EnvironmentError` semantics for real infra faults too, and
-            // `SecurityAbortKind.TopologyUnavailable` sits deliberately outside every
-            // `SecurityAssurance.Unconfirmed` disjunct, so a reclassification here would move
-            // security semantics as well. Do NOT widen this catch without reading it.
-            //
-            // THE ANSWER HAS BEEN TO NARROW WHAT CAN REACH IT, not to reclassify what does. Issue
-            // #413 closed the first known route (a throwing provider `Bind`); #466 closed the
-            // rest of `ProviderPipeline.Compile`'s provider surface the same way — `Validate`,
-            // `Resources`, `HostResources`, `Emit` and the directly-called
-            // `ICompileReferenceContributor.CompileReferenceAssemblies` (SIX `DescribeProviderFault`
-            // call sites in total, counting Bind's), plus `CsxAssembler.Assemble`, which refuses
-            // provider-EMITTED content and is guarded separately because the exception cannot name
-            // a step. Each is a `PipelineResult.Failure` returned before this frame is reached.
-            //
-            // WHAT THAT DOES AND DOES NOT LICENCE. It closes every route THROUGH
-            // `ProviderPipeline.Compile`, which is where every known escape had been. It is NOT a
-            // claim that no provider code can ever reach this frame again: a provider also runs
-            // inside the compiled CSX at step-execution time, on the far side of the topology, and
-            // that is a different frame with its own handling. The honest statement is the narrow
-            // one — the compile-time provider surface is closed — and what still arrives here is
-            // an engine fault in a frame no guard covers, or a genuine infrastructure fault, which
-            // is what this classification is FOR.
-            //
-            // RENDER-TIME PROVIDER CODE IS A THIRD, SEPARATELY-HANDLED SURFACE (issue #485), and
-            // it is named here because a reader who stops at "the compile-time provider surface is
-            // closed" over-reads it into "provider code cannot break a run". `IStepDiffRenderer`
-            // is provider code that runs at REPORTING time — after this gather has joined and
-            // after every verdict is fixed — from `ScenarioRunner.BuildDiffLookup`'s closure, on
-            // the render thread rather than in any slot. It could not reach THIS frame even
-            // before it was guarded: it threw past `TerminalRenderer.Render` in `RenderAndAggregate`
-            // below, which is outside every per-slot catch and ahead of the HTML / JUnit /
-            // `--events` writes, so the cost was every report artefact for the whole run rather
-            // than a mis-classified slot. That is now contained AT the closure — one guard per
-            // member, one named diagnostic per (kind, member, exception type) onto `output` — so
-            // it neither reaches here nor reaches the renderers. Read BuildDiffLookup's remarks
-            // before adding a fourth surface to this list.
+            // An unclassified escape can still be an acquisition/infrastructure failure. The
+            // topology-free pipeline and the early reuse-binding frame now produce marked
+            // Inconclusive results where they know the phase (#486); this slot must not guess
+            // that provenance for exceptions raised after acquisition began. Provider render
+            // faults remain contained separately by BuildDiffLookup at reporting time.
             //
             // Leave a minimal, redaction-safe trace (exception TYPE only, never the message — §17)
             // on this slot's raw writer so a genuine engine fault is at least diagnosable; the raw
@@ -733,16 +699,8 @@ public static class ParallelSuiteRunner
                 .Declaring(declared)
                 .Refusing(SecurityAbortKind.TopologyUnavailable);
 
-            // ISSUE #480'S MARKER IS DELIBERATELY LEFT `false` HERE, AND THAT IS ISSUE #486's
-            // PROBLEM RATHER THAN AN OVERSIGHT. This arm is the one place in the run that cannot
-            // say whether what escaped was an engine defect or a genuine infrastructure fault —
-            // it sees an exception type and nothing else, which is the same limitation the
-            // paragraph above records for the EnvironmentError classification itself. Setting the
-            // marker here would redden every suite whose unrelated container fell over mid-run;
-            // leaving it false leaves this one route uncovered by #480, which is exactly what
-            // #486 tracks and what a phase marker on the escape — not a guess at this frame —
-            // would close. The routes #480 DOES close are the ones where the engine knows it was
-            // inside provider code, because a guard was there to say so.
+            // No phase evidence reached this fallback. Preserve the optional infrastructure
+            // policy; known pre-topology defects set the marker at their owning frames instead.
             slotProviderOrEngineFaults[index] = false;
             livePump?.PostRange(slotBuffers[index]);
         }

@@ -26,7 +26,7 @@ environment:
     # The system under test: a single traefik/whoami container listening on port 80.
     # `httpPort` tells the engine which container port to expose and health-gate.
     whoami:
-      image: traefik/whoami
+      image: traefik/whoami:v1.11.0
       httpPort: 80
 
 steps:

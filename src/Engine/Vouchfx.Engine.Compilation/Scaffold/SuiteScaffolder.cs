@@ -29,7 +29,7 @@ public static partial class SuiteScaffolder
     private static partial Regex StepIdPattern();
 
     /// <summary>Default OCI image for scaffolded services.</summary>
-    public const string DefaultServiceImage = "traefik/whoami";
+    public const string DefaultServiceImage = "traefik/whoami:v1.11.0";
 
     /// <summary>Fallback logical target when no service/dependency name is available.</summary>
     public const string FallbackTargetName = "scaffold-target";

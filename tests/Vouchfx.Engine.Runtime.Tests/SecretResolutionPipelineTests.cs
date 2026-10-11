@@ -58,7 +58,7 @@ public sealed class SecretResolutionPipelineTests
         environment:
           services:
             api:
-              image: traefik/whoami
+              image: traefik/whoami:v1.11.0
               httpPort: 80
 
         steps:

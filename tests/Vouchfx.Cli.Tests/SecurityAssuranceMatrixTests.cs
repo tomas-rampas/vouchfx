@@ -1205,7 +1205,7 @@ public sealed class SecurityAssuranceMatrixTests : IDisposable
     }
 
     [Fact]
-    public async Task Row11_SharedEnvironmentDivergence_Secured_ExitsEnvironmentError()
+    public async Task Row11_SharedEnvironmentDivergence_Secured_ExitsInconclusive()
     {
         var dir = WriteDivergentEnvironmentSuite(
             "r11-secured", SecurityBlock(), SecurityBlock());
@@ -1214,7 +1214,7 @@ public sealed class SecurityAssuranceMatrixTests : IDisposable
         var exitCode = await RunAsync(dir, parallel: null, sw);
 
         Assert.Contains("must share one topology", sw.ToString(), StringComparison.Ordinal);
-        Assert.Equal(ExitCodes.EnvironmentError, exitCode);
+        Assert.Equal(ExitCodes.Inconclusive, exitCode);
     }
 
     [Fact]
@@ -1235,11 +1235,11 @@ public sealed class SecurityAssuranceMatrixTests : IDisposable
     /// SECOND scenario declares <c>security</c>. The suite-level walk used to read
     /// <c>scenarios[0].Environment</c> alone, so this document reached the divergence gate with an
     /// empty <c>Declared</c> and exited 0 — while the same two files with the security block in the
-    /// other one exited 3. A rename of either file flipped a CI build's colour, which is the exact
+    /// other one exited 3 before the Inconclusive taxonomy repair. A rename of either file flipped a CI build's colour, which is the exact
     /// false negative REQ-018 exists to remove: security declared, never exercised, build green.
     /// </summary>
     [Fact]
-    public async Task Row11_SharedEnvironmentDivergence_OnlyTheLaterScenarioSecured_ExitsEnvironmentError()
+    public async Task Row11_SharedEnvironmentDivergence_OnlyTheLaterScenarioSecured_ExitsInconclusive()
     {
         var dir = WriteDivergentEnvironmentSuite(
             "r11-mixed", firstSecurity: null, secondSecurity: SecurityBlock());
@@ -1248,6 +1248,6 @@ public sealed class SecurityAssuranceMatrixTests : IDisposable
         var exitCode = await RunAsync(dir, parallel: null, sw);
 
         Assert.Contains("must share one topology", sw.ToString(), StringComparison.Ordinal);
-        Assert.Equal(ExitCodes.EnvironmentError, exitCode);
+        Assert.Equal(ExitCodes.Inconclusive, exitCode);
     }
 }

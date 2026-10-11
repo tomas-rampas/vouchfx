@@ -18,9 +18,9 @@
 // Scope note: this validates the host-filesystem shape of declared paths, plus (slice D fix
 // round one) the one SERVICE SHAPE that can never be secured — a `project`-form service, which
 // the schema accepts and EnvironmentMapper then rejects at topology-build time. It does not
-// resolve `profile`/`endpoint` (REQ-002's requiredness is enforced by the JSON Schema layer
-// alone), does not probe the endpoint (REQ-005, a later PR), and does not orchestrate the
-// actual container-file copy (REQ-016, a later PR).
+// resolve endpoint names or probe the endpoint; requiredness is enforced by the schema.
+// It also diagnoses unsupported references in endpoint/container-target fields and an
+// inert tls-only client passphrase before any secret is resolved.
 
 using Vouchfx.Engine.Abstractions.Secrets;
 using Vouchfx.Engine.Authoring.Ast;
@@ -216,6 +216,29 @@ internal static class EnvironmentSecurityValidator
             return null;
         }
 
+        var endpointFailure = ValidateUnsupportedSecretReference(security.Endpoint,
+            $"environment.{ownerKindPlural}.{ownerName}.security.endpoint",
+            "select a declared endpoint name or a numeric port");
+        if (endpointFailure is not null)
+        {
+            return endpointFailure;
+        }
+
+        // Client material under tls already has a contradiction guard in the client helpers.
+        // Diagnose the remaining inert shape here, without reading a passphrase or changing
+        // that guard's precedence: tls with a passphrase but no client identity to unlock.
+        if (security.Profile == "tls" && security.ClientKeyPassword is not null
+            && security.ClientCert is null && security.ClientKey is null)
+        {
+            return new ValidationFailure(
+                $"environment.{ownerKindPlural}.{ownerName}.security.clientKeyPassword: "
+                + "profile 'tls' presents no client identity, so 'clientKeyPassword' is not used. "
+                + "Remove it, or use 'profile: mtls' with matching 'clientCert' and 'clientKey' files.")
+            {
+                IsSecurityPreflight = true,
+            };
+        }
+
         var failure =
             ValidatePath(security.CaCert, "caCert", ownerKindPlural, ownerName, resolvedSuiteDirectory) ??
             ValidatePath(security.ClientCert, "clientCert", ownerKindPlural, ownerName, resolvedSuiteDirectory) ??
@@ -252,6 +275,22 @@ internal static class EnvironmentSecurityValidator
         return null;
     }
 
+    private static ValidationFailure? ValidateUnsupportedSecretReference(
+        string? value, string fieldPath, string remedy)
+    {
+        if (value?.Contains(SecretReference.Sigil, StringComparison.Ordinal) != true)
+        {
+            return null;
+        }
+
+        return new ValidationFailure(
+            $"{fieldPath}: uses secret-reference syntax ('{SecretReference.Sigil}'). "
+            + $"Secret references are unsupported here; {remedy}.")
+        {
+            IsSecurityPreflight = true,
+        };
+    }
+
     /// <summary>
     /// Validates one <c>serverArtifacts[].target</c>: an absolute in-container path naming a FILE,
     /// declared at most once on this owner (REQ-016).
@@ -278,6 +317,13 @@ internal static class EnvironmentSecurityValidator
         string? target, int index, string ownerKindPlural, string ownerName, HashSet<string> claimedTargets)
     {
         var fieldPath = $"environment.{ownerKindPlural}.{ownerName}.security.serverArtifacts[{index}].target";
+
+        var referenceFailure = ValidateUnsupportedSecretReference(target, fieldPath,
+            "give a literal absolute path inside the container");
+        if (referenceFailure is not null)
+        {
+            return referenceFailure;
+        }
 
         if (string.IsNullOrWhiteSpace(target) || target[0] != '/')
         {
@@ -395,9 +441,8 @@ internal static class EnvironmentSecurityValidator
     /// <strong>Not every path-valued field in the block.</strong>
     /// <c>serverArtifacts[].target</c> is also path-valued but is a CONTAINER path, validated by
     /// <see cref="ValidateArtifactTarget"/> against POSIX rules and never resolved against the
-    /// host filesystem — so it does not reach here and carries no sigil check. REQ-011 scopes
-    /// itself to the four host paths, so that is conformant rather than an omission; the gap is
-    /// filed as issue #397, not closed here.
+    /// host filesystem — so it does not reach here. Its own validation rejects secret-reference
+    /// syntax before applying container-path rules.
     /// </para>
     /// </remarks>
     private static ValidationFailure? ValidatePath(

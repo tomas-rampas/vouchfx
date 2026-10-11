@@ -2008,8 +2008,9 @@ internal static class RunCommand
         //
         // ONE ROUTE REMAINS UNCOVERED, and it is named rather than papered over: an exception that
         // escapes the core entirely reaches ParallelSuiteRunner's per-slot catch-all, which sees a
-        // type and cannot tell an engine defect from a container that fell over. That slot leaves
-        // this marker false. Closing it needs a phase marker on the escape, which is issue #486.
+        // type and cannot classify an unmarked acquisition escape. The topology-free pipeline
+        // and early environment reuse-binding frames now retain their own phase evidence (#486),
+        // so their unexpected faults arrive with this marker; genuine acquisition errors do not.
         //
         // A SECOND PROVIDER SURFACE SITS OUTSIDE THIS RULE, AND IT IS INVISIBLE TO THE EXIT CODE
         // RATHER THAN COVERED BY IT. It is named because the headline above invites the reading

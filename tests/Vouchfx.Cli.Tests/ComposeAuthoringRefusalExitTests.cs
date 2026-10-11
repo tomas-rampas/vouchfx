@@ -135,8 +135,9 @@ public sealed class ComposeAuthoringRefusalExitTests
                     type: script.csharp
                     code: 'return;'
                 """);
-            // Cancellation cases keep the deliberate short deadline; ordinary faults must reach their native seam.
-            var startupTimeoutSeconds = fault is "post-up-deadline" or "caller-cancel" ? 1 : 30;
+            // Only the deadline case uses a short startup budget; caller cancellation is
+            // triggered explicitly by fake up after native startup is reached.
+            var startupTimeoutSeconds = fault == "post-up-deadline" ? 1 : 30;
             File.WriteAllText(Path.Combine(Directory, "environment.compose.yaml"), $$"""
                 version: 1
                 files: [./compose.yaml]

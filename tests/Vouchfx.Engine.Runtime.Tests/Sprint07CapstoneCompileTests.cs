@@ -131,7 +131,7 @@ public sealed class Sprint07CapstoneCompileTests
         environment:
           services:
             sut:
-              image: traefik/whoami
+              image: traefik/whoami:v1.11.0
               httpPort: 80
 
         steps:

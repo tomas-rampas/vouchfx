@@ -1124,6 +1124,8 @@ public static class EnvironmentMapper
                     nameof(env));
             }
 
+            EnvironmentImageValidator.ValidateService(name, spec, nameof(env));
+
             // ── REQ-006 (SERVICE-FORM FIELDS): the two shapes where a field is meaningless on
             //    the form it sits on ──
             //
@@ -1421,127 +1423,7 @@ public static class EnvironmentMapper
                 throw new ArgumentException(message, nameof(env));
             }
 
-            // feat/dependency-image-override — decided precedence (§5): an 'image:' that already
-            // carries its own tag or digest, together with a sibling 'version:', is ambiguous —
-            // reject it outright rather than silently picking one, which is how customers lose
-            // hours chasing the wrong image. Runs after the type check above so the dependency is
-            // already known-registered; ImageReferenceParser.Parse itself throws ArgumentException
-            // on a malformed 'image:' string, which is left to surface unwrapped.
-            //
-            // C4 fix: a dangling 'image:' (no value) or an explicit 'image: ""' must be treated
-            // identically to 'image' being absent altogether — mirrors the MN3 fix for Version a
-            // few lines below (and ApplyImageOverrides' own mirror of this same guard). Before
-            // this fix the guard was 'spec.Image is not null'.
-            //
-            // This IsNullOrEmpty check is LOAD-BEARING, not merely defensive: YamlDocumentParser.
-            // GetScalarOrPlainNull (§66aef95-extension) only collapses PLAIN "no real content"
-            // spellings to null — a dangling key, and the four YAML-null tokens. A QUOTED
-            // 'image: ""' is a real, common AUTHORED shape (e.g. CI templating that renders an
-            // unset variable into a quoted string) that the parser deliberately leaves as the
-            // literal "" — quoting is the author's explicit opt-out from null-token resolution
-            // (see GetScalarOrPlainNull's own remarks). This guard is what actually catches THAT
-            // shape; do not simplify it to 'is not null' on the assumption "the parser already
-            // handles every empty case" — it does not, for a quoted empty string, and narrowing
-            // this guard would reintroduce the exact ArgumentException this fix closes for that
-            // authored input. (It also covers a hand-constructed DependencySpec carrying ""
-            // directly, as several tests in this area do, but that is the secondary reason.)
-            //
-            // Why "" is absorbed here while "   " (below) is rejected, though both can come from
-            // the same CI-templating accident: "" has a CONTRACT-level meaning — empty means
-            // absent, matching Version's MN3 guard and the schema's own dangling-key promise —
-            // whereas whitespace-only has none and is indistinguishable from a typo, so it gets
-            // the loud rejection.
-            //
-            // REJECTED (do not re-introduce): widening this guard to IsNullOrWhiteSpace, on the
-            // reasoning "match what ImageReferenceParser.Parse itself rejects, so spec.Image can
-            // never reach Parse in a state Parse would reject". That rationale IS the regression
-            // it looks like it prevents: pre-filtering exactly the inputs Parse rejects converts
-            // Parse's loud, author-visible rejection into a silent intent-discard. A realistic
-            // trigger — CI templating expanding an unset variable into 'image: "   "' — would
-            // silently fall back to the provider's default image, exactly the "no author-visible
-            // signal" failure mode the MN5 design comment in ImageReference.cs explicitly rejects
-            // trimming for. The 66aef95 contract covers a dangling key and YAML's explicit null
-            // only; whitespace-only text is neither, and must keep failing loudly via Parse's own
-            // IsNullOrWhiteSpace check below — which is exactly what IsNullOrEmpty here preserves.
-            if (!string.IsNullOrEmpty(spec.Image))
-            {
-                var parsedImage = ImageReferenceParser.Parse(spec.Image);
-
-                // MINOR-2 fix (independent re-review, feat/dependency-image-override): the
-                // digest's own algorithm prefix must be validated HERE, in this eager pass, not
-                // inside ApplyImageOverrides. Reproduced before the fix: 'image: mongo@sha512:...'
-                // and 'image: mongo@abcdef0123' (a digest with no algorithm prefix at all — a
-                // plausible typo) both let Map() return successfully, and were rejected only far
-                // downstream, inside the 'configure' closure, AFTER earlier dependencies in
-                // iteration order had already mutated the builder — violating the "reject before
-                // any builder mutation" discipline every other malformed-'image:' case in this
-                // loop (and this method's own doc comment) is held to.
-                // ImageReferenceParser.Parse only validates that the hash BODY is present and
-                // hex; it deliberately does not care which algorithm prefixes the digest, so that
-                // check alone does not catch this. 'sha256:' is the only digest algorithm
-                // Aspire's ContainerImageAnnotation.SHA256 field supports (confirmed by
-                // decompiling Aspire.Hosting 13.4.2 — see ApplyImageOverrides' own remarks at its
-                // digest branch), so any other (or absent) prefix is rejected eagerly here
-                // instead. ApplyImageOverrides no longer re-checks this — every call site is
-                // reached only after this loop has already validated the same DependencySpec.
-                if (parsedImage.Digest is not null &&
-                    !parsedImage.Digest.StartsWith("sha256:", StringComparison.Ordinal))
-                {
-                    throw new ArgumentException(
-                        $"Dependency '{name}' image digest '{parsedImage.Digest}' does not use " +
-                        "the 'sha256:' algorithm prefix - the only digest algorithm Aspire's " +
-                        "container image annotation supports.",
-                        nameof(env));
-                }
-
-                // MN3 fix: treat 'version: ""' the same as 'version:' absent everywhere this
-                // method reasons about it — the mutation site (ApplyImageOverrides) does the
-                // same normalisation, so both branches agree on what "no version" means.
-                // IsNullOrEmpty, deliberately NOT IsNullOrWhiteSpace: a whitespace-only
-                // 'version: "   "' is real, if useless, text the author actually wrote — it
-                // becomes a literal (garbage) container tag, unchanged from origin/main and
-                // outside the 66aef95 contract's scope (that contract covers a dangling key and
-                // YAML's explicit null only). A prior revision of this fix widened this guard to
-                // IsNullOrWhiteSpace "for symmetry with Image" — see the REJECTED note on the
-                // Image guard above for why that symmetry was itself a regression.
-                var hasVersion = !string.IsNullOrEmpty(spec.Version);
-
-                if ((parsedImage.Tag is not null || parsedImage.Digest is not null) && hasVersion)
-                {
-                    var carries = parsedImage.Digest is not null
-                        ? $"digest '{parsedImage.Digest}'"
-                        : $"tag '{parsedImage.Tag}'";
-                    throw new ArgumentException(
-                        $"Dependency '{name}' sets both 'image: {spec.Image}' (which already " +
-                        $"carries a {carries}) and 'version: {spec.Version}'. This is ambiguous - " +
-                        "specify the tag/digest in exactly one place: either embed it in 'image:', " +
-                        "or use 'version:' alone.",
-                        nameof(env));
-                }
-
-                // M3 fix: a tagless, digestless 'image:' with no sibling 'version:' would
-                // otherwise reach ApplyImageOverrides' WithImage(repository) call with no tag
-                // argument at all — confirmed empirically against the pinned Aspire.Hosting
-                // 13.4.2 packages, that overload writes ContainerImageAnnotation.Tag = "latest",
-                // silently discarding whatever pinned default tag the provider's own AddXxx/
-                // AddContainer registration established. This violates the §4 determinism
-                // invariant every AddContainer-based registration in this file restates verbatim
-                // three lines above its own call ("Pin a stable tag for determinism (§4): never
-                // float on 'latest'"), it is the single most obvious thing an author will type
-                // (a bare 'image: mongo'), and — before this fix — it had no test and no
-                // documentation. Reject it eagerly, before any builder mutation, exactly like
-                // the ambiguity check above.
-                if (parsedImage.Tag is null && parsedImage.Digest is null && !hasVersion)
-                {
-                    throw new ArgumentException(
-                        $"Dependency '{name}' sets 'image: {spec.Image}' with no tag or digest, " +
-                        "and no sibling 'version:' either. This would silently float on the " +
-                        "':latest' tag, defeating the section 4 determinism invariant. Either embed a " +
-                        $"tag in 'image:' (e.g. 'image: {spec.Image}:<tag>'), or add a " +
-                        "'version:' field.",
-                        nameof(env));
-                }
-            }
+            EnvironmentImageValidator.ValidateDependency(name, spec, nameof(env));
         }
 
         // feat/dependency-image-override — validate the env-level imagePullPolicy eagerly,

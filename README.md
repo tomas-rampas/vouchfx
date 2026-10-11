@@ -54,7 +54,7 @@ metadata:
 environment:
   services:
     whoami:                    # the system under test
-      image: traefik/whoami
+      image: traefik/whoami:v1.11.0
       httpPort: 80             # health-gated before any step runs
 
 steps:

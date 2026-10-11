@@ -24,6 +24,7 @@ public sealed class EnvironmentDriverRegistry
     {
         if (environment?.Source is not { } source)
         {
+            EnvironmentImageValidator.Validate(environment);
             var services = environment?.Services?.ToDictionary(p => p.Key,
                 p => new DeclaredServiceInfo(ServiceEndpointNaming.DeclaredEndpointNames(p.Value)), StringComparer.Ordinal)
                 ?? new Dictionary<string, DeclaredServiceInfo>();

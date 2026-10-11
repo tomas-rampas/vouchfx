@@ -376,7 +376,7 @@ public sealed class ScenarioCauseArtefactTests
             environment:
               services:
                 whoami:
-                  image: traefik/whoami
+                  image: traefik/whoami:v1.11.0
             steps:
               - id: get-root
                 type: http.rest
@@ -393,7 +393,7 @@ public sealed class ScenarioCauseArtefactTests
             environment:
               services:
                 whoami:
-                  image: traefik/whoami
+                  image: traefik/whoami:v1.11.0
             steps:
               - id: get-root
                 type: http.rest

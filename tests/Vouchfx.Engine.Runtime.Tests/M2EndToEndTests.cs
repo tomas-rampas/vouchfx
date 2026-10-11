@@ -97,7 +97,7 @@ public sealed class M2EndToEndTests
         environment:
           services:
             whoami:
-              image: traefik/whoami
+              image: traefik/whoami:v1.11.0
               httpPort: 80
           dependencies:
             m2db:

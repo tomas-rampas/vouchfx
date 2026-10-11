@@ -45,7 +45,7 @@ environment:
     # The system under test: traefik/whoami — a tiny HTTP service whose GET /api
     # response includes the container hostname (our JSONPath capture target).
     whoami:
-      image: traefik/whoami
+      image: traefik/whoami:v1.11.0
       httpPort: 80
 
   dependencies:

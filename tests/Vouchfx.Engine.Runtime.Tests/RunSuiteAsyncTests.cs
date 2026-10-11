@@ -951,7 +951,7 @@ public sealed class RunSuiteAsyncTests
     /// compilations. Issue #451 moved it BELOW per-scenario schema validation, so it now shares
     /// <c>StampWhereUnjudged</c> with its neighbours. Neither move touches THIS shape: both
     /// documents here are schema-valid and neither carries an early verdict, so the stamp produces
-    /// exactly the list the synthesis did — two scenarios, both <see cref="Verdict.EnvironmentError"/>,
+    /// the same two scenarios, now both <see cref="Verdict.Inconclusive"/> authoring refusals,
     /// both carrying the divergence as their cause.
     /// </para>
     /// </remarks>
@@ -1009,24 +1009,23 @@ public sealed class RunSuiteAsyncTests
             Assert.True(File.Exists(htmlPath), "…and the requested HTML report.");
             Assert.True(File.Exists(eventsPath), "…and the requested events stream.");
 
-            // Both scenarios present, both EnvironmentError — JUnit's <error> primitive, not
-            // <skipped>, which is what makes CountsFor's non-Inconclusive arm a live path.
+            // Both scenarios are authoring-refused Inconclusive outcomes: JUnit skips both.
             var xml = File.ReadAllText(junitPath);
             Assert.Contains("tests=\"2\"", xml, StringComparison.Ordinal);
-            Assert.Contains("errors=\"2\"", xml, StringComparison.Ordinal);
+            Assert.Contains("skipped=\"2\"", xml, StringComparison.Ordinal);
             Assert.Contains("<testcase name=\"env-a\"", xml, StringComparison.Ordinal);
             Assert.Contains("<testcase name=\"env-b\"", xml, StringComparison.Ordinal);
             Assert.Equal(
                 2,
-                CountOccurrences(xml, "<property name=\"vouchfx.verdict\" value=\"ENV_ERROR\"/>"));
+                CountOccurrences(xml, "<property name=\"vouchfx.verdict\" value=\"INCONCLUSIVE\"/>"));
 
             Assert.Equal(4, File.ReadAllLines(eventsPath).Length);
 
-            // Verdict and assurance are UNCHANGED by the reroute — only the artefacts are new.
-            Assert.Equal(Verdict.EnvironmentError, result.Verdict);
+            // Verdict follows authoring taxonomy; the unconfirmed security assurance is retained.
+            Assert.Equal(Verdict.Inconclusive, result.Verdict);
             Assert.True(result.Assurance.Unconfirmed);
             Assert.Equal(2, result.ScenarioVerdicts.Count);
-            Assert.All(result.ScenarioVerdicts, entry => Assert.Equal(Verdict.EnvironmentError, entry.Verdict));
+            Assert.All(result.ScenarioVerdicts, entry => Assert.Equal(Verdict.Inconclusive, entry.Verdict));
 
             // One print, not two: the divergence is one suite-level fact, and it is also stamped as
             // each scenario's own cause.
@@ -1383,7 +1382,7 @@ public sealed class RunSuiteAsyncTests
         // third scenario, the one that actually differs from the baseline.
         Assert.Contains(DivergentEnvironmentMarker, rendered, StringComparison.Ordinal);
         Assert.Contains("'divergent'", rendered, StringComparison.Ordinal);
-        Assert.Equal(Verdict.EnvironmentError, result.Verdict);
+        Assert.Equal(Verdict.Inconclusive, result.Verdict);
 
         // Before any container: the guard still returns above the topology build.
         Assert.DoesNotContain(PreTopologyMarker, rendered, StringComparison.Ordinal);
@@ -2224,7 +2223,7 @@ public sealed class RunSuiteAsyncTests
     /// </para>
     /// </remarks>
     [Theory]
-    [InlineData(PreTopologyDoor.SharedEnvironmentDivergence, Verdict.EnvironmentError)]
+    [InlineData(PreTopologyDoor.SharedEnvironmentDivergence, Verdict.Inconclusive)]
     [InlineData(PreTopologyDoor.ProtocolConflict, Verdict.Inconclusive)]
     [InlineData(PreTopologyDoor.EnvironmentMapperArgumentFault, Verdict.Inconclusive)]
     public async Task RunSuiteAsync_UnsecuredScenariosBesideASecuredUnbuiltDocument_RaisesAtEveryPreTopologyDoor(

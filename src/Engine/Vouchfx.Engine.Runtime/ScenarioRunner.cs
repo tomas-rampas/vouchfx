@@ -1012,7 +1012,7 @@ public static class ScenarioRunner
         // a step-secret-only document pays for, is recorded on RunPreTopologyAuthoringDoor. What is
         // local to THIS site is only what it does with the answer, below.
         var (pipelineResult, authoringFault) =
-            RunPreTopologyAuthoringDoor(ast, registry, seedBaseDirectory, environmentDrivers);
+            RunPreTopologyAuthoringDoor(ast, registry, seedBaseDirectory, environmentDrivers, cancellationToken);
         if (authoringFault is not null)
         {
             var nowAuthoring = DateTimeOffset.UtcNow;
@@ -1551,9 +1551,42 @@ public static class ScenarioRunner
         // acquires a fresh lease and disposes it before the next slot (concurrency one).
         if (scenarioBaseDirectories is not null && scenarioBaseDirectories.Count != scenarios.Count)
             throw new ArgumentException("scenarioBaseDirectories must have the same length as scenarios.", nameof(scenarioBaseDirectories));
-        if (scenarios.Select((ast, index) => RequiresRecreation(ast.Environment,
-            environmentDrivers ?? EnvironmentDriverRegistry.BuiltIn,
-            scenarioBaseDirectories?[index] ?? seedBaseDirectory)).Any(recreate => recreate))
+        if (scenarios.Count != 0 && (scenarioNames.Count != scenarios.Count || yamlTexts.Count != scenarios.Count))
+            throw new ArgumentException("scenarios, scenarioNames and yamlTexts must have the same length.", nameof(scenarios));
+        bool requiresRecreation;
+        try
+        {
+            requiresRecreation = scenarios.Select((ast, index) => RequiresRecreation(ast.Environment,
+                environmentDrivers ?? EnvironmentDriverRegistry.BuiltIn,
+                scenarioBaseDirectories?[index] ?? seedBaseDirectory)).Any(recreate => recreate);
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            // The reuse-policy probe binds before the compile door. Keep its failure at this
+            // known pre-acquisition frame; retrying Bind could erase a transient engine fault.
+            var failure = ProviderPipeline.RefusePreTopologyFault("environment reuse binding", ex);
+            var refused = scenarios.Select((ast, index) => (
+                ScenarioName: scenarioNames[index], Ast: ast, Pipeline: (PipelineResult?)failure,
+                EarlyVerdict: (Verdict?)Verdict.Inconclusive, EarlyMessage: (string?)failure.Failure!.Message,
+                ScenarioBaseDirectory: scenarioBaseDirectories?[index] ?? seedBaseDirectory)).ToList();
+            var refusedAssurance = SecurityAssurance.None
+                .Declaring(scenarios.SelectMany(ast => SecuredTargets.Enumerate(ast.Environment)).ToList())
+                .Refusing(SecurityAbortKind.AuthoringFault);
+            var refusalRegistry = StepKindRegistry.BuildAndFreeze(providerAssemblies);
+            return await CompleteWithoutTopologyAsync(refused,
+                SecurityAssurance.Worse(refusedAssurance,
+                    AssureUnbuiltDocumentsAlone(unbuiltDocuments, providerAssemblies)),
+                output, decorate, BuildDiffLookup(refusalRegistry, output),
+                htmlReportPath, junitReportPath, eventsReportPath, eventsStreamPath,
+                runSecretLedger: null, runPathLedger: null,
+                providerOrEngineFaultObserved: true, authoringRefusalObserved: true).ConfigureAwait(false);
+        }
+        if (requiresRecreation)
         {
             return await ParallelSuiteRunner.RunParallelAsync(scenarios, scenarioNames, yamlTexts,
                 providerAssemblies, appHostAssemblyName, output, maxConcurrency: 1,
@@ -1941,7 +1974,7 @@ public static class ScenarioRunner
                     $"RunSuiteAsync: scenario '{scenarioNames[i]}' declares a different " +
                     $"environment block than scenario '{scenarioNames[baselineIndex]}'.  All " +
                     "scenarios in a suite must share one topology.  Suite aborted with " +
-                    "EnvironmentError.";
+                    "Inconclusive (authoring refusal).";
 
                 // Issue #266, Item 4: the scenario names are author-controlled (a scenario's
                 // metadata.name or file-derived identity) — sanitise before writing. Printed HERE,
@@ -1985,7 +2018,7 @@ public static class ScenarioRunner
                 // needs a container).
                 return await CompleteWithoutTopologyAsync(
                         StampWhereUnjudged(
-                            compilations, Verdict.EnvironmentError, divergentEnvironment),
+                            compilations, Verdict.Inconclusive, divergentEnvironment),
                         WithUnbuiltDocuments(assurance.Refusing(SecurityAbortKind.AuthoringFault)),
                         output,
                         decorate,
@@ -2055,7 +2088,7 @@ public static class ScenarioRunner
             // `--watch` iteration plan. The two clauses above and the ordering they describe are
             // properties of RunPreTopologyAuthoringDoor now, not of this loop.
             var (pipelineResult, authoringFault) =
-                RunPreTopologyAuthoringDoor(ast, registry, scenarioBaseDirectory, environmentDrivers);
+                RunPreTopologyAuthoringDoor(ast, registry, scenarioBaseDirectory, environmentDrivers, cancellationToken);
             if (authoringFault is not null)
             {
                 authoringRefusalObserved = true;
@@ -3367,8 +3400,8 @@ public static class ScenarioRunner
     /// of anything — they are the scenario's own single outcome expressed in the shape the wire
     /// contract's <c>counts</c> object has. Every stamp WAS Inconclusive when this was extracted,
     /// which is why it reproduced the previously-hardcoded <c>{ Inconclusive = 1 }</c> byte for
-    /// byte; the shared-<c>environment</c> divergence guard now stamps
-    /// <see cref="Verdict.EnvironmentError"/> and is the live path that needs the other arm.
+    /// byte. Other without-topology failures, including genuine acquisition failures,
+    /// use their own verdict arm; environment divergence is an Inconclusive authoring refusal.
     /// </remarks>
     private static VerdictCounts CountsFor(Verdict verdict) => verdict switch
     {
@@ -3379,111 +3412,29 @@ public static class ScenarioRunner
     };
 
     /// <summary>
-    /// THE merged pre-topology authoring door (#399, #412): the provider-pipeline compile and the
-    /// secret-reference walk, both run, neither short-circuiting the other, joined into one
-    /// diagnostic.
+    /// Runs the shared topology-free pipeline and secret-reference walk. Independent findings
+    /// remain typed; run/watch join them only when writing their existing textual cause.
     /// </summary>
-    /// <param name="ast">The scenario to gate.</param>
-    /// <param name="registry">The frozen provider registry.</param>
-    /// <param name="baseDirectory">
-    /// The directory relative step file fields (and <c>security</c> artefact paths) resolve
-    /// against — THIS scenario's own directory (#268), which for the shared-topology suite path is
-    /// not necessarily the suite-wide seed root.
-    /// </param>
-    /// <returns>
-    /// The pipeline result (always computed, even when a fault is reported) and the joined fault,
-    /// or <see langword="null"/> when the document passed both walks.
-    /// </returns>
     /// <remarks>
-    /// <para>
-    /// <strong>Extracted so "which fault an author sees first" cannot be a property of which path
-    /// they took.</strong> Before #399 the two verdict-producing paths ran the two walks in opposite
-    /// orders and each returned at its first fault, so the same document was diagnosed differently
-    /// by <c>run</c> and by <c>run --parallel</c>. That was fixed by writing the merged door out at
-    /// both sites; #412 then found the retired ordering surviving in a THIRD spelling on the
-    /// <c>--watch</c> seam, which is what a duplicated door is for. There is now one.
-    /// </para>
-    /// <para>
-    /// <strong>A document whose only fault is a step-secret fault still pays a full in-memory CSX
-    /// emit, which is then thrown away.</strong> Recorded so it is not "optimised" back into a
-    /// short-circuit: guarding the <c>Compile</c> call on <c>stepSecretFault is null</c> restores
-    /// exactly the divergence #399 was filed for, silently, because both paths would still refuse.
-    /// The cost is bounded — one in-memory emit for a scenario that is about to be refused; no
-    /// topology, no container, no Roslyn ALC load.
-    /// </para>
-    /// <para>
-    /// <strong>The <c>fromSecurityDeclaration</c> out-value is discarded</strong>, and that is the
-    /// rule rather than an oversight: a secured document refused before any container started is
-    /// unconfirmable whatever the fault was, and an unsecured one is not, whatever the fault was.
-    /// Callers that derive REQ-018's signal do so from the refusal, not from the fault's shape;
-    /// <c>--watch</c> derives none at all. The helper keeps the out-parameter for its own tests.
-    /// </para>
-    /// <para>
-    /// <strong>A provider whose <c>Bind</c> threw arrives here as a <c>PipelineResult.Failure</c></strong>
-    /// (#413) rather than as an exception unwinding past the door. It is a provider defect and not
-    /// an authoring fault, but the taxonomy answer is the same: nothing compiled, nothing ran.
-    /// </para>
+    /// Both walks run even when one refuses the document. Unexpected pipeline escapes carry
+    /// engine-fault provenance from the frame that owns that phase; actual caller cancellation
+    /// propagates. Secret validation never resolves a reference and preserves withholding.
     /// </remarks>
-    internal static (PipelineResult Pipeline, string? Fault) RunPreTopologyAuthoringDoor(
+    internal static PreTopologyAuthoringResult RunPreTopologyAuthoringDoor(
         ScenarioAst ast, StepKindRegistry registry, string? baseDirectory,
-        EnvironmentDriverRegistry? environmentDrivers = null)
+        EnvironmentDriverRegistry? environmentDrivers = null,
+        CancellationToken cancellationToken = default)
     {
         var pipelineResult = ProviderPipeline.Compile(ast, registry, SuiteNamespace, baseDirectory,
-            environmentDrivers: environmentDrivers);
-        var stepSecretFault = TryValidateSecretReferences(ast, out var secretError, out _)
-            ? secretError
-            : null;
-
-        return (
-            pipelineResult,
-            pipelineResult.Failure is null && stepSecretFault is null
-                ? null
-                : JoinAuthoringFaults(pipelineResult.Failure?.Message, stepSecretFault));
+            environmentDrivers: environmentDrivers, cancellationToken: cancellationToken);
+        var diagnostics = new List<ValidationDiagnostic>();
+        if (pipelineResult.Failure is { } pipelineFailure)
+            diagnostics.Add(new ValidationDiagnostic(ValidationStage.Pipeline, pipelineFailure.Message));
+        foreach (var fault in CollectSecretReferenceFaults(ast))
+            diagnostics.Add(new ValidationDiagnostic(ValidationStage.Pipeline, fault.Message));
+        cancellationToken.ThrowIfCancellationRequested();
+        return new PreTopologyAuthoringResult(pipelineResult, diagnostics.AsReadOnly());
     }
-
-    /// <summary>
-    /// The single diagnostic for the merged pre-topology authoring door: every fault it found, in
-    /// a fixed order, joined the way the schema door already joins its own error list.
-    /// </summary>
-    /// <param name="pipelineFailure">The provider-pipeline refusal, or <see langword="null"/>.</param>
-    /// <param name="stepSecretFault">The secret-reference refusal, or <see langword="null"/>.</param>
-    /// <remarks>
-    /// <para>
-    /// The ORDER is fixed here rather than at the two call sites, because "which fault is reported
-    /// first" being a property of the call site is the defect this exists to remove: the two run
-    /// paths ran the two passes in opposite orders and each reported only its first, so the same
-    /// document was diagnosed differently by <c>run</c> and by <c>run --parallel</c>.
-    /// </para>
-    /// <para>
-    /// At least one argument is non-empty at every call site (both are guarded by
-    /// <c>failure is not null || fault is not null</c>), so this never returns the empty string on
-    /// a live path.
-    /// </para>
-    /// <para>
-    /// <strong>The separator is a NEWLINE, not <c>"; "</c>, because both halves are complete
-    /// sentences ending in a full stop.</strong> The semicolon form rendered
-    /// <c>…no-such-cert.pem').; step 'call': …</c> — a stop and a semicolon adjacent, mid-line, in
-    /// the one diagnostic an author reads to find two unrelated faults. The security half of
-    /// <see cref="TryValidateSecretReferences"/> already joins its own two messages with <c>"\n"</c>
-    /// for exactly this reason.
-    /// </para>
-    /// <para>
-    /// <c>"\n"</c> is available HERE, and the constraint that forbids it there does not apply: that
-    /// site's string reaches the schema-versioned <c>validate --json</c> document, where
-    /// <c>Environment.NewLine</c> would make one document differ between a Windows and a Linux
-    /// runner — and <c>"\n"</c> is the platform-independent answer to that, not an escape from it.
-    /// This helper's two call sites are BOTH run-path terminal: one writes straight to the run's
-    /// output writer through <c>DisplaySanitiser</c> (which preserves <c>\n</c> and
-    /// strips <c>\r</c>), the other becomes an <c>EarlyMessage</c>, which #372 carried onto
-    /// <see cref="ScenarioCompletedEvent.Message"/> — so this string DOES reach the event stream,
-    /// the JUnit <c>message</c> attribute and the HTML report. (An earlier revision of this remark
-    /// said the opposite, and it was true only until #372 landed on this same branch.)
-    /// </para>
-    /// </remarks>
-    private static string JoinAuthoringFaults(string? pipelineFailure, string? stepSecretFault) =>
-        string.Join(
-            "\n",
-            new[] { pipelineFailure, stepSecretFault }.Where(m => !string.IsNullOrEmpty(m)));
 
     /// <summary>
     /// The assurance contributed by every SCHEMA-REJECTED scenario whose serialised
@@ -4239,13 +4190,11 @@ public static class ScenarioRunner
         //      across ALL data (relational DELETE orders, Mongo document deletion, Redis FLUSHDB,
         //      Elasticsearch delete_by_query — the right reset for unseeded dependencies and
         //      for data a prior run's script.csharp step created).
-        //   2. topology.ReseedAsync — for SEEDED Postgres dependencies, drops and recreates the
-        //      public schema then re-applies the seed, so the author's (non-idempotent) seed SQL
-        //      re-runs cleanly and the seeded baseline is restored. Non-Postgres stores are
-        //      skipped: there is no row-applied non-Postgres seed to restore, and the isolation
-        //      reset in step 1 already cleared them ('sql' is the only seed kind in the v1
-        //      language — see SeedSpec.cs's header remarks — so there is no broker/document seed
-        //      to reconcile here either). A no-op when the scenario declares no seed.
+        //   2. topology.ReseedAsync — for SEEDED relational dependencies, resets the PostgreSQL
+        //      public schema, SQL Server user objects or selected MySQL database, then re-applies
+        //      the seed. Driver-specific limits are documented in docs/seed-fixtures.md.
+        //      Non-relational stores are skipped: SQL is the only seed kind, and step 1
+        //      clears their data. A no-op when the scenario declares no seed.
         // Skipped ENTIRELY on the build path (resetAndReseed=false): StartAsync just applied the
         // seed and there are no prior writes, so a reset would wrongly truncate the seed (and
         // relational reset throws on a schema-via-script.csharp DB that has no user tables yet —
@@ -6028,95 +5977,25 @@ public static class ScenarioRunner
     }
 
     /// <summary>
-    /// Runs the central secret-reference validation pass over every substitutable
-    /// field of every step in <paramref name="ast"/> (§17, S05-B-01), and over the one
-    /// secret-bearing field outside <c>steps</c> — every declared
-    /// <c>security.clientKeyPassword</c> (client-key-password EDGE-003, #387).
+    /// The text adapter for the typed secret-reference walk. It reports each invalid field in
+    /// stable step/declaration order and never resolves secrets; machine validation uses the
+    /// individual findings rather than this joined display string.
     /// </summary>
-    /// <param name="ast">The parsed scenario to validate.</param>
-    /// <param name="error">
-    /// On failure, an actionable British-English message; otherwise <see langword="null"/>. It
-    /// names the offending STEP and field problem for a step fault, and the offending
-    /// environment FIELD PATH for a security-declaration fault — which names no step at all. When
-    /// the document carries both, it carries BOTH messages, step first, newline-separated.
-    /// </param>
-    /// <returns>
-    /// <see langword="true"/> when a validation error was found (the caller should
-    /// short-circuit with <see cref="Verdict.Inconclusive"/>); <see langword="false"/>
-    /// when every field's secret references are well-formed and use a known source.
-    /// </returns>
-    /// <remarks>
-    /// This pass is engine-level and provider-uniform — it does not require any
-    /// change to the frozen <c>IStepValidator&lt;T&gt;</c> interface. It reuses
-    /// <see cref="StepTemplateCensus"/>, whose secret-aware field coverage is checked
-    /// against actual provider Bind/Emit outputs by the independent emission census.
-    /// internal (not private, #260): this pass is entirely topology-free (it scans
-    /// authored text and bounded REST-body JSON only, never resolves a secret), so <see cref="ScenarioValidator"/>
-    /// reuses it verbatim rather than duplicating the scan.
-    /// <para>
-    /// <strong>Two scans, not one (EDGE-003, #387):</strong> steps first, then every declared
-    /// <c>security</c> block's <c>clientKeyPassword</c>. #387 measured the asymmetry the second
-    /// scan closes — <c>${secret:nosuchsource/TOKEN}</c> in a step's field was diagnosed by name,
-    /// while the same token in a <c>security</c> field was mistaken for a filename, because this
-    /// pass walked <c>ast.Steps</c> alone. The second scan is scoped to <c>clientKeyPassword</c>
-    /// BY SCOPE, not by stage order: it is the one REFERENCE-valued security field, and its
-    /// path-valued siblings are not scanned here at all, so no double-report is possible whatever
-    /// order the two passes run in. (Order is genuinely not fixed — <c>ScenarioValidator</c> and
-    /// <see cref="RunAsync"/> reach <c>EnvironmentSecurityValidator</c> first, while
-    /// <see cref="RunSuiteAsync"/> and the watch seam reach THIS pass first.)
-    /// </para>
-    /// <para>
-    /// <strong>A consequence worth knowing before it surprises someone:</strong> a document
-    /// carrying BOTH a REQ-011 fault (a <c>${secret:}</c> in a path-valued security field) and an
-    /// EDGE-003 one (a bad <c>clientKeyPassword</c> reference) reports DIFFERENT faults under
-    /// <c>vouchfx validate</c> and under <c>vouchfx run</c>, because those two reach the two
-    /// passes in opposite orders. Both exit 4, both faults are real, and fixing either leaves the
-    /// other reported next — an author is never sent in a circle. No field is scanned by both
-    /// passes, so the two can never double-report the SAME fault.
-    /// </para>
-    /// </remarks>
-    /// <param name="fromSecurityDeclaration">
-    /// <see langword="true"/> when THE DOCUMENT CONTAINS a secret fault in a declared
-    /// <c>security</c> block.
-    /// <para>
-    /// <strong>NEITHER RUN PATH READS THIS ANY LONGER</strong> (security-assurance-derivation): it
-    /// was the input to a door-local classification, and no door classifies now — a secured
-    /// document refused before any container started is unconfirmable whatever the fault was, and
-    /// an unsecured one is not, whatever the fault was. Both call sites discard it with
-    /// <c>out _</c>. It is retained because it is directly asserted by
-    /// <c>ScenarioValidatorTests</c> and states a true fact about the document.
-    /// </para>
-    /// <para>
-    /// It deliberately does NOT mean "the failure reported through <c>error</c> was a security
-    /// one". Those two readings come apart whenever a document carries BOTH a step fault and a
-    /// security fault. Both halves therefore always run; only which MESSAGE is reported is
-    /// first-wins — and that REPORTING property still matters and is still what the unconditional
-    /// security half below delivers.
-    /// </para>
-    /// </param>
+    /// <param name="ast">The parsed scenario.</param>
+    /// <param name="error">Joined safe messages, or null when every reference is valid.</param>
+    /// <param name="fromSecurityDeclaration">Whether any finding belongs to a security declaration.</param>
     internal static bool TryValidateSecretReferences(
         ScenarioAst ast, out string? error, out bool fromSecurityDeclaration)
     {
-        // BOTH halves run, ALWAYS, and the security half runs FIRST so no early return can skip
-        // it. `fromSecurityDeclaration` answers "does this document contain a security-declaration
-        // secret fault?", which is a property of the DOCUMENT — not "was the first fault I found a
-        // security one?", which is a property of the search order. The step half used to return
-        // before this walk, and a document with a step fault AND a security fault then exited 0.
-        var securityFault = TryFindSecurityDeclarationSecretFault(ast, out var securityError);
-        fromSecurityDeclaration = securityFault;
+        var faults = CollectSecretReferenceFaults(ast);
+        fromSecurityDeclaration = faults.Any(fault => fault.FromSecurityDeclaration);
+        error = faults.Count == 0 ? null : string.Join("\n", faults.Select(fault => fault.Message));
+        return faults.Count != 0;
+    }
 
-        // The step half decides only the ORDER messages appear in, never the flag. Step-first is
-        // retained because it is the pre-existing behaviour and nothing here depends on it.
-        //
-        // BOTH are reported when both exist. An earlier form returned the step message alone and
-        // dropped `securityError` on the floor: two documents differing only in whether a
-        // `clientKeyPassword` fault was present produced BYTE-IDENTICAL rendered output and
-        // differed only in exit code, so the fault that turned the build red was never printed.
-        // On a surface whose whole job is refusing false assurance, an unexplained red is barely
-        // better than a wrong green. Concatenation is safe here: the security half withholds its
-        // declared value on every path that could carry one (see ValidateSecretBearingField), so
-        // joining the two strings cannot disclose anything the security half would not have
-        // printed on its own.
+    internal static IReadOnlyList<SecretReferenceFault> CollectSecretReferenceFaults(ScenarioAst ast)
+    {
+        var faults = new List<SecretReferenceFault>();
         foreach (var node in ast.Steps)
         {
             var collection = StepTemplateCensus.Collect(node);
@@ -6124,83 +6003,28 @@ public static class ScenarioRunner
             {
                 if (!SecretReference.ValidateField(field.Text, s_knownSecretSources, out var fieldError))
                 {
-                    // "\n", never Environment.NewLine: this string reaches the schema-versioned
-                    // `validate --json` document, where a platform-dependent separator would make
-                    // one document differ between a Windows and a Linux runner for the same input.
-                    // The terminal path is unaffected either way — DisplaySanitiser strips '\r'.
-                    var stepError = $"step '{node.Id}': {fieldError}";
-                    // Preserve existing REST/PostgreSQL diagnostics; new field coverage also
-                    // identifies its selector without printing a potentially sensitive map key.
-                    if (node.CanonicalType is not ("http.rest" or "db-assert.postgres"))
-                        stepError += $" (field '{field.Location}')";
-                    error = securityFault ? stepError + "\n" + securityError : stepError;
-                    return true;
+                    var message = $"step '{node.Id}': {fieldError} (field '{field.Location}')";
+                    faults.Add(new SecretReferenceFault(message, $"steps.{node.Id}.{field.Location}", false));
                 }
             }
             if (collection.Failure is { } collectionFailure)
-            {
-                var stepError = $"step '{node.Id}': {collectionFailure}";
-                error = securityFault ? stepError + "\n" + securityError : stepError;
-                return true;
-            }
+                faults.Add(new SecretReferenceFault($"step '{node.Id}': {collectionFailure}", $"steps.{node.Id}", false));
         }
 
-        error = securityError;
-        return securityFault;
-    }
-
-    /// <summary>
-    /// Scans every declared <c>security</c> block's <c>clientKeyPassword</c> for a secret-reference
-    /// fault, returning the first found (EDGE-003, #387).
-    /// </summary>
-    /// <remarks>
-    /// Split out from <see cref="TryValidateSecretReferences"/> so that pass can run this half
-    /// UNCONDITIONALLY — the REQ-018 signal is a property of the document, and a half that only
-    /// runs when the step half found nothing cannot report one.
-    /// </remarks>
-    private static bool TryFindSecurityDeclarationSecretFault(ScenarioAst ast, out string? error)
-    {
-        // SecuredTargets.Enumerate is the ONE canonical walk of declared `security` blocks
-        // (services then dependencies, each in declaration order) — the same walk
-        // BuildReproducibilityEnvelope's section 1b reuses for this same field. Its own header
-        // records why it exists: a security predicate that had grown three spellings in three
-        // assemblies, each asserting in prose that it agreed with the others.
+        // Always scan every declaration. The secret-bearing validator owns both grammar and
+        // withholding: malformed references and literal passphrases must never be echoed.
         foreach (var target in SecuredTargets.Enumerate(ast.Environment))
         {
             if (target.Security.ClientKeyPassword is not { } clientKeyPassword)
-            {
                 continue;
-            }
-
-            // ValidateSecretBearingField applies BOTH rules this field is held to — the
-            // whole-token rule and the known-source rule — atomically and in that order, and
-            // withholds the declared value on every failing path except the unknown-source one,
-            // where the value is a whole well-formed reference and §17 says a reference is a
-            // pointer, never a secret.
-            //
-            // Atomic on purpose: the two rules used to be two statements here, and getting their
-            // ORDER wrong discloses the value. Composing them at a call site is also how the
-            // second defect arrived — a predicate written here tried to guess which of
-            // ValidateField's branches would fire, and `${secret:nosuchsource/PASS${secret:LEAKED}`
-            // (schema-valid, so CLI-reachable) defeats that guess. The method that owns the
-            // grammar owns both decisions now.
             if (!SecretReference.ValidateSecretBearingField(
                     clientKeyPassword, s_knownSecretSources, out var fieldError))
             {
-                // The step half's `step '{id}': …` prefix has no sensible environment-level form,
-                // so this half carries its own, spelled the way EnvironmentSecurityValidator
-                // spells every security field path — an author sees ONE convention across the two
-                // stages that report on this block, not two. SecuredTargets.PluralFor owns the
-                // plural.
-                error =
-                    $"environment.{SecuredTargets.PluralFor(target)}.{target.Name}"
-                    + $".security.clientKeyPassword: {fieldError}";
-                return true;
+                var fieldPath = $"environment.{SecuredTargets.PluralFor(target)}.{target.Name}.security.clientKeyPassword";
+                faults.Add(new SecretReferenceFault($"{fieldPath}: {fieldError}", fieldPath, true));
             }
         }
-
-        error = null;
-        return false;
+        return faults.AsReadOnly();
     }
 
     /// <summary>

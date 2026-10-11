@@ -98,7 +98,7 @@ public sealed class EnvironmentKeyMapperTests : IDisposable
     {
         var values = new Dictionary<string, string>(StringComparer.Ordinal) { [key] = value };
         var project = kind == "project" ? _projects.CreateWithHttpEndpoint() : null;
-        return new EnvironmentSpec(kind is "image" or "project" ? new Dictionary<string, ServiceSpec> { ["app"] = new(kind == "image" ? "app" : null, project, null, null, values) } : null,
+        return new EnvironmentSpec(kind is "image" or "project" ? new Dictionary<string, ServiceSpec> { ["app"] = new(kind == "image" ? "app:1.0" : null, project, null, null, values) } : null,
             kind is not ("image" or "project") ? new Dictionary<string, DependencySpec> { ["store"] = new(kind, null, null) { Env = values } } : null,
             null, null, null);
     }

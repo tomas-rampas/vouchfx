@@ -85,6 +85,10 @@ legacy key, marked `Proc-Type: 4,ENCRYPTED`, must first be converted with `opens
 passphrase declared against a key that is not encrypted, one declared with no `clientKey` at all, and
 a reference resolving to an empty value are each refused with a diagnostic rather than ignored.
 
+`clientKeyPassword` belongs to `profile: mtls`. A TLS declaration with a passphrase but no
+client identity is refused during pre-topology validation, including direct engine embedding
+that bypasses the document schema; its value is neither resolved nor included in the diagnostic.
+
 What remains unavailable is a **PKCS#12/PFX bundle** carrying the certificate and key together —
 there is no field for one — and a passphrase for `caCert`, a trust anchor being a public certificate
 with no private key to unlock.
@@ -96,6 +100,10 @@ has to be copied in beside the suite. A `${secret:…}` reference is no way roun
 path-valued field — `caCert`, `clientCert`, `clientKey`, `serverArtifacts[].source` — it is refused,
 naming the field, because the engine reads and copies the file such a field points at while the
 secrets subsystem yields a value, which is not a file.
+
+`security.endpoint` takes a literal endpoint name or port; `serverArtifacts[].target` takes
+a literal absolute container-file path. Secret-reference syntax is unsupported in either field
+and is diagnosed before endpoint resolution or container-path shape checks.
 
 `caCert` is the asymmetric case, and it invites the wrong generalisation: the trust anchor is loaded
 through a path constructor that auto-detects PEM and DER, so one field is format-tolerant and the

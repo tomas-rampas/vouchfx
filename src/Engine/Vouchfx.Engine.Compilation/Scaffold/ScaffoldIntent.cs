@@ -14,7 +14,7 @@ namespace Vouchfx.Engine.Compilation.Scaffold;
 /// </param>
 /// <param name="Services">
 /// Optional named services for <c>environment.services</c>. Image defaults to
-/// <c>traefik/whoami</c> when omitted.
+/// <c>traefik/whoami:v1.11.0</c> when omitted.
 /// </param>
 /// <param name="Dependencies">
 /// Optional named managed dependencies for <c>environment.dependencies</c>. Each
@@ -44,7 +44,7 @@ public sealed record ScaffoldStepIntent(
 /// A service outline entry for the scaffolded <c>environment.services</c> map.
 /// </summary>
 /// <param name="Name">Logical service name (map key).</param>
-/// <param name="Image">OCI image reference; defaults to <c>traefik/whoami</c> when null/empty.</param>
+/// <param name="Image">OCI image reference; defaults to <c>traefik/whoami:v1.11.0</c> when null/empty.</param>
 public sealed record ScaffoldServiceIntent(
     string Name,
     string? Image = null);

@@ -340,7 +340,42 @@ internal static class ProviderPipeline
         string suiteNamespace,
         string? suiteDirectory = null,
         SecurityProfileRegistry? securityProfileRegistry = null,
-        EnvironmentDriverRegistry? environmentDrivers = null)
+        EnvironmentDriverRegistry? environmentDrivers = null,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        try
+        {
+            var result = CompileCore(ast, registry, suiteNamespace, suiteDirectory,
+                securityProfileRegistry, environmentDrivers);
+            cancellationToken.ThrowIfCancellationRequested();
+            return result;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            // This frame owns the topology-free phase. Unexpected driver/engine escapes are
+            // defects here; acquisition has not begun. Do not ask a downstream slot to guess
+            // that provenance, and do not expose arbitrary exception text or property getters.
+            return RefusePreTopologyFault("provider pipeline", ex);
+        }
+    }
+
+    internal static PipelineResult RefusePreTopologyFault(string phase, Exception exception) =>
+        Refuse(ProviderOrEngineFault(
+            $"Pre-topology {phase} failed with {exception.GetType().Name}; "
+            + "no environment was acquired (exception message withheld)."));
+
+    private static PipelineResult CompileCore(
+        ScenarioAst ast,
+        StepKindRegistry registry,
+        string suiteNamespace,
+        string? suiteDirectory,
+        SecurityProfileRegistry? securityProfileRegistry,
+        EnvironmentDriverRegistry? environmentDrivers)
     {
         var resolvedSuiteDirectory = suiteDirectory ?? Directory.GetCurrentDirectory();
         var fragments = new List<StepCompilePlan>(ast.Steps.Count);
@@ -1082,18 +1117,13 @@ internal static class ProviderPipeline
     /// <param name="message">The already-composed, already-scrubbed diagnostic.</param>
     /// <remarks>
     /// <para>
-    /// <strong>SEVEN CALL SITES, ONE FACTORY.</strong> Six are the guards around the provider
-    /// surface — <c>Bind</c> in <see cref="BindAllSteps"/>, and <c>Validate</c>,
-    /// <c>HostResources</c>, <c>Resources</c>, <c>CompileReferenceAssemblies</c> and <c>Emit</c> in
-    /// <see cref="Compile"/>'s Pass 2 — and the seventh is the suite-level
-    /// <c>CsxAssembler.Assemble</c> guard, which refuses provider-EMITTED content. That set is
-    /// exactly the set of <see cref="DescribeProviderFault"/> and
-    /// <see cref="DescribeAssemblyFault"/> call sites, so the marker cannot drift from the
-    /// diagnostics: a new guard around provider code composes its message through one of those two
-    /// methods, and it reaches this factory to do so.
+    /// Provider dispatch guards, the assembly guard, and the owning pre-topology frame all use
+    /// this factory. Member-specific failures keep their scrubbed member attribution; unexpected
+    /// pipeline or reuse-binding failures use phase/type-only text and never inspect the exception
+    /// message. Genuine caller cancellation propagates before a fault is recorded.
     /// </para>
     /// <para>
-    /// <strong>NOTHING ELSE IN THIS FILE IS MARKED, and the boundary is the point.</strong> An
+    /// Expected authoring refusals are not marked. An
     /// unknown step type, the registry-lookup internal error, the host-resource/service collision,
     /// the two security preflights, the <c>${conn:}</c>/protocol guards, the malformed-suite-
     /// directory refusal and the secret-reference walk are all AUTHORING failures — the suite is

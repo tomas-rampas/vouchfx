@@ -27,7 +27,7 @@ environment:
     # to HTTP requests with JSON describing itself. httpPort tells vouchfx
     # which container port to expose and health-gate before the test runs.
     whoami:
-      image: traefik/whoami
+      image: traefik/whoami:v1.11.0
       httpPort: 80
 
 # No variables section: this example uses no pre-loaded constants.

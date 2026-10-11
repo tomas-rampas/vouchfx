@@ -7,9 +7,11 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using Vouchfx.Engine.Abstractions;
+using YamlDotNet.Core;
 using YamlDotNet.Core.Events;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
+using YamlDotNet.Serialization.NodeDeserializers;
 
 namespace Vouchfx.Engine.Compilation.Schema;
 
@@ -155,7 +157,9 @@ internal static class SchemaResources
     /// Type inference: plain YAML scalars that parse as <see cref="long"/>
     /// or <see cref="double"/> are emitted as JSON numbers (not quoted strings),
     /// preserving the type information required by the JSON Schema validator's
-    /// <c>type: integer</c> and <c>type: number</c> constraints.
+    /// <c>type: integer</c> and <c>type: number</c> constraints. Plain, untagged
+    /// integer values use decimal digits, including leading zeros, matching the
+    /// authoring parser rather than YAML 1.1 octal coercion.
     /// </para>
     /// <para>
     /// <strong>Step 2 is budgeted at 16 Mi characters, and step 2 is the right
@@ -192,6 +196,8 @@ internal static class SchemaResources
         var deserializer = new DeserializerBuilder()
             .WithNamingConvention(NullNamingConvention.Instance)
             .WithNodeTypeResolver(new YamlScalarTypeResolver())
+            .WithNodeDeserializer(new DecimalIntegerNodeDeserializer(),
+                where => where.Before<ScalarNodeDeserializer>())
             .Build();
 
         var graph = deserializer.Deserialize<object?>(yamlText);
@@ -209,17 +215,11 @@ internal static class SchemaResources
         // Shared env-map aliases are checked once; the existing emission budget remains intact.
         RefuseMalformedEnvironmentNames(graph);
 
-        // Step 2 — re-serialise the object graph to a JSON string using
-        // YamlDotNet's JSON-compatible emitter, which correctly renders
-        // Dictionary<object,object> entries as JSON object properties and
-        // emits long/double values as JSON number literals (not quoted strings).
-        //
-        // THE TextWriter OVERLOAD, NOT Serialize(object), and the difference is the whole
-        // fix (#505).  The parameterless overload accumulates into a writer of its own that
-        // this code cannot reach, so the count has nowhere to live and the first observable
-        // moment is a finished string — 160 MB of it at seven levels, ten times that per
-        // further line.  Writing THROUGH the budgeted writer is what makes the stop early
-        // and the memory bounded.
+        // Step 2 — keep JsonCompatible graph traversal and scalar spellings, but
+        // emit its events as JSON tokens. The YAML core emitter otherwise treats
+        // multiline string keys as complex keys and writes YAML-only punctuation.
+        // Every token passes through the budgeted writer before being accumulated;
+        // the serializer never creates an unbounded intermediate document (#505).
         var jsonSerializer = new SerializerBuilder()
             .JsonCompatible()
             .Build();
@@ -227,7 +227,7 @@ internal static class SchemaResources
         string json;
         using (var writer = new BudgetedJsonWriter())
         {
-            jsonSerializer.Serialize(writer, graph);
+            jsonSerializer.Serialize(new JsonTokenEmitter(writer), graph);
             json = writer.ToString();
         }
 
@@ -255,6 +255,169 @@ internal static class SchemaResources
                     throw new EnvironmentNameConversionException($"/environment/{kind}/{escapedOwner}/env");
                 }
             }
+        }
+    }
+
+    // JsonCompatible supplies JSON scalar spellings and expands aliases, but its
+    // default core emitter still writes YAML complex-key punctuation for multiline
+    // strings. Consume those existing events as JSON tokens instead, without changing
+    // graph traversal, type inference or creating a second encoded document buffer.
+    private sealed class JsonTokenEmitter : IEmitter
+    {
+        private readonly TextWriter _writer;
+        private readonly Stack<JsonContainer> _containers = new();
+        private bool _hasRoot;
+
+        public JsonTokenEmitter(TextWriter writer) => _writer = writer;
+
+        public void Emit(ParsingEvent evt)
+        {
+            switch (evt)
+            {
+                case StreamStart:
+                case DocumentStart:
+                    break;
+                case DocumentEnd:
+                case StreamEnd:
+                    if (!_hasRoot || _containers.Count != 0)
+                        throw new JsonException("The JSON document is incomplete.");
+                    break;
+                case MappingStart:
+                    BeforeValue();
+                    _writer.Write('{');
+                    _containers.Push(new JsonContainer(mapping: true));
+                    break;
+                case MappingEnd:
+                    if (_containers.Count == 0 || !_containers.Peek().IsMapping
+                        || !_containers.Peek().ExpectingKey)
+                        throw new JsonException("The JSON object is incomplete.");
+                    _writer.Write('}');
+                    _containers.Pop();
+                    break;
+                case SequenceStart:
+                    BeforeValue();
+                    _writer.Write('[');
+                    _containers.Push(new JsonContainer(mapping: false));
+                    break;
+                case SequenceEnd:
+                    if (_containers.Count == 0 || _containers.Peek().IsMapping)
+                        throw new JsonException("The JSON array is incomplete.");
+                    _writer.Write(']');
+                    _containers.Pop();
+                    break;
+                case Scalar scalar:
+                    WriteScalar(scalar);
+                    break;
+                default:
+                    throw new JsonException("The YAML event cannot be represented as JSON.");
+            }
+        }
+
+        private void WriteScalar(Scalar scalar)
+        {
+            if (_containers.Count > 0 && _containers.Peek().IsMapping
+                && _containers.Peek().ExpectingKey)
+            {
+                // Keep the existing refusal of typed/non-string and structured keys.
+                // Supported string keys are always JSON property names, even when they
+                // contain line breaks and YAML would classify them as complex keys.
+                if (scalar.Style != ScalarStyle.DoubleQuoted)
+                    throw new JsonException("JSON object property names must be strings.");
+                var mapping = _containers.Peek();
+                if (!mapping.First)
+                    _writer.Write(',');
+                mapping.First = false;
+                WriteQuotedString(scalar.Value);
+                _writer.Write(':');
+                mapping.ExpectingKey = false;
+                return;
+            }
+
+            BeforeValue();
+            if (scalar.Style == ScalarStyle.DoubleQuoted)
+                WriteQuotedString(scalar.Value);
+            else if (scalar.Style == ScalarStyle.Plain)
+                _writer.Write(scalar.Value);
+            else
+                throw new JsonException("The YAML scalar cannot be represented as JSON.");
+        }
+
+        private void BeforeValue()
+        {
+            if (_containers.Count == 0)
+            {
+                if (_hasRoot)
+                    throw new JsonException("JSON documents must have exactly one root value.");
+                _hasRoot = true;
+                return;
+            }
+
+            var container = _containers.Peek();
+            if (container.IsMapping)
+            {
+                if (container.ExpectingKey)
+                    throw new JsonException("JSON object property names must be strings.");
+                container.ExpectingKey = true;
+            }
+            else
+            {
+                if (!container.First)
+                    _writer.Write(',');
+                container.First = false;
+            }
+        }
+
+        private void WriteQuotedString(string value)
+        {
+            _writer.Write('"');
+            for (var index = 0; index < value.Length; index++)
+            {
+                var character = value[index];
+                switch (character)
+                {
+                    case '"': _writer.Write("\\\""); break;
+                    case '\\': _writer.Write("\\\\"); break;
+                    case '\b': _writer.Write("\\b"); break;
+                    case '\f': _writer.Write("\\f"); break;
+                    case '\n': _writer.Write("\\n"); break;
+                    case '\r': _writer.Write("\\r"); break;
+                    case '\t': _writer.Write("\\t"); break;
+                    default:
+                        if (char.IsHighSurrogate(character))
+                        {
+                            if (index + 1 >= value.Length || !char.IsLowSurrogate(value[index + 1]))
+                                throw new JsonException("JSON strings cannot contain unpaired surrogates.");
+                            WriteUnicodeEscape(character);
+                            WriteUnicodeEscape(value[++index]);
+                        }
+                        else if (char.IsLowSurrogate(character))
+                            throw new JsonException("JSON strings cannot contain unpaired surrogates.");
+                        else if (character < ' ' || character is >= '\u007f' and <= '\u009f'
+                            or '\u2028' or '\u2029')
+                            WriteUnicodeEscape(character);
+                        else
+                            _writer.Write(character);
+                        break;
+                }
+            }
+            _writer.Write('"');
+        }
+
+        private void WriteUnicodeEscape(char value)
+        {
+            const string hex = "0123456789ABCDEF";
+            _writer.Write('\\');
+            _writer.Write('u');
+            for (var shift = 12; shift >= 0; shift -= 4)
+                _writer.Write(hex[(value >> shift) & 0xf]);
+        }
+
+        private sealed class JsonContainer
+        {
+            public JsonContainer(bool mapping) => IsMapping = mapping;
+            public bool IsMapping { get; }
+            public bool First { get; set; } = true;
+            public bool ExpectingKey { get; set; } = true;
         }
     }
 
@@ -293,6 +456,8 @@ internal static class SchemaResources
             new UnicodeEncoding(bigEndian: false, byteOrderMark: false);
 
         private readonly StringBuilder _builder = new();
+        private bool _inString;
+        private bool _escaped;
 
         /// <inheritdoc/>
         public override Encoding Encoding => s_encoding;
@@ -303,6 +468,50 @@ internal static class SchemaResources
         /// <inheritdoc/>
         public override void Write(char value)
         {
+            // JsonTokenEmitter writes JSON tokens. Keep this translation as a defensive
+            // compatibility path for YAML-only escapes inside strings or mapping keys.
+            // Tracking escape pairs preserves literal backslash-L/P and escaped quotes;
+            // reserve the resulting JSON characters before appending, without creating
+            // an extra document buffer.
+            if (_escaped)
+            {
+                _escaped = false;
+                var jsonEscape = value switch
+                {
+                    '0' => "u0000",
+                    'a' => "u0007",
+                    'v' => "u000B",
+                    'e' => "u001B",
+                    'N' => "u0085",
+                    'L' => "u2028",
+                    'P' => "u2029",
+                    'x' => "u00", // The compatibility escape's two hexadecimal digits follow unchanged.
+                    _ => null,
+                };
+                if (jsonEscape is not null)
+                {
+                    Reserve(jsonEscape.Length);
+                    _builder.Append(jsonEscape);
+                    return;
+                }
+            }
+            else if (_inString && value == '\\')
+            {
+                _escaped = true;
+            }
+            else if (value == '"')
+            {
+                _inString = !_inString;
+            }
+
+            // Defensively escape literal tabs; JsonTokenEmitter already emits JSON escapes.
+            if (_inString && value == '\t')
+            {
+                Reserve(2);
+                _builder.Append("\\t");
+                return;
+            }
+
             Reserve(1);
             _builder.Append(value);
         }
@@ -315,15 +524,15 @@ internal static class SchemaResources
                 return;
             }
 
-            Reserve(value.Length);
-            _builder.Append(value);
+            foreach (var character in value)
+                Write(character);
         }
 
         /// <inheritdoc/>
         public override void Write(char[] buffer, int index, int count)
         {
-            Reserve(count);
-            _builder.Append(buffer, index, count);
+            foreach (var character in buffer.AsSpan(index, count))
+                Write(character);
         }
 
         /// <inheritdoc/>
@@ -350,6 +559,37 @@ internal static class SchemaResources
                     + "gigabytes. Reduce the aliasing - or, if the suite really is this large, "
                     + "split it into several documents.");
             }
+        }
+    }
+
+    // Selecting typeof(long) alone is insufficient: YamlDotNet's scalar
+    // deserialiser then reads a leading zero as octal. Consume only the plain,
+    // untagged integers selected by our own resolver, using that same decimal
+    // parse for the value. Quoted/block scalars, explicit tags, floats, booleans,
+    // nulls and the anchor/alias graph retain their existing handlers.
+    private sealed class DecimalIntegerNodeDeserializer : INodeDeserializer
+    {
+        public bool Deserialize(
+            IParser reader,
+            Type expectedType,
+            Func<IParser, Type, object?> nestedObjectDeserializer,
+            out object? value,
+            ObjectDeserializer rootDeserializer)
+        {
+            if (expectedType == typeof(long)
+                && reader.Accept<Scalar>(out var scalar)
+                && scalar.Style == ScalarStyle.Plain
+                && scalar.Tag.IsEmpty
+                && long.TryParse(scalar.Value, NumberStyles.Integer,
+                    CultureInfo.InvariantCulture, out var integer))
+            {
+                reader.MoveNext();
+                value = integer;
+                return true;
+            }
+
+            value = null;
+            return false;
         }
     }
 

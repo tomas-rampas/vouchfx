@@ -3,7 +3,7 @@
 //
 // THE PROBLEM
 // -----------
-// `environment.dependencies[].image` lets an author on a private registry (e.g. an
+// Inline service images and `environment.dependencies[].image` let an author on a private registry (e.g. an
 // internal Nexus) name their own image as a single string, e.g.
 //   nexus.corp.local:5000/platform/mongo:8.0
 // Aspire's `WithImage(repository, tag)` — the API this feeds — takes the repository
@@ -38,20 +38,11 @@
 // contains-'.'-or-':'-or-equals-"localhost" heuristic. This class is deliberately
 // consistent with both — same digest-first ordering, same Ordinal comparisons.
 //
-// These are NOT interchangeable, and folding them onto one shared helper would change
-// observable behaviour: ResolveImage is a bare prefix check with no validation at all,
-// and silently passes through every shape this parser rejects outright — leading/
-// trailing whitespace, empty path segments ("myorg/", "/mongo", "a//b"), a second
-// colon inside a tag, and a missing or non-hex digest body. ResolveImage feeds
-// services' 'image:' (handed to AddContainer as a single opaque string); routing it
-// through this parser's strict validation would start THROWING on service images that
-// are malformed in exactly those ways and pass through untouched today — an
-// observable behaviour change for every existing suite that happens to author one.
-// Nor is "EnvironmentMapper.cs is not modified here" a safe assumption for that later
-// step: this class's own commit (feat/dependency-image-override) already modified
-// EnvironmentMapper.cs extensively (ApplyImageOverrides, the eager dependency-image
-// validation loop) — it left the ResolveImage FUNCTION specifically untouched, which
-// is the only claim that ever held.
+// ResolveImage remains a registry-prefix operation, not a validator. The shared
+// EnvironmentImageValidator now applies this parser and the pin/algorithm rules to
+// both inline services and dependency overrides before either binding or mapping.
+// Its service checks deliberately reject malformed or tagless references that the
+// former opaque AddContainer path passed through.
 //
 // This class is a pure, dependency-free string parser — no Aspire, no Docker, no
 // I/O — so every branch is exhaustively unit-testable.
@@ -132,7 +123,7 @@ internal static class ImageReferenceParser
     /// <c>"/mongo"</c>, <c>"a//b"</c>).
     /// <para>
     /// Every rejected input is degenerate author YAML: the caller is validating a
-    /// <c>.e2e.yaml</c> <c>environment.dependencies[].image</c> value and wants a loud,
+    /// <c>.e2e.yaml</c> service image or dependency image override and wants a loud,
     /// specific failure over silently resolving an ambiguous or wrong image (see the
     /// file-header remarks) — so this throws rather than returning a best-effort guess.
     /// </para>

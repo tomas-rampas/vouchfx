@@ -117,7 +117,7 @@ public sealed class MetricsAssertPrometheusProvider
             "path": {
               "description": "The scrape path.  May contain {placeholder} and ${secret:source/path} tokens.  Defaults to '/metrics' when omitted. Must be a rooted relative path (start with a single '/'); absolute URLs, protocol-relative paths ('//…'), and backslashes are rejected as an SSRF guard.",
               "type": "string",
-              "pattern": "^/(?!/)[^\\\\]*$",
+              "pattern": "^/(?!/)[^\\\\\\x00-\\x1F\\x7F-\\x9F]*(?![\\s\\S])",
               "default": "/metrics"
             },
             "metric": {
@@ -267,12 +267,13 @@ public sealed class MetricsAssertPrometheusProvider
             //
             // NOTE: Uri.TryCreate(path, UriKind.Absolute, …) is intentionally absent — on
             // Linux a leading '/' parses as a file URI (file:///foo), so that check would
-            // reject valid rooted paths on that platform.  The three guards below are
-            // fully platform-independent and together cover every unsafe form:
+            // reject valid rooted paths on that platform.  The four guards below are
+            // fully platform-independent:
             //   • !StartsWith('/')     — rejects scheme-bearing URLs (http://…) and bare
             //                            relative paths such as "metrics".
             //   • StartsWith("//", …)  — rejects protocol-relative paths (//evil/…).
             //   • Contains('\\', …)    — rejects backslash paths.
+            //   • Any(char.IsControl)       — rejects raw C0, DEL and C1 controls.
             // A scheme-bearing absolute URL always starts with a letter, not '/', so the
             // first guard catches it without any Uri parsing.  The runtime same-authority
             // guard in MetricsAssertPrometheus_Helpers.ScrapeAsync remains as defence in
@@ -298,6 +299,10 @@ public sealed class MetricsAssertPrometheusProvider
                 errors.Add(
                     "metrics-assert.prometheus: 'path' must not contain backslashes; " +
                     "use forward slashes for URL path separators.");
+            }
+            else if (path.Any(char.IsControl))
+            {
+                errors.Add("metrics-assert.prometheus: 'path' must not contain raw control characters.");
             }
         }
 

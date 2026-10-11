@@ -23,10 +23,9 @@
 //
 // Reuse, not duplication (CLAUDE.md "How to work here"): every step below calls the
 // SAME engine entry points the run path calls (DocumentValidator.Validate,
-// AstBuilder.Build, ProviderPipeline.Compile, ScenarioRunner.TryValidateSecretReferences,
-// ScenarioRunner.BclReferencePaths, RoslynScriptCompiler.CompileOnce) — the three
-// ScenarioRunner members were promoted from private to internal for exactly this reuse
-// (see their own remarks).
+// AstBuilder.Build, ScenarioRunner.RunPreTopologyAuthoringDoor,
+// ScenarioRunner.BclReferencePaths, RoslynScriptCompiler.CompileOnce). The common door
+// retains separate typed diagnostics for independent pipeline and secret-reference faults.
 using Vouchfx.Engine.Authoring;
 using Vouchfx.Engine.Authoring.Ast;
 using Vouchfx.Engine.Compilation;
@@ -255,25 +254,14 @@ public static class ScenarioValidator
             return SingleDiagnostic(path, ValidationStage.Parse, $"Parse / AST error: {ex.Message}");
         }
 
-        // ── Stage 3a: provider pipeline — bind / validate / resources / emit ──
-        var pipelineResult = ProviderPipeline.Compile(ast, registry, ScenarioRunner.SuiteNamespace,
-            seedBaseDirectory, environmentDrivers: environmentDrivers);
-        if (pipelineResult.Failure is not null)
-        {
-            return SingleDiagnostic(path, ValidationStage.Pipeline, pipelineResult.Failure.Message);
-        }
-
-        // ── Stage 3b: secret-reference syntax check (§17) ─────────────────────
-        // Topology-free by construction (it scans AST text only; it never resolves a
-        // secret), so it runs here as part of the SAME "Pipeline" stage the run path
-        // treats it as — reusing ScenarioRunner's exact check, not a re-implementation.
-        // REQ-018's signal is DISCARDED here, deliberately: `vouchfx validate` reports validity,
-        // not a run verdict, and an invalid document already exits 4 whatever made it invalid —
-        // the carve-out exists to stop a RUN going green, and there is no run here to gate.
-        if (ScenarioRunner.TryValidateSecretReferences(ast, out var secretError, out _))
-        {
-            return SingleDiagnostic(path, ValidationStage.Pipeline, secretError!);
-        }
+        // ── Stage 3: the shared topology-free authoring door ──────────────────
+        // Keep independent findings as records. Joining is a display/report operation, never
+        // the shape of diagnostics[] in validate --json. The same safe secret walk feeds run.
+        var authoring = ScenarioRunner.RunPreTopologyAuthoringDoor(ast, registry,
+            seedBaseDirectory, environmentDrivers);
+        var pipelineResult = authoring.Pipeline;
+        if (authoring.Diagnostics.Count != 0)
+            return new ScenarioValidationResult(path, IsValid: false, authoring.Diagnostics);
 
         // ── Stage 4: Roslyn compile-once — no run, no topology, no Docker ─────
         try
@@ -361,7 +349,7 @@ public static class ScenarioValidator
         return new ValidationReport(results);
     }
 
-    /// <summary>Builds a failed, single-diagnostic result — the common shape for stages 2–4.</summary>
+    /// <summary>Builds a failed result for one AST or compilation failure.</summary>
     private static ScenarioValidationResult SingleDiagnostic(string path, ValidationStage stage, string message) =>
         new(path, IsValid: false, new[] { new ValidationDiagnostic(stage, message) });
 }

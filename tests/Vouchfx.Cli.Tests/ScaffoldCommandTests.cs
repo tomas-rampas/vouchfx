@@ -22,7 +22,7 @@ public sealed class ScaffoldCommandTests
             { "id": "get-api", "type": "http.rest", "label": "GET api" },
             { "id": "check-db", "type": "db-assert.postgres" }
           ],
-          "services": [ { "name": "api", "image": "traefik/whoami" } ],
+          "services": [ { "name": "api", "image": "traefik/whoami:v1.11.0" } ],
           "dependencies": [ { "name": "db", "type": "postgres" } ]
         }
         """;

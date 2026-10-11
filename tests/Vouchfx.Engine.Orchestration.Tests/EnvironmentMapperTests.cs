@@ -102,7 +102,7 @@ public sealed class EnvironmentMapperTests : IDisposable
             Services: new Dictionary<string, ServiceSpec>
             {
                 ["web"] = new ServiceSpec(
-                    Image: "traefik/whoami",
+                    Image: "traefik/whoami:v1.11.0",
                     Project: null,
                     ImagePullPolicy: null,
                     HttpPort: null,
@@ -762,7 +762,7 @@ public sealed class EnvironmentMapperTests : IDisposable
             Services: new Dictionary<string, ServiceSpec>
             {
                 ["web"] = new ServiceSpec(
-                    Image: "traefik/whoami",
+                    Image: "traefik/whoami:v1.11.0",
                     Project: null,
                     ImagePullPolicy: null,
                     HttpPort: null,
@@ -794,7 +794,7 @@ public sealed class EnvironmentMapperTests : IDisposable
             Services: new Dictionary<string, ServiceSpec>
             {
                 ["web"] = new ServiceSpec(
-                    Image: "traefik/whoami",
+                    Image: "traefik/whoami:v1.11.0",
                     Project: null,
                     ImagePullPolicy: null,
                     HttpPort: null,
@@ -1231,7 +1231,7 @@ public sealed class EnvironmentMapperTests : IDisposable
             Services: new Dictionary<string, ServiceSpec>
             {
                 ["web"] = new ServiceSpec(
-                    Image: "traefik/whoami",
+                    Image: "traefik/whoami:v1.11.0",
                     Project: null,
                     ImagePullPolicy: null,
                     HttpPort: null,
@@ -2067,7 +2067,7 @@ public sealed class EnvironmentMapperTests : IDisposable
             Services: new Dictionary<string, ServiceSpec>
             {
                 ["svc"] = new ServiceSpec(
-                    Image: "traefik/whoami",
+                    Image: "traefik/whoami:v1.11.0",
                     Project: "./Api.csproj",
                     ImagePullPolicy: null,
                     HttpPort: null,
@@ -4392,7 +4392,7 @@ public sealed class EnvironmentMapperTests : IDisposable
             Services: new Dictionary<string, ServiceSpec>
             {
                 ["web"] = new ServiceSpec(
-                    Image: "traefik/whoami",
+                    Image: "traefik/whoami:v1.11.0",
                     Project: null,
                     ImagePullPolicy: "Sometimes",
                     HttpPort: null,
@@ -4421,7 +4421,7 @@ public sealed class EnvironmentMapperTests : IDisposable
             Services: new Dictionary<string, ServiceSpec>
             {
                 ["web"] = new ServiceSpec(
-                    Image: "traefik/whoami",
+                    Image: "traefik/whoami:v1.11.0",
                     Project: null,
                     ImagePullPolicy: "Always",
                     HttpPort: null,
@@ -4503,7 +4503,7 @@ public sealed class EnvironmentMapperTests : IDisposable
             Services: new Dictionary<string, ServiceSpec>
             {
                 ["web"] = new ServiceSpec(
-                    Image: "traefik/whoami",
+                    Image: "traefik/whoami:v1.11.0",
                     Project: null,
                     ImagePullPolicy: "always",
                     HttpPort: null,
@@ -4535,7 +4535,7 @@ public sealed class EnvironmentMapperTests : IDisposable
             Services: new Dictionary<string, ServiceSpec>
             {
                 ["web"] = new ServiceSpec(
-                    Image: "traefik/whoami",
+                    Image: "traefik/whoami:v1.11.0",
                     Project: null,
                     ImagePullPolicy: canonicalPolicy,
                     HttpPort: null,

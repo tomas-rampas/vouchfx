@@ -194,27 +194,19 @@ vouchfx --version
 ```
 
 The tool is framework-dependent and requires .NET 8 (runtime or SDK) on the
-target machine.  All engine DLLs are bundled in the nupkg (~61 MB).
+target machine. Current source packages bundle the engine DLLs and the complete,
+version-matched DCP tools trees for `win-x64`, `linux-x64`, `osx-x64` and
+`osx-arm64`. A source checkout or prior Aspire restore is not an installation
+prerequisite. At topology start, `DcpPathResolver` selects the executing RID's
+bundle beside the host assembly before stale build-machine cache metadata.
+`ASPIRE_DCP_PATH` remains an explicit override for an existing DCP installation
+(the directory containing `dcp`).
 
-**DCP prerequisite:** the tool requires the Aspire DCP binary
-(`aspire.hosting.orchestration.<rid>` v13.4.2) to be present in the local
-NuGet package cache (`NUGET_PACKAGES` if set, otherwise `~/.nuget/packages/`).
-The engine resolves it at run time: if the path baked in at pack time does not
-exist on the executing machine (it never does for a CI-packed tool), the
-`DcpPathResolver` fallback probes the local cache for the platform- and
-version-exact package, and fails with an actionable environment error naming
-the package if it is absent.  The prerequisite is satisfied on any machine
-that has restored a project carrying `Aspire.AppHost.Sdk` 13.4.2 — the
-version-exact requirement matters; having restored some *other* Aspire
-version does not help.  A completely fresh machine populates the cache by
-restoring this repository (`dotnet restore vouchfx.sln`) or any other
-project carrying `Aspire.AppHost.Sdk` at that version.  Do **not** recommend
-`dotnet workload install aspire`: the workload was retired with Aspire 9,
-installs Aspire 8.2.x packs under the SDK packs directory (not the NuGet
-cache), and can never satisfy this prerequisite.  Power users may instead
-point `ASPIRE_DCP_PATH` at the directory of an existing DCP installation
-(the folder containing the `dcp` executable); when that variable is set the
-engine's fallback stands aside entirely and Aspire's own resolution uses it.
+**Legacy published rc.6:** this older package does not bundle DCP and requires
+`aspire.hosting.orchestration.<rid>` version 13.4.2 in the executing machine's
+NuGet cache, or an explicit `ASPIRE_DCP_PATH`. That legacy cache prerequisite
+does not describe packages built from current source. Installing the retired
+Aspire workload does not provide the required NuGet package.
 
 ### Secondary: self-contained executables and installers
 
@@ -224,24 +216,17 @@ The self-contained archives (`*.tar.gz`) and native installers (`.msi`,
 `.deb`, `.pkg`) bundle the .NET 8 runtime alongside vouchfx.  Users do not
 need the .NET SDK or runtime installed.
 
-**DCP portability (resolved at run time):** the Aspire.AppHost.Sdk embeds the
-DCP binary path as `AssemblyMetadata` (`dcpclipath`) at compile time, pointing
-to the *build machine's* NuGet package cache — an absolute, machine-specific
-path with the build machine's RID.  The self-contained executables do NOT
-bundle the DCP binary itself.  Historically this made every cross-machine
-distribution channel silently broken (the baked `/home/runner/...` linux-x64
-path can never exist on a user machine); the engine now self-heals at
-topology start: when the baked path does not exist, `DcpPathResolver`
-re-resolves DCP from the executing machine's own NuGet cache using the
-executing machine's RID (see the DCP prerequisite above).  The
-`smoke-test-packaged-tool` job in `release.yml` simulates exactly this
-cross-machine hand-off — dead baked path, populated user cache — and gates
-`publish-release`, so a portability regression can no longer ship.  Operator
-note: that smoke job stands up a live Docker topology, so a rare
-infrastructure flake there can block a legitimate release; because
-publishing is idempotent (`--skip-duplicate`), the remedy is simply to
-re-run the workflow — only investigate a portability regression if the
-smoke failure reproduces.
+**Bundled DCP portability:** current self-contained archives and installers
+include the complete version-matched DCP tools tree for their own RID. They use
+the same bundle-first resolution as the global tool; no pre-existing Aspire
+NuGet cache is required. The `smoke-test-distribution-platforms` job in
+`release.yml` installs the exact candidate into an isolated cache and launches
+the bundled native DCP and archive CLI on all four advertised RIDs. The
+`smoke-test-packaged-tool` job additionally runs the installed tool against a
+live Docker topology with an empty user cache, checks the JUnit results and
+rejects new Docker residue or a restored Aspire orchestration package. Both
+jobs gate `publish-release`. Investigate the failing gate's logs before
+retrying; a retry is not evidence that a portability defect is resolved.
 
 **Single-file executables are NOT produced** (e.g. `PublishSingleFile=true`
 is not used).  The Roslyn compiler in the engine uses `Assembly.Location` to

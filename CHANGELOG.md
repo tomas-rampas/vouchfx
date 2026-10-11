@@ -185,6 +185,19 @@ to published pre-releases on 2026-07-14.
 
 ### Fixed
 
+- Pin scaffolded services, generated catalogue examples and runnable getting-started/reference fixtures to an explicit image version so they pass the deterministic-image guard.
+- **Inline image validation agrees between validate and run.** Both services and dependency overrides use the same topology-free reference, digest-algorithm and pin checks. Service images now require an explicit tag or SHA-256 digest instead of silently selecting `:latest`; dependency version precedence, empty overrides, registry redirection and external-driver configuration remain unchanged.
+
+- **Schema validation reads bare integers as decimal.** Leading-zero `httpPort` values such as `0123` and `08080` now validate as 123 and 8080, matching execution. Out-of-range values such as `0177777` produce a located range diagnostic. Quoted values and existing endpoint-selector spelling rules retain their behaviour.
+
+- Reject raw C0/DEL/C1 control characters in the authored `path` of `http.rest`, `http.soap`, and `metrics-assert.prometheus` during provider and composed-schema validation, while preserving percent-encoded text and existing path diagnostics (#344).
+
+- **Security declaration diagnostics cover inert TLS passphrases and unsupported references.** Pre-topology validation refuses a TLS-only passphrase without a client identity and explains secret-reference misuse in security endpoint and container-target fields. Diagnostics withhold passphrase and reference text; secret resolution, transport policy and frozen SDK helpers are unchanged.
+
+- **Pre-topology faults and authoring refusals retain consistent diagnostics.** Unexpected environment binding and pipeline escapes are Inconclusive engine faults with archived phase/type-only causes and nonzero exits; genuine acquisition failures keep their existing infrastructure policy. `validate --json` emits one diagnostic per independent secret-reference fault, with safe field identity and passphrase withholding. Shared-environment divergence is an Inconclusive authoring refusal in live and archived events, HTML and JUnit, including secured suites.
+
+- Fix YAML validation of Unicode string values and HTTP request body keys, including U+2028/U+2029 separators, while preserving scalar types, aliases, and the JSON conversion size limit.
+
 - Seed SQL fixture paths now share the lexical suite-relative containment policy used by security artefacts; rooted and base-escaping entries are refused before filesystem or driver access. Seed report details identify driver error types/codes without echoing raw SQL errors. Kept-topology reseeding resets supported SQL Server/MySQL schema objects as well as Postgres, allowing ordinary non-idempotent table fixtures to run again; MySQL database charset/collation are retained. See `docs/seed-fixtures.md` for reset scope and the symlink/DDL limitations.
 
 - **Unicode across redirected CLI streams.** Redirected stdin, stdout and stderr use UTF-8, without an output BOM, before command dispatch. Scaffold labels such as `Café — naïve §1` round-trip through file or stdin intents and stdout or file output on non-UTF-8 Windows consoles. Interactive handles, shared console pages, JSON escaping, output bounds and shutdown budgets remain unchanged. MCP decoding must ship with the matching engine pin; published pre-releases may predate this source change.

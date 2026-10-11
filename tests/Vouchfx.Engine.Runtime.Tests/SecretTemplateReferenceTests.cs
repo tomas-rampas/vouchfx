@@ -347,7 +347,7 @@ public sealed class SecretTemplateReferenceTests
         if (dependency is not null)
             root.Add("environment", new YamlMappingNode { { "dependencies", new YamlMappingNode { { "fixture", new YamlMappingNode { { "type", dependency } } } } } });
         else if (kind is "http.rest" or "http.soap" or "metrics-assert.prometheus")
-            root.Add("environment", new YamlMappingNode { { "services", new YamlMappingNode { { "fixture", new YamlMappingNode { { "image", "app" } } } } } });
+            root.Add("environment", new YamlMappingNode { { "services", new YamlMappingNode { { "fixture", new YamlMappingNode { { "image", "app:1.0" } } } } } });
         if (avro)
         {
             var environment = (YamlMappingNode)root.Children[new YamlScalarNode("environment")];

@@ -1214,4 +1214,149 @@ public sealed class EnvironmentSecurityValidatorTests : IDisposable
 
         AssertRefusedAsSecretReference(result, "environment.services.api.security.caCert");
     }
+    private const string DiagnosticSecretReference = "${secret:env/DIAGNOSTIC_REFERENCE_CANARY}";
+
+    [Theory]
+    [InlineData(false, "${secret:env/DIAGNOSTIC_REFERENCE_CANARY}")]
+    [InlineData(true, "${secret:env/DIAGNOSTIC_REFERENCE_CANARY}")]
+    [InlineData(false, "DIAGNOSTIC_LITERAL_CANARY")]
+    [InlineData(true, "DIAGNOSTIC_LITERAL_CANARY")]
+    [InlineData(false, "")]
+    [InlineData(true, "")]
+    public void DiagnosticRegression_TlsPassphraseWithoutClientIdentity_IsRefusedBeforeUse(
+        bool service, string password)
+    {
+        var security = new SecuritySpec("tls", "9093", null, null, null, null)
+        { ClientKeyPassword = password };
+
+        var failure = EnvironmentSecurityValidator.Validate(DiagnosticAst(service, security), _suiteDir);
+
+        Assert.NotNull(failure);
+        Assert.True(failure.IsSecurityPreflight);
+        Assert.Contains(DiagnosticField(service, "clientKeyPassword"), failure.Message, StringComparison.Ordinal);
+        Assert.Contains("profile 'tls' presents no client identity", failure.Message, StringComparison.Ordinal);
+        Assert.Contains("profile: mtls", failure.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("DIAGNOSTIC_", failure.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain(_suiteDir, failure.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(false, "${secret:env/DIAGNOSTIC_REFERENCE_CANARY}")]
+    [InlineData(true, "${secret:env/DIAGNOSTIC_REFERENCE_CANARY}")]
+    [InlineData(false, "secure-${secret:env/DIAGNOSTIC_REFERENCE_CANARY}")]
+    [InlineData(true, "secure-${secret:env/DIAGNOSTIC_REFERENCE_CANARY}")]
+    public void DiagnosticRegression_EndpointSecretSyntax_IsRefusedAsReferenceMisuse(
+        bool service, string endpoint)
+    {
+        var security = new SecuritySpec("tls", endpoint, null, null, null, null);
+
+        AssertUnsupportedReference(
+            EnvironmentSecurityValidator.Validate(DiagnosticAst(service, security), _suiteDir),
+            DiagnosticField(service, "endpoint"));
+    }
+
+    [Theory]
+    [InlineData(false, "${secret:env/DIAGNOSTIC_REFERENCE_CANARY}")]
+    [InlineData(true, "${secret:env/DIAGNOSTIC_REFERENCE_CANARY}")]
+    [InlineData(false, "/etc/${secret:env/DIAGNOSTIC_REFERENCE_CANARY}.pem")]
+    [InlineData(true, "/etc/${secret:env/DIAGNOSTIC_REFERENCE_CANARY}.pem")]
+    public void DiagnosticRegression_ArtifactTargetSecretSyntax_IsRefusedAsReferenceMisuse(
+        bool service, string target)
+    {
+        WriteSuiteFile("certs/server.pem");
+        var security = new SecuritySpec("tls", "9093", null, null, null,
+            new[] { new SecurityServerArtifactSpec("certs/server.pem", target) });
+
+        AssertUnsupportedReference(
+            EnvironmentSecurityValidator.Validate(DiagnosticAst(service, security), _suiteDir),
+            DiagnosticField(service, "serverArtifacts[0].target"));
+    }
+
+    [Theory]
+    [InlineData(false, "tls")]
+    [InlineData(true, "tls")]
+    [InlineData(false, "mtls")]
+    [InlineData(true, "mtls")]
+    [InlineData(false, "example.future")]
+    [InlineData(true, "example.future")]
+    public void DiagnosticRegression_ApplicableOrAbsentPassphrase_RemainsUntouched(
+        bool service, string profile)
+    {
+        var mutualTls = profile == "mtls";
+        if (mutualTls)
+        {
+            WriteSuiteFile("certs/client.pem");
+            WriteSuiteFile("certs/client-key.pem");
+        }
+        var security = new SecuritySpec(profile, "9093", null,
+            mutualTls ? "certs/client.pem" : null, mutualTls ? "certs/client-key.pem" : null, null)
+        { ClientKeyPassword = profile == "tls" ? null : DiagnosticSecretReference };
+
+        Assert.Null(EnvironmentSecurityValidator.Validate(DiagnosticAst(service, security), _suiteDir));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void DiagnosticRegression_LiteralContainerTargetWithOtherDollarSyntax_RemainsAccepted(bool service)
+    {
+        WriteSuiteFile("certs/server.pem");
+        var security = new SecuritySpec("tls", "9093", null, null, null,
+            new[] { new SecurityServerArtifactSpec("certs/server.pem", "/etc/${HOME}.pem") });
+
+        Assert.Null(EnvironmentSecurityValidator.Validate(DiagnosticAst(service, security), _suiteDir));
+    }
+
+    [Theory]
+    [InlineData(false, "clientKeyPassword")]
+    [InlineData(true, "clientKeyPassword")]
+    [InlineData(false, "endpoint")]
+    [InlineData(true, "endpoint")]
+    [InlineData(false, "serverArtifacts[0].target")]
+    [InlineData(true, "serverArtifacts[0].target")]
+    public void DiagnosticRegression_Compile_PreservesPreflightFailureAndWithholdsAssembly(
+        bool service, string field)
+    {
+        WriteSuiteFile("certs/server.pem");
+        var declaration = field switch
+        {
+            "clientKeyPassword" => $"clientKeyPassword: '{DiagnosticSecretReference}'",
+            "endpoint" => string.Empty,
+            _ => $"serverArtifacts:\n          - source: certs/server.pem\n            target: '/etc/{DiagnosticSecretReference}.pem'",
+        };
+        var yaml = $"environment:\n  {(service ? "services" : "dependencies")}:\n    target:\n      "
+            + (service ? "image: myorg/app:1.0\n" : "type: kafka\n")
+            + $"      security:\n        profile: tls\n        endpoint: '{(field == "endpoint" ? DiagnosticSecretReference : "9093")}'\n"
+            + $"        {declaration}\nsteps:\n  - id: noop\n    type: script.csharp\n    code: '// filler'\n";
+        var ast = AstBuilder.Build(YamlDocumentParser.Parse(yaml), s_pipelineRegistry);
+
+        var result = ProviderPipeline.Compile(ast, s_pipelineRegistry, "DiagnosticSuite", _suiteDir);
+
+        Assert.Null(result.Assembled);
+        Assert.NotNull(result.Failure);
+        Assert.True(result.Failure.IsSecurityPreflight);
+        Assert.Contains(DiagnosticField(service, field), result.Failure.Message, StringComparison.Ordinal);
+        Assert.Contains(field == "clientKeyPassword" ? "profile 'tls' presents no client identity"
+            : "uses secret-reference syntax", result.Failure.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("DIAGNOSTIC_", result.Failure.Message, StringComparison.Ordinal);
+    }
+
+    private static ScenarioAst DiagnosticAst(bool service, SecuritySpec security) => service
+        ? BuildAst(services: OneService("target", security))
+        : BuildAst(dependencies: new Dictionary<string, DependencySpec>(StringComparer.Ordinal)
+        { ["target"] = new DependencySpec("kafka", null, null) { Security = security } });
+
+    private static string DiagnosticField(bool service, string field) =>
+        $"environment.{(service ? "services" : "dependencies")}.target.security.{field}";
+
+    private static void AssertUnsupportedReference(ValidationFailure? failure, string fieldPath)
+    {
+        Assert.NotNull(failure);
+        Assert.True(failure.IsSecurityPreflight);
+        Assert.Contains(fieldPath, failure.Message, StringComparison.Ordinal);
+        Assert.Contains("uses secret-reference syntax ('${secret:')", failure.Message, StringComparison.Ordinal);
+        Assert.Contains("Secret references are unsupported here", failure.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("DIAGNOSTIC_", failure.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("must be an absolute path", failure.Message, StringComparison.Ordinal);
+    }
 }

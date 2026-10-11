@@ -65,10 +65,10 @@ public static class ServiceEndpointNaming
     ///   <item><description>
     ///     <strong>A port number</strong> — a bare decimal integer in 1..65535 with no
     ///     leading zero. The strictness is deliberate: <see cref="SecuritySpec.Endpoint"/>
-    ///     retains the RAW scalar text, so a leading-zero value such as <c>0123</c> (which
-    ///     YAML itself reads as octal 83, while this text reads 123) has three plausible
-    ///     meanings and is treated as none of them — it falls through to the name branch and
-    ///     is reported as unresolvable rather than silently securing an arbitrary port.
+    ///     retains the RAW scalar text. Although schema conversion now reads plain
+    ///     leading-zero integers as decimal, endpoint selectors keep their canonical
+    ///     spelling rule: <c>0123</c> falls through to the name branch and must resolve
+    ///     to a declared endpoint rather than silently selecting a port.
     ///   </description></item>
     ///   <item><description>
     ///     <strong>The name of a declared endpoint</strong> — one of the names this
@@ -78,11 +78,10 @@ public static class ServiceEndpointNaming
     ///   </description></item>
     /// </list>
     /// <para>
-    /// The schema documents a quoted numeric value as a NAME rather than a port, but
+    /// Quoting selects the schema's string branch, which also permits endpoint names.
     /// <see cref="SecuritySpec.Endpoint"/> carries raw scalar text with quoting already
-    /// discarded, so the two shapes are indistinguishable here and the port reading wins. No
-    /// endpoint a service can declare is ever NAMED with bare digits, so nothing is lost:
-    /// the name reading of <c>"8443"</c> would resolve to nothing in every case.
+    /// discarded, so canonical numeric strings such as <c>"8443"</c> still select that
+    /// port. Leading-zero strings remain names; quoting never relaxes the selector rule.
     /// </para>
     /// </remarks>
     public static int? ResolveSecuredPort(ServiceSpec spec)
