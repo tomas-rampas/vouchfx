@@ -182,14 +182,19 @@ On Windows, set `vouchfx.cliPath` to a directly executable installed or publishe
 *run-vouchfx.sh:*
 ```bash
 #!/bin/sh
-exec dotnet run --project src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj -- "$@"
+script_dir=$(CDPATH= cd "$(dirname "$0")" && pwd) || exit 1
+exec dotnet run --project "$script_dir/src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj" -- "$@"
 ```
 
-Then configure the extension to use the wrapper:
+Make the wrapper executable, then configure the extension with its absolute path so it works regardless of the extension host's working directory:
+
+```bash
+chmod +x /absolute/path/to/vouchfx/run-vouchfx.sh
+```
 
 ```json
 {
-  "vouchfx.cliPath": "./run-vouchfx.sh"
+  "vouchfx.cliPath": "/absolute/path/to/vouchfx/run-vouchfx.sh"
 }
 ```
 
