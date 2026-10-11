@@ -227,6 +227,45 @@ entire image stream or check the literal accent colour. It makes no network
 requests and leaves renderer output unchanged. Include it before uploading a
 Pages artefact and in the pull request's site-validation job.
 
+## Private-identifier validation
+
+After building a site, check its static published text before uploading it:
+
+```sh
+python -m vouchfx_site_tools.check_private_identifiers _site
+```
+
+The callable API is `check_private_identifiers(Path("_site"))` from
+`vouchfx_site_tools.check_private_identifiers`. It returns normally on success
+and raises `PrivateIdentifierError` with a fixed diagnostic on refusal, including
+missing or invalid directories. The
+command exits `0` on success, `1` on refusal and `2` for incorrect arguments.
+Diagnostics include neither matching content nor input paths.
+
+The scan covers static HTML text and visible labels, embedded `iframe srcdoc`
+documents, XML character data, plain text, and JSON keys and values. Inline
+markup and entity escaping cannot conceal a private planning identifier. Each
+JSON member is analysed independently, including repeated names. Only string
+`$comment` annotations at recognised locations in a declared JSON Schema
+2020-12 document are exempt; examples, defaults and unknown extensions remain
+data. Actual HTML source comments and script/style bodies are exempt. Those
+spellings inside JSON data receive no exemption. JavaScript source and source
+maps are outside this prose scan. External frames are not fetched, and CSS and
+JavaScript are not executed.
+
+Limits remain 8 Mi characters per text file, 1 Mi characters per embedded
+document, eight embedded levels, 32 Mi characters of shared parsing work and
+16,384 documents per file. JSON traversal permits at most 128 levels and
+100,000 nodes. Unsupported or unsafe inputs are refused.
+
+The scanner and command use only the Python standard library. Markdown and
+Pygments are imported when the generator renders or builds, so checking an
+existing output does not load them. The engine's `scripts/check_site.py` calls
+this same scanner and retains its separate five-schema description check and
+all other publication checks. Social-card validation remains a separate
+command. Satellite workflows must pin a helper commit containing this module
+before adding the command; installation of an older pin does not provide it.
+
 ## Local development
 
 As of the Material for MkDocs migration, the engine's own

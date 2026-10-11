@@ -22,10 +22,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-import markdown
-from markdown.extensions.codehilite import CodeHiliteExtension
-from markdown.extensions.toc import TocExtension
-from pygments.formatters import HtmlFormatter
 import urllib.request
 
 __all__ = ["SiteConfig", "build"]
@@ -463,6 +459,10 @@ def render_markdown(
     published: set[str],
     facts: dict[str, str],
 ) -> None:
+    import markdown
+    from markdown.extensions.codehilite import CodeHiliteExtension
+    from markdown.extensions.toc import TocExtension
+
     src = config.root / rel
     text = src.read_text(encoding="utf-8")
     text, mermaid = extract_mermaid(text)
@@ -730,6 +730,8 @@ def build(config: SiteConfig, out: Path) -> None:
     companions when both exist. See `SiteConfig.site_url`'s docstring for
     the full rationale.
     """
+    from pygments.formatters import HtmlFormatter
+
     root = config.root
     site = root / "site"
 

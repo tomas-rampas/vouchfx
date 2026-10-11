@@ -289,7 +289,7 @@ def test_schema_permission_error_diagnostics_do_not_expose_exception_payload(
 
 
 def test_schema_work_limit_fails_closed(gate, public_schemas, tmp_path, monkeypatch):
-    monkeypatch.setattr(gate, "_PUBLICATION_JSON_MAX_NODES", 2)
+    monkeypatch.setattr(gate._publication, "_PUBLICATION_JSON_MAX_NODES", 2)
     (public_schemas / SCHEMA_PATHS[-1]).write_text(
         json.dumps({"anyOf": [{"description": "Public value."}] * 3}), encoding="utf-8"
     )
@@ -758,7 +758,7 @@ def test_shared_character_work_at_and_over_budget_uses_all_siblings(gate, monkey
     # Small deterministic budgets exercise the production shared accumulator,
     # rather than generating a 32 Mi-character fixture for each unit case.
     work = len(markup) + len("<p>Public</p>") + len("<p>Capability</p>")
-    monkeypatch.setattr(gate, "_PUBLICATION_HTML_MAX_WORK", work - over)
+    monkeypatch.setattr(gate._publication, "_PUBLICATION_HTML_MAX_WORK", work - over)
     if over:
         with pytest.raises(gate.CheckFailed, match=TEXT_INVALID):
             gate.check_no_private_identifiers(_site(tmp_path, markup))
@@ -950,7 +950,7 @@ def test_duplicate_json_and_preserved_annotation_values_count_toward_node_budget
     if annotation:
         serialized = '{"$schema":"https://json-schema.org/draft/2020-12/schema","$comment":"REQ-004","$comment":"EDGE-018"}'
         nodes = 4
-    monkeypatch.setattr(gate, "_PUBLICATION_JSON_MAX_NODES", nodes - int(over))
+    monkeypatch.setattr(gate._publication, "_PUBLICATION_JSON_MAX_NODES", nodes - int(over))
     site = _site(tmp_path, serialized, "public-data.json")
     if over:
         with pytest.raises(gate.CheckFailed) as error:
@@ -964,7 +964,7 @@ def test_duplicate_json_and_preserved_annotation_values_count_toward_node_budget
 def test_duplicate_description_values_count_toward_source_node_budget(gate, public_schemas, tmp_path, monkeypatch, over):
     serialized = '{"description":"Public.","description":"Also public."}'
     (public_schemas / SCHEMA_PATHS[-1]).write_text(serialized, encoding="utf-8")
-    monkeypatch.setattr(gate, "_PUBLICATION_JSON_MAX_NODES", 3 - int(over))
+    monkeypatch.setattr(gate._publication, "_PUBLICATION_JSON_MAX_NODES", 3 - int(over))
     if over:
         with pytest.raises(gate.CheckFailed) as error:
             gate.check_schema_descriptions_no_private_identifiers(tmp_path)
@@ -981,7 +981,7 @@ def test_duplicate_json_storage_does_not_add_depth_and_annotations_count(gate, t
     if annotation:
         serialized = '{"$schema":"https://json-schema.org/draft/2020-12/schema","properties":{"record":{"$comment":"REQ-004"}}}'
         depth = 3
-    monkeypatch.setattr(gate, "_PUBLICATION_JSON_MAX_DEPTH", depth - int(over))
+    monkeypatch.setattr(gate._publication, "_PUBLICATION_JSON_MAX_DEPTH", depth - int(over))
     site = _site(tmp_path, serialized, "schema.json")
     if over:
         with pytest.raises(gate.CheckFailed) as error:
@@ -998,7 +998,7 @@ def test_duplicate_json_strings_share_existing_projection_budgets(gate, tmp_path
     serialized = '{"x":' + json.dumps(content) + ',"x":' + json.dumps(content) + '}'
     limit = (len("x") + len(content)) * 2 if kind == "characters" else 4
     constant = "_PUBLICATION_HTML_MAX_WORK" if kind == "characters" else "_PUBLICATION_HTML_MAX_DOCUMENTS"
-    monkeypatch.setattr(gate, constant, limit - int(over))
+    monkeypatch.setattr(gate._publication, constant, limit - int(over))
     site = _site(tmp_path, serialized, "public-data.json")
     if over:
         with pytest.raises(gate.CheckFailed) as error:
@@ -1107,7 +1107,7 @@ def test_json_marked_sections_charge_existing_shared_projection_budgets(gate, tm
         "depth": ("_PUBLICATION_HTML_MAX_DEPTH", 1),
     }
     constant, limit = limits[kind]
-    monkeypatch.setattr(gate, constant, limit - int(over))
+    monkeypatch.setattr(gate._publication, constant, limit - int(over))
     site = _site(tmp_path, serialized, "public-data.json")
     if over:
         with pytest.raises(gate.CheckFailed) as error:
@@ -1232,7 +1232,7 @@ def test_data_lexical_streaming_preserves_body_and_end_tag_semantics(gate, chunk
 
 @pytest.mark.parametrize("limit", ["_PUBLICATION_HTML_MAX_WORK", "_PUBLICATION_HTML_MAX_DOCUMENTS"])
 def test_data_lexical_nested_attributes_share_work_limits(gate, tmp_path, monkeypatch, limit):
-    monkeypatch.setattr(gate, limit, 1)
+    monkeypatch.setattr(gate._publication, limit, 1)
     fragment = """<input value="<!DOCTYPE <x data='Public capability'>">"""
     site = _site(tmp_path, json.dumps({"value": fragment}), "data.json")
     with pytest.raises(gate.CheckFailed) as error:
@@ -1364,7 +1364,7 @@ def test_marked_structure_conditional_payloads_share_existing_budgets(gate, tmp_
         "documents": ("_PUBLICATION_HTML_MAX_DOCUMENTS", 3),
         "depth": ("_PUBLICATION_HTML_MAX_DEPTH", 1),
     }[kind]
-    monkeypatch.setattr(gate, name, limit - int(over))
+    monkeypatch.setattr(gate._publication, name, limit - int(over))
     site = _site(tmp_path, json.dumps({"message": markup}), "data.json")
     if over:
         with pytest.raises(gate.CheckFailed) as error:
