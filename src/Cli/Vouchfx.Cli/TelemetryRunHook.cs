@@ -276,11 +276,16 @@ internal sealed class TelemetryRunHook
     /// <c>startupMs</c>/<c>timeToFirstTestMs</c> anchor.
     /// </param>
     /// <param name="cancellationToken">Propagated to the async sink write.</param>
+    /// <param name="currentArchiveWritten">
+    /// Successful raw-writer receipt from this run, default false. Existence of an older
+    /// archive is insufficient. Suppression still cleans up a hook-owned temp file.
+    /// </param>
     public async Task EmitAsync(
         string? eventsPath,
         bool isTempFile,
         DateTimeOffset runStartedAt,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool currentArchiveWritten = false)
     {
         if (string.IsNullOrEmpty(eventsPath))
         {
@@ -291,7 +296,7 @@ internal sealed class TelemetryRunHook
         {
             // Re-check emission at write time too (defence in depth: consent could be
             // anything, and ShouldEmit is the single gate).
-            if (!ShouldEmit())
+            if (!currentArchiveWritten || !ShouldEmit())
             {
                 return;
             }

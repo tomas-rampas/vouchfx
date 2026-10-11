@@ -24,10 +24,12 @@
 //     regardless of how long the back-off window lasts (criterion 7 — symmetric);
 //   • under OutboxStore's exclusive lock, snapshot the outbox, batch (<=500 lines / a body
 //     cap), POST each batch with an Idempotency-Key = SHA-256 hex of the batch bytes;
-//   • on the FIRST non-2xx, STOP and keep that batch + all later batches as undelivered;
+//   • on HTTP 400, discard the whole refused batch (none accepted) and continue;
+//   • on retryable non-delivery, STOP and keep that batch + all later batches;
 //   • on success, continue; afterwards the store rewrites the outbox to the undelivered
 //     lines and enforces the size/age/line cap (oldest-first);
-//   • on ALL-delivered → reset the back-off; on ANY failure (or a fault) → advance it.
+//   • on a fully processed window → reset back-off; retryable non-delivery advances it.
+//     Budget expiry keeps progress and leaves back-off untouched; caller cancellation propagates.
 //
 // Any fault anywhere in the drain leaves the outbox intact (OutboxStore only rewrites on a
 // clean path) and is swallowed — telemetry must be invisible to the run.
@@ -176,7 +178,7 @@ public sealed class DrainingTelemetrySink : ITelemetrySink
                 return;
             }
 
-            var drainResult = BatchDrainResult.AllDelivered;
+            var drainResult = BatchDrainResult.AllProcessed;
 
             // Bound the WHOLE drain by the overall budget: a linked CTS that cancels after
             // _drainBudget, so a healthy-but-slow endpoint cannot walk every batch and add
@@ -207,12 +209,12 @@ public sealed class DrainingTelemetrySink : ITelemetrySink
             {
                 switch (drainResult)
                 {
-                    case BatchDrainResult.AllDelivered:
-                        // Clean drain: reset the back-off (next attempt allowed immediately).
+                    case BatchDrainResult.AllProcessed:
+                        // Fully processed window (delivered or refused): reset the back-off.
                         OutboxDrainState.Reset().Write(_paths.DrainStatePath);
                         break;
                     case BatchDrainResult.Failed:
-                        // A non-2xx: advance the exponential back-off.
+                        // A retryable non-delivery: advance the exponential back-off.
                         drainState.AfterFailure(now, _jitter()).Write(_paths.DrainStatePath);
                         break;
                     case BatchDrainResult.BudgetExpired:
@@ -247,13 +249,14 @@ public sealed class DrainingTelemetrySink : ITelemetrySink
 
     // Drain the snapshot batch-by-batch.  Returns the lines that remain UNDELIVERED plus a
     // tri-state result so the caller can decide what to do with the back-off:
-    //   • AllDelivered  — every batch acked 2xx; nothing remains.
-    //   • Failed        — a batch returned a non-2xx; keep that batch + everything after it
+    //   • AllProcessed  — every batch acked 2xx or permanently refused; nothing remains.
+    //   • Failed        — a retryable non-delivery; keep that batch + everything after it
     //                     (the back-off advances).
     //   • BudgetExpired — the overall drain budget elapsed mid-send; keep the in-flight batch
     //                     + everything after it (the back-off is left UNTOUCHED — some batches
     //                     delivered, so this is not a hard failure).
-    // In every stop case we preserve order and never drop a line we did not confirm.  The
+    // A permanently refused batch is discarded atomically, including valid neighbours.
+    // Every stop preserves the retryable remainder verbatim and in order. The
     // `callerToken` is the run's cancellation (propagated); `budgetToken` is the bounded
     // budget (caught and turned into BudgetExpired rather than thrown).
     private async Task<(IReadOnlyList<string> Undelivered, BatchDrainResult Result)>
@@ -265,7 +268,7 @@ public sealed class DrainingTelemetrySink : ITelemetrySink
         if (_http is null)
         {
             // Defensive: TryDrainAsync only calls this when configured.
-            return (snapshot, BatchDrainResult.AllDelivered);
+            return (snapshot, BatchDrainResult.AllProcessed);
         }
 
         var index = 0;
@@ -297,15 +300,15 @@ public sealed class DrainingTelemetrySink : ITelemetrySink
                 return (Slice(snapshot, batchStart), BatchDrainResult.BudgetExpired);
             }
 
-            if (!ack.Delivered)
+            if (!ack.Delivered && !ack.PermanentlyRefused)
             {
-                // Stop at the first non-2xx: keep this batch and all remaining lines.
+                // Retryable refusal/fault: keep this batch and all remaining lines.
                 return (Slice(snapshot, batchStart), BatchDrainResult.Failed);
             }
         }
 
-        // Every batch delivered: nothing remains.
-        return (Array.Empty<string>(), BatchDrainResult.AllDelivered);
+        // Every batch was delivered or permanently refused: nothing remains.
+        return (Array.Empty<string>(), BatchDrainResult.AllProcessed);
     }
 
     // Slice `snapshot` from `start` (inclusive) to the end into a fresh list — the undelivered
@@ -365,7 +368,7 @@ public sealed class DrainingTelemetrySink : ITelemetrySink
     private enum BatchDrainResult
     {
         // Every batch acked 2xx: reset the back-off.
-        AllDelivered,
+        AllProcessed,
 
         // A batch returned a non-2xx: advance the exponential back-off.
         Failed,

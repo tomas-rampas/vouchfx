@@ -95,6 +95,10 @@ internal static class FileReportWriter
     /// discipline the parallel runner already follows.  <see langword="null"/> discards the
     /// notice.
     /// </param>
+    /// <returns>
+    /// True only after this invocation successfully writes and disposes the raw events
+    /// writer. HTML/JUnit writes and existing files provide no receipt.
+    /// </returns>
     /// <exception cref="ArgumentNullException">
     /// Thrown when <paramref name="eventLines"/> is <see langword="null"/>.
     /// </exception>
@@ -119,7 +123,7 @@ internal static class FileReportWriter
     /// always valid, so such a throw signals a genuine bug, not a bad path.
     /// </para>
     /// </remarks>
-    public static void WriteFileReports(
+    public static bool WriteFileReports(
         IReadOnlyList<string> eventLines,
         Func<string, JsonElement, string?>? diffLookup,
         string? htmlPath,
@@ -128,6 +132,7 @@ internal static class FileReportWriter
         string? eventsPath = null)
     {
         ArgumentNullException.ThrowIfNull(eventLines);
+        var eventsArchiveWritten = false;
 
         // Each report is written independently and the file-system / path exception family is
         // caught PER FILE: a caller-supplied bad path can never abort the other report and can
@@ -193,11 +198,14 @@ internal static class FileReportWriter
         {
             try
             {
-                using var writer = CreateWriter(eventsPath);
-                // string.Join keeps the buffer byte-exact: no trailing newline, '\n' separators
-                // only (CreateWriter does not translate line endings — StreamWriter writes the
-                // literal '\n' bytes), and no per-line transformation.
-                writer.Write(string.Join('\n', eventLines));
+                using (var writer = CreateWriter(eventsPath))
+                {
+                    // Preserve the exact raw bytes: no BOM or trailing newline.
+                    writer.Write(string.Join('\n', eventLines));
+                }
+
+                // Receipt only after the raw writer successfully flushes/disposes.
+                eventsArchiveWritten = true;
             }
             catch (Exception ex) when (ex is IOException
                 or UnauthorizedAccessException
@@ -212,6 +220,8 @@ internal static class FileReportWriter
                     $"Report write failed for 'events' (verdict unaffected): {ex.GetType().Name}");
             }
         }
+
+        return eventsArchiveWritten;
     }
 
     /// <summary>

@@ -292,16 +292,17 @@ public sealed class TelemetryConsentStore
     /// Held as a constant so the notice wording is reviewable in one place.
     /// </summary>
     public const string FirstRunNoticeText =
-        "vouchfx can collect anonymous, aggregate usage telemetry (tool/engine/.NET\n"
-        + "versions, step + scenario verdict counts, which built-in step kinds ran,\n"
-        + "startup timings, and a count of unreadable event-stream lines) to help\n"
-        + "prioritise the engine. It NEVER collects your test contents, captured values,\n"
-        + "secrets, URLs, image names, scenario names, or step ids.\n"
-        + "\n"
-        + "Telemetry is OFF by default and NOTHING is sent unless you opt in:\n"
-        + "  enable  : vouchfx telemetry enable\n"
-        + "  opt out : vouchfx telemetry disable   (or set VOUCHFX_NO_TELEMETRY=1)\n"
-        + "  status  : vouchfx telemetry status\n"
-        + "\n"
-        + "This notice is shown once.";
+        "vouchfx can collect aggregate usage telemetry: tool/engine/.NET versions and\n"
+         + "telemetry schema version, a random install identifier, a UTC timestamp,\n"
+         + "run, scenario and per-verdict step + scenario counts, which built-in step\n"
+         + "kinds ran, startup timings, and a count of unreadable event-stream lines.\n"
+         + "It NEVER collects your test contents, captured values, secrets, URLs,\n"
+         + "image names, scenario names, or step ids.\n"
+         + "\n"
+         + "Telemetry is OFF by default and NOTHING is sent unless you opt in:\n"
+         + "  enable  : vouchfx telemetry enable\n"
+         + "  opt out : vouchfx telemetry disable   (or set VOUCHFX_NO_TELEMETRY=1)\n"
+         + "  status  : vouchfx telemetry status\n"
+         + "\n"
+         + "This notice is shown once.";
 }

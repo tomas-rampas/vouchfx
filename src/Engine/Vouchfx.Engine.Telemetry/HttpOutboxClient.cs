@@ -143,7 +143,7 @@ public sealed class HttpOutboxClient : IOutboxHttpClient
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _token);
         request.Headers.TryAddWithoutValidation(IdempotencyKeyHeader, idempotencyKey);
 
-        return await SendClassifyingAsync(request, ndjsonLines.Count, cancellationToken)
+        return await SendClassifyingAsync(request, ndjsonLines.Count, classifyBatchRefusal: true, cancellationToken)
             .ConfigureAwait(false);
     }
 
@@ -163,17 +163,19 @@ public sealed class HttpOutboxClient : IOutboxHttpClient
 
         // Fail-silent: a forget that cannot reach the server must not throw out of the
         // `telemetry disable` path — the local install id is deleted regardless.
-        await SendClassifyingAsync(request, expectedCount: 0, cancellationToken)
+        await SendClassifyingAsync(request, expectedCount: 0, classifyBatchRefusal: false, cancellationToken)
             .ConfigureAwait(false);
     }
 
     // Sends a request under a bounded per-attempt timeout and classifies the result:
-    // any 2xx => delivered; any non-2xx or any transport/timeout fault => not delivered.
+    // Any 2xx => delivered; batch HTTP 400 => permanently refused, wholly unaccepted.
+    // All other HTTP statuses and transport/timeout faults remain retryable non-delivery.
     // NEVER throws for an ordinary fault and NEVER includes the token or the response
     // body in any surfaced detail (there is no surfaced detail — the result is a bool).
     private async Task<DrainAck> SendClassifyingAsync(
         HttpRequestMessage request,
         int expectedCount,
+        bool classifyBatchRefusal,
         CancellationToken cancellationToken)
     {
         // A linked CTS bounds THIS attempt without mutating the shared HttpClient.Timeout
@@ -190,7 +192,9 @@ public sealed class HttpOutboxClient : IOutboxHttpClient
 
             return response.IsSuccessStatusCode
                 ? new DrainAck(Delivered: true, AcceptedCount: expectedCount)
-                : DrainAck.NotDelivered;
+                : classifyBatchRefusal && response.StatusCode == System.Net.HttpStatusCode.BadRequest
+                    ? DrainAck.PermanentRefusal
+                    : DrainAck.NotDelivered;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {

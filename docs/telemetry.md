@@ -54,11 +54,7 @@ vouchfx telemetry enable
 This opts you in and mints a unique, anonymous install identifier (a GUID) if one does not already exist. You will see:
 
 ```
-Telemetry ENABLED. Anonymous, aggregate usage data (versions, verdict counts,
-which built-in step kinds ran, startup timings, and a count of unreadable
-event-stream lines) will be collected on each run.
-Your test contents, captured values, secrets, URLs, image names, scenario
-names and step ids are NEVER collected.
+Telemetry ENABLED. Aggregate usage data (tool/engine/.NET versions and telemetry schema version, a random install identifier, a UTC timestamp, run, scenario and per-verdict step + scenario counts, which built-in step kinds ran, startup timings, and a count of unreadable event-stream lines) will be collected on each run. Your test contents, captured values, secrets, URLs, image names, scenario names and step ids are NEVER collected.
 Install id: 12345678... (anonymous; identifies this install only).
 Opt out any time with: vouchfx telemetry disable
 ```
@@ -138,9 +134,9 @@ When you run `vouchfx telemetry disable`, both files are cleaned up — the inst
 
 ### Local file format
 
-The outbox is a **JSON Lines file** (one JSON object per line, UTF-8 without a byte-order mark). Each line is a compact, allowlisted telemetry event recording the fields described above. The file is **append-only** — successive opted-in runs accumulate one event per line. It is cleared only when you run `vouchfx telemetry disable`. Automatic log rotation or capping is deferred to future hosted-backend work.
+The outbox is a **JSON Lines file** (one JSON object per line, UTF-8 without a byte-order mark). Each opted-in run appends one compact, allowlisted event first. Without a configured transport the CLI keeps this file locally until you disable telemetry. With a transport, the drain rewrites it to retain only pending events and applies the retention cap described below. Successfully delivered batches and permanently refused HTTP 400 batches are removed.
 
-The file is safe for consumption by local analysis tools (for instance, you could parse the outbox and analyse your own patterns). No remote transmission happens in v1.
+The file can be read by local analysis tools. Remote transmission requires the explicit endpoint and token configuration described below; enabling telemetry alone does not select a server.
 
 ## Install-identifier lifecycle
 
@@ -160,11 +156,12 @@ If you re-enable telemetry after disabling it, a new install identifier is minte
 When consent is undecided (i.e. you have not yet run `vouchfx telemetry enable` or `disable`), the first time you run `vouchfx`, a one-time notice is printed to stderr informing you of the telemetry feature, what is collected, and how to opt in or out:
 
 ```
-vouchfx can collect anonymous, aggregate usage telemetry (tool/engine/.NET
-versions, step + scenario verdict counts, which built-in step kinds ran,
-startup timings, and a count of unreadable event-stream lines) to help
-prioritise the engine. It NEVER collects your test contents, captured values,
-secrets, URLs, image names, scenario names, or step ids.
+vouchfx can collect aggregate usage telemetry: tool/engine/.NET versions and
+telemetry schema version, a random install identifier, a UTC timestamp,
+run, scenario and per-verdict step + scenario counts, which built-in step
+kinds ran, startup timings, and a count of unreadable event-stream lines.
+It NEVER collects your test contents, captured values, secrets, URLs,
+image names, scenario names, or step ids.
 
 Telemetry is OFF by default and NOTHING is sent unless you opt in:
   enable  : vouchfx telemetry enable
@@ -185,6 +182,10 @@ Telemetry emission requires **all** of the following to be true:
 3. The `VOUCHFX_NO_TELEMETRY` environment variable is **not set** (or is empty/whitespace).
 
 If any one of these is false, telemetry is suppressed for that run. This conjunction-of-consent model ensures that a single opt-out signal at any level (consent, run flag, or environment variable) prevents emission — the opt-out signals in points 2 and 3 override **both** consent channels.
+
+## Current-run archive requirement
+
+Telemetry emits only when the current runner confirms that its raw events archive was written and its writer flushed and disposed successfully. A readable file left by an earlier run, its timestamp or size, successful HTML/JUnit output, and the presence of scenarios or steps do not establish that receipt. Discovery failures and failed current archive writes emit nothing from an older archive. A newly written refusal archive can still produce aggregate telemetry. Hook-owned temporary captures are deleted even when emission is suppressed; user-requested archives remain in place.
 
 ## Future work: per-file opt-out (v2)
 
@@ -265,7 +266,7 @@ After each test run, if telemetry is enabled and the HTTP transport is configure
 
 1. Events in the local outbox are appended first (unchanged — this guarantees the local outbox always receives every event).
 2. The client then attempts to drain the outbox by POSTing batches to `{endpoint}/v1/telemetry` with `Authorization: Bearer <token>` and `Content-Type: application/x-ndjson`. Batches are limited to 500 lines and ~1 MB per POST to keep requests bounded.
-3. Only batches that receive a 2xx HTTP response are removed from the outbox. A non-2xx response, network error, or timeout leaves the batch and all subsequent batches intact for the next run.
+3. A **2xx** response removes delivered lines. **HTTP 400** permanently refuses the entire batch: no lines were accepted, and the client discards the whole batch, including valid neighbours of an invalid line, then proceeds to later batches. This intentional data loss avoids a poison batch blocking future telemetry; it is not reported as delivery. Every other HTTP status (including 401, 413, 415, 408, 429 and 5xx), network fault or timeout retains the retryable batch and all later lines verbatim.
 4. **All faults are silent** — a network outage, timeout, or endpoint misconfiguration never affects the test run or its verdict.
 
 ### Outbox retention and draining
@@ -278,11 +279,11 @@ The local outbox is capped to prevent unbounded growth, particularly in long-run
 
 - **`VOUCHFX_TELEMETRY_OUTBOX_MAX_LINES`** — maximum outbox line count (default: 10,000 lines). Oldest events are dropped first.
 
-All three caps are enforced independently and use oldest-first eviction. Even when the HTTP transport is unconfigured, the local outbox is still capped so it never grows unbounded.
+All three caps are enforced independently by the draining sink and use oldest-first eviction. They also apply while a configured transport is backed off. The CLI uses a bare local sink when transport configuration is absent; that local-only file remains uncapped until telemetry is disabled.
 
 ### Cross-run back-off
 
-If the remote endpoint is unreachable or returns an error, the client applies exponential back-off with jitter across runs. The back-off state is persisted to disk, so a hard-down endpoint does not trigger a drain attempt on every run — the back-off window grows geometrically instead. A healthy endpoint resets the back-off immediately.
+If the remote endpoint is unreachable or returns an error, the client applies exponential back-off with jitter across runs. The back-off state is persisted to disk, so a hard-down endpoint does not trigger a drain attempt on every run — the back-off window grows geometrically instead. A fully processed drain window resets the back-off, whether its batches were delivered or permanently refused. A later retryable failure advances it; partial progress alone does not reset it.
 
 ### Drain budget
 

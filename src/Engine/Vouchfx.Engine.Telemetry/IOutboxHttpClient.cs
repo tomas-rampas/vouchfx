@@ -26,7 +26,17 @@ namespace Vouchfx.Engine.Telemetry;
 /// </param>
 public readonly record struct DrainAck(bool Delivered, int AcceptedCount)
 {
-    /// <summary>A non-delivered acknowledgement (a non-2xx response or a transport fault).</summary>
+    /// <summary>
+    /// True only for a permanently refused batch (HTTP 400). No lines were accepted;
+    /// the whole batch may be discarded so later batches can progress.
+    /// Defaults to false for existing constructors and transport implementations.
+    /// </summary>
+    public bool PermanentlyRefused { get; init; }
+
+    /// <summary>A permanently refused, wholly unaccepted batch.</summary>
+    public static DrainAck PermanentRefusal => new(false, 0) { PermanentlyRefused = true };
+
+    /// <summary>A retryable non-delivery (a non-2xx response or a transport fault).</summary>
     public static DrainAck NotDelivered => new(false, 0);
 }
 
@@ -58,8 +68,8 @@ public interface IOutboxHttpClient
     /// <param name="cancellationToken">Propagated to the HTTP send.</param>
     /// <returns>
     /// A <see cref="DrainAck"/> whose <see cref="DrainAck.Delivered"/> is <see langword="true"/>
-    /// only on a 2xx.  Never throws for an ordinary transport/HTTP fault — it returns
-    /// <see cref="DrainAck.NotDelivered"/>.
+    /// only on a 2xx. HTTP 400 returns <see cref="DrainAck.PermanentRefusal"/>;
+    /// other HTTP or transport faults return <see cref="DrainAck.NotDelivered"/>.
     /// </returns>
     Task<DrainAck> PostBatchAsync(
         IReadOnlyList<string> ndjsonLines,

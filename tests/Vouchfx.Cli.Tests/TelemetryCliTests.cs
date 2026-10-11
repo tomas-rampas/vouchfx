@@ -72,7 +72,7 @@ public sealed class TelemetryCliTests
         // Simulate the runner writing the verbatim buffered stream to that path.
         await File.WriteAllLinesAsync(eventsPath!, SyntheticStream());
 
-        await hook.EmitAsync(eventsPath, isTemp, T0, CancellationToken.None);
+        await hook.EmitAsync(eventsPath, isTemp, T0, CancellationToken.None, currentArchiveWritten: true);
 
         Assert.Single(sink.Sent);
         Assert.Equal(1, sink.Sent[0].ScenarioCount);
@@ -115,7 +115,7 @@ public sealed class TelemetryCliTests
         };
         await File.WriteAllLinesAsync(eventsPath!, stream);
 
-        await hook.EmitAsync(eventsPath, isTemp, runStartedAt: T0, CancellationToken.None);
+        await hook.EmitAsync(eventsPath, isTemp, runStartedAt: T0, CancellationToken.None, currentArchiveWritten: true);
 
         Assert.Single(sink.Sent);
         Assert.Equal(250, sink.Sent[0].StartupMs);
@@ -142,7 +142,7 @@ public sealed class TelemetryCliTests
         Assert.False(isTemp);
 
         // Even if a stream existed, EmitAsync with a null path is a no-op.
-        await hook.EmitAsync(eventsPath, isTemp, T0, CancellationToken.None);
+        await hook.EmitAsync(eventsPath, isTemp, T0, CancellationToken.None, currentArchiveWritten: true);
         Assert.Empty(sink.Sent);
     }
 
@@ -158,7 +158,7 @@ public sealed class TelemetryCliTests
 
         var (eventsPath, _) = hook.ResolveEventsCapturePath(userEventsPath: null);
         Assert.Null(eventsPath);
-        await hook.EmitAsync(eventsPath, isTempFile: false, T0, CancellationToken.None);
+        await hook.EmitAsync(eventsPath, isTempFile: false, T0, CancellationToken.None, currentArchiveWritten: true);
         Assert.Empty(sink.Sent);
     }
 
@@ -288,7 +288,7 @@ public sealed class TelemetryCliTests
         var (eventsPath, isTemp) = hook.ResolveEventsCapturePath(userEventsPath: null);
         Assert.NotNull(eventsPath);
         await File.WriteAllLinesAsync(eventsPath!, SyntheticStream());
-        await hook.EmitAsync(eventsPath, isTemp, T0, CancellationToken.None);
+        await hook.EmitAsync(eventsPath, isTemp, T0, CancellationToken.None, currentArchiveWritten: true);
 
         // The event carries the SUPPLIED id (stable per repo), and nothing was
         // written to the local consent store — env mode bypasses it entirely.
@@ -313,7 +313,7 @@ public sealed class TelemetryCliTests
 
         var (eventsPath, isTemp) = hook.ResolveEventsCapturePath(userEventsPath: null);
         Assert.Null(eventsPath);
-        await hook.EmitAsync(eventsPath, isTemp, T0, CancellationToken.None);
+        await hook.EmitAsync(eventsPath, isTemp, T0, CancellationToken.None, currentArchiveWritten: true);
         Assert.Empty(sink.Sent);
     }
 
@@ -333,7 +333,7 @@ public sealed class TelemetryCliTests
 
         var (eventsPath, isTemp) = hook.ResolveEventsCapturePath(userEventsPath: null);
         Assert.Null(eventsPath);
-        await hook.EmitAsync(eventsPath, isTemp, T0, CancellationToken.None);
+        await hook.EmitAsync(eventsPath, isTemp, T0, CancellationToken.None, currentArchiveWritten: true);
         Assert.Empty(sink.Sent);
     }
 
@@ -354,7 +354,7 @@ public sealed class TelemetryCliTests
         var (eventsPath, isTemp) = hook.ResolveEventsCapturePath(userEventsPath: null);
         Assert.NotNull(eventsPath);
         await File.WriteAllLinesAsync(eventsPath!, SyntheticStream());
-        await hook.EmitAsync(eventsPath, isTemp, T0, CancellationToken.None);
+        await hook.EmitAsync(eventsPath, isTemp, T0, CancellationToken.None, currentArchiveWritten: true);
 
         // The invalid env id was ignored with a single warning naming the variable
         // (never echoing the raw value into an event), and the STORE id was used.

@@ -26,6 +26,13 @@ namespace Vouchfx.Cli;
 /// </remarks>
 internal static class TelemetryCommand
 {
+    internal const string EnableNoticeText =
+        "Telemetry ENABLED. Aggregate usage data (tool/engine/.NET versions and telemetry schema "
+        + "version, a random install identifier, a UTC timestamp, run, scenario and per-verdict "
+        + "step + scenario counts, which built-in step kinds ran, startup timings, and a count of "
+        + "unreadable event-stream lines) will be collected on each run. Your test contents, "
+        + "captured values, secrets, URLs, image names, scenario names and step ids are NEVER collected.";
+
     /// <summary>
     /// Builds the <c>telemetry</c> <see cref="Command"/> with its <c>enable</c>,
     /// <c>disable</c>, and <c>status</c> subcommands, each wired to operate on the
@@ -57,12 +64,7 @@ internal static class TelemetryCommand
         {
             var store = new TelemetryConsentStore(new DefaultTelemetryPaths());
             var state = store.Enable();
-            Console.Out.WriteLine(
-                "Telemetry ENABLED. Anonymous, aggregate usage data (versions, verdict counts, "
-                + "which built-in step kinds ran, startup timings, and a count of unreadable "
-                + "event-stream lines) will be collected on each run. Your test contents, "
-                + "captured values, secrets, URLs, image names, scenario names and step ids are "
-                + "NEVER collected.");
+            Console.Out.WriteLine(EnableNoticeText);
             Console.Out.WriteLine(
                 $"Install id: {ShortInstallId(state.InstallId)} (anonymous; identifies this "
                 + "install only).");

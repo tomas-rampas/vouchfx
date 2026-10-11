@@ -183,6 +183,10 @@ to published pre-releases on 2026-07-14.
 
 ### Fixed
 
+- Telemetry discards permanently refused HTTP 400 batches atomically and continues with later batches. Valid neighbours in a refused batch are intentionally discarded; retryable failures retain their raw bytes and idempotency keys.
+- Run telemetry now requires a successful current raw archive write, including writer flush and disposal. Older readable archives cannot produce events after discovery or report-write failure; newly written refusal archives remain valid.
+- Both telemetry consent notices and their public copies disclose every field in the closed telemetry allowlist, including the random install identifier and UTC timestamp.
+
 - **Git change selection recovers from confirmed executable-load failures on earlier `PATH` entries.** The real repository-root lookup tries ordered absolute candidates within fixed limits: 220 complete entries, 32,768 UTF-16 code units and 32 distinct launch attempts. Windows still accepts only `git.exe`; POSIX still checks execute permission. Typed invalid-image or missing-interpreter errors can advance to the next candidate before execution. The first binary that starts is pinned for diff and status; child errors, timeouts, failed captures and cancellation never trigger fallback. Exhaustion is a fixed path-free exit-2 refusal. Native Windows and nonroot glibc Linux container controls cover the repaired cases; native Linux host, macOS and musl acceptance remain separate.
 
 - **The documentation publication guard now handles marked DATA syntax consistently.** Standard marked bodies preserve surrounding-text adjacency; conditional markers contribute boundaries while their condition text remains scanned. Unsupported headers and unfinished DATA tag syntax are refused safely. Marker names cannot hide adjacent split identifiers, and streaming input preserves wrapper classification. XML character data, actual HTML source exemptions, independent fields, single entity decoding and shared parsing limits remain unchanged.

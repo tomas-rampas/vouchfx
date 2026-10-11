@@ -85,6 +85,9 @@ public sealed record SuiteResult(
     Verdict Verdict,
     IReadOnlyList<(string ScenarioName, Verdict Verdict)> ScenarioVerdicts)
 {
+    /// <summary>Current invocation successfully flushed/disposed its raw events writer.</summary>
+    internal bool EventsArchiveWritten { get; init; }
+
     /// <summary>At least one document was refused by an authoring/schema gate or CompileOnce.</summary>
     public bool AuthoringRefusalObserved { get; init; }
 
@@ -2914,11 +2917,12 @@ public static class ScenarioRunner
             // input (parity).  A null path writes nothing.  `output` is the diagnostics sink: a bad
             // --html / --junit / --events path is caught PER FILE and reported there, so report
             // writing can NEVER change the already-computed verdict / exit code.
-            FileReportWriter.WriteFileReports(
+            var eventsArchiveWritten = FileReportWriter.WriteFileReports(
                 allBuffers, diffLookup, htmlReportPath, junitReportPath, output, eventsPath: eventsReportPath);
 
             return new SuiteResult(suiteAggregate, results)
             {
+                EventsArchiveWritten = eventsArchiveWritten,
                 AuthoringRefusalObserved = authoringRefusalObserved,
                 // Threaded on the normal-completion path too, and REACHABLE carrying a refusal —
                 // corrected in fix round eight (m3, peer-review critic). This note twice claimed
@@ -3325,11 +3329,12 @@ public static class ScenarioRunner
         }
 
         TerminalRenderer.Render(allBuffers, output, decorate, diffLookup);
-        FileReportWriter.WriteFileReports(
+        var eventsArchiveWritten = FileReportWriter.WriteFileReports(
             allBuffers, diffLookup, htmlReportPath, junitReportPath, output, eventsPath: eventsReportPath);
 
         return new SuiteResult(suiteAggregate, results)
         {
+            EventsArchiveWritten = eventsArchiveWritten,
             AuthoringRefusalObserved = authoringRefusalObserved,
             Assurance = assurance,
 

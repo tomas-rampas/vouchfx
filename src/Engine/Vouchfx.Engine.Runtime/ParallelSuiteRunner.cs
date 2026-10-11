@@ -844,11 +844,12 @@ public static class ParallelSuiteRunner
         // buffer).  A null path writes nothing.  `output` is the diagnostics sink: a bad --html /
         // --junit / --events path is caught PER FILE and reported there, so report writing can NEVER
         // change the already-computed verdict / exit code.
-        FileReportWriter.WriteFileReports(
+        var eventsArchiveWritten = FileReportWriter.WriteFileReports(
             allBuffers, diffLookup, htmlReportPath, junitReportPath, output, eventsPath: eventsReportPath);
 
         return new SuiteResult(aggregate, perScenario)
         {
+            EventsArchiveWritten = eventsArchiveWritten,
             AuthoringRefusalObserved = authoringRefusal,
             Assurance = assurance,
 

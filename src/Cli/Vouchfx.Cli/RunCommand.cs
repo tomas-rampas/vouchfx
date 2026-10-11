@@ -1553,6 +1553,7 @@ internal static class RunCommand
         // the exit code is whatever the rest of this method derives.
         var providerOrEngineFaultObserved = false;
         var authoringRefusalObserved = false;
+        var eventsArchiveWritten = false;
         if (parsed.Count > 0)
         {
             var asts = parsed.Select(p => p.Ast!).ToList();
@@ -1668,6 +1669,7 @@ internal static class RunCommand
                     environmentDrivers: environmentDrivers).ConfigureAwait(false);
 
             suiteVerdict = result.Verdict;
+            eventsArchiveWritten = result.EventsArchiveWritten;
 
             // REQ-018: the one cause of a non-Fail verdict that breaks CI without an opt-in flag.
             // Read straight off the runner's own result rather than re-derived from the verdict or
@@ -1692,7 +1694,8 @@ internal static class RunCommand
         if (telemetryHook is not null)
         {
             await telemetryHook.EmitAsync(
-                runnerEventsPath, isTempEventsFile, runStartedAt, runCancellationToken)
+                runnerEventsPath, isTempEventsFile, runStartedAt, runCancellationToken,
+                currentArchiveWritten: eventsArchiveWritten)
                 .ConfigureAwait(false);
         }
 
