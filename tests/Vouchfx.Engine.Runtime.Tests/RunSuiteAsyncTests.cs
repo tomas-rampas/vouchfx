@@ -15,6 +15,7 @@ using System.Net.Sockets;
 using Vouchfx.Engine.Abstractions;
 using Vouchfx.Engine.Authoring;
 using Vouchfx.Engine.Authoring.Model;
+using Vouchfx.Engine.Orchestration.Environments;
 using Vouchfx.Engine.Runtime;
 using Vouchfx.Sdk;
 using Vouchfx.Steps.HttpRest;
@@ -1182,10 +1183,9 @@ public sealed class RunSuiteAsyncTests
     // It still refuses before any container starts, which is the constraint the guard exists for.
 
     /// <summary>
-    /// The environment the #451 pair shares, with a <c>security</c> block for the typo to live in
-    /// and the same <c>${conn:typo}</c> the mixed-suite fixtures use — so a run that gets PAST the
-    /// divergence guard fails deterministically at <c>EnvironmentMapper.Map</c>, before any
-    /// container, and prints <see cref="PreTopologyMarker"/> as proof it got there.
+    /// The valid environment the #451 pair shares, with a <c>security</c> block for the typo.
+    /// Acquisition is observed through the existing inline-start test seam: an undeclared
+    /// connection would now fail pure binding before a valid sibling could reach that seam.
     /// </summary>
     private const string SecurityTypoSuiteEnvironment = """
         environment:
@@ -1193,7 +1193,7 @@ public sealed class RunSuiteAsyncTests
             api:
               image: myorg/api:1.0
               env:
-                FOO: "${conn:typo}"
+                FOO: "fixture-value"
               security:
                 profile: tls
                 endpoint: 8443
@@ -1227,7 +1227,7 @@ public sealed class RunSuiteAsyncTests
             api:
               image: myorg/api:1.0
               env:
-                FOO: "${conn:typo}"
+                FOO: "fixture-value"
               security:
                 profile: tls
                 endpoint: 8443
@@ -1239,6 +1239,7 @@ public sealed class RunSuiteAsyncTests
         SecurityTypoSuiteClean.Replace("myorg/api:1.0", "myorg/api:2.0", StringComparison.Ordinal);
 
     private static readonly string[] s_securityTypoNames = { "clean", "typo" };
+    private static readonly string[] s_unknownConnectionNames = { "unknown-connection" };
     private static readonly string[] s_typoFirstDivergentNames = { "typo", "clean", "divergent" };
 
     /// <summary>
@@ -1252,10 +1253,9 @@ public sealed class RunSuiteAsyncTests
     /// </para>
     /// <para>
     /// <see cref="PreTopologyMarker"/> is asserted PRESENT rather than absent, and that is the
-    /// half that proves the sibling is no longer vetoed: the clean scenario is runnable, so the
-    /// suite proceeds to the topology exactly as it would have before #353 made this shape
-    /// divergent. It fails there for the fixture's own deliberate <c>${conn:typo}</c>, at
-    /// <c>Map</c>'s eager validation, so no container is ever started.
+    /// half that proves the sibling is no longer vetoed: the clean scenario validates and
+    /// reaches the counted inline acquisition seam. The seam throws a controlled
+    /// <see cref="ArgumentException"/> before DCP or any container can start.
     /// </para>
     /// </remarks>
     [Fact]
@@ -1263,6 +1263,14 @@ public sealed class RunSuiteAsyncTests
     {
         var yamls = new[] { SecurityTypoSuiteClean, SecurityTypoSuiteOffending };
         var registry = StepKindRegistry.BuildAndFreeze(ProviderAssemblies);
+        var acquisitionAttempts = 0;
+        var drivers = new EnvironmentDriverRegistry(Array.Empty<IEnvironmentDriver>(), (_, _) =>
+        {
+            acquisitionAttempts++;
+            throw new ArgumentException("fixture acquisition refusal");
+        });
+        Assert.True(ScenarioValidator.ValidateScenario(
+            SecurityTypoSuiteClean, "clean.e2e.yaml", registry, environmentDrivers: drivers).IsValid);
         var scenarios = yamls
             .Select(y => AstBuilder.Build(YamlDocumentParser.Parse(y), registry))
             .ToArray();
@@ -1274,7 +1282,8 @@ public sealed class RunSuiteAsyncTests
             yamlTexts: yamls,
             providerAssemblies: ProviderAssemblies,
             appHostAssemblyName: AppHostAssemblyName,
-            output: sw);
+            output: sw,
+            environmentDrivers: drivers);
 
         var rendered = sw.ToString();
 
@@ -1286,8 +1295,10 @@ public sealed class RunSuiteAsyncTests
         Assert.NotEqual(Verdict.EnvironmentError, result.Verdict);
         Assert.Equal(Verdict.Inconclusive, result.Verdict);
 
-        // The clean sibling was not vetoed: the run reached the topology build.
+        // The clean sibling was not vetoed: exactly one acquisition was attempted.
+        Assert.Equal(1, acquisitionAttempts);
         Assert.Contains(PreTopologyMarker, rendered, StringComparison.Ordinal);
+        Assert.Contains("fixture acquisition refusal", rendered, StringComparison.Ordinal);
 
         // WHICH DISJUNCT RAISES IS ASSERTED, NOT JUST THAT ONE DOES (security review). The typo is
         // INSIDE the `security` block, so the schema error is located there, so the door records
@@ -1296,6 +1307,37 @@ public sealed class RunSuiteAsyncTests
         // `AuthoringFault ∧ something-went-unconfirmed` disjunct, which on this fixture is true only
         // because the topology never came up — so it would pin the fixture, not the rule.
         Assert.Equal(SecurityAbortKind.SecurityDeclarationRejected, result.Assurance.Refusal);
+        Assert.True(result.Assurance.Unconfirmed);
+    }
+
+    [Fact]
+    public async Task RunSuiteAsync_UndeclaredConnection_IsRefusedBeforeInlineAcquisition()
+    {
+        var yaml = SecurityTypoSuiteClean.Replace("fixture-value", "${conn:typo}", StringComparison.Ordinal);
+        var registry = StepKindRegistry.BuildAndFreeze(ProviderAssemblies);
+        var scenario = AstBuilder.Build(YamlDocumentParser.Parse(yaml), registry);
+        var acquisitionAttempts = 0;
+        var drivers = new EnvironmentDriverRegistry(Array.Empty<IEnvironmentDriver>(), (_, _) =>
+        {
+            acquisitionAttempts++;
+            throw new ArgumentException("fixture acquisition refusal");
+        });
+        var output = new StringWriter();
+
+        var result = await ScenarioRunner.RunSuiteAsync(
+            scenarios: new[] { scenario },
+            scenarioNames: s_unknownConnectionNames,
+            yamlTexts: new[] { yaml },
+            providerAssemblies: ProviderAssemblies,
+            appHostAssemblyName: AppHostAssemblyName,
+            output: output,
+            environmentDrivers: drivers);
+
+        Assert.Equal(0, acquisitionAttempts);
+        Assert.Contains("references unknown dependency 'typo'", output.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain(PreTopologyMarker, output.ToString(), StringComparison.Ordinal);
+        Assert.Equal(Verdict.Inconclusive, result.Verdict);
+        Assert.Equal(SecurityAbortKind.AuthoringFault, result.Assurance.Refusal);
         Assert.True(result.Assurance.Unconfirmed);
     }
 

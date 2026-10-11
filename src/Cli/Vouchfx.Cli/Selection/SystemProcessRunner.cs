@@ -313,7 +313,8 @@ internal sealed class SystemProcessRunner : IProcessRunner
             // naming the resolved path as the CONTROL for the mapped one not naming it.
             throw new ProcessLaunchException(
                 $"Could not start '{fileName}'. See the inner exception for the operating system's reason.",
-                ex);
+                ex,
+                ClassifyLaunchFailure(ex, OperatingSystem.IsWindows(), workingDirectory));
         }
 
         // `using` emits its Dispose in a finally that ENCLOSES the explicit one below, so the kill
@@ -565,6 +566,28 @@ internal sealed class SystemProcessRunner : IProcessRunner
                 await standardOutput!.ConfigureAwait(false),
                 await standardError!.ConfigureAwait(false));
         }
+    }
+
+    /// <summary>Classifies only known OS load refusals; other failures retain their existing mapping.</summary>
+    // Called only around Process.Start, never around capture, waits or a running child. Codes
+    // are platform numbers, not localised text. Windows invalid-image codes 193/216 and POSIX
+    // ENOEXEC (8) identify a load refusal. ENOENT (2) on POSIX also covers a missing interpreter;
+    // require an existing working directory so a missing discovery root is not retried.
+    internal static ProcessLaunchFailureKind ClassifyLaunchFailure(
+        Exception error, bool windows, string workingDirectory)
+    {
+        if (error is not System.ComponentModel.Win32Exception native)
+        {
+            return ProcessLaunchFailureKind.Unclassified;
+        }
+
+        var loadFailure = windows
+            ? native.NativeErrorCode is 193 or 216
+            : native.NativeErrorCode == 8
+                || (native.NativeErrorCode == 2 && Directory.Exists(workingDirectory));
+        return loadFailure
+            ? ProcessLaunchFailureKind.ExecutableLoad
+            : ProcessLaunchFailureKind.Unclassified;
     }
 
     /// <summary>

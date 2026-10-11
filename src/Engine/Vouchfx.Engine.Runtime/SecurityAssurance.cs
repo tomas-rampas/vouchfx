@@ -68,11 +68,12 @@ public enum SecurityAbortKind
     /// <strong>"Whatever refused it" is the door's identity, not the predicate.</strong> An earlier
     /// wording said a document aborting before any container starts is unconfirmable whatever
     /// aborted it. That is wider than <see cref="SecurityAssurance.Unconfirmed"/>: this member
-    /// raises only in conjunction with a declared target left unconfirmed, so a secured document
-    /// whose YAML cannot be read or parsed at all binds no declaration and does not raise here (its
-    /// rows assert the notice is absent — and beside a parseable sibling that still costs an exit 0,
-    /// which is the residual of issue #411), and a refusal beside siblings whose probe confirmed
-    /// every declared target does not either. The door is irrelevant; the predicate is not.
+    /// raises only in conjunction with a declared target left unconfirmed. A document whose
+    /// YAML cannot be read or parsed binds no declaration and does not raise this predicate;
+    /// the matrix asserts security-notice absence. The independent parse-refusal policy
+    /// still prevents exit 0 beside a parseable sibling. A refusal beside siblings whose probe
+    /// confirmed every declared target does not raise this predicate either. The door is
+    /// irrelevant; the predicate is not.
     /// </para>
     /// <para>
     /// <strong>The refused-for-its-contents half of that hole is CLOSED for a document that

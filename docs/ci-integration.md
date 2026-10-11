@@ -154,9 +154,11 @@ that fault was about.**
 What that no longer implies is a difference in exit code. An unsecured suite carrying the same fault
 also reddens, through the separate no-verdict rule above (#369), so both arms exit 4 and the code
 cannot tell them apart. **The discriminator is the security notice**, which prints only for the
-secured arm. `SecurityAssuranceMatrixTests` rows 01 and 05–08b pin exactly that pair, and they were
-renamed from `…_Unsecured_ExitsSuccess` to `…_ExitsInconclusiveWithNoSecurityNotice` when the
-distinction moved.
+secured arm. `SecurityAssuranceMatrixTests` rows 01 and 05–08b use matched controls:
+the secured methods assert notice presence, while the unsecured methods assert notice absence;
+both assert exit 4. These are presence/absence checks, not exact notice-count assertions. The
+unsecured methods were renamed from `…_Unsecured_ExitsSuccess` to
+`…_ExitsInconclusiveWithNoSecurityNotice` when the distinction moved.
 
 The qualification "in a document it parsed" is the one shape outside that sentence, and it is a
 measured hole rather than a nuance of the rule: a file whose **YAML** the engine cannot read or parse

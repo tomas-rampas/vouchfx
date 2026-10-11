@@ -294,8 +294,8 @@ public static class SecuredTargets
     // framing wrote Encoding.UTF8.GetBytes, whose replacement fallback maps an unpaired
     // surrogate to U+FFFD — so caCert: "ca\uD800.pem" and caCert: "ca\uFFFD.pem"
     // produced identical bytes of identical length and therefore ONE identity, while NTFS stores
-    // UTF-16 filenames and.NET's path APIs pass both through, so both can name distinct files on
-    // disk. Hashing the code units directly is total over every , so the
+    // UTF-16 filenames and .NET's path APIs pass both through, so both can name distinct files on
+    // disk. Hashing the code units directly is total over every string, so the
     // injectivity claimed above holds whatever the field values contain, and it adds no throw
     // path, so the digest still cannot fail open.
     // Internal correction history (not XML documentation):
@@ -362,7 +362,7 @@ public static class SecuredTargets
     // declarations differing ONLY there share one identity. Not reachable today for a document the
     // engine accepts: $defs/security closes with "unevaluatedProperties": false and
     // no profile fragment contributing a field has shipped, so on every schema-valid document the
-    // bucket is  and contributes nothing to distinguish.
+    // bucket is null and contributes nothing to distinguish.
     // A rejected document can carry a non-null bucket, and that is NOT a way round this
     // exclusion — a claim an earlier revision of this remark made and which is false. An
     // unknown security key is what puts content in the bucket, and it does so by being a
@@ -411,9 +411,9 @@ public static class SecuredTargets
     // presence bit, a count and two strings per entry. A number written here is a second spelling
     // of that method, free to go stale the next time a field joins it, and it did.
     // Internal correction history (not XML documentation):
-    // A  field and an empty-string field differ — the
+    // A null field and an empty-string field differ — the
     // presence marker is written for both and the length only for the second — because an
-    // undeclared caCert is not the same declaration as caCert: "". (b)
+    // undeclared caCert is not the same declaration as caCert: "". REQ-004(b)
     // already requires an undeclared caCert to be treated as absent rather than as a
     // missing-but-implied field, and a digest that conflated the two would let those two
     // declarations cross-satisfy each other.

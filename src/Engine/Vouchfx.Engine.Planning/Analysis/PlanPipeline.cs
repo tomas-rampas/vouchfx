@@ -50,24 +50,24 @@ internal static class PlanPipeline
 
     // Internal correction history (not XML documentation):
     // MINOR fix-round: the original four-key claim that no analyser emits a tie past those
-    // four keys was false the moment  went from a T1 stub
-    // to real: two  findings (kind,
-    // target, suite, and step id all  on both — see
-    // 's rule-1/rule-2 emitters) tie on every one of
+    // four keys was false the moment CoverageGapAnalyser went from a T1 stub
+    // to real: two PlanFindingKinds.SuiteIdentityAmbiguous findings (kind,
+    // target, suite, and step id all null on both — see
+    // CoverageGapAnalyser.Analyse's rule-1/rule-2 emitters) tie on every one of
     // those four keys whenever a suite set has two scenario-id collisions, or one collision
     // plus one renamed-file ambiguity. The fifth key
-    // () separates a collision finding from a
+    // (PlanFinding.AmbiguityReason) separates a collision finding from a
     // renamed-file finding, but TWO collisions (or two renamed-file ambiguities) still tie on
     // all five — each is keyed by a distinct ScenarioId upstream
     // (RunCorrelator.Correlate's per-ScenarioId grouping), and that id is always
-    // embedded in 's templated prose, so the sixth key
+    // embedded in PlanFinding.Detail's templated prose, so the sixth key
     // finishes the job for every finding shape the current analysers produce. Before this fix
     // the four-key sort "worked" only by accident of RunCorrelator happening to emit
     // its collisions/renamed-file lists already ordinal-sorted by ScenarioId and
     // LINQ's OrderBy/ThenBy being a stable sort — properties this pipeline must
     // not silently depend on. This six-key sort is a genuinely total order over every finding
     // shape the current analysers emit; it is not a mathematically total order over every
-    // conceivable  two hand-built findings identical in all six
+    // conceivable PlanFinding: two hand-built findings identical in all six
     // fields would still tie, but no analyser today constructs such a pair.
     /// <summary>
     /// Sorts findings by kind, then target, then suite path, then step id, then ambiguity

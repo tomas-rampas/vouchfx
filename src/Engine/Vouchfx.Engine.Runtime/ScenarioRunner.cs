@@ -1211,12 +1211,12 @@ public static class ScenarioRunner
                 oex.Message));
             livePump?.PostRange(buffer);
 
-            // REQ-018: exactly ONE cause of an Environment error exits non-zero without
-            // --fail-on-env-error, and THIS DISCRIMINATOR IS UNTOUCHED by the derivation. The
-            // classified kind on the exception decides — not the verdict and not the message — so
-            // an unhealthy container, an unpullable image and an unrelated seed failure all reach
-            // this same catch, record TopologyUnavailable, and still exit 0 by default. That is
-            // #390, and it is deliberately still open (see SecurityAbortKind.TopologyUnavailable).
+            // WithAcquisitionFailure uses typed acquisition evidence, never message text.
+            // A failed security probe records ProbeUnconfirmed. The declared secured target's
+            // own readiness, discovery or server-material failure records
+            // SecuredTargetUnavailable when that declaration remains unconfirmed, so this
+            // EnvironmentError exits 3 without --fail-on-env-error. Unrelated or unattributed
+            // failures retain TopologyUnavailable and its ordinary infrastructure gate.
             return new ScenarioCoreResult(Verdict.EnvironmentError, buffer)
             {
                 Assurance = SecurityAssurance.None
@@ -2337,9 +2337,9 @@ public static class ScenarioRunner
         // THE WIDE READING WINS (security-assurance-derivation, decision 3). A secured document
         // that aborts before any container starts is unconfirmable WHATEVER aborted it, because
         // nothing downstream of the refusal ever runs to confirm it. What the old rationale got
-        // right is preserved by `Declared`, not by this branch: a suite declaring no security is
-        // untouched here, exactly as before — exit 0 by default, exit 4 under
-        // --fail-on-inconclusive — because an empty `Declared` raises nothing.
+        // right is preserved by Declared, not by this branch: an empty declaration raises no
+        // security-assurance predicate. The independent authoring/no-execution rules still
+        // make an unsecured protocol-conflict refusal exit 4 without --fail-on-inconclusive.
         //
         // USER-VISIBLE: a secured suite whose scenarios split the two protocol families now reddens
         // a build that was green. That is the widening, stated rather than discovered.
@@ -2544,25 +2544,21 @@ public static class ScenarioRunner
             await output.WriteLineAsync(DisplaySanitiser.SanitiseForDisplay(topologyFailure))
                 .ConfigureAwait(false);
 
-            // REQ-018: AT THIS CATCH, the classified kind on the exception is the whole
-            // discriminator — not the message text and not the verdict — and IT IS UNTOUCHED by
-            // the derivation. An unhealthy container, an unpullable image and an unrelated seed
-            // failure all reach this same catch and record TopologyUnavailable.
+            // Classify through WithAcquisitionFailure, using the error kind plus typed
+            // acquisition stage and exact resource name, never the message or verdict.
+            // A failed confirmation probe records ProbeUnconfirmed. The declared secured
+            // resource's own readiness, discovery or server-material failure records
+            // SecuredTargetUnavailable when that declaration remains unconfirmed; its
+            // EnvironmentError exits 3 even without --fail-on-env-error.
             //
-            // AND WHEN THE TOPOLOGY FAILURE IS THE RUN'S ONLY FAULT, THAT STILL EXITS 0 BY
-            // DEFAULT — that is #390, deliberately still open. It is no longer true of every run
-            // reaching this catch, and the exception is the marker threaded onto the return below:
-            // a Pass-B provider defect followed by a topology that would not start aggregates to
-            // EnvironmentError, FromVerdict returns Success ungated, and #480's rule then takes it
-            // to 4. Under --fail-on-env-error the answer is 3 rather than 4, because that rule is
-            // conditioned on the code so far being Success and the gate has already chosen one.
+            // Unrelated or unattributed startup failures retain TopologyUnavailable. When
+            // one is the run's only fault, --fail-on-env-error still controls exit 3 versus 0.
+            // A provider/engine or authoring refusal already recorded by the same run cannot
+            // be hidden: those independent checks prevent exit 0 without replacing a code
+            // already selected. Under --fail-on-env-error, the EnvironmentError stays 3.
             //
-            // Scoped to this catch deliberately. An earlier wording said "exactly ONE cause of an
-            // Environment error exits non-zero without --fail-on-env-error", which was true when
-            // the probe was the only one; the shared-`environment` divergence gate is now a second,
-            // and it never reaches this catch at all — it returns an EnvironmentError verdict with
-            // no exception to classify. A count of causes stated from inside one catch goes stale
-            // the moment a cause appears outside it.
+            // The shared-environment divergence guard is a separate refusal before this
+            // catch. Do not infer a run's exit policy from an exception category alone.
             //
             // `Refusing` keeps the more consequential refusal, so a scenario already refused at a
             // compile-time door does not have its record overwritten by a topology that then
@@ -2585,14 +2581,12 @@ public static class ScenarioRunner
             // tells the completion path this text already reached the terminal, so the print above
             // is not duplicated.
             //
-            // The classified kind on the exception still decides the refusal, untouched: an
-            // unhealthy container, an unpullable image and an unrelated seed failure all record
-            // TopologyUnavailable, and where the topology failure is the run's ONLY fault they
-            // still exit 0 by default. That is #390, deliberately open — #407's change was about
-            // what a run REPORTS, not about what it exits. The qualifier is load-bearing on THIS
-            // call: `providerOrEngineFaultObserved` is passed below, and when it is true the run
-            // exits 4 (or 3 under --fail-on-env-error, which chooses a code first) by #480's rule.
-            // See the REQ-018 paragraph above for the full statement.
+            // WithAcquisitionFailure preserves a previously stronger refusal and records
+            // typed SecuredTargetUnavailable when this failure belongs to an unconfirmed
+            // declared secured resource. An unrelated or unattributed topology failure
+            // remains gated only when it is the run's sole fault; provider/engine and
+            // authoring refusal evidence passed below independently prevents exit 0.
+            // See the acquisition-classification paragraph above for the full distinction.
             return await CompleteWithoutTopologyAsync(
                     StampWhereUnjudged(compilations, Verdict.EnvironmentError, topologyFailure),
                     WithUnbuiltDocuments(assurance.WithAcquisitionFailure(oex)),

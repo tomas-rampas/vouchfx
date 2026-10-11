@@ -115,9 +115,11 @@
 // leading-dash refusal plus `--end-of-options` defends git's own OPTION PARSING; `ArgumentList`
 // defends against SHELL quoting. Which BINARY is resolved was covered by neither.
 //
-// The search lives in this file rather than in SystemProcessRunner because it is git-specific (the
-// candidate name, the "is git installed" diagnostic) and that runner deliberately carries no git
-// knowledge. It runs ONCE per change-set: three git calls, one resolution.
+// The candidate search lives here because it is git-specific; SystemProcessRunner supplies only
+// typed OS launch outcomes. Production examines a bounded ordered PATH list during the first real
+// rev-parse call. It retries only confirmed pre-execution load failures, then pins the first binary
+// that starts for diff and status. A child exit, timeout, capture failure or cancellation is never
+// a reason to try another binary. The generic LocateOnPath helper retains its first-match policy.
 //
 // THE GIT CHILD'S ENVIRONMENT IS CONFINED HERE, FOR THE SAME REASON (#500).
 // ────────────────────────────────────────────────────────────────────────
@@ -160,7 +162,7 @@ internal sealed class GitChangeSet : IChangeSet
     /// <param name="processRunner">The seam used to invoke git.</param>
     /// <param name="gitExecutableLocator">
     /// Overrides the <c>PATH</c> search that finds the git executable, returning a rooted path or
-    /// <see langword="null"/> for "not found". Defaults to <see cref="LocateGitOnPath"/>.
+    /// <see langword="null"/> for "not found". Production uses the bounded candidate search.
     /// </param>
     /// <param name="cancellationToken">
     /// Cancels the git calls. Threaded through so a Ctrl+C during a wedged <c>--changed-since</c>
@@ -189,6 +191,18 @@ internal sealed class GitChangeSet : IChangeSet
         IProcessRunner processRunner,
         Func<string?>? gitExecutableLocator = null,
         CancellationToken cancellationToken = default)
+        : this(changedSinceRef, workingDirectory, processRunner, gitExecutableLocator, null, cancellationToken)
+    {
+    }
+
+    /// <summary>Supports candidate-search tests without changing the existing single-locator seam.</summary>
+    internal GitChangeSet(
+        string changedSinceRef,
+        string workingDirectory,
+        IProcessRunner processRunner,
+        Func<string?>? gitExecutableLocator,
+        Func<IReadOnlyList<string>>? gitExecutableCandidatesLocator,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(workingDirectory);
         ArgumentNullException.ThrowIfNull(processRunner);
@@ -207,25 +221,29 @@ internal sealed class GitChangeSet : IChangeSet
                 $"Invalid git ref '{changedSinceRef}': must not start with '-'.");
         }
 
-        // ONCE per change-set, not once per git call (#499): three invocations follow and they all
-        // launch this same rooted path. A miss is refused here rather than degraded to the bare
-        // name — falling back to "git" is precisely the search-order hole this resolution closes.
-        //
-        // The refusal reuses the launch failure's OUTCOME — a ChangeSetException, which the CLI
-        // maps to exit 2 — but no longer its WORDING: this site has no candidate and the launch
-        // site has one, so "is git installed and on PATH?" is the actionable question here and a
-        // misdirection there. See GitNotStartable. Exit 2 for every selection-infrastructure
-        // failure, this one included, is the recorded decision — blueprint §16.4 (issue #521),
-        // and see RunGit's remarks — not something this binary-resolution fix answers in passing.
-        var gitExecutable = (gitExecutableLocator ?? LocateGitOnPath)()
-            ?? throw new ChangeSetException(GitUnavailable("the change-set computation"));
-
-        // ONCE per change-set, like the resolution above and for the same reason: the three calls
-        // below are one logical operation and must not disagree about what git can see (#500).
+        // Build one confined environment for the whole operation. Production selects a rooted
+        // executable during rev-parse, then uses that exact path for diff and status. No branch
+        // falls back to a bare name or shell. Selection-infrastructure failures remain exit 2;
+        // caller cancellation still propagates separately.
         var gitEnvironment = ConfinedGitEnvironment();
 
-        var repoRoot = ResolveRepoRoot(
-            gitExecutable, workingDirectory, gitEnvironment, processRunner, cancellationToken);
+        string gitExecutable;
+        string repoRoot;
+        if (gitExecutableLocator is not null)
+        {
+            // Keep the existing single-locator seam independent of the host's PATH and of the
+            // new candidate seam. It never searches for an alternative after its one answer.
+            gitExecutable = gitExecutableLocator()
+                ?? throw new ChangeSetException(GitUnavailable("the change-set computation"));
+            repoRoot = ResolveRepoRoot(
+                gitExecutable, workingDirectory, gitEnvironment, processRunner, cancellationToken);
+        }
+        else
+        {
+            var candidates = (gitExecutableCandidatesLocator ?? LocateGitCandidatesOnPath)();
+            (gitExecutable, repoRoot) = ResolveGitAndRepoRoot(
+                candidates, workingDirectory, gitEnvironment, processRunner, cancellationToken);
+        }
 
         var changed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -342,14 +360,16 @@ internal sealed class GitChangeSet : IChangeSet
         string workingDirectory,
         IReadOnlyDictionary<string, string> environment,
         IProcessRunner processRunner,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool retryLoadFailure = false)
     {
-        var result = RunGit(
+        var result = RunGitCore(
             gitExecutable,
             processRunner,
             workingDirectory,
             environment,
             "repository-root lookup",
+            retryLoadFailure,
             cancellationToken,
             // See the constructor's status call for why every call carries this.
             "--no-optional-locks",
@@ -374,6 +394,57 @@ internal sealed class GitChangeSet : IChangeSet
         // canonicalising separators keeps every Path.GetFullPath call site in this file
         // consistent against the Linux backslash-as-literal-char behaviour (see IsChanged).
         return Normalise(Path.GetFullPath(ToOsSeparators(root)));
+    }
+
+    private static (string Executable, string RepoRoot) ResolveGitAndRepoRoot(
+        IReadOnlyList<string> candidates,
+        string workingDirectory,
+        IReadOnlyDictionary<string, string> environment,
+        IProcessRunner processRunner,
+        CancellationToken cancellationToken)
+    {
+        ProcessLaunchException? lastLoadFailure = null;
+        var seen = new HashSet<string>(
+            OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+        var attempts = 0;
+        for (var index = 0; index < Math.Min(candidates.Count, MaximumPathEntries); index++)
+        {
+            var candidate = candidates[index];
+            cancellationToken.ThrowIfCancellationRequested();
+            if (attempts == MaximumGitLaunchAttempts)
+            {
+                break;
+            }
+
+            if (!Path.IsPathFullyQualified(candidate) || !seen.Add(Path.GetFullPath(candidate)))
+            {
+                continue;
+            }
+
+            attempts++;
+            try
+            {
+                // This is the real first operation, not a --version probe. Any returned child
+                // result, timeout, capture failure or other refusal ends selection immediately.
+                var root = ResolveRepoRoot(
+                    candidate, workingDirectory, environment, processRunner, cancellationToken,
+                    retryLoadFailure: true);
+                return (candidate, root);
+            }
+            catch (ProcessLaunchException error)
+                when (error.FailureKind == ProcessLaunchFailureKind.ExecutableLoad)
+            {
+                lastLoadFailure = error;
+            }
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        if (lastLoadFailure is not null)
+        {
+            throw new ChangeSetException(GitCandidatesExhausted, lastLoadFailure);
+        }
+
+        throw new ChangeSetException(GitUnavailable("the change-set computation"));
     }
 
     /// <summary>
@@ -427,6 +498,18 @@ internal sealed class GitChangeSet : IChangeSet
         IReadOnlyDictionary<string, string> environment,
         string operation,
         CancellationToken cancellationToken,
+        params string[] arguments) =>
+        RunGitCore(gitExecutable, processRunner, workingDirectory, environment, operation,
+            false, cancellationToken, arguments);
+
+    private static ProcessResult RunGitCore(
+        string gitExecutable,
+        IProcessRunner processRunner,
+        string workingDirectory,
+        IReadOnlyDictionary<string, string> environment,
+        string operation,
+        bool retryLoadFailure,
+        CancellationToken cancellationToken,
         params string[] arguments)
     {
         ProcessResult result;
@@ -436,6 +519,7 @@ internal sealed class GitChangeSet : IChangeSet
                 gitExecutable, arguments, workingDirectory, environment, cancellationToken);
         }
         catch (ProcessLaunchException ex)
+            when (!retryLoadFailure || ex.FailureKind != ProcessLaunchFailureKind.ExecutableLoad)
         {
             // NO REASON CLAUSE AT ALL, and the deletion is the fix rather than a simplification.
             // Both candidate sources for one carry the host path. MEASURED on this host (net8.0,
@@ -538,14 +622,22 @@ internal sealed class GitChangeSet : IChangeSet
     /// a reader would want named and is precisely the host path that may not be disclosed, so the
     /// message describes WHICH candidate it means rather than spelling it. That is #357's rule in
     /// its usual shape: name the declared thing and the concept it resolves against, never the
-    /// resolution. "The first git on <c>PATH</c>" is the concept because
-    /// <see cref="LocateGitOnPath"/> returns the first fully qualified match and nothing else; a
-    /// test may inject another locator, and nothing user-facing goes through one.
+    /// resolution. "The selected git on <c>PATH</c>" names the candidate without claiming it is
+    /// the first entry: earlier candidates may have failed before execution. Tests can retain
+    /// the single-candidate locator without changing that diagnostic or probing the host.
     /// </remarks>
     private static string GitNotStartable(string operation) =>
         $"Could not start git for {operation}. A git executable was found on PATH, but the "
-        + "operating system refused to start it. Is the first git on PATH a valid executable this "
+        + "operating system refused to start it. Is the selected git on PATH a valid executable this "
         + "user may run?";
+
+    internal const int MaximumPathEntries = 220;
+    internal const int MaximumPathCharacters = 32_768;
+    internal const int MaximumGitLaunchAttempts = 32;
+    internal const string GitCandidatesExhausted =
+        "Could not start git for the change-set computation. The bounded PATH search found "
+        + "candidates, but the operating system refused to load them. Install a valid git "
+        + "executable this user may run and place its directory earlier on PATH.";
 
     /// <summary>
     /// What replaces an absolute host path in relayed text.
@@ -1640,7 +1732,6 @@ internal sealed class GitChangeSet : IChangeSet
         }
 
         var fileName = CandidateFileName(name, OperatingSystem.IsWindows());
-
         foreach (var entry in pathVariable.Split(Path.PathSeparator))
         {
             if (entry.Length == 0 || !Path.IsPathFullyQualified(entry))
@@ -1656,6 +1747,59 @@ internal sealed class GitChangeSet : IChangeSet
         }
 
         return null;
+    }
+
+    internal static IReadOnlyList<string> LocateGitCandidatesOnPath() =>
+        LocateCandidatesOnPath("git", Environment.GetEnvironmentVariable("PATH"));
+
+    /// <summary>Searches complete PATH entries within fixed character, entry and candidate bounds.</summary>
+    internal static IReadOnlyList<string> LocateCandidatesOnPath(string name, string? pathVariable)
+    {
+        var candidates = new List<string>();
+        if (string.IsNullOrEmpty(pathVariable))
+        {
+            return candidates;
+        }
+
+        var fileName = CandidateFileName(name, OperatingSystem.IsWindows());
+
+        var seen = new HashSet<string>(
+            OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+        var start = 0;
+        var entries = 0;
+        var searchableLength = Math.Min(pathVariable.Length, MaximumPathCharacters);
+        while (start < searchableLength && entries < MaximumPathEntries
+            && candidates.Count < MaximumGitLaunchAttempts)
+        {
+            var end = pathVariable.IndexOf(Path.PathSeparator, start, searchableLength - start);
+            if (end < 0)
+            {
+                // A longer input has no complete remaining entry inside the character budget.
+                // Do not scan beyond it to find a separator, or treat a partial entry as a path.
+                if (pathVariable.Length > searchableLength)
+                {
+                    break;
+                }
+
+                end = searchableLength;
+            }
+
+            var entry = pathVariable[start..end];
+            entries++;
+            start = end + 1;
+            if (entry.Length == 0 || !Path.IsPathFullyQualified(entry))
+            {
+                continue;
+            }
+
+            var candidate = Path.Combine(entry, fileName);
+            if (IsExecutableFile(candidate) && seen.Add(Path.GetFullPath(candidate)))
+            {
+                candidates.Add(candidate);
+            }
+        }
+
+        return candidates;
     }
 
     /// <summary>
@@ -1693,13 +1837,12 @@ internal sealed class GitChangeSet : IChangeSet
     /// <strong>PERMISSION IS NOT LAUNCHABILITY, so resolution does not promise the candidate will
     /// load.</strong> <c>access(X_OK)</c> answers "may this caller execute it", not "can
     /// <c>execve</c> make an image of it": a mode-0755 text file with no shebang, or an ELF whose
-    /// interpreter is missing, passes here and then fails <c>ENOEXEC</c> at the launch.
-    /// <see cref="LocateOnPath(string, string?)"/> returns that first plausible candidate and does
-    /// not continue, so the shadowing shape #509 closed for the permission cause survives for
-    /// every non-permission one. First-launchable resolution was the other fix #509 offered and
-    /// was declined; such a failure therefore surfaces at <see cref="RunGit"/>'s
-    /// <see cref="ProcessLaunchException"/> arm, which lists <c>ENOEXEC</c> among the causes still
-    /// reachable there.
+    /// interpreter is missing, passes here but can fail during loading: a no-shebang text file
+    /// gives <c>ENOEXEC</c>; a missing interpreter gives <c>ENOENT</c>. Those were measured in a
+    /// glibc Linux container as a nonroot caller. Production git selection retries only the
+    /// process boundary's typed load refusals within fixed bounds. The generic
+    /// <see cref="LocateOnPath(string, string?)"/> still returns the first plausible candidate;
+    /// callers using that helper alone have not established launchability.
     /// </para>
     /// </remarks>
     private static bool IsExecutableFile(string candidate)

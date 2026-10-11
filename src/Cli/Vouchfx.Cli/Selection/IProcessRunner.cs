@@ -174,6 +174,27 @@ internal sealed class ProcessLaunchException : Exception
         : base(message, innerException)
     {
     }
+
+    /// <summary>Initialises an OS-confirmed failure before execution began.</summary>
+    public ProcessLaunchException(
+        string message, Exception innerException, ProcessLaunchFailureKind failureKind)
+        : base(message, innerException)
+    {
+        FailureKind = failureKind;
+    }
+
+    /// <summary>The process boundary's classification; unclassified failures are never retried.</summary>
+    public ProcessLaunchFailureKind FailureKind { get; }
+}
+
+/// <summary>Distinguishes a confirmed image-load refusal from other start failures.</summary>
+internal enum ProcessLaunchFailureKind
+{
+    /// <summary>No executable-load cause has been established.</summary>
+    Unclassified,
+
+    /// <summary>The OS refused the executable before a child began running.</summary>
+    ExecutableLoad,
 }
 
 /// <summary>

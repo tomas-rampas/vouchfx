@@ -9,7 +9,10 @@ using YamlDotNet.RepresentationModel;
 
 namespace Vouchfx.Engine.Orchestration.Environments;
 
-internal sealed record ComposeHttpBinding(string Service, int Port, string ReadinessPath, int ExpectedStatus);
+internal enum ComposeServiceKind { Http, Tcp }
+internal enum ComposeReadinessKind { Http, Tcp, Healthcheck }
+internal sealed record ComposeServiceBinding(string Service, int Port, ComposeServiceKind Kind,
+    ComposeReadinessKind Readiness, string? ReadinessPath = null, int ExpectedStatus = 200);
 internal sealed record ComposePostgresBinding(string Service, int Port, string Database, string Username, string PasswordReference);
 
 /// <summary>The adapter's configuration. Native Compose alone interprets and merges manifests.</summary>
@@ -20,13 +23,14 @@ internal sealed record ComposeConfiguration(
     IReadOnlyList<string> Profiles,
     IReadOnlyList<string> EnvFiles,
     IReadOnlyDictionary<string, string> Environment,
-    IReadOnlyDictionary<string, ComposeHttpBinding> Services,
+    IReadOnlyDictionary<string, ComposeServiceBinding> Services,
     IReadOnlyDictionary<string, ComposePostgresBinding> Dependencies,
     TimeSpan StartupTimeout,
     TimeSpan CleanupTimeout,
     string Fingerprint)
 {
     private static readonly string[] s_httpEndpoints = { "http" };
+    private static readonly string[] s_tcpEndpoints = { "tcp" };
     internal IReadOnlyList<string> InputFiles { get; init; } = Array.Empty<string>();
     internal static ComposeConfiguration Load(string path, ISet<string>? knownInputs = null)
     {
@@ -70,22 +74,42 @@ internal sealed record ComposeConfiguration(
             ValidateReference(environment[name], reader, "environment." + name, required: false);
         }
 
-        var services = new Dictionary<string, ComposeHttpBinding>(StringComparer.Ordinal);
+        var services = new Dictionary<string, ComposeServiceBinding>(StringComparer.Ordinal);
         foreach (var (name, node) in reader.Map("services"))
         {
             Name(name, reader, "services");
             var item = ConfigMapping.Child(node, "services." + name);
-            item.Only("service", "port", "readiness");
+            item.Only("type", "service", "port", "readiness");
             var service = item.Text("service");
             Name(service, item, "service");
             var readiness = item.Child("readiness");
-            readiness.Only("path", "status");
-            var readinessPath = readiness.Text("path");
-            if (!readinessPath.StartsWith('/') || readinessPath.StartsWith("//", StringComparison.Ordinal)
-                || readinessPath.Contains('?') || readinessPath.Contains('#') || readinessPath.Contains("${", StringComparison.Ordinal))
-                throw readiness.Error("path", "must be an HTTP path without authority, query, fragment or credentials");
-            services.Add(name, new ComposeHttpBinding(service, item.Integer("port", 1, 65535),
-                readinessPath, readiness.Integer("status", 100, 599, 200)));
+            var port = item.Integer("port", 1, 65535);
+            switch (item.OptionalText("type") ?? "http")
+            {
+                case "http":
+                    readiness.Only("type", "path", "status");
+                    if (readiness.OptionalText("type") is { } httpReadiness && httpReadiness != "http")
+                        throw readiness.Error("type", "HTTP bindings require HTTP path readiness");
+                    var readinessPath = readiness.Text("path");
+                    if (!readinessPath.StartsWith('/') || readinessPath.StartsWith("//", StringComparison.Ordinal)
+                        || readinessPath.Contains('?') || readinessPath.Contains('#') || readinessPath.Contains("${", StringComparison.Ordinal))
+                        throw readiness.Error("path", "must be an HTTP path without authority, query, fragment or credentials");
+                    services.Add(name, new ComposeServiceBinding(service, port, ComposeServiceKind.Http,
+                        ComposeReadinessKind.Http, readinessPath, readiness.Integer("status", 100, 599, 200)));
+                    break;
+                case "tcp":
+                    readiness.Only("type");
+                    var kind = readiness.Text("type") switch
+                    {
+                        "tcp" => ComposeReadinessKind.Tcp,
+                        "healthcheck" => ComposeReadinessKind.Healthcheck,
+                        _ => throw readiness.Error("type", "TCP bindings require explicit tcp or healthcheck readiness"),
+                    };
+                    services.Add(name, new ComposeServiceBinding(service, port, ComposeServiceKind.Tcp, kind));
+                    break;
+                default:
+                    throw item.Error("type", "must be http or tcp");
+            }
         }
 
         var dependencies = new Dictionary<string, ComposePostgresBinding>(StringComparer.Ordinal);
@@ -103,7 +127,7 @@ internal sealed record ComposeConfiguration(
             dependencies.Add(name, new ComposePostgresBinding(service, item.Integer("port", 1, 65535),
                 item.Text("database"), item.Text("username"), password));
         }
-        if (services.Count + dependencies.Count == 0) throw reader.Error("services", "declare at least one HTTP or PostgreSQL binding");
+        if (services.Count + dependencies.Count == 0) throw reader.Error("services", "declare at least one HTTP, TCP or PostgreSQL binding");
 
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         AddHash(hash, configPath, bytes);
@@ -132,7 +156,8 @@ internal sealed record ComposeConfiguration(
     }
 
     internal EnvironmentDeclarations Declarations() => new(
-        Services.ToDictionary(p => p.Key, _ => new DeclaredServiceInfo(s_httpEndpoints), StringComparer.Ordinal),
+        Services.ToDictionary(p => p.Key, p => new DeclaredServiceInfo(
+            p.Value.Kind == ComposeServiceKind.Tcp ? s_tcpEndpoints : s_httpEndpoints), StringComparer.Ordinal),
         Dependencies.ToDictionary(p => p.Key, _ => "postgres", StringComparer.Ordinal));
 
     private static List<string> ManifestEnvironmentFiles(byte[] bytes, string projectDirectory, Action<string> trackInput)

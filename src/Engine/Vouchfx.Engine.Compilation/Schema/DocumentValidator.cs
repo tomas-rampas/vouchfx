@@ -110,7 +110,7 @@ public static class DocumentValidator
 
     // Internal correction history (not XML documentation):
     // M2 + M3 (peer review, fix round 2). The registry parameter previously hung off the PUBLIC
-    // overload with a  default — a shipped, documented API surface whose
+    // overload with a null default — a shipped, documented API surface whose
     // own documentation promised a test that did not exist, on a package that was not supposed
     // to publish this type at all. Every call site passed two arguments: 81 of them, re-measured
     // across src/, tests/, tools/ and examples/ with build output
@@ -380,7 +380,7 @@ public static class DocumentValidator
     // registry since G-MINOR-8 — its <param> was already correct, so the two
     // disagreed.
     // Internal correction history (not XML documentation):
-    // Copilot 2 : the pointer is built by ESCAPING each map key per
+    // Copilot 2: the pointer is built by ESCAPING each map key per
     // RFC 6901 (see EncodePointerSegment), never by raw interpolation. Both
     // environment.services and environment.dependencies are open objects with no
     // propertyNames pattern (only variables and capture carry one), so a

@@ -201,10 +201,10 @@ internal static class ExitCodes
         bool failOnInconclusive,
         SecurityAssurance? securityAssurance = null)
     {
-        // REQ-018's carve-out, read ONCE from the assurance's own evidence rather than decided at
-        // any of the nine doors that used to decide it for themselves. `Unconfirmed` is
-        // `(an authoring refusal ∧ some declared target went unconfirmed) ∨ a failed probe
-        // ∨ a refusal located in the declaration itself` — see SecurityAssurance.
+        // Read the assurance's own evidence once rather than deciding it at each door.
+        // Authoring or typed secured-target acquisition refusal with an unconfirmed
+        // declaration, a failed probe, or a declaration rejection raises the predicate.
+        // See SecurityAssurance.Unconfirmed for the complete rule.
         var securityUnconfirmed = securityAssurance?.Unconfirmed == true;
 
         return verdict switch

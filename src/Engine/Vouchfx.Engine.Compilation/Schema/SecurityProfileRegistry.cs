@@ -270,8 +270,8 @@ internal sealed class SecurityProfileRegistry
     // copies are fixed together, because a known correctness bug duplicated across two files is
     // how one becomes permanent. Same back-off idiom as
     // SuiteSetLoader.TruncateParseErrorMessage.
-    // SEC-1 (peer review, fix round 3): , not
-    // , so SecurityProfileWiringValidator (Vouchfx.Engine.Runtime,
+    // SEC-1 (peer review, fix round 3): internal, not
+    // private, so SecurityProfileWiringValidator (Vouchfx.Engine.Runtime,
     // reached through this project's own InternalsVisibleTo) bounds its own
     // author-controlled profile interpolation through THIS helper rather than growing a
     // third copy. Widening the accessibility publishes nothing: every type in this file is
@@ -487,7 +487,7 @@ internal sealed class SecurityProfileRegistry
 // is consulted at VALIDATION time (SecurityProfileWiringValidator, run from
 // ProviderPipeline.Compile), so it gates WHICH SUITES VALIDATE — identical semantics to
 // REQ-021's schema narrowing, which this series declared freeze-critical for exactly that
-// reason. A tls wiring returning  unconditionally would accept, at
+// reason. A tls wiring returning true unconditionally would accept, at
 // 1.0, a profile: tls on (say) a postgres dependency for which nothing stages a TLS
 // connection at all: the engine-side REQ-005 probe would confirm the endpoint SPEAKS TLS while
 // the step's own provider-emitted client connected in plaintext — precisely the false assurance

@@ -186,7 +186,7 @@ public interface ISecurityCertificateMaterial
     // Internal correction history (not XML documentation):
     // What the type does NOT give is ledger membership, and an earlier draft
     // of these remarks claimed otherwise. SecretString's constructor is
-    //  (SecretString.cs), with InternalsVisibleTo
+    // internal (SecretString.cs), with InternalsVisibleTo
     // granted only to Vouchfx.Engine.Abstractions.Tests, so the load path cannot MINT a
     // SecretString: it must obtain one from a resolver. That is a strictly
     // narrower guarantee than "the value is in the scrub ledger", because a resolver called
@@ -202,7 +202,7 @@ public interface ISecurityCertificateMaterial
     // DEFAULT-IMPLEMENTED rather than abstract, per CLAUDE.md's rule for evolving an
     // engine-supplied interface others implement: every existing implementor — the production
     // material and the test doubles — keeps compiling untouched, and the default's own
-    //  means "no passphrase declared", never "not yet loaded".
+    // null means "no passphrase declared", never "not yet loaded".
     /// <summary>
     /// The resolved passphrase for an encrypted client private key, or
     /// <see langword="null"/> when the target declares no <c>clientKeyPassword</c> — the

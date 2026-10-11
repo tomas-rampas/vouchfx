@@ -166,7 +166,7 @@ public sealed class ReproducibilityEnvelopeRunnerTests
     }
 
     // -------------------------------------------------------------------------
-    // 2. Fixture hash equals the seed applier's hash (shared routine, no dupe).
+    // 2. Envelope fixture hash matches SHA-256 of raw file bytes via SeedFixtures.
     // -------------------------------------------------------------------------
 
     /// <summary>

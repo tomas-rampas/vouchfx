@@ -356,17 +356,16 @@ public sealed class RunPathRootExecuteTests : IDisposable
     }
 
     /// <summary>
-    /// The carve-out stays NARROW: the same bad reference in a STEP is an ordinary authoring
-    /// error, exits 0 without <c>--fail-on-inconclusive</c>, and 4 with it. Without this control
-    /// the three tests above would equally pass an implementation that flagged every secret-
-    /// reference failure.
+    /// A bad reference in a STEP is an ordinary authoring refusal. All four rows exit
+    /// 4 regardless of <c>--fail-on-inconclusive</c>, before topology acquisition.
+    /// This control exercises the step-level path separately from security-field
+    /// reference failures; security-notice absence is covered by the matrix controls.
     /// </summary>
     [Theory]
-    // #369: the two ungated rows moved from Success to Inconclusive. A step-level secret-
-    // reference failure is refused before any topology is built, so nothing executed — and the
-    // gate is now irrelevant to this shape rather than decisive, which is why all four rows
-    // agree. The theory still earns its name: what it asserts is that this fault is NOT carved
-    // out by the security rule, and the notice assertion below is what shows that.
+    // The step-reference refusal happens before topology acquisition. All four rows
+    // therefore require Inconclusive regardless of the runtime gating flag.
+    // This test checks that exit and the step diagnostic; it does not assert notice
+    // absence. Row05's unsecured matrix control pins the security-notice distinction.
     [InlineData(false, ExitCodes.Inconclusive, null)]
     [InlineData(true, ExitCodes.Inconclusive, null)]
     [InlineData(false, ExitCodes.Inconclusive, 1)]
@@ -837,9 +836,9 @@ public sealed class RunPathRootExecuteTests : IDisposable
     }
 
     /// <summary>
-    /// The other direction, so the broadening is provably not collateral damage: the SAME innocent
-    /// schema error in an UNSECURED suite still exits 0 without <c>--fail-on-inconclusive</c>, and
-    /// prints no security notice.
+    /// The same schema refusal in an UNSECURED suite exits 4 without
+    /// <c>--fail-on-inconclusive</c>. It prints no security notice, so the
+    /// security-assurance rule has not broadened to a suite declaring no security.
     /// </summary>
     [Theory]
     [InlineData(null)]

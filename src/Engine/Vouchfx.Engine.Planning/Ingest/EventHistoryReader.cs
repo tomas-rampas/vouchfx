@@ -32,7 +32,7 @@ internal static class EventHistoryReader
     /// <summary>The raw, uncorrelated event data extracted from a history (before <see cref="RunCorrelator"/> attributes it to declared suites).</summary>
     /// <param name="ScenarioStarts">Every successfully-parsed <c>scenario-started</c> event.</param>
     /// <param name="StepCompletions">Every successfully-parsed <c>step-completed</c> event.</param>
-    /// <param name="RunIds">Every <c>runId</c> observed on a successfully recognised event (may repeat).</param>
+    /// <param name="RunIds">Every <c>runId</c> observed on an accepted envelope except transport advisories and reserved suite events (may repeat).</param>
     /// <param name="SkippedLines">The count of unparseable or unrecognisable event lines.</param>
     /// <param name="FirstTimestamp">The earliest timestamp across every recognised event, or <see langword="null"/> when none.</param>
     /// <param name="LastTimestamp">The latest timestamp across every recognised event, or <see langword="null"/> when none.</param>
@@ -213,17 +213,25 @@ internal static class EventHistoryReader
                         }
                     }
 
-                    // Any other recognised event type (suite-started, step-started,
-                    // step-attempt, environment-error, reproducibility-envelope) parses fine
-                    // as an envelope but carries no Planner-relevant payload; it still counts
-                    // toward the timestamp range and the observed run-id set below.
+                    // Other types, including unknown future types, retain generic envelope
+                    // acceptance without additional payload validation. Every accepted event
+                    // contributes to the timestamp range; only the known non-scenario types
+                    // below are excluded from the scenario execution count.
                     if (!recognisedFully)
                     {
                         skipped++;
                         continue;
                     }
 
-                    runIds.Add(envelope.RunId);
+                    // A transport advisory can carry a shared topology ID that belongs to no
+                    // scenario. Reserved suite envelopes likewise do not represent scenario
+                    // executions. Exclude only these exact types, preserving partial histories
+                    // and the existing forward-compatible handling of unknown envelopes.
+                    if (envelope.Type is not (EventTypes.TransportNotice
+                        or EventTypes.SuiteStarted or EventTypes.SuiteCompleted))
+                    {
+                        runIds.Add(envelope.RunId);
+                    }
                     if (first is null || envelope.Timestamp < first)
                     {
                         first = envelope.Timestamp;

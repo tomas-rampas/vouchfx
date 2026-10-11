@@ -174,7 +174,7 @@ This is correct behaviour: the Planner knows only what is declared, not what pla
 
 ### 3. Run count counts scenario executions, not invocations
 
-The `runCount` in the report counts distinct `runId`s observed. Each scenario execution receives its own `runId` (blueprint §16.2). A single `vouchfx run ./tests` over three `.e2e.yaml` files yields a run count of **3**, not **1**. This is correct: you ran three scenarios, so three scenario instances are present in the history.
+The report's `runCount` counts distinct `runId`s on accepted history events, excluding `transport-notice` advisories and the reserved `suite-started`/`suite-completed` types. A shared topology advisory can have an ID that belongs to no scenario, so it does not add an execution. Each scenario execution receives its own `runId` (blueprint §16.2): one `vouchfx run ./tests` over three `.e2e.yaml` files yields **3**, not **1**. Partial scenario histories and unknown future envelope types retain their existing counting behavior. Accepted advisories and suite envelopes still contribute to the history timestamp range; malformed lines retain the existing skip rules.
 
 ## Example invocation and output
 

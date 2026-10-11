@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.vouchfx.io/environment/compose/v1.json",
   "title": "Owned Compose Environment",
-  "description": "Configuration for fresh, owned Docker Compose environments with explicit HTTP and PostgreSQL bindings. Manifests are interpreted by native Docker Compose, not by this schema.",
+  "description": "Configuration for fresh, owned Docker Compose environments with explicit HTTP, TCP and PostgreSQL bindings. Manifests are interpreted by native Docker Compose, not by this schema.",
   "type": "object",
   "additionalProperties": false,
   "required": ["version", "files"],
@@ -25,19 +25,7 @@
     "cleanupTimeoutSeconds": { "type": "integer", "minimum": 1, "maximum": 120, "default": 30 },
     "services": {
       "type": "object", "propertyNames": { "$ref": "#/$defs/name" },
-      "additionalProperties": {
-        "type": "object", "additionalProperties": false, "required": ["service", "port", "readiness"],
-        "properties": {
-          "service": { "$ref": "#/$defs/name" }, "port": { "$ref": "#/$defs/port" },
-          "readiness": {
-            "type": "object", "additionalProperties": false, "required": ["path"],
-            "properties": {
-              "path": { "type": "string", "pattern": "^/(?!/)[^?#]*$", "not": { "pattern": "\\$\\{" } },
-              "status": { "type": "integer", "minimum": 100, "maximum": 599, "default": 200 }
-            }
-          }
-        }
-      }
+      "additionalProperties": { "oneOf": [{ "$ref": "#/$defs/httpBinding" }, { "$ref": "#/$defs/tcpBinding" }] }
     },
     "dependencies": {
       "type": "object", "propertyNames": { "$ref": "#/$defs/name" },
@@ -52,6 +40,34 @@
     }
   },
   "$defs": {
+    "httpBinding": {
+      "type": "object", "additionalProperties": false, "required": ["service", "port", "readiness"],
+      "properties": {
+        "type": { "const": "http", "default": "http" },
+        "service": { "$ref": "#/$defs/name" }, "port": { "$ref": "#/$defs/port" },
+        "readiness": {
+          "type": "object", "additionalProperties": false, "required": ["path"],
+          "properties": {
+            "type": { "const": "http" },
+            "path": { "type": "string", "pattern": "^/(?!/)[^?#]*$", "not": { "pattern": "\\$\\{" } },
+            "status": { "type": "integer", "minimum": 100, "maximum": 599, "default": 200 }
+          }
+        }
+      }
+    },
+    "tcpBinding": {
+      "type": "object", "additionalProperties": false, "required": ["type", "service", "port", "readiness"],
+      "properties": {
+        "type": { "const": "tcp" },
+        "service": { "$ref": "#/$defs/name" }, "port": { "$ref": "#/$defs/port" },
+        "readiness": {
+          "type": "object", "additionalProperties": false, "required": ["type"],
+          "properties": {
+            "type": { "enum": ["tcp", "healthcheck"], "description": "tcp proves host endpoint reachability only; healthcheck also requires the explicitly configured native service healthcheck to be healthy." }
+          }
+        }
+      }
+    },
     "name": { "type": "string", "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]*$" },
     "path": { "type": "string", "minLength": 1, "not": { "pattern": "\\$\\{" } },
     "port": { "type": "integer", "minimum": 1, "maximum": 65535 },

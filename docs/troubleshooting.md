@@ -1455,7 +1455,7 @@ A step's `type` field is well-formed (matches the `<family>.<provider>` pattern)
 
 ## Git selection diagnostics
 
-When using `--changed-since`, the CLI invokes git to determine which scenarios have changed. Two distinct error messages indicate different failure modes:
+When using `--changed-since`, the CLI invokes git to determine which scenarios have changed. Three distinct error messages indicate different failure modes:
 
 **Symptom 1:**
 ```
@@ -1463,7 +1463,7 @@ Could not run git for <operation>. Is git installed and on PATH?
 ```
 
 **What it means:**
-The CLI searched `PATH` but found no executable called `git` (or `git.exe` on Windows). Either git is not installed, or its installation directory is not in the `PATH` environment variable.
+The bounded CLI search found no eligible file called `git` (or `git.exe` on Windows). Either git is not installed, or its installation directory is not in the `PATH` environment variable.
 
 **Fix:**
 
@@ -1496,49 +1496,27 @@ The CLI searched `PATH` but found no executable called `git` (or `git.exe` on Wi
 
 **Symptom 2:**
 ```
-Could not start git for <operation>. A git executable was found on PATH, but the operating system refused to start it. Is the first git on PATH a valid executable this user may run?
+Could not start git for <operation>. A git executable was found on PATH, but the operating system refused to start it. Is the selected git on PATH a valid executable this user may run?
 ```
 
 **What it means:**
-A file named `git.exe` (or `git` on POSIX) was found on `PATH`, but the operating system would not execute it. Common causes:
+A selected candidate could not start for an error outside the supported load-recovery cases, or the pinned executable failed during diff or status. No alternative is used after a binary has started. Verify that the discovery directory exists and that your git installation is accessible and complete. A `.cmd` or `.bat` shim is never a candidate.
 
-- **Broken symlink on Windows:** The git executable is a symlink whose target is missing.
-  This reaches *this* symptom only on Windows, where `File.Exists` returns true for a
-  dangling symlink and the candidate is therefore retained. On POSIX the same file is
-  skipped during the search, so a broken symlink there produces Symptom 1 above instead.
-- **Wrong architecture:** The executable was compiled for a different CPU architecture (32-bit vs 64-bit).
-- **Permissions:** The file lacks read and execute permissions for the current user.
-- **File system race:** The file existed during the search but was deleted or replaced before execution.
+**Symptom 3:**
+```
+Could not start git for the change-set computation. The bounded PATH search found candidates, but the operating system refused to load them. Install a valid git executable this user may run and place its directory earlier on PATH.
+```
+
+**What it means:**
+Every attempted candidate failed before execution with a supported OS load error. Selection examines at most 220 complete `PATH` entries and 32,768 UTF-16 code units, and attempts at most 32 distinct candidates. It skips empty and relative entries without resolving them against the current directory. It does not launch a shell to interpret a text file.
 
 **Fix:**
 
-1. **On Windows, identify which `git.exe` was resolved:**
-   ```powershell
-   Get-Command git -CommandType Application | Where-Object { $_.Source -like '*.exe' } | Select-Object -First 1 Source
-   ```
-   The selection uses the **first `git.exe` on `PATH`**, so that is the file the operating system
-   refused. Confirm it is a genuine executable of the right architecture, rather than a placeholder,
-   a partially written download, or a text file that happens to be named `git.exe`.
+1. Install a complete git distribution for your platform. On Windows, use a real `git.exe`; on POSIX, check execute permission and any required interpreter or loader.
+2. Remove invalid placeholders or place the real installation directory earlier on `PATH`, within the search limits. A successful shell `git --version` alone does not prove that vouchfx resolves the same binary: shells can use aliases, functions and shims that this selection refuses.
+3. Retry selection from an existing repository. A real git that starts and rejects the repository or reference keeps its own failure; vouchfx never retries that result with another binary.
 
-   A `.cmd` or `.bat` shim is **not** this symptom. Shims are never candidates, so a host whose only
-   git is a shim reports Symptom 1 above, not this one.
-
-2. **On POSIX, verify the symlink resolves and the file is executable:**
-   ```bash
-   ls -la $(which git)
-   ```
-   If the output shows a broken symlink (target `->` pointing to a non-existent path), reinstall git via your package manager.
-
-3. **Check the file's permissions (POSIX):**
-   ```bash
-   stat $(which git)
-   ```
-   Ensure the current user can read and execute it. If not, run:
-   ```bash
-   chmod u+rx $(which git)
-   ```
-
-4. **In CI environments:** If this error occurs in a CI/CD pipeline, ensure the CI runner's git installation is correct and its `PATH` includes the git binary directory. Some container images ship only a git stub; use an image with a full git installation.
+All three selection refusals retain exit 2. A timeout or failed capture also refuses selection without using partial output; caller cancellation follows the cancellation path instead.
 
 ---
 

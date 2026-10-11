@@ -184,7 +184,7 @@ in `Vouchfx.Engine.Compilation` and `Vouchfx.Engine.Planning` instead of shellin
 
 | Code | Meaning | Breaks CI? |
 |---|---|---|
-| `0` | Pass — or EnvironmentError/Inconclusive when not opted in | – |
+| `0` | Pass, or a permitted ungated runtime EnvironmentError/Inconclusive; no unconditional refusal or security check applies | – |
 | `1` | **Fail** — a genuine defect | **Always** |
 | `2` | UsageError — bad option, missing path | Always |
 | `3` | EnvironmentError | Only with `--fail-on-env-error` — except an unconfirmable `security:` declaration |

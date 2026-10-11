@@ -23,7 +23,7 @@ The configuration path is relative to the suite. It cannot be combined with inli
 
 ## Bind logical targets
 
-Name the HTTP and PostgreSQL targets your assertions use. Manifest/env-file paths are relative to this configuration; native Compose handles merging, interpolation and project/build/mount paths.
+Name the HTTP, TCP and PostgreSQL targets your assertions use. Manifest/env-file paths are relative to this configuration; native Compose handles merging, interpolation and project/build/mount paths.
 
 ```yaml
 version: 1
@@ -39,6 +39,11 @@ services:
     service: web
     port: 8080
     readiness: {path: /health, status: 200}
+  broker:
+    type: tcp
+    service: kafka
+    port: 9092
+    readiness: {type: healthcheck}
 dependencies:
   db:
     type: postgres
@@ -51,7 +56,18 @@ dependencies:
 
 `files` is an ordered, nonempty list. `projectDirectory` defaults to the first manifest's directory. Optional `envFiles` selects Compose interpolation files; service `env_file` inputs are tracked too. `environment` accepts literal values or whole environment-secret references. Its names start with an ASCII letter or underscore, followed by ASCII letters, digits, underscores or dots, preserving case; `VOUCHFX_PROBE.key_1` is valid. Malformed names are refused without printing them. `COMPOSE_` and `DOCKER_` names remain reserved for ownership and daemon selection. This configuration rule does not reinterpret native manifest `environment` fields. Passwords require `${secret:env/NAME}`. Secrets resolve only during acquisition through the run's scrub ledger. Unknown configuration keys are refused.
 
-Publish exactly one IPv4 TCP mapping for each selected service/port. Random host ports are supported; fixed host ports are retained and conflicts fail startup. IPv6-only and multiple mappings are refused. HTTP readiness requires the selected status from the specified path. PostgreSQL readiness opens the declared database and executes `SELECT 1`; a running container alone cannot satisfy readiness.
+Publish exactly one IPv4 TCP mapping for each selected service/port, with one replica. Random host ports are supported; fixed host ports are retained and conflicts fail startup. IPv6-only and multiple mappings are refused. A published `0.0.0.0` address is reached through host loopback.
+
+| Binding | Readiness | Value supplied to assertions |
+| --- | --- | --- |
+| HTTP, the default; optional `type: http` | `readiness: {path: /health, status: 200}`; optional readiness `type: http` | `svc::<name>` holds `http://host:port` |
+| `type: tcp` service | `readiness: {type: tcp}` proves host-port reachability only | `svc::<name>` holds bare `host:port` |
+| `type: tcp` service | `readiness: {type: healthcheck}` requires its native healthcheck to be healthy and its host port reachable | `svc::<name>` holds bare `host:port` |
+| `type: postgres` dependency | Opens the declared database and executes `SELECT 1` | `conn::<name>` holds its connection string |
+
+TCP readiness must name its mode explicitly. Use `healthcheck` for brokers that need a protocol-level readiness command: configure an enabled native Compose `healthcheck.test` for that service. The adapter refuses missing, disabled or `NONE` checks before starting resources; an image's implicit healthcheck cannot satisfy this authoring requirement. At runtime it accepts healthy state only from the exact owned project's service container. Healthcheck command output is suppressed and is never stored in the ownership journal. A reachable TCP port alone does not prove broker readiness.
+
+Existing Kafka publish/expect steps can target the logical `broker` service. Supply a host-reachable Kafka advertised listener matching the selected published port; the adapter does not rewrite Kafka advertisements. Application-to-broker traffic can use a separate listener on Compose DNS. Use an isolated fixed listener port when the broker's advertisement requires it; conflicts fail startup. Configuration, binding and readiness remain adapter concerns, so another registered format can supply the same normalised service value.
 
 ## Validate, run and watch
 
@@ -84,6 +100,6 @@ Recovery requires access to the recorded local daemon, not original manifests or
 
 ## Current limits
 
-This driver supports owned HTTP/PostgreSQL environments on local Unix-socket or Windows named-pipe Docker daemons. Explicit `DOCKER_HOST` values must use a literal absolute Unix socket path, such as `unix:///var/run/docker.sock`, or `npipe:////./pipe/<name>` with one nonempty pipe name. Unix socket URIs cannot contain an authority, query, fragment, encoding, dot segments or empty path segments. Use isolated test overrides. External storage/networks, explicit shared resource names, fixed container names, delegated Compose provider plugins, custom resource drivers/options, reserved Compose labels, writable host mounts, host namespaces/devices/capabilities, explicit `uts`/`userns_mode`/`cgroup` settings and `use_api_socket` are refused before startup. Active `include`/`extends`, seed, borrowed resources, reuse and external-driver TLS/mTLS declarations are unsupported. Existing inline security validation remains available. These ownership checks do not sandbox user container images; review read-only host mounts and application behaviour yourself.
+This driver supports owned HTTP/TCP/PostgreSQL environments with IPv4 published endpoints on local Unix-socket or Windows named-pipe Docker daemons. Explicit `DOCKER_HOST` values must use a literal absolute Unix socket path, such as `unix:///var/run/docker.sock`, or `npipe:////./pipe/<name>` with one nonempty pipe name. Unix socket URIs cannot contain an authority, query, fragment, encoding, dot segments or empty path segments. Use isolated test overrides. External storage/networks, explicit shared resource names, fixed container names, delegated Compose provider plugins, custom resource drivers/options, reserved Compose labels, writable host mounts, host namespaces/devices/capabilities, explicit `uts`/`userns_mode`/`cgroup` settings and `use_api_socket` are refused before startup. Active `include`/`extends`, seed, borrowed resources, reuse and external-driver TLS/mTLS declarations are unsupported. Existing inline security validation remains available. These ownership checks do not sandbox user container images; review read-only host mounts and application behaviour yourself.
 
 In this matching source checkout, follow `examples/compose-orders/README.md` for the HTTP mutation and database example, including its identical inline assertion steps.

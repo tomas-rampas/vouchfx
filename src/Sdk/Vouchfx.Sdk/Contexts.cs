@@ -9,8 +9,9 @@ namespace Vouchfx.Sdk;
 // Internal correction history (not XML documentation):
 // This context is engine-supplied and provider-consumed:
 // providers receive an instance and read its members but never implement the
-// interface. Adding a member is therefore non-breaking for providers — only the
-// engine (the single in-tree implementor) must satisfy it. The frozen v1
+// interface. Providers do not implement added members; the engine supplies production
+// instances, while SDK testing contexts and test doubles may also implement the interface.
+// Keep additions compatible with those implementations. The frozen v1
 // contract (CLAUDE.md §13) governs the provider-implemented surface
 // (IStepProvider, IStepBinder<T>, …), which evolves solely via
 // new optional interfaces (e.g. ICompileReferenceContributor) and
@@ -169,8 +170,9 @@ public interface IProjectContext
 // Internal correction history (not XML documentation):
 // This context is engine-supplied and provider-consumed:
 // providers receive an instance and read its members but never implement the
-// interface. Adding a member is therefore non-breaking for providers — only the
-// engine (the single in-tree implementor) must satisfy it. The frozen v1
+// interface. Providers do not implement added members; the engine supplies production
+// instances, while SDK testing contexts and test doubles may also implement the interface.
+// Keep additions compatible with those implementations. The frozen v1
 // contract (CLAUDE.md §13) governs the provider-implemented surface
 // (IStepProvider, IStepBinder<T>, …), which evolves solely via
 // new optional interfaces (e.g. ICompileReferenceContributor) and
@@ -242,16 +244,14 @@ public interface ICompileContext
     /// a provider must avoid; membership of this map is the answer, and it is known at compile time.
     /// </para>
     /// <para>
-    /// <strong>Why a DEFAULT implementation rather than a plain new member.</strong> This
-    /// interface's own remarks say adding a member is non-breaking because the engine is its
-    /// single in-tree implementor — which is true of PRODUCTION code and false of test doubles:
-    /// this repository alone carries some eighty <c>StubCompileContext</c> stand-ins, and every
-    /// provider outside it is free to carry more. A default returning the empty map keeps all of
-    /// them compiling and behaving EXACTLY as before (an unknown name is not a service, so a
-    /// provider emits the <c>conn::</c> key it emitted before this member existed), while the
-    /// engine's own context overrides it with the real map. Adding a member with a default is
-    /// additive in the strongest available sense; adding one without would have been a
-    /// source-breaking change dressed as an additive one.
+    /// <strong>Why a default implementation rather than an abstract member.</strong>
+    /// Engine contexts, SDK testing contexts and test doubles implement this interface;
+    /// third-party harnesses may implement it too. Adding an abstract member would require
+    /// each existing implementation to provide it. The empty-map default lets implementations
+    /// without declared-service metadata retain their existing behaviour: an unknown target
+    /// is not a declared service, so providers continue to emit the <c>conn::</c> key.
+    /// Contexts that supply declared-service metadata override this member with their map;
+    /// the engine's compile context and <c>TestCompileContext</c> both expose that capability.
     /// </para>
     /// </remarks>
     IReadOnlyDictionary<string, DeclaredServiceInfo> DeclaredServices => NoDeclaredServices;

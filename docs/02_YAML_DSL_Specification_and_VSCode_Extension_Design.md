@@ -1703,12 +1703,14 @@ Variables that **no longer reach git** include:
 
 Operators who need a variable outside this list can forward it as a `GIT_`-prefixed variable (e.g. a custom `GIT_CONFIG_GLOBAL`), which always passes through. This is the supported escape hatch for cases where repository-level configuration depends on environment variables.
 
-**Git binary resolution.** The git executable is located by searching `PATH` **in order** and taking the first fully-qualified match. This differs from the default OS search:
+**Git binary resolution.** Selection searches absolute `PATH` entries **in order** and uses the first candidate that the operating system loads for the real repository-root lookup. The search examines at most 220 entries and 32,768 UTF-16 code units, without splitting a partial entry, and attempts at most 32 distinct candidates. Duplicate paths, empty entries and relative entries are skipped; entries are neither trimmed nor unquoted. This differs from the default OS search:
 
 - On **Windows:** the search looks **only** for `git.exe`. Git shims installed as `.cmd` or `.bat` files are skipped — they are not considered as candidates — because shims would otherwise enable command injection through argument parsing. If no `git.exe` is found on `PATH`, the selection fails with the error `Could not run git for <operation>. Is git installed and on PATH?`
 - On **POSIX:** the search looks for the bare name `git` and asks `access(2)` with `X_OK` whether this caller may execute it, rather than reading the mode bits — an execute bit set for *somebody* is not enough, so a candidate the caller cannot run is skipped instead of ending the search. Note that `access(2)` resolves against the **real** user and group, not the effective pair, so the two can disagree under set-uid. Reading the mode bits survives only as the fallback where the C library call cannot be resolved. Symlinks are resolved.
 
-This resolution happens **once per change-set** and is cached across all three git invocations. The binary must exist and be executable by the current user at the moment of the selection; a file system race (the binary is replaced between resolution and execution) is treated as a launch failure.
+The first operation retries only typed OS load refusals before execution: Windows invalid-image codes 193/216, or POSIX `ENOEXEC` (8) and `ENOENT` (2) when the discovery directory exists. This lets a text placeholder or a missing interpreter ahead of real git stop shadowing it. Other start failures remain refusals. There is no shell, batch-shim or `--version` fallback.
+
+Once a candidate starts, its absolute path is pinned for the repository-root lookup, diff and status. A nonzero child exit, timeout, failed output capture or caller cancellation **never** selects another binary, including when a later operation fails. Exhausting load-refused candidates produces a fixed path-free diagnostic and exit 2. The bounds also mean a valid git beyond the search limit is not used; place its directory earlier on `PATH`. These checks do not establish that a successfully loaded candidate is trustworthy.
 
 If git cannot be found, the selection fails with the error `Could not run git for <operation>. Is git installed and on PATH?` (For the full list of selection errors and how to handle them, see `troubleshooting.md` § Git selection diagnostics.)
 

@@ -2,7 +2,7 @@ using Vouchfx.Engine.Authoring.Model;
 
 namespace Vouchfx.Engine.Orchestration.Environments;
 
-/// <summary>Owned, fresh Compose projects exposing explicit HTTP and PostgreSQL bindings.</summary>
+/// <summary>Owned, fresh Compose projects exposing explicit HTTP, TCP and PostgreSQL bindings.</summary>
 public sealed class ComposeEnvironmentDriver : IEnvironmentDriver
 {
     public string Id => "compose";

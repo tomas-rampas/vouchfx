@@ -1,7 +1,9 @@
 using System.Collections.Frozen;
 using System.Net;
+using System.Net.Sockets;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using Npgsql;
 using Vouchfx.Engine.Abstractions.Secrets;
 
@@ -12,6 +14,12 @@ internal sealed class ComposeLease : IKeptTopology
     private static readonly string[] s_contextArguments = { "context", "inspect", "--format", "{{json .Endpoints.docker.Host}}" };
     private static readonly string[] s_configArguments = { "config", "--format", "json" };
     private static readonly string[] s_upArguments = { "up", "--detach", "--build" };
+    private const string HealthInspectionTemplate = """
+        {{json (index .Config.Labels "com.docker.compose.project")}}
+        {{json (index .Config.Labels "com.docker.compose.service")}}
+        {{json .State.Status}}
+        {{if .State.Health}}{{json .State.Health.Status}}{{else}}null{{end}}
+        """;
     private readonly ComposeConfiguration _configuration;
     private readonly IComposeProcess _process;
     private readonly IReadOnlyDictionary<string, string> _environment;
@@ -93,9 +101,19 @@ internal sealed class ComposeLease : IKeptTopology
             foreach (var (name, binding) in configuration.Services)
             {
                 var endpoint = await lease.DiscoverAsync(binding.Service, binding.Port, startup.Token).ConfigureAwait(false);
-                var url = $"http://{endpoint.Address}:{endpoint.Port}";
-                await WaitHttpAsync(url + binding.ReadinessPath, binding.ExpectedStatus, startup.Token).ConfigureAwait(false);
-                discovered[name] = url;
+                if (binding.Kind == ComposeServiceKind.Http)
+                {
+                    var url = $"http://{endpoint.Address}:{endpoint.Port}";
+                    await WaitHttpAsync(url + binding.ReadinessPath, binding.ExpectedStatus, startup.Token).ConfigureAwait(false);
+                    discovered[name] = url;
+                }
+                else
+                {
+                    if (binding.Readiness == ComposeReadinessKind.Healthcheck)
+                        await lease.WaitContainerHealthAsync(binding.Service, startup.Token).ConfigureAwait(false);
+                    await WaitTcpAsync(endpoint, startup.Token).ConfigureAwait(false);
+                    discovered[name] = endpoint.ToString();
+                }
             }
             foreach (var (name, binding) in configuration.Dependencies)
             {
@@ -125,7 +143,7 @@ internal sealed class ComposeLease : IKeptTopology
             }
             if (primary is ArgumentException) throw;
             if (primary is OperationCanceledException && ct.IsCancellationRequested) throw;
-            throw ComposeProcess.Failure("Compose startup or endpoint readiness failed before the deadline. Check published ports, the readiness path and credentials; subprocess output is suppressed.", OrchestrationErrorKind.HealthGate);
+            throw ComposeProcess.Failure("Compose startup or endpoint readiness failed before the deadline. Check published ports, readiness settings and credentials; subprocess output is suppressed.", OrchestrationErrorKind.HealthGate);
         }
     }
 
@@ -272,6 +290,58 @@ internal sealed class ComposeLease : IKeptTopology
         }
     }
 
+    private static async Task WaitTcpAsync(IPEndPoint endpoint, CancellationToken ct)
+    {
+        while (true)
+        {
+            ct.ThrowIfCancellationRequested();
+            try
+            {
+                using var attempt = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                attempt.CancelAfter(TimeSpan.FromSeconds(2));
+                using var client = new TcpClient(AddressFamily.InterNetwork);
+                await client.ConnectAsync(endpoint.Address, endpoint.Port, attempt.Token).ConfigureAwait(false);
+                return;
+            }
+            catch (SocketException) { }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }
+            await Task.Delay(200, ct).ConfigureAwait(false);
+        }
+    }
+
+    private async Task WaitContainerHealthAsync(string service, CancellationToken ct)
+    {
+        while (true)
+        {
+            ct.ThrowIfCancellationRequested();
+            var inventory = await RunAsync(new[] { "ps", "--all", "--quiet", service }, ct).ConfigureAwait(false);
+            var ids = inventory.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (ids.Length != 1 || !Regex.IsMatch(ids[0], "^[a-f0-9]{64}$", RegexOptions.CultureInvariant))
+                throw ComposeProcess.Failure("Native healthcheck readiness requires exactly one owned service container; subprocess output is suppressed.", OrchestrationErrorKind.Discovery);
+            var output = await RunCheckedAsync(_process,
+                new[] { "container", "inspect", "--format", HealthInspectionTemplate, ids[0] },
+                _configuration.ProjectDirectory, _environment, ct).ConfigureAwait(false);
+            var lines = output.Split('\n', StringSplitOptions.TrimEntries);
+            if (lines.Length > 0 && lines[^1].Length == 0) lines = lines[..^1];
+            if (lines.Length != 4)
+                throw ComposeProcess.Failure("Native healthcheck inspection was malformed or incomplete; subprocess output is suppressed.", OrchestrationErrorKind.Discovery);
+            string?[] fields;
+            try { fields = lines.Select(line => JsonSerializer.Deserialize<string>(line)).ToArray(); }
+            catch (JsonException)
+            {
+                throw ComposeProcess.Failure("Native healthcheck inspection was malformed or incomplete; subprocess output is suppressed.", OrchestrationErrorKind.Discovery);
+            }
+            if (fields[0] != _project || fields[1] != service)
+                throw ComposeProcess.Failure("Native healthcheck inspection refused a container with mismatched project/service ownership labels; subprocess output is suppressed.", OrchestrationErrorKind.Discovery);
+            if (fields[2] is not ("running" or "created" or "restarting")
+                || (fields[3] is not ("healthy" or "starting" or "unhealthy")
+                    && !(fields[3] is null && fields[2] is "created" or "restarting")))
+                throw ComposeProcess.Failure("Native healthcheck inspection found an unsupported container or health state; subprocess output is suppressed.", OrchestrationErrorKind.HealthGate);
+            if (fields[2] == "running" && fields[3] == "healthy") return;
+            await Task.Delay(200, ct).ConfigureAwait(false);
+        }
+    }
+
     internal static void ValidateNativeConfiguration(string json, string project, ComposeConfiguration configuration)
     {
         try { ValidateNativeConfigurationCore(json, project, configuration); }
@@ -317,6 +387,7 @@ internal sealed class ComposeLease : IKeptTopology
                     if (volume.TryGetProperty("type", out var type) && type.GetString() == "bind"
                         && (!volume.TryGetProperty("read_only", out var readOnly) || !readOnly.GetBoolean())) Refuse("writable host bind mounts are unsupported.");
             if (value.TryGetProperty("deploy", out var deploy) && deploy.TryGetProperty("replicas", out var replicas) && replicas.GetInt32() != 1) Refuse("replicated services are unsupported.");
+            if (value.TryGetProperty("scale", out var scale) && scale.GetInt32() != 1) Refuse("replicated services are unsupported.");
         }
         foreach (var (service, port) in configuration.Services.Values.Select(b => (b.Service, b.Port))
             .Concat(configuration.Dependencies.Values.Select(b => (b.Service, b.Port))))
@@ -327,6 +398,20 @@ internal sealed class ComposeLease : IKeptTopology
             if (matches.Length != 1) Refuse("a binding requires exactly one published TCP port selection.");
             if (matches[0].TryGetProperty("host_ip", out var hostIp) && hostIp.GetString() is { Length: > 0 } address
                 && (!IPAddress.TryParse(address, out var parsed) || parsed.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork)) Refuse("IPv6-only or invalid host port addresses are unsupported; publish an IPv4 test mapping.");
+        }
+
+        foreach (var binding in configuration.Services.Values.Where(b => b.Readiness == ComposeReadinessKind.Healthcheck))
+        {
+            var service = services.GetProperty(binding.Service);
+            if (!service.TryGetProperty("healthcheck", out var healthcheck) || healthcheck.ValueKind != JsonValueKind.Object
+                || (healthcheck.TryGetProperty("disable", out var disabled)
+                    && (disabled.ValueKind is not (JsonValueKind.True or JsonValueKind.False) || disabled.GetBoolean()))
+                || !healthcheck.TryGetProperty("test", out var test) || test.ValueKind != JsonValueKind.Array
+                || test.GetArrayLength() < 2 || test[0].ValueKind != JsonValueKind.String
+                || test[0].GetString() is not ("CMD" or "CMD-SHELL")
+                || test[1].ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(test[1].GetString())
+                || test.EnumerateArray().Any(argument => argument.ValueKind != JsonValueKind.String))
+                Refuse("healthcheck readiness requires an enabled executable healthcheck explicitly configured for the selected native service.");
         }
 
         void RefuseReservedLabels(JsonElement value)
