@@ -15,7 +15,7 @@ namespace Vouchfx.Sdk;
 /// <para>
 /// <see cref="StepKindId"/> is the validated identity token for the registry.
 /// Broader semantic validation — duplicate detection, alias resolution, and
-/// family-level constraints — lives in the <c>StepKindRegistry</c> (Sprint 2).
+/// family-level constraints — lives in the <c>StepKindRegistry</c>.
 /// </para>
 /// </remarks>
 public sealed record StepKindId

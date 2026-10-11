@@ -74,7 +74,7 @@ public sealed record StepCatalogueDocument(
 /// an agent or editor to choose a family.
 /// </param>
 /// <param name="ExactlyOneOfGroups">
-/// Additive (T1 follow-up, feat/fragment-completeness — gatekeeper B1). Each entry
+/// Each entry
 /// is a group of field names of which EXACTLY ONE must be set — a root-level
 /// <c>oneOf</c> whose every branch names exactly one required field (e.g.
 /// <c>script.csharp</c>'s <c>[["code","file"]]</c>). Never <see langword="null"/>
@@ -92,7 +92,7 @@ public sealed record StepCatalogueDocument(
 /// (<c>topic</c> + <c>subscription</c>) shape has a two-name branch).
 /// </param>
 /// <param name="AtLeastOneOfGroups">
-/// Additive (same follow-up as <see cref="ExactlyOneOfGroups"/>). Each entry is a
+/// Like <see cref="ExactlyOneOfGroups"/>, each entry is a
 /// group of field names of which AT LEAST ONE must be set — the identical
 /// single-required-per-branch detection applied to a root-level <c>anyOf</c>
 /// instead of <c>oneOf</c> (e.g. <c>mq-expect.azureservicebus</c>'s

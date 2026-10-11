@@ -277,7 +277,7 @@ public static class RoslynScriptCompiler
     ///   </description></item>
     ///   <item><description>
     ///     <see cref="Load"/> + <see cref="LoadedScript.InvokeAsync"/> — optimal for
-    ///     high-iteration load tests and the S01-B-03 memory harness where a single
+    /// high-iteration load tests and the memory harness where a single
     ///     scenario body must execute thousands of times inside one lifecycle.
     ///   </description></item>
     /// </list>

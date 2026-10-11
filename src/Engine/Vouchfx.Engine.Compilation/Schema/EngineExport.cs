@@ -348,76 +348,107 @@ public static class EngineExport
         };
     }
 
+    // Internal correction history (not XML documentation):
+    // Both detections are generic, not written for any one provider — a
+    // genuine public extension point (Community providers may use either
+    // shape). oneOf → StepCatalogueEntry.ExactlyOneOfGroups
+    // (script.csharp's code/file; mq-publish.azureservicebus's
+    // queue/topic). anyOf → StepCatalogueEntry.AtLeastOneOfGroups
+    // (mq-expect.azureservicebus's expectPayloadContains/expectProperties —
+    // this ALSO fixes the corollary M4 finding: relying on
+    // StepCatalogueEntry.RequiredFields alone for that type
+    // previously under-specified a minimal document — target plus
+    // nothing else — that the composed schema rejects). Either fires
+    // alongside any genuinely top-level required names
+    // (mq-publish.azureservicebus keeps target/payload as
+    // ordinary required entries too).
+    // Internal correction history (not XML documentation):
+    // Degrade-don't-fabricate (mirrors SchemaErrorCollector's own
+    // HasUnattributableBranch guard, M1-r): when any branch's
+    // required does NOT name exactly one field and nothing else —
+    // mq-expect.azureservicebus's
+    // oneOf: [{required:[queue]}, {required:[topic,subscription]}], a
+    // two-name branch mixed with a one-name branch — the synthesis for THAT
+    // keyword is skipped entirely rather than emitting a group that
+    // misstates the actual constraint (it is NOT "exactly one of queue,
+    // topic, subscription"; it is "queue, OR topic together with
+    // subscription"). Those field names fall back to plain
+    // required/properties handling exactly as before this fix.
+    // The qualifying shape is intentionally narrow — code, not merely this
+    // comment, enforces it (gatekeeper finding #4): a branch qualifies only
+    // when it is EXACTLY {"required": ["<name>"]} and nothing
+    // else (see TryReadSingleRequiredGroupNames), the safer
+    // direction for a synthesis that other tooling trusts verbatim.
+    // Internal correction history (not XML documentation):
+    // Before T1, this method only ever read the top-level required
+    // array. script.csharp declares NO top-level required at all — its
+    // "exactly one of code/file" constraint lives entirely inside a
+    // oneOf — so the catalogue silently reported
+    // RequiredFields: [], an outright lie (an agent/editor reading the
+    // catalogue would believe an empty step body validates).
+    // Internal correction history (not XML documentation):
+    // B1 correction (gatekeeper, proven against the built CLI): the
+    // first cut of this fix synthesised a PROSE string ("exactly one of:
+    // code, file") into StepCatalogueEntry.RequiredFields —
+    // but that list is consumed by SuiteScaffolder as bare field
+    // NAMES, emitted verbatim as a YAML key
+    // (SuiteScaffolder.EmitField/EmitScalar); the prose string
+    // rendered as exactly one of: code, file: scaffold — a hard YAML
+    // parse error, proven for both script.csharp and
+    // mq-publish.azureservicebus. Fixed by using the CORRECT vehicle: two
+    // typed, structured fields on StepCatalogueEntry —
+    // StepCatalogueEntry.ExactlyOneOfGroups (from a root
+    // oneOf) and StepCatalogueEntry.AtLeastOneOfGroups
+    // (from a root anyOf) — each a list of field-name GROUPS, never a
+    // sentence. SuiteScaffolder consumes these directly (emits the
+    // first group member with its own scaffold value) rather than parsing
+    // prose back out of a names list. The field names in either kind of
+    // group are still excluded from StepCatalogueEntry.RequiredFields
+    // and StepCatalogueEntry.OptionalFields (listing them
+    // there too would silently contradict the group's own constraint — see
+    // BuildCatalogue_ScriptCsharp_SurfacesOneOfRequirement_NotEmpty).
     /// <summary>
     /// Parses a provider's schema-fragment JSON for top-level <c>properties</c>,
-    /// <c>required</c>, and (T1, feat/fragment-completeness; group vehicle
-    /// corrected per gatekeeper B1) a root-level <c>oneOf</c>/<c>anyOf</c> of
+    /// <c>required</c>, and a root-level <c>oneOf</c>/<c>anyOf</c> of
     /// single-name <c>required</c> branches. Field lists are type-specific only
     /// (fragments do not restate common root-step fields).
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Before T1, this method only ever read the top-level <c>required</c>
-    /// array. script.csharp declares NO top-level <c>required</c> at all — its
-    /// "exactly one of code/file" constraint lives entirely inside a
-    /// <c>oneOf</c> — so the catalogue silently reported
-    /// <c>RequiredFields: []</c>, an outright lie (an agent/editor reading the
-    /// catalogue would believe an empty step body validates).
+    /// A provider may express required alternatives entirely within <c>oneOf</c>, as
+    /// script.csharp does for <c>code</c>/<c>file</c>, with no top-level <c>required</c> array.
+    /// Reading only that array would therefore under-specify the minimum valid step.
     /// </para>
     /// <para>
-    /// <b>B1 correction (gatekeeper, proven against the built CLI):</b> the
-    /// first cut of this fix synthesised a PROSE string ("exactly one of:
-    /// code, file") into <see cref="StepCatalogueEntry.RequiredFields"/> —
-    /// but that list is consumed by <c>SuiteScaffolder</c> as bare field
-    /// NAMES, emitted verbatim as a YAML key
-    /// (<c>SuiteScaffolder.EmitField</c>/<c>EmitScalar</c>); the prose string
-    /// rendered as <c>exactly one of: code, file: scaffold</c> — a hard YAML
-    /// parse error, proven for both script.csharp and
-    /// mq-publish.azureservicebus. Fixed by using the CORRECT vehicle: two
-    /// typed, structured fields on <see cref="StepCatalogueEntry"/> —
-    /// <see cref="StepCatalogueEntry.ExactlyOneOfGroups"/> (from a root
-    /// <c>oneOf</c>) and <see cref="StepCatalogueEntry.AtLeastOneOfGroups"/>
-    /// (from a root <c>anyOf</c>) — each a list of field-name GROUPS, never a
-    /// sentence. <c>SuiteScaffolder</c> consumes these directly (emits the
-    /// first group member with its own scaffold value) rather than parsing
-    /// prose back out of a names list. The field names in either kind of
-    /// group are still excluded from <see cref="StepCatalogueEntry.RequiredFields"/>
-    /// and <see cref="StepCatalogueEntry.OptionalFields"/> (listing them
-    /// there too would silently contradict the group's own constraint — see
-    /// <c>BuildCatalogue_ScriptCsharp_SurfacesOneOfRequirement_NotEmpty</c>).
+    /// Groups belong in the typed <see cref="StepCatalogueEntry.ExactlyOneOfGroups"/> and
+    /// <see cref="StepCatalogueEntry.AtLeastOneOfGroups"/> fields.
+    /// <see cref="StepCatalogueEntry.RequiredFields"/> contains bare names which
+    /// <c>SuiteScaffolder.EmitField</c>/<c>EmitScalar</c> emit as YAML keys; prose such as
+    /// "exactly one of: code, file" there would produce invalid YAML. The scaffolder consumes
+    /// structured groups and emits the first member with its scaffold value. Group members
+    /// are excluded from <see cref="StepCatalogueEntry.RequiredFields"/> and
+    /// <see cref="StepCatalogueEntry.OptionalFields"/> to avoid contradicting their constraints.
+    /// <c>BuildCatalogue_ScriptCsharp_SurfacesOneOfRequirement_NotEmpty</c> pins this shape.
     /// </para>
     /// <para>
-    /// Both detections are generic, not written for any one provider — a
-    /// genuine public extension point (Community providers may use either
-    /// shape). <c>oneOf</c> → <see cref="StepCatalogueEntry.ExactlyOneOfGroups"/>
-    /// (script.csharp's <c>code</c>/<c>file</c>; mq-publish.azureservicebus's
-    /// <c>queue</c>/<c>topic</c>). <c>anyOf</c> → <see cref="StepCatalogueEntry.AtLeastOneOfGroups"/>
-    /// (mq-expect.azureservicebus's <c>expectPayloadContains</c>/<c>expectProperties</c> —
-    /// this ALSO fixes the corollary M4 finding: relying on
-    /// <see cref="StepCatalogueEntry.RequiredFields"/> alone for that type
-    /// previously under-specified a minimal document — <c>target</c> plus
-    /// nothing else — that the composed schema rejects). Either fires
-    /// alongside any genuinely top-level <c>required</c> names
-    /// (mq-publish.azureservicebus keeps <c>target</c>/<c>payload</c> as
-    /// ordinary required entries too).
+    /// Both detections are generic provider-extension contracts. <c>oneOf</c> contributes
+    /// <see cref="StepCatalogueEntry.ExactlyOneOfGroups"/>: for example, script.csharp
+    /// <c>code</c>/<c>file</c> or mq-publish.azureservicebus <c>queue</c>/<c>topic</c>.
+    /// <c>anyOf</c> contributes <see cref="StepCatalogueEntry.AtLeastOneOfGroups"/>, such as
+    /// mq-expect.azureservicebus <c>expectPayloadContains</c>/<c>expectProperties</c>.
+    /// <see cref="StepCatalogueEntry.RequiredFields"/> alone would under-specify the latter
+    /// type. Groups coexist with top-level <c>required</c> fields, such as
+    /// mq-publish.azureservicebus <c>target</c>/<c>payload</c>.
     /// </para>
     /// <para>
-    /// Degrade-don't-fabricate (mirrors <c>SchemaErrorCollector</c>'s own
-    /// <c>HasUnattributableBranch</c> guard, M1-r): when any branch's
-    /// <c>required</c> does NOT name exactly one field and nothing else —
-    /// mq-expect.azureservicebus's
-    /// <c>oneOf: [{required:[queue]}, {required:[topic,subscription]}]</c>, a
-    /// two-name branch mixed with a one-name branch — the synthesis for THAT
-    /// keyword is skipped entirely rather than emitting a group that
-    /// misstates the actual constraint (it is NOT "exactly one of queue,
-    /// topic, subscription"; it is "queue, OR topic together with
-    /// subscription"). Those field names fall back to plain
-    /// <c>required</c>/<c>properties</c> handling exactly as before this fix.
-    /// The qualifying shape is intentionally narrow — code, not merely this
-    /// comment, enforces it (gatekeeper finding #4): a branch qualifies only
-    /// when it is EXACTLY <c>{"required": ["&lt;name&gt;"]}</c> and nothing
-    /// else (see <see cref="TryReadSingleRequiredGroupNames"/>), the safer
-    /// direction for a synthesis that other tooling trusts verbatim.
+    /// Degrade rather than fabricate a group when any branch does not consist solely of
+    /// <c>{"required": ["&lt;name&gt;"]}</c> (see <see cref="TryReadSingleRequiredGroupNames"/>).
+    /// For example, <c>oneOf: [{required:[queue]}, {required:[topic,subscription]}]</c> means
+    /// queue or topic together with subscription, not exactly one of three independent
+    /// fields. That keyword's group is omitted and the names retain plain
+    /// <c>required</c>/<c>properties</c> handling. This mirrors
+    /// <c>SchemaErrorCollector.CompositeGroupState.HasUnattributableBranch</c> and avoids
+    /// misstating a constraint that other tooling consumes verbatim.
     /// </para>
     /// </remarks>
     private static (
@@ -529,15 +560,13 @@ public static class EngineExport
     /// (declaration-order, not sorted) list of field names when EVERY branch
     /// qualifies. A branch qualifies ONLY when it is EXACTLY
     /// <c>{"required": ["&lt;singleName&gt;"]}</c> — a <c>required</c> array
-    /// of length 1 AND no other property on the branch object (gatekeeper
-    /// finding #4: the code enforces "nothing else", not merely a comment —
-    /// the safer direction for a synthesis other tooling, and
-    /// <c>SuiteScaffolder</c>, trusts verbatim). Returns
+    /// of length 1 and no other property on the branch object. This narrow shape
+    /// protects consumers such as <c>SuiteScaffolder</c> from a misleading group. Returns
     /// <see langword="null"/> when the keyword is absent, or when any branch
     /// does not qualify — the degrade-don't-fabricate guard documented on
     /// <see cref="ExtractFields"/> (mirrors
     /// <c>SchemaErrorCollector.CompositeGroupState.HasUnattributableBranch</c>,
-    /// M1-r, applied here at catalogue-export time rather than validation
+    /// applied here at catalogue-export time rather than validation
     /// time).
     /// </summary>
     private static List<string>? TryReadSingleRequiredGroupNames(JsonElement root, string keyword)

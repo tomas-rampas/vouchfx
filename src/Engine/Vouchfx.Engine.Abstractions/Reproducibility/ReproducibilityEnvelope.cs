@@ -138,8 +138,8 @@ public sealed record FixtureDigest(
 /// <para>
 /// <strong>No resolved secret value can ever enter this type.</strong>
 /// <see cref="Compute"/> and <see cref="HashReference"/> operate purely on the
-/// verbatim reference text; the secret resolver is never called.  This is the
-/// graded acceptance for S05-B-03 and is proven by a unit test that sets the
+/// verbatim reference text; the secret resolver is never called. This property
+/// is proven by a unit test that sets the
 /// backing env var to a known value and asserts the value is absent from the
 /// serialised envelope.
 /// </para>

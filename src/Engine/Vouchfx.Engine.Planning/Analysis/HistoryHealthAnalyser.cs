@@ -44,7 +44,7 @@ using Vouchfx.Engine.Planning.Report;
 
 namespace Vouchfx.Engine.Planning.Analysis;
 
-/// <summary>REQ-006 per-step history-health analyser (stale / flaky / fragile / inconclusive-prone).</summary>
+/// <summary>per-step history-health analyser (stale / flaky / fragile / inconclusive-prone).</summary>
 internal static class HistoryHealthAnalyser
 {
     /// <summary>
@@ -203,11 +203,11 @@ internal static class HistoryHealthAnalyser
     }
 
     /// <summary>
-    /// Builds a single history-health <see cref="PlanFinding"/>: no target, no REQ-007
+    /// Builds a single history-health <see cref="PlanFinding"/>: no target, no
     /// hand-off hint — this analyser only ever reports a step's own observed history
-    /// (EDGE-006: <paramref name="detail"/> must be composed only from suite paths, step ids,
-    /// dotted step types, verdict counts, and threshold numbers). <paramref name="isColliding"/>
-    /// (MINOR fix-round) stamps the REQ-008 ambiguity marker when this suite's ScenarioId
+    /// (<paramref name="detail"/> must be composed only from suite paths, step ids,
+    /// dotted step types, verdict counts, and threshold numbers).
+    /// <paramref name="isColliding"/> stamps the ambiguity marker when this suite's ScenarioId
     /// participates in a scenario-id collision — the observations tallied above are then the
     /// MERGED history of every colliding suite, not any one suite's own, exactly the same
     /// caveat CoverageGapAnalyser's coverage findings already carry for a colliding suite.

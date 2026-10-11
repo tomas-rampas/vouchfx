@@ -69,7 +69,7 @@ public sealed class SecretResolutionException : Exception
     /// <summary>
     /// Initialises a new instance with a message, the reference coordinates, and an
     /// underlying transport/parse cause (e.g. an <see cref="System.Net.Http.HttpRequestException"/>
-    /// from the Vault source, S08-B-01).
+    /// from the Vault source).
     /// </summary>
     /// <param name="source">The resolver source identifier.</param>
     /// <param name="path">The source-specific lookup path.</param>

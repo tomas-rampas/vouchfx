@@ -31,7 +31,7 @@ public enum CaptureFormat
     /// <summary>
     /// The expression is a JSONPath query (JsonPath.Net, §5.7), evaluated against
     /// the JSON body of the step result.  This is the default for the bare-scalar
-    /// authoring form (<c>name: "$.id"</c>), preserving pre-S07 behaviour.
+    /// authoring form (<c>name: "$.id"</c>), preserving legacy behaviour.
     /// </summary>
     JsonPath,
 

@@ -28,8 +28,8 @@ public sealed class ScriptGlobalVariables
     /// <summary>
     /// Typed client surface provided by the orchestration layer.
     /// Steps obtain strongly-typed clients (e.g. <c>HttpClient</c>, <c>NpgsqlConnection</c>)
-    /// by key.  The surface is intentionally empty in Sprint 1; the full provider SDK (§13)
-    /// populates it in later sprints.
+    /// by key. The caller supplies the clients in this map; the script does not
+    /// discover or construct them through a static handle.
     /// </summary>
     public IReadOnlyDictionary<string, object> Services { get; }
 
@@ -49,7 +49,7 @@ public sealed class ScriptGlobalVariables
     public ISecretAccessor Secrets { get; }
 
     /// <summary>
-    /// The execution-time webhook-capture accessor (§5, S07-F-01a).  A later
+    /// The execution-time webhook-capture accessor (§5). A later
     /// assertion step reads the inbound HTTP requests captured by a host-owned
     /// ephemeral webhook listener through this member, keyed by the listener's
     /// logical name — never through any static handle.
@@ -124,7 +124,7 @@ public sealed class ScriptGlobalVariables
 
     /// <summary>
     /// The execution-time per-target CLIENT SECURITY CONFIGURATION accessor
-    /// (authenticated-infrastructure-mtls, REQ-014).  An emitted step block resolves the
+    /// (authenticated-infrastructure-mtls). An emitted step block resolves the
     /// configuration declared for its own <c>target</c> through this member — certificate
     /// paths for a client library that takes only paths, loaded certificate objects for one
     /// that takes only objects — and configures its transport from it at step-execution time.
@@ -141,7 +141,7 @@ public sealed class ScriptGlobalVariables
     /// </para>
     /// <para>
     /// The material this exposes is deliberately NOT reachable through <see cref="Vars"/>
-    /// under any prefix (REQ-014): <see cref="Vars"/> feeds the reported and §14 event
+    /// under any prefix: <see cref="Vars"/> feeds the reported and §14 event
     /// surface, and a certificate or key path written there would leak past the
     /// <c>SecretString</c> redaction model.  Legacy constructors populate this with a
     /// <see cref="NullSecurityConfigurationAccessor"/> whose every lookup returns
@@ -277,7 +277,7 @@ public sealed class ScriptGlobalVariables
 
     /// <summary>
     /// Initialises a new instance with caller-supplied dictionaries, secret accessor,
-    /// and webhook-capture accessor (the full host↔script boundary, S07-F-01a), and no
+    /// and webhook-capture accessor (the full host↔script boundary), and no
     /// configured OTLP receivers. <see cref="Traces"/> is a <see cref="NullTraceCaptureAccessor"/>
     /// that returns an empty list.
     /// </summary>

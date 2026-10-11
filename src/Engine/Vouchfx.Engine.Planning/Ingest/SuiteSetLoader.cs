@@ -34,7 +34,7 @@ internal static class SuiteSetLoader
 
     /// <summary>
     /// The maximum permitted length, in UTF-16 characters, of a captured parse/AST-build
-    /// error message surfaced in <see cref="PlanUnanalysableSuite.Error"/> (MINOR fix-round).
+    /// error message surfaced in <see cref="PlanUnanalysableSuite.Error"/>.
     /// Unlike the adjacent I/O-fault catch in <see cref="ParseFile"/> (which deliberately
     /// names only the exception TYPE, never <c>Message</c>, to avoid leaking an absolute
     /// path), a parse/AST-build message IS embedded here because it is the author's own
@@ -55,7 +55,7 @@ internal static class SuiteSetLoader
     /// single-file root.
     /// </param>
     /// <param name="Suites">Every suite that parsed and built successfully.</param>
-    /// <param name="UnanalysableSuites">Every discovered suite that failed to parse (EDGE-003).</param>
+    /// <param name="UnanalysableSuites">Every discovered suite that failed to parse.</param>
     internal sealed record LoadResult(
         string AnalysedRoot,
         IReadOnlyList<PlanSuite> Suites,
@@ -70,7 +70,7 @@ internal static class SuiteSetLoader
     /// <returns>The load result: analysed root, parsed suites, and captured parse failures.</returns>
     /// <exception cref="PlanInputException">
     /// Thrown when <paramref name="suitePath"/> does not exist, names a file that does not
-    /// end in <c>.e2e.yaml</c>, or discovers zero <c>*.e2e.yaml</c> files at all (EDGE-009).
+    /// end in <c>.e2e.yaml</c>, or discovers zero <c>*.e2e.yaml</c> files at all.
     /// </exception>
     internal static LoadResult Load(string suitePath, StepKindRegistry registry)
     {
@@ -258,7 +258,7 @@ internal static class SuiteSetLoader
 
     /// <summary>
     /// Bounds <paramref name="message"/> to <see cref="MaxParseErrorMessageChars"/> UTF-16
-    /// characters, never splitting a surrogate pair (MINOR fix-round). A naive
+    /// characters, never splitting a surrogate pair. A naive
     /// <c>message[..MaxParseErrorMessageChars]</c> slice can land exactly between a high
     /// surrogate and its low-surrogate partner when the offending YAML's raw content (echoed
     /// verbatim by <c>AstBuilder</c>'s error messages) contains an astral-plane character —

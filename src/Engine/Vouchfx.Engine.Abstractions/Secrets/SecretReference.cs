@@ -198,9 +198,9 @@ public sealed record SecretReference(string Source, string Path, string Raw)
     /// </summary>
     /// <param name="fieldValue">The raw field text to validate.</param>
     /// <param name="knownSources">
-    /// The resolver source identifiers the engine can resolve this sprint (e.g.
-    /// <c>env</c>). Vault is added in Sprint 8 by extending this set — no change
-    /// to this method is required.
+    /// The resolver source identifiers the caller supports, for example <c>env</c> or
+    /// <c>vault</c>. Supporting another resolver requires extending this set, not
+    /// changing this method.
     /// </param>
     /// <param name="error">
     /// On failure, an actionable British-English message naming the problem;

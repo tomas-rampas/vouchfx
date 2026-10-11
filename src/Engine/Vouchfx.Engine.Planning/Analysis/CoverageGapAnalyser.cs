@@ -45,11 +45,11 @@ using Vouchfx.Engine.Planning.Report;
 
 namespace Vouchfx.Engine.Planning.Analysis;
 
-/// <summary>REQ-004 declared-vs-exercised coverage-gap analyser, plus REQ-008 suite-identity ambiguity.</summary>
+/// <summary>declared-vs-exercised coverage-gap analyser, plus suite-identity ambiguity.</summary>
 internal static class CoverageGapAnalyser
 {
     /// <summary>
-    /// Analyses <paramref name="inputs"/> for REQ-004 coverage gaps and REQ-008
+    /// Analyses <paramref name="inputs"/> for coverage gaps and
     /// suite-identity-ambiguity findings.
     /// </summary>
     /// <param name="inputs">The fully-assembled, correlated Planner inputs.</param>

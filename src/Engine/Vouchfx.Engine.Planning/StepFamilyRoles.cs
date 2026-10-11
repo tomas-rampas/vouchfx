@@ -18,7 +18,7 @@ namespace Vouchfx.Engine.Planning;
 /// <para>
 /// A dependency that is targeted only by non-asserting steps (e.g. published to via
 /// <c>mq-publish.kafka</c> but never consumed via an asserting family) is an exercised-but-
-/// unverified seam — REQ-004's <c>dependency-not-asserted</c> finding.
+/// unverified seam — the <c>dependency-not-asserted</c> finding.
 /// </para>
 /// <para>
 /// A test asserting every family currently registered in a live <see cref="Vouchfx.Sdk.StepKindRegistry"/>

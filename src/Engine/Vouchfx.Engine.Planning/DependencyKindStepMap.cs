@@ -22,7 +22,7 @@ namespace Vouchfx.Engine.Planning;
 /// <summary>
 /// The engine-maintained, CI-guarded mapping from a dependency kind (a
 /// <c>Vouchfx.Engine.Compilation.Scaffold.KnownDependencyKinds</c> token) to the dotted step
-/// types that assert or observe it (REQ-005).
+/// types that assert or observe it.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -80,7 +80,7 @@ public static class DependencyKindStepMap
 
     /// <summary>
     /// Dependency kinds explicitly known to have no asserting/observing Core provider yet.
-    /// Every entry must carry an inline comment justifying it (REQ-007 case (a)). Empty
+    /// Every entry must carry an inline comment justifying it. Empty
     /// today — every <c>KnownDependencyKinds.All</c> entry maps to at least one candidate step
     /// type above. Kept as a real (empty) set, not omitted
     /// entirely, so <c>DependencyKindStepMapDriftTests</c>'s exemption branch has somewhere
@@ -116,15 +116,15 @@ public static class DependencyKindStepMap
     }
 
     /// <summary>
-    /// Describes why <paramref name="kind"/> is unmappable (REQ-007), for callers that have
+    /// Describes why <paramref name="kind"/> is unmappable, for callers that have
     /// already established via <see cref="TryGetCandidates"/> that it has no candidate step
     /// type. Lives here (not in <c>PlanPipeline</c>) so the reason text sits beside the
     /// mapping table it describes, in the file this todo owns.
     /// </summary>
     /// <param name="kind">A dependency kind token with no candidate step type.</param>
     /// <returns>
-    /// REQ-007 case (a) when <paramref name="kind"/> is in
-    /// <see cref="KindsWithoutAssertingProvider"/>; REQ-007 case (b) — genuinely consulting
+    /// The exempt-kind explanation when <paramref name="kind"/> is in
+    /// <see cref="KindsWithoutAssertingProvider"/>; the unknown-kind explanation — consulting
     /// <see cref="KnownDependencyKinds.All"/>, not inferred from the absence of an
     /// exemption — when <paramref name="kind"/> is not recognised by the engine's
     /// dependency-kind vocabulary at all; otherwise a drift fallback naming a kind that is

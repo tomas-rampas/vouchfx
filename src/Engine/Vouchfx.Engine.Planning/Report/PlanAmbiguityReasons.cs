@@ -11,15 +11,14 @@
 namespace Vouchfx.Engine.Planning.Report;
 
 /// <summary>
-/// The frozen v1 <see cref="PlanFinding.AmbiguityReason"/> discriminator tokens (REQ-008
-/// rules 1 and 2).
+/// The frozen v1 <see cref="PlanFinding.AmbiguityReason"/> discriminator tokens.
 /// </summary>
 public static class PlanAmbiguityReasons
 {
-    /// <summary>REQ-008 rule 1: two or more declared suites derive the same scenario id.</summary>
+    /// <summary>Two or more declared suites derive the same scenario id.</summary>
     public const string ScenarioIdCollision = "scenario-id-collision";
 
-    /// <summary>REQ-008 rule 2: history references a <c>file</c> that no longer exists on disk (the rename case).</summary>
+    /// <summary>History references a <c>file</c> that no longer exists on disk (the rename case).</summary>
     public const string HistoryReferencesMissingFile = "history-references-missing-file";
 
     /// <summary>Every frozen v1 ambiguity-reason token, ordinal-sorted.</summary>

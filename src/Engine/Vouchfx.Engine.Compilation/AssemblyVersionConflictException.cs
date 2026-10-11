@@ -34,9 +34,8 @@ public sealed record AssemblyConflict(string SimpleName, IReadOnlyList<Version> 
 /// <remarks>
 /// <para>
 /// This exception indicates an <em>Environment error</em>, not a test defect.
-/// In Sprint 2 it will map to the <c>Environment-error</c> verdict bucket (§12.1).
-/// Until that taxonomy is wired, callers should treat it as a fatal infrastructure
-/// failure that aborts the entire suite run before any step executes.
+/// It belongs to the <em>Environment-error</em> verdict bucket (§12.1). Callers must
+/// refuse the conflicting assembly closure before any step executes.
 /// </para>
 /// <para>
 /// The recommended fix is stated in the exception message: align all conflicting

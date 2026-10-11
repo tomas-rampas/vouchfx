@@ -23,14 +23,14 @@ namespace Vouchfx.Engine.Planning.Report;
 /// </param>
 /// <param name="Thresholds">
 /// The EFFECTIVE history-health thresholds used for this analysis (defaults or caller
-/// overrides), echoed here — a document-identity field, not part of the REQ-003 inventory
+/// overrides), echoed here — a document-identity field, not part of the inventory
 /// fence — so a reader can tell why a step was flagged stale/flaky/fragile without
 /// re-deriving the defaults.
 /// </param>
-/// <param name="Inventory">The REQ-003 inventory section.</param>
+/// <param name="Inventory">The inventory section.</param>
 /// <param name="Findings">
 /// Every coverage gap, vocabulary gap, history-health, and suite-identity-ambiguity finding,
-/// in the EDGE-005 deterministic order: kind, then target, then suite path, then step id,
+/// in the deterministic order: kind, then target, then suite path, then step id,
 /// then ambiguity reason, then detail text — all keys <see cref="StringComparer.Ordinal"/>,
 /// nulls last. The last two keys exist to break ties the first four cannot: two
 /// suite-identity-ambiguity findings on the same collision (kind, target, suite, and step id
@@ -48,7 +48,7 @@ public sealed record PlanReportDocument(
     [property: JsonPropertyOrder(4)] IReadOnlyList<PlanFinding> Findings);
 
 /// <summary>
-/// The effective history-health thresholds used for one analysis (REQ-006), echoed on the
+/// The effective history-health thresholds used for one analysis, echoed on the
 /// report document.
 /// </summary>
 /// <param name="StaleDays">See <see cref="Vouchfx.Engine.Planning.PlanThresholds.StaleDays"/>.</param>
@@ -62,7 +62,7 @@ public sealed record PlanThresholdsReport(
     [property: JsonPropertyOrder(3)] int InconclusiveMin);
 
 /// <summary>
-/// The REQ-003 inventory section: a fixed, non-extensible list of structural counts and
+/// The inventory section: a fixed, non-extensible list of structural counts and
 /// names derived purely from the declared suites and the analysed event history.
 /// </summary>
 /// <param name="Suites">Every discovered suite (path and scenario identity).</param>
@@ -73,8 +73,7 @@ public sealed record PlanThresholdsReport(
 /// </param>
 /// <param name="Dependencies">
 /// Every dependency declared across every suite's <c>environment.dependencies</c> block, one
-/// entry per (suite, name, type), ordinal-sorted by name then type then suite. MAJOR
-/// fix-round: entries are NOT deduplicated by name+type alone across suites — a dependency is
+/// entry per (suite, name, type), ordinal-sorted by name then type then suite. Entries are NOT deduplicated by name+type alone across suites — a dependency is
 /// declared inside exactly one suite, so two suites declaring a same-named dependency
 /// (optionally with different <c>type</c> values) each get their own entry, disambiguated by
 /// <see cref="PlanDependencyEntry.Suite"/>.
@@ -92,12 +91,12 @@ public sealed record PlanThresholdsReport(
 /// history is empty or absent.
 /// </param>
 /// <param name="LastEventTs">
-/// The latest event timestamp in the analysed history — REQ-006's "now" for stale-step
+/// The latest event timestamp in the analysed history — the "now" for stale-step
 /// classification — or <see langword="null"/> when the history is empty or absent.
 /// </param>
 /// <param name="SkippedEventLines">
 /// The count of event-history lines that were not parseable JSON, or were valid JSON but
-/// not a recognisable event (EDGE-004), so a reader never mistakes a truncated history for
+/// not a recognisable event, so a reader never mistakes a truncated history for
 /// genuine non-coverage. An event source that could not be read at all (a transient I/O
 /// race — a directory that could not be enumerated, or a file that became unreadable
 /// mid-read) counts as a single skipped entry here too; an OVERSIZED event-history file is
@@ -107,17 +106,17 @@ public sealed record PlanThresholdsReport(
 /// <param name="UnmatchedObservations">
 /// The count of history observations (scenario or step events) that could not be attributed
 /// to any currently-declared suite and were not classified as a suite-identity ambiguity —
-/// e.g. a run of a suite outside the analysed path (EDGE-007).
+/// e.g. a run of a suite outside the analysed path.
 /// </param>
 /// <param name="UnanalysableSuites">
-/// Suites that were discovered under the analysed path but failed to parse (EDGE-003), each
+/// Suites that were discovered under the analysed path but failed to parse, each
 /// with its captured error message. The analysis still proceeds over every other suite.
 /// </param>
 /// <param name="UnmappableDependencies">
-/// Declared dependencies whose kind has no REQ-005 candidate step type — either because the
+/// Declared dependencies whose kind has no candidate step type — either because the
 /// kind is explicitly known to have no asserting/observing Core provider yet, or because the
-/// kind is not recognised by the engine's dependency-kind vocabulary at all (REQ-007). These
-/// intentionally never produce a gap finding (a hint-less finding would violate REQ-007);
+/// kind is not recognised by the engine's dependency-kind vocabulary at all. These
+/// intentionally never produce a gap finding (a gap finding would lack the required hand-off hints);
 /// they are recorded here instead.
 /// </param>
 public sealed record PlanInventory(
@@ -142,7 +141,7 @@ public sealed record PlanInventory(
 /// The suite's derived scenario identity: <c>metadata.name</c> when present, else the
 /// filename stem (character-for-character identical to the CLI's
 /// <c>RunCommand.ScenarioName</c> derivation) — the sole correlation key against the event
-/// history (REQ-008).
+/// history.
 /// </param>
 /// <param name="Name">
 /// The suite's <c>metadata.name</c> verbatim, or <see langword="null"/> when the suite
@@ -159,7 +158,7 @@ public sealed record PlanSuiteEntry(
 /// <param name="Name">The dependency's logical name (the map key under <c>environment.dependencies</c>).</param>
 /// <param name="Type">The dependency's declared <c>type</c> token, e.g. <c>postgres</c>, <c>kafka</c>.</param>
 /// <param name="Suite">
-/// MAJOR fix-round (REQ-011 additive): the relative path of the suite that declares this
+/// The relative path of the suite that declares this
 /// dependency — the same <see cref="PlanSuiteEntry.Path"/> value, and never
 /// <see langword="null"/> (a dependency is always declared inside exactly one suite's
 /// <c>environment</c>, unlike <see cref="PlanFinding.Suite"/> which can be null for a
@@ -175,14 +174,14 @@ public sealed record PlanDependencyEntry(
     [property: JsonPropertyOrder(1)] string Type,
     [property: JsonPropertyOrder(2)] string Suite);
 
-/// <summary>A discovered suite that failed to parse (EDGE-003).</summary>
+/// <summary>A discovered suite that failed to parse.</summary>
 /// <param name="Path">The suite's path relative to the analysed root, <c>/</c>-separated.</param>
 /// <param name="Error">The captured parse / AST-build error message.</param>
 public sealed record PlanUnanalysableSuite(
     [property: JsonPropertyOrder(0)] string Path,
     [property: JsonPropertyOrder(1)] string Error);
 
-/// <summary>A declared dependency whose kind has no REQ-005 candidate step type (REQ-007).</summary>
+/// <summary>A declared dependency whose kind has no candidate step type.</summary>
 /// <param name="Name">The dependency's logical name.</param>
 /// <param name="Type">The dependency's declared <c>type</c> token.</param>
 /// <param name="Reason">
@@ -191,7 +190,7 @@ public sealed record PlanUnanalysableSuite(
 /// recognised by the engine's dependency-kind vocabulary at all.
 /// </param>
 /// <param name="Suite">
-/// MAJOR fix-round (REQ-011 additive): the relative path of the suite that declares this
+/// The relative path of the suite that declares this
 /// dependency — see <see cref="PlanDependencyEntry.Suite"/> for why <see cref="Name"/> alone
 /// is not a unique key once more than one suite is analysed. Never <see langword="null"/>.
 /// </param>

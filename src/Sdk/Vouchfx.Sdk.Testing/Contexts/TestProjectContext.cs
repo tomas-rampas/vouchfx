@@ -54,8 +54,7 @@ public sealed class TestProjectContext : IProjectContext
 
     /// <summary>
     /// Initialises a new <see cref="TestProjectContext"/> with the given
-    /// declared-dependencies AND declared-services maps (services-generalisation spec,
-    /// REQ-010).
+    /// declared-dependencies AND declared-services maps.
     /// </summary>
     /// <remarks>
     /// A NEW, separate constructor OVERLOAD — not an added parameter on the existing

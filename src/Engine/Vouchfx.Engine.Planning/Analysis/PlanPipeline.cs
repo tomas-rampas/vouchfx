@@ -48,6 +48,27 @@ internal static class PlanPipeline
 
     // ── EDGE-005 deterministic order ─────────────────────────────────────────────
 
+    // Internal correction history (not XML documentation):
+    // MINOR fix-round: the original four-key claim that no analyser emits a tie past those
+    // four keys was false the moment  went from a T1 stub
+    // to real: two  findings (kind,
+    // target, suite, and step id all  on both — see
+    // 's rule-1/rule-2 emitters) tie on every one of
+    // those four keys whenever a suite set has two scenario-id collisions, or one collision
+    // plus one renamed-file ambiguity. The fifth key
+    // () separates a collision finding from a
+    // renamed-file finding, but TWO collisions (or two renamed-file ambiguities) still tie on
+    // all five — each is keyed by a distinct ScenarioId upstream
+    // (RunCorrelator.Correlate's per-ScenarioId grouping), and that id is always
+    // embedded in 's templated prose, so the sixth key
+    // finishes the job for every finding shape the current analysers produce. Before this fix
+    // the four-key sort "worked" only by accident of RunCorrelator happening to emit
+    // its collisions/renamed-file lists already ordinal-sorted by ScenarioId and
+    // LINQ's OrderBy/ThenBy being a stable sort — properties this pipeline must
+    // not silently depend on. This six-key sort is a genuinely total order over every finding
+    // shape the current analysers emit; it is not a mathematically total order over every
+    // conceivable  two hand-built findings identical in all six
+    // fields would still tie, but no analyser today constructs such a pair.
     /// <summary>
     /// Sorts findings by kind, then target, then suite path, then step id, then ambiguity
     /// reason, then detail text — every string key <see cref="StringComparer.Ordinal"/>,
@@ -56,26 +77,14 @@ internal static class PlanPipeline
     /// would otherwise make byte-identical re-runs depend on input enumeration order.
     /// </summary>
     /// <remarks>
-    /// MINOR fix-round: the original four-key claim that no analyser emits a tie past those
-    /// four keys was false the moment <see cref="CoverageGapAnalyser"/> went from a T1 stub
-    /// to real: two <see cref="PlanFindingKinds.SuiteIdentityAmbiguous"/> findings (kind,
-    /// target, suite, and step id all <see langword="null"/> on both — see
-    /// <see cref="CoverageGapAnalyser.Analyse"/>'s rule-1/rule-2 emitters) tie on every one of
-    /// those four keys whenever a suite set has two scenario-id collisions, or one collision
-    /// plus one renamed-file ambiguity. The fifth key
-    /// (<see cref="PlanFinding.AmbiguityReason"/>) separates a collision finding from a
-    /// renamed-file finding, but TWO collisions (or two renamed-file ambiguities) still tie on
-    /// all five — each is keyed by a distinct <c>ScenarioId</c> upstream
-    /// (<c>RunCorrelator.Correlate</c>'s per-ScenarioId grouping), and that id is always
-    /// embedded in <see cref="PlanFinding.Detail"/>'s templated prose, so the sixth key
-    /// finishes the job for every finding shape the current analysers produce. Before this fix
-    /// the four-key sort "worked" only by accident of <c>RunCorrelator</c> happening to emit
-    /// its collisions/renamed-file lists already ordinal-sorted by <c>ScenarioId</c> and
-    /// LINQ's <c>OrderBy</c>/<c>ThenBy</c> being a stable sort — properties this pipeline must
-    /// not silently depend on. This six-key sort is a genuinely total order over every finding
-    /// shape the current analysers emit; it is not a mathematically total order over every
-    /// conceivable <see cref="PlanFinding"/> two hand-built findings identical in all six
-    /// fields would still tie, but no analyser today constructs such a pair.
+    /// Ambiguity findings can tie on kind, target, suite and step id. The fifth key,
+    /// <see cref="PlanFinding.AmbiguityReason"/>, separates collisions from renamed-file
+    /// ambiguities. The sixth, <see cref="PlanFinding.Detail"/>, contains the distinct
+    /// scenario identity and separates multiple findings of the same ambiguity kind.
+    /// Explicit tie-breaks prevent output from depending on upstream enumeration or
+    /// LINQ's stable-sort behaviour. The six keys distinguish every finding shape the
+    /// current analysers emit; arbitrary hand-built findings identical on all six keys
+    /// can still tie.
     /// </remarks>
     private static PlanFinding[] Sort(IReadOnlyList<PlanFinding> findings) =>
         findings

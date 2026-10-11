@@ -18,7 +18,7 @@ namespace Vouchfx.Engine.Abstractions.Webhooks;
 /// <summary>
 /// The execution-time, read-only entry point the emitted script uses to observe the
 /// inbound HTTP requests captured by a host-owned ephemeral webhook listener
-/// (S07-F-01a, §5).
+/// (§5).
 /// </summary>
 /// <remarks>
 /// <para>

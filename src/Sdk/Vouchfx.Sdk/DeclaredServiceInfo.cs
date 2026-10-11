@@ -12,6 +12,23 @@
 
 namespace Vouchfx.Sdk;
 
+// Internal correction history (not XML documentation):
+// m5 (peer review, fix round 2): the parameter documentation above used to forward to
+// IProjectContext.DeclaredServices's own remarks "for what populates this per
+// source", and those remarks do not answer it for one of the three sources they enumerate. For
+// a HOST-RESOURCE entry — a webhook-listen.http listener, a trace-expect.otlp
+// receiver — this list holds the contributing requirement's
+// HostResourceRequirement.Kind (e.g. ["webhook-listener"]), which is a
+// resource-kind discriminator, NOT an Aspire endpoint name. The forward is therefore replaced
+// by the concrete examples above, and the exception stated here rather than left to a reader to
+// discover by inspecting ProviderPipeline's own service-map construction.
+// MINOR-1 (peer review, fix round 3): the paragraph below used to be a SECOND, consecutive
+// <remarks> element on this same member. Vouchfx.Sdk is packable with
+// GenerateDocumentationFile=true, and documentation renderers show only the FIRST
+// <remarks> — so the block that silently disappeared from the emitted
+// Vouchfx.Sdk.xml was the one carrying the binary-compatibility rule, on a type inside
+// the frozen v1 contract. Merged into one element with two <para> blocks, the
+// shape every other file in this change already uses.
 /// <summary>
 /// The declared shape of a single entry in <see cref="IProjectContext.DeclaredServices"/>.
 /// </summary>
@@ -23,24 +40,10 @@ namespace Vouchfx.Sdk;
 /// </param>
 /// <remarks>
 /// <para>
-/// m5 (peer review, fix round 2): the parameter documentation above used to forward to
-/// <see cref="IProjectContext.DeclaredServices"/>'s own remarks "for what populates this per
-/// source", and those remarks do not answer it for one of the three sources they enumerate. For
-/// a HOST-RESOURCE entry — a <c>webhook-listen.http</c> listener, a <c>trace-expect.otlp</c>
-/// receiver — this list holds the contributing requirement's
-/// <see cref="HostResourceRequirement.Kind"/> (e.g. <c>["webhook-listener"]</c>), which is a
-/// resource-kind discriminator, NOT an Aspire endpoint name. The forward is therefore replaced
-/// by the concrete examples above, and the exception stated here rather than left to a reader to
-/// discover by inspecting <c>ProviderPipeline</c>'s own service-map construction.
-/// </para>
-/// <para>
-/// MINOR-1 (peer review, fix round 3): the paragraph below used to be a SECOND, consecutive
-/// <c>&lt;remarks&gt;</c> element on this same member. <c>Vouchfx.Sdk</c> is packable with
-/// <c>GenerateDocumentationFile=true</c>, and documentation renderers show only the FIRST
-/// <c>&lt;remarks&gt;</c> — so the block that silently disappeared from the emitted
-/// <c>Vouchfx.Sdk.xml</c> was the one carrying the binary-compatibility rule, on a type inside
-/// the frozen v1 contract. Merged into one element with two <c>&lt;para&gt;</c> blocks, the
-/// shape every other file in this change already uses.
+/// Host-resource entries are an exception to the endpoint-name shape: a
+/// <c>webhook-listen.http</c> listener or <c>trace-expect.otlp</c> receiver contributes its
+/// <see cref="HostResourceRequirement.Kind"/> (for example, <c>["webhook-listener"]</c>).
+/// That value is a resource-kind discriminator, not an Aspire endpoint name.
 /// </para>
 /// <para>
 /// A record (not a bare <see cref="IReadOnlyList{T}"/>) so a later addition — e.g. a flag

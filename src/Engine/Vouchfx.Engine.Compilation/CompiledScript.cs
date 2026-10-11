@@ -15,7 +15,7 @@ namespace Vouchfx.Engine.Compilation;
 /// </para>
 /// <para>
 /// <see cref="SubmissionTypeName"/> and <see cref="FactoryMethodName"/> record the
-/// well-known Roslyn submission naming convention confirmed during the Sprint-1 PoC
+/// well-known Roslyn submission naming convention
 /// (<c>"Submission#0"</c> / <c>"&lt;Factory&gt;"</c>).  They are exposed as constants
 /// so the executor and the tests can refer to the same names without magic strings.
 /// </para>

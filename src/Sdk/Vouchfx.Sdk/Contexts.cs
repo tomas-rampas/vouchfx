@@ -6,25 +6,53 @@
 // CaptureExprs (Sprint 4/7), and SuiteDirectory.
 namespace Vouchfx.Sdk;
 
+// Internal correction history (not XML documentation):
+// This context is engine-supplied and provider-consumed:
+// providers receive an instance and read its members but never implement the
+// interface. Adding a member is therefore non-breaking for providers — only the
+// engine (the single in-tree implementor) must satisfy it. The frozen v1
+// contract (CLAUDE.md §13) governs the provider-implemented surface
+// (IStepProvider, IStepBinder<T>, …), which evolves solely via
+// new optional interfaces (e.g. ICompileReferenceContributor) and
+// freezes at the M1.5 milestone (end of Phase 2).
 /// <summary>
 /// Provides contextual services available to a provider's binding stage,
 /// such as resolution of shared configuration or diagnostic sinks.
 /// </summary>
 /// <remarks>
 /// <para>
-/// This context is <strong>engine-supplied and provider-consumed</strong>:
-/// providers receive an instance and read its members but never implement the
-/// interface. Adding a member is therefore non-breaking for providers — only the
-/// engine (the single in-tree implementor) must satisfy it. The <em>frozen v1
-/// contract</em> (CLAUDE.md §13) governs the provider-<em>implemented</em> surface
-/// (<c>IStepProvider</c>, <c>IStepBinder&lt;T&gt;</c>, …), which evolves solely via
-/// new optional interfaces (e.g. <see cref="ICompileReferenceContributor"/>) and
-/// freezes at the M1.5 milestone (end of Phase 2).
+/// This context is <strong>engine-supplied and provider-consumed</strong>. Providers
+/// receive an instance; they do not implement it. Preserve compatibility for engine
+/// implementations and test doubles when adding members. The frozen v1 provider-implemented
+/// contracts (<c>IStepProvider</c>, <c>IStepBinder&lt;T&gt;</c>, and their siblings) evolve through
+/// optional interfaces such as <see cref="ICompileReferenceContributor"/>.
 /// </para>
-/// <para>Sprint-1 surface: marker only.</para>
+/// <para>This binding context is a marker interface.</para>
 /// </remarks>
 public interface IBindingContext { }
 
+// Internal correction history (not XML documentation):
+// This context is engine-supplied and provider-consumed:
+// providers receive an instance and read its members but never implement the
+// interface. Adding a member is therefore non-breaking for providers — the ENGINE
+// is the only PRODUCTION implementor that must satisfy it. (n5 fix, fix round 2:
+// this remark previously claimed the engine as "the single in-tree implementor",
+// which the services-generalisation spec's own DeclaredServices
+// addition below made visibly false — adding that member required updating ~22
+// test-only stand-in implementations across this repository's own test suites,
+// which also implement this interface in-tree, just never ship. The claim that
+// matters for provider authors is unaffected either way: no PROVIDER implements
+// this interface, so no provider needs to change when a member is added.) The
+// frozen v1 contract (CLAUDE.md §13) governs the provider-implemented
+// surface (IStepProvider, IStepBinder<T>, …), which evolves solely
+// via new optional interfaces (e.g. ICompileReferenceContributor) and
+// freezes at the M1.5 milestone (end of Phase 2).
+// Sprint-4 addition: DeclaredDependencies.
+// Later addition: SuiteDirectory, added so providers whose
+// fields reference an external file (e.g. script.csharp's file
+// field) can validate the file exists relative to the scenario's own
+// directory, without inventing a second path convention alongside
+// environment.seed's existing seedBaseDirectory.
 /// <summary>
 /// Provides contextual services available to a provider's validation stage,
 /// such as access to the project-level configuration, path resolution, and
@@ -32,29 +60,18 @@ public interface IBindingContext { }
 /// </summary>
 /// <remarks>
 /// <para>
-/// This context is <strong>engine-supplied and provider-consumed</strong>:
-/// providers receive an instance and read its members but never implement the
-/// interface. Adding a member is therefore non-breaking for providers — the ENGINE
-/// is the only PRODUCTION implementor that must satisfy it. (n5 fix, fix round 2:
-/// this remark previously claimed the engine as "the single in-tree implementor",
-/// which the services-generalisation spec's own <see cref="DeclaredServices"/>
-/// addition below made visibly false — adding that member required updating ~22
-/// test-only stand-in implementations across this repository's own test suites,
-/// which also implement this interface in-tree, just never ship. The claim that
-/// matters for provider authors is unaffected either way: no PROVIDER implements
-/// this interface, so no provider needs to change when a member is added.) The
-/// <em>frozen v1 contract</em> (CLAUDE.md §13) governs the provider-<em>implemented</em>
-/// surface (<c>IStepProvider</c>, <c>IStepBinder&lt;T&gt;</c>, …), which evolves solely
-/// via new optional interfaces (e.g. <see cref="ICompileReferenceContributor"/>) and
-/// freezes at the M1.5 milestone (end of Phase 2).
+/// This context is <strong>engine-supplied and provider-consumed</strong>. Providers read it
+/// but do not implement it. The engine supplies production instances; test doubles and the
+/// SDK testing package may also implement the interface. Prefer default implementations for
+/// additions that such doubles must satisfy. The frozen v1 provider-implemented contracts
+/// (<c>IStepProvider</c>, <c>IStepBinder&lt;T&gt;</c>, and their siblings) are separate: preserve
+/// existing signatures and evolve through optional interfaces or compatible default members.
 /// </para>
 /// <para>
-/// Sprint-4 addition: <see cref="DeclaredDependencies"/>.
-/// Later addition: <see cref="SuiteDirectory"/>, added so providers whose
-/// fields reference an external file (e.g. <c>script.csharp</c>'s <c>file</c>
-/// field) can validate the file exists relative to the scenario's own
-/// directory, without inventing a second path convention alongside
-/// <c>environment.seed</c>'s existing <c>seedBaseDirectory</c>.
+/// <see cref="DeclaredDependencies"/> supplies the declared dependency map.
+/// <see cref="SuiteDirectory"/> lets a provider validate an external file, such as
+/// <c>script.csharp</c>'s <c>file</c>, relative to the scenario directory, using the same
+/// base-directory convention as <c>environment.seed</c>.
 /// </para>
 /// </remarks>
 public interface IProjectContext
@@ -75,8 +92,7 @@ public interface IProjectContext
 
     /// <summary>
     /// Gets the map of service names to their declared shape, as declared under
-    /// <c>environment.services</c> in the scenario file (services-generalisation spec,
-    /// REQ-010).
+    /// <c>environment.services</c> in the scenario file.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -150,6 +166,28 @@ public interface IProjectContext
     string SuiteDirectory { get; }
 }
 
+// Internal correction history (not XML documentation):
+// This context is engine-supplied and provider-consumed:
+// providers receive an instance and read its members but never implement the
+// interface. Adding a member is therefore non-breaking for providers — only the
+// engine (the single in-tree implementor) must satisfy it. The frozen v1
+// contract (CLAUDE.md §13) governs the provider-implemented surface
+// (IStepProvider, IStepBinder<T>, …), which evolves solely via
+// new optional interfaces (e.g. ICompileReferenceContributor) and
+// freezes at the M1.5 milestone (end of Phase 2).
+// Sprint-2 additions: StepId and SuiteNamespace.
+// Sprint-4 addition: Captures (S04-B-02).
+// Sprint-7 addition: CaptureExprs (S07-B-01a) — the
+// format-aware view that supersedes Captures.
+// Later addition: SuiteDirectory, mirroring the identically
+// named member on IProjectContext so a provider's Emit
+// stage can resolve the same external file it validated at bind/validate
+// time (e.g. script.csharp's file field).
+// authenticated-infrastructure-mtls addition: DeclaredServices,
+// mirroring IProjectContext.DeclaredServices for the same reason —
+// a provider whose target may name EITHER a dependency or a service must
+// emit the corresponding Vars key, and which key that is can only be
+// decided at compile time.
 /// <summary>
 /// Provides contextual services available to a provider's compilation stage,
 /// such as the step identifier, the suite-level namespace, and access to
@@ -157,29 +195,19 @@ public interface IProjectContext
 /// </summary>
 /// <remarks>
 /// <para>
-/// This context is <strong>engine-supplied and provider-consumed</strong>:
-/// providers receive an instance and read its members but never implement the
-/// interface. Adding a member is therefore non-breaking for providers — only the
-/// engine (the single in-tree implementor) must satisfy it. The <em>frozen v1
-/// contract</em> (CLAUDE.md §13) governs the provider-<em>implemented</em> surface
-/// (<c>IStepProvider</c>, <c>IStepBinder&lt;T&gt;</c>, …), which evolves solely via
-/// new optional interfaces (e.g. <see cref="ICompileReferenceContributor"/>) and
-/// freezes at the M1.5 milestone (end of Phase 2).
+/// This context is <strong>engine-supplied and provider-consumed</strong>. Providers read it
+/// but do not implement it. The engine supplies production instances and test doubles may
+/// also implement it. Compatible default members avoid breaking those doubles. The frozen
+/// v1 provider-implemented contracts are separate and preserve existing signatures; optional
+/// interfaces such as <see cref="ICompileReferenceContributor"/> extend provider capabilities.
 /// </para>
 /// <para>
-/// Sprint-2 additions: <see cref="StepId"/> and <see cref="SuiteNamespace"/>.
-/// Sprint-4 addition: <see cref="Captures"/> (S04-B-02).
-/// Sprint-7 addition: <see cref="CaptureExprs"/> (S07-B-01a) — the
-/// format-aware view that supersedes <see cref="Captures"/>.
-/// Later addition: <see cref="SuiteDirectory"/>, mirroring the identically
-/// named member on <see cref="IProjectContext"/> so a provider's <c>Emit</c>
-/// stage can resolve the same external file it validated at bind/validate
-/// time (e.g. <c>script.csharp</c>'s <c>file</c> field).
-/// authenticated-infrastructure-mtls addition: <see cref="DeclaredServices"/>,
-/// mirroring <see cref="IProjectContext.DeclaredServices"/> for the same reason —
-/// a provider whose <c>target</c> may name EITHER a dependency or a service must
-/// emit the corresponding <c>Vars</c> key, and which key that is can only be
-/// decided at compile time.
+/// <see cref="StepId"/> and <see cref="SuiteNamespace"/> identify the compilation scope.
+/// <see cref="CaptureExprs"/> is the format-aware capture view; <see cref="Captures"/>
+/// retains the expression-only compatibility view. <see cref="SuiteDirectory"/> mirrors
+/// <see cref="IProjectContext.SuiteDirectory"/> so <c>Emit</c> resolves the same file that
+/// validation checked. <see cref="DeclaredServices"/> mirrors the validation map so a
+/// provider can select the correct dependency or service <c>Vars</c> key at compile time.
 /// </para>
 /// </remarks>
 public interface ICompileContext
@@ -208,10 +236,10 @@ public interface ICompileContext
     /// <para>
     /// <strong>What it is for.</strong> A provider whose <c>target</c> may name either kind —
     /// <c>mq-publish.kafka</c> and <c>mq-expect.kafka</c> accept a <c>kafka</c> dependency OR a
-    /// declared service (REQ-011) — must emit <c>VarKeys.Connection(target)</c> for the first
+    /// declared service — must emit <c>VarKeys.Connection(target)</c> for the first
     /// and <c>VarKeys.Service(target)</c> for the second. Emitting one key and hoping, or
     /// emitting both and letting the helper try each in turn, is the "provider guessing" that
-    /// REQ-023 forbids; membership of this map is the answer, and it is known at compile time.
+    /// a provider must avoid; membership of this map is the answer, and it is known at compile time.
     /// </para>
     /// <para>
     /// <strong>Why a DEFAULT implementation rather than a plain new member.</strong> This
@@ -256,7 +284,7 @@ public interface ICompileContext
 
     /// <summary>
     /// Gets the map of variable names to capture <em>expression strings</em>
-    /// declared in the step's <c>capture</c> block (DSL §6.1, S04-B-02).
+    /// declared in the step's <c>capture</c> block (DSL §6.1).
     /// </summary>
     /// <remarks>
     /// <para>
@@ -267,7 +295,7 @@ public interface ICompileContext
     /// <para>
     /// This is the <strong>format-agnostic, back-compatible view</strong>: it
     /// exposes only the expression text and is retained so that a provider that
-    /// only ever evaluates JSONPath (the pre-S07 behaviour) compiles and behaves
+    /// only ever evaluates JSONPath (the legacy behaviour) compiles and behaves
     /// unchanged.  A provider that needs to dispatch on the extractor language
     /// (JSONPath vs XPath) must read <see cref="CaptureExprs"/> instead, whose
     /// <see cref="CaptureExpr.Expression"/> values are identical to these entries
@@ -287,7 +315,7 @@ public interface ICompileContext
 
     /// <summary>
     /// Gets the map of variable names to typed <see cref="CaptureExpr"/> values
-    /// declared in the step's <c>capture</c> block (DSL §6.1, S07-B-01a).
+    /// declared in the step's <c>capture</c> block (DSL §6.1).
     /// </summary>
     /// <remarks>
     /// <para>

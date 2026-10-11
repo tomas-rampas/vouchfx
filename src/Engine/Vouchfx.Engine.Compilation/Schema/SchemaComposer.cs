@@ -52,8 +52,7 @@ public static class SchemaComposer
     /// The frozen language-schema version this composer emits.  The composed
     /// schema self-identifies as this version via the
     /// <c>x-vouchfx-schema-version</c> annotation (see <see cref="ComposeSchemaJson"/>),
-    /// so the snapshotted golden artifact is unambiguously the <c>v1</c> contract
-    /// (S08-F-01).
+    /// so the snapshotted golden artefact is unambiguously the <c>v1</c> contract.
     /// </summary>
     public const string SchemaVersion = "v1";
 
@@ -110,8 +109,7 @@ public static class SchemaComposer
     /// the <c>if</c>/<c>then</c> discriminator clauses are sorted by their
     /// <c>&lt;family&gt;.&lt;provider&gt;</c> type key (so reflection/registration
     /// order cannot perturb the bytes) and the JSON is written with
-    /// <see cref="JsonSerializerOptions.WriteIndented"/>.  This is what the
-    /// S08-F-01 freeze gate snapshots into <c>composed-schema.v1.json</c>.
+    /// <see cref="JsonSerializerOptions.WriteIndented"/>. The freeze gate snapshots this output into <c>composed-schema.v1.json</c>.
     /// </para>
     /// <para>
     /// <see cref="ComposeSchema"/> parses exactly this text, so the validated

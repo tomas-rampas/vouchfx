@@ -27,7 +27,7 @@ namespace Vouchfx.Engine.Authoring.Model;
 /// <param name="Seed">
 /// Optional seed block applied after the topology is healthy and before the
 /// first step runs (docs/02 §3.2.2).  Bound to a strongly-typed
-/// <see cref="SeedSpec"/> in S05-A-01; <see langword="null"/> when the
+/// <see cref="SeedSpec"/>; <see langword="null"/> when the
 /// <c>seed</c> block is absent or empty.
 /// </param>
 /// <param name="ImageRegistry">
@@ -95,7 +95,7 @@ public sealed record ServiceSpec(
 {
     /// <summary>
     /// Optional transport security declaration (TLS/mTLS) for this service's endpoint
-    /// (authenticated-infrastructure-mtls spec, REQ-001). <see langword="null"/> when
+    /// (authenticated-infrastructure-mtls spec). <see langword="null"/> when
     /// the service declares no <c>security:</c> block — today's unauthenticated-by-default
     /// behaviour is unchanged.
     /// </summary>
@@ -111,7 +111,7 @@ public sealed record ServiceSpec(
 
     /// <summary>
     /// One or more TCP ports this service exposes, beyond (or instead of) the implicit
-    /// default HTTP endpoint (services-generalisation spec, REQ-008). <see langword="null"/>
+    /// default HTTP endpoint (services-generalisation spec). <see langword="null"/>
     /// when the service declares no <c>ports:</c> list — today's HTTP-only-by-default
     /// behaviour (an implicit HTTP endpoint on <see cref="HttpPort"/>, or port 80) is
     /// unchanged. When declared, the service is brought up via Aspire's generic TCP
@@ -127,7 +127,7 @@ public sealed record ServiceSpec(
     public IReadOnlyList<int>? Ports { get; init; }
 
     /// <summary>
-    /// The host port each pinned container port publishes on (REQ-025), keyed by CONTAINER
+    /// The host port each pinned container port publishes on, keyed by CONTAINER
     /// port. <see langword="null"/> when no entry of <see cref="Ports"/> used the
     /// <c>"&lt;host&gt;:&lt;container&gt;"</c> form, and never containing an entry for a port
     /// declared as a bare integer — for which the orchestrator allocates a host port as before.
@@ -137,7 +137,7 @@ public sealed record ServiceSpec(
     /// <strong>A companion map rather than a richer <see cref="Ports"/> element type</strong>,
     /// and the reason is what reads <see cref="Ports"/>. Every consumer of that list wants the
     /// CONTAINER port and nothing else: <c>ServiceEndpointNaming</c> derives endpoint names from
-    /// it (<c>tcp-9093</c>), <c>security.endpoint</c> resolves its selector against it (REQ-002),
+    /// it (<c>tcp-9093</c>), <c>security.endpoint</c> resolves its selector against it,
     /// and the health-check cross-reference and default probe read it. Widening the element type
     /// would have made every one of those sites decide which half of a pair it meant, for a field
     /// that is <see langword="null"/> in every suite written before this requirement. Keeping
@@ -158,12 +158,10 @@ public sealed record ServiceSpec(
     public IReadOnlyDictionary<int, int>? PinnedHostPorts { get; init; }
 
     /// <summary>
-    /// An author-declared health check for this service (services-generalisation spec,
-    /// REQ-009), replacing the implicit default (<c>WithHttpHealthCheck(path: "/",
+    /// An author-declared health check for this service, replacing the implicit default (<c>WithHttpHealthCheck(path: "/",
     /// endpointName: "http")</c>) applied when this is <see langword="null"/> on an
     /// HTTP-shaped service (no <see cref="Ports"/> declared). A <see cref="Ports"/>-declared
-    /// (non-HTTP-by-default) service with no <see cref="HealthCheck"/> does NOT go unchecked
-    /// (M4 fix, fix round 2 — this summary previously said it did, before that fix landed):
+    /// (non-HTTP-by-default) service with no <see cref="HealthCheck"/> does NOT go unchecked:
     /// it defaults to a <c>tcp</c> probe against the first declared port, never an HTTP
     /// request the service may not even be able to answer, but a real check rather than none
     /// at all — see docs/02 §3.2.6a for what a <c>tcp</c> probe does and does not prove.
@@ -310,7 +308,7 @@ public sealed record DependencySpec(
 
     /// <summary>
     /// Optional transport security declaration (TLS/mTLS) for this dependency's
-    /// endpoint (authenticated-infrastructure-mtls spec, REQ-001). <see langword="null"/>
+    /// endpoint (authenticated-infrastructure-mtls spec). <see langword="null"/>
     /// when the dependency declares no <c>security:</c> block — today's
     /// unauthenticated-by-default behaviour is unchanged. Kind-generic: every
     /// dependency kind accepts this field, unlike <see cref="Extra"/>'s
@@ -324,7 +322,7 @@ public sealed record DependencySpec(
 
     /// <summary>
     /// Optional environment-variable mapping for this dependency's container
-    /// (dependency-env spec, REQ-001) — the managed-resource counterpart to
+    /// (dependency-env spec) — the managed-resource counterpart to
     /// <see cref="ServiceSpec.Env"/>, by which a managed dependency whose image is configured
     /// through environment variables is configurable — e.g. <c>MSSQL_COLLATION</c>, on the
     /// image the engine's own <c>AddSqlServer</c> mapping starts.

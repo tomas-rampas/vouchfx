@@ -54,7 +54,7 @@ public sealed class SecretAccessor : ISecretAccessor
     private readonly ISecretSourceCatalog _catalog;
 
     /// <summary>
-    /// The Default-ALC record of every value this accessor has revealed (§17, S11-B-01).
+    /// The Default-ALC record of every value this accessor has revealed (§17).
     /// Populated on each successful <see cref="Resolve"/> and consumed by the runner as a
     /// DEFENCE-IN-DEPTH scrub net for free-form provider observation text before it enters the
     /// event stream.  Type-based <see cref="SecretString"/> redaction remains the primary
@@ -71,7 +71,7 @@ public sealed class SecretAccessor : ISecretAccessor
     /// </para>
     /// <para>
     /// <strong>The ledger's lifetime is the CALLER's choice, not this type's</strong>
-    /// (client-key-password REQ-010).  Built through <see cref="SecretAccessor(ISecretSourceCatalog)"/>
+    /// (client-key-password). Built through <see cref="SecretAccessor(ISecretSourceCatalog)"/>
     /// it is private to this accessor, which is the per-scenario shape the scrub net was
     /// introduced with.  Built through
     /// <see cref="SecretAccessor(ISecretSourceCatalog, ResolvedSecretLedger)"/> the caller
@@ -116,7 +116,7 @@ public sealed class SecretAccessor : ISecretAccessor
     /// <summary>
     /// Initialises a new accessor over <paramref name="catalog"/> that records every value it
     /// reveals into <paramref name="ledger"/> — a ledger the caller may share with other
-    /// accessors so one scrub net covers them all (client-key-password REQ-010).
+    /// accessors so one scrub net covers them all (client-key-password).
     /// </summary>
     /// <param name="catalog">The run's source catalog; must not be <see langword="null"/>.</param>
     /// <param name="ledger">

@@ -29,7 +29,7 @@ internal static class StepTargetResolver
     /// <summary>
     /// Returns the step's <c>target</c> scalar, or <see langword="null"/> when the field is
     /// absent, empty, or structurally unresolvable (a <c>{placeholder}</c> or
-    /// <c>${secret:...}</c> reference — flag F-16). Never throws and never attempts
+    /// <c>${secret:...}</c> reference). Never throws and never attempts
     /// substitution: an unresolvable target simply targets nothing.
     /// </summary>
     /// <param name="step">The normalised AST step node.</param>
@@ -54,7 +54,7 @@ internal static class StepTargetResolver
 
     /// <summary>
     /// Classifies <paramref name="target"/> as a declared service or dependency name within
-    /// <paramref name="suite"/>'s <c>environment</c> block (fix-round M3) — the single shared
+    /// <paramref name="suite"/>'s <c>environment</c> block — the single shared
     /// lookup both the coverage-gap and vocabulary-gap analysers must use so they can never
     /// stamp <see cref="PlanFinding.TargetKind"/> inconsistently.
     /// </summary>

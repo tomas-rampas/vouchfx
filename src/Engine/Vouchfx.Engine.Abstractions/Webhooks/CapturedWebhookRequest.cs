@@ -16,7 +16,7 @@ namespace Vouchfx.Engine.Abstractions.Webhooks;
 
 /// <summary>
 /// An immutable snapshot of a single inbound HTTP request captured by a host-owned
-/// ephemeral webhook listener (S07-F-01a).
+/// ephemeral webhook listener.
 /// </summary>
 /// <remarks>
 /// <para>

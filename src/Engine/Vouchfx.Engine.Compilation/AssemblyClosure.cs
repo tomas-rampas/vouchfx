@@ -22,12 +22,12 @@ namespace Vouchfx.Engine.Compilation;
 ///   <item><description>
 ///     <see cref="ReservedNamespaceGuard.ThrowIfSquatting"/> — refuses customer DLLs
 ///     that declare types under the reserved namespaces <c>Vouchfx.Engine.*</c> or
-///     <c>Vouchfx.Steps.*</c> (S02-F-03).
+/// <c>Vouchfx.Steps.*</c>.
 ///   </description></item>
 ///   <item><description>
 ///     <see cref="AssemblyGraphGuard.ThrowIfConflicting(IEnumerable{Assembly})"/> —
 ///     fails fast when the same simple assembly name appears at two or more distinct
-///     version values (S02-B-02).
+/// version values.
 ///   </description></item>
 /// </list>
 /// </para>

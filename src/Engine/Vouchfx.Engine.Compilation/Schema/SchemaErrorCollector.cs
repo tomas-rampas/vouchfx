@@ -451,7 +451,7 @@ internal static class SchemaErrorCollector
     /// <c>"const"</c>, <c>"required"</c>) — never re-derived from <c>Message</c>'s
     /// <c>[keyword]</c> display tag, which exists for the AUTHOR to read, not for this
     /// class to re-parse. Consulted by <see cref="SuppressRedundantConstWhenEnumPresent"/>
-    /// (m8 fix, fix round 2).
+    ///
     /// </param>
     private readonly record struct CollectedError(
         string InstanceLocation, string EvaluationPath, string Message, bool IsUnevaluatedProperties,
@@ -494,7 +494,7 @@ internal static class SchemaErrorCollector
         /// by itself, a safe 1:1 map of names to matching branches even when
         /// its own <c>Count</c> happens to equal <see cref="ValidBranchCount"/>
         /// — see <see cref="HasUnattributableBranch"/> for why count equality
-        /// alone (M1) is necessary but not sufficient (M1-r), and
+        /// alone is necessary but not sufficient, and
         /// <see cref="FormatTooManyOneOfMatchesError"/>'s remarks for the
         /// caller's full guard.
         /// </summary>
@@ -505,18 +505,16 @@ internal static class SchemaErrorCollector
         /// <c>TryReadRequiredFieldNames</c> call yields anything other than
         /// EXACTLY one name — zero (no <c>required</c> member at all, e.g. a
         /// bare <c>type</c> constraint) or two-or-more (a paired
-        /// <c>required</c>, one match contributing several names at once)
-        /// (M1-r, third-round gatekeeper re-review).
+        /// <c>required</c>, one match contributing several names at once).
         /// </summary>
         /// <remarks>
-        /// M1's own count-equality check (<c>ValidBranchFieldNames.Count ==
+        /// The count-equality check (<c>ValidBranchFieldNames.Count ==
         /// ValidBranchCount</c>) is necessary but NOT sufficient on its own:
         /// a group with one single-name branch plus one two-name branch plus
         /// one zero-name branch can coincidentally sum to the same count as
         /// the branch total (1 + 2 + 0 = 3 matches, 3 names) while the
         /// per-branch correspondence the named message relies on is still
-        /// broken — see the class remarks' M1-r addendum for the measured
-        /// counter-example. This flag is set the instant ANY branch breaks
+        /// broken. This flag is set the instant ANY branch breaks
         /// the correspondence, independent of what the running total
         /// happens to add up to afterwards, closing exactly that gap.
         /// </remarks>
@@ -682,7 +680,7 @@ internal static class SchemaErrorCollector
 
     /// <summary>
     /// Drops a <c>const</c> error whenever an <c>enum</c> error is ALSO reported at the
-    /// SAME <see cref="CollectedError.InstanceLocation"/> (m8 fix, fix round 2).
+    /// SAME <see cref="CollectedError.InstanceLocation"/>.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -745,15 +743,44 @@ internal static class SchemaErrorCollector
         return survivors;
     }
 
+    // Internal correction history (not XML documentation):
+    // Measured before this pass existed: profile: TLS on a redis dependency emitted TWO
+    // errors (the [pattern] miss and the per-kind narrowing's own finding) where the same
+    // value on a SERVICE — which carries no per-kind narrowing — emitted ONE. Three review
+    // rounds passed over the asymmetry because both the corpus fixture and the unit assertion
+    // for a wrong-cased profile exercised it only on a service. The gatekeeper's original remedy
+    // (mirror SuppressRedundantConstWhenEnumPresent, keyed on pattern
+    // instead of enum) was written against the OLD schema, where the second error was a
+    // sibling const at the identical location; M1 replaced that const with a
+    // boolean false one level UP, so a same-location keyword-pair rule no longer matches
+    // the shape at all. Subsumption by container is the rule that does — and it is strictly more
+    // general, covering the required, unevaluatedProperties and
+    // minLength children the keyword-pair rule never reached.
+    // MINOR-2 (peer review, fix round 4). The paragraph above used to end "…and two NESTED
+    // forbidden containers collapse to the outermost — the one an author must act on". The code
+    // does the opposite, and always has: the short-circuit is unconditional, so a forbidden-shape
+    // error nested INSIDE another forbidden container is never subsumed by it and both are
+    // reported. That is a known limitation of this rule rather than a behaviour it implements —
+    // only the outermost is actionable, and the inner one is redundant beside it — and the case
+    // is REACHABLE today, contrary to the reading that the security block is the only
+    // object-valued forbidden property. Measured: a project-form service forbids
+    // healthCheck outright, while $defs/serviceHealthCheck's own type: http
+    // clause forbids port INSIDE it, so
+    // { project: …, healthCheck: { type: http, port: 8080 } } reports BOTH
+    // /environment/services/app/healthCheck and
+    // /environment/services/app/healthCheck/port — pinned by
+    // EnvironmentSchemaTests.Service_NestedForbiddenContainers_BothSurvive. Collapsing
+    // them would mean exempting a STRICTLY-nested forbidden error from the short-circuit, a
+    // behaviour change this round deliberately does not make.
     /// <summary>
     /// Drops every error located strictly INSIDE an object that a boolean <c>false</c> subschema
-    /// has already rejected outright (H-A, peer review — held item, fix round 2).
+    /// has already rejected outright.
     /// </summary>
     /// <remarks>
     /// <para>
     /// The <c>properties/&lt;name&gt;: false</c> idiom this schema uses for every conditional
     /// exclusion (<c>$defs/dependency</c>'s per-kind <c>schemaRegistry</c>/<c>queues</c>/<c>topics</c>
-    /// clauses and, since M1, its <c>security</c> clause; <c>$defs/security</c>'s own
+    /// clauses and its <c>security</c> clause; <c>$defs/security</c>'s own
     /// <c>clientCert</c>/<c>clientKey</c> pair; <c>$defs/serviceHealthCheck</c>'s
     /// <c>port</c>/<c>path</c> pair; storage-assert.s3's and db-assert.dynamodb's
     /// <c>exists: false</c> shapes) rejects the property REGARDLESS of its contents. Every other
@@ -764,18 +791,10 @@ internal static class SchemaErrorCollector
     /// all, so what is wrong INSIDE it cannot be the author's next action.
     /// </para>
     /// <para>
-    /// Measured before this pass existed: <c>profile: TLS</c> on a redis dependency emitted TWO
-    /// errors (the <c>[pattern]</c> miss and the per-kind narrowing's own finding) where the same
-    /// value on a SERVICE — which carries no per-kind narrowing — emitted ONE. Three review
-    /// rounds passed over the asymmetry because both the corpus fixture and the unit assertion
-    /// for a wrong-cased profile exercised it only on a service. The gatekeeper's original remedy
-    /// (mirror <see cref="SuppressRedundantConstWhenEnumPresent"/>, keyed on <c>pattern</c>
-    /// instead of <c>enum</c>) was written against the OLD schema, where the second error was a
-    /// sibling <c>const</c> at the identical location; M1 replaced that <c>const</c> with a
-    /// boolean <c>false</c> one level UP, so a same-location keyword-pair rule no longer matches
-    /// the shape at all. Subsumption by container is the rule that does — and it is strictly more
-    /// general, covering the <c>required</c>, <c>unevaluatedProperties</c> and
-    /// <c>minLength</c> children the keyword-pair rule never reached.
+    /// Subsumption by container covers <c>pattern</c>, <c>required</c>,
+    /// <c>unevaluatedProperties</c> and <c>minLength</c> findings inside a forbidden property.
+    /// A same-location keyword-pair rule would miss nested findings: a boolean <c>false</c>
+    /// rejection may sit one level above the field whose own constraint also failed.
     /// </para>
     /// <para>
     /// Scoped by CONTAINMENT, not by container name: an error survives unless some OTHER error in
@@ -788,10 +807,8 @@ internal static class SchemaErrorCollector
     /// nothing else. A scalar-valued forbidden property has no CHILDREN to subsume, but it does
     /// have same-location SIBLINGS: any keyword of the property's OWN base schema that the value
     /// also fails reports at the identical pointer as this rule's boolean-<c>false</c> rejection,
-    /// so this pass is not a no-op on a scalar. An earlier version of this paragraph called that
-    /// shape a no-op, which was wrong outright rather than merely out of date — it has been
-    /// reachable for as long as the <c>tls</c> branch has forbidden a scalar with any base-schema
-    /// constraint. MEASURED against the composed schema, each of these documents makes the
+    /// so this pass is not a no-op on a scalar.
+    /// Against the composed schema, each of these documents makes the
     /// evaluator report TWO errors at one pointer, which the same-location clause below reduces to
     /// the ONE an author must act on (delete the field; what its value would have had to look like
     /// is moot): <c>profile: tls</c> with <c>clientCert: ""</c> (<c>minLength</c> +
@@ -816,22 +833,13 @@ internal static class SchemaErrorCollector
     /// location both survive.
     /// </para>
     /// <para>
-    /// MINOR-2 (peer review, fix round 4). The paragraph above used to end "…and two NESTED
-    /// forbidden containers collapse to the outermost — the one an author must act on". The code
-    /// does the opposite, and always has: the short-circuit is unconditional, so a forbidden-shape
-    /// error nested INSIDE another forbidden container is never subsumed by it and both are
-    /// reported. That is a known limitation of this rule rather than a behaviour it implements —
-    /// only the outermost is actionable, and the inner one is redundant beside it — and the case
-    /// is REACHABLE today, contrary to the reading that the <c>security</c> block is the only
-    /// object-valued forbidden property. Measured: a <c>project</c>-form service forbids
-    /// <c>healthCheck</c> outright, while <c>$defs/serviceHealthCheck</c>'s own <c>type: http</c>
-    /// clause forbids <c>port</c> INSIDE it, so
-    /// <c>{ project: …, healthCheck: { type: http, port: 8080 } }</c> reports BOTH
-    /// <c>/environment/services/app/healthCheck</c> and
-    /// <c>/environment/services/app/healthCheck/port</c> — pinned by
-    /// <c>EnvironmentSchemaTests.Service_NestedForbiddenContainers_BothSurvive</c>. Collapsing
-    /// them would mean exempting a STRICTLY-nested forbidden error from the short-circuit, a
-    /// behaviour change this round deliberately does not make.
+    /// A forbidden-shape error nested inside another forbidden container survives the
+    /// unconditional short-circuit, so both are reported. This is a known limitation: only the
+    /// outermost is actionable. The shape is reachable on a <c>project</c>-form service with
+    /// <c>{ healthCheck: { type: http, port: 8080 } }</c>: both the forbidden health-check block
+    /// and its forbidden port are reported.
+    /// <c>EnvironmentSchemaTests.Service_NestedForbiddenContainers_BothSurvive</c> pins this
+    /// behaviour. Collapsing them would require changing the short-circuit for strict descendants.
     /// </para>
     /// </remarks>
     private static List<CollectedError> SuppressErrorsInsideForbiddenContainer(List<CollectedError> errors)
@@ -1086,7 +1094,7 @@ internal static class SchemaErrorCollector
     /// <c>unevaluatedProperties</c>, <c>additionalProperties</c>, and a
     /// per-field <c>properties/&lt;name&gt;: false</c>), naming the owning
     /// dependency/service for a <c>required</c> violation inside a
-    /// <c>security</c> block (REQ-002 — e.g. the missing-<c>endpoint</c>
+    /// <c>security</c> block (e.g. the missing-<c>endpoint</c>
     /// case), enriching an <c>enum</c> violation with the offending value
     /// and the live accepted list (see <see cref="FormatEnumError"/>),
     /// enriching a <c>const</c> violation similarly (m4 — see
@@ -1348,10 +1356,10 @@ internal static class SchemaErrorCollector
     /// <c>/environment/(services|dependencies)/&lt;name&gt;/&lt;property&gt;</c>, OR is
     /// at-or-below that same container's own <c>security</c> sub-object — e.g.
     /// <c>.../security/&lt;bogus&gt;</c> or a nested
-    /// <c>.../security/serverArtifacts/0/&lt;bogus&gt;</c> (REQ-002; see
+    /// <c>.../security/serverArtifacts/0/&lt;bogus&gt;</c> (see
     /// <see cref="TryResolveEnvironmentContainer"/>'s <c>allowNestedSecurity</c>) — or a
     /// captureEntry's own <c>/steps/&lt;N&gt;/capture/&lt;varName&gt;/&lt;property&gt;</c>
-    /// (n-b, fourth-round gatekeeper re-review — see
+    /// (see
     /// <see cref="TryResolveCaptureEntryContainer"/>), the container's own
     /// kind and map key — e.g. <c>Unknown property 'imagePullPolcy' on
     /// service 'orders-api'</c>, <c>Unknown property 'bogus' on dependency
@@ -1360,7 +1368,7 @@ internal static class SchemaErrorCollector
     /// entry 'orderId'</c>. An unrecognised key BELOW the security object — inside one
     /// of its own <c>serverArtifacts[]</c> entries — instead reads <c>Unknown property
     /// 'bogus' IN dependency 'events-kafka' (at security.serverArtifacts[0].bogus)</c>
-    /// (MINOR-6, honest nested attribution): the entry is a distinct container one level
+    /// (nested attribution): the entry is a distinct container one level
     /// further in, so the sub-path also locates WHICH one — see the <c>required</c>
     /// branch in <see cref="FormatError"/> for the identical on/in split, and
     /// <see cref="BuildSecuritySubPath"/> for the sub-path rendering. Every other
@@ -1442,7 +1450,7 @@ internal static class SchemaErrorCollector
     /// no gate proves the roster either way.
     /// </para>
     /// <para>
-    /// On a <c>captureEntry</c> container (m6 — see
+    /// On a <c>captureEntry</c> container (see
     /// <see cref="TryResolveCaptureEntryContainer"/>), names BOTH keys:
     /// the offending one and the one already present that makes it
     /// forbidden, the latter read from the LIVE schema's own sibling
@@ -1451,7 +1459,7 @@ internal static class SchemaErrorCollector
     /// specifically.
     /// </para>
     /// <para>
-    /// n-a (fourth-round gatekeeper re-review): that name-lookup genericity
+    /// That name-lookup genericity
     /// does NOT make this branch correct for an arbitrary number of
     /// extractor formats — only for TODAY's exactly two (both declared in
     /// this engine-owned <c>$defs/captureEntry</c> definition, not a
@@ -1468,9 +1476,7 @@ internal static class SchemaErrorCollector
     /// extractor format is ever added.
     /// </para>
     /// <para>
-    /// M5 (gatekeeper, feat/fragment-completeness — gatekeeper dissent
-    /// accepted over the original "measured, degrade-don't-fabricate is
-    /// enough" call): a FOURTH, fully generic branch covers every
+    /// A fourth, fully generic branch covers every
     /// <c>allOf</c>/<c>if</c>/<c>then</c>-declared per-field exclusion
     /// OUTSIDE the three named containers above — storage-assert.s3's
     /// <c>size</c>/<c>minSize</c> mutual exclusion and its (and
@@ -1859,7 +1865,7 @@ internal static class SchemaErrorCollector
     /// <c>{"required": ["field"]}</c> — a plain co-presence exclusion with NO
     /// other content (storage-assert.s3's <c>size</c>/<c>minSize</c> shape) —
     /// mirrors <c>EngineExport.TryReadSingleRequiredGroupNames</c>'s own
-    /// "exactly one property, no other content" strictness (M1-style
+    /// "exactly one property, no other content" strictness (
     /// tightening applied here too, not only in the catalogue exporter).
     /// </summary>
     private static bool TryReadSoleRequiredNoOtherContent(JsonElement ifClause, out string fieldName)
@@ -1922,20 +1928,18 @@ internal static class SchemaErrorCollector
     /// Callers MUST only reach this when <paramref name="matchedFieldNames"/>
     /// holds exactly one name per matching branch — true if and only if
     /// <c>!HasUnattributableBranch &amp;&amp; ValidBranchFieldNames.Count ==
-    /// ValidBranchCount</c> (M1/M1-r), checked once in
+    /// ValidBranchCount</c>, checked once in
     /// <see cref="CollectErrors"/>, not re-verified here. Count-equality
-    /// ALONE (M1) is necessary but not sufficient: a branch with no
+    /// alone is necessary but not sufficient: a branch with no
     /// <c>required</c> member, or one whose <c>required</c> lists more than
     /// one name, can still leave the running total coincidentally equal to
-    /// the branch count (M1-r's measured counter-example: a one-name branch
+    /// the branch count (for example, a one-name branch
     /// + a two-name branch + a zero-name branch summing to the same total
     /// as three matches) while the per-branch correspondence this method
     /// depends on is broken. <see cref="CompositeGroupState.HasUnattributableBranch"/>
     /// is set the instant any branch breaks that correspondence, closing
     /// the gap; a caller whose group sets it must instead use
-    /// <see cref="FormatUnnamedTooManyOneOfMatchesError"/> — see the class
-    /// remarks' "Third-round gatekeeper findings" for the measured shapes
-    /// this guard exists to catch.
+    /// <see cref="FormatUnnamedTooManyOneOfMatchesError"/>.
     /// </remarks>
     private static string FormatTooManyOneOfMatchesError(List<string> matchedFieldNames)
     {
@@ -1949,7 +1953,7 @@ internal static class SchemaErrorCollector
 
     /// <summary>
     /// Builds the honest fallback for a <c>oneOf</c> "too many matches"
-    /// failure (M1) when the matching branches' own <c>required</c> names
+    /// failure when the matching branches' own <c>required</c> names
     /// cannot be safely attributed one-for-one to the branches that matched
     /// (see <see cref="FormatTooManyOneOfMatchesError"/>'s remarks for the
     /// guard). Names no field and fabricates nothing beyond the count of
@@ -2084,7 +2088,7 @@ internal static class SchemaErrorCollector
     /// a given message is O(1) in the value it complains about.
     /// </para>
     /// <para>
-    /// SEC-2 (peer review, fix round 3): the cut index is a CHAR index, so a naive
+    /// The cut index is a CHAR index, so a naive
     /// <c>value[..MaxOffendingValueChars]</c> slice can land exactly between a high surrogate
     /// and its low-surrogate partner when the author-controlled value contains an astral-plane
     /// character — measured with <c>ESC + 198×'a' + U+1F600</c> (length 201), where the cut fell
@@ -2131,6 +2135,38 @@ internal static class SchemaErrorCollector
         return $"{shown}, ... and {remaining} more";
     }
 
+    // Internal correction history (not XML documentation):
+    // H-B (peer review, held item — corrected in fix round 2, and the correction is now
+    // self-enforcing). This paragraph used to assert that every OTHER const in the
+    // composed schema belongs to a discriminator clause "which IsIfDiscriminatorNoise
+    // filters out before this method is ever reached". That was false while REQ-021's own
+    // narrowing pinned security.profile to const: "tls": that const sat in
+    // a then, not an if, so it was NOT filtered and did reach this method — which
+    // is exactly why this method carried a third, security.profile-specific branch.
+    // M1's schema tightening deleted that clause (a non-kafka dependency now rejects the whole
+    // security block via a boolean false subschema, a properties shape
+    // handled by FormatForbiddenPropertyError, never a const), and the
+    // branch went with it. The claim is therefore true again TODAY — measured, not assumed:
+    // SchemaErrorCollectorTests.ComposedSchema_DeclaresNoThenClauseConst_OutsideTheTwoNamedShapes
+    // walks the live composed schema and fails the moment a third then-clause
+    // const appears, so the next one to be added is caught here rather than silently
+    // inheriting the generic message.
+    // Internal correction history (not XML documentation):
+    // The composed schema has TWO user-facing const shapes (m8 fix, fix round 2
+    // corrects this remark — it previously claimed exactly one; that was already wrong
+    // the day $defs/service's ports-only conditional shipped, and the second
+    // branch below closes the gap): metadata.schemaVersion, and
+    // environment.services.<name>.healthCheck.type's conditional pin to
+    // "tcp" on a ports-only service (no sibling httpPort — a type: http
+    // probe has no HTTP endpoint to target there). Both are named directly below, mirroring
+    // FormatForbiddenPropertyError's own fixed-rule-vs-generic-fallback split
+    // (see that method's remarks for the same reasoning applied to image/project).
+    // A wrong-CASE value at the healthCheck.type location (e.g. type: TCP) ALSO fails
+    // the field's own unconditional enum at the identical location; that redundant
+    // pairing is suppressed upstream by SuppressRedundantConstWhenEnumPresent
+    // before this method is ever reached for it, so this method only ever sees a
+    // healthCheck.type const that has no enum sibling — a valid enum member (e.g.
+    // "http") failing the narrower ports-only conditional.
     /// <summary>
     /// Builds the actionable message for a <c>const</c> rejection (m4) —
     /// e.g. <c>metadata.schemaVersion: v2</c>, previously surfacing raw
@@ -2141,38 +2177,24 @@ internal static class SchemaErrorCollector
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The composed schema has TWO user-facing <c>const</c> shapes (m8 fix, fix round 2
-    /// corrects this remark — it previously claimed exactly one; that was already wrong
-    /// the day <c>$defs/service</c>'s ports-only conditional shipped, and the second
-    /// branch below closes the gap): <c>metadata.schemaVersion</c>, and
-    /// <c>environment.services.&lt;name&gt;.healthCheck.type</c>'s conditional pin to
-    /// <c>"tcp"</c> on a ports-only service (no sibling <c>httpPort</c> — a <c>type: http</c>
-    /// probe has no HTTP endpoint to target there). Both are named directly below, mirroring
-    /// <see cref="FormatForbiddenPropertyError"/>'s own fixed-rule-vs-generic-fallback split
-    /// (see that method's remarks for the same reasoning applied to <c>image</c>/<c>project</c>).
-    /// A wrong-CASE value at the healthCheck.type location (e.g. <c>type: TCP</c>) ALSO fails
-    /// the field's own unconditional <c>enum</c> at the identical location; that redundant
-    /// pairing is suppressed upstream by <see cref="SuppressRedundantConstWhenEnumPresent"/>
-    /// before this method is ever reached for it, so this method only ever sees a
-    /// healthCheck.type <c>const</c> that has no enum sibling — a valid enum member (e.g.
-    /// <c>"http"</c>) failing the narrower ports-only conditional.
+    /// The composed schema has two named user-facing <c>const</c> shapes:
+    /// <c>metadata.schemaVersion</c> and the ports-only service
+    /// <c>environment.services.&lt;name&gt;.healthCheck.type</c> pin to <c>"tcp"</c>. Without a
+    /// sibling <c>httpPort</c>, an HTTP probe has no endpoint to target. Both receive specific
+    /// messages, like the fixed-rule cases in <see cref="FormatForbiddenPropertyError"/>.
+    /// A wrong-cased <c>type: TCP</c> also fails the field's unconditional <c>enum</c>;
+    /// <see cref="SuppressRedundantConstWhenEnumPresent"/> suppresses that redundant pair.
+    /// This formatter therefore receives a conditional health-check constant only when an
+    /// otherwise valid enum value, such as <c>"http"</c>, violates the narrower condition.
     /// </para>
     /// <para>
-    /// H-B (peer review, held item — corrected in fix round 2, and the correction is now
-    /// self-enforcing). This paragraph used to assert that every OTHER <c>const</c> in the
-    /// composed schema belongs to a discriminator clause "which <see cref="IsIfDiscriminatorNoise"/>
-    /// filters out before this method is ever reached". That was false while REQ-021's own
-    /// narrowing pinned <c>security.profile</c> to <c>const: "tls"</c>: that <c>const</c> sat in
-    /// a <c>then</c>, not an <c>if</c>, so it was NOT filtered and did reach this method — which
-    /// is exactly why this method carried a third, <c>security.profile</c>-specific branch.
-    /// M1's schema tightening deleted that clause (a non-kafka dependency now rejects the whole
-    /// <c>security</c> block via a boolean <c>false</c> subschema, a <c>properties</c> shape
-    /// handled by <see cref="FormatForbiddenPropertyError"/>, never a <c>const</c>), and the
-    /// branch went with it. The claim is therefore true again TODAY — measured, not assumed:
+    /// Other built-in <c>const</c> clauses belong to discriminator branches, which
+    /// <see cref="IsIfDiscriminatorNoise"/> filters before this method. Non-kafka dependency
+    /// security is refused by a boolean <c>false</c> property schema, handled by
+    /// <see cref="FormatForbiddenPropertyError"/>, rather than a profile <c>const</c>.
     /// <c>SchemaErrorCollectorTests.ComposedSchema_DeclaresNoThenClauseConst_OutsideTheTwoNamedShapes</c>
-    /// walks the live composed schema and fails the moment a third <c>then</c>-clause
-    /// <c>const</c> appears, so the next one to be added is caught here rather than silently
-    /// inheriting the generic message.
+    /// guards the two named cases against a new built-in <c>then</c>-clause constant that would
+    /// otherwise inherit the generic message.
     /// </para>
     /// <para>
     /// A future provider-authored <c>const</c> falls through to the generic branch below rather
@@ -2635,8 +2657,7 @@ internal static class SchemaErrorCollector
     /// exactly depth 4, SERVICE-only (see the Authoring model's own <c>HealthCheckSpec</c>
     /// remarks: a dependency's health gate is the engine's own concern, never
     /// author-declarable, so <c>healthCheck</c> never appears under
-    /// <c>environment.dependencies</c>) — and extracts the owning service's own map key
-    /// (G1, gatekeeper MAJOR-1).
+    /// <c>environment.dependencies</c>) — and extracts the owning service's own map key.
     /// </summary>
     /// <remarks>
     /// Checked BEFORE <see cref="TryResolveEnvironmentContainer"/> in <see cref="FormatError"/>'s
@@ -2679,7 +2700,7 @@ internal static class SchemaErrorCollector
     /// Resolves <c>environment/services/&lt;name&gt;/healthCheck/type</c> — ONE segment
     /// deeper than <see cref="TryResolveHealthCheckContainer"/>'s own <c>healthCheck</c>
     /// container match — for <see cref="FormatConstError"/>'s ports-only-conditional
-    /// <c>healthCheck.type</c> branch (m8 fix, fix round 2). Every OTHER healthCheck field
+    /// <c>healthCheck.type</c> branch. Every OTHER healthCheck field
     /// rejection at this depth (an unrecognised key, a forbidden <c>port</c>/<c>path</c>)
     /// already lands correctly via the additionalProperties/properties formatters and does
     /// not need this helper; only the <c>type</c> field's conditional <c>const</c> does.

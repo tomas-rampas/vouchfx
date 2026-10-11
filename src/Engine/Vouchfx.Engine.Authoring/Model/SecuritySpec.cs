@@ -41,7 +41,7 @@ namespace Vouchfx.Engine.Authoring.Model;
 /// </remarks>
 /// <param name="Profile">
 /// The transport security mechanism as authored: <c>"tls"</c> or <c>"mtls"</c> (an open
-/// discriminator, REQ-019 — a dotted <c>&lt;vendor&gt;.&lt;name&gt;</c> form is also
+/// discriminator — a dotted <c>&lt;vendor&gt;.&lt;name&gt;</c> form is also
 /// schema-legal, reserved for an out-of-tree profile). Retained verbatim (never
 /// case-normalised) so an incorrectly-cased value (e.g. <c>"TLS"</c>) is rejected by the
 /// schema's case-sensitive pattern rather than silently accepted here; an unrecognised
@@ -55,14 +55,13 @@ namespace Vouchfx.Engine.Authoring.Model;
 /// <see cref="ServiceSpec.HttpPort"/>, which always means a port number,
 /// <c>endpoint</c> may equally name a declared endpoint (a non-numeric string), so
 /// pre-parsing here would lose that second, equally valid shape. Resolving which
-/// shape a given value is belongs to a later stage (the REQ-005 probe), not this
-/// authoring-surface PR.
+/// shape a given value is belongs to endpoint resolution, not this parser.
 /// </param>
 /// <param name="CaCert">
 /// Path to a CA certificate (trust anchor) file, relative to the suite directory.
 /// Optional for both <c>tls</c> and <c>mtls</c>; <see langword="null"/> when the
-/// author never declares it — REQ-004(b) requires that an undeclared <c>caCert</c>
-/// is treated as absent, never as a missing-but-implied field.
+/// author never declares it. An undeclared <c>caCert</c> is absent, never a
+/// missing-but-implied field.
 /// </param>
 /// <param name="ClientCert">
 /// Path to the client certificate file presented during a mutual-TLS handshake,
@@ -75,9 +74,8 @@ namespace Vouchfx.Engine.Authoring.Model;
 /// for <c>profile: mtls</c>; not applicable to <c>profile: tls</c> (enforced by the schema).
 /// </param>
 /// <param name="ServerArtifacts">
-/// Host files to be copied into the container at topology-build time (REQ-016's
-/// authoring surface only — the actual container-file-copy orchestration is a later
-/// PR). <see langword="null"/> when the security block declares no
+/// Host files to be copied into the container at topology-build time. This record
+/// binds the authored paths; runtime orchestration performs the copy. <see langword="null"/> when the security block declares no
 /// <c>serverArtifacts</c> entries.
 /// </param>
 public sealed record SecuritySpec(
@@ -91,7 +89,7 @@ public sealed record SecuritySpec(
     /// <summary>
     /// The passphrase for an encrypted <see cref="ClientKey"/>, as DECLARED TEXT: a
     /// <c>${secret:&lt;source&gt;/&lt;path&gt;}</c> reference, retained verbatim and
-    /// UNRESOLVED at this layer (client-key-password spec, REQ-003).
+    /// UNRESOLVED at this layer (client-key-password spec).
     /// <see langword="null"/> when the author declares no <c>clientKeyPassword</c> — the
     /// ordinary case, an unencrypted key.
     /// </summary>
@@ -111,8 +109,7 @@ public sealed record SecuritySpec(
     /// </para>
     /// <para>
     /// <strong><c>SecretReference.TryParse</c> alone is NOT that proof</strong>, and a consumer
-    /// writing <c>if (TryParse(v)) quote(v);</c> reproduces a disclosure defect this branch has
-    /// already had to fix once. <c>TryParse</c> asks only whether one whole token spans the
+    /// writing <c>if (TryParse(v)) quote(v);</c> can disclose unvalidated author text. <c>TryParse</c> asks only whether one whole token spans the
     /// value; because a reference path terminates at the first closing brace and is otherwise
     /// unrestricted, a value can satisfy that while still containing a further lead-in swallowed
     /// inside the path — and everything after that lead-in is then arbitrary author text that
@@ -154,8 +151,8 @@ public sealed record SecuritySpec(
     /// <remarks>
     /// <para>
     /// The counterpart of <see cref="DependencySpec.Extra"/>, added for the same reason: a
-    /// field no typed member claims is PRESERVED rather than dropped on the floor. REQ-020
-    /// closed <c>$defs/security</c> with <c>"unevaluatedProperties": false</c> so that a
+    /// field no typed member claims is preserved rather than discarded. The schema
+    /// closes <c>$defs/security</c> with <c>"unevaluatedProperties": false</c> so that a
     /// future security profile can contribute its own fields to the schema without mutating
     /// a frozen keyword; before this bucket existed such a field validated and was then
     /// discarded before any consumer could see it.
@@ -189,6 +186,24 @@ public sealed record SecuritySpec(
     /// </remarks>
     public YamlMappingNode? Extra { get; init; }
 
+    // Internal correction history (not XML documentation):
+    // This record used to refuse this guard on completeness grounds, and that refusal
+    // was overturned by maintainer decision on 2026-08-27. The objection was that a
+    // hand-written override cannot enumerate a member that does not exist yet, and would
+    // therefore drop a future field from ToString() without anything saying so. Its
+    // unstated premise — that nothing would say so — is what fails.
+    // SecuritySpecDisclosureTests.SecuritySpec_HasExactlyTheMembersPrintMembersEnumerates
+    // pins this record's printable-member set, so a member added here turns a test red instead
+    // of disappearing from a diagnostic. That is the answer SecuredTarget had
+    // already adopted, in this same assembly, for this same objection; the old reasoning is
+    // recorded here rather than deleted so the next reader can see which step of it was wrong.
+    // What the refusal cost while it stood is measured, not supposed. It made
+    // this record a live disclosure that every holder had to remember to guard, and holders
+    // were fixed one at a time: #408 guarded SecuredTarget, a peer review then
+    // measured the identical canary surviving at ServiceSpec.Security and
+    // DependencySpec.Security, and a second fix guarded those two. Two rounds of
+    // per-holder fixes, neither able to close the class, because the thing being disclosed was
+    // never the holder.
     /// <summary>
     /// Withholds <see cref="ClientKeyPassword"/> and <see cref="Extra"/> from
     /// <c>ToString()</c>, printing every other member exactly as the compiler-generated
@@ -198,25 +213,10 @@ public sealed record SecuritySpec(
     /// <returns><see langword="true"/>, since this record always prints at least one member.</returns>
     /// <remarks>
     /// <para>
-    /// <strong>This record used to refuse this guard on completeness grounds, and that refusal
-    /// was overturned by maintainer decision on 2026-08-27.</strong> The objection was that a
-    /// hand-written override cannot enumerate a member that does not exist yet, and would
-    /// therefore drop a future field from <c>ToString()</c> without anything saying so. Its
-    /// unstated premise — that nothing would say so — is what fails.
-    /// <c>SecuritySpecDisclosureTests.SecuritySpec_HasExactlyTheMembersPrintMembersEnumerates</c>
-    /// pins this record's printable-member set, so a member added here turns a test red instead
-    /// of disappearing from a diagnostic. That is the answer <see cref="SecuredTarget"/> had
-    /// already adopted, in this same assembly, for this same objection; the old reasoning is
-    /// recorded here rather than deleted so the next reader can see which step of it was wrong.
-    /// </para>
-    /// <para>
-    /// <strong>What the refusal cost while it stood is measured, not supposed.</strong> It made
-    /// this record a live disclosure that every holder had to remember to guard, and holders
-    /// were fixed one at a time: #408 guarded <see cref="SecuredTarget"/>, a peer review then
-    /// measured the identical canary surviving at <see cref="ServiceSpec.Security"/> and
-    /// <see cref="DependencySpec.Security"/>, and a second fix guarded those two. Two rounds of
-    /// per-holder fixes, neither able to close the class, because the thing being disclosed was
-    /// never the holder.
+    /// The printable-member set is pinned by
+    /// <c>SecuritySpecDisclosureTests.SecuritySpec_HasExactlyTheMembersPrintMembersEnumerates</c>.
+    /// Adding a member therefore requires an explicit rendering decision instead of silently
+    /// omitting it from <c>ToString()</c>. Redacting at the declaring record covers every holder.
     /// </para>
     /// <para>
     /// <strong>The render shape: the secret-bearing members are withheld, not the block.</strong>
@@ -259,12 +259,12 @@ public sealed record SecuritySpec(
 
 /// <summary>
 /// A single <c>{ source, target }</c> pair declared under a <see cref="SecuritySpec.ServerArtifacts"/>
-/// list (REQ-016's authoring surface): a host file copied into the container at the
+/// list (the authoring surface): a host file copied into the container at the
 /// declared in-container path.
 /// </summary>
 /// <param name="Source">
 /// Host path of the file to copy, relative to the suite directory. Must resolve
-/// inside that directory (REQ-003, EDGE-006) and must exist on the host (REQ-004)
+/// inside that directory and must exist on the host
 /// when declared — checked by <c>Vouchfx.Engine.Runtime.EnvironmentSecurityValidator</c>,
 /// never by this record itself.
 /// </param>

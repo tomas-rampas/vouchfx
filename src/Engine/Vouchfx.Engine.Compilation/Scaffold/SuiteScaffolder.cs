@@ -473,12 +473,11 @@ public static partial class SuiteScaffolder
     }
 
     /// <summary>
-    /// Residual, genuinely-non-generic companion emission (B1, gatekeeper
-    /// review): script.csharp's code/file and mq-publish.azureservicebus's
-    /// queue/topic used to be hardcoded here too, but both are now ordinary
+    /// Companion emission for shapes that cannot use the generic group mechanism.
+    /// script.csharp's code/file and mq-publish.azureservicebus's queue/topic are ordinary
     /// <see cref="StepCatalogueEntry.ExactlyOneOfGroups"/> shapes handled by
-    /// <see cref="EmitFirstUnemittedPerGroup"/> above (folded into the generic
-    /// mechanism rather than kept as a second path, per review). The SAME is
+    /// <see cref="EmitFirstUnemittedPerGroup"/> above (handled by the generic
+    /// mechanism). The SAME is
     /// true of mq-expect.azureservicebus's expectPayloadContains/expectProperties
     /// (an <see cref="StepCatalogueEntry.AtLeastOneOfGroups"/> shape now).
     /// </summary>

@@ -23,7 +23,7 @@ namespace Vouchfx.Engine.Planning.Report;
 /// </param>
 /// <param name="Suite">
 /// The relative path of the suite this finding concerns, or <see langword="null"/> when the
-/// finding is not scoped to a single suite. MAJOR fix-round: a
+/// finding is not scoped to a single suite. A
 /// <see cref="PlanFindingKinds.DependencyMissingStepType"/> or
 /// <see cref="PlanFindingKinds.ServiceMissingHttpStep"/> finding is now ALWAYS scoped to its
 /// declaring suite (never <see langword="null"/>) — a dependency/service is declared inside
@@ -48,16 +48,16 @@ namespace Vouchfx.Engine.Planning.Report;
 /// <see cref="Target"/> is set; otherwise <see langword="null"/>.
 /// </param>
 /// <param name="SuggestedTypes">
-/// REQ-007 hand-off hint: one or more dotted step types, present in the current
+/// A hand-off hint: one or more dotted step types, present in the current
 /// registration, that would close this gap. Empty for finding kinds that are not gaps (see
 /// <see cref="PlanFindingKinds.IsGap"/>).
 /// </param>
 /// <param name="SuggestedStepId">
-/// REQ-007 hand-off hint: a deterministic, YAML-legal suggested step id for a scaffolded
+/// A hand-off hint: a deterministic, YAML-legal suggested step id for a scaffolded
 /// step closing this gap. <see langword="null"/> for finding kinds that are not gaps.
 /// </param>
 /// <param name="Ambiguous">
-/// REQ-008 / EDGE-002 marker: <see langword="true"/> when this finding's suite identity
+/// An ambiguity marker: <see langword="true"/> when this finding's suite identity
 /// could not be resolved unambiguously against the event history (a scenario-id collision
 /// between two declared suites, or history referencing a since-renamed file).
 /// <see langword="false"/> otherwise, including for every non-coverage finding kind.
@@ -68,7 +68,7 @@ namespace Vouchfx.Engine.Planning.Report;
 /// <see cref="Ambiguous"/> is <see langword="true"/>; otherwise <see langword="null"/>.
 /// </param>
 /// <param name="History">
-/// REQ-006 evidence for a history-health finding (pass/fail/env-error/inconclusive counts,
+/// Evidence for a history-health finding (pass/fail/env-error/inconclusive counts,
 /// distinct runs, last-observed timestamp, age in days). <see langword="null"/> for gap and
 /// ambiguity finding kinds.
 /// </param>
@@ -76,17 +76,17 @@ namespace Vouchfx.Engine.Planning.Report;
 /// A short, human-readable explanation of the finding. Composed <strong>only</strong> from
 /// suite paths, step ids, dotted step types, service/dependency names, dependency-kind
 /// tokens declared in <c>environment.dependencies.*.type</c>, verdict counts, timestamps,
-/// and threshold numbers (EDGE-006) — never from an observation payload, a captured value,
+/// and threshold numbers — never from an observation payload, a captured value,
 /// or an environment (secret-bearing) value, so a secret can never reach the report through
 /// this field. A dependency-kind token is a reference (the DSL's own declared vocabulary,
-/// already surfaced in REQ-003's inventory), not a resolved value, so it carries no secret
+/// already surfaced in the inventory), not a resolved value, so it carries no secret
 /// risk despite being read from the suite's YAML.
 /// </param>
 /// <param name="RelatedSuites">
-/// Fix-round MAJOR (additive, REQ-011-compatible): the relative paths of every OTHER suite
+/// The relative paths of every OTHER suite
 /// this finding's ambiguity concerns, machine-readably — today populated only for a
 /// <see cref="PlanFindingKinds.SuiteIdentityAmbiguous"/> finding raised by a scenario-id
-/// collision (REQ-008 rule 1), where it duplicates <see cref="Detail"/>'s prose as a
+/// collision, where it duplicates <see cref="Detail"/>'s prose as a
 /// structured list so an MCP consumer never has to regex a sentence. Empty for every other
 /// finding kind, including a rule-2 renamed-file ambiguity (no declared suite matches that
 /// case at all, so there is no suite to relate) and every gap/history-health kind.
@@ -106,7 +106,7 @@ public sealed record PlanFinding(
     [property: JsonPropertyOrder(11)] IReadOnlyList<string> RelatedSuites);
 
 /// <summary>
-/// REQ-006 evidence attached to a history-health finding: the raw <c>step-completed</c>
+/// Evidence attached to a history-health finding: the raw <c>step-completed</c>
 /// tallies that justified the classification.
 /// </summary>
 /// <param name="PassCount">The number of <c>Pass</c> <c>step-completed</c> verdicts observed.</param>
@@ -117,7 +117,7 @@ public sealed record PlanFinding(
 /// <param name="LastObserved">The timestamp of the most recent <c>step-completed</c> event for this step.</param>
 /// <param name="AgeDays">
 /// The whole number of days between <see cref="LastObserved"/> and the analysed history's
-/// newest event timestamp (REQ-006 "now"), or <see langword="null"/> when not applicable.
+/// newest event timestamp (the reference "now"), or <see langword="null"/> when not applicable.
 /// </param>
 public sealed record PlanStepHistory(
     [property: JsonPropertyOrder(0)] int PassCount,

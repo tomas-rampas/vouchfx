@@ -33,7 +33,7 @@ internal static class EventHistoryReader
     /// <param name="ScenarioStarts">Every successfully-parsed <c>scenario-started</c> event.</param>
     /// <param name="StepCompletions">Every successfully-parsed <c>step-completed</c> event.</param>
     /// <param name="RunIds">Every <c>runId</c> observed on a successfully recognised event (may repeat).</param>
-    /// <param name="SkippedLines">EDGE-004: the count of unparseable or unrecognisable event lines.</param>
+    /// <param name="SkippedLines">The count of unparseable or unrecognisable event lines.</param>
     /// <param name="FirstTimestamp">The earliest timestamp across every recognised event, or <see langword="null"/> when none.</param>
     /// <param name="LastTimestamp">The latest timestamp across every recognised event, or <see langword="null"/> when none.</param>
     internal sealed record RawEventHistory(
@@ -44,7 +44,7 @@ internal static class EventHistoryReader
         DateTimeOffset? FirstTimestamp,
         DateTimeOffset? LastTimestamp);
 
-    /// <summary>An empty, successful read result — REQ-009's absent/empty-history case.</summary>
+    /// <summary>An empty, successful read result — the absent/empty-history case.</summary>
     internal static RawEventHistory Empty { get; } = new(
         Array.Empty<ScenarioStartedEvent>(),
         Array.Empty<StepCompletedEvent>(),
@@ -54,25 +54,24 @@ internal static class EventHistoryReader
         LastTimestamp: null);
 
     /// <summary>
-    /// The maximum permitted size, in bytes, of a single <c>.jsonl</c> event-history file
-    /// (fix-round M5). Checked via <see cref="FileInfo.Length"/> BEFORE the file is opened —
+    /// The maximum permitted size, in bytes, of a single <c>.jsonl</c> event-history file.
+    /// Checked via <see cref="FileInfo.Length"/> BEFORE the file is opened —
     /// mirroring <c>SuiteSetLoader.MaxDocumentSizeBytes</c>'s reject-before-reading
-    /// discipline. An oversized file throws <see cref="PlanInputException"/> (fix-round-2
-    /// NEW-1) rather than being silently folded into <c>SkippedEventLines</c>: that field is
+    /// discipline. An oversized file throws <see cref="PlanInputException"/> rather than being silently folded into <c>SkippedEventLines</c>: that field is
     /// frozen documentation for a COUNT OF LINES, and a whole file dropped whole is a
-    /// configuration problem (EDGE-009's "loud, exit 2" philosophy), not corrupt data — never
+    /// configuration problem (a usage error mapped to exit 2), not corrupt data — never
     /// materialised into memory either way.
     /// </summary>
     internal const long MaxEventFileSizeBytes = 64 * 1024 * 1024; // 64 MiB.
 
     /// <summary>
     /// The maximum permitted length, in UTF-16 characters, of a single event-history line
-    /// (fix-round M5) — a defence-in-depth bound alongside
+    /// — a defence-in-depth bound alongside
     /// <see cref="MaxEventFileSizeBytes"/>: <see cref="File.ReadLines(string)"/> must fully
     /// materialise a line into a <see cref="string"/> before its length can be checked, so
     /// this cannot prevent that one-time allocation, but it does stop a single pathological
-    /// line from being processed any further. A line over this length is skipped and counted
-    /// (EDGE-004).
+    /// line from being processed any further. A line over this length is skipped and counted.
+    ///
     /// </summary>
     internal const int MaxEventLineLengthChars = 1024 * 1024; // 1 Mi characters.
 

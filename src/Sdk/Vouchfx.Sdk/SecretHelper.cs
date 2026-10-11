@@ -23,7 +23,7 @@ namespace Vouchfx.Sdk;
 /// Supplies the canonical source text for the <c>Secret_Helpers</c> static class
 /// that providers splice into their <see cref="CsxFragment.RequiredHelpers"/> to
 /// resolve <c>${secret:source/path}</c> references at step-execution time
-/// (S05-B-02, §17).
+/// (§17).
 /// </summary>
 /// <remarks>
 /// <para>

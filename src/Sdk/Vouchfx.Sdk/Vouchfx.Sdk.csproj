@@ -10,9 +10,9 @@
     <VouchfxDocumentEveryPublicMember>true</VouchfxDocumentEveryPublicMember>
   </PropertyGroup>
 
-  <!-- NuGet packaging (S08 T4 / S08-F-03): publish the frozen v1 provider SDK
-       contract as Vouchfx.Sdk 1.0.0. Only this project is packable; the engine,
-       provider, and test projects are not. -->
+  <!-- NuGet packaging: this library publishes the frozen v1 provider SDK contract.
+       The release workflow also packs Sdk.Testing and the Abstractions, Authoring
+       and Compilation libraries. Planning is packable but outside that release closure. -->
   <PropertyGroup>
     <IsPackable>true</IsPackable>
     <PackageId>Vouchfx.Sdk</PackageId>

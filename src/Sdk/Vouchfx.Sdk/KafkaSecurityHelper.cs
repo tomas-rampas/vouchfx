@@ -45,18 +45,18 @@ namespace Vouchfx.Sdk;
 /// <c>mq-publish.kafka</c> and <c>mq-expect.kafka</c> providers splice into their
 /// <see cref="CsxFragment.RequiredHelpers"/> to set transport security on the emitted
 /// <c>ProducerConfig</c>/<c>ConsumerConfig</c> from the client security configuration declared
-/// for a step's own <c>target</c> (authenticated-infrastructure-mtls, REQ-015).
+/// for a step's own <c>target</c> (authenticated-infrastructure-mtls).
 /// </summary>
 /// <remarks>
 /// <para>
 /// The material is read at STEP-EXECUTION time through <c>ScriptGlobalVariables.Security</c>
-/// (REQ-014), never at compile time: baking a certificate path into the emitted script would
+///, never at compile time: baking a certificate path into the emitted script would
 /// defeat compile-once and corrupt the reproducibility envelope, the same rule §17 already
 /// imposes on secrets.
 /// </para>
 /// <para>
 /// <strong>An absent <c>caCert</c> leaves <c>SslCaLocation</c> UNSET — never empty, never
-/// defaulted (REQ-001, REQ-015).</strong> Measured against the pinned Confluent.Kafka 2.14.2:
+/// defaulted.</strong> Measured against the pinned Confluent.Kafka 2.14.2:
 /// <c>ClientConfig</c> is a keyed property bag, and assigning <see langword="null"/> to
 /// <c>SslCaLocation</c> REMOVES the <c>ssl.ca.location</c> key, whereas assigning
 /// <c>""</c> ADDS it with an empty value. Those are different configurations — an empty
@@ -70,13 +70,51 @@ namespace Vouchfx.Sdk;
 /// <strong>The declared profile decides what happens, and an unknown profile fails closed.</strong>
 /// <c>mtls</c> presents the declared client identity <em>and requires one</em>; <c>tls</c> presents
 /// none and refuses contradictory <c>clientCert</c>/<c>clientKey</c>; any other profile throws
-/// <c>SecurityMaterialException</c>. Because REQ-019 makes the profile discriminator OPEN,
+/// <c>SecurityMaterialException</c>. Because the schema permits an open profile discriminator,
 /// inferring the behaviour from which certificate fields happen to be non-null would let a later
 /// profile inherit Kafka client-certificate semantics nobody chose for it.
 /// </para>
 /// </remarks>
 public static class KafkaSecurityHelper
 {
+    // Internal correction history (not XML documentation):
+    // What closes it is Vouchfx.Engine.Orchestration.SecurityPathDisclosureLedger: the
+    // engine records (resolved path → the author's declared text) at each chokepoint that hands
+    // the resolved form to code the engine does not write, and substitutes the declared form back
+    // at the three scrub chokepoints every archived channel already passes through. Nothing about
+    // this helper changed, and nothing about it needed to — which is the point of the shape that
+    // was chosen. (The ledger was born in
+    // Vouchfx.Engine.Runtime and #473 lifted it DOWN into Orchestration, because the
+    // sibling recording sites live there and Runtime references Orchestration rather than the
+    // reverse. The namespace here is corrected rather than the type renamed.)
+    // WHAT THE LEDGER NOW COVERS, and where it still does not reach. #375
+    // recorded exactly caCert/clientCert/clientKey, at the accessor
+    // chokepoint. #473 added the two sibling sites that hold both halves and discarded the
+    // declared one: security.serverArtifacts[].source, which sits in the very same
+    // security: block and is handed to Aspire's container-file staging, and each resolved
+    // environment.seed SQL path, whose diagnostics splice a BCL or driver message the
+    // engine did not write.
+    // The ledger substitutes into text the ENGINE DID NOT WRITE, and that is the boundary of what
+    // it is for. Every engine-owned diagnostic names the declared path by construction instead
+    // (#357) — SeedFixtures' fixture-not-found throw and script.csharp's
+    // file:-not-found refusal are the two #473 examined and left on that side of the line,
+    // the latter also being structurally unable to reach the ledger at all, since a provider
+    // references only Vouchfx.Sdk and Vouchfx.Engine.Abstractions. A path that
+    // reaches a diagnostic through neither route is still invisible to both mechanisms; that is
+    // the ledger's stated limit, not an open ticket.
+    // One measurement worth carrying forward, and it is the opposite of what an earlier draft of
+    // this paragraph said. The SIGNATURE golden records this member as
+    // field const System.String Source and does NOT pin the literal value, so editing this
+    // string's content does not trip THAT golden — but the companion helper-sources golden
+    // (vouchfx-sdk-helper-sources.v1.txt, added by #361) SHA-256s the constant's runtime
+    // value through BuildHelperSourceSignature. A body edit is therefore a deliberate
+    // golden change, and it carries a cross-version compatibility cost: a const inlines
+    // into every consuming assembly, and CsxAssembler refuses two same-named helper
+    // classes whose source text differs, so an out-of-tree provider built against an older SDK
+    // breaks in any suite that also splices this helper from an in-tree one.
+    // Editing this REMARKS block is free by comparison: it sits outside the constant altogether,
+    // so neither golden can see it. That was re-verified when this correction was written —
+    // SdkContractFreezeTests stayed green with no regeneration.
     /// <summary>
     /// The full C# source text of the <c>KafkaSecurity_Helpers</c> static class.
     /// </summary>
@@ -91,41 +129,30 @@ public static class KafkaSecurityHelper
     /// <strong>PATH DISCLOSURE: the leak this helper can cause is closed AT THE SINK, not here
     /// (issue #375).</strong> This helper hands librdkafka the RESOLVED absolute paths —
     /// <c>ssl.ca.location</c>, <c>ssl.certificate.location</c>, <c>ssl.key.location</c> take
-    /// nothing else (REQ-015) — and when librdkafka cannot open one, its own error text names the
+    /// nothing else — and when librdkafka cannot open one, its own error text names the
     /// path it tried. That text becomes a step observation and is archived into the §14 event
     /// stream. The engine's own diagnostics on this path always complied
     /// (<c>SecurityMaterialException</c> names the declared text); this is the library's text, not
     /// the engine's, and no code written at THIS seam could constrain it.
     /// </para>
     /// <para>
-    /// What closes it is <c>Vouchfx.Engine.Orchestration.SecurityPathDisclosureLedger</c>: the
-    /// engine records (resolved path → the author's declared text) at each chokepoint that hands
-    /// the resolved form to code the engine does not write, and substitutes the declared form back
-    /// at the three scrub chokepoints every archived channel already passes through. Nothing about
-    /// this helper changed, and nothing about it needed to — which is the point of the shape that
-    /// was chosen. (The ledger was born in
-    /// <c>Vouchfx.Engine.Runtime</c> and #473 lifted it DOWN into Orchestration, because the
-    /// sibling recording sites live there and Runtime references Orchestration rather than the
-    /// reverse. The namespace here is corrected rather than the type renamed.)
+    /// The engine-side <c>Vouchfx.Engine.Orchestration.SecurityPathDisclosureLedger</c> records
+    /// resolved paths beside the author's declared text at hand-off points, then substitutes
+    /// the declared form at the archived-channel scrub points. The engine owns this ledger
+    /// because the helper sees resolved material, not the declared path text.
     /// </para>
     /// <para>
-    /// <strong>WHAT THE LEDGER NOW COVERS, and where it still does not reach.</strong> #375
-    /// recorded exactly <c>caCert</c>/<c>clientCert</c>/<c>clientKey</c>, at the accessor
-    /// chokepoint. #473 added the two sibling sites that hold both halves and discarded the
-    /// declared one: <c>security.serverArtifacts[].source</c>, which sits in the very same
-    /// <c>security:</c> block and is handed to Aspire's container-file staging, and each resolved
-    /// <c>environment.seed</c> SQL path, whose diagnostics splice a BCL or driver message the
-    /// engine did not write.
+    /// The ledger covers <c>caCert</c>, <c>clientCert</c> and <c>clientKey</c> at the accessor,
+    /// <c>security.serverArtifacts[].source</c> at container-file staging, and resolved
+    /// <c>environment.seed</c> SQL paths where library diagnostics may name host files.
     /// </para>
     /// <para>
-    /// The ledger substitutes into text the ENGINE DID NOT WRITE, and that is the boundary of what
-    /// it is for. Every engine-owned diagnostic names the declared path by construction instead
-    /// (#357) — <c>SeedFixtures</c>' fixture-not-found throw and <c>script.csharp</c>'s
-    /// <c>file:</c>-not-found refusal are the two #473 examined and left on that side of the line,
-    /// the latter also being structurally unable to reach the ledger at all, since a provider
-    /// references only <c>Vouchfx.Sdk</c> and <c>Vouchfx.Engine.Abstractions</c>. A path that
-    /// reaches a diagnostic through neither route is still invisible to both mechanisms; that is
-    /// the ledger's stated limit, not an open ticket.
+    /// The ledger substitutes into text from libraries; engine-owned diagnostics name the
+    /// declared path directly. <c>SeedFixtures</c>' fixture-not-found error and
+    /// <c>script.csharp</c>'s missing-file refusal use that direct rule. A provider references
+    /// only <c>Vouchfx.Sdk</c> and <c>Vouchfx.Engine.Abstractions</c>, so it cannot reach the
+    /// engine-side ledger. Paths reaching diagnostics through neither route remain outside
+    /// both protections.
     /// </para>
     /// <para>
     /// The two remediations considered at THIS seam were measured and REJECTED, and the reasoning
@@ -156,21 +183,14 @@ public static class KafkaSecurityHelper
     ///   </description></item>
     /// </list>
     /// <para>
-    /// One measurement worth carrying forward, and it is the opposite of what an earlier draft of
-    /// this paragraph said. The SIGNATURE golden records this member as
-    /// <c>field const System.String Source</c> and does NOT pin the literal value, so editing this
-    /// string's content does not trip THAT golden — but the companion helper-sources golden
-    /// (<c>vouchfx-sdk-helper-sources.v1.txt</c>, added by #361) SHA-256s the constant's runtime
-    /// value through <c>BuildHelperSourceSignature</c>. A body edit is therefore a deliberate
-    /// golden change, and it carries a cross-version compatibility cost: a <c>const</c> inlines
-    /// into every consuming assembly, and <c>CsxAssembler</c> refuses two same-named helper
-    /// classes whose source text differs, so an out-of-tree provider built against an older SDK
-    /// breaks in any suite that also splices this helper from an in-tree one.
-    /// </para>
-    /// <para>
-    /// Editing this REMARKS block is free by comparison: it sits outside the constant altogether,
-    /// so neither golden can see it. That was re-verified when this correction was written —
-    /// <c>SdkContractFreezeTests</c> stayed green with no regeneration.
+    /// The signature golden records this member as <c>field const System.String Source</c>;
+    /// the helper-sources golden <c>vouchfx-sdk-helper-sources.v1.txt</c> separately pins the
+    /// constant's runtime SHA-256. A body edit therefore requires a deliberate golden change
+    /// and has a cross-version compatibility cost: <c>const</c> values inline into consuming
+    /// assemblies, and <c>CsxAssembler</c> refuses same-named helper classes with differing
+    /// source. An older out-of-tree provider can consequently conflict with an in-tree provider
+    /// that splices the same helper. Documentation edits outside the constant change neither
+    /// signatures nor helper source bytes.
     /// </para>
     /// </remarks>
     public const string Source =

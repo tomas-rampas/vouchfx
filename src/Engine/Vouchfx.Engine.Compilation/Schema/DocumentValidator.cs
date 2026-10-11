@@ -108,43 +108,52 @@ public static class DocumentValidator
     public static SchemaValidationResult Validate(string yamlText, StepKindRegistry registry) =>
         Validate(yamlText, registry, SecurityProfileRegistry.BuiltIn);
 
+    // Internal correction history (not XML documentation):
+    // M2 + M3 (peer review, fix round 2). The registry parameter previously hung off the PUBLIC
+    // overload with a  default — a shipped, documented API surface whose
+    // own documentation promised a test that did not exist, on a package that was not supposed
+    // to publish this type at all. Every call site passed two arguments: 81 of them, re-measured
+    // across src/, tests/, tools/ and examples/ with build output
+    // excluded (the review reported 40; the higher figure is the one that holds over that full
+    // set, and neither figure contained a single three-argument call).
+    // Both halves are fixed by making the seam internal: SecurityProfileRegistry
+    // is no longer published (see that type's own file header), the public front door is the
+    // two-argument overload every real caller already used, and this overload is exercised
+    // directly — DocumentValidatorTests.Validate_UnknownSecurityProfile_WithInjectedReducedRegistry_*
+    // drives a reduced registry through the SAME method body a production call runs, which is
+    // what the promise was worth in the first place.
+    // The registry reaches CollectUnknownSecurityProfileErrors and nowhere else.
+    // It is deliberately NOT threaded into SchemaErrorCollector: that class used to
+    // consult SecurityProfileRegistry.BuiltIn directly from a REQ-021 const branch,
+    // so an injected registry would have left the two paths disagreeing on every dependency
+    // kind but kafka (a profile registered HERE but absent from BuiltIn would have been reported as
+    // "unknown" by the schema path while being genuinely registered). M1's schema tightening
+    // deleted that branch outright — no const on security.profile survives anywhere
+    // in the composed schema — so there is now exactly ONE path that consults a registry, and the
+    // two can no longer disagree by construction rather than by discipline.
     /// <summary>
     /// The <see cref="Validate(string, StepKindRegistry)"/> overload above, with the
     /// security-profile registry supplied explicitly.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// M2 + M3 (peer review, fix round 2). The registry parameter previously hung off the PUBLIC
-    /// overload with a <see langword="null"/> default — a shipped, documented API surface whose
-    /// own documentation promised a test that did not exist, on a package that was not supposed
-    /// to publish this type at all. Every call site passed two arguments: 81 of them, re-measured
-    /// across <c>src/</c>, <c>tests/</c>, <c>tools/</c> and <c>examples/</c> with build output
-    /// excluded (the review reported 40; the higher figure is the one that holds over that full
-    /// set, and neither figure contained a single three-argument call).
-    /// Both halves are fixed by making the seam <c>internal</c>: <see cref="SecurityProfileRegistry"/>
-    /// is no longer published (see that type's own file header), the public front door is the
-    /// two-argument overload every real caller already used, and this overload is exercised
-    /// directly — <c>DocumentValidatorTests.Validate_UnknownSecurityProfile_WithInjectedReducedRegistry_*</c>
-    /// drives a reduced registry through the SAME method body a production call runs, which is
-    /// what the promise was worth in the first place.
+    /// This internal overload supplies a registry to the same method body used by the public
+    /// two-argument front door. Tests can provide a reduced registry without publishing
+    /// <c>SecurityProfileRegistry</c> as an extension contract. Production uses the built-in
+    /// registry; <c>DocumentValidatorTests</c> exercises the injected-registry path directly.
     /// </para>
     /// <para>
     /// The registry reaches <see cref="CollectUnknownSecurityProfileErrors"/> and nowhere else.
-    /// It is deliberately NOT threaded into <see cref="SchemaErrorCollector"/>: that class used to
-    /// consult <c>SecurityProfileRegistry.BuiltIn</c> directly from a REQ-021 <c>const</c> branch,
-    /// so an injected registry would have left the two paths disagreeing on every dependency
-    /// kind but kafka (a profile registered HERE but absent from <c>BuiltIn</c> would have been reported as
-    /// "unknown" by the schema path while being genuinely registered). M1's schema tightening
-    /// deleted that branch outright — no <c>const</c> on <c>security.profile</c> survives anywhere
-    /// in the composed schema — so there is now exactly ONE path that consults a registry, and the
-    /// two can no longer disagree by construction rather than by discipline.
+    /// <see cref="SchemaErrorCollector"/> does not consult a registry: the composed schema has
+    /// no <c>const</c> on <c>security.profile</c>. Profile-name lookup therefore has one source
+    /// of truth, including when a test injects a reduced registry.
     /// </para>
     /// </remarks>
     /// <param name="yamlText">The raw contents of a <c>.e2e.yaml</c> file.</param>
     /// <param name="registry">The frozen provider registry (see the overload above).</param>
     /// <param name="securityProfileRegistry">
     /// The security-profile registry <see cref="CollectUnknownSecurityProfileErrors"/> checks a
-    /// declared <c>security.profile</c> against (REQ-019) —
+    /// declared <c>security.profile</c> against the supplied registry —
     /// <see cref="SecurityProfileRegistry.BuiltIn"/> on every production path.
     /// </param>
     /// <returns>See the overload above.</returns>
@@ -365,22 +374,33 @@ public static class DocumentValidator
         return errors is null ? Array.Empty<SchemaValidationError>() : errors;
     }
 
+    // Internal correction history (not XML documentation):
+    // n4 (peer review, fix round 2): this summary previously hardcoded
+    // "SecurityProfileRegistry.BuiltIn" although the method has taken an injected
+    // registry since G-MINOR-8 — its <param> was already correct, so the two
+    // disagreed.
+    // Internal correction history (not XML documentation):
+    // Copilot 2 : the pointer is built by ESCAPING each map key per
+    // RFC 6901 (see EncodePointerSegment), never by raw interpolation. Both
+    // environment.services and environment.dependencies are open objects with no
+    // propertyNames pattern (only variables and capture carry one), so a
+    // service literally named a/b or c~d is schema-legal today — and
+    // JsonSchema.Net escapes such a name in the InstanceLocation it reports, while raw
+    // interpolation did not. The two spellings could then never compare equal, so BOTH the
+    // deferral above and ResolveLineFromPointer's (line N) enrichment
+    // silently failed for exactly those names: measured, a service named c~d declaring
+    // profile: TLS emitted the double-report this method exists to prevent, and a service
+    // named a/b emitted an error carrying no line number at all.
     /// <summary>
     /// Walks <c>environment.services</c> and <c>environment.dependencies</c> for a declared
     /// <c>security.profile</c> scalar that is a well-formed value but not registered in
-    /// <paramref name="registry"/> — REQ-019: <c>profile</c> is an open
+    /// <paramref name="registry"/>: <c>profile</c> is an open
     /// string pattern in the composed schema (no <c>enum</c>), and an unrecognised name is
     /// rejected here, at validation time, against the frozen registry, mirroring exactly the
     /// division <see cref="CollectUnknownStepTypeErrors"/> already applies to a step's own
     /// <c>type</c>.
     /// </summary>
     /// <remarks>
-    /// <para>
-    /// n4 (peer review, fix round 2): this summary previously hardcoded
-    /// "<c>SecurityProfileRegistry.BuiltIn</c>" although the method has taken an injected
-    /// registry since G-MINOR-8 — its <c>&lt;param&gt;</c> was already correct, so the two
-    /// disagreed.
-    /// </para>
     /// <para>
     /// A <c>profile</c> value that already violates the root schema's own
     /// <c>^[a-z0-9-]+(\.[a-z0-9-]+)?$</c> pattern (e.g. a wrong-cased <c>TLS</c>) already has
@@ -391,9 +411,9 @@ public static class DocumentValidator
     /// moved a check the OTHER way — schema to registry lookup — to avoid exactly that).
     /// </para>
     /// <para>
-    /// H-A (peer review, held item — fix round 2): the deferral ALSO yields when the schema
+    /// The deferral also yields when the schema
     /// rejected the enclosing <c>security</c> BLOCK rather than the <c>profile</c> field itself.
-    /// Since M1, a non-kafka dependency's <c>security</c> block is forbidden outright by a boolean
+    /// A non-kafka dependency's <c>security</c> block is forbidden outright by a boolean
     /// <c>false</c> subschema whose error lands one segment shallower
     /// (<c>.../&lt;name&gt;/security</c>, not <c>.../&lt;name&gt;/security/profile</c>), so a
     /// pointer-exact test alone would let this cross-check add a second, moot finding about a
@@ -404,17 +424,12 @@ public static class DocumentValidator
     /// through it.
     /// </para>
     /// <para>
-    /// Copilot 2 (PR #351 review, fix round 2): the pointer is built by ESCAPING each map key per
-    /// RFC 6901 (see <see cref="EncodePointerSegment"/>), never by raw interpolation. Both
+    /// The pointer escapes each map key per RFC 6901 (see <see cref="EncodePointerSegment"/>).
     /// <c>environment.services</c> and <c>environment.dependencies</c> are open objects with no
-    /// <c>propertyNames</c> pattern (only <c>variables</c> and <c>capture</c> carry one), so a
-    /// service literally named <c>a/b</c> or <c>c~d</c> is schema-legal today — and
-    /// JsonSchema.Net escapes such a name in the <c>InstanceLocation</c> it reports, while raw
-    /// interpolation did not. The two spellings could then never compare equal, so BOTH the
-    /// deferral above and <see cref="ResolveLineFromPointer"/>'s <c>(line N)</c> enrichment
-    /// silently failed for exactly those names: measured, a service named <c>c~d</c> declaring
-    /// <c>profile: TLS</c> emitted the double-report this method exists to prevent, and a service
-    /// named <c>a/b</c> emitted an error carrying no line number at all.
+    /// <c>propertyNames</c> pattern, so names such as <c>a/b</c> and <c>c~d</c> are legal.
+    /// JsonSchema.Net uses the escaped spelling in <c>InstanceLocation</c>; this cross-check
+    /// must match it for schema-error deferral and <see cref="ResolveLineFromPointer"/>
+    /// <c>(line N)</c> enrichment to work.
     /// </para>
     /// <para>
     /// No unevaluated-properties cascade suppression is needed here, unlike
@@ -433,7 +448,7 @@ public static class DocumentValidator
     /// <param name="registry">
     /// The security-profile registry to check each declared <c>profile</c> against —
     /// <see cref="SecurityProfileRegistry.BuiltIn"/> in production; a caller-supplied registry
-    /// in a test proving this cross-check's own behaviour explicitly (G-MINOR-8).
+    /// in a test proving this cross-check's own behaviour explicitly.
     /// </param>
     /// <returns>
     /// One <see cref="SchemaValidationError"/> per declared <c>security.profile</c> with an

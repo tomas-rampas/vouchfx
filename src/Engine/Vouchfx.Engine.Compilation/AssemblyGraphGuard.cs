@@ -30,9 +30,9 @@ namespace Vouchfx.Engine.Compilation;
 /// per-step or per-script-run.
 /// </para>
 /// <para>
-/// <b>Sprint-2 note:</b> <see cref="AssemblyVersionConflictException"/> maps to the
-/// <em>Environment-error</em> verdict bucket (§12.1).  Until the verdict taxonomy is
-/// wired, treat it as a fatal suite-start failure.
+/// <b>Failure classification:</b> <see cref="AssemblyVersionConflictException"/> is an
+/// <em>Environment error</em> (§12.1), not a test defect. Refuse the conflicting
+/// closure before any step executes.
 /// </para>
 /// </remarks>
 public static class AssemblyGraphGuard

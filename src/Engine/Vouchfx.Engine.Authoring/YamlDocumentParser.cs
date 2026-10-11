@@ -486,7 +486,7 @@ public static class YamlDocumentParser
     // -------------------------------------------------------------------------
 
     /// <summary>
-    /// Parses a service's optional <c>ports:</c> sequence (REQ-008) into a list of TCP
+    /// Parses a service's optional <c>ports:</c> sequence into a list of TCP
     /// port numbers. Each item is read as a bare integer scalar — unlike <c>httpPort</c>,
     /// this is a NEW field with no pre-existing engine behaviour to preserve, so it does
     /// not carry <c>httpPort</c>'s quoted-string/leading-zero-octal compatibility shape;
@@ -637,20 +637,26 @@ public static class YamlDocumentParser
             item.Start.Line,
             item.Start.Column);
 
+    // Internal correction history (not XML documentation):
+    // Leading zeros are refused, and that is what stops one document meaning two
+    // things. This value IS re-read as YAML — an earlier note here claimed otherwise and
+    // was wrong: the schema bridge re-parses the document with a scalar resolver applying YAML
+    // 1.1, under which 0123 is OCTAL. Measured: ports: [0123] was seen as 83
+    // by the schema and 123 by this parser, and [00080] threw inside the bridge.
+    // Refusing the spelling makes that divergence unreachable rather than merely documented, and
+    // it is already the published rule for the sibling security.endpoint ("decimal,
+    // 1–65535, no leading zero").
     /// <summary>
     /// Parses one port value — a whole bare entry, or one half of a pinned pair — as a bare
     /// decimal integer in 1..65535 with no leading zero.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <strong>Leading zeros are refused, and that is what stops one document meaning two
-    /// things.</strong> This value IS re-read as YAML — an earlier note here claimed otherwise and
-    /// was wrong: the schema bridge re-parses the document with a scalar resolver applying YAML
-    /// 1.1, under which <c>0123</c> is OCTAL. Measured: <c>ports: [0123]</c> was seen as <b>83</b>
-    /// by the schema and <b>123</b> by this parser, and <c>[00080]</c> threw inside the bridge.
-    /// Refusing the spelling makes that divergence unreachable rather than merely documented, and
-    /// it is already the published rule for the sibling <c>security.endpoint</c> ("decimal,
-    /// 1–65535, no leading zero").
+    /// <strong>Leading zeros are refused to keep parsing and validation consistent.</strong>
+    /// The schema bridge re-parses YAML with a YAML 1.1 scalar resolver, which reads
+    /// <c>0123</c> as octal 83, while this parser reads decimal 123; <c>00080</c> can throw
+    /// in the bridge. Refusing this spelling prevents the divergence and matches the
+    /// <c>security.endpoint</c> rule: decimal 1–65535 with no leading zero.
     /// </para>
     /// <para>
     /// <see cref="NumberStyles.None"/> refuses a leading sign, surrounding space and thousands
@@ -693,7 +699,7 @@ public static class YamlDocumentParser
     }
 
     /// <summary>
-    /// Parses a service's optional <c>healthCheck:</c> block (REQ-009) into a strongly-typed
+    /// Parses a service's optional <c>healthCheck:</c> block into a strongly-typed
     /// <see cref="HealthCheckSpec"/>. Takes no owner-name parameter (unlike
     /// <see cref="ParseSecurity"/>/<see cref="ParseServerArtifacts"/>): every field here is
     /// read leniently with no throw path of its own, so there is no diagnostic message to
@@ -724,8 +730,8 @@ public static class YamlDocumentParser
     /// <param name="ownerMapping">The service's or dependency's own YAML mapping node.</param>
     /// <param name="ownerLabel">
     /// <c>"Service"</c> or <c>"Dependency"</c> — the subject noun spliced into this method's
-    /// diagnostics, exactly as <see cref="ParseSecurity"/> does with its own label. WIDENED
-    /// rather than forked (dependency-env spec, REQ-001): this is generic
+    /// diagnostics, exactly as <see cref="ParseSecurity"/> does with its own label. Generic
+    /// rather than forked: this is generic
     /// mapping-to-dictionary logic that had only the noun <c>"Service"</c> baked into it, and
     /// two copies of it would be two places for the value-shape rules to drift apart. The
     /// service diagnostics are byte-identical to their pre-widening form for
@@ -735,7 +741,7 @@ public static class YamlDocumentParser
     /// <returns>
     /// <see langword="null"/> when the owner declares no <c>env:</c> key at all; otherwise the
     /// declared mapping — INCLUDING an empty dictionary for an empty <c>env: {}</c>, so
-    /// "declared, empty" stays distinguishable from "not declared" (dependency-env EDGE-002).
+    /// "declared, empty" stays distinguishable from "not declared" (dependency-env).
     /// <para>
     /// THIS READER'S CONTRACT IS NOT WHAT EVERY CALLER SHIPS: <see cref="ParseServiceMap"/>
     /// deliberately re-collapses an empty dictionary back to <see langword="null"/> for a
@@ -835,8 +841,7 @@ public static class YamlDocumentParser
     /// <remarks>
     /// The SERVICE call site's rule, deliberately NOT <see cref="ParseEnvMap"/>'s — that reader
     /// retains an empty declaration so a DEPENDENCY can distinguish "declared, empty" from "not
-    /// declared" (dependency-env EDGE-002), and changing service <c>env:</c> behaviour in any
-    /// way is out of scope for that change. Named rather than inlined so the rule describes
+    /// declared"; the service caller preserves its existing empty-map behaviour. Named rather than inlined so the rule describes
     /// itself and cannot drift from a comment; both halves of the asymmetry are pinned by
     /// <c>Parse_Env_EmptyMap_CollapsesToNullOnAServiceButIsRetainedOnADependency</c>.
     /// </remarks>
@@ -942,7 +947,7 @@ public static class YamlDocumentParser
     // -------------------------------------------------------------------------
 
     /// <summary>
-    /// Parses a service's or dependency's optional <c>security:</c> block (REQ-001)
+    /// Parses a service's or dependency's optional <c>security:</c> block
     /// into a strongly-typed <see cref="SecuritySpec"/>.
     /// </summary>
     /// <param name="ownerMapping">The service's or dependency's own YAML mapping node.</param>
@@ -954,11 +959,11 @@ public static class YamlDocumentParser
     /// <param name="ownerName">The service's or dependency's logical (map-key) name.</param>
     /// <remarks>
     /// Every field is read as its raw scalar text with NO requiredness enforced here —
-    /// <c>profile</c>/<c>endpoint</c> requiredness (REQ-001/REQ-002), the
+    /// <c>profile</c>/<c>endpoint</c> requiredness, the
     /// mtls-requires-<c>clientCert</c>/<c>clientKey</c> rule, and the
     /// tls-forbids-<c>clientCert</c>/<c>clientKey</c> rule, and the rule that
     /// <c>clientKeyPassword</c> is a single whole <c>${secret:}</c> reference rather than a
-    /// literal (client-key-password spec, REQ-001), are the JSON Schema layer's
+    /// literal (client-key-password spec), are the JSON Schema layer's
     /// responsibility (<c>root-language-schema.json</c>'s <c>$defs/security</c>),
     /// mirroring this parser's existing "deliberately lenient" design (see this file's
     /// header remarks). <c>endpoint</c> is kept as raw scalar text rather than parsed to
@@ -1018,7 +1023,7 @@ public static class YamlDocumentParser
     }
 
     /// <summary>
-    /// Parses a security block's optional <c>serverArtifacts:</c> sequence (REQ-016's
+    /// Parses a security block's optional <c>serverArtifacts:</c> sequence (the
     /// authoring surface) into a list of <see cref="SecurityServerArtifactSpec"/> pairs.
     /// </summary>
     /// <exception cref="YamlParseException">
@@ -1108,7 +1113,7 @@ public static class YamlDocumentParser
 
     /// <summary>
     /// Parses the optional <c>capture:</c> block of a step (DSL §6.1) into a map
-    /// of variable name to a typed <see cref="CaptureExpr"/> (S07-B-01a).
+    /// of variable name to a typed <see cref="CaptureExpr"/>.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -1119,7 +1124,7 @@ public static class YamlDocumentParser
     ///   <item><description>
     ///     A <strong>bare scalar</strong> (<c>name: "$.id"</c>) is bound to a
     ///     <see cref="CaptureExpr"/> with <see cref="CaptureFormat.JsonPath"/>,
-    ///     preserving the exact pre-S07 semantics (every existing scalar capture
+    /// preserving the exact legacy semantics (every existing scalar capture
     ///     parses and behaves identically).
     ///   </description></item>
     ///   <item><description>
@@ -1311,28 +1316,38 @@ public static class YamlDocumentParser
         return extra.Children.Count > 0 ? extra : null;
     }
 
+    // Internal correction history (not XML documentation):
+    // #417, fix round 2. YamlDotNet rejects a duplicate key of its own accord, but the check it
+    // applies is YamlScalarNode equality — which includes the TAG. Measured on the
+    // pinned YamlDotNet: "environment": and 'environment': beside a plain
+    // environment: ARE both refused by the loader (quoting style is no part of a scalar
+    // node's identity), so the one spelling that slips through is an EXPLICIT tag —
+    // !!str environment: beside environment: loads with no complaint at all.
+    // Internal correction history (not XML documentation):
+    // That single surviving shape put the two front-ends back in disagreement, which is what the
+    // first round of #417 set out to end. Measured on the pre-guard build, over a document whose
+    // two environment blocks each carried a differently-named unknown property:
+    // TryGetNode scans forward and takes the FIRST occurrence, while the schema
+    // validator's front-end (the YamlDotNet deserialiser, via
+    // SchemaResources.ConvertYamlToJsonDocument) is last-wins and reported an error only
+    // under the SECOND. Exactly the two halves of the engine reading two different documents that
+    // the tag-insensitive key comparison below was introduced to prevent.
     /// <summary>
     /// Throws when any mapping reachable from <paramref name="root"/> carries two scalar keys
     /// with the same value, whatever YAML tag each of them was written with.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// #417, fix round 2. YamlDotNet rejects a duplicate key of its own accord, but the check it
-    /// applies is <see cref="YamlScalarNode"/> equality — which includes the TAG. Measured on the
-    /// pinned YamlDotNet: <c>"environment":</c> and <c>'environment':</c> beside a plain
-    /// <c>environment:</c> ARE both refused by the loader (quoting style is no part of a scalar
-    /// node's identity), so the one spelling that slips through is an EXPLICIT tag —
-    /// <c>!!str environment:</c> beside <c>environment:</c> loads with no complaint at all.
+    /// YamlDotNet checks duplicate keys using <see cref="YamlScalarNode"/> equality, which
+    /// includes the YAML tag. Quoted and plain <c>environment</c> keys compare equal, but an
+    /// explicitly tagged <c>!!str environment:</c> beside a plain <c>environment:</c> can load
+    /// without that check rejecting it. This walk compares scalar values without their tags.
     /// </para>
     /// <para>
-    /// That single surviving shape put the two front-ends back in disagreement, which is what the
-    /// first round of #417 set out to end. Measured on the pre-guard build, over a document whose
-    /// two <c>environment</c> blocks each carried a differently-named unknown property:
-    /// <see cref="TryGetNode"/> scans forward and takes the FIRST occurrence, while the schema
-    /// validator's front-end (the YamlDotNet deserialiser, via
-    /// <c>SchemaResources.ConvertYamlToJsonDocument</c>) is last-wins and reported an error only
-    /// under the SECOND. Exactly the two halves of the engine reading two different documents that
-    /// the tag-insensitive key comparison below was introduced to prevent.
+    /// The parser and schema front ends choose different winners for a duplicated map key:
+    /// <see cref="TryGetNode"/> takes the first occurrence, while the deserialiser behind
+    /// <c>SchemaResources.ConvertYamlToJsonDocument</c> is last-wins. Rejecting tag-insensitive
+    /// duplicates ensures the two front ends validate and bind the same document.
     /// </para>
     /// <para>
     /// Refusing the document closes that rather than relocating it: a throwing parse produces no
@@ -1542,7 +1557,7 @@ public static class YamlDocumentParser
     /// renders <c>!!str null</c> as JSON <c>null</c> (the tag is not honoured there), so the
     /// document validates via the field's <c>["string","null"]</c> type union while this parser
     /// keeps the literal text <c>"null"</c>. The two layers disagree about the value; the engine
-    /// then rejects the literal <c>"null"</c> loudly via the M3 tagless-image rule, so the
+    /// then rejects the literal <c>"null"</c> loudly via the tagless-image rule, so the
     /// disagreement never produces silent behaviour.
     /// </para>
     /// </remarks>

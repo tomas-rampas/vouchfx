@@ -44,7 +44,7 @@ using Vouchfx.Sdk;
 
 namespace Vouchfx.Engine.Planning.Analysis;
 
-/// <summary>REQ-005 declared-vs-available vocabulary-gap analyser.</summary>
+/// <summary>declared-vs-available vocabulary-gap analyser.</summary>
 internal static class VocabularyGapAnalyser
 {
     private const string HttpFamily = "http";
@@ -165,7 +165,7 @@ internal static class VocabularyGapAnalyser
 
     /// <summary>
     /// Returns <see langword="true"/> when at least one step DECLARED IN <paramref name="suite"/>
-    /// itself (never any other analysed suite — REQ-005's per-declaring-suite evaluation
+    /// itself (never any other analysed suite — the per-declaring-suite evaluation
     /// scope) both satisfies <paramref name="typePredicate"/> and resolves (via the shared
     /// <see cref="StepTargetResolver.TryClassifyTarget"/> classifier — the same lookup
     /// <c>CoverageGapAnalyser</c> uses, so the two analysers can never disagree about what a

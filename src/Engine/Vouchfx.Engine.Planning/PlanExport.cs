@@ -74,9 +74,8 @@ public static class PlanExport
     /// <returns>The complete, deterministic <see cref="PlanReportDocument"/>.</returns>
     /// <exception cref="PlanInputException">
     /// Thrown when <paramref name="request"/>'s suite path does not exist, names a file that
-    /// is not a <c>.e2e.yaml</c> scenario, or discovers zero suites at all (EDGE-009); or when
-    /// <paramref name="request"/>'s effective thresholds are out of range (MINOR fix-round —
-    /// see <see cref="ValidateThresholds"/>).
+    /// is not a <c>.e2e.yaml</c> scenario, or discovers zero suites at all; or when
+    /// <paramref name="request"/>'s effective thresholds are out of range (see <see cref="ValidateThresholds"/>).
     /// </exception>
     /// <exception cref="CatalogueExportException">
     /// Thrown when a registered step type in <paramref name="registry"/> lacks a schema
@@ -139,14 +138,14 @@ public static class PlanExport
     }
 
     /// <summary>
-    /// MINOR fix-round: rejects an out-of-range <see cref="PlanThresholds"/> before it ever
+    /// Rejects an out-of-range <see cref="PlanThresholds"/> before it ever
     /// reaches <see cref="HistoryHealthAnalyser"/>. Every threshold is a bare
     /// <see cref="int"/> with no range enforced at the CLI parse layer, so e.g.
     /// <c>--stale-days -1</c> would otherwise silently mark every step with ANY observed
     /// history as stale (a negative "more than N days" test is vacuously true), and a
     /// count threshold of <c>0</c> degenerates identically ("at least 0" is vacuously true
     /// for a step with zero matching observations too) — both defeat the "documented
-    /// defaults + override flags" contract (REQ-006) by turning a typo'd flag into silent,
+    /// defaults + override flags" contract by turning a typo'd flag into silent,
     /// wildly wrong output rather than a loud, actionable failure.
     /// </summary>
     /// <param name="thresholds">The effective (default-or-override) thresholds for this analysis.</param>

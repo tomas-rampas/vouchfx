@@ -18,7 +18,7 @@
 
 namespace Vouchfx.Engine.Planning.Ingest;
 
-/// <summary>Correlates a raw event history against the declared suite set (REQ-008).</summary>
+/// <summary>Correlates a raw event history against the declared suite set.</summary>
 internal static class RunCorrelator
 {
     /// <summary>
@@ -182,7 +182,7 @@ internal static class RunCorrelator
     /// <summary>
     /// Resolves <paramref name="recordedFile"/> (relative to <paramref name="analysedRoot"/>
     /// when not rooted) and returns <see langword="true"/> only when the resolved path falls
-    /// under the analysed root AND no longer exists on disk (REQ-008 rule 2, the rename
+    /// under the analysed root AND no longer exists on disk (the rename
     /// case). Path-prefix comparison is case-insensitive, matching the case-insensitive
     /// filesystems this check is primarily exercised against.
     /// </summary>

@@ -28,12 +28,12 @@ namespace Vouchfx.Sdk;
 /// Supplies the canonical source text for the <c>Security_Helpers</c> static class the
 /// HTTP-family providers splice into their <see cref="CsxFragment.RequiredHelpers"/> to
 /// configure an <c>HttpClientHandler</c> from the client security configuration declared for
-/// a step's own <c>target</c> (authenticated-infrastructure-mtls, REQ-024).
+/// a step's own <c>target</c> (authenticated-infrastructure-mtls).
 /// </summary>
 /// <remarks>
 /// <para>
 /// The material is read at STEP-EXECUTION time through
-/// <c>ScriptGlobalVariables.Security</c> (REQ-014), never at compile time: baking a
+/// <c>ScriptGlobalVariables.Security</c>, never at compile time: baking a
 /// certificate path — let alone its contents — into the emitted script would defeat
 /// compile-once and corrupt the reproducibility envelope, the same rule §17 already imposes
 /// on secrets.
@@ -46,8 +46,8 @@ namespace Vouchfx.Sdk;
 /// <strong>The declared profile decides what happens, and an unknown profile fails closed.</strong>
 /// <c>mtls</c> presents the declared client certificate and requires one; <c>tls</c> presents
 /// none and refuses a contradictory <c>clientCert</c>/<c>clientKey</c>; any other profile throws
-/// <c>SecurityMaterialException</c>. Because REQ-019
-/// makes the profile discriminator OPEN, inferring the behaviour from which certificate fields
+/// <c>SecurityMaterialException</c>. Because the schema permits an open profile discriminator,
+/// inferring the behaviour from which certificate fields
 /// happen to be non-null would let a later profile inherit HTTPS client-certificate semantics
 /// nobody chose for it — see the switch's own remarks in <see cref="Source"/>.
 /// </para>

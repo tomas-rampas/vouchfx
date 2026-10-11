@@ -20,7 +20,7 @@ namespace Vouchfx.Sdk;
 /// <summary>
 /// Supplies the canonical source text for the <c>Substitute_Helpers</c> static class
 /// that providers splice into their <see cref="CsxFragment.RequiredHelpers"/> to
-/// enable <c>{placeholder}</c> substitution at step-execution time (S04-B-03, DSL §3).
+/// enable <c>{placeholder}</c> substitution at step-execution time (DSL §3).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -38,7 +38,7 @@ namespace Vouchfx.Sdk;
 /// </para>
 /// <para>
 /// Secret safety (§17): the helper resolves values at runtime but the engine's event
-/// stream (G-01) records only the placeholder <em>names</em> — values are never emitted.
+/// stream records only the placeholder <em>names</em> — values are never emitted.
 /// </para>
 /// </remarks>
 public static class SubstituteHelper

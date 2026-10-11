@@ -44,7 +44,7 @@ namespace Vouchfx.Engine.Authoring.Model;
 /// against the result and the value is written into the shared context (§4,
 /// §6.1).  The bare-scalar authoring form (<c>name: "$.id"</c>) is parsed to a
 /// <see cref="CaptureExpr"/> with <see cref="CaptureFormat.JsonPath"/>,
-/// preserving pre-S07 behaviour.
+/// preserving legacy behaviour.
 /// </param>
 /// <param name="VerifyMode">
 /// Raw token: <c>IMMEDIATE</c> (default) or <c>RETRY</c>.  <see langword="null"/>

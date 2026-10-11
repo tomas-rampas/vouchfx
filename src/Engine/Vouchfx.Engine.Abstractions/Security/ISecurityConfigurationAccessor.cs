@@ -34,7 +34,7 @@ namespace Vouchfx.Engine.Abstractions.Security;
 
 /// <summary>
 /// Resolves the client-side security configuration declared for a named service or
-/// dependency (authenticated-infrastructure-mtls, REQ-014).
+/// dependency (authenticated-infrastructure-mtls).
 /// </summary>
 /// <remarks>
 /// Reached from an emitted step block as <see cref="ScriptGlobalVariables.Security"/>. A
@@ -75,14 +75,14 @@ public interface ISecurityConfigurationAccessor
 /// Deliberately a configuration rather than a certificate bundle: <see cref="Certificates"/>
 /// is the ONE view 1.0's <c>tls</c>/<c>mtls</c> profiles populate, and a later profile adds a
 /// sibling view here (a SASL mechanism and credential, a bearer token, a Kerberos principal)
-/// without any consumer needing a second accessor. See this file's header for why that
-/// distinction is the whole point of the re-shaped REQ-014.
+/// without any consumer needing a second accessor. Consumers select the view their
+/// transport needs through this configuration.
 /// </remarks>
 public interface ISecurityConfiguration
 {
     /// <summary>
     /// The declared <c>security.profile</c> verbatim as authored (<c>"tls"</c> or
-    /// <c>"mtls"</c> at 1.0; an open discriminator, REQ-019).
+    /// <c>"mtls"</c> at 1.0; an open discriminator).
     /// </summary>
     string Profile { get; }
 
@@ -90,20 +90,19 @@ public interface ISecurityConfiguration
     /// The certificate view of this configuration, or <see langword="null"/> when the target
     /// declares no path-valued certificate field at all (e.g. <c>profile: tls</c> with no
     /// <c>caCert</c> — a normal, valid configuration in which the platform's own default
-    /// trust store applies and the engine synthesises nothing, REQ-001/REQ-024).
+    /// trust store applies and the engine synthesises nothing).
     /// </summary>
     ISecurityCertificateMaterial? Certificates { get; }
 }
 
 /// <summary>
 /// The certificate view of a target's security configuration, in BOTH the forms real client
-/// libraries demand: host file paths and loaded <see cref="X509Certificate2"/> objects
-/// (REQ-014).
+/// libraries demand: host file paths and loaded <see cref="X509Certificate2"/> objects.
 /// </summary>
 /// <remarks>
 /// <para>
 /// Every path is already resolved against the suite directory and existence-checked at
-/// validation time (REQ-003/REQ-004, <c>EnvironmentSecurityValidator</c>) before any
+/// validation time (<c>EnvironmentSecurityValidator</c>) before any
 /// implementation of this interface is constructed.
 /// </para>
 /// <para>
@@ -138,10 +137,10 @@ public interface ISecurityCertificateMaterial
     /// <summary>
     /// Resolved host path of the declared trust-anchor (CA) file, or <see langword="null"/>
     /// when <c>caCert</c> is not declared. <see langword="null"/> means ABSENT, never
-    /// "defaulted": the engine must not synthesise a path (REQ-001, REQ-024).
+    /// "defaulted": the engine must not synthesise a path.
     /// </summary>
     /// <exception cref="SecurityMaterialException">
-    /// The declared path resolves outside the suite directory (REQ-003).
+    /// The declared path resolves outside the suite directory.
     /// </exception>
     string? CaCertificatePath { get; }
 
@@ -150,7 +149,7 @@ public interface ISecurityCertificateMaterial
     /// profile that presents no client identity (<c>profile: tls</c>).
     /// </summary>
     /// <exception cref="SecurityMaterialException">
-    /// The declared path resolves outside the suite directory (REQ-003).
+    /// The declared path resolves outside the suite directory.
     /// </exception>
     string? ClientCertificatePath { get; }
 
@@ -159,7 +158,7 @@ public interface ISecurityCertificateMaterial
     /// profile that presents no client identity (<c>profile: tls</c>).
     /// </summary>
     /// <exception cref="SecurityMaterialException">
-    /// The declared path resolves outside the suite directory (REQ-003).
+    /// The declared path resolves outside the suite directory.
     /// </exception>
     string? ClientKeyPath { get; }
 
@@ -169,7 +168,7 @@ public interface ISecurityCertificateMaterial
     /// </summary>
     /// <exception cref="SecurityMaterialException">
     /// The declared file exists but cannot be read as a certificate, or its declared path
-    /// resolves outside the suite directory (REQ-003).
+    /// resolves outside the suite directory.
     /// </exception>
     X509Certificate2? CaCertificate { get; }
 
@@ -180,14 +179,34 @@ public interface ISecurityCertificateMaterial
     /// </summary>
     /// <exception cref="SecurityMaterialException">
     /// The declared certificate/key pair exists but cannot be loaded, the key does not match
-    /// the certificate, or a declared path resolves outside the suite directory (REQ-003).
+    /// the certificate, or a declared path resolves outside the suite directory.
     /// </exception>
     X509Certificate2? ClientCertificate { get; }
 
+    // Internal correction history (not XML documentation):
+    // What the type does NOT give is ledger membership, and an earlier draft
+    // of these remarks claimed otherwise. SecretString's constructor is
+    //  (SecretString.cs), with InternalsVisibleTo
+    // granted only to Vouchfx.Engine.Abstractions.Tests, so the load path cannot MINT a
+    // SecretString: it must obtain one from a resolver. That is a strictly
+    // narrower guarantee than "the value is in the scrub ledger", because a resolver called
+    // DIRECTLY registers nothing — EnvironmentSecretResolver is a public sealed class
+    // whose public Resolve ends by constructing a SecretString
+    // (Secrets/ISecretResolver.cs), VaultSecretResolver has the same shape, and
+    // ScenarioRunner.BuildSecretResolvers already constructs both inside
+    // Vouchfx.Engine.Runtime. Only ISecretAccessor.Resolve records into
+    // SecretAccessor.ResolvedSecrets (Secrets/ISecretAccessor.cs). The
+    // obligation stated above is therefore a DISCIPLINE that NO type enforces — not this one,
+    // and not any other in the engine. It holds only for as long as callers keep it.
+    // Internal correction history (not XML documentation):
+    // DEFAULT-IMPLEMENTED rather than abstract, per CLAUDE.md's rule for evolving an
+    // engine-supplied interface others implement: every existing implementor — the production
+    // material and the test doubles — keeps compiling untouched, and the default's own
+    //  means "no passphrase declared", never "not yet loaded".
     /// <summary>
     /// The resolved passphrase for an encrypted client private key, or
     /// <see langword="null"/> when the target declares no <c>clientKeyPassword</c> — the
-    /// ordinary case, an unencrypted key (client-key-password spec, REQ-004).
+    /// ordinary case, an unencrypted key (client-key-password spec).
     /// </summary>
     /// <remarks>
     /// <para>
@@ -212,26 +231,19 @@ public interface ISecurityCertificateMaterial
     /// any diagnostic string.
     /// </para>
     /// <para>
-    /// <strong>What the type does NOT give is ledger membership</strong>, and an earlier draft
-    /// of these remarks claimed otherwise. <see cref="SecretString"/>'s constructor is
-    /// <see langword="internal"/> (<c>SecretString.cs</c>), with <c>InternalsVisibleTo</c>
-    /// granted only to <c>Vouchfx.Engine.Abstractions.Tests</c>, so the load path cannot MINT a
-    /// <see cref="SecretString"/>: it must obtain one from a resolver. That is a strictly
-    /// narrower guarantee than "the value is in the scrub ledger", because a resolver called
-    /// DIRECTLY registers nothing — <c>EnvironmentSecretResolver</c> is a public sealed class
-    /// whose public <c>Resolve</c> ends by constructing a <see cref="SecretString"/>
-    /// (<c>Secrets/ISecretResolver.cs</c>), <c>VaultSecretResolver</c> has the same shape, and
-    /// <c>ScenarioRunner.BuildSecretResolvers</c> already constructs both inside
-    /// <c>Vouchfx.Engine.Runtime</c>. Only <see cref="ISecretAccessor.Resolve"/> records into
-    /// <see cref="SecretAccessor.ResolvedSecrets"/> (<c>Secrets/ISecretAccessor.cs</c>). The
-    /// obligation stated above is therefore a DISCIPLINE that NO type enforces — not this one,
-    /// and not any other in the engine. It holds only for as long as callers keep it.
+    /// A <see cref="SecretString"/> does not prove ledger membership. Its constructor is
+    /// <see langword="internal"/> and its friend assembly is
+    /// <c>Vouchfx.Engine.Abstractions.Tests</c>, so the load path obtains a value from a resolver
+    /// rather than constructing one. A resolver called directly records nothing:
+    /// <c>EnvironmentSecretResolver.Resolve</c> and <c>VaultSecretResolver.Resolve</c> can return
+    /// this type without the ledger. Only <see cref="ISecretAccessor.Resolve"/> records into
+    /// <see cref="SecretAccessor.ResolvedSecrets"/>. Callers must maintain this discipline; no
+    /// type enforces it.
     /// </para>
     /// <para>
-    /// DEFAULT-IMPLEMENTED rather than abstract, per CLAUDE.md's rule for evolving an
-    /// engine-supplied interface others implement: every existing implementor — the production
-    /// material and the test doubles — keeps compiling untouched, and the default's own
-    /// <see langword="null"/> means "no passphrase declared", never "not yet loaded".
+    /// The default implementation preserves compatibility for production material and test
+    /// doubles implementing this engine-supplied interface. Its <see langword="null"/> means
+    /// "no passphrase declared", never "not yet loaded".
     /// </para>
     /// </remarks>
     SecretString? ClientKeyPassword => null;

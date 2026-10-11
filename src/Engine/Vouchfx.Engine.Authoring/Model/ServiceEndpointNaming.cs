@@ -18,20 +18,19 @@ namespace Vouchfx.Engine.Authoring.Model;
 
 /// <summary>
 /// Computes the Aspire endpoint names a <see cref="ServiceSpec"/>'s declared shape
-/// produces (services-generalisation spec, REQ-008/REQ-010; the secured endpoint,
-/// authenticated-infrastructure-mtls REQ-023).
+/// produces, including its secured endpoint.
 /// </summary>
 public static class ServiceEndpointNaming
 {
     /// <summary>
     /// The fixed endpoint name every implicit or explicit HTTP endpoint uses — unchanged
-    /// from the engine's pre-REQ-008 behaviour, where every image-form service's single
+    /// from the engine's legacy behaviour, where every image-form service's single
     /// endpoint was always named <c>"http"</c>.
     /// </summary>
     public const string HttpEndpointName = "http";
 
     /// <summary>
-    /// The fixed endpoint name a service's SECURED endpoint uses (REQ-023) — the one
+    /// The fixed endpoint name a service's SECURED endpoint uses — the one
     /// declared with an <c>https</c> URI scheme, and the one staged at
     /// <c>svc::&lt;name&gt;</c> for a service that declares <c>security</c>.
     /// </summary>
@@ -54,8 +53,8 @@ public static class ServiceEndpointNaming
     public static string TcpEndpointName(int port) => $"tcp-{port}";
 
     /// <summary>
-    /// Resolves the container port a service's <c>security.endpoint</c> selector names
-    /// (REQ-002/REQ-023), or <see langword="null"/> when the service declares no
+    /// Resolves the container port a service's <c>security.endpoint</c> selector names,
+    /// or <see langword="null"/> when the service declares no
     /// <c>security</c> block or the selector cannot be resolved.
     /// </summary>
     /// <remarks>
@@ -114,7 +113,7 @@ public static class ServiceEndpointNaming
     /// <summary>
     /// Returns the ordered <c>(name, container port)</c> pairs a service's
     /// <c>ports:</c>/<c>httpPort:</c> declaration produces, IGNORING any <c>security</c>
-    /// block — the pre-REQ-023 endpoint set, which
+    /// block — the legacy endpoint set, which
     /// <see cref="ResolveSecuredPort(ServiceSpec)"/> resolves a named selector against and
     /// <see cref="DeclaredEndpointNames(ServiceSpec)"/> then rewrites.
     /// </summary>
@@ -161,7 +160,7 @@ public static class ServiceEndpointNaming
 
     /// <summary>
     /// Returns the ordered <c>(name, container port, scheme-carrying)</c> endpoint set a
-    /// service's declared shape produces once its <c>security</c> block (REQ-023) is applied:
+    /// service's declared shape produces once its <c>security</c> block is applied:
     /// the endpoint on the secured port is named <see cref="HttpsEndpointName"/> and REPLACES
     /// the plaintext one, and a secured port that matches no declared port is appended.
     /// </summary>
@@ -287,7 +286,7 @@ public static class ServiceEndpointNaming
     ///   </description></item>
     ///   <item><description>
     ///     An image-form service with NO explicit <see cref="ServiceSpec.Ports"/> yields
-    ///     exactly <c>["http"]</c> — the implicit default HTTP endpoint (REQ-008's
+    /// exactly <c>["http"]</c> — the implicit default HTTP endpoint (the
     ///     backward-compatible default shape).
     ///   </description></item>
     ///   <item><description>
@@ -295,10 +294,10 @@ public static class ServiceEndpointNaming
     ///     <see cref="TcpEndpointName(int)"/> entry per declared port, PLUS <c>"http"</c>
     ///     only when <see cref="ServiceSpec.HttpPort"/> is ALSO explicitly declared (the
     ///     opt-in hybrid shape — declaring <c>ports</c> alone no longer implies an HTTP
-    ///     endpoint at all, REQ-008's whole point).
+    /// endpoint at all).
     ///   </description></item>
     ///   <item><description>
-    ///     A service declaring <c>security</c> (REQ-023) additionally has the endpoint on
+    /// A service declaring <c>security</c> additionally has the endpoint on
     ///     its secured port named <see cref="HttpsEndpointName"/> instead of the plaintext
     ///     name it would otherwise carry; a secured port matching no declared port appends
     ///     <see cref="HttpsEndpointName"/>. A service declaring no <c>security</c> block is
@@ -328,7 +327,7 @@ public static class ServiceEndpointNaming
 
 /// <summary>
 /// One endpoint a service's declared shape produces: its Aspire endpoint name, the container
-/// port it targets, and whether it is the service's SECURED endpoint (REQ-023).
+/// port it targets, and whether it is the service's SECURED endpoint.
 /// </summary>
 /// <param name="Name">The Aspire endpoint name.</param>
 /// <param name="Port">The container port the endpoint targets.</param>

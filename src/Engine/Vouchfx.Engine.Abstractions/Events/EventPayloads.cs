@@ -282,7 +282,7 @@ public sealed record StepAttemptEvent
 
 /// <summary>
 /// Records the provenance of a single JSONPath capture operation that was
-/// declared in a step's <c>capture</c> block (S04-G-01, DSL §3).
+/// declared in a step's <c>capture</c> block (DSL §3).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -313,7 +313,7 @@ public sealed record CapturedVar(
 /// <summary>
 /// Records the provenance of a single <c>{placeholder}</c> substitution that
 /// was detected at compile time in a substitutable field of a step
-/// (S04-G-01, DSL §3, S04-B-03).
+/// (DSL §3).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -339,7 +339,7 @@ public sealed record CapturedVar(
 /// </param>
 /// <param name="SecretDerived">
 /// <see langword="true"/> when this entry records a <c>${secret:source/path}</c>
-/// reference found in a substitutable field of the step (S05-G-01); in that case
+/// reference found in a substitutable field of the step; in that case
 /// <see cref="Placeholder"/> carries the reference label, never the value (§17).
 /// <see langword="false"/> for an ordinary <c>{placeholder}</c> token: whether a
 /// placeholder's runtime value happens to derive from a secret is not determinable
@@ -414,7 +414,7 @@ public sealed record StepCompletedEvent
     public required long DurationMs { get; init; }
 
     /// <summary>
-    /// Per-capture provenance records for this step (S04-G-01).
+    /// Per-capture provenance records for this step.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -434,7 +434,7 @@ public sealed record StepCompletedEvent
     public IReadOnlyList<CapturedVar>? Captured { get; init; }
 
     /// <summary>
-    /// Compile-time substitution provenance records for this step (S04-G-01).
+    /// Compile-time substitution provenance records for this step.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -456,7 +456,7 @@ public sealed record StepCompletedEvent
     public IReadOnlyList<SubstitutionRef>? Substitutions { get; init; }
 
     /// <summary>
-    /// Provider-supplied structured observation for this step (S07-G-01).
+    /// Provider-supplied structured observation for this step.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -588,9 +588,8 @@ public sealed record ScenarioCompletedEvent
     /// message through the <c>ResolvedSecretLedger</c> its caller hands it. That ledger is a
     /// REQUIRED parameter, so a producer holding one cannot omit the scrub by forgetting, and a
     /// producer with none writes <c>null</c> on purpose. A source-scanning CI gate
-    /// (<c>SecretObservationLeakPenetrationTests
-    /// .EveryScenarioCompletedEmission_InRuntime_GoesThroughTheStampingChokepoint</c>) keeps it
-    /// the only construction site. This replaced a per-producer obligation that was measured
+    /// (<c>SecretObservationLeakPenetrationTests.EveryScenarioCompletedEmission_InRuntime_GoesThroughTheStampingChokepoint</c>)
+    /// keeps it the only construction site. This replaced a per-producer obligation that was measured
     /// half-kept: <c>RunSuiteAsync</c>'s <c>OrchestrationException</c> catch scrubbed and its
     /// <c>ArgumentException</c> catch did not.
     /// </para>

@@ -15,18 +15,18 @@ namespace Vouchfx.Engine.Planning;
 /// A directory to search recursively for <c>*.e2e.yaml</c> suite files, or a single
 /// <c>*.e2e.yaml</c> file, exactly like the <c>run</c>/<c>validate</c> CLI commands'
 /// discovery behaviour. A directory that discovers zero suites is a usage error
-/// (<see cref="PlanInputException"/>, EDGE-009); a single named file that does not exist,
+/// (<see cref="PlanInputException"/>); a single named file that does not exist,
 /// or that exists but does not end in <c>.e2e.yaml</c>, is likewise rejected.
 /// </param>
 /// <param name="EventsPath">
 /// Optional path to a JSON Lines event history: a single <c>.jsonl</c> file, or a directory
 /// whose <c>*.jsonl</c> files (directly within it, name-sorted) are read as one combined
 /// history. <see langword="null"/> or an absent path is a valid, successful analysis
-/// (REQ-009): every declared suite and step is reported never-run and history-health
+/// every declared suite and step is reported never-run and history-health
 /// findings are empty.
 /// </param>
 /// <param name="Thresholds">
-/// Optional history-health threshold overrides (REQ-006). <see langword="null"/> uses
+/// Optional history-health threshold overrides. <see langword="null"/> uses
 /// <see cref="PlanThresholds.Defaults"/>.
 /// </param>
 public sealed record PlanRequest(
@@ -35,7 +35,7 @@ public sealed record PlanRequest(
     PlanThresholds? Thresholds = null);
 
 /// <summary>
-/// Documented, overridable thresholds that classify per-step history health (REQ-006).
+/// Documented, overridable thresholds that classify per-step history health.
 /// </summary>
 /// <param name="StaleDays">
 /// A step is <c>step-stale</c> when its last observed <c>step-completed</c> event is more
@@ -73,11 +73,11 @@ public sealed record PlanThresholds(
 
 /// <summary>
 /// Thrown when a <see cref="PlanRequest"/> is unusable: its suite path does not exist, is a
-/// file that does not end in <c>.e2e.yaml</c>, or discovers zero suites at all (EDGE-009 — a
+/// file that does not end in <c>.e2e.yaml</c>, or discovers zero suites at all (a
 /// configuration error, not a finding); or its effective <see cref="PlanThresholds"/> are out
-/// of range (MINOR fix-round — a negative <see cref="PlanThresholds.StaleDays"/>, or any of
+/// of range (a negative <see cref="PlanThresholds.StaleDays"/>, or any of
 /// the three count thresholds below <c>1</c>, would otherwise silently degenerate the
-/// corresponding REQ-006 classification into "every observed step matches").
+/// corresponding classification into "every observed step matches").
 /// </summary>
 /// <remarks>
 /// Deliberately distinct from <see cref="Vouchfx.Engine.Compilation.Schema.CatalogueExportException"/>,

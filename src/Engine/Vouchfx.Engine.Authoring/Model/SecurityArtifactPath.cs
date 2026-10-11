@@ -20,16 +20,26 @@ using System.Globalization;
 
 namespace Vouchfx.Engine.Authoring.Model;
 
+// Internal correction history (not XML documentation):
+// The reason is that a diagnostic's audience is not knowable from its site. A validation-time
+// message from this class reaches ScenarioCompletedEvent.message by way of
+// ProviderPipeline's failure and ScenarioRunner's early message, and from there the
+// §14 event stream, the JUnit message attribute and the HTML report — archived, uploaded,
+// and beyond the reach of any scrubber (ResolvedSecrets.Scrub covers revealed secret
+// VALUES; a filesystem path is never one). An earlier revision of this comment asserted the
+// opposite of each such message — that it "is never placed in an event line" — and licensed the
+// resolved path on that basis. Naming the CONCEPT the path resolves against ("relative to the
+// suite directory") keeps a relative path diagnosable without disclosing the host layout.
 /// <summary>
-/// The single spelling of REQ-003's containment rule for a declared <c>security</c> artefact
+/// The single spelling of the containment rule for a declared <c>security</c> artefact
 /// path, shared by every stage that resolves one.
 /// </summary>
 /// <remarks>
 /// <para>
 /// Three stages resolve these paths and all three must agree: <c>EnvironmentSecurityValidator</c>
-/// (pre-topology validation, REQ-003/REQ-004), <c>SecurityConfigurationAccessor</c> (the
-/// client-side certificate views, REQ-014) and <c>EnvironmentMapper</c> (the server-side
-/// artefact copy, REQ-016).
+/// (pre-topology validation), <c>SecurityConfigurationAccessor</c> (the
+/// client-side certificate views) and <c>EnvironmentMapper</c> (the server-side
+/// artefact copy).
 /// </para>
 /// <para>
 /// <strong>Not a hardened sandbox boundary.</strong> <see cref="Path.GetFullPath(string)"/> is a
@@ -44,15 +54,12 @@ namespace Vouchfx.Engine.Authoring.Model;
 /// every stage, validation-time and step-time alike, and it holds for callers not yet written.
 /// </para>
 /// <para>
-/// The reason is that a diagnostic's audience is not knowable from its site. A validation-time
-/// message from this class reaches <c>ScenarioCompletedEvent.message</c> by way of
-/// <c>ProviderPipeline</c>'s failure and <c>ScenarioRunner</c>'s early message, and from there the
-/// §14 event stream, the JUnit <c>message</c> attribute and the HTML report — archived, uploaded,
-/// and beyond the reach of any scrubber (<c>ResolvedSecrets.Scrub</c> covers revealed secret
-/// VALUES; a filesystem path is never one). An earlier revision of this comment asserted the
-/// opposite of each such message — that it "is never placed in an event line" — and licensed the
-/// resolved path on that basis. Naming the CONCEPT the path resolves against ("relative to the
-/// suite directory") keeps a relative path diagnosable without disclosing the host layout.
+/// A validation-time message can reach <c>ScenarioCompletedEvent.message</c> through
+/// <c>ProviderPipeline</c> and <c>ScenarioRunner</c>, then the event stream, JUnit
+/// <c>message</c> attribute and HTML report. These archives may leave the host, and
+/// <c>ResolvedSecrets.Scrub</c> covers secret values rather than filesystem paths. Naming
+/// the concept a path resolves against ("relative to the suite directory") keeps a relative
+/// path diagnosable without disclosing the resolved host layout.
 /// </para>
 /// </remarks>
 public static class SecurityArtifactPath

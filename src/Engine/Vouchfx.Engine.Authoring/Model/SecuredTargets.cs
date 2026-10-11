@@ -289,6 +289,157 @@ public static class SecuredTargets
     /// </remarks>
     public static bool Any(EnvironmentSpec? environment) => Enumerate(environment).Any();
 
+    // Internal correction history (not XML documentation):
+    // The encoding is UTF-16 code units, and that too is load-bearing. An earlier
+    // framing wrote Encoding.UTF8.GetBytes, whose replacement fallback maps an unpaired
+    // surrogate to U+FFFD — so caCert: "ca\uD800.pem" and caCert: "ca\uFFFD.pem"
+    // produced identical bytes of identical length and therefore ONE identity, while NTFS stores
+    // UTF-16 filenames and.NET's path APIs pass both through, so both can name distinct files on
+    // disk. Hashing the code units directly is total over every , so the
+    // injectivity claimed above holds whatever the field values contain, and it adds no throw
+    // path, so the digest still cannot fail open.
+    // Internal correction history (not XML documentation):
+    // An identity is scoped to ONE suite directory. Path-valued fields are hashed
+    // as the DECLARED RELATIVE TEXT, never as a resolved path, so two documents in different suite
+    // directories declaring a byte-identical security block share one identity while
+    // potentially naming different files on disk. Identities derived under different suite
+    // directories must therefore not be compared. Today that is not a hazard — the shared-topology
+    // accessor roots every scenario at the base directory of the scenario the topology is built
+    // from (compilations[topologyIndex].ScenarioBaseDirectory: the first schema-VALID one,
+    // which is index 0 unless a rejected document sits ahead of it — issue #451), so every
+    // scenario in a run resolves against one directory regardless of where its document lives —
+    // but any future caller that widens the comparison across directories must revisit this.
+    // Internal correction history (not XML documentation):
+    // And an identity covers the security BLOCK, not the declared shape that block
+    // is resolved against. The second scope limit, and the reason the summary on
+    // SecuredTargetIdentity no longer claims the digest covers everything a
+    // declaration asserts. ServiceEndpointNaming.ResolveSecuredPort accepts a NAMED
+    // endpoint selector (http, tcp-<port>) and resolves it against the
+    // service's own ports:/httpPort:/project: declaration — none of which is an
+    // input here, since DigestOf hashes the selector's TEXT and never its resolution.
+    // So two documents declaring a byte-identical security: { profile: mtls, endpoint: http,
+    // … } on services declaring DIFFERENT httpPort: values assert mutual TLS on different
+    // ports and share one identity.
+    // The selector has to be a name-stable one for that to be constructible, and the first
+    // example written here was not. It used endpoint: tcp-9093, but
+    // ServiceEndpointNaming.TcpEndpointName(port) is $"tcp-{port}" — a
+    // tcp-<port> selector ENCODES the port it resolves to, so either both services
+    // declare 9093 and both resolve identically, or one does not and ResolveSecuredPort
+    // returns null on that side, which is refused rather than confirmed. The example could not
+    // exhibit the divergence it was written to illustrate. http can:
+    // HttpEndpointName is the fixed string "http" and PlaintextEndpoints maps
+    // it to whatever ServiceSpec.HttpPort happens to be.
+    // It is nonetheless strictly stronger than the target-NAME matching it replaced,
+    // and it is not reachable today — but the reason it is not is a RUNNER invariant, not a
+    // property of this digest, and issue #451 came within one line of removing it.
+    // Internal correction history (not XML documentation):
+    // #451 narrowed that third one to the SCHEMA-VALID scenarios, and this is the field
+    // that would have paid for it. That change moved the guard below per-scenario schema
+    // validation so an authoring typo reports as an authoring fault rather than as a suite-level
+    // infrastructure one; a scenario the schema rejected is skipped by the guard while still
+    // contributing its declaration to the canonical walk. Because this digest hashes the
+    // endpoint: selector's TEXT and never its resolution — the paragraph above — a rejected
+    // scenario declaring a byte-identical security: { profile: mtls, endpoint: http, … } on
+    // a service whose httpPort: differs from the baseline's shares the baseline's identity
+    // exactly. A running sibling's probe confirmation would then have satisfied a declaration the
+    // probe never tested: mutual TLS asserted on a port nothing confirmed, exiting 0 where the
+    // suite previously exited 3.
+    // Internal correction history (not XML documentation):
+    // It is closed in the RUNNER rather than here, and deliberately so.
+    // ScenarioRunner.RunSuiteAsync folds a schema-rejected scenario's assurance WHOLE — its
+    // own declaration beside its own refusal, Confirmed empty — whenever its serialised
+    // environment differs from the baseline's, exactly as an unbuilt document is folded and for
+    // exactly the same reason: nothing held that environment against the one that started. Where
+    // the two environments ARE equal the scenario stays in the shared union and a confirmation may
+    // satisfy it, which is what preserves #451's improvement for the ordinary typo. Hashing the
+    // RESOLVED port here would close it at this tier instead, and needs the whole
+    // ServiceSpec rather than the SecuritySpec this walk yields — that remains the
+    // fix for any FUTURE caller that compares identities derived from two environments no guard
+    // held together, and such a caller must not assume the runner's gate covers it.
+    // Internal correction history (not XML documentation):
+    // Third scope limit: SecuritySpec.Extra is NOT an input. That
+    // bucket (#353) retains every security key the parser binds to no typed member, so two
+    // declarations differing ONLY there share one identity. Not reachable today for a document the
+    // engine accepts: $defs/security closes with "unevaluatedProperties": false and
+    // no profile fragment contributing a field has shipped, so on every schema-valid document the
+    // bucket is  and contributes nothing to distinguish.
+    // A rejected document can carry a non-null bucket, and that is NOT a way round this
+    // exclusion — a claim an earlier revision of this remark made and which is false. An
+    // unknown security key is what puts content in the bucket, and it does so by being a
+    // schema error located AT the security node: $defs/security closes with
+    // unevaluatedProperties: false over exactly the keys the parser binds, so a populated
+    // bucket IMPLIES such an error. The schema door therefore records
+    // SecurityAbortKind.SecurityDeclarationRejected, which is a STANDALONE disjunct of
+    // SecurityAssurance.Unconfirmed — no sibling's confirmation can satisfy it, whatever
+    // this digest says about the identities. Measured, both halves:
+    // RunSuiteAsyncTests.RunSuiteAsync_OneScenarioEnvironmentTypo_… asserts the recorded
+    // kind, and
+    // SecurityConfirmationExitCodeTests.Unconfirmed_WhenTheConfirmationCoversTheDeclaration_…
+    // asserts the disjunct against a confirmation that DOES cover the declaration. The bucket's
+    // exclusion is therefore exactly as unreachable as it was before #451; the shape that change
+    // did make reachable is the httpPort one in the paragraph above, which reaches this
+    // digest through a TYPED field's resolution rather than through the bucket. It is left out
+    // rather than hashed because its content is unconstrained author text with no
+    // SecretReference gate over it — the same §17 argument that keeps a bare literal
+    // passphrase out of this hash, below. Whoever ships the first profile fragment must revisit
+    // this alongside deciding what the bucket carries.
+    // Internal correction history (not XML documentation):
+    // A MIDDLE PATH EXISTS AND WAS CONSIDERED, so the next reader need not rediscover
+    // it. Excluding the bucket's VALUES is what §17 requires;
+    // excluding it entirely is a strictly stronger choice than that requires. Hashing a presence
+    // bit plus the bucket's ordinal-sorted KEY NAMES — structural text, not credential material —
+    // would restore the distinguishability lost above at zero disclosure cost, and
+    // AppendPassphraseDeclaration already demonstrates the shape (a presence bit,
+    // then a decision bit, then conditionally the text). It is DEFERRED, not rejected on merit:
+    // anything appended to DigestOf changes the digest for EVERY target, including
+    // the ones carrying no bucket at all, so the change is not local to the case it serves — and
+    // what the bucket is allowed to carry is itself undecided until a profile fragment ships,
+    // which leaves "hash the key names" a rule with no set of key names to be about. Both
+    // decisions belong to whoever ships that fragment, together.
+    // Internal correction history (not XML documentation):
+    // JSON was the alternative and is rejected for two reasons. Its determinism would rest on
+    // JsonSerializerOptions defaults and on reflected property order — properties of the
+    // serialiser rather than of this file, free to move under a runtime upgrade and taking every
+    // stored digest with them. And this is a IsPackable assembly, so a reflection-based
+    // serialiser would put trim/AOT analysis warnings on a shipped surface in order to hash a
+    // tuple this file already writes by hand. "Six strings" is what this sentence used to
+    // say and it was never right, so the count is not restated here — the inputs are whatever
+    // DigestOf appends, in that order: the target's name and kind, the
+    // spec's own presence, then (when present) profile, endpoint, caCert,
+    // clientCert, clientKey, the clientKeyPassword declaration — whose text is
+    // CONDITIONAL, so the arity is not even fixed — and the serverArtifacts list, itself a
+    // presence bit, a count and two strings per entry. A number written here is a second spelling
+    // of that method, free to go stale the next time a field joins it, and it did.
+    // Internal correction history (not XML documentation):
+    // A  field and an empty-string field differ — the
+    // presence marker is written for both and the length only for the second — because an
+    // undeclared caCert is not the same declaration as caCert: "". (b)
+    // already requires an undeclared caCert to be treated as absent rather than as a
+    // missing-but-implied field, and a digest that conflated the two would let those two
+    // declarations cross-satisfy each other.
+    // Internal correction history (not XML documentation):
+    // That is NOT proof the value is a pointer, and this file no longer claims it is.
+    // A reference path terminates at the first closing brace and is otherwise unrestricted, so a
+    // SECOND ${secret: lead-in is swallowed INTO the path and everything after it is
+    // arbitrary author text: ${secret:env/PASS${secret:hunter2} satisfies TryParse
+    // AND the schema's anchored pattern, so it is reachable from authored YAML, and its
+    // swallowed literal tail IS hashed. SecuritySpec's own header names that very inference
+    // ("if (TryParse(v)) quote(v);") as a reproduced disclosure defect, and
+    // SecretReference.WithheldValueMessage spells the swallowing out. The decision here
+    // stands anyway, but for a reason that is NOT "the value is proven safe": we are HASHING, not
+    // quoting, §17.1.1 sanctions hashing a reference, and the digest is a value this engine COMPARES
+    // and never renders. ValidateSecretBearingField, the stronger proof, needs a runtime
+    // secret-source list, and threading one into a pure identity function on a packable assembly is
+    // not a signature this type will take.
+    // Internal correction history (not XML documentation):
+    // Both bits are needed, and the earlier presence-only framing was not enough. It kept the
+    // discrimination between "this declaration says the key is encrypted" and "this one says it is
+    // not" — but it ALSO collapsed clientKeyPassword: ${secret:vault/prod-key} onto
+    // clientKeyPassword: ${secret:env/DEV_KEY}: two different references naming two
+    // different passphrases, sharing one identity, which is precisely the cross-satisfaction
+    // #415 exists to close. What now holds: two declarations whose passphrase references differ get
+    // different identities; two declarations whose passphrase values are NOT whole-token references
+    // still collapse to the presence bit, because either might be the secret itself.
     /// <summary>
     /// The <see cref="SecuredTargetIdentity"/> of one declared target: its name, plus a digest over
     /// everything the <c>security</c> block itself declares. The three scope limits that phrasing
@@ -316,50 +467,31 @@ public static class SecuredTargets
     /// parseable and therefore injective over the field tuple.
     /// </para>
     /// <para>
-    /// <strong>The encoding is UTF-16 code units, and that too is load-bearing.</strong> An earlier
-    /// framing wrote <c>Encoding.UTF8.GetBytes</c>, whose replacement fallback maps an unpaired
-    /// surrogate to U+FFFD — so <c>caCert: "ca\uD800.pem"</c> and <c>caCert: "ca\uFFFD.pem"</c>
-    /// produced identical bytes of identical length and therefore ONE identity, while NTFS stores
-    /// UTF-16 filenames and .NET's path APIs pass both through, so both can name distinct files on
-    /// disk. Hashing the code units directly is total over every <see langword="string"/>, so the
-    /// injectivity claimed above holds whatever the field values contain, and it adds no throw
-    /// path, so the digest still cannot fail open.
+    /// <strong>The encoding is UTF-16 code units.</strong> UTF-8 replacement fallback maps an
+    /// unpaired surrogate to U+FFFD, so <c>caCert: "ca\uD800.pem"</c> and
+    /// <c>caCert: "ca\uFFFD.pem"</c> would produce identical bytes. NTFS stores UTF-16 names
+    /// and .NET path APIs pass both through, so they can name distinct files. Hashing code
+    /// units is total over every <see langword="string"/>, preserves injectivity over the
+    /// field tuple and adds no throw path through which the digest could fail open.
     /// </para>
     /// <para>
-    /// <strong>An identity is scoped to ONE suite directory.</strong> Path-valued fields are hashed
-    /// as the DECLARED RELATIVE TEXT, never as a resolved path, so two documents in different suite
-    /// directories declaring a byte-identical <c>security</c> block share one identity while
-    /// potentially naming different files on disk. Identities derived under different suite
-    /// directories must therefore not be compared. Today that is not a hazard — the shared-topology
-    /// accessor roots every scenario at the base directory of the scenario the topology is built
-    /// from (<c>compilations[topologyIndex].ScenarioBaseDirectory</c>: the first schema-VALID one,
-    /// which is index 0 unless a rejected document sits ahead of it — issue #451), so every
-    /// scenario in a run resolves against one directory regardless of where its document lives —
-    /// but any future caller that widens the comparison across directories must revisit this.
+    /// <strong>An identity is scoped to one suite directory.</strong> Path-valued fields are
+    /// hashed as declared relative text, never as resolved paths. Identical declarations
+    /// in different directories can name different files and must not be compared. The
+    /// shared-topology accessor roots every scenario at
+    /// <c>compilations[topologyIndex].ScenarioBaseDirectory</c>, the first schema-valid
+    /// scenario, so current comparisons use one directory. A caller comparing across
+    /// directories must revisit this boundary.
     /// </para>
     /// <para>
-    /// <strong>And an identity covers the <c>security</c> BLOCK, not the declared shape that block
-    /// is resolved against.</strong> The second scope limit, and the reason the summary on
-    /// <see cref="SecuredTargetIdentity"/> no longer claims the digest covers everything a
-    /// declaration asserts. <c>ServiceEndpointNaming.ResolveSecuredPort</c> accepts a NAMED
-    /// <c>endpoint</c> selector (<c>http</c>, <c>tcp-&lt;port&gt;</c>) and resolves it against the
-    /// service's own <c>ports:</c>/<c>httpPort:</c>/<c>project:</c> declaration — none of which is an
-    /// input here, since <see cref="DigestOf"/> hashes the selector's TEXT and never its resolution.
-    /// So two documents declaring a byte-identical <c>security: { profile: mtls, endpoint: http,
-    /// … }</c> on services declaring DIFFERENT <c>httpPort:</c> values assert mutual TLS on different
-    /// ports and share one identity.
-    /// <strong>The selector has to be a name-stable one for that to be constructible, and the first
-    /// example written here was not.</strong> It used <c>endpoint: tcp-9093</c>, but
-    /// <c>ServiceEndpointNaming.TcpEndpointName(port)</c> is <c>$"tcp-{port}"</c> — a
-    /// <c>tcp-&lt;port&gt;</c> selector ENCODES the port it resolves to, so either both services
-    /// declare 9093 and both resolve identically, or one does not and <c>ResolveSecuredPort</c>
-    /// returns null on that side, which is refused rather than confirmed. The example could not
-    /// exhibit the divergence it was written to illustrate. <c>http</c> can:
-    /// <c>HttpEndpointName</c> is the fixed string <c>"http"</c> and <c>PlaintextEndpoints</c> maps
-    /// it to whatever <c>ServiceSpec.HttpPort</c> happens to be.
-    /// It is nonetheless strictly stronger than the target-NAME matching it replaced,
-    /// and it is not reachable today — but the reason it is not is a RUNNER invariant, not a
-    /// property of this digest, and issue #451 came within one line of removing it.
+    /// <strong>The identity covers the security block, not the service shape it resolves
+    /// against.</strong> <c>ServiceEndpointNaming.ResolveSecuredPort</c> resolves a named
+    /// selector against <c>ports</c>, <c>httpPort</c> or <c>project</c>, while
+    /// <see cref="DigestOf"/> hashes only the selector text. Identical <c>endpoint: http</c>
+    /// declarations on services with different <c>httpPort</c> values therefore share an
+    /// identity. A <c>tcp-&lt;port&gt;</c> selector encodes its port, so it either resolves
+    /// identically on both sides or is refused. The runner guards the environment used
+    /// by both sides; this digest alone does not establish resolved-endpoint equality.
     /// </para>
     /// <para>
     /// <strong>The three ways every comparison the engine makes derives both sides from ONE
@@ -369,95 +501,57 @@ public static class SecuredTargets
     /// shared-<c>environment</c> divergence guard forces the suite byte-identical.
     /// </para>
     /// <para>
-    /// <strong>#451 narrowed that third one to the SCHEMA-VALID scenarios, and this is the field
-    /// that would have paid for it.</strong> That change moved the guard below per-scenario schema
-    /// validation so an authoring typo reports as an authoring fault rather than as a suite-level
-    /// infrastructure one; a scenario the schema rejected is skipped by the guard while still
-    /// contributing its declaration to the canonical walk. Because this digest hashes the
-    /// <c>endpoint:</c> selector's TEXT and never its resolution — the paragraph above — a rejected
-    /// scenario declaring a byte-identical <c>security: { profile: mtls, endpoint: http, … }</c> on
-    /// a service whose <c>httpPort:</c> differs from the baseline's shares the baseline's identity
-    /// exactly. A running sibling's probe confirmation would then have satisfied a declaration the
-    /// probe never tested: mutual TLS asserted on a port nothing confirmed, exiting 0 where the
-    /// suite previously exited 3.
+    /// The shared-environment guard compares schema-valid scenarios. A rejected scenario
+    /// can still declare the same security-block text on a different service port, and that
+    /// identity alone could match a sibling probe which never tested its endpoint. Such a
+    /// scenario must not inherit confirmations from an environment the guard did not compare.
     /// </para>
     /// <para>
-    /// <strong>It is closed in the RUNNER rather than here, and deliberately so.</strong>
-    /// <c>ScenarioRunner.RunSuiteAsync</c> folds a schema-rejected scenario's assurance WHOLE — its
-    /// own declaration beside its own refusal, <c>Confirmed</c> empty — whenever its serialised
-    /// environment differs from the baseline's, exactly as an unbuilt document is folded and for
-    /// exactly the same reason: nothing held that environment against the one that started. Where
-    /// the two environments ARE equal the scenario stays in the shared union and a confirmation may
-    /// satisfy it, which is what preserves #451's improvement for the ordinary typo. Hashing the
-    /// RESOLVED port here would close it at this tier instead, and needs the whole
-    /// <c>ServiceSpec</c> rather than the <c>SecuritySpec</c> this walk yields — that remains the
-    /// fix for any FUTURE caller that compares identities derived from two environments no guard
-    /// held together, and such a caller must not assume the runner's gate covers it.
+    /// The runner folds a schema-rejected scenario's assurance as a whole, with its own
+    /// declaration and refusal and an empty <c>Confirmed</c>, whenever its serialised
+    /// environment differs from the baseline. Equal environments remain in the shared
+    /// union, allowing a confirmed endpoint to cover an ordinary unrelated authoring typo.
+    /// A future caller comparing identities from different environments must instead
+    /// include the resolved port and complete <c>ServiceSpec</c>, or provide an equivalent
+    /// comparison guard; it cannot assume the runner's invariant covers it.
     /// </para>
     /// <para>
-    /// <strong>Third scope limit: <see cref="SecuritySpec.Extra"/> is NOT an input.</strong> That
-    /// bucket (#353) retains every <c>security</c> key the parser binds to no typed member, so two
-    /// declarations differing ONLY there share one identity. Not reachable today for a document the
-    /// engine accepts: <c>$defs/security</c> closes with <c>"unevaluatedProperties": false</c> and
-    /// no profile fragment contributing a field has shipped, so on every schema-valid document the
-    /// bucket is <see langword="null"/> and contributes nothing to distinguish.
-    /// <strong>A rejected document can carry a non-null bucket, and that is NOT a way round this
-    /// exclusion — a claim an earlier revision of this remark made and which is false.</strong> An
-    /// unknown <c>security</c> key is what puts content in the bucket, and it does so by being a
-    /// schema error located AT the <c>security</c> node: <c>$defs/security</c> closes with
-    /// <c>unevaluatedProperties: false</c> over exactly the keys the parser binds, so a populated
-    /// bucket IMPLIES such an error. The schema door therefore records
-    /// <c>SecurityAbortKind.SecurityDeclarationRejected</c>, which is a STANDALONE disjunct of
-    /// <c>SecurityAssurance.Unconfirmed</c> — no sibling's confirmation can satisfy it, whatever
-    /// this digest says about the identities. Measured, both halves:
-    /// <c>RunSuiteAsyncTests.RunSuiteAsync_OneScenarioEnvironmentTypo_…</c> asserts the recorded
-    /// kind, and
+    /// <strong><see cref="SecuritySpec.Extra"/> is not an input.</strong> This bucket holds
+    /// untyped security keys, so declarations differing only there share an identity. The
+    /// current schema closes <c>$defs/security</c> with <c>unevaluatedProperties: false</c>
+    /// and no profile fragment contributes extra fields. A populated bucket therefore
+    /// implies a security-node schema error. That records
+    /// <c>SecurityAbortKind.SecurityDeclarationRejected</c>, a standalone disjunct of
+    /// <c>SecurityAssurance.Unconfirmed</c> that sibling confirmations cannot satisfy.
+    /// <c>RunSuiteAsyncTests.RunSuiteAsync_OneScenarioEnvironmentTypo_…</c> and
     /// <c>SecurityConfirmationExitCodeTests.Unconfirmed_WhenTheConfirmationCoversTheDeclaration_…</c>
-    /// asserts the disjunct against a confirmation that DOES cover the declaration. The bucket's
-    /// exclusion is therefore exactly as unreachable as it was before #451; the shape that change
-    /// did make reachable is the <c>httpPort</c> one in the paragraph above, which reaches this
-    /// digest through a TYPED field's resolution rather than through the bucket. It is left out
-    /// rather than hashed because its content is unconstrained author text with no
-    /// <c>SecretReference</c> gate over it — the same §17 argument that keeps a bare literal
-    /// passphrase out of this hash, below. Whoever ships the first profile fragment must revisit
-    /// this alongside deciding what the bucket carries.
+    /// pin these two safeguards. Values stay out of the digest because they are unconstrained
+    /// author text without a <c>SecretReference</c> gate and may contain secret material.
+    /// A profile fragment accepting new keys must revisit this boundary.
     /// </para>
     /// <para>
-    /// <strong>A MIDDLE PATH EXISTS AND WAS CONSIDERED, so the next reader need not rediscover
-    /// it</strong> (peer-review MINOR). Excluding the bucket's VALUES is what §17 requires;
-    /// excluding it entirely is a strictly stronger choice than that requires. Hashing a presence
-    /// bit plus the bucket's ordinal-sorted KEY NAMES — structural text, not credential material —
-    /// would restore the distinguishability lost above at zero disclosure cost, and
-    /// <see cref="AppendPassphraseDeclaration"/> already demonstrates the shape (a presence bit,
-    /// then a decision bit, then conditionally the text). It is DEFERRED, not rejected on merit:
-    /// anything appended to <see cref="DigestOf"/> changes the digest for EVERY target, including
-    /// the ones carrying no bucket at all, so the change is not local to the case it serves — and
-    /// what the bucket is allowed to carry is itself undecided until a profile fragment ships,
-    /// which leaves "hash the key names" a rule with no set of key names to be about. Both
-    /// decisions belong to whoever ships that fragment, together.
+    /// Hashing the bucket's presence plus ordinal-sorted key names could distinguish its
+    /// structure without hashing credential values. <see cref="AppendPassphraseDeclaration"/>
+    /// already demonstrates conditional text hashing. This alternative is deferred: adding
+    /// any input to <see cref="DigestOf"/> changes every target's digest, including targets
+    /// without a bucket, and the allowed key vocabulary is undefined until a profile
+    /// fragment supplies it. That fragment must decide both the accepted shape and identity rule.
     /// </para>
     /// <para>
-    /// JSON was the alternative and is rejected for two reasons. Its determinism would rest on
-    /// <c>JsonSerializerOptions</c> defaults and on reflected property order — properties of the
-    /// serialiser rather than of this file, free to move under a runtime upgrade and taking every
-    /// stored digest with them. And this is a <c>IsPackable</c> assembly, so a reflection-based
-    /// serialiser would put trim/AOT analysis warnings on a shipped surface in order to hash a
-    /// tuple this file already writes by hand. <strong>"Six strings" is what this sentence used to
-    /// say and it was never right, so the count is not restated here — the inputs are whatever
-    /// <see cref="DigestOf"/> appends, in that order</strong>: the target's name and kind, the
-    /// spec's own presence, then (when present) <c>profile</c>, <c>endpoint</c>, <c>caCert</c>,
-    /// <c>clientCert</c>, <c>clientKey</c>, the <c>clientKeyPassword</c> declaration — whose text is
-    /// CONDITIONAL, so the arity is not even fixed — and the <c>serverArtifacts</c> list, itself a
-    /// presence bit, a count and two strings per entry. A number written here is a second spelling
-    /// of that method, free to go stale the next time a field joins it, and it did.
+    /// JSON serialisation is unsuitable here: determinism would depend on
+    /// <c>JsonSerializerOptions</c> defaults and reflected property order, which can change
+    /// under a runtime upgrade. Reflection also introduces trim/AOT analysis costs on this
+    /// packable assembly. <see cref="DigestOf"/> writes its tuple directly: target name and
+    /// kind; spec presence; profile, endpoint and certificate paths; the conditional
+    /// <c>clientKeyPassword</c> declaration; and <c>serverArtifacts</c> presence, count and
+    /// source/target entries. The framing follows that method rather than a separately
+    /// maintained fixed field count.
     /// </para>
     /// <para>
-    /// <strong>A <see langword="null"/> field and an empty-string field differ</strong> — the
-    /// presence marker is written for both and the length only for the second — because an
-    /// undeclared <c>caCert</c> is not the same declaration as <c>caCert: ""</c>. REQ-004(b)
-    /// already requires an undeclared <c>caCert</c> to be treated as absent rather than as a
-    /// missing-but-implied field, and a digest that conflated the two would let those two
-    /// declarations cross-satisfy each other.
+    /// <strong>A <see langword="null"/> field and an empty-string field differ.</strong>
+    /// Both carry a presence marker, and only a present field carries a length. An undeclared
+    /// <c>caCert</c> is absent, not a missing-but-implied field; conflating it with
+    /// <c>caCert: ""</c> would allow distinct declarations to cross-satisfy each other.
     /// </para>
     /// <para>
     /// <strong><see cref="SecuritySpec.ClientKeyPassword"/> enters the digest as its PRESENCE
@@ -480,19 +574,13 @@ public static class SecuredTargets
     /// text.
     /// </para>
     /// <para>
-    /// <strong>That is NOT proof the value is a pointer, and this file no longer claims it is.</strong>
-    /// A reference path terminates at the first closing brace and is otherwise unrestricted, so a
-    /// SECOND <c>${secret:</c> lead-in is swallowed INTO the path and everything after it is
-    /// arbitrary author text: <c>${secret:env/PASS${secret:hunter2}</c> satisfies <c>TryParse</c>
-    /// AND the schema's anchored <c>pattern</c>, so it is reachable from authored YAML, and its
-    /// swallowed literal tail IS hashed. <c>SecuritySpec</c>'s own header names that very inference
-    /// ("<c>if (TryParse(v)) quote(v);</c>") as a reproduced disclosure defect, and
-    /// <c>SecretReference.WithheldValueMessage</c> spells the swallowing out. The decision here
-    /// stands anyway, but for a reason that is NOT "the value is proven safe": we are HASHING, not
-    /// quoting, §17.1.1 sanctions hashing a reference, and the digest is a value this engine COMPARES
-    /// and never renders. <c>ValidateSecretBearingField</c>, the stronger proof, needs a runtime
-    /// secret-source list, and threading one into a pure identity function on a packable assembly is
-    /// not a signature this type will take.
+    /// <strong><c>SecretReference.TryParse</c> does not prove that text is a safe pointer.</strong>
+    /// A second <c>${secret:</c> lead-in can be swallowed into the unrestricted reference
+    /// path: <c>${secret:env/PASS${secret:hunter2}</c> satisfies both <c>TryParse</c> and the
+    /// schema pattern, so its literal tail is hashed. The decision is confined to hashing
+    /// rather than quoting: the engine compares this digest and never renders it.
+    /// <c>ValidateSecretBearingField</c> provides the stronger disclosure proof but requires
+    /// a runtime secret-source list unavailable to this pure identity function.
     /// </para>
     /// <para>
     /// <strong>What that argument does and does not say about the presence-bit-only collapse: no
@@ -519,14 +607,9 @@ public static class SecuredTargets
     /// does exactly its job: the literal passphrase is the one thing NOT hashed.
     /// </para>
     /// <para>
-    /// Both bits are needed, and the earlier presence-only framing was not enough. It kept the
-    /// discrimination between "this declaration says the key is encrypted" and "this one says it is
-    /// not" — but it ALSO collapsed <c>clientKeyPassword: ${secret:vault/prod-key}</c> onto
-    /// <c>clientKeyPassword: ${secret:env/DEV_KEY}</c>: two different references naming two
-    /// different passphrases, sharing one identity, which is precisely the cross-satisfaction
-    /// #415 exists to close. What now holds: two declarations whose passphrase references differ get
-    /// different identities; two declarations whose passphrase values are NOT whole-token references
-    /// still collapse to the presence bit, because either might be the secret itself.
+    /// Different whole-token passphrase references produce different identities, even when
+    /// they resolve to the same value. Declarations whose passphrase text is not a whole-token
+    /// reference collapse to a presence bit; hashing such text could hash the secret itself.
     /// </para>
     /// </remarks>
     public static SecuredTargetIdentity IdentityOf(SecuredTarget target) =>

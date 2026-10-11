@@ -223,6 +223,17 @@ jobs:
               -o artifacts/nuget
           done
 
+      # SDK documentation is a published package contract. Check the actual ZIP
+      # members after the complete closure is packed, before any artifact upload.
+      # Planning remains a separately audited packable library, outside this closure.
+      - name: Validate SDK XML publication boundary and CLI XML exclusions
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          python -m unittest discover -s scripts/tests -p test_check_sdk_xml.py -v
+          python scripts/check_sdk_xml.py --packages-dir artifacts/nuget --version "$VERSION"
+
       # Self-contained multi-file publish for each RID.
       # PublishSingleFile is NOT used (Assembly.Location → IL3000 build errors).
       # Each publish carries its own RID-specific DCP tools tree beside the CLI.

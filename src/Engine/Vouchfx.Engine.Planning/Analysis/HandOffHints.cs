@@ -37,13 +37,13 @@ using Vouchfx.Sdk;
 
 namespace Vouchfx.Engine.Planning.Analysis;
 
-/// <summary>REQ-007 hand-off-hint enrichment over every gap finding that lacks one.</summary>
+/// <summary>hand-off-hint enrichment over every gap finding that lacks one.</summary>
 internal static class HandOffHints
 {
     private const string ServiceSuggestedStepType = "http.rest";
 
     /// <summary>
-    /// Returns <paramref name="findings"/> with every REQ-004/REQ-005 gap finding that is
+    /// Returns <paramref name="findings"/> with every coverage or vocabulary gap finding that is
     /// missing its hand-off hints enriched with a suggested step type list and a suggested
     /// step id. History-health and suite-identity-ambiguity findings, and any gap finding
     /// that already carries hints, pass through unchanged.
@@ -179,8 +179,8 @@ internal static class HandOffHints
 
     /// <summary>
     /// Filters <paramref name="types"/> down to the ones present in <paramref name="registry"/>
-    /// (REQ-007: "suggested types MUST exist in the current registration") and ordinal-sorts
-    /// the result (REQ-005: "suggestedTypes lists all candidates, ordinal-sorted"). Shared by
+    /// (suggested types must exist in the current registration) and ordinal-sorts
+    /// all candidates. Shared by
     /// <see cref="VocabularyGapAnalyser"/>, which already knows its own candidates are
     /// registered (guarded by <c>DependencyKindStepMapDriftTests</c>) but filters anyway for a
     /// single, consistent guarantee at every call site.

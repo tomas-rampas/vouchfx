@@ -39,7 +39,7 @@ namespace Vouchfx.Engine.Abstractions;
 ///   </description></item>
 ///   <item><description>
 ///     <c>__capture_status::</c> — per-step capture-matched-flag records written
-///     by emitted CSX step blocks for provenance reporting (G-01).
+/// by emitted CSX step blocks for provenance reporting.
 ///     Retrieve with <see cref="CaptureStatus(string)"/>.
 ///   </description></item>
 ///   <item><description>
@@ -163,7 +163,7 @@ public static class VarKeys
     /// <summary>
     /// Returns the <c>Vars</c> key under which an emitted CSX step block writes its
     /// per-capture matched-flag record for the runner to consume when emitting
-    /// provenance events (G-01, S04-B-02).
+    /// provenance events.
     /// </summary>
     /// <param name="sanitisedStepId">
     /// The step identifier after sanitisation (hyphens replaced with underscores
