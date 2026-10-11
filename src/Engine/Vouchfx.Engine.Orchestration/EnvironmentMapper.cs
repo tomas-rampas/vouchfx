@@ -29,6 +29,7 @@
 //   • HealthGateNames — produces the ordered gate-name sequence for the topology fixture to await.
 //   Adding a new dependency type = add one entry; Map() is unchanged.
 
+using System.Globalization;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Aspire.Hosting;
@@ -88,6 +89,9 @@ public sealed record MappedTopology(
     IReadOnlyList<string> HealthGateResourceNames,
     IReadOnlyList<string> DependencyNames)
 {
+    /// <summary>Checks access at acquisition, without consuming or logging certificate/key contents.</summary>
+    internal Action<CancellationToken> VerifyServerArtifactAccess { get; init; } = static _ => { };
+
     /// <summary>
     /// A LIVE view of the endpoint <see cref="ResolveServices"/> will read from, per staged
     /// <c>svc::&lt;name&gt;</c> key — empty until <see cref="Configure"/> has run, because that is
@@ -406,7 +410,8 @@ public static class EnvironmentMapper
                     if (KafkaWantsSchemaRegistry(spec.Extra))
                     {
                         var srName = KafkaSchemaRegistryServiceName(name);
-                        var internalEndpoint = kafkaBuilder.Resource.InternalEndpoint;
+                        var plaintextEndpoint = spec.Security is null ? "internal" : ManagedKafkaSecurityPlan.Create(name, spec).PlaintextEndpointName;
+                        var internalEndpoint = new EndpointReference(kafkaBuilder.Resource, plaintextEndpoint, KnownNetworkIdentifiers.DefaultAspireContainerNetwork);
                         var bootstrapServers = ReferenceExpression.Create(
                             $"PLAINTEXT://{internalEndpoint.Property(EndpointProperty.Host)}:{internalEndpoint.Property(EndpointProperty.Port)}");
                         // feat/dependency-image-override (§ item 6, sidecars out of scope): this
@@ -871,6 +876,71 @@ public static class EnvironmentMapper
     // -----------------------------------------------------------------------
     // Map — public entry point
     // -----------------------------------------------------------------------
+
+    internal static void ValidateSecurityEnvironmentValues(EnvironmentSpec? environment)
+    {
+        var dependencies = environment?.Dependencies ?? new Dictionary<string, DependencySpec>();
+        foreach (var (name, spec) in environment?.Services ?? new Dictionary<string, ServiceSpec>())
+            foreach (var (key, value) in spec.Env ?? new Dictionary<string, string>())
+                ValidateEnvValue("Service", name, key, value, dependencies, connectionReferencesSupported: true);
+        foreach (var (name, spec) in dependencies)
+            foreach (var (key, value) in spec.Env ?? new Dictionary<string, string>())
+                ValidateEnvValue("Dependency", name, key, value, dependencies, connectionReferencesSupported: false);
+        foreach (var (name, spec) in environment?.Services ?? new Dictionary<string, ServiceSpec>())
+            foreach (var key in spec.Env?.Keys ?? Array.Empty<string>()) ValidateEnvName("Service", name, key);
+        foreach (var (name, spec) in dependencies)
+            foreach (var key in spec.Env?.Keys ?? Array.Empty<string>()) ValidateEnvName("Dependency", name, key);
+    }
+
+    private static async Task<T> DiscoverAsync<T>(string name, Func<Task<T>> discover, CancellationToken cancellationToken)
+    {
+        try { return await discover().ConfigureAwait(false); }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch (OrchestrationException) { throw; }
+        catch (Exception ex)
+        {
+            var info = OrchestrationErrorClassifier.Classify(ex, imageRef: null, resourceName: name);
+            throw new OrchestrationException(info, ex) { AcquisitionStage = ResourceAcquisitionStage.Discovery };
+        }
+    }
+
+    private sealed record ManagedKafkaEndpointAnnotation(string PlaintextEndpointName) : IResourceAnnotation;
+
+    private static void ConfigureManagedKafkaSecurity(IDistributedApplicationBuilder builder,
+        IResourceBuilder<KafkaServerResource> broker, ManagedKafkaSecurityPlan plan)
+    {
+        broker.WithEndpoint(plan.SecureEndpointName, endpoint => endpoint.TargetPort = plan.SecurePort);
+        broker.WithEndpoint(plan.PlaintextEndpointName, endpoint => endpoint.TargetPort = plan.PlaintextPort);
+        broker.Resource.Annotations.Add(new ManagedKafkaEndpointAnnotation(plan.PlaintextEndpointName));
+        foreach (var annotation in broker.Resource.Annotations.OfType<HealthCheckAnnotation>()
+            .Where(check => check.Key == broker.Resource.Name + "_check").ToArray())
+            broker.Resource.Annotations.Remove(annotation);
+
+        var secureEndpoint = new EndpointReference(broker.Resource, plan.SecureEndpointName, KnownNetworkIdentifiers.LocalhostNetwork);
+        var plaintextEndpoint = new EndpointReference(broker.Resource, plan.PlaintextEndpointName, KnownNetworkIdentifiers.DefaultAspireContainerNetwork);
+        broker.WithEnvironment(context =>
+        {
+            context.EnvironmentVariables["KAFKA_LISTENERS"] =
+                $"PLAINTEXT://127.0.0.1:{plan.InterBrokerPort},CONTROLLER://127.0.0.1:{plan.ControllerPort},"
+                + $"{ManagedKafkaSecurityPlan.SecureListener}://0.0.0.0:{plan.SecurePort},"
+                + $"{ManagedKafkaSecurityPlan.PlaintextListener}://0.0.0.0:{plan.PlaintextPort}";
+            context.EnvironmentVariables["KAFKA_LISTENER_SECURITY_PROTOCOL_MAP"] =
+                $"CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,{ManagedKafkaSecurityPlan.SecureListener}:SSL,{ManagedKafkaSecurityPlan.PlaintextListener}:PLAINTEXT";
+            context.EnvironmentVariables["KAFKA_ADVERTISED_LISTENERS"] = ReferenceExpression.Create(
+                $"PLAINTEXT://localhost:{plan.InterBrokerPort.ToString(CultureInfo.InvariantCulture)},{ManagedKafkaSecurityPlan.SecureListener}://{secureEndpoint.Property(EndpointProperty.HostAndPort)},{ManagedKafkaSecurityPlan.PlaintextListener}://{plaintextEndpoint.Property(EndpointProperty.HostAndPort)}");
+            context.EnvironmentVariables["KAFKA_INTER_BROKER_LISTENER_NAME"] = "PLAINTEXT";
+            context.EnvironmentVariables["KAFKA_CONTROLLER_LISTENER_NAMES"] = "CONTROLLER";
+            context.EnvironmentVariables["KAFKA_CONTROLLER_QUORUM_VOTERS"] = $"1@127.0.0.1:{plan.ControllerPort}";
+            context.EnvironmentVariables["KAFKA_CONTROLLER_QUORUM_BOOTSTRAP_SERVERS"] = $"127.0.0.1:{plan.ControllerPort}";
+            context.EnvironmentVariables["KAFKA_NODE_ID"] = "1";
+            context.EnvironmentVariables["KAFKA_PROCESS_ROLES"] = "broker,controller";
+            context.EnvironmentVariables["KAFKA_REST_BOOTSTRAP_SERVERS"] = $"PLAINTEXT://127.0.0.1:{plan.InterBrokerPort}";
+            context.EnvironmentVariables["KAFKA_REST_LISTENERS"] = $"http://0.0.0.0:{plan.RestPort}";
+            context.EnvironmentVariables["KAFKA_LISTENER_NAME_VOUCHFXSECURE_SSL_CLIENT_AUTH"] = plan.MutualTls ? "required" : "none";
+        });
+        ApplyTcpHealthCheck(builder, builder.CreateResourceBuilder<ContainerResource>(broker.Resource),
+            broker.Resource.Name, plan.SecurePort, plan.SecureEndpointName);
+    }
 
     /// <summary>
     /// Maps the supplied <see cref="EnvironmentSpec"/> to a <see cref="MappedTopology"/>.
@@ -1594,6 +1664,8 @@ public static class EnvironmentMapper
         foreach (var (name, spec) in env.Dependencies ?? new Dictionary<string, DependencySpec>())
             foreach (var key in spec.Env?.Keys ?? Array.Empty<string>()) ValidateEnvName("Dependency", name, key);
 
+        var kafkaSecurityPlans = ManagedKafkaSecurityPlan.ValidateEnvironment(env);
+
         var dependencyEnvToApply = new Dictionary<string, IReadOnlyDictionary<string, string>>(
             StringComparer.Ordinal);
         foreach (var (name, spec) in dependencies)
@@ -1836,6 +1908,11 @@ public static class EnvironmentMapper
                         DependencyContainer(),
                         dependencyEnv,
                         s_noEnvAccess);
+                }
+
+                if (kafkaSecurityPlans.TryGetValue(name, out var kafkaSecurityPlan))
+                {
+                    ConfigureManagedKafkaSecurity(builder, (IResourceBuilder<KafkaServerResource>)retained, kafkaSecurityPlan);
                 }
             }
 
@@ -2415,15 +2492,20 @@ public static class EnvironmentMapper
                 var result = new Dictionary<string, object>(StringComparer.Ordinal);
 
                 foreach (var (name, endpointRef) in serviceEndpoints)
-                    result[name] = StageServiceEndpoint(name, endpointRef, kafkaTargets);
+                    result[name] = await DiscoverAsync(name, () => Task.FromResult(StageServiceEndpoint(name, endpointRef, kafkaTargets)), ct).ConfigureAwait(false);
 
                 // §4 invariant: never use app.GetConnectionString(name) — it does not exist on
                 // DistributedApplication in Aspire 13.4.2 (spike S01-A-03 finding).
                 foreach (var (name, depBuilder) in dependencyBuilders)
                 {
-                    if (depBuilder.Resource is IResourceWithConnectionString cs)
+                    if (depBuilder.Resource is KafkaServerResource kafka && kafkaSecurityPlans.TryGetValue(name, out var securityPlan))
                     {
-                        var connStr = await cs.GetConnectionStringAsync(ct).ConfigureAwait(false);
+                        var endpoint = new EndpointReference(kafka, securityPlan.SecureEndpointName, KnownNetworkIdentifiers.LocalhostNetwork);
+                        result[name] = await DiscoverAsync(name, () => Task.FromResult(AuthorityText.Format(endpoint.Host, endpoint.Port)), ct).ConfigureAwait(false);
+                    }
+                    else if (depBuilder.Resource is IResourceWithConnectionString cs)
+                    {
+                        var connStr = await DiscoverAsync(name, () => cs.GetConnectionStringAsync(ct).AsTask(), ct).ConfigureAwait(false);
                         if (connStr is not null)
                             result[name] = connStr;
                     }
@@ -2435,7 +2517,7 @@ public static class EnvironmentMapper
                 // after StartAsync) and constructs the full connection string.
                 foreach (var (name, connBuilder) in depConnBuilders)
                 {
-                    var connStr = await connBuilder(ct).ConfigureAwait(false);
+                    var connStr = await DiscoverAsync(name, () => connBuilder(ct), ct).ConfigureAwait(false);
                     if (connStr is not null)
                         result[name] = connStr;
                 }
@@ -2449,6 +2531,24 @@ public static class EnvironmentMapper
             HealthGateResourceNames: healthGateNames,
             DependencyNames: dependencies.Keys.ToList())
         {
+            VerifyServerArtifactAccess = cancellationToken =>
+            {
+                foreach (var (name, groups) in serviceArtifacts.Concat(dependencyArtifacts))
+                {
+                    foreach (var file in groups.SelectMany(group => group.Files))
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        try { using var stream = File.OpenRead(file.SourcePath); }
+                        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                        {
+                            throw new OrchestrationException(new OrchestrationErrorInfo(
+                                OrchestrationErrorKind.Provision, name, null, null,
+                                "A declared server artefact could not be opened at acquisition. Check its access permissions and availability."), ex)
+                            { AcquisitionStage = ResourceAcquisitionStage.ServerMaterial };
+                        }
+                    }
+                }
+            },
             // The SAME dictionary instance the Configure closure writes into and the
             // ResolveServices closure reads from — not a copy, so it reflects staging as it
             // happens rather than the empty state at Map's return.
@@ -3100,7 +3200,9 @@ public static class EnvironmentMapper
 
         if (retained.Resource is KafkaServerResource kafka)
         {
-            var internalEndpoint = kafka.InternalEndpoint;
+            var secureEndpoint = kafka.Annotations.OfType<ManagedKafkaEndpointAnnotation>().SingleOrDefault();
+            var internalEndpoint = secureEndpoint is null ? kafka.InternalEndpoint
+                : new EndpointReference(kafka, secureEndpoint.PlaintextEndpointName, KnownNetworkIdentifiers.DefaultAspireContainerNetwork);
             return new DependencyEnvAccess(
                 FullConnection: BuildHostPortExpression(internalEndpoint),
                 Host: internalEndpoint.Property(EndpointProperty.Host),

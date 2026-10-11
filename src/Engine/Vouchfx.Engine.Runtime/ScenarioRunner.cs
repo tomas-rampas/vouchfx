@@ -1221,10 +1221,7 @@ public static class ScenarioRunner
             {
                 Assurance = SecurityAssurance.None
                     .Declaring(declaredTargets)
-                    .Refusing(
-                        oex.Info.Kind == OrchestrationErrorKind.SecurityConfirmation
-                            ? SecurityAbortKind.ProbeUnconfirmed
-                            : SecurityAbortKind.TopologyUnavailable),
+                    .WithAcquisitionFailure(oex),
             };
         }
         finally
@@ -2598,10 +2595,7 @@ public static class ScenarioRunner
             // See the REQ-018 paragraph above for the full statement.
             return await CompleteWithoutTopologyAsync(
                     StampWhereUnjudged(compilations, Verdict.EnvironmentError, topologyFailure),
-                    WithUnbuiltDocuments(assurance.Refusing(
-                        oex.Info.Kind == OrchestrationErrorKind.SecurityConfirmation
-                            ? SecurityAbortKind.ProbeUnconfirmed
-                            : SecurityAbortKind.TopologyUnavailable)),
+                    WithUnbuiltDocuments(assurance.WithAcquisitionFailure(oex)),
                     output,
                     decorate,
                     diffLookup,

@@ -59,8 +59,13 @@ script execution, a compile-budget cancellation and caller cancellation are not 
 invalid authored code. Genuine runtime inconclusive results still require `--fail-on-inconclusive`.
 
 **An Inconclusive suite with no executed scenario** retains its existing nonzero check independently.
-An ordinary topology startup failure carrying `EnvironmentError` is outside that check and retains
-`--fail-on-env-error` when it is the only fault ([issue #390](https://github.com/tomas-rampas/vouchfx/issues/390)).
+An unrelated or unattributed topology startup failure carrying `EnvironmentError` is outside that
+check and retains `--fail-on-env-error` when it is the only fault. A typed failure of a declared
+secured resource's own readiness, discovery or server-material access that prevents confirmation
+produces a non-zero default exit instead.
+Verdict aggregation is unchanged: `EnvironmentError` ranks above `Fail`. A completed failed
+assertion beside that broker's own unconfirmed readiness failure therefore aggregates to
+`EnvironmentError` and exits 3. An aggregate `Fail` still exits 1.
 A suite carrying both an authoring/provider refusal and an ungated environment error exits 4;
 `--fail-on-env-error` selects 3 first. Divergent shared declarations are authoring refusals even when
 the existing aggregate verdict is EnvironmentError. Unconfirmable security keeps its separate rule.
@@ -102,7 +107,7 @@ A suite that declares a `security:` block the engine **cannot confirm** exits no
 
 A run vouches for a declared `security:` block only when it confirmed **every** target that block
 declares — each secured endpoint reached, over the transport the declaration names, with the material
-the declaration names. Two shapes raise:
+the declaration names. Three shapes raise:
 
 - the post-health-gate **confirmation probe ran and measured the declaration not to hold**. The probe
   connects to the declared endpoint with exactly the material a step would use, so anything that stops
@@ -111,6 +116,10 @@ the declaration names. Two shapes raise:
   or the declared client identity cannot be **loaded** at all — a well-formed `clientKeyPassword` that
   cannot be resolved, that resolves to an empty value, or that does not decrypt the key. The run
   aborts before any step executes.
+- a **typed acquisition failure of the declared secured resource itself** prevented confirmation.
+  This covers its named readiness gate, endpoint discovery and server-material access. The
+  declaration must match that exact resource; an unrelated dependency or ambiguous global
+  startup exception is not attributed to it from diagnostic text.
 - **something refused the document** before it could be confirmed **and left some declared target
   unconfirmed**. Nothing downstream of a refusal runs, so the declaration is never validated, never
   probed and therefore never confirmed. Both halves carry weight, and the word carrying the second
@@ -127,10 +136,8 @@ the declaration names. Two shapes raise:
   wherever this page uses them (see *What does not break CI* below, and in particular the bullet on
   an unbuildable document beside a confirming sibling).
 
-Ending without that confirmation is not by itself the rule, and one shape sits outside both bullets: a
-topology that came **up** and then failed its health gate leaves the declaration unprobed, and a run
-whose **only** fault is that gate still exits 0. That is the deliberate exception recorded under
-*What does not break CI* below.
+Ending without confirmation is not by itself the rule. Unrelated or unattributed infrastructure
+failures remain outside these shapes and retain the opt-in policy described below.
 
 **What the refusal was about is not consulted, and that is the whole of the rule.** The engine does
 not ask whether the fault was a security fault; it asks whether the refusal left a declared target
@@ -211,7 +218,7 @@ many. Printed exactly when this rule, and no earlier rule, is why the run is non
 > failed is printed above; this line exists only to connect it to the exit code.
 
 It follows the security line's own reach — **stdout only**, absent from `--junit` and `--events` — and
-the two lines never print together: REQ-018's carve-out is decided inside `ExitCodes.FromVerdict`
+the two lines never print together: the security-confirmation carve-out is decided inside `ExitCodes.FromVerdict`
 before this rule is ever consulted, so whenever the security line is why the run is non-zero, this one
 stays silent rather than printing a second, redundant explanation. It names no step, deliberately: the
 diagnostic the guard itself printed above already names the offending step and its provider type where
@@ -220,20 +227,11 @@ does not identify the fragment), so one wording serves both arms truthfully.
 
 #### What does *not* break CI
 
-- **A topology that came up and then failed its health gate, when that is the run's *only* fault.**
-  Such a suite exits 0 by default, with or without a `security:` block, exactly as any other
-  environment error does. The qualification is load-bearing rather than cautious: a health-gate
-  failure never *clears* a refusal the same run already recorded, so a secured suite in which one
-  scenario was refused on an authoring fault before the topology failed its gate exits non-zero on
-  that refusal. Measured on the built CLI with neither gating flag: a two-scenario secured suite
-  whose first scenario omits a required `method:` and whose topology then fails to provision exits
-  **3**, where the identical pair with no `security:` block exits **0**. Narrowing the only-fault
-  case is [issue #390](https://github.com/tomas-rampas/vouchfx/issues/390); until it lands, an
-  unhealthy container in a secured suite that is otherwise clean can leave the declaration unprobed
-  and the pipeline green.
-- **Every other cause of an environment error** — an unhealthy container, an unpullable image, a seed
-  failure unrelated to security — raises nothing of its own, and a run whose only fault is one of
-  them still exits 0 by default.
+- **Unrelated or unattributed infrastructure failures, when they are the run's only fault.**
+  An unrelated unhealthy dependency, an ambiguous global startup failure or an ordinary seed
+  failure still exits 0 without `--fail-on-env-error`. Typed failure of the declared secured
+  resource's own readiness, discovery or server-material access is excluded from this exception.
+  Infrastructure failure never clears an authoring/provider refusal already recorded.
 - **The same document with no `security:` block.** Both arms now exit 4 — the unsecured one through
   the no-verdict rule (#369) — so what separates them is the security notice, not the code. Pinned by
   `SecurityAssuranceMatrixTests` rows 01 and 05–08b, on both run paths.
@@ -571,6 +569,17 @@ tag, whose SHA already **is** the commit. **If a `^{}` line is present, take tha
 single line's SHA is the commit SHA to pin.
 
 ---
+
+## Documentation publication
+
+Before publishing documentation, build and validate the final output:
+
+```bash
+mkdocs build --strict
+python scripts/check_site.py _site
+```
+
+The publication guard checks XML character data, including literal CDATA contiguous with ordinary text. XML script/style elements have no HTML source exemption. In JSON DATA, CDATA, IGNORE, INCLUDE, RCDATA and TEMP wrappers require valid headers and preserve adjacency between their bodies and surrounding text. The if, else and endif markers form boundaries; their condition text remains DATA and receives inline projection. Valid unfinished bodies are still scanned at end of input; unsupported headers and unfinished DATA tag syntax are refused safely. Independent JSON fields remain separate. Declaration, bogus-comment and processing-instruction openers form boundaries in JSON DATA; their bodies receive inline projection, including unfinished input. Malformed closing tags in DATA are refused safely, and each fragment is decoded only once. Actual HTML source comments and script/style bodies keep their exemptions. The guard does not execute CSS/JavaScript, fetch external frames or reproduce full browser layout.
 
 ## See also
 

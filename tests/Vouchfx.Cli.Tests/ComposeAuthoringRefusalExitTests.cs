@@ -93,9 +93,14 @@ public sealed class ComposeAuthoringRefusalExitTests
         using var fixture = new Inputs("caller-cancel");
         var output = new StringWriter();
         // Nominal sequential uses the generic FreshOwned recreation policy: pass completes first.
-        Assert.Equal(0, await fixture.RunAsync(output, parallel: null));
+        var cancellation = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => fixture.RunAsync(output, parallel: null));
+        Assert.Equal(fixture.Cancellation.Token, cancellation.CancellationToken);
         Assert.True(fixture.Cancellation.IsCancellationRequested);
         Assert.Contains("PASS", output.ToString(), StringComparison.Ordinal);
+        var archive = await File.ReadAllTextAsync(fixture.Events);
+        Assert.Contains("\"type\":\"step-completed\"", archive, StringComparison.Ordinal);
+        Assert.Contains("PASS", archive, StringComparison.Ordinal);
+        Assert.DoesNotContain(Inputs.Canary, archive + output, StringComparison.Ordinal);
         Assert.Equal(1, fixture.Process.UpCount);
         Assert.Equal(1, fixture.Process.RemovedContainers);
         Assert.False(fixture.Process.CleanupTokenWasCancelled);
@@ -130,10 +135,12 @@ public sealed class ComposeAuthoringRefusalExitTests
                     type: script.csharp
                     code: 'return;'
                 """);
-            File.WriteAllText(Path.Combine(Directory, "environment.compose.yaml"), """
+            // Cancellation cases keep the deliberate short deadline; ordinary faults must reach their native seam.
+            var startupTimeoutSeconds = fault is "post-up-deadline" or "caller-cancel" ? 1 : 30;
+            File.WriteAllText(Path.Combine(Directory, "environment.compose.yaml"), $$"""
                 version: 1
                 files: [./compose.yaml]
-                startupTimeoutSeconds: 1
+                startupTimeoutSeconds: {{startupTimeoutSeconds}}
                 cleanupTimeoutSeconds: 1
                 services:
                   api: { service: api, port: 8080, readiness: { path: /health, status: 200 } }

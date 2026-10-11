@@ -8,9 +8,15 @@ namespace Vouchfx.Engine.Orchestration.Environments;
 public sealed class EnvironmentDriverRegistry
 {
     private readonly FrozenDictionary<string, IEnvironmentDriver> _drivers;
+    private readonly Func<EnvironmentStartContext, CancellationToken, Task<IKeptTopology>>? _inlineStart;
 
     public EnvironmentDriverRegistry(IEnumerable<IEnvironmentDriver> drivers)
         => _drivers = drivers.ToFrozenDictionary(d => d.Id, StringComparer.Ordinal);
+
+    // Test-only internal seam: retain normal inline validation/declarations without launching DCP.
+    internal EnvironmentDriverRegistry(IEnumerable<IEnvironmentDriver> drivers,
+        Func<EnvironmentStartContext, CancellationToken, Task<IKeptTopology>> inlineStart) : this(drivers)
+        => _inlineStart = inlineStart;
 
     public static EnvironmentDriverRegistry BuiltIn { get; } = new(new IEnvironmentDriver[] { new ComposeEnvironmentDriver() });
 
@@ -25,7 +31,7 @@ public sealed class EnvironmentDriverRegistry
                 ?? new Dictionary<string, string>();
             return new EnvironmentPlan(new EnvironmentDeclarations(services, dependencies), "inline",
                 EnvironmentStatePolicy.Inline,
-                async (context, ct) => await context.Request.StartAsync(context.Security, context.Paths, ct).ConfigureAwait(false),
+                _inlineStart ?? (async (context, ct) => await context.Request.StartAsync(context.Security, context.Paths, ct).ConfigureAwait(false)),
                 declaredSecurity: SecuredTargets.Enumerate(environment).ToArray())
             { PreserveInnerLease = true };
         }

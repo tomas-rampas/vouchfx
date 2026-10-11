@@ -402,6 +402,15 @@ internal static class ProviderPipeline
             return Refuse(securityProfileWiringFailure);
         }
 
+        try
+        {
+            ManagedKafkaSecurityPlan.ValidateEnvironment(ast.Environment);
+        }
+        catch (ArgumentException ex)
+        {
+            return Refuse(new ValidationFailure(ex.Message) { IsSecurityPreflight = true });
+        }
+
         // REQ-023 (amended 2026-08-04): one target, one staged form. A target addressed by BOTH
         // the HTTP family (which consumes an https:// URL) and the Kafka families (which consume
         // a bare host:port bootstrap authority) cannot be staged correctly for both, and picking a

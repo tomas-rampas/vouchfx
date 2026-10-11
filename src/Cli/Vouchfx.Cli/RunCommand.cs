@@ -421,13 +421,12 @@ internal static class RunCommand
     /// budgets can never drift apart.
     /// </summary>
     /// <remarks>
-    /// 30s comfortably covers the PATHOLOGICAL sum of <c>HeadlessTopology.DisposeAsync</c>'s two
-    /// sequential bounded waits (§4.5): its own 15s <c>StopAsync</c> CTS, PLUS the subsequent
-    /// (unconditional, un-timeout-wrapped in that method) <c>_app.DisposeAsync()</c> call, which
-    /// DCP's own internal dispose/cleanup path can itself take up to ~10s to complete — a worst
-    /// case of ~25s. An earlier 20s value covered only the 15s <c>StopAsync</c> bound in isolation
-    /// and left a narrow re-leak window against that combined ~25s worst case; 30s clears it with
-    /// headroom while remaining FINITE, so a genuinely wedged run still eventually terminates.
+    /// The default topology disposal route allows 15s for <c>StopAsync</c>, then awaits
+    /// <c>DisposeAsync</c>. Caller cancellation during acquisition instead permits 30s for
+    /// <c>StopAsync</c> alone before that subsequent disposal. This outer force-termination
+    /// budget is unchanged and cannot cover that route's maximum duration. In-process
+    /// caller-token cleanup tests do not prove Ctrl-C, SIGTERM or stdin-EOF completion before
+    /// their force-exit timers. The finite process deadline remains a separate limit.
     /// </remarks>
     internal const int TeardownBudgetSeconds = 30;
 
@@ -1103,7 +1102,8 @@ internal static class RunCommand
     /// This calls <see cref="ScenarioRunner.RunSuiteAsync"/> (or
     /// <see cref="ParallelSuiteRunner.RunParallelAsync"/> when <paramref name="parallel"/> is
     /// supplied, or the watch loop when <paramref name="watch"/> is set), which starts an Aspire
-    /// topology and therefore needs Docker — so this method is NOT exercised by the unit tests.
+    /// topology by default. The internal registered-driver seam also exercises this normal CLI
+    /// path in Docker-free tests; native acquisition still requires Docker.
     /// Its Docker-free building blocks (<see cref="ScenarioDiscovery.Discover"/>,
     /// <see cref="ProviderRegistryFactory.BuildCoreRegistry"/>,
     /// <see cref="AggregateVerdict"/>, <see cref="ExitCodes.FromVerdict"/>, the
@@ -1249,7 +1249,7 @@ internal static class RunCommand
         // run, which is how a real engine defect gets relabelled a requested shutdown.
         try
         {
-            return await ExecuteRunPipelineAsync(
+            var code = await ExecuteRunPipelineAsync(
                 path,
                 criteria,
                 parallel,
@@ -1265,6 +1265,12 @@ internal static class RunCommand
                 telemetryHook,
                 runCancellationToken,
                 environmentDrivers).ConfigureAwait(false);
+            // Parallel slots retain their Inconclusive cancellation records and join cleanup
+            // before returning. Normal runs preserve the original caller's stop signal at this
+            // boundary. A completed watch loop keeps its graceful stop result; the distinct
+            // linked stdin-EOF token must not turn into a user cancellation here.
+            if (!watch) cancellationToken.ThrowIfCancellationRequested();
+            return code;
         }
         catch (OperationCanceledException ex)
             when (IsStdinEofShutdown(linkedShutdownSource, cancellationToken))

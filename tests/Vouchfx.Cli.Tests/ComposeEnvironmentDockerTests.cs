@@ -319,10 +319,20 @@ public sealed class ComposeEnvironmentDockerTests
             var output = process.StandardOutput.ReadToEndAsync(deadline.Token);
             var error = process.StandardError.ReadToEndAsync(deadline.Token);
             try { await process.WaitForExitAsync(deadline.Token); }
-            finally { if (!process.HasExited) process.Kill(entireProcessTree: true); }
+            finally
+            {
+                KillTreeQuietly(process);
+                using var reap = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                await process.WaitForExitAsync(reap.Token);
+            }
             Assert.True(process.ExitCode == 0, "Docker acceptance prerequisite/operation failed (exit " + process.ExitCode + "); native output withheld.");
             await error;
             return (await output).Trim();
+        }
+
+        private static void KillTreeQuietly(Process process)
+        {
+            if (!process.HasExited) process.Kill(entireProcessTree: true);
         }
     }
 }

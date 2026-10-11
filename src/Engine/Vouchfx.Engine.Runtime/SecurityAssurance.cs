@@ -24,9 +24,10 @@ namespace Vouchfx.Engine.Runtime;
 /// went unconfirmed.
 /// </summary>
 /// <remarks>
-/// This enum names a CAUSE, never a verdict and never an exit code. Three of its members can raise
-/// REQ-018's non-zero exit — <see cref="AuthoringFault"/> only in conjunction with a declared target
-/// left unconfirmed, the other two unconditionally — and the fourth deliberately cannot. Every one
+/// This enum names a CAUSE, never a verdict and never an exit code. Four members can raise
+/// the non-zero exit: <see cref="AuthoringFault"/> and <see cref="SecuredTargetUnavailable"/> require
+/// a declared target left unconfirmed; the other two raise unconditionally. Unattributed topology
+/// failure deliberately cannot. Every one
 /// of those decisions lives in <see cref="SecurityAssurance.Unconfirmed"/> and nowhere else.
 /// </remarks>
 public enum SecurityAbortKind
@@ -173,17 +174,15 @@ public enum SecurityAbortKind
     SecurityDeclarationRejected,
 
     /// <summary>
-    /// The topology failed to start for a reason that is NOT a security-confirmation failure — an
-    /// unhealthy container, an image that cannot be pulled, a seed failure, a health-gate timeout.
+    /// An unrelated or unattributed infrastructure failure prevented topology acquisition,
+    /// or a seed failed without establishing a failed declared secured endpoint.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <strong>This member never raises, and that is the fence rather than an oversight.</strong> A
-    /// secured suite whose ONLY fault is a topology that came up and failed its health gate exits 0
-    /// by default; that is issue #390 and it is deliberately out of scope here. It needs a
-    /// resource-scoped narrowing plus an endpoint-resolvability preflight, and its own blast-radius
-    /// measurement — closing it from inside this derivation would be one clause in the same
-    /// expression and would redden every suite whose unrelated container was slow to come up.
+    /// This member does not raise by itself. Exact typed resource/stage evidence that the
+    /// declared secured target's own readiness, discovery or server-material access failed uses
+    /// <see cref="SecuredTargetUnavailable"/> instead. A secured declaration alone is not evidence
+    /// that an unrelated container or an ambiguous global startup failure belongs to that target.
     /// </para>
     /// <para>
     /// <strong>"Never raises" is a property of this MEMBER, not of the run that recorded it — and
@@ -191,10 +190,8 @@ public enum SecurityAbortKind
     /// <see cref="SecurityAssurance.Refusing"/> keeps
     /// the HIGHER precedence and this kind ranks lowest, so a scenario already refused as
     /// <see cref="AuthoringFault"/> keeps that refusal when the shared topology then fails its gate,
-    /// and the suite raises on it. Measured on the built CLI: a two-scenario secured suite whose
-    /// first scenario omits a required <c>method:</c> and whose topology then fails to provision
-    /// exits 3, where the identical pair with no <c>security</c> block exits 0. Every surface
-    /// stating this fence states it with the only-fault qualification for that reason.
+    /// and the suite raises on it. The separate typed authoring-refusal policy also prevents
+    /// a refused document from exiting success beside an infrastructure failure.
     /// </para>
     /// </remarks>
     TopologyUnavailable,
@@ -210,6 +207,9 @@ public enum SecurityAbortKind
     /// a declared block, so it cannot fire for a document that declared nothing.
     /// </remarks>
     ProbeUnconfirmed,
+
+    /// <summary>A declared secured resource's own readiness, discovery or server-material access prevented confirmation.</summary>
+    SecuredTargetUnavailable,
 }
 
 /// <summary>
@@ -335,6 +335,7 @@ public sealed record SecurityAssurance(
     /// <remarks>
     /// <para>
     /// <c>raise = (aborted on an authoring fault ∧ some declared target went unconfirmed)
+    /// ∨ (the declared target's own typed acquisition failed ∧ it went unconfirmed)
     /// ∨ (probe raised OrchestrationErrorKind.SecurityConfirmation)
     /// ∨ (the refusal was located in the declaration itself)</c>.
     /// </para>
@@ -356,8 +357,8 @@ public sealed record SecurityAssurance(
     /// confirmed ALL of it.
     /// </para>
     /// <para>
-    /// <strong>The comparison lives INSIDE the first disjunct, not above the three, and that is
-    /// what the safety of this expression actually rests on.</strong> All three disjuncts require a
+    /// <strong>The comparison lives INSIDE the conditional disjuncts, not above all four, and that is
+    /// what the safety of this expression actually rests on.</strong> All four disjuncts require a
     /// specific non-null <see cref="Refusal"/>, so a run that reaches normal completion with a
     /// declared target missing from <see cref="Confirmed"/> and NO refusal recorded does not raise
     /// and exits 0. Nothing in this expression prevents that shape; it is unreachable today only
@@ -369,7 +370,7 @@ public sealed record SecurityAssurance(
     /// so a probe change that skipped a target turns a test red rather than a pipeline green.
     /// </para>
     /// <para>
-    /// The third disjunct is a DEVIATION from REQ-003's two-clause formula, taken deliberately and
+    /// The security-declaration rejection disjunct is a DEVIATION from REQ-003's two-clause formula, taken deliberately and
     /// measured: <c>security: mtls</c> binds no <c>SecuritySpec</c>, so the canonical walk reports
     /// nothing declared and the first two clauses take a shipped exit 4 to 0. See
     /// <see cref="SecurityAbortKind.SecurityDeclarationRejected"/> for the full account.
@@ -387,12 +388,15 @@ public sealed record SecurityAssurance(
     /// one of each.
     /// </para>
     /// <para>
-    /// <see cref="SecurityAbortKind.TopologyUnavailable"/> is absent from all three disjuncts
-    /// deliberately — see its own remarks; that is #390's fence.
+    /// A typed failure of the declared secured target's own acquisition raises only while that
+    /// declaration remains unconfirmed. <see cref="SecurityAbortKind.TopologyUnavailable"/> is
+    /// absent from all four disjuncts deliberately: unrelated and unattributed failures retain
+    /// their infrastructure gating policy.
     /// </para>
     /// </remarks>
     public bool Unconfirmed =>
         (Refusal == SecurityAbortKind.AuthoringFault && SomeDeclaredTargetWentUnconfirmed)
+        || (Refusal == SecurityAbortKind.SecuredTargetUnavailable && SomeDeclaredTargetWentUnconfirmed)
         || Refusal == SecurityAbortKind.ProbeUnconfirmed
         || Refusal == SecurityAbortKind.SecurityDeclarationRejected;
 
@@ -439,6 +443,16 @@ public sealed record SecurityAssurance(
     private bool SomeDeclaredTargetWentUnconfirmed =>
         Declared.Any(declared => !Confirmed.Contains(declared));
 
+    internal SecurityAssurance WithAcquisitionFailure(OrchestrationException failure)
+    {
+        if (failure.Info.Kind == OrchestrationErrorKind.SecurityConfirmation)
+            return Refusing(SecurityAbortKind.ProbeUnconfirmed);
+        var targetFailure = failure.AcquisitionStage is ResourceAcquisitionStage.Readiness or ResourceAcquisitionStage.Discovery or ResourceAcquisitionStage.ServerMaterial
+            && Declared.Any(target => string.Equals(target.Name, failure.Info.ResourceName, StringComparison.Ordinal)
+                && !Confirmed.Contains(target));
+        return Refusing(targetFailure ? SecurityAbortKind.SecuredTargetUnavailable : SecurityAbortKind.TopologyUnavailable);
+    }
+
     /// <summary>
     /// Records a refusal, keeping the more consequential one when a run has already recorded a
     /// different door.
@@ -449,7 +463,8 @@ public sealed record SecurityAssurance(
     /// sibling that runs, and the shared topology can then fail its own way. Precedence is
     /// <see cref="SecurityAbortKind.ProbeUnconfirmed"/> &gt;
     /// <see cref="SecurityAbortKind.SecurityDeclarationRejected"/> &gt;
-    /// <see cref="SecurityAbortKind.AuthoringFault"/> &gt;
+    /// <see cref="SecurityAbortKind.AuthoringFault"/> =
+    /// <see cref="SecurityAbortKind.SecuredTargetUnavailable"/> &gt;
     /// <see cref="SecurityAbortKind.TopologyUnavailable"/> — most specific evidence about the
     /// declaration first — so a topology that merely failed to come up can never overwrite a
     /// recorded authoring refusal, and a measured probe failure always wins.
@@ -612,6 +627,7 @@ public sealed record SecurityAssurance(
     {
         SecurityAbortKind.ProbeUnconfirmed => 3,
         SecurityAbortKind.SecurityDeclarationRejected => 2,
+        SecurityAbortKind.SecuredTargetUnavailable => 1,
         SecurityAbortKind.AuthoringFault => 1,
         _ => 0,
     };

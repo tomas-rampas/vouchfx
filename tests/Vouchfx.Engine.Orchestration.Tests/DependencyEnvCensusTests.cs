@@ -248,7 +248,11 @@ public sealed class DependencyEnvCensusTests
     [Fact]
     public void EveryEngineSetVariableOnAnAuthorAddressableResource_IsInTheReservedSet()
     {
-        var reserved = ReservedEnvKeys();
+        var reserved = ReservedEnvKeys().ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
+        var managedKafkaKeys = (IReadOnlySet<string>)typeof(ManagedKafkaSecurityPlan)
+            .GetField("s_mechanicalKeys", BindingFlags.NonPublic | BindingFlags.Static)!.GetValue(null)!;
+        // Global client.auth is refused as an equivalent override; only listener-specific auth is written.
+        reserved["kafka"] = managedKafkaKeys.Where(key => key != "KAFKA_SSL_CLIENT_AUTH").ToHashSet(StringComparer.Ordinal);
         var schemaTypes = SchemaDependencyTypeEnum();
         var failures = new List<string>();
 
@@ -330,6 +334,21 @@ public sealed class DependencyEnvCensusTests
                     + "no reason. Remove it from the table.");
             }
         }
+
+        foreach (var canonical in managedKafkaKeys)
+            foreach (var key in new[] { canonical, canonical[..6] + canonical[6..].ToLowerInvariant(),
+            canonical[..6] + canonical[6..].Replace('_', '.') })
+            {
+                var dependency = new DependencySpec("kafka", null, null)
+                {
+                    Security = new SecuritySpec("tls", "tcp", null, null, null, null),
+                    Env = new Dictionary<string, string> { [key] = "census-override" },
+                };
+                var environment = new EnvironmentSpec(null, new Dictionary<string, DependencySpec> { ["broker"] = dependency }, null, null, null);
+                Assert.Throws<TopologyAuthoringException>(() => EnvironmentMapper.Map(environment));
+                Assert.Null(Record.Exception(() => EnvironmentMapper.Map(environment with
+                { Dependencies = new Dictionary<string, DependencySpec> { ["broker"] = dependency with { Security = null } } })));
+            }
 
         Assert.True(
             failures.Count == 0,
@@ -632,6 +651,25 @@ public sealed class DependencyEnvCensusTests
         {
             var enclosing = invocation.FirstAncestorOrSelf<MethodDeclarationSyntax>();
             var enclosingName = enclosing?.Identifier.ValueText;
+
+            if (ReferenceEquals(source, mapper) && enclosingName == "ConfigureManagedKafkaSecurity"
+                && key is LambdaExpressionSyntax callback && invocation.Expression is MemberAccessExpressionSyntax
+                { Expression: IdentifierNameSyntax { Identifier.ValueText: "broker" } })
+            {
+                var writes = callback.DescendantNodes().OfType<AssignmentExpressionSyntax>().ToArray();
+                if (writes.Length == 0) failures.Add($"{where}: managed Kafka callback has no recognised environment writes.");
+                foreach (var write in writes)
+                {
+                    if (write.Left is ElementAccessExpressionSyntax
+                        { Expression: MemberAccessExpressionSyntax { Expression: IdentifierNameSyntax { Identifier.ValueText: "context" }, Name.Identifier.ValueText: "EnvironmentVariables" } } element
+                        && element.ArgumentList.Arguments.Count == 1
+                        && element.ArgumentList.Arguments[0].Expression is LiteralExpressionSyntax variableName
+                        && variableName.IsKind(SyntaxKind.StringLiteralExpression))
+                        engineSetByType["kafka"].Add(variableName.Token.ValueText);
+                    else failures.Add($"{where}: unrecognised managed Kafka write {Excerpt(write)}. Extend the conditional ownership census explicitly.");
+                }
+                return;
+            }
 
             if (key is IdentifierNameSyntax dynamicKey)
             {

@@ -210,30 +210,17 @@ public sealed class SecurityConfirmationExitCodeTests
     // needs nothing, which is precisely what carrying evidence rather than a conclusion buys.
 
     /// <summary>
-    /// <strong>THE FENCE (#390), stated as a test rather than as a comment.</strong> A secured
-    /// suite whose ONLY refusal is a topology that reached the health gate and failed it exits 0 —
-    /// unchanged, deliberately, and OUT OF SCOPE for this derivation. An implementation that reddens
-    /// this row has built something the spec forbids.
-    /// <para>
-    /// The only-refusal qualification is what this row measures and is not decoration:
-    /// <c>Refusing</c> keeps the higher precedence, so a suite that recorded an
-    /// <see cref="SecurityAbortKind.AuthoringFault"/> before the gate failed keeps THAT refusal and
-    /// raises on it. This row therefore says nothing about such a suite, and the doc surfaces
-    /// stating the fence carry the same qualification.
-    /// </para>
-    /// <para>
-    /// Both spellings of the row are here: the unhealthy resource being the declared secured target
-    /// and it being an unrelated one. The engine cannot tell them apart at this seam — the
-    /// discriminator is <c>OrchestrationErrorKind</c>, which yields
-    /// <see cref="SecurityAbortKind.TopologyUnavailable"/> either way — and that indiscriminacy is
-    /// exactly what #390 is about. Closing it needs a resource-scoped narrowing plus an
-    /// endpoint-resolvability preflight, with its own blast-radius measurement.
-    /// </para>
+    /// Unrelated or unattributed topology failures remain opt-in, even in a secured document.
+    /// This row deliberately carries only <see cref="SecurityAbortKind.TopologyUnavailable"/>;
+    /// typed failure of the declaration's own resource uses
+    /// <see cref="SecurityAbortKind.SecuredTargetUnavailable"/> instead, measured through the
+    /// normal CLI in <see cref="ManagedKafkaSecurityCliTests"/>. A topology failure also cannot
+    /// overwrite an earlier raising authoring or probe refusal.
     /// </summary>
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public void FromVerdict_SecuredSuiteWhoseHealthGateFailed_StillExitsSuccess(bool secured)
+    public void FromVerdict_UnattributedTopologyFailure_RemainsOptInForSecuredOrUnsecuredSuite(bool secured)
     {
         var assurance = secured
             ? Secured(SecurityAbortKind.TopologyUnavailable)

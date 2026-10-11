@@ -1,31 +1,5 @@
-// dependency-env EDGE-008 — `security:` and `env:` on the SAME dependency.
-//
-// EDGE-008 has two halves, and they pull in opposite directions:
-//
-//   1. `env:` must not disturb the mTLS probe a `kafka` dependency's `security:` block drives.
-//   2. The collision guard must not accidentally reserve names the security path sets on the
-//      author's behalf.
-//
-// MEASURED, for the second half, against this tree: THE SECURITY PATH SETS NO ENVIRONMENT
-// VARIABLE ON ANY RESOURCE. `WithEnvironment` occurs in exactly one file under `src/` —
-// `EnvironmentMapper.cs` — and the security path's only container mutation is
-// `ServerArtifactInjection.Apply`, which calls `WithContainerFiles` (a copy through the daemon
-// API) and nothing else. A secured broker's `KAFKA_SSL_*` settings are AUTHOR-supplied, not
-// engine-supplied: `examples/security-mtls.e2e.yaml` writes them in its own `env:` map and in
-// the entrypoint script it ships as a `serverArtifacts` entry. So there is no name the security
-// path could reserve on the author's behalf, and `s_engineSetEnvKeys` correctly has no `kafka`
-// row — the `kafka` registration's only `WithEnvironment` calls land on the schema-registry
-// SIDECAR (`<name>-sr`), which no author can name.
-//
-// WHICH TIER THIS FILE ASSERTS AT, AND WHICH IT DOES NOT. Everything here is the non-Docker
-// in-memory tier: `Map` runs its eager passes and `Configure` builds the resource graph, and the
-// `EnvironmentCallbackAnnotation` callbacks resolve with no live endpoint (see the test-strategy
-// note at the top of EnvironmentMapperTests.cs). The LIVE probe arm of EDGE-008 — a secured
-// `kafka` dependency with an unrelated `env:` entry completing its authenticated round trip —
-// is `SecuredEndpointProbeTests.Confirm_SecuredKafkaDependencyCarryingAnUnrelatedEnvEntry_
-// StillConfirms`, against a loopback TLS listener, also without Docker. What NO tier here covers
-// is a real broker container started with both an author `env:` map and engine-injected server
-// artefacts: that is the `requires=docker` mTLS suite, and it was NOT run for this file.
+// Secured managed Kafka owns listener mechanics conditionally; certificate material and unrelated env remain authored.
+// This suite checks the in-memory mapper and declaration identity, without starting a broker.
 using System.Reflection;
 using Aspire.Hosting;
 using Aspire.Hosting.ApplicationModel;
@@ -140,49 +114,18 @@ public sealed class DependencyEnvSecurityInteropTests
             + string.Join(", ", baselineVars.Keys));
     }
 
-    // ── 3. no refusal fires: `kafka` reserves no names ────────────────────────────────────
-
-    /// <summary>
-    /// <c>kafka</c> has no row in <c>EnvironmentMapper.s_engineSetEnvKeys</c>, so no <c>env:</c>
-    /// key is refused on a secured broker — including a <c>KAFKA_SSL_*</c> name, which is the
-    /// shape EDGE-008's second clause is about.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// <b>Why <c>kafka</c> reserves nothing, measured rather than assumed.</b> The security path
-    /// sets no environment variable on any resource — its only container mutation is
-    /// <c>ServerArtifactInjection.Apply</c>'s <c>WithContainerFiles</c> — and the <c>kafka</c>
-    /// registration's own <c>WithEnvironment</c> calls all land on the schema-registry sidecar
-    /// <c>&lt;name&gt;-sr</c>, a name no author can write. A secured broker's <c>KAFKA_SSL_*</c>
-    /// settings are AUTHOR-supplied; see <c>examples/security-mtls.e2e.yaml</c>. So a reserved
-    /// <c>kafka</c> row would refuse an author's entry for no reason, which is exactly what the
-    /// census test's second direction polices.
-    /// </para>
-    /// <para>
-    /// <b>The reserved table is read by reflection, not respelled.</b> The reserved names have ONE
-    /// declaration and this test must not become a second one — so the loop below is driven by
-    /// whatever the table actually holds. A name added under any type is automatically
-    /// asserted not to be refused on <c>kafka</c>.
-    /// </para>
-    /// <para>
-    /// <b>The positive control is not decoration.</b> "Nothing was refused" is also what a
-    /// completely disabled guard produces, so one row that MUST be refused is exercised through
-    /// the same <c>Map</c> call. Without it this test would stay green if the refusal were deleted
-    /// outright.
-    /// </para>
-    /// </remarks>
+    // Unsecured Kafka has no unconditional reserved row; secured Kafka protects its own mechanics.
     [Fact]
-    public async Task KafkaReservesNoEngineSetName_SoASecuredBrokersOwnEnvEntriesAreApplied()
+    public async Task KafkaUnconditionalNamesRemainUnreserved_WhileSecuredListenerMechanicsAreProtected()
     {
         var reserved = ReservedEnvKeys();
 
-        Assert.False(
-            reserved.ContainsKey("kafka"),
-            "s_engineSetEnvKeys has grown a 'kafka' row. The engine sets no environment variable "
-            + "on a kafka dependency's own container — the registration's WithEnvironment calls "
-            + "land on the '<name>-sr' schema-registry sidecar, and the security path sets none "
-            + "at all — so a reserved name here refuses an author's entry for no reason. That is "
-            + "EDGE-008's second clause and the census test's second direction.");
+        Assert.False(reserved.ContainsKey("kafka"));
+        var secured = ParseEnvironment(SecuredKafkaYaml(EnvBlock("KAFKA_LISTENERS", "override")));
+        Assert.Throws<TopologyAuthoringException>(() => EnvironmentMapper.Map(secured));
+        var broker = secured.Dependencies![DependencyName];
+        Assert.Null(Record.Exception(() => EnvironmentMapper.Map(secured with
+        { Dependencies = new Dictionary<string, DependencySpec> { [DependencyName] = broker with { Security = null } } })));
 
         // Nothing reserved for ANY other type is refused on kafka: the guard is per type, not a
         // global denylist. Driven off the table itself so a new name is covered on the day it
@@ -282,7 +225,20 @@ public sealed class DependencyEnvSecurityInteropTests
     /// </summary>
     private static async Task<Dictionary<string, object>> MapAndResolveAsync(string yaml)
     {
-        var mapped = EnvironmentMapper.Map(ParseEnvironment(yaml));
+        var environment = ParseEnvironment(yaml);
+        var directory = Directory.CreateTempSubdirectory("vouchfx-kafka443-interop-").FullName;
+        var spec = environment.Dependencies![DependencyName];
+        if (spec.Env?.TryGetValue("KAFKA_SSL_KEYSTORE_LOCATION", out var location) == true)
+        {
+            File.WriteAllText(Path.Combine(directory, "broker.pem"), "model fixture, never consumed");
+            spec = spec with
+            {
+                Security = spec.Security! with
+                { ServerArtifacts = new[] { new SecurityServerArtifactSpec("./broker.pem", location) } }
+            };
+            environment = environment with { Dependencies = new Dictionary<string, DependencySpec> { [DependencyName] = spec } };
+        }
+        var mapped = EnvironmentMapper.Map(environment, directory);
         var builder = CreateBuilder();
         mapped.Configure(builder);
 

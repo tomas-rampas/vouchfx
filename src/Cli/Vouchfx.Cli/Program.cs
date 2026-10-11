@@ -85,10 +85,11 @@ rootCommand.Add(EnvironmentCommand.Build());
 //     stopped by a human's Ctrl-C or by a host process's SIGTERM — e.g. an MCP server that spawns
 //     this CLI) gets a BOUNDED, FINITE budget instead of the ~2s default. An earlier value here
 //     was 20s — comfortably above the 15s StopAsync bound ALONE, but not above the PATHOLOGICAL
-//     sum of that 15s StopAsync wait plus the subsequent ~10s DisposeAsync wait (~25s worst
-//     case), leaving a narrow re-leak window. RunCommand.TeardownBudgetSeconds (30) clears that
-//     combined worst case with headroom while staying deliberately NOT null, so a genuinely
-//     wedged run still eventually gets force-killed rather than hanging forever. THE SAME
+//     sum of that default 15s StopAsync wait plus the subsequent DisposeAsync wait. The separate
+//     cancellation-only startup route now permits 30s for StopAsync alone, then awaits disposal;
+//     this outer 30s signal budget does not cover its maximum duration. Caller-token tests do
+//     not establish Ctrl-C/SIGTERM cleanup before force termination. The finite outer budget
+//     remains unchanged, so a wedged run still eventually gets force-killed. THE SAME
 //     constant also bounds ShutdownBackstop — the stdin-EOF graceful-shutdown seam's own
 //     force-exit timer (RunCommand.ExecuteAsync) — so both termination paths give a wedged `run`
 //     an identical grace period.

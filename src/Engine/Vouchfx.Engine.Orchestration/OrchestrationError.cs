@@ -161,6 +161,11 @@ public sealed class OrchestrationException : Exception
     /// </summary>
     public OrchestrationErrorInfo Info { get; }
 
+    /// <summary>Only explicit resource-scoped acquisition doors assign this evidence.</summary>
+    internal ResourceAcquisitionStage AcquisitionStage { get; init; }
+
     private static string BuildMessage(OrchestrationErrorInfo info) =>
         $"Orchestration {info.Kind} on resource '{info.ResourceName}': {info.Detail}";
 }
+
+internal enum ResourceAcquisitionStage { Unattributed, Readiness, Discovery, ServerMaterial }

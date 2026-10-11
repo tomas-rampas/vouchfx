@@ -487,6 +487,7 @@ public sealed class SuiteTopology : IAsyncDisposable, IKeptTopology
         // declarative reason — including a pinned port that clashes with a sibling `httpPort` —
         // should be told THAT, not told about a port collision it also happens to have.
         EnsurePinnedHostPortsAreFree(environment);
+        mapped.VerifyServerArtifactAccess(cancellationToken);
 
         // ----------------------------------------------------------------
         // Step 2: Start the headless Aspire host.
@@ -528,6 +529,12 @@ public sealed class SuiteTopology : IAsyncDisposable, IKeptTopology
             // own FormatException when it materialises a malformed env value, DCP, Docker — all
             // of which are genuine engine/infrastructure faults and belong in EnvironmentError.
             // Nothing has started at this point either way: Configure runs before builder.Build().
+            throw;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // A caller cancellation is not an infrastructure verdict. Headless startup has
+            // already disposed its failed start; preserve the original cancellation signal.
             throw;
         }
         catch (Exception ex)
@@ -572,6 +579,12 @@ public sealed class SuiteTopology : IAsyncDisposable, IKeptTopology
                     // Already classified — propagate as-is (will be caught by outer try/catch).
                     throw;
                 }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    // The resource gate's own deadline remains a typed readiness failure below.
+                    // Only the caller's explicit cancellation bypasses verdict classification.
+                    throw;
+                }
                 catch (Exception ex)
                 {
                     // #420's flight recorder is still armed here, and this is the catch that
@@ -596,7 +609,11 @@ public sealed class SuiteTopology : IAsyncDisposable, IKeptTopology
                     // the classifier uses the message heuristics (timeout / unhealthy / cancelled).
                     var info = OrchestrationErrorClassifier.Classify(
                         ex, imageRef: null, resourceName: resourceName);
-                    throw new OrchestrationException(info, ex);
+                    throw new OrchestrationException(info, ex)
+                    {
+                        AcquisitionStage = cancellationToken.IsCancellationRequested
+                            ? ResourceAcquisitionStage.Unattributed : ResourceAcquisitionStage.Readiness,
+                    };
                 }
             }
 
@@ -737,7 +754,10 @@ public sealed class SuiteTopology : IAsyncDisposable, IKeptTopology
 
             // Any health-gate or discovery failure: dispose the already-started topology
             // so containers started by HeadlessTopology.StartAsync do not leak.
-            await topology.DisposeAsync().ConfigureAwait(false);
+            if (ex is OperationCanceledException && cancellationToken.IsCancellationRequested)
+                await topology.DisposeAfterCallerCancellationAsync().ConfigureAwait(false);
+            else
+                await topology.DisposeAsync().ConfigureAwait(false);
             throw;
         }
     }

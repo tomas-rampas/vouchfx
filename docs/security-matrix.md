@@ -25,41 +25,38 @@ container starts.
 
 ## The short answer
 
-- **Kafka service targets** — reachable over TLS and mutual TLS through an
-  `environment.services` entry for an author-configured broker. The managed `kafka`
-  dependency accepts security declarations and configures the client, but its secured listener
-  advertisement remains unresolved ([#443](https://github.com/tomas-rampas/vouchfx/issues/443)).
-  Use the service-based example while that managed path is incomplete.
+- **Kafka targets** — TLS and mutual TLS through an author-configured image-form service
+  or the default managed `kafka` dependency using the
+  [file-backed PEM recipe](managed-kafka-security.md). Managed advertisement, client bootstrap
+  and confirmation use the same allocated host address. The recipe's measured host/image scope
+  is stated in that guide; it does not establish SASL or external-driver security support.
 - **The HTTP family** (`http.rest`, `http.soap`, `metrics-assert.prometheus`) — reachable over
   HTTPS, presenting a client certificate, against any declared service.
 - **Everything else** — RabbitMQ, NATS, MongoDB, Redis, PostgreSQL, SQL Server, MySQL,
   Elasticsearch, and the remaining families — **not** reachable over a secured connection in 1.0.
 
-## Read this first: vouchfx secures the *client*, never the server
+## Server material and client expectations
 
 This is the single most likely surprise for a new enterprise adopter, so it is stated before the
 tables rather than after them.
 
-A `security:` block declares the **client-side** expectation for infrastructure whose server side is
-**already secured**. It does not cause vouchfx to secure anything. Where vouchfx starts the
-container itself — every managed dependency — it stages only the client half of the connection: the
-trust anchor, the client certificate and key, the transport protocol on the emitted client. It does
-not generate a server certificate, does not enable a listener's TLS, and does not reconfigure a
-stock image to demand an identity.
+A `security:` block declares the client expectation. Image-form services must provide their
+own secured listener configuration. The default managed Kafka path additionally configures
+its selected listener for TLS or mutual TLS from author-supplied PEM server artefacts; it
+does not generate certificates or reuse the client key as the broker key.
 
 So "vouchfx supports mutual-TLS Kafka" means this in practice:
 
-1. You supply an `environment.services` broker entry whose image and configuration already
-   serve a secured listener. A custom image alone does not establish that a managed dependency's
-   advertised address matches its allocated endpoint.
+1. You choose the documented managed Kafka PEM recipe, or supply an image-form service whose
+   listener configuration and advertised host port already agree.
 2. You supply its server-side material — keystore, truststore, certificate — through
    `security.serverArtifacts`, which vouchfx streams into that container at topology-build time.
 3. vouchfx configures the *client*: the step's producer or consumer connects over TLS with the
    certificate you declared.
 
-**You configure the server; vouchfx configures the client.** Declaring `security:` on a stock,
-engine-provisioned dependency does not secure it — it states an expectation the engine then confirms
-at run time, and fails the suite when the endpoint turns out not to speak TLS at all.
+**You supply server material; vouchfx confirms the declared connection.** Managed Kafka owns
+its listener mechanics. Services retain their author-owned server configuration. A security
+declaration alone cannot establish that files are readable or that a broker will start.
 
 One consequence worth knowing up front: a secured service's default health check becomes a TCP
 probe rather than an HTTP one, because a container health check cannot present a client certificate
@@ -118,7 +115,7 @@ A secured inline connection needs **all four** of the following:
    resolved security configuration — measured across all twenty-five Core providers, that is the
    two Kafka providers and the three HTTP-family providers, and no others.
 4. the topology reaches readiness and the target advertises an address reachable by that client.
-   The managed Kafka advertisement gap above is outside the first three checks.
+   Managed Kafka uses the selected allocated endpoint for both advertisement and client staging.
 
 Rule 3 is what makes the answer honest. Rules 1 and 2 alone would only tell you which suites
 *validate*; a suite can validate and still connect in plaintext if nothing on the provider side ever
@@ -135,8 +132,8 @@ Every Core provider, and what it can reach.
 | `http.rest` | services | **Yes** — TLS and mutual TLS | `image:`-form service only |
 | `http.soap` | services | **Yes** — TLS and mutual TLS | `image:`-form service only |
 | `metrics-assert.prometheus` | services | **Yes** — TLS and mutual TLS | `image:`-form service only |
-| `mq-publish.kafka` | `kafka` dependency, or a service | **Service targets** — TLS and mutual TLS | Plain-payload and Avro client paths; secured managed dependency blocked by #443 |
-| `mq-expect.kafka` | `kafka` dependency, or a service | **Service targets** — TLS and mutual TLS | Plain-payload and Avro client paths; secured managed dependency blocked by #443 |
+| `mq-publish.kafka` | `kafka` dependency, or a service | **Yes** — TLS and mutual TLS | Default managed PEM recipe or author-configured image-form service; see the recipe's proof scope |
+| `mq-expect.kafka` | `kafka` dependency, or a service | **Yes** — TLS and mutual TLS | Default managed PEM recipe or author-configured image-form service; see the recipe's proof scope |
 | `mq-publish.rabbitmq` | `rabbitmq` dependency | No | Server-side TLS deferred to 1.1 |
 | `mq-expect.rabbitmq` | `rabbitmq` dependency | No | Server-side TLS deferred to 1.1 |
 | `mq-publish.nats` | `nats` dependency | No | Server-side TLS deferred to 1.1 |
@@ -166,7 +163,7 @@ kind it is rejected outright — the *block*, not merely a particular profile va
 
 | `environment.dependencies` kind | Accepts `security:` | Status |
 | --- | --- | --- |
-| `kafka` | **Yes** | Client configuration accepted; secured managed listener advertisement incomplete (#443) |
+| `kafka` | **Yes** | Default managed PEM TLS/mTLS recipe; selected allocated listener is advertised and confirmed |
 | `postgres` | No | Deferred to 1.1 |
 | `sqlserver` | No | Deferred to 1.1 |
 | `mysql` | No | Deferred to 1.1 |
@@ -287,13 +284,11 @@ endpoint with the same material a step will use, and reports one of two named co
 A declaration it cannot confirm forces a nonzero exit as an environment error without additional
 gating flags. See [CI integration](ci-integration.md) for the complete exit policy.
 
-**Confirmation requires successful topology startup.** Current source still treats a readiness
-failure before the confirmation probe as an ordinary environment error, which can exit 0 by
-default even when it prevents confirmation of a secured target
-([#390](https://github.com/tomas-rampas/vouchfx/issues/390),
-[#376](https://github.com/tomas-rampas/vouchfx/issues/376)). Use `--fail-on-env-error` when such
-startup failures must fail CI. A successful process exit alone is not a confirmation record;
-check that the secured target reached one of the levels below.
+**Confirmation requires successful topology startup.** A typed failure of the declared secured
+resource's own readiness, endpoint discovery or server-material access that prevents confirmation
+now produces a non-zero default exit. An unrelated dependency failure or ambiguous global startup
+failure retains the ordinary `--fail-on-env-error` policy. A successful process exit alone is not
+a confirmation record; check that the secured target reached one of the levels below.
 
 **A green secured suite proves nothing about a secured file the run never executed, and it no longer
 pretends to.** A `.e2e.yaml` that parsed and was then refused for its contents never becomes a

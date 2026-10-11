@@ -48,8 +48,25 @@ internal sealed class ComposeProcess : IComposeProcess
         catch (Exception) { throw Failure("Docker CLI execution failed or exceeded its 8 MiB output limit. Check Docker/Compose installation and input size."); }
         finally
         {
-            try { if (process.Id != 0 && !process.HasExited) process.Kill(entireProcessTree: true); }
-            catch (InvalidOperationException) { }
+            KillTreeQuietly(process);
+            await ReapAsync(process).ConfigureAwait(false);
+        }
+    }
+
+    private static void KillTreeQuietly(Process process)
+    {
+        try { if (process.Id != 0 && !process.HasExited) process.Kill(entireProcessTree: true); }
+        catch (InvalidOperationException) { }
+    }
+
+    private static async Task ReapAsync(Process process)
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        try { if (process.Id != 0) await process.WaitForExitAsync(deadline.Token).ConfigureAwait(false); }
+        catch (InvalidOperationException) { }
+        catch (OperationCanceledException) when (deadline.IsCancellationRequested)
+        {
+            throw Failure("Docker CLI child did not terminate within its independent 10-second reap budget.");
         }
     }
 

@@ -612,7 +612,17 @@ public sealed class HeadlessTopology : IAsyncDisposable
     internal void DropDiagnostics() => _recorder?.Dispose();
 
     /// <inheritdoc />
-    public async ValueTask DisposeAsync()
+    public ValueTask DisposeAsync() => DisposeCoreAsync(TimeSpan.FromSeconds(15));
+
+    /// <summary>
+    /// Stops an already-started owned app after caller cancellation, independently of the cancelled token.
+    /// Startup can still be completing when cancellation arrives; <c>StopAsync</c> gets a separate
+    /// 30-second budget, followed by the existing awaited disposal. An outer process force-exit
+    /// deadline can interrupt this route; it is not a bound on the total disposal duration.
+    /// </summary>
+    internal ValueTask DisposeAfterCallerCancellationAsync() => DisposeCoreAsync(TimeSpan.FromSeconds(30));
+
+    private async ValueTask DisposeCoreAsync(TimeSpan stopTimeout)
     {
         if (_disposed)
         {
@@ -635,10 +645,12 @@ public sealed class HeadlessTopology : IAsyncDisposable
         // containers and the session network instead of racing process exit (§4.5 teardown
         // discipline). This mirrors Aspire's own DistributedApplicationFactory, which calls
         // StopAsync before DisposeAsync; DisposeAsync alone does NOT call StopAsync in Aspire 13.4.2.
-        // The 15s bound sits above DCP's own internal ~10s dispose/cleanup timeout, so under normal
+        // The default 15s bound sits above DCP's own internal ~10s dispose/cleanup timeout, so under normal
         // operation StopAsync returns well before the CTS fires and the CTS only trips on a wedged
         // stop — do not trim it below DCP's timeout or teardown would race DCP again.
-        using var stopCts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        // Caller cancellation during resource startup has a separate 30s budget: queued startup,
+        // Docker's termination grace period and exact resource deletion can outlast the default.
+        using var stopCts = new CancellationTokenSource(stopTimeout);
         try
         {
             await _app.StopAsync(stopCts.Token).ConfigureAwait(false);

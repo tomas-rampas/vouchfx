@@ -46,10 +46,11 @@ namespace Vouchfx.Cli;
 /// provider- or engine-surface guard (#480) each turn a <see cref="Success"/> this class returned
 /// into a non-zero code, without <see cref="FromVerdict"/> knowing. A suite that declares a
 /// <c>security</c> block the engine cannot confirm — REQ-005's post-health-gate probe fails,
-/// or a security preflight rejects the declaration before any container starts — exits non-zero
-/// WITHOUT <c>--fail-on-env-error</c>. Every OTHER cause of
-/// <see cref="Verdict.EnvironmentError"/> (an unhealthy container, an image that cannot be
-/// pulled, a seed failure unrelated to security) is unaffected and still exits
+/// a security preflight rejects the declaration before any container starts, or a typed failure
+/// of that declared target's own readiness, discovery or server-material access prevents
+/// confirmation — exits non-zero WITHOUT <c>--fail-on-env-error</c>. Unrelated and unattributed
+/// causes of <see cref="Verdict.EnvironmentError"/> (another unhealthy container, ambiguous global
+/// startup failure or a seed failure unrelated to security) are unaffected and still exit
 /// <see cref="Success"/> by default. The rationale: an unconfirmable security assertion is not
 /// an infrastructure flake the way a failed image pull is — it is an assertion the author
 /// explicitly wrote into the suite, and treating it as opt-in-only would let a team that forgot

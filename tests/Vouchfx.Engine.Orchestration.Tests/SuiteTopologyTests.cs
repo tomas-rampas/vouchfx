@@ -264,7 +264,8 @@ public sealed class SuiteTopologyTests : IDisposable
     /// </summary>
     /// <remarks>
     /// Also non-Docker, by construction. The service's <c>env</c> names a dependency that does not
-    /// exist, which <c>EnvironmentMapper.Map</c> rejects EAGERLY as an <see cref="ArgumentException"/>
+    /// exist, which <c>EnvironmentMapper.Map</c> rejects EAGERLY as an <see cref="ArgumentException"/>,
+    /// wrapped at the acquisition boundary as <see cref="TopologyAuthoringException"/>
     /// — Map is pure, and it runs before <c>HeadlessTopology.StartAsync</c> ever reaches DCP. So
     /// reaching that exception is positive proof of two things at once: the guard did not fire, and
     /// control got past Step 0 into real mapping.
@@ -287,10 +288,12 @@ public sealed class SuiteTopologyTests : IDisposable
             ImageRegistry: null,
             ImagePullPolicy: null);
 
-        await Assert.ThrowsAsync<ArgumentException>(
+        var failure = await Assert.ThrowsAsync<TopologyAuthoringException>(
             () => SuiteTopology.StartAsync(
                 environment: unsecured,
                 appHostAssemblyName: AppHostAssemblyName));
+        Assert.IsType<ArgumentException>(failure.InnerException);
+        Assert.Contains("references unknown dependency 'typo'", failure.Message, StringComparison.Ordinal);
     }
 
     // -----------------------------------------------------------------------

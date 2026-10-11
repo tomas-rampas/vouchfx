@@ -529,7 +529,7 @@ vouchfx distinguishes four outcomes (see `docs/01` §12.1 for the full taxonomy)
 |---------|---------|---------|----------------------|
 | **Pass** | All assertions passed. | A test runs end-to-end and all steps succeed. | 0 (success) |
 | **Fail** | An assertion failed — a genuine product defect. | `expect: { status: 200 }` but the API returned 500. | 1 (always breaks CI) |
-| **EnvironmentError** | Infrastructure problem, not a product defect. | Docker daemon unreachable, image pull fails, seed SQL fails. | 0 by default; 3 if `--fail-on-env-error` |
+| **EnvironmentError** | Infrastructure problem, not a product defect. | Docker daemon unreachable, image pull fails, seed SQL fails. | 0 by default; 3 with `--fail-on-env-error` or an unconfirmable declared security target |
 | **Inconclusive** | The engine could not decide; the assertion may pass if retried. | A RETRY step's polling window expires; a capture expression fails to match. | 0 by default; 4 if `--fail-on-inconclusive`; never 0 on a parse failure, or on an Inconclusive suite refused before anything ran |
 
 **Why the distinction?**
@@ -540,9 +540,13 @@ In microservices, infrastructure is often brittle. A test might fail not because
 - **EnvironmentError (0 or 3)** — The infrastructure is in trouble. Page on-call or escalate to DevOps.
 - **Inconclusive (0 or 4)** — The engine could not decide; maybe timing was just off. Investigate or re-run.
 
-By default, **only Fail breaks CI**. This reduces false positives and keeps developers focused on real defects, not infrastructure flakiness.
+An aggregate **Fail** exits 1. Ordinary unrelated or unattributed infrastructure errors retain opt-in gating. A typed readiness, discovery or server-material access failure of the declared secured target itself prevents confirmation and exits non-zero without either flag. `EnvironmentError` ranks above `Fail`: a failed assertion beside that secured-target failure therefore aggregates to `EnvironmentError` and exits 3. See [CI integration](ci-integration.md) for authoring and provider-refusal rules.
 
-**Four deliberate exceptions break CI regardless of the gating flags.** First: a suite that declares a `security:` block the engine could not confirm exits non-zero with **neither** `--fail-on-env-error` nor `--fail-on-inconclusive` set — at whichever code that run's own verdict names, 3 or 4. That includes a secured `.e2e.yaml` the engine parsed and then refused for its contents (an unknown step type, a duplicate step id): such a file never becomes a scenario, so nothing ever confirmed its declaration, and it now reddens the run even when its siblings came up and confirmed the same target. The run prints a line on **stdout** saying the exit is the security rule's doing, so a job that reads only `results.xml` sees a bare non-zero exit with no explanation. Fix the file the run names. Second: any parse failure never exits 0. Third: a suite that parsed and was then refused before any scenario executed, which leaves the run Inconclusive, never exits 0 either. Fourth: any scenario refused at a provider- or engine-surface guard — a provider's `Bind`, `Validate`, `Resources`, `HostResources`, `Emit` or `CompileReferenceAssemblies` threw, or the assembler refused the fragments a provider emitted — never exits 0 either, and unlike the third rule it applies even when a sibling scenario ran and passed (the second rule, any parse failure, survives an executing sibling too — see `docs/01` §16.4). That one is a fault in the **testing machinery** rather than in your suite or your system under test, and it is identified by where it arose rather than by whose it is. Usually it is a provider defect and the fix belongs with whoever ships that provider — but the same guards also catch a dispatch failure before the provider's own body ran, and a filesystem or out-of-memory condition that may be the host's, where the engine deliberately declines to blame the provider. **Read the diagnostic before you route the bug.** For the six provider-surface guards it names the offending step and its step type; the assembler guard deliberately names no step, because the exception it catches does not identify which fragment produced the bad content. This rule also prints its own line on **stdout** connecting the exit to it, the same way the security rule's does — but never together with the security line, since the security rule is decided first and this one is never reached once that has already moved the code off Success. Note "never exits 0" rather than "exits 4": none of these rules overrides a code another rule already chose — the second, third and fourth are conditioned on the code so far being Success, and the security rule is decided inside the verdict-to-exit mapping itself, independent of the flags and never consulted for a `Fail` verdict — so a parse failure beside a failing scenario exits 1, and beside a gated environment error, 3. And a run that executed nothing but carries an `EnvironmentError` — a topology that never started, or an unsecured suite whose scenarios declared divergent `environment` blocks — is outside the second and third rules and still exits 0 by default, provided that is its only fault: a topology that failed to start in a suite where a sibling's provider had already thrown is caught by the fourth rule instead and exits 4 by default (or 3 with `--fail-on-env-error`, which takes the code off Success before the fourth rule is consulted). (A secured suite refused by that same divergence guard exits 3 through the security rule above.) See [CI integration](ci-integration.md) for the full rule and the code each outcome carries.
+**Refusals can break CI without the gating flags.** A security declaration raises the default exit when it is refused for its contents, fails confirmation, or its own named readiness, discovery or server-material access fails before confirmation. An unrelated or unattributed topology failure remains opt-in; the presence of a security block does not make every infrastructure failure unconditional. The run prints a security notice on stdout when this rule applies.
+
+Any parse failure, typed authoring refusal, or provider/engine-surface guard refusal also prevents exit 0, including beside a passing sibling. Provider guards cover `Bind`, `Validate`, `Resources`, `HostResources`, `Emit`, `CompileReferenceAssemblies` and fragment assembly. Read the diagnostic before assigning a provider bug: a guard can also expose an engine dispatch or host filesystem failure. A suite whose aggregate is Inconclusive and executed nothing likewise cannot exit 0.
+
+These refusal rules preserve a non-zero exit already selected by another policy. An aggregate `Fail` exits 1; the existing aggregate ranking places `EnvironmentError` above `Fail`, so a completed assertion failure beside an unconfirmed secured target's own readiness failure aggregates to `EnvironmentError` and exits 3. A topology failure with no attributable security failure or other refusal still exits 0 by default, or 3 with `--fail-on-env-error`. See [CI integration](ci-integration.md) for the complete policy.
 
 **Opt into stricter gating with flags:**
 ```bash
@@ -817,6 +821,17 @@ A capture expression (JSONPath or XPath) did not match the step result, or a pla
 ---
 
 ## Kafka messages not consumed (ordering or timing)
+
+For a managed broker with `security:`, start with the [tested PEM TLS/mTLS
+recipe](managed-kafka-security.md). An invalid broker PEM can pass metadata-only
+validation and then fail readiness; check the declared server artefacts and matching
+PEM type/location settings. Do not override the managed listener mechanics or replace
+Aspire's allocated host address with a guessed port. The selected listener is secured;
+Schema Registry and container connection references use the other plaintext listener.
+
+The current consumer opens a fresh group per attempt and polls for roughly one second.
+For the local runnable recipe, set `KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: "0"` and use
+`verifyMode: RETRY`; a default rebalance delay can otherwise outlast every fresh attempt.
 
 **Symptom:**
 An `mq-expect.kafka` step fails to find a message that was published earlier, even with `verifyMode: RETRY`.
