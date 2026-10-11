@@ -4,9 +4,8 @@
 // all five provider interfaces plus ICompileReferenceContributor for the
 // mq-expect.kafka step kind.
 //
-// PLAIN-payload slice: the assertion criteria are evaluated against the UTF-8 message
-// value (a literal string or inline JSON via JSONPath).  Avro / schema-registry
-// decoding is a SEPARATE later task and is not present here.
+// Plain payloads match UTF-8 text or inline JSON via JSONPath. The Avro path
+// decodes through the configured schema registry before applying the same criteria.
 //
 // RETRY model (§7): this provider is the primary verifyMode: RETRY consumer.  The
 // engine wraps a RETRY step in a polling loop, so the emitted helper performs an
@@ -116,7 +115,7 @@ public sealed class MqExpectKafkaProvider
     public JsonSchemaFragment SchemaFragment { get; } = new JsonSchemaFragment(
         """
         {
-          "description": "Consumes a message from a Kafka topic and asserts it matches the declared criteria (key, headers, payload substring, and/or JSONPath-evaluated fields), optionally Avro-decoding the value first.  Each attempt is a SINGLE drain of the retained log as it already stands — a fresh consumer group reading from the earliest offset, stopping at partition EOF — bounded at about one second.  Under the default verifyMode: IMMEDIATE a declared timeout does NOT widen that window: it is an upper bound, not a wait. Use verifyMode: RETRY to poll until the message arrives.",
+          "description": "Consumes a message from a Kafka topic and asserts it matches the declared criteria (key, headers, payload substring, and/or JSONPath-evaluated fields), optionally Avro-decoding the value first.  Each attempt is a SINGLE drain of the retained log as it already stands — manual assignment of every actual topic partition at the earliest offset, stopping when all partitions reach EOF — bounded at about one second.  Under the default verifyMode: IMMEDIATE a declared timeout does NOT widen that window: it is an upper bound, not a wait. Use verifyMode: RETRY to poll until the message arrives.",
           "type": "object",
           "required": ["target", "topic", "match"],
           "properties": {
@@ -422,102 +421,17 @@ public sealed class MqExpectKafkaProvider
     /// <c>finally</c> so no native handle survives the collectible-ALC unload.
     /// </para>
     /// <para>
-    /// NO <c>Close()</c> (#468).  This is the single home for the reasoning; the emitted
-    /// CSX carries a pointer here rather than a copy, because that text is spliced into
-    /// every generated script and a §5 argument is inert to a suite author reading one.
+    /// Each attempt manually assigns every discovered topic partition at
+    /// <c>Offset.Beginning</c>; it does not subscribe, join a consumer group or commit
+    /// offsets. The unique <c>GroupId</c> satisfies client configuration only. There
+    /// are no subscribed members waiting for a LeaveGroup or session-timeout eviction.
     /// </para>
     /// <para>
-    /// <c>IConsumer&lt;K,V&gt;.Close()</c> is an uncancellable blocking leave-group round
-    /// trip: in the pinned Confluent.Kafka 2.14.2 it has no <c>CancellationToken</c> and no
-    /// <c>TimeSpan</c> overload, and the package binds <c>rd_kafka_consumer_close</c>
-    /// (blocking), not <c>rd_kafka_consumer_close_queue</c>.  The emitted consumer config
-    /// sets no timeout keys at all, so every bound is a librdkafka default rather than
-    /// anything this repo chose — documented default <c>socket.timeout.ms</c> 60s; WHICH
-    /// timeout governs <c>rd_kafka_consumer_close()</c> is an inference, not probed here.
-    /// </para>
-    /// <para>
-    /// Bounding the wait is FORBIDDEN, not merely unattractive.  Every <c>Task.Run</c> /
-    /// <c>Wait(timeout)</c> shape compiles its lambda and display class into the
-    /// COLLECTIBLE submission assembly and leaves an abandoned frame on a thread stack;
-    /// <c>RoslynScriptCompiler.RunIsolatedAsync</c> calls <c>Unload()</c> in the same
-    /// <c>finally</c> the awaited body returns to.  The frame does not block that unload
-    /// "forever" — it defers it by exactly the unbounded interval the bound was meant to
-    /// avoid, and NOTHING observes the deferral.  The memory-leak CI gate asserts
-    /// collection inside a bounded window, so the failure is loud in CI and silent in
-    /// production, which is the worst split available.  Independently of §5 at all, the
-    /// abandoned <c>Close()</c> would race the <c>finally</c>'s <c>Dispose()</c> on the
-    /// same <c>rd_kafka_t</c> — two threads tearing down one native handle, a
-    /// use-after-free.  <c>CsxAssembler</c> already states the rule ("no task
-    /// abandonment").
-    /// </para>
-    /// <para>
-    /// <c>Dispose()</c> is the vendor's supported teardown: for a consumer handle
-    /// <c>SafeKafkaHandle.ReleaseHandle</c> routes to
-    /// <c>rd_kafka_destroy_flags(handle, RD_KAFKA_DESTROY_F_NO_CONSUMER_CLOSE)</c>, which
-    /// performs NO leave-group round trip.  It is NOT non-blocking and is not claimed to be
-    /// — it still terminates the handle's internal threads and returns when they are
-    /// joined.  <strong>Its cost here is UNMEASURED, and the nearest figures do not
-    /// transfer.</strong>  #367's 16ms / 94-110ms are the PRODUCER handle: the same
-    /// <c>ReleaseHandle</c> branches on handle type and takes plain <c>rd_kafka_destroy</c>
-    /// for a producer, <c>destroy_flags</c> only for a consumer — and both #367 probes ran
-    /// against brokers the client never reached (refused bootstrap, connect-refused peer),
-    /// so no fetcher or coordinator thread existed to join.  The case that matters here is
-    /// a consumer that HAS joined a group, which is exactly the fault-injection shape this
-    /// repo does not have yet.  Do not quote #367's numbers for this path.
-    /// </para>
-    /// <para>
-    /// Removing <c>Close()</c> is NOT a new code path — it is the path the old code
-    /// already took whenever the broker was uncooperative, which is precisely the case
-    /// #468 is about.  From the IL: <c>Close()</c> is
-    /// <c>ConsumerClose(); Dispose(true); GC.SuppressFinalize(this)</c>, and
-    /// <c>SafeKafkaHandle.ConsumerClose()</c> throws <c>KafkaException</c> on any non-zero
-    /// <c>ErrorCode</c> from <c>rd_kafka_consumer_close</c>.  So on the failure path the
-    /// throw skipped <c>Close()</c>'s own <c>Dispose(true)</c>, the old bare <c>catch</c>
-    /// swallowed it, and the handle was released by the outer <c>Dispose()</c> — by
-    /// exactly the mechanism that is now the only one.  On the success path <c>Close()</c>
-    /// had already disposed and suppressed finalization, so the outer <c>Dispose()</c> was
-    /// a no-op.  (That an unreachable broker yields a non-zero <c>ErrorCode</c> is
-    /// librdkafka's documented behaviour, inferred here rather than probed.)
-    /// </para>
-    /// <para>
-    /// <c>Unsubscribe()</c> WAS considered and is rejected — recorded because "considered
-    /// and rejected because X" is a different claim from "nothing else exists", and the
-    /// pinned package's own <c>Consumer`2.Dispose</c> remarks name <c>Unsubscribe()</c>
-    /// alongside <c>Close()</c> as the way to avoid the session-timeout rebalance.  It
-    /// carries NONE of this change's disqualifiers: no abandoned frame in the collectible
-    /// ALC, no second thread on the <c>rd_kafka_t</c>, and it binds
-    /// <c>rd_kafka_unsubscribe</c>, which returns once the request is enqueued rather than
-    /// waiting on the coordinator.  That last property is also why it is rejected:
-    /// <c>Unsubscribe()</c> followed immediately by <c>destroy_flags</c> most likely tears
-    /// the handle down before the LeaveGroup is transmitted, buying nothing while adding a
-    /// second native call to the teardown.  <strong>Inferred, not probed</strong> —
-    /// confirming it needs the same joined-consumer fault injection as the figure above.
-    /// If that harness lands and the inference is wrong, <c>Unsubscribe()</c> is the
-    /// candidate to revisit; nothing in this change forecloses it.
-    /// </para>
-    /// <para>
-    /// The accepted cost is a DELAY, not a residue.  Without a prompt LeaveGroup the group
-    /// keeps a live-but-silent member and stays <c>Stable</c>/<c>PreparingRebalance</c>
-    /// until the broker evicts it — the MECHANISM is documented by the pinned package
-    /// itself (<c>Consumer`2.Dispose</c>: "the group will rebalance after a timeout
-    /// specified by the group's session.timeout.ms"); only the 45s NUMBER is a librdkafka
-    /// default, not probed here.  After eviction the group becomes <c>Empty</c>, which is
-    /// where <c>Close()</c> would have put it, only sooner.  No persistent broker-side
-    /// state is added, which is the answer to "can I point this at a shared broker".
-    /// </para>
-    /// <para>
-    /// The count that matters is PEAK CONCURRENT, not cumulative, because the window is
-    /// time-bounded: at most (eviction window) / (per-attempt cycle) groups linger at once.
-    /// The cycle is this helper's ~1s poll plus the RETRY delay (<c>RetryRunner</c>: 200ms
-    /// base, x2 exponential, capped at 5s), so at the cap that is ~7-8, and ~10-11 over the
-    /// first 45s counting the ramp.  A shorter authored <c>pollInterval</c> shrinks the
-    /// delay term toward zero and raises the ceiling toward the ~45 a 1s cycle allows, and
-    /// the whole figure multiplies by the runner's <c>--parallel</c> slots against a shared
-    /// broker.  Arithmetic from the cited constants, not measured.  It is cheap here and
-    /// only here: the group is <c>"vouchfx-expect-" + a fresh Guid per attempt</c>, a
-    /// throwaway single-member group that nothing rejoins, and <c>EnableAutoCommit</c> is
-    /// <c>false</c> so <c>Close()</c> would commit no offsets either.  A provider that
-    /// reused a stable group id could NOT make this trade.
+    /// Teardown calls <c>Dispose()</c> directly, without <c>Close()</c> or
+    /// <c>Unsubscribe()</c>. No background task is abandoned to impose a wait bound:
+    /// it would retain a collectible submission frame and race disposal of the same
+    /// native handle. Disposal joins native client threads; its elapsed cost is not
+    /// inferred from producer measurements or treated as a new polling budget.
     /// </para>
     /// <para>
     /// The teardown <c>Dispose()</c> is wrapped in a bare <c>catch</c>, matching the house
@@ -601,7 +515,7 @@ public sealed class MqExpectKafkaProvider
         "        bool budgetGoverned)\n" +
         "    {\n" +
         "        // AVRO path is selected when 'avro' is true.  Otherwise the PLAIN string\n" +
-        "        // consumer path runs, byte-identical to the committed slice.\n" +
+        "        // consumer path reads the retained log using the same bounded assignment.\n" +
         "        if (avro)\n" +
         "        {\n" +
         "            await ExpectAvroAsync(vars, secrets, security, outcomeKey, bootstrapKey, targetName,\n" +
@@ -662,9 +576,8 @@ public sealed class MqExpectKafkaProvider
         "                // JSONPath expressions are used verbatim; only expected VALUES are resolved (§17).\n" +
         "                jsonValues[ji] = Secret_Helpers.ResolveTemplate(secrets, vars, jsonValueTemplates[ji]);\n" +
         "            }\n" +
-        "            // A fresh GroupId per attempt + AutoOffsetReset.Earliest makes the poll\n" +
-        "            // idempotent: each attempt scans from the start of the available log.\n" +
-        "            // EnablePartitionEof lets us break as soon as the available log is drained.\n" +
+        "            // Manual earliest assignment makes each attempt idempotent without a group\n" +
+        "            // rebalance that can outlast this attempt. EOF must cover every partition.\n" +
         "            var config = new Confluent.Kafka.ConsumerConfig\n" +
         "            {\n" +
         "                BootstrapServers = bootstrap,\n" +
@@ -681,24 +594,31 @@ public sealed class MqExpectKafkaProvider
         "            // no security block leaves the config exactly as built above.\n" +
         "            KafkaSecurity_Helpers.ConfigureClient(security, targetName, config);\n" +
         "            consumer = new Confluent.Kafka.ConsumerBuilder<string, string>(config).Build();\n" +
-        "            consumer.Subscribe(topic);\n" +
+        "            var deadline = System.DateTime.UtcNow.AddMilliseconds(DrainWindowMs);\n" +
+        "            var partitions = RetainedPartitions(consumer.Handle, topic, deadline, ct);\n" +
+        "            consumer.Assign(partitions);\n" +
+        "            var drained = new System.Collections.Generic.HashSet<int>();\n" +
         "            int scanned = 0;\n" +
         "            bool matched = false;\n" +
         "            // Bounded per-attempt poll budget.  The RETRY runner owns the overall\n" +
         "            // timeout/backoff; this is just one attempt's drain window.\n" +
-        "            var deadline = System.DateTime.UtcNow.AddMilliseconds(DrainWindowMs);\n" +
         "            // Step-timeout convention (#232): consumer.Consume(TimeSpan) is a blocking,\n" +
         "            // synchronous call with no cancellation-token overload usable here without\n" +
         "            // restructuring this loop's try/catch — so cooperative early-exit is added\n" +
         "            // to the loop GUARD only.  The step token is polled between Consume() calls;\n" +
         "            // the bounded per-attempt poll (<=1s) keeps this responsive.\n" +
-        "            while (System.DateTime.UtcNow < deadline && !matched && !ct.IsCancellationRequested)\n" +
+        "            while (partitions.Count > 0 && System.DateTime.UtcNow < deadline && !matched && !ct.IsCancellationRequested)\n" +
         "            {\n" +
-        "                var cr = consumer.Consume(System.TimeSpan.FromMilliseconds(200));\n" +
+        "                var remainingMs = (deadline - System.DateTime.UtcNow).TotalMilliseconds;\n" +
+        "                var cr = consumer.Consume(System.TimeSpan.FromMilliseconds(System.Math.Min(200, System.Math.Max(1, remainingMs))));\n" +
         "                if (cr is null)\n" +
         "                    continue;\n" +
         "                if (cr.IsPartitionEOF)\n" +
-        "                    break;  // drained what is available this attempt.\n" +
+        "                {\n" +
+        "                    drained.Add(cr.Partition.Value);\n" +
+        "                    if (drained.Count == partitions.Count) break;\n" +
+        "                    continue;\n" +
+        "                }\n" +
         "                scanned++;\n" +
         "                if (MatchesMessage(cr, expectKey, payloadContains, headerNames, headerValues, jsonPaths, jsonValues))\n" +
         "                    matched = true;\n" +
@@ -765,6 +685,46 @@ public sealed class MqExpectKafkaProvider
         "        }\n" +
         "        vars[outcomeKey] = new Vouchfx.Engine.Abstractions.StepOutcome(\n" +
         "            verdict, sw.ElapsedMilliseconds, observation);\n" +
+        "    }\n" +
+        "\n" +
+        "    /// <summary>\n" +
+        "    /// Discovers every retained-log partition within the shared attempt deadline.\n" +
+        "    /// </summary>\n" +
+        "    // Metadata and consumption share the existing one-second attempt budget.\n" +
+        "    // The dependent admin wrapper reuses the consumer handle and its security configuration;\n" +
+        "    // its disposal does not own or replace the consumer's native-handle teardown.\n" +
+        "    private static System.Collections.Generic.List<Confluent.Kafka.TopicPartitionOffset> RetainedPartitions(\n" +
+        "        Confluent.Kafka.Handle handle, string topic, System.DateTime deadline,\n" +
+        "        System.Threading.CancellationToken ct)\n" +
+        "    {\n" +
+        "        var partitions = new System.Collections.Generic.List<Confluent.Kafka.TopicPartitionOffset>();\n" +
+        "        var remaining = deadline - System.DateTime.UtcNow;\n" +
+        "        if (remaining <= System.TimeSpan.Zero || ct.IsCancellationRequested) return partitions;\n" +
+        "        var admin = new Confluent.Kafka.DependentAdminClientBuilder(handle).Build();\n" +
+        "        try\n" +
+        "        {\n" +
+        "            Confluent.Kafka.Metadata metadata;\n" +
+        "            try { metadata = admin.GetMetadata(topic, remaining); }\n" +
+        "            catch (Confluent.Kafka.KafkaException ex) when (ex.Error.Code == Confluent.Kafka.ErrorCode.Local_TimedOut)\n" +
+        "            {\n" +
+        "                // No metadata within this attempt is a non-match; the engine owns retry.\n" +
+        "                return partitions;\n" +
+        "            }\n" +
+        "            foreach (var candidate in metadata.Topics)\n" +
+        "            {\n" +
+        "                if (!string.Equals(candidate.Topic, topic, System.StringComparison.Ordinal)) continue;\n" +
+        "                if (candidate.Error.Code == Confluent.Kafka.ErrorCode.UnknownTopicOrPart) return partitions;\n" +
+        "                if (candidate.Error.IsError) throw new Confluent.Kafka.KafkaException(candidate.Error);\n" +
+        "                foreach (var partition in candidate.Partitions)\n" +
+        "                {\n" +
+        "                    if (partition.Error.IsError) throw new Confluent.Kafka.KafkaException(partition.Error);\n" +
+        "                    partitions.Add(new Confluent.Kafka.TopicPartitionOffset(topic, partition.PartitionId, Confluent.Kafka.Offset.Beginning));\n" +
+        "                }\n" +
+        "                return partitions;\n" +
+        "            }\n" +
+        "            return partitions;\n" +
+        "        }\n" +
+        "        finally { admin.Dispose(); }\n" +
         "    }\n" +
         "\n" +
         "    /// <summary>\n" +
@@ -983,20 +943,27 @@ public sealed class MqExpectKafkaProvider
         "            consumer = new Confluent.Kafka.ConsumerBuilder<string, Avro.Generic.GenericRecord>(config)\n" +
         "                .SetValueDeserializer(Confluent.Kafka.SyncOverAsync.SyncOverAsyncDeserializerExtensionMethods.AsSyncOverAsync(deserializer))\n" +
         "                .Build();\n" +
-        "            consumer.Subscribe(topic);\n" +
+        "            var deadline = System.DateTime.UtcNow.AddMilliseconds(DrainWindowMs);\n" +
+        "            var partitions = RetainedPartitions(consumer.Handle, topic, deadline, ct);\n" +
+        "            consumer.Assign(partitions);\n" +
+        "            var drained = new System.Collections.Generic.HashSet<int>();\n" +
         "            int scanned = 0;\n" +
         "            bool matched = false;\n" +
-        "            var deadline = System.DateTime.UtcNow.AddMilliseconds(DrainWindowMs);\n" +
         "            // Step-timeout convention (#232): see ExpectAsync's poll loop for the\n" +
         "            // rationale — Consume(TimeSpan) stays a blocking call; cooperative\n" +
         "            // early-exit is added to the loop GUARD only.\n" +
-        "            while (System.DateTime.UtcNow < deadline && !matched && !ct.IsCancellationRequested)\n" +
+        "            while (partitions.Count > 0 && System.DateTime.UtcNow < deadline && !matched && !ct.IsCancellationRequested)\n" +
         "            {\n" +
-        "                var cr = consumer.Consume(System.TimeSpan.FromMilliseconds(200));\n" +
+        "                var remainingMs = (deadline - System.DateTime.UtcNow).TotalMilliseconds;\n" +
+        "                var cr = consumer.Consume(System.TimeSpan.FromMilliseconds(System.Math.Min(200, System.Math.Max(1, remainingMs))));\n" +
         "                if (cr is null)\n" +
         "                    continue;\n" +
         "                if (cr.IsPartitionEOF)\n" +
-        "                    break;\n" +
+        "                {\n" +
+        "                    drained.Add(cr.Partition.Value);\n" +
+        "                    if (drained.Count == partitions.Count) break;\n" +
+        "                    continue;\n" +
+        "                }\n" +
         "                scanned++;\n" +
         "                var json = RecordToJson(cr.Message.Value);\n" +
         "                if (MatchesDecoded(json, cr.Message.Key, cr.Message.Headers, expectKey,\n" +

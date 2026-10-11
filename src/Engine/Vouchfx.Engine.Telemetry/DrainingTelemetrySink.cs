@@ -367,10 +367,10 @@ public sealed class DrainingTelemetrySink : ITelemetrySink
     // The outcome of a batch-by-batch drain, deciding how the back-off is updated.
     private enum BatchDrainResult
     {
-        // Every batch acked 2xx: reset the back-off.
+        // Every batch delivered or permanently refused: reset the back-off.
         AllProcessed,
 
-        // A batch returned a non-2xx: advance the exponential back-off.
+        // A batch had a retryable failure: advance the exponential back-off.
         Failed,
 
         // The overall drain budget elapsed mid-send: persist progress but leave the back-off

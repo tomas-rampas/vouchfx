@@ -69,6 +69,8 @@ TCP readiness must name its mode explicitly. Use `healthcheck` for brokers that 
 
 Existing Kafka publish/expect steps can target the logical `broker` service. Supply a host-reachable Kafka advertised listener matching the selected published port; the adapter does not rewrite Kafka advertisements. Application-to-broker traffic can use a separate listener on Compose DNS. Use an isolated fixed listener port when the broker's advertisement requires it; conflicts fail startup. Configuration, binding and readiness remain adapter concerns, so another registered format can supply the same normalised service value.
 
+Kafka retained-record assertions manually assign every actual topic partition at its earliest offset; they do not wait for a fresh consumer group to rebalance. Metadata discovery and consumption share the existing one-second attempt budget. An empty partition does not end the drain while another partition remains unread. Use `verifyMode: RETRY` for messages that have not arrived yet; a step timeout does not widen an individual drain. Native broker health and HTTP success still require the separate Kafka business assertion.
+
 ## Validate, run and watch
 
 ```sh
@@ -103,3 +105,5 @@ Recovery requires access to the recorded local daemon, not original manifests or
 This driver supports owned HTTP/TCP/PostgreSQL environments with IPv4 published endpoints on local Unix-socket or Windows named-pipe Docker daemons. Explicit `DOCKER_HOST` values must use a literal absolute Unix socket path, such as `unix:///var/run/docker.sock`, or `npipe:////./pipe/<name>` with one nonempty pipe name. Unix socket URIs cannot contain an authority, query, fragment, encoding, dot segments or empty path segments. Use isolated test overrides. External storage/networks, explicit shared resource names, fixed container names, delegated Compose provider plugins, custom resource drivers/options, reserved Compose labels, writable host mounts, host namespaces/devices/capabilities, explicit `uts`/`userns_mode`/`cgroup` settings and `use_api_socket` are refused before startup. Active `include`/`extends`, seed, borrowed resources, reuse and external-driver TLS/mTLS declarations are unsupported. Existing inline security validation remains available. These ownership checks do not sandbox user container images; review read-only host mounts and application behaviour yourself.
 
 In this matching source checkout, follow `examples/compose-orders/README.md` for the HTTP mutation and database example, including its identical inline assertion steps.
+
+The [shared-app .NET Compose orders sample](https://github.com/tomas-rampas/vouchfx-samples/tree/main/samples/orders-dotnet-compose) demonstrates all five business assertions: REST creation, the PostgreSQL row, the retained Kafka event, the outbound webhook and the final REST refetch. Its README describes the pinned images, native readiness checks and standard sample runner.

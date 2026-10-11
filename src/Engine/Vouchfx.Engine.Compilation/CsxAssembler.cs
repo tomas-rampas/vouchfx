@@ -317,6 +317,13 @@ public static class CsxAssembler
         if (helpersOrdered.Count > 0)
             sb.AppendLine();
 
+        if (blocks.Count > 0)
+        {
+            sb.Append("var __vouchfxRunCt = Services.TryGetValue(")
+              .Append(JsonSerializer.Serialize(ScriptInvocationContext.CancellationServiceKey))
+              .Append(", out var __vouchfxRunToken) && __vouchfxRunToken is System.Threading.CancellationToken __vouchfxToken\n")
+              .Append("    ? __vouchfxToken : System.Threading.CancellationToken.None;\n");
+        }
         sb.Append(string.Join("\n", blocks));
 
         return new AssembledScript(sb.ToString(), stepIds);
@@ -343,9 +350,8 @@ public static class CsxAssembler
     /// </para>
     /// <para>
     /// <strong>No timeout declared:</strong> the token local aliases
-    /// <see cref="System.Threading.CancellationToken.None"/> and the block is spliced
-    /// with no try/catch, no timer and no post-check — byte-for-byte behavioural
-    /// parity with the pre-#232 splice apart from the two token locals.
+    /// the invocation's cancellation token and the block is spliced with no
+    /// try/catch or timer. Without caller cancellation, outcomes remain unchanged.
     /// </para>
     /// <para>
     /// <strong>Timeout declared:</strong> enforcement is two-fold and entirely
@@ -400,20 +406,22 @@ public static class CsxAssembler
 
         var sb = new StringBuilder();
         sb.Append('{').Append('\n');
+        sb.Append("    __vouchfxRunCt.ThrowIfCancellationRequested();\n");
 
         if (budget is not { } b)
         {
-            // No declared timeout: token convention only, zero behavioural change.
+            // No declared timeout: use caller cancellation without a step timer.
             // __stepBudgetGoverned_<safeId> is the second convention local: false here,
             // so wired providers keep their own transport-timeout conventions as the
             // step's de facto bound.
             sb.Append("    System.Threading.CancellationToken __stepCt_").Append(safe)
-              .Append(" = System.Threading.CancellationToken.None;\n");
+              .Append(" = __vouchfxRunCt;\n");
             sb.Append("    _ = __stepCt_").Append(safe).Append(";\n");
             sb.Append("    bool __stepBudgetGoverned_").Append(safe).Append(" = false;\n");
             sb.Append("    _ = __stepBudgetGoverned_").Append(safe).Append(";\n");
             AppendStepStartedCall(sb, rawIdLit);
             sb.Append(statementBlock).Append('\n');
+            AppendCallerCancellationCheck(sb, outcomeLit);
             AppendStepCompletedCall(sb, safe, rawIdLit, outcomeLit, captureStatusLit);
             sb.Append('}');
             return sb.ToString();
@@ -434,8 +442,9 @@ public static class CsxAssembler
         sb.Append("    var __stepSw_").Append(safe)
           .Append(" = System.Diagnostics.Stopwatch.StartNew();\n");
         sb.Append("    var __stepCts_").Append(safe)
-          .Append(" = new System.Threading.CancellationTokenSource(System.TimeSpan.FromMilliseconds(")
-          .Append(budgetLit).Append("));\n");
+          .Append(" = System.Threading.CancellationTokenSource.CreateLinkedTokenSource(__vouchfxRunCt);\n");
+        sb.Append("    __stepCts_").Append(safe)
+          .Append(".CancelAfter(System.TimeSpan.FromMilliseconds(").Append(budgetLit).Append("));\n");
         sb.Append("    System.Threading.CancellationToken __stepCt_").Append(safe)
           .Append(" = __stepCts_").Append(safe).Append(".Token;\n");
         sb.Append("    _ = __stepCt_").Append(safe).Append(";\n");
@@ -451,7 +460,7 @@ public static class CsxAssembler
         sb.Append(statementBlock).Append('\n');
         sb.Append("    }\n");
         sb.Append("    catch (System.OperationCanceledException) when (__stepCts_")
-          .Append(safe).Append(".IsCancellationRequested)\n");
+           .Append(safe).Append(".IsCancellationRequested && !__vouchfxRunCt.IsCancellationRequested)\n");
         sb.Append("    {\n");
         sb.Append("        // Early cooperative cut: the body observed the step token (section 4, #232).\n");
         sb.Append("        __stepTimedOut_").Append(safe).Append(" = true;\n");
@@ -466,6 +475,8 @@ public static class CsxAssembler
         sb.Append("        __stepSw_").Append(safe).Append(".Stop();\n");
         sb.Append("        __stepCts_").Append(safe).Append(".Dispose();\n");
         sb.Append("    }\n");
+
+        AppendCallerCancellationCheck(sb, outcomeLit);
 
         // Late enforcement: the body completed (any verdict) but exceeded the budget.
         // Strictly-greater comparison — the budget itself is within the bound.  The
@@ -551,6 +562,7 @@ public static class CsxAssembler
 
         var sb = new StringBuilder();
         sb.Append('{').Append('\n');
+        sb.Append("    __vouchfxRunCt.ThrowIfCancellationRequested();\n");
         AppendStepStartedCall(sb, rawIdLit);
 
         // Per-step attempt local function.  Fully-qualified types — no new usings.
@@ -595,12 +607,14 @@ public static class CsxAssembler
         // into Vars under outcomeKey / attemptsKey.  Method group → Func<CT, Task<…>>.
         // Issue #262: the two trailing arguments route into the sink-aware PollAsync
         // overload, so RetryRunner reports each attempt to StepEvents in real time as it
-        // resolves — the caller-side ct parameter is left at its default.
+        // resolves; invocation cancellation also interrupts the attempt and backoff.
         sb.Append("    await Vouchfx.Engine.Abstractions.Retry.RetryRunner.PollAsync(\n");
         sb.Append("        Vars, ").Append(outcomeLit).Append(", ").Append(attemptsLit)
           .Append(", ").Append(timeoutLit).Append(", ").Append(pollLit)
           .Append(", __attempt_").Append(safe)
-          .Append(", StepEvents, ").Append(rawIdLit).Append(");\n");
+          .Append(", StepEvents, ").Append(rawIdLit).Append(", ct: __vouchfxRunCt);\n");
+
+        AppendCallerCancellationCheck(sb, outcomeLit);
 
         // Issue #262: read the FINAL outcome — the value PollAsync just wrote back to
         // Vars[outcomeKey] — matching exactly what the post-run reconstruction reads.
@@ -609,6 +623,17 @@ public static class CsxAssembler
         sb.Append('}');
 
         return sb.ToString();
+    }
+
+    private static void AppendCallerCancellationCheck(StringBuilder sb, string outcomeLit)
+    {
+        // Providers may return normally after observing cancellation. Discard their
+        // transient outcome before a completion event or step-timeout classification.
+        sb.Append("    if (__vouchfxRunCt.IsCancellationRequested)\n");
+        sb.Append("    {\n");
+        sb.Append("        Vars.Remove(").Append(outcomeLit).Append(");\n");
+        sb.Append("        __vouchfxRunCt.ThrowIfCancellationRequested();\n");
+        sb.Append("    }\n");
     }
 
     /// <summary>

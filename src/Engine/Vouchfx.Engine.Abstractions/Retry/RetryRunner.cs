@@ -282,6 +282,9 @@ public static class RetryRunner
                     linked.Token)
                 .ConfigureAwait(false);
 
+            // A terminal attempt or its event sink may cancel the caller and still
+            // return normally. Caller cancellation wins before final Vars promotion.
+            ct.ThrowIfCancellationRequested();
             finalOutcome = Classify(result, attempts.Count, overall.ElapsedMilliseconds);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)

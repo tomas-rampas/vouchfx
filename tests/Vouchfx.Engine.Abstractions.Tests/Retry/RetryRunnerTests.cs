@@ -39,6 +39,27 @@ internal sealed class RecordingStepEventSink : IStepEventSink
 /// </summary>
 public sealed class RetryRunnerTests
 {
+    [Theory]
+    [InlineData(Verdict.Pass)]
+    [InlineData(Verdict.EnvironmentError)]
+    public async Task PollAsync_CallerCancellationFromTerminalAttempt_DoesNotPromoteFinalOutcome(Verdict verdict)
+    {
+        using var cancellation = new CancellationTokenSource();
+        var vars = new Dictionary<string, object?>();
+        var calls = 0;
+        Task<StepOutcome> Attempt(CancellationToken _)
+        {
+            calls++;
+            cancellation.Cancel();
+            return Task.FromResult(new StepOutcome(verdict, 1L, null));
+        }
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => RetryRunner.PollAsync(
+            vars, OutcomeKey, AttemptsKey, 60000L, 60000L, Attempt, ct: cancellation.Token));
+        Assert.Equal(1, calls);
+        Assert.False(vars.ContainsKey(OutcomeKey));
+        Assert.False(vars.ContainsKey(AttemptsKey));
+    }
+
     private const string OutcomeKey = "__outcome::step_under_test";
     private const string AttemptsKey = "__attempts::step_under_test";
 

@@ -550,7 +550,7 @@ public static class RoslynScriptCompiler
 
         cancellationToken.ThrowIfCancellationRequested();
 
-        var submissionArray = new object?[] { globals, null };
+        var submissionArray = new object?[] { ScriptInvocationContext.Create(globals, cancellationToken), null };
 
         // Await directly — exceptions propagate naturally with their original stacks
         // intact, with no ContinueWith dance and no reflection-based Result extraction.

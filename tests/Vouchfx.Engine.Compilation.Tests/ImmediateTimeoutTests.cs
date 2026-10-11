@@ -3,7 +3,7 @@
 // The DSL documents `timeout` as an upper bound on the step; before #232 the
 // assembler wired it only as the RETRY polling window.  These tests cover the
 // WrapForImmediate cancellation scope:
-//   • no declared timeout → token local aliases CancellationToken.None; the
+//   • no declared timeout → token local aliases invocation cancellation; the
 //     provider block's outcome is untouched (behavioural parity)
 //   • non-positive timeout → treated exactly like no timeout
 //   • fast body under budget → outcome preserved verbatim
@@ -76,7 +76,7 @@ public sealed class ImmediateTimeoutTests
     // ── no timeout: parity ────────────────────────────────────────────────────
 
     [Fact]
-    public async Task NoTimeout_EmitsNoneAliasAndPreservesOutcome()
+    public async Task NoTimeout_EmitsInvocationAliasAndPreservesOutcome()
     {
         var plan = new StepCompilePlan(
             "plain-step", TokenIgnorantFragment("plain_step", 10, "Pass"),
@@ -86,7 +86,7 @@ public sealed class ImmediateTimeoutTests
 
         // Token convention exists even without a timeout…
         Assert.Contains(
-            "System.Threading.CancellationToken __stepCt_plain_step = System.Threading.CancellationToken.None;",
+            "System.Threading.CancellationToken __stepCt_plain_step = __vouchfxRunCt;",
             assembled.CsxSource, StringComparison.Ordinal);
         // …the budget-governed convention local is false…
         Assert.Contains(

@@ -291,7 +291,7 @@ Set `type: mq-expect.azureservicebus` to use this step.
 
 ### `mq-expect.kafka`
 
-Consumes a message from a Kafka topic and asserts it matches the declared criteria (key, headers, payload substring, and/or JSONPath-evaluated fields), optionally Avro-decoding the value first. Each attempt is a SINGLE drain of the retained log as it already stands — a fresh consumer group reading from the earliest offset, stopping at partition EOF — bounded at about one second. Under the default verifyMode: IMMEDIATE a declared timeout does NOT widen that window: it is an upper bound, not a wait. Use verifyMode: RETRY to poll until the message arrives.
+Consumes a message from a Kafka topic and asserts it matches the declared criteria (key, headers, payload substring, and/or JSONPath-evaluated fields), optionally Avro-decoding the value first. Each attempt is a SINGLE drain of the retained log as it already stands — manual assignment of every actual topic partition at the earliest offset, stopping when all partitions reach EOF — bounded at about one second. Under the default verifyMode: IMMEDIATE a declared timeout does NOT widen that window: it is an upper bound, not a wait. Use verifyMode: RETRY to poll until the message arrives.
 
 Set `type: mq-expect.kafka` to use this step.
 

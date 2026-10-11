@@ -69,6 +69,11 @@ public sealed class EnvironmentPlan
 }
 
 /// <summary>Bind reads authoring inputs only: no subprocess, daemon or secret resolution.</summary>
+/// <remarks>
+/// A driver's startup callback must remove any partial resources before throwing, using its own
+/// bounded cleanup token rather than the cancelled acquisition token. The engine can dispose an
+/// acquired lease only after startup returns it; readiness must complete before that handover.
+/// </remarks>
 public interface IEnvironmentDriver
 {
     string Id { get; }

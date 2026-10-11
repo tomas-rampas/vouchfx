@@ -123,7 +123,7 @@ public sealed class LoadedScript : IDisposable
     /// <see cref="ScriptGlobalVariables.Vars"/>; mutations are visible to the caller
     /// after the returned <see cref="Task{TResult}"/> completes.
     /// </param>
-    /// <param name="ct">Propagated to any async operations inside the script body.</param>
+    /// <param name="ct">Cancellation supplied to engine-generated retry and immediate step tokens; provider operations must observe it.</param>
     /// <returns>The script's return value, or <see langword="null"/>.</returns>
     /// <exception cref="ObjectDisposedException">
     /// Thrown if <see cref="Dispose"/> has already been called before this method is
@@ -142,7 +142,7 @@ public sealed class LoadedScript : IDisposable
 
         // Roslyn's submission model: submissionArray[0] = globals, submissionArray[1] = null
         // (previous submission result; always null for the first/only submission).
-        var submissionArray = new object?[] { globals, null };
+        var submissionArray = new object?[] { ScriptInvocationContext.Create(globals, ct), null };
         return factory(submissionArray);
     }
 
