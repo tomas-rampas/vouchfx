@@ -22,6 +22,28 @@ LIBRARY = gate.RELEASE_LIBRARIES[0]
 LIB_XML = f"lib/net8.0/{LIBRARY}.xml"
 SETTINGS = ('<DotNetCliTool Version="1"><Commands><Command Name="vouchfx" '
             'EntryPoint="vouchfx.dll" Runner="dotnet" /></Commands></DotNetCliTool>')
+INLINE_LANGWORD_BAD_PROSE = (
+    '<see langword="REQ-"/><see langword="004"/>',
+    'REQ-<see langword="004"/>',
+    '<see langword="REQ-"/>004',
+    'R<see langword="EQ-"/>004',
+    '<see langword="REQ&#45;"/><see langword="004"/>',
+    'REQ-<c><see langword="004"/></c>',
+    '<c><see langword="REQ-"/></c><em><see langword="004"/></em>',
+    '<see langword="REQ-"/><seealso langword="004"/>',
+    '<see langword="REQ-">004</see>',
+    'REQ-<see langword="0">04</see>',
+    'peer<see langword=" "/>review',
+    'S<see langword="08"/>',
+)
+INLINE_LANGWORD_ISOLATED_PROSE = (
+    '<para><see langword="REQ-"/></para><para><see langword="004"/></para>',
+    '<code>REQ-</code><code><see langword="004"/></code>',
+    '<para><see langword="S"/></para><para><see langword="08"/></para>',
+    'REQ-<see cref="T:Example.004"/>',
+    '<see langword="null"/> <see langword="true"/> <see langword="internal"/> '
+    '<see cref="T:Example.S08"/> <paramref name="S08"/> <typeparamref name="S08"/>',
+)
 
 
 def documentation(prose="A typed contract.", library=LIBRARY):
@@ -94,6 +116,47 @@ class PublicationTests(unittest.TestCase):
                                 ('<see langword="REQ&#45;004"/>', 1), (controls, 0)):
             with self.subTest(expected=expected, prose=prose):
                 self.package([(LIB_XML, documentation(prose))], target)
+                result = subprocess.run([sys.executable, str(SCRIPT), "--packages-dir",
+                                         str(self.directory), "--version", VERSION],
+                                        capture_output=True, text=True, check=False)
+                self.assertEqual(result.returncode, expected)
+                if expected:
+                    self.assertEqual(result.stdout, "")
+                    self.assertEqual(result.stderr, "FAIL: XML contains internal publication prose\n")
+                else:
+                    self.assertEqual(result.stderr, "")
+                    self.assertEqual(result.stdout,
+                                     "OK: required library XML and CLI XML publication contracts passed\n")
+
+    def test_inline_langword_fragments_join_in_actual_zip(self):
+        for prose in INLINE_LANGWORD_BAD_PROSE:
+            with self.subTest(prose=prose):
+                self.refused([(LIB_XML, documentation(prose))], "internal publication prose")
+
+    def test_inline_langword_fragments_keep_blocks_and_members_isolated_in_actual_zip(self):
+        for prose in INLINE_LANGWORD_ISOLATED_PROSE:
+            with self.subTest(prose=prose):
+                gate.check_package(self.library(prose), LIBRARY)
+        xml = documentation('<see langword="REQ-"/>').replace(
+            b'</members>', b'<member name="T:Other"><summary><see langword="004"/>'
+            b'</summary></member></members>')
+        gate.check_package(self.package([(LIB_XML, xml)]), LIBRARY)
+
+    def test_normal_command_joins_inline_langwords_and_keeps_contexts_isolated(self):
+        for library in gate.RELEASE_LIBRARIES:
+            self.package([(f"lib/net8.0/{library}.xml", documentation(library=library))],
+                         self.directory / f"{library}.{VERSION}.nupkg")
+        self.package([(gate.TOOL_SETTINGS, SETTINGS)], self.directory / f"vouchfx.{VERSION}.nupkg")
+        target = self.directory / f"{LIBRARY}.{VERSION}.nupkg"
+        separate_members = documentation('<see langword="REQ-"/>').replace(
+            b'</members>', b'<member name="T:Other"><summary><see langword="004"/>'
+            b'</summary></member></members>')
+        cases = [(documentation(prose), 1) for prose in INLINE_LANGWORD_BAD_PROSE]
+        cases.extend((documentation(prose), 0) for prose in INLINE_LANGWORD_ISOLATED_PROSE)
+        cases.append((separate_members, 0))
+        for xml, expected in cases:
+            with self.subTest(expected=expected, xml=xml):
+                self.package([(LIB_XML, xml)], target)
                 result = subprocess.run([sys.executable, str(SCRIPT), "--packages-dir",
                                          str(self.directory), "--version", VERSION],
                                         capture_output=True, text=True, check=False)

@@ -134,6 +134,10 @@ def check_prose(tree):
             # must also not defeat a token split in the surrounding visible text.
             inspect(element.text or "")
             return
+        if element.tag in {"see", "seealso"}:
+            # Displayed labels participate in the surrounding inline prose in
+            # document order; symbol references remain independently exempt.
+            parts.append(element.attrib.get("langword", ""))
         parts.append(element.text or "")
         for name, value in element.attrib.items():
             if (element.tag, name) not in SYMBOL_ATTRIBUTES:
