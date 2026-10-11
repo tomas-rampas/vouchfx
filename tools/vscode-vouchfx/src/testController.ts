@@ -3,10 +3,8 @@
 // This is the THIN `vscode`-API adapter. All testable logic lives in the pure
 // modules it imports — `e2eYamlOutline` (file → step line ranges),
 // `eventsParse` (`--events` stream → per-scenario verdicts) and `verdictMap`
-// (verdict token → editor state). The `vscode` module is unavailable under
-// `node --test`, so this file deliberately holds NO logic worth unit-testing:
-// it discovers files, spawns the CLI, and forwards the parsed results onto the
-// Test Explorer surface.
+// (verdict token → editor state). Lifecycle tests exercise the compiled adapter
+// with a stub VSCode host because `vscode` is unavailable under `node --test`.
 //
 // Behaviour:
 //   • Discovery — one parent TestItem per `*.e2e.yaml` file in the workspace,
@@ -14,7 +12,7 @@
 //     A FileSystemWatcher keeps this current on create/change/delete, and a
 //     resolveHandler (re-)scans on demand.
 //   • Run — for each requested file the CLI is spawned as
-//       <cliPath> run <file> --events <tmpEventsFile> --no-decorations
+//       <cliPath> run <file> --events <tmpEventsFile> --no-decorations --shutdown-on-stdin-eof
 //     where <tmpEventsFile> lives inside an exclusive `mkdtemp` directory that is
 //     removed in full on every exit path. On exit the temp events file is parsed;
 //     each step is reported via
@@ -48,6 +46,9 @@ const E2E_GLOB = '**/*.e2e.yaml';
 const CONFIG_SECTION = 'vouchfx';
 const CONFIG_CLI_PATH = 'cliPath';
 const DEFAULT_CLI_PATH = 'vouchfx';
+
+/** Allow the CLI's 30-second shutdown backstop to finish before forcing exit. */
+const CLI_CANCEL_GRACE_MS = 35_000;
 
 /** Controller id + label shown in the Test Explorer. */
 const CONTROLLER_ID = 'vouchfx';
@@ -258,7 +259,7 @@ async function runHandler(
     const fileItems = fileItemsForRequest(controller, request);
 
     for (const fileItem of fileItems) {
-      if (token.isCancellationRequested) {
+      if (token.isCancellationRequested || run.token.isCancellationRequested) {
         break;
       }
       if (fileItem.uri === undefined) {
@@ -325,6 +326,14 @@ async function runOneFile(
     const scenario = pickScenario(parsed.scenarios, uri);
 
     if (scenario === undefined || scenario.steps.length === 0) {
+      if (run.token.isCancellationRequested) {
+        run.skipped(fileItem);
+        for (const step of stepItems) {
+          run.skipped(step);
+        }
+        return;
+      }
+
       // The CLI ran but yielded no usable events. If it also exited non-zero with
       // no output, that is almost certainly a CLI/config problem.
       const detail =
@@ -472,7 +481,7 @@ interface CliResult {
 }
 
 /**
- * Spawns `<cliPath> run <file> --events <eventsPath> --no-decorations` and
+ * Spawns the CLI with events reporting and opt-in stdin-EOF shutdown, and
  * resolves when the process exits. Rejects only when the process could not be
  * started at all (e.g. the CLI is not on PATH) — a non-zero exit resolves
  * normally so the caller can still read whatever events were written.
@@ -483,45 +492,100 @@ function spawnCli(
   eventsPath: string,
   token: vscode.CancellationToken,
 ): Promise<CliResult> {
+  if (token.isCancellationRequested) {
+    return Promise.resolve({ code: null, stderr: '' });
+  }
+
   return new Promise<CliResult>((resolve, reject) => {
-    const args = ['run', filePath, '--events', eventsPath, '--no-decorations'];
+    const args = [
+      'run', filePath, '--events', eventsPath, '--no-decorations', '--shutdown-on-stdin-eof',
+    ];
 
     // `shell: false` (the default) — arguments are passed as an array, so no
     // shell-quoting/injection concern even if a path contains spaces.
-    const child = spawn(cliPath, args, { windowsHide: true });
+    // Own the stdin writer until cancellation. EOF lets the engine clean up its
+    // topology; an immediate kill on Windows terminates that cleanup abruptly.
+    // Verdicts come from the events file, so unused stdout must not fill a pipe.
+    const child = spawn(cliPath, args, { windowsHide: true, stdio: ['pipe', 'ignore', 'pipe'] });
 
     let stderr = '';
     let settled = false;
+    let exited = false;
+    let cancellationRequested = false;
+    let cancelTimer: ReturnType<typeof setTimeout> | undefined;
+    let onCancel: vscode.Disposable | undefined = undefined;
 
-    const onCancel = token.onCancellationRequested(() => {
-      try {
-        child.kill();
-      } catch {
-        // Best effort.
+    const disposeCancellation = (): void => {
+      if (cancelTimer !== undefined) {
+        clearTimeout(cancelTimer);
+        cancelTimer = undefined;
       }
-    });
+      onCancel?.dispose();
+    };
 
-    child.stderr?.on('data', (chunk: Buffer) => {
+    const requestCancellation = (): void => {
+      if (cancellationRequested || exited || settled) {
+        return;
+      }
+      cancellationRequested = true;
+      cancelTimer = setTimeout(() => {
+        cancelTimer = undefined;
+        // Use only the owned child, and never signal it after actual exit even
+        // if descendants still hold stderr open and delay the close event.
+        if (!exited && !settled && child.exitCode === null && child.signalCode === null) {
+          try {
+            child.kill('SIGKILL');
+          } catch {
+            // The child may have exited just before the fallback.
+          }
+        }
+      }, CLI_CANCEL_GRACE_MS);
+      try {
+        child.stdin.end();
+      } catch {
+        // A closed/broken writer still has the bounded kill fallback above.
+      }
+    };
+
+    // Closing stdin can race with child exit; EPIPE must not escape activation.
+    child.stdin.on('error', () => {});
+
+    child.stderr.on('data', (chunk: Buffer) => {
       stderr += chunk.toString('utf8');
     });
 
-    child.on('error', (error) => {
+    child.once('exit', () => {
+      exited = true;
+      disposeCancellation();
+    });
+
+    child.once('error', (error) => {
       if (settled) {
         return;
       }
       settled = true;
-      onCancel.dispose();
+      disposeCancellation();
       reject(error);
     });
 
-    child.on('close', (code) => {
+    child.once('close', (code) => {
       if (settled) {
         return;
       }
       settled = true;
-      onCancel.dispose();
+      disposeCancellation();
       resolve({ code, stderr });
     });
+
+    onCancel = token.onCancellationRequested(requestCancellation);
+    // Cover cancellation between the initial check/spawn and registration,
+    // including tokens whose event does not replay an earlier cancellation.
+    if (token.isCancellationRequested) {
+      requestCancellation();
+    }
+    if (exited || settled) {
+      disposeCancellation();
+    }
   });
 }
 

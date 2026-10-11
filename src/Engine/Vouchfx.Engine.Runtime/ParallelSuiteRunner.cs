@@ -574,8 +574,8 @@ public static class ParallelSuiteRunner
         LiveEventPump? livePump,
         CancellationToken ct)
     {
-        // Yield so the launch loop completes promptly and all slots are pending before any runs —
-        // the gate (not launch interleaving) is what bounds concurrency.
+        // Yield before waiting for the gate, which bounds concurrency for parallel runs.
+        // Degree-one runs await each scenario before the next slot is launched.
         await Task.Yield();
 
         try

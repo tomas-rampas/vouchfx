@@ -71,7 +71,7 @@ body is **syntax-highlighted as C#** (keywords, strings, member access) while
 the surrounding YAML stays YAML-coloured. The embedded region begins at the
 block-scalar body and ends — per the YAML indentation rule — at the first line
 indented at or below the `code:` key. Open
-[`examples/script-csharp-highlighting.e2e.yaml`](./examples/script-csharp-highlighting.e2e.yaml)
+[`examples/script-csharp-highlighting.e2e.yaml`](https://github.com/tomas-rampas/vouchfx/blob/main/tools/vscode-vouchfx/examples/script-csharp-highlighting.e2e.yaml)
 to eyeball it.
 
 A step can instead reference an external `.csx` file via `file:` (resolved
@@ -90,7 +90,7 @@ VSCode's standard C# extension, so this is the natural place to grow a
 `script.csharp` body once it outgrows a `code:` block scalar. The injection
 grammar above only applies to `code:`; a `file:` value is a plain path string,
 not an embedded C# region, so there is nothing to highlight inline. See
-[`examples/script-csharp-external-file.e2e.yaml`](./examples/script-csharp-external-file.e2e.yaml).
+[`examples/script-csharp-external-file.e2e.yaml`](https://github.com/tomas-rampas/vouchfx/blob/main/tools/vscode-vouchfx/examples/script-csharp-external-file.e2e.yaml).
 
 ### C# IntelliSense (status)
 
@@ -109,7 +109,7 @@ LSP does not cleanly expose virtual-document completion forwarding** for an
 in-memory `.cs` not bound to an MSBuild project, and the YAML ↔ virtual
 position-mapping is non-trivial; a custom Roslyn LSP is a multi-sprint effort.
 The full rationale and planned approach are in
-[`docs/csharp-intellisense.md`](./docs/csharp-intellisense.md).
+[`docs/csharp-intellisense.md`](https://github.com/tomas-rampas/vouchfx/blob/main/tools/vscode-vouchfx/docs/csharp-intellisense.md).
 
 ## Test Explorer
 
@@ -126,10 +126,10 @@ The full rationale and planned approach are in
 A Run profile invokes the `vouchfx` CLI as:
 
 ```
-<cliPath> run <file> --events <tmpEventsFile> --no-decorations
+<cliPath> run <file> --events <tmpEventsFile> --no-decorations --shutdown-on-stdin-eof
 ```
 
-The extension parses the emitted `--events` JSON Lines stream, resolves each step's verdict, and reports the outcome via the Test Explorer surface. The `--events` and `--no-decorations` CLI options are provided by the companion vouchfx reporting and CLI work (Sprint-10 .NET PR #148); until that PR is merged and the CLI becomes available on PATH, Test Explorer runs fail soft with items marked `errored` and a `vouchfx.cliPath` notice (see [Fail-soft behaviour](#fail-soft-behaviour) below). Each verdict maps to a VSCode TestItem state:
+The extension runs the configured vouchfx CLI, parses its `--events` JSON Lines stream, and reports each step's verdict via the Test Explorer surface. Test Explorer requires a CLI that supports `--events`, `--no-decorations` and `--shutdown-on-stdin-eof`. Set `vouchfx.cliPath` if the CLI is not on `PATH`. A CLI that cannot start or produces no usable events fails soft with items marked `errored` and a configuration notice (see [Fail-soft behaviour](#fail-soft-behaviour) below). The extension keeps the CLI's stdin pipe open during a run; cancellation closes that pipe so `--shutdown-on-stdin-eof` requests graceful engine cleanup. If the CLI has not exited after 35 seconds, the extension forcibly terminates its child process. A cancelled run with no usable events is marked `skipped`. Each verdict maps to a VSCode TestItem state:
 
 | vouchfx verdict | VSCode state | What it means |
 | --- | --- | --- |
@@ -177,7 +177,7 @@ The `vouchfx.cliPath` setting lets you point the Test Explorer at a non-standard
 
 **Development build from source:**
 
-If you want to run `dotnet run` from source, create a small wrapper script (e.g. `run-vouchfx.sh` on Unix, `run-vouchfx.bat` on Windows) at the repository root:
+On Windows, set `vouchfx.cliPath` to a directly executable installed or published `vouchfx.exe`, including the executable from a .NET global tool installation. On Unix, you can run `dotnet run` from source through a small wrapper script (`run-vouchfx.sh`) at the repository root:
 
 *run-vouchfx.sh:*
 ```bash
