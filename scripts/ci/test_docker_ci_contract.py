@@ -367,5 +367,40 @@ jobs:
         self.assertIn(b"unexpected-field", result.stdout)
 
 
+class ActionlintVersionTests(unittest.TestCase):
+    class VersionAccepted(Exception):
+        pass
+
+    def check_version_gate(self, stdout, code=0, accepted=False):
+        import lint_workflows
+        from unittest import mock
+
+        # Exercise the actual wrapper's version gate, stopping at the next
+        # tool so this format regression has no external-tool dependency.
+        with tempfile.TemporaryDirectory(dir=SCRATCH) as directory:
+            version = subprocess.CompletedProcess(["actionlint", "-version"], code, stdout, b"")
+            with mock.patch.object(lint_workflows.tempfile, "mkdtemp", return_value=directory), \
+                    mock.patch.object(lint_workflows.shutil, "which", side_effect=["actionlint", "shellcheck"]), \
+                    mock.patch.object(lint_workflows, "BASH", "bash"), \
+                    mock.patch.object(lint_workflows.subprocess, "run", side_effect=[version, self.VersionAccepted()]):
+                expected = self.VersionAccepted if accepted else AssertionError
+                with self.assertRaises(expected):
+                    lint_workflows.main()
+
+    def test_release_and_source_build_banners_accept_the_exact_pin(self):
+        for banner in [b"1.7.12\nbuilt with go compiler\n", b"v1.7.12\ninstalled by building from source\n"]:
+            with self.subTest(banner=banner):
+                self.check_version_gate(banner, accepted=True)
+
+    def test_wrong_versions_and_malformed_banners_are_refused(self):
+        for banner in [b"", b"1.7.11\n", b"v1.7.13\n", b"vv1.7.12\n",
+                       b"1.7.12 extra\n", b"warning\n1.7.12\n", b" 1.7.12\n"]:
+            with self.subTest(banner=banner):
+                self.check_version_gate(banner)
+
+    def test_matching_banner_cannot_hide_a_failed_version_command(self):
+        self.check_version_gate(b"1.7.12\n", code=1)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

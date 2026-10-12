@@ -64,7 +64,7 @@ def main():
     if not actionlint or not shellcheck or not BASH:
         raise AssertionError("actionlint 1.7.12, ShellCheck 0.11.0 and Bash are mandatory")
     version = run("actionlint-version", [actionlint, "-version"])
-    if version.returncode or version.stdout.splitlines()[0] != b"v1.7.12":
+    if version.returncode or version.stdout.splitlines()[:1] not in [[b"1.7.12"], [b"v1.7.12"]]:
         raise AssertionError("Require actionlint v1.7.12")
     version = run("shellcheck-version", [shellcheck, "--version"])
     if version.returncode or b"version: 0.11.0" not in version.stdout:

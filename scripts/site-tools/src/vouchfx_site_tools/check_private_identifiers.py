@@ -122,8 +122,11 @@ class _PublishedText(HTMLParser):
         self.budget.consume(len(data))
         super().feed(data)
 
-    def set_cdata_mode(self, elem: str) -> None:
+    def set_cdata_mode(self, elem: str, *, escapable: bool = False) -> None:
         super().set_cdata_mode(elem)
+        # Python 3.12.15 distinguishes RCDATA entity decoding in the tokenizer.
+        # Keep decoding here, once, on both old and new tokenizer versions.
+        self._escapable = False
         if self.data:
             # JSON strings remain data during optional markup projection too:
             # script/style spelling cannot suppress inline-tag-split text.
@@ -363,6 +366,11 @@ class _PublishedText(HTMLParser):
         self.handle_data("&#" + name + ";")
 
     def parse_html_declaration(self, i: int) -> int:
+        if self.rawdata.startswith("<![", i):
+            # Python 3.12.15 no longer delegates marked sections to this
+            # override. Preserve the publication scanner's structural rules
+            # for DATA and XML, including malformed/unfinished headers.
+            return self.parse_marked_section(i)
         if self.data and not self.at_eof and self.rawdata[i:] in {"<!", "<!-"}:
             # These prefixes can still become a marked section or comment in
             # the next feed. Preserve them until their syntax is classified.
