@@ -55,8 +55,6 @@
     <!-- StepNode.RawNode is a YamlMappingNode; StepTargetResolver reads the raw step body
          directly to resolve `target` without re-parsing YAML text. -->
     <PackageReference Include="YamlDotNet" />
-    <!-- Build-only: emits SourceLink metadata into the PDB; not a runtime/lib dependency. -->
-    <PackageReference Include="Microsoft.SourceLink.GitHub" PrivateAssets="all" />
   </ItemGroup>
 
   <ItemGroup>

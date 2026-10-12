@@ -40,8 +40,6 @@
 
   <ItemGroup>
     <PackageReference Include="YamlDotNet" />
-    <!-- Build-only: emits SourceLink metadata into the PDB; not a runtime/lib dependency. -->
-    <PackageReference Include="Microsoft.SourceLink.GitHub" PrivateAssets="all" />
   </ItemGroup>
 
   <ItemGroup>

@@ -37,9 +37,6 @@
          public surface is a published contract. See Directory.Build.props. -->
     <VouchfxDocumentEveryPublicMember>true</VouchfxDocumentEveryPublicMember>
   </PropertyGroup>
-  <ItemGroup>
-    <PackageReference Include="Microsoft.SourceLink.GitHub" PrivateAssets="all" />
-  </ItemGroup>
 
   <!-- Expose internal types (CollectibleScriptLoadContext) to the memory-model test project. -->
   <ItemGroup>

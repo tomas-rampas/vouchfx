@@ -6,7 +6,7 @@
 # installed and is never touched.
 #
 # What it guarantees, idempotently:
-#   1. A .NET 8 SDK that satisfies global.json (8.0.400, rollForward latestFeature).
+#   1. A .NET 8 SDK that satisfies global.json (8.0.424, rollForward latestFeature).
 #      The web sandbox's egress proxy blocks builds.dotnet.microsoft.com (where
 #      dotnet-install.sh downloads from), and Ubuntu 24.04's own dotnet-sdk-8.0 is an
 #      8.0.1xx build, below global.json's floor. Microsoft's Ubuntu 22.04 (jammy) apt
@@ -125,4 +125,4 @@ fi
 write_profile
 
 export DOTNET_ROOT="$DOTNET_DIR" DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
-echo "session-start: .NET SDK $("$DOTNET_DIR/dotnet" --version) ready (global.json floor 8.0.400)."
+echo "session-start: .NET SDK $("$DOTNET_DIR/dotnet" --version) ready (global.json floor 8.0.424)."

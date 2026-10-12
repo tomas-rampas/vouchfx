@@ -43,10 +43,6 @@
     <VouchfxDocumentEveryPublicMember>true</VouchfxDocumentEveryPublicMember>
   </PropertyGroup>
 
-  <ItemGroup>
-    <!-- Build-only: emits SourceLink metadata into the PDB; not a runtime/lib dependency. -->
-    <PackageReference Include="Microsoft.SourceLink.GitHub" PrivateAssets="all" />
-  </ItemGroup>
 
   <ItemGroup>
     <!-- Each referenced project carries its own PackageId (Version 1.0.0), so under

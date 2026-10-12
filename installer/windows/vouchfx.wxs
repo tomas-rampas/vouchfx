@@ -34,10 +34,10 @@
     %ProgramFiles%\vouchfx is appended to the system PATH on install,
     removed on uninstall (Permanent="no", System="yes").
 
-  DCP prerequisite:
-    The installed vouchfx.exe requires aspire.hosting.orchestration.win-x64
-    v13.4.2 in the user NuGet cache (~\.nuget\packages\).  This is present on
-    any machine that has built or restored an Aspire project.
+  DCP distribution:
+    The installed CLI includes its version-matched Windows native DCP tree.
+    It resolves that bundle beside the host assembly; an Aspire project restore
+    or a pre-populated user NuGet cache is not an installation prerequisite.
 
   GUIDs (never change these):
     UpgradeCode  {7C9D4A2B-E3F5-4B6A-8D1C-9E2F3A4B5C6D}  product family GUID
