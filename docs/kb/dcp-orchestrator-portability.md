@@ -2,7 +2,7 @@
 
 **Applies to:** CLI global tools, archives and installers.
 
-**Updated:** 2026-10-10. Published `1.0.0-rc.6` is still cache-dependent; current source bundles DCP.
+**Updated:** 2026-10-12. Published `1.0.0-rc.6` is still cache-dependent; current source bundles DCP.
 
 ## Symptoms and cause
 
@@ -31,6 +31,12 @@ not the current directory: `dcp/13.4.2/<rid>/tools/`.
 | Unsupported bundled RID | Report supported RIDs and the explicit-override option. |
 | Source/custom AppHost without a bundle | Preserve existing metadata and exact-version local-cache fallback. |
 
+Installed distributions also relocate Aspire's AppHost directory to the host assembly's directory
+and allocate a separate writable store under the system temporary directory for each topology.
+The store is removed after a failed build/start or normal teardown. Embedded build-machine
+project and intermediate-output paths never select the installed tool's runtime storage; the
+installation directory may be read-only. Source/custom AppHosts without a distribution manifest retain Aspire's existing paths.
+
 On Unix, archives and installers preserve native execute bits. Global-tool startup repairs them
 in the selected bundle only; read-only installs with broken permissions require their owner to
 repair them. DCP resolution remains inside inline Aspire startup for future environment adapters.
@@ -47,7 +53,8 @@ See [troubleshooting](../troubleshooting.md#the-aspire-orchestration-component-i
 
 Resolver tests cover bundle priority, all advertised RIDs, unsupported/incomplete bundles and
 explicit override. Glue tests verify host-relative configuration and Unix permission repair with
-an empty cache. Packaging checks compare complete native trees against restored exact-version
+an empty cache. Real Aspire-store tests cover stale Windows/Unix metadata, isolated concurrent
+stores, installation-file preservation and failure/disposal cleanup. Packaging checks compare complete native trees against restored exact-version
 NuGet payloads, validate executable hashes/platforms and enforce a 250,000,000-byte tool ceiling.
 
 Release preflights launch tool/archive binaries on all four RIDs and verify installer payloads.

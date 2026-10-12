@@ -66,6 +66,8 @@ public sealed class HeadlessTopology : IAsyncDisposable
     // still has something harmless for DisposeAsync to close.
     private TempDirectoryLedger _tempDirectoriesToClean = new();
 
+    private TempDirectoryLedger? _aspireStoreDirectories;
+
     private bool _disposed;
 
     private HeadlessTopology(DistributedApplication app, DcpFlightRecorder? recorder)
@@ -214,9 +216,13 @@ public sealed class HeadlessTopology : IAsyncDisposable
     /// </remarks>
     internal static HeadlessTopology ForTestingDisposal(
         DistributedApplication app,
-        TempDirectoryLedger? tempDirectoriesToClean = null)
+        TempDirectoryLedger? tempDirectoriesToClean = null,
+        TempDirectoryLedger? aspireStoreDirectories = null)
     {
-        var topology = new HeadlessTopology(app, recorder: null);
+        var topology = new HeadlessTopology(app, recorder: null)
+        {
+            _aspireStoreDirectories = aspireStoreDirectories,
+        };
         if (tempDirectoriesToClean is not null)
         {
             topology._tempDirectoriesToClean = tempDirectoriesToClean;
@@ -267,6 +273,7 @@ public sealed class HeadlessTopology : IAsyncDisposable
             AssemblyName = appHostAssemblyName,
         };
 
+        ApplyInstalledAppHostDirectory(options);
         var builder = DistributedApplication.CreateBuilder(options);
 
         // Packaged-tool DCP path self-heal (see the class remarks and DcpPathResolver for
@@ -300,11 +307,10 @@ public sealed class HeadlessTopology : IAsyncDisposable
         //
         // The property the filter actually relies on: everything that category emits BELOW
         // Warning is lifecycle chatter with no diagnostic value here, and one item of it is
-        // actively misleading — "Application host directory is: <path>" prints the
-        // apphostprojectpath AssemblyMetadata baked at BUILD time, i.e. the release build
-        // machine's directory (/home/runner/work/...) on every customer run of the packaged tool,
-        // while nothing in the engine reads AppHostDirectory (scenario-relative paths resolve
-        // against the suite's own directory). Warning and above still passes, which is what keeps
+        // lifecycle chatter — "Application host directory is: <path>" now names the
+        // relocated installation for a packaged host; source/custom hosts keep Aspire's
+        // defaults. Scenario-relative paths still resolve against the suite's own directory.
+        // Warning and above still passes, which is what keeps
         // the port-allocation warning visible.
         // Aspire.Hosting.Dcp.DcpHost is deliberately NOT filtered: its "Starting DCP with
         // arguments" line shows THIS machine's resolved DCP path — primary diagnostic
@@ -332,8 +338,10 @@ public sealed class HeadlessTopology : IAsyncDisposable
         });
 
         DistributedApplication app;
+        TempDirectoryLedger? aspireStoreDirectories = null;
         try
         {
+            aspireStoreDirectories = ApplyInstalledAspireStorePath(builder);
             configureResources?.Invoke(builder);
             app = builder.Build();
         }
@@ -346,6 +354,10 @@ public sealed class HeadlessTopology : IAsyncDisposable
             // write. The exception leaves unchanged and untyped-over, which is what lets
             // SuiteTopology's own TopologyAuthoringException catch still see it.
             recorder?.Dispose();
+            if (aspireStoreDirectories is not null)
+            {
+                DeleteEngineOwnedTempDirectories(aspireStoreDirectories);
+            }
             throw;
         }
 
@@ -416,6 +428,10 @@ public sealed class HeadlessTopology : IAsyncDisposable
                 {
                     DeleteEngineOwnedTempDirectories(tempDirectoryLedger);
                 }
+                if (aspireStoreDirectories is not null)
+                {
+                    DeleteEngineOwnedTempDirectories(aspireStoreDirectories);
+                }
             }
 
             throw;
@@ -429,7 +445,59 @@ public sealed class HeadlessTopology : IAsyncDisposable
         // golden evidence and then discard it on exactly the fault this exists to capture.
         // SuiteTopology and StubTopology own the far end of the window; a caller that uses
         // HeadlessTopology directly drops it at DisposeAsync.
-        return new HeadlessTopology(app, recorder);
+        return new HeadlessTopology(app, recorder)
+        {
+            _aspireStoreDirectories = aspireStoreDirectories,
+        };
+    }
+
+    /// <summary>
+    /// Uses the installed host directory instead of build-machine AppHost metadata.
+    /// Source/custom AppHosts without a distribution manifest retain Aspire's defaults.
+    /// </summary>
+    internal static void ApplyInstalledAppHostDirectory(DistributedApplicationOptions options)
+    {
+        var directory = InstalledAppHostDirectory(ResolveHostAssembly(options.AssemblyName));
+        if (directory is not null) options.ProjectDirectory = directory;
+    }
+
+    /// <summary>
+    /// Gives installed distributions a writable, isolated store before Aspire resolves
+    /// services. Aspire 13.4.2 otherwise prefers the embedded intermediate-output path,
+    /// even when ProjectDirectory was relocated. The caller owns every cleanup path.
+    /// </summary>
+    internal static TempDirectoryLedger? ApplyInstalledAspireStorePath(IDistributedApplicationBuilder builder)
+    {
+        if (InstalledAppHostDirectory(builder.AppHostAssembly) is null) return null;
+
+        var directories = new TempDirectoryLedger();
+        var directory = Path.Combine(Path.GetTempPath(), EngineTempDirectoryPrefix + "aspire-" + Guid.NewGuid().ToString("N"));
+        directories.Stage(directory, _ => { });
+        builder.Configuration["Aspire:Store:Path"] = directory;
+        return directories;
+    }
+
+    private static string? InstalledAppHostDirectory(Assembly? hostAssembly)
+    {
+        if (hostAssembly is null || string.IsNullOrEmpty(hostAssembly.Location)) return null;
+        var directory = Path.GetDirectoryName(hostAssembly.Location);
+        return directory is not null && File.Exists(Path.Combine(directory, "dcp", "supported-rids.txt"))
+            ? directory : null;
+    }
+
+    private static Assembly? ResolveHostAssembly(string? appHostAssemblyName)
+    {
+        try
+        {
+            return appHostAssemblyName is null
+                ? Assembly.GetEntryAssembly()
+                : Assembly.Load(new AssemblyName(appHostAssemblyName));
+        }
+        catch
+        {
+            // Preserve Aspire's own diagnosis for a missing or unloadable host assembly.
+            return null;
+        }
     }
 
     /// <summary>
@@ -460,17 +528,7 @@ public sealed class HeadlessTopology : IAsyncDisposable
     /// </remarks>
     internal static void ApplyDcpPathSelfHeal(IDistributedApplicationBuilder builder, string? appHostAssemblyName)
     {
-        Assembly? hostAssembly;
-        try
-        {
-            hostAssembly = appHostAssemblyName is null
-                ? Assembly.GetEntryAssembly()
-                : Assembly.Load(new AssemblyName(appHostAssemblyName));
-        }
-        catch
-        {
-            hostAssembly = null;
-        }
+        var hostAssembly = ResolveHostAssembly(appHostAssemblyName);
 
         if (hostAssembly is null)
         {
@@ -677,6 +735,10 @@ public sealed class HeadlessTopology : IAsyncDisposable
         // per-directory, so one failure cannot stop the others or skip the final _app release
         // below; see DeleteEngineOwnedTempDirectories for what is swallowed and why.
         DeleteEngineOwnedTempDirectories(_tempDirectoriesToClean);
+        if (_aspireStoreDirectories is not null)
+        {
+            DeleteEngineOwnedTempDirectories(_aspireStoreDirectories);
+        }
 
         // Guarded for the reason the StopAsync catch above already states as a RULE — "teardown
         // must never throw into the verdict path (§12.1)" — which this line contradicted by being
