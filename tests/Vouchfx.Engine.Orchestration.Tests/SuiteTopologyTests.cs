@@ -68,7 +68,7 @@ public sealed class SuiteTopologyTests : IDisposable
             Services: new Dictionary<string, ServiceSpec>
             {
                 ["whoami"] = new ServiceSpec(
-                    Image: "traefik/whoami",
+                    Image: "traefik/whoami@sha256:c4717a8d1f0134a7444e24f881160e033991f23027c6c5a9a3f8fd22e70d1d44",
                     Project: null,
                     ImagePullPolicy: null,
                     HttpPort: null,

@@ -1078,47 +1078,16 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
             $"the '{arm}' arm's output did not contain \"{expected}\". Output:\n{output}");
 
     // ─────────────────────────────────────────────────────────────────────────────────────────
-    // Issue #410 — the carve-out's confirmed-probe narrowing, and #467's fold WIRING
-    // ─────────────────────────────────────────────────────────────────────────────────────────
-    //
-    // THREE ROWS OVER ONE BASELINE SUITE AND TWO KNOBS, so what separates any two of them is
-    // stated in one place and is greppable, rather than three separately-argued suites.
-    //
-    // NOT "each row moves one variable" — Row 2 moves BOTH knobs against Row 1's zero, and saying
-    // otherwise would overstate the differential. The pairs that ARE one-knob differentials are the
-    // ones the rows' claims rest on: Row 1 → Row 3 moves the environment alone (which is the fold's
-    // gate), and Row 3 → Row 2 moves the declaration alone (which is what the canonical union
-    // reads). Row 2 against Row 1 is two moves and is not used as evidence about either gate.
-    //
-    // Every row is the positive control's suite — a topology that comes up and a probe that
-    // CONFIRMS `mtls-broker` — plus ONE schema-rejected sibling. The sibling is always rejected the
-    // same way (a step missing its required `topic`, an error at `/steps/0` and therefore OUTSIDE
-    // any `security` node, so the recorded kind is AuthoringFault and never the unconditionally-
-    // raising SecurityDeclarationRejected). What varies is only its `environment`:
-    //
-    //   Row 1  environment BYTE-IDENTICAL              → exit 0, no notice.  The carve-out.
-    //   Row 2  environment differs, DECLARATION differs → non-zero.          The union raises.
-    //   Row 3  environment differs, declaration SAME    → non-zero.          Only the fold raises.
-    //
-    // MEASURED, all three green on one host in 1m06s, with no container or `aspire-session-network-*`
-    // left behind. AND the three are not one row wearing three names: replacing the outer
-    // `Worse(…, rejectedDivergentAssurance)` term in `RunSuiteAsync` with `SecurityAssurance.None`
-    // takes Row 3 from exit 4 to exit 0 (it fails) while Row 2 stays green — so Row 3 measures the
-    // WIRING and Row 2 measures the union, which is exactly the split the two rows claim.
-    //
-    // WHY DOCKER IS NOT OPTIONAL FOR ANY OF THEM. All three turn on `Confirmed` being NON-EMPTY,
-    // and nothing but a probe that succeeded can fill it. Without a topology every one of these
-    // suites records `Confirmed = []` and raises, whichever variant it is — so the three rows
-    // collapse into one and measure nothing. That is issue #410's own sentence ("every Docker-free
-    // row in the matrix is blind to this by construction") and it is why the record-tier folds and
-    // `FoldRejectedDivergentTests` cannot stand in for these.
-    //
-    // WHAT IS PINNED DOCKER-FREE, AND WHY IT IS NOT THE SAME CLAIM. The FIXTURE's premises — that
-    // each sibling is schema-rejected outside its security block, still builds an AST, and diverges
-    // (or does not) in environment and in declared identity exactly as its row's name says — are
-    // asserted by `SiblingPremises_AreWhatEachRowClaims` below, with no container. That guard exists
-    // because a fixture that silently stopped being rejected, or stopped diverging, would leave
-    // every row here green while measuring nothing. It is a check on the BED, not on the carve-out.
+    // Issue #410's security-notice distinction under the independent authoring-refusal floor.
+    // All three schema-rejected sibling shapes exit 4. The confirmed probe suppresses the
+    // security notice only for the byte-identical environment; divergent declaration/environment
+    // rows still raise that notice through the canonical union or the fold.
+    // Every sibling remains schema-rejected outside its security node and AST-buildable.
+    // The main publish deliberately follows the unpinned advertised port and expires as
+    // Inconclusive. Neither transport confirmation nor that runtime classification forgives
+    // the sibling's independent authoring refusal (AuthoringRefusalExitTests, blueprint §16.4).
+    // Before the authoring-refusal floor, removing the fold changed Row 3's exit 4 to 0;
+    // that historical mutation no longer distinguishes process exit codes on this policy.
 
     /// <summary>
     /// Which sibling a row writes beside the drill — the two knobs, named.
@@ -1126,7 +1095,7 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
     internal enum SiblingShape
     {
         /// <summary>Byte-identical <c>environment</c>: not folded, and its declaration is the one
-        /// the probe confirmed. Row 1's carve-out.</summary>
+        /// the probe confirmed. Row 1's quiet security notice.</summary>
         IdenticalEnvironment,
 
         /// <summary>A divergent <c>environment</c> carrying a DIFFERENT <c>security</c> declaration:
@@ -1140,55 +1109,18 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
     }
 
     /// <summary>
-    /// <strong>Issue #410's first acceptance row.</strong> A shared-topology secured suite where one
-    /// scenario carries a pre-topology authoring fault while the probe confirms EVERY declared
-    /// target exits <b>0</b> and prints no security notice.
+    /// A confirmed probe keeps the security notice quiet, while the schema-rejected sibling independently forces exit 4.
     /// </summary>
-    /// <remarks>
-    /// <para>
-    /// The narrowing this pins: the declared assertion <em>was</em> confirmed, so REQ-018 has
-    /// nothing to say, and what remains is an authoring fault — <c>Inconclusive</c>, and only
-    /// <c>Fail</c> breaks CI by default (blueprint §12.1). Before the narrowing the schema door
-    /// OR-ed on <c>declaresSecurity</c> alone, without asking whether confirmation had happened, and
-    /// this suite raised — <strong>read</strong> from the archived source at the branch point and
-    /// never re-run, which is the same evidence label the changelog entry carries. What THIS row
-    /// measures is one tree: the exit code on this one.
-    /// </para>
-    /// <para>
-    /// <strong>Exit 0 is asserted together with the notice's ABSENCE, and neither alone would
-    /// do.</strong> Several doors in this engine produce a 0, so the code alone is not evidence that
-    /// the assurance stayed quiet.
-    /// </para>
-    /// <para>
-    /// <strong>The notice's absence is not, on its own, "Unconfirmed answered false" — and the row
-    /// closes the gap rather than overstating it.</strong> The one site that prints it in
-    /// <c>RunCommand</c> is guarded on a CONJUNCTION: <c>Unconfirmed: true, Refusal: not
-    /// ProbeUnconfirmed</c>. So a silent run is either an assurance that did not raise (what this
-    /// row claims) or one that raised on a FAILED PROBE (which prints its own measured security
-    /// failure instead). <see cref="AssertProbeConfirmed"/> runs first and rules the second out by
-    /// measurement: it asserts this run reached a CONFIRMED probe, and a confirmed probe records no
-    /// <c>ProbeUnconfirmed</c> refusal. The premise check therefore does double duty — it stops a
-    /// host whose topology never came up from reading as a regressed carve-out, and it is what makes
-    /// the absence below mean the predicate rather than the guard's other conjunct.
-    /// </para>
-    /// <para>
-    /// Row 2 below is what stops this row passing by the carve-out simply having been disabled: the
-    /// same baseline suite, with the sibling's environment AND its declaration moved, exits
-    /// non-zero. Two knobs, not one — stated exactly, because the one-knob differentials in this
-    /// group run Row 1 → Row 3 (environment alone) and Row 3 → Row 2 (declaration alone), and
-    /// neither of those is the pair being cited here.
-    /// </para>
-    /// </remarks>
     [Fact]
     [Trait("requires", "docker")]
-    public async Task AuthoringRefusalBesideAFullyConfirmedProbe_ExitsZeroWithNoNotice()
+    public async Task AuthoringRefusalBesideAFullyConfirmedProbe_ExitsFourWithNoSecurityNotice()
     {
         var (exitCode, output) = await RunSchemaRejectedSiblingRowAsync(
             "410-carve-out", SiblingShape.IdenticalEnvironment);
 
         AssertProbeConfirmed("run", output);
 
-        // The run genuinely completed rather than exiting 0 by never starting: the step ran, and
+        // The run genuinely completed: the step ran, and
         // the sibling was seen AND refused for the reason this fixture built it to be.
         //
         // The diagnostic is asserted as the WHOLE missing-required-property message, not as the
@@ -1198,24 +1130,14 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
         AssertArmOutputContains("run", output, $"step '{StepId}'");
         AssertArmOutputContains("run", output, Issue410SiblingSchemaDiagnostic);
 
-        // THE EXIT CODE ALONE DOES NOT SAY WHICH 0 THIS IS, so the verdict is asserted directly.
-        // `ExitCodes.FromVerdict` returns 0 for Pass AND for a flagless Inconclusive, so a suite
-        // that somehow passed would satisfy the assertion below just as well as the one this row is
-        // about — and they are not the same claim. The carve-out's claim is precisely that an
-        // INCONCLUSIVE suite, whose declared assertion the probe confirmed, does not have its exit
-        // code escalated by the security rule. The renderer's per-scenario line carries the token
-        // (measured: `Scenario '<name>': INCONCLUSIVE`), so it costs one assertion to say so; and
-        // because the suite verdict is the Elevate fold over its scenarios, a sibling reported
-        // INCONCLUSIVE bounds the suite at Inconclusive or worse. Asserting the sibling's line
-        // rather than a bare token also keeps the earlier premise — that the sibling became a
-        // SCENARIO rather than an unbuilt document, which is what puts this row on the carve-out's
-        // rule instead of #415's.
+        // The sibling must remain Inconclusive; the authoring-refusal policy independently
+        // sets exit 4, so the verdict and the security-notice absence are asserted separately.
         AssertArmOutputContains(
             "run",
             output,
             $"schema-rejected-sibling-{SiblingShape.IdenticalEnvironment}': INCONCLUSIVE");
 
-        Assert.Equal(0, exitCode);
+        Assert.Equal(4, exitCode);
         Assert.DoesNotContain(
             "declares a 'security' block that this run could not confirm",
             output,
@@ -1223,37 +1145,8 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
     }
 
     /// <summary>
-    /// <strong>Issue #410's companion row.</strong> The same suite with the refused scenario
-    /// declaring a DIFFERENT secured target: one declared identity confirmed, one not, so the
-    /// carve-out must not apply and the run exits non-zero.
+    /// The divergent declaration raises the security notice; the independent authoring refusal also requires exit 4.
     /// </summary>
-    /// <remarks>
-    /// <para>
-    /// This is what makes the row above evidence. A carve-out that had simply been switched off —
-    /// or a predicate weakened to "anything was confirmed" — would take this suite to 0 as well, and
-    /// the pair separates the two readings. It is the end-to-end twin of
-    /// <c>SecurityConfirmationExitCodeTests.Unconfirmed_OneOfTwoDeclaredTargetsConfirmed_StillRaises</c>,
-    /// which pins the same rule at the record tier and cannot reach a real confirmation.
-    /// </para>
-    /// <para>
-    /// <strong>The canonical union suffices to raise it, and that is what makes it the wrong row for
-    /// #467's wiring.</strong> The sibling's <c>endpoint</c> differs, so
-    /// <c>SecuredTargets.IdentityOf</c> gives it an identity the probe never confirmed, and
-    /// <c>Unconfirmed</c>'s first disjunct is satisfied by the suite-wide walk alone. The fold ALSO
-    /// fires here — the environment diverges and the scenario declares something, so its gate is met
-    /// too — which is precisely why this row cannot attribute the raise to the wiring: both terms
-    /// raise and <c>Worse</c> keeps a raise either way. MEASURED, by removing the wiring term: this
-    /// row stays green while Row 3 reddens, so the union is doing the work here and the fold is
-    /// doing it there.
-    /// </para>
-    /// <para>
-    /// <strong>The exit code is 4, not 3</strong>, for the reason the #415 row above records: the
-    /// run reaches its step, whose budget expires as Inconclusive, and a schema-rejected sibling
-    /// keeps the aggregate there — 4 is the taxonomy's code for that verdict, and the carve-out
-    /// decides WHETHER it is returned flaglessly, never WHICH code it is. Asserted as non-zero AND
-    /// as 4, because "non-zero" alone would tolerate an exit 2 from a bed that never ran.
-    /// </para>
-    /// </remarks>
     [Fact]
     [Trait("requires", "docker")]
     public async Task PartiallyConfirmedDeclarationBesideAConfirmedProbe_ExitsNonZero()
@@ -1270,43 +1163,8 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
     }
 
     /// <summary>
-    /// <strong>Issue #410's third obligation, added by #467: the fold WIRING.</strong> A
-    /// schema-rejected scenario whose serialised <c>environment</c> differs from the baseline's,
-    /// beside a sibling whose probe confirms everything, exits non-zero — and the outer
-    /// <c>Worse(union, rejectedDivergentAssurance)</c> term is the only thing that can raise it.
+    /// The divergent environment raises the security notice through the fold; the authoring refusal independently requires exit 4.
     /// </summary>
-    /// <remarks>
-    /// <para>
-    /// <strong>The union cannot raise on this suite, which is the whole reason the row exists.</strong>
-    /// The sibling's <c>security</c> block is byte-identical to the baseline's, so
-    /// <c>SecuredTargets.IdentityOf</c> gives the two the SAME identity — the digest hashes the
-    /// <c>endpoint:</c> selector's TEXT, never its resolution — and the suite-wide walk therefore
-    /// holds one identity, which the probe confirmed. <c>SomeDeclaredTargetWentUnconfirmed</c> is
-    /// false, no probe failure was recorded, and the schema error sits outside the declaration, so
-    /// all three of <c>Unconfirmed</c>'s disjuncts are false for the union. Only
-    /// <c>FoldRejectedDivergent</c>'s contribution — that scenario's own declaration beside its own
-    /// refusal, with <c>Confirmed</c> empty by construction — raises, and only the wiring term
-    /// carries it into the suite's answer.
-    /// </para>
-    /// <para>
-    /// <strong>This is the row the call-site comment in <c>ScenarioRunner.RunSuiteAsync</c> promises,
-    /// and it is the measurement that comment could not make.</strong> MEASURED there: deleting the
-    /// wiring term leaves the whole non-Docker suite green, because at every pre-topology door
-    /// <c>Confirmed</c> is empty and the union raises on its own. This suite is the one shape where
-    /// the union does not — and that is MEASURED here rather than argued: with the term replaced by
-    /// <c>SecurityAssurance.None</c> this row reports <c>exit code: 0</c> and fails on the very
-    /// assertion below, while the union row above stays green in the same run.
-    /// </para>
-    /// <para>
-    /// <strong>Why the divergence is an <c>env:</c> value and not the <c>httpPort:</c> the fold's
-    /// own tests use.</strong> The knob has to change the serialised <c>EnvironmentSpec</c> while
-    /// leaving the <c>security</c> block byte-identical, and this fixture's service declares its
-    /// ports through <c>ports:</c> — where a change would also move what the health gate and the
-    /// probe address. An <c>env:</c> entry the broker does not act on moves the serialisation and
-    /// nothing else. <c>FoldRejectedDivergentTests</c> tables the same gate with an <c>httpPort:</c>
-    /// against a container-free fixture; the gate is environment equality either way.
-    /// </para>
-    /// </remarks>
     [Fact]
     [Trait("requires", "docker")]
     public async Task RejectedDivergentSiblingBesideAConfirmedProbe_RaisesThroughTheFold()
@@ -1347,6 +1205,7 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
         using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(5));
         var (exitCode, output) = await RunCliAsync(cli, "run", suiteDirectory, cts.Token);
 
+        AssertArmOutputContains("run", output, $"step '{StepId}': INCONCLUSIVE");
         _output.WriteLine($"exit code: {exitCode}");
         _output.WriteLine("── CLI output ──\n" + output);
 
@@ -1370,7 +1229,8 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
     /// from the #415 fixture and is forced by the subject.</strong> A document refused by the AST
     /// builder never becomes a scenario at all — it reaches the runner as an
     /// <c>UnbuiltDocument</c>, whose assurance is kept WHOLE and therefore always raises when it
-    /// declares anything. That is #415's rule and it would make all three rows here non-zero. These
+    /// declares anything. That is #415's rule and it would raise every row's security notice,
+    /// obscuring the notice distinction independently of authoring refusal's exit 4. These
     /// rows are about a document that IS a scenario: schema-rejected inside
     /// <c>RunSuiteAsync</c>'s own Pass A, where <c>schemaValid[i]</c> is false and the fold's gate
     /// can be reached.
@@ -2354,9 +2214,9 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
             #     step could not pass is the wrong budget for the one row that requires it to.
             #   • The two abort rows never reach the step at all, so any value does.
             #   • The remaining rows reach it and cannot pass (see this file's header on advertised
-            #     listeners). They tolerate the value — but not any value: the CLI control asserts
-            #     exit 0, and that couples to the step's CLASSIFICATION, since a budget expiry
-            #     resolves as Inconclusive (flaglessly exit 0) where a Fail would exit 1.
+            #     listeners). They retain the budget-expiry Inconclusive classification.
+            #     A runtime-only flagless control exits 0; the schema-refused sibling rows independently
+            #     exit 4 under the authoring-refusal policy, even though their security probe confirms.
             #
             # Measured at 10s the unpinned step spent ~20s of wall clock; a value below 5s is
             # schema-legal and untried, so nothing here claims 5s is a floor.

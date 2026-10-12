@@ -87,8 +87,9 @@ namespace Vouchfx.Engine.Orchestration.Tests;
 /// So no in-process discipline can make "nobody else writes here" true, and these rows do not
 /// assert it. The two rows that declare a resource identify THEIR OWN capture by the name they
 /// splice into their topology - a name made unique PER ROW RUN, not per class, so two hosts
-/// running this same row on one account cannot claim each other's files - which DCP echoes into
-/// the traffic the capture holds. The routing row declares none, so it cannot key on anything and
+/// running this same row on one account cannot claim each other's files. HeadlessTopology binds
+/// registered resource names into separate private capture context before DCP starts.
+/// The routing row declares none, so it cannot key on anything and
 /// does not try; it proves the same property at its source instead. Each assertion argues its own
 /// case where it stands.
 /// </para>
@@ -151,7 +152,7 @@ public sealed class DcpFlightRecorderDockerTests
     /// whole retention set inside that window five times over would not reach it.
     /// </para>
     /// <para>
-    /// The residual is real and is the same CLASS the healthy row's "SECOND, NARROWER SILENT MISS"
+    /// The residual is real and is the same CLASS the healthy row's "REMAINING SILENT MISS"
     /// paragraph already records: a row's own capture that the filter cannot see passes green over
     /// a leak. <strong>It is WORSE than that one in its consequence, though, and the difference is
     /// worth writing down.</strong> There the file had already been pruned away by retention, so
@@ -280,7 +281,8 @@ public sealed class DcpFlightRecorderDockerTests
             // recorder ARMED. Disarming here would turn the assertion below into a tautology.
             await using (var topology = await HeadlessTopology.StartAsync(
                 appHostAssemblyName: AppHostAssemblyName,
-                configureResources: b => b.AddContainer(_healthyResourceName, "traefik/whoami")))
+                configureResources: b => b.AddContainer(_healthyResourceName, "traefik/whoami")
+                    .WithImageSHA256("c4717a8d1f0134a7444e24f881160e033991f23027c6c5a9a3f8fd22e70d1d44")))
             {
                 Assert.NotNull(topology.Application);
             }
@@ -346,36 +348,14 @@ public sealed class DcpFlightRecorderDockerTests
         // the duration of the start and the health gates, and nothing else: no file, no output,
         // no residue.
         //
-        // Property 1 holds for the shape this row exists to catch: a capture written because a
-        // SUCCESSFUL start flushed instead of dropping is written after DCP created the
-        // container, so the buffer it holds names _healthyResourceName and nothing else on the
-        // machine can.
+        // Ownership comes from the actual application model bound before DCP starts, not from
+        // upstream Debug logs echoing a resource name. Assertion (c) in the failing row proves
+        // that the production capture contains this separate context; (e) independently requires
+        // native DCP traffic. A start failure before the first reconciler log is therefore still
+        // attributable when its registered name fits the context's published bounds. These
+        // short, unique names are inside those bounds; larger models may omit or truncate names.
         //
-        // THAT THE RESOURCE NAME REACHES A CAPTURE BODY AT ALL IS ARGUED HERE, MEASURED NEXT
-        // DOOR. Assertion (c) in the sibling failing row pins it on a real capture in this same
-        // docker leg, so the key cannot go silently vacuous - but that capture differs from this
-        // row's hypothetical one in three ways: a topology that FAILED rather than succeeded, a
-        // different resource name, and the gate-failure flush site rather than a success-path
-        // one. What carries across the three is the mechanism, not the circumstance: the name is
-        // echoed by DCP's own reconciler traffic as it brings a resource up, which both
-        // topologies do identically and neither outcome is a precondition for. What does NOT
-        // carry across is timing, and that is the limit below.
-        //
-        // KNOWN LIMIT, stated rather than papered over, and it is a FAMILY rather than one case.
-        // Measured on real captures from this host, the name arrives only at the very end of the
-        // buffer: one 20-entry capture names its resource on entries 18 and 19 only, and the
-        // capture the property-1 drill produced held 18 entries with 2 naming theirs (a reviewer
-        // counting nine captures got 3 of 20, first at entry 17 - same shape). Everything DCP
-        // logs before its reconcilers run - apiserver start, controller host, kubeconfig read,
-        // network creation, image pull - is nameless. So ANY failure before that point - the
-        // #420 shape among them, but equally an image-pull failure, a network-creation failure,
-        // or an apiserver or controller death - leaves a capture this row cannot claim, and it is
-        // therefore neither asserted on nor deleted. The row still goes red, on the
-        // Assert.NotNull/throw above rather than here, and the file stays put. That is the safe
-        // direction: an unclaimable capture in this directory is indistinguishable from a real
-        // finding, and deleting it on suspicion is exactly the bug fixed here.
-        //
-        // A SECOND, NARROWER SILENT MISS, on the other side of the listing. Retention keeps
+        // A REMAINING SILENT MISS, on the other side of the listing. Retention keeps
         // DcpCapture.RetainedFiles = 12 files and each write prunes the oldest, so if twelve
         // captures were written by OTHER hosts after this row's own flush and before the listing
         // below, this row's file is gone before it can be seen: `mine` comes back empty and the
@@ -633,7 +613,7 @@ public sealed class DcpFlightRecorderDockerTests
                     // threw inside app.StartAsync instead, which exercises the pre-existing
                     // start-path flush rather than the post-start window this drill exists for.
                     [_failingResourceName] = new ServiceSpec(
-                        Image: "traefik/whoami",
+                        Image: "traefik/whoami@sha256:c4717a8d1f0134a7444e24f881160e033991f23027c6c5a9a3f8fd22e70d1d44",
                         Project: null,
                         ImagePullPolicy: null,
                         HttpPort: 8080,
@@ -658,9 +638,8 @@ public sealed class DcpFlightRecorderDockerTests
             //     concurrent writer.
             //
             //     Property 1 is exact here. If the redirect were ignored, the production flush
-            //     would put THIS topology's buffer - which names _failingResourceName, because
-            //     DCP echoes the resource it is bringing up into the traffic the recorder holds,
-            //     and assertion (c) below pins that on this very capture - into the real root.
+            //     would put THIS topology's capture, whose private application-model context
+            //     names _failingResourceName (assertion (c)), into the real root.
             //     The name carries a per-run suffix, so nothing else on the machine, in this
             //     process or any other, runs a resource by it: a leak by this row run reddens
             //     this assertion and only this row run's leak can.
@@ -690,24 +669,11 @@ public sealed class DcpFlightRecorderDockerTests
                     + captures.Length.ToString(System.Globalization.CultureInfo.InvariantCulture));
             }
 
-            // (c) THE OWNERSHIP PREMISE ITSELF, pinned on a real capture in a blocking lane.
-            //     Every leak assertion in this class - (a) above and the one in the healthy row -
-            //     is an emptiness assertion over CapturesNaming, and emptiness assertions fail
-            //     open: if DCP ever stopped echoing the resource name into the buffered traffic,
-            //     the filter would return nothing for a row's OWN capture, both would pass for
-            //     free, and no test would notice. This repo advances Aspire per engine release,
-            //     so "what DCP echoes" is a moving dependency, not a constant.
-            //
-            //     THIRD, not last, and the position is load-bearing. This is the only positive
-            //     check that the key exists at all, so every assertion placed ahead of it is one
-            //     that can leave the premise unverified for a whole docker leg. It sits directly
-            //     behind the two it cannot run without: (a), because a row that has already
-            //     leaked should say so first, and (b), because it needs a capture to read.
-            //
-            //     Measured on real captures from this host, the key is genuine but thin and late:
-            //     one 20-entry capture named its resource on entries 18 and 19 only, and this
-            //     row's own drill capture held 18 entries with 2 naming the resource. Thin is
-            //     survivable; silent is not.
+            // (c) OWNERSHIP is positive evidence from the actual registered model, recorded
+            //     separately from native traffic. Empty leak checks otherwise fail open if the
+            //     key disappears. Upstream DCP Debug logs do not guarantee a resource-name echo
+            //     on initial creation, so they cannot establish this premise. Check context first,
+            //     then independently require real native entries at (e); neither replaces the other.
             //
             //     NOT Assert.Contains, AND THAT IS #526 AGAIN. Xunit prints the ACTUAL argument
             //     on failure, whatever that argument is - measured on this branch against a
@@ -726,12 +692,15 @@ public sealed class DcpFlightRecorderDockerTests
             //     what such a message will and will not carry; this one follows that rule rather
             //     than restating it.
             var body = await File.ReadAllTextAsync(captures[0]);
-            if (!body.Contains(_failingResourceName, StringComparison.OrdinalIgnoreCase))
+            var sections = body.Split("\n----\n", StringSplitOptions.None);
+            if (sections.Length != 2
+                || !sections[0].Contains("application-model context:", StringComparison.Ordinal)
+                || !sections[0].Split('\n').Contains("resource: " + _failingResourceName, StringComparer.Ordinal))
             {
                 Assert.Fail(
                     "the capture written at the health-gate timeout does not name this run's own "
                     + "resource '" + _failingResourceName + "', so the ownership key every leak "
-                    + "assertion in this class rests on is no longer in the traffic DCP echoes - "
+                    + "assertion in this class rests on is absent from the registered model context - "
                     + "and those assertions, being emptiness checks, would now pass for free. The "
                     + "body is deliberately not reproduced here (#526): it is a real capture and "
                     + "can carry generated credentials and host paths. To read it, see the (e) "
@@ -795,13 +764,13 @@ public sealed class DcpFlightRecorderDockerTests
             //     apart); or DCP traffic that WAS recorded and was then evicted by later non-DCP
             //     Aspire traffic under the recorder's bounds, which leaves entry lines but no DCP
             //     line and announces itself in the header count - FormatCapture adds a TRUNCATED
-            //     note when anything was evicted, making the header five lines rather than four.
+            //     note when anything was evicted. Private model context adds separate header lines.
             //
             //     Which is why the message below states the OBSERVATION and stops. It used to
             //     diagnose ("the buffer was empty - the arming window closed too early"), which
             //     named one of the three and was then immediately contradicted by the census
             //     printed beside it: a drill produced "17 entry line(s)" under that sentence.
-            var dcpLines = body
+            var dcpLines = sections[1]
                 .Split('\n')
                 .Where(l => l.Contains(
                     DcpFlightRecorder.DcpCategoryPrefix, StringComparison.OrdinalIgnoreCase))
@@ -1079,10 +1048,10 @@ public sealed class DcpFlightRecorderDockerTests
     /// <para>
     /// The ownership key is the resource name the calling row splices into its topology, carrying
     /// that row run's own Guid suffix. A capture body is <c>DcpFlightRecorder.FormatCapture</c>'s
-    /// output: a header plus the buffered DCP log lines, and DCP names the resource it is
-    /// creating, waiting on or failing in those lines. So a capture produced by the calling row
-    /// run's topology contains that name and no other capture on the machine does — including
-    /// one written by a concurrent host running this same row.
+    /// output: a header, bounded private application-model context and buffered native DCP lines.
+    /// HeadlessTopology binds registered names before start, independently of upstream log wording.
+    /// The row's short name is within that context's bounds, so its capture contains the key — including
+    /// without claiming a concurrent host running this same row under a different per-run name.
     /// </para>
     /// <para>
     /// <strong>That name is the WHOLE ownership test, and the per-run suffix is what makes it
@@ -1184,7 +1153,8 @@ public sealed class DcpFlightRecorderDockerTests
         // reports length 0, which the lower bound rejects; a zero-length regular file is a
         // mid-write or a stub and is not a capture either.
         const int HeaderSlack = 8 * 1024;
-        var maxCaptureBytes = (long)DcpFlightRecorder.DefaultCharLimit * 4 + HeaderSlack;
+        var maxCaptureBytes = (long)DcpFlightRecorder.DefaultCharLimit * 4
+            + DcpFlightRecorder.ContextCharLimit + HeaderSlack;
 
         // COUNT, and it is the bound #538 took away without putting one back. The removed snapshot
         // had bounded this listing incidentally: only files that appeared during the row's own

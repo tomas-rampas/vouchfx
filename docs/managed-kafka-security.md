@@ -55,7 +55,6 @@ environment:
         KAFKA_SSL_KEYSTORE_LOCATION: /etc/kafka/secrets/server.pem
         KAFKA_SSL_TRUSTSTORE_TYPE: PEM
         KAFKA_SSL_TRUSTSTORE_LOCATION: /etc/kafka/secrets/ca.pem
-        KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: "0"
 steps:
   - id: publish
     type: mq-publish.kafka
@@ -116,11 +115,13 @@ bounded TCP backend check. A socket check does not confirm TLS: before steps run
 separate probe validates the certificate chain and hostname, performs a Kafka protocol
 round trip and, for mutual TLS, checks rejection without a client identity.
 
-The consumer creates a fresh group per attempt and polls for roughly one second. The
-broker's default group rebalance delay can exceed that window, so the runnable test
-recipe explicitly sets `KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: "0"`. `RETRY` accommodates
-message and group readiness; increasing the outer timeout alone does not remove a
-rebalance delay that restarts for each fresh group.
+`mq-expect.kafka` manually assigns every discovered topic partition at its earliest
+available offset and reads retained records. A fresh client `GroupId` is configured
+per attempt, but the step does not subscribe to or join a broker consumer group,
+and it does not commit offsets. Broker group-rebalance delay therefore does not
+govern this step. Each attempt drains for roughly one second; `RETRY` accommodates
+messages arriving later. Increasing the outer timeout does not lengthen an
+individual drain.
 
 A statically invalid selected endpoint is an authoring refusal. A typed failure of the
 declared secured resource's own readiness, discovery or server-material access that

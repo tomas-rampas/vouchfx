@@ -114,7 +114,7 @@ public sealed class Sprint04CapstoneTests
         environment:
           services:
             whoami:
-              image: traefik/whoami
+              image: traefik/whoami@sha256:c4717a8d1f0134a7444e24f881160e033991f23027c6c5a9a3f8fd22e70d1d44
               httpPort: 80
           dependencies:
             capdb:

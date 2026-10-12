@@ -1,6 +1,7 @@
 using System.Reflection;
 using System.Runtime.InteropServices;
 using Aspire.Hosting;
+using Aspire.Hosting.ApplicationModel;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
@@ -350,6 +351,9 @@ public sealed class HeadlessTopology : IAsyncDisposable
 
         try
         {
+            // Bind actual registered resources before DCP starts. Native logs may not echo
+            // names during initial creation; ownership context belongs in private metadata.
+            recorder?.BindApplicationModel(app.Services.GetRequiredService<DistributedApplicationModel>());
             await app.StartAsync(cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex)

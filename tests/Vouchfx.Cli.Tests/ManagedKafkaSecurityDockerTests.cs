@@ -20,11 +20,22 @@ namespace Vouchfx.Cli.Tests;
 public sealed class ManagedKafkaSecurityDockerTests
 {
     [Theory]
-    [InlineData("2026-10-11T00:00:00Z INFO [GroupCoordinator 1] Preparing to rebalance group vouchfx-expect-0123456789abcdef0123456789abcdef in state PreparingRebalance", 1)]
-    [InlineData("2026-10-11T00:00:00Z authored vouchfx-expect-0123456789abcdef0123456789abcdef", 0)]
-    [InlineData("2026-10-11T00:00:00Z INFO [GroupCoordinator 1] Preparing to rebalance group unrelated-group", 0)]
-    public void BrokerLogObserver_RequiresTimestampCoordinatorAndGeneratedGroupGrammar(string log, int count)
-        => Assert.Equal(count, ObserveCoordinatorGroups(log).Length);
+    [InlineData("group")]
+    [InlineData("unread")]
+    [InlineData("foreign-bootstrap")]
+    public void BrokerStateObserver_RefusesUnexpectedGroupsUnreadLogsAndForeignBootstrap(string fault)
+    {
+        using var document = JsonDocument.Parse(JsonSerializer.Serialize(new
+        {
+            bootstrap = fault == "foreign-bootstrap" ? "localhost:9999" : "localhost:9093",
+            Host = "localhost",
+            Port = 9093,
+            topic = "owned-orders",
+            groups = fault == "group" ? new[] { "vouchfx-expect-0123456789abcdef0123456789abcdef" } : Array.Empty<string>(),
+            partitions = new[] { new { partition = 0, low = 0L, high = 1L, readOffset = fault == "unread" ? (long?)null : 0L } },
+        }));
+        Assert.ThrowsAny<Xunit.Sdk.XunitException>(() => AssertManualConsumerState(document.RootElement, "localhost:9093"));
+    }
 
     [Theory]
     [InlineData("/brokerfixture-abcdef12", true)]
@@ -404,7 +415,7 @@ public sealed class ManagedKafkaSecurityDockerTests
                 using var process = Process.GetProcessById(int.Parse(owned.CreatorPid, System.Globalization.CultureInfo.InvariantCulture));
                 var expected = DateTimeOffset.Parse(owned.CreatorStart, System.Globalization.CultureInfo.InvariantCulture);
                 var same = !process.HasExited && process.ProcessName.StartsWith("dcp", StringComparison.OrdinalIgnoreCase)
-                    && Math.Abs((expected - new DateTimeOffset(process.StartTime)).TotalSeconds) <= 1;
+                    && Math.Abs((expected - CreatorIdentityTime(process)).TotalSeconds) <= 1;
                 return new CreatorCompletion(DateTimeOffset.UtcNow, owned.CreatorPid, owned.CreatorStart, true, same);
             }
             catch (ArgumentException)
@@ -537,7 +548,8 @@ public sealed class ManagedKafkaSecurityDockerTests
                     Assert.Equal(443, sut.RootElement.GetProperty("correlation").GetInt32());
                     File.WriteAllText(Path.Combine(directory, "container-routing.json"), sut.RootElement.GetRawText());
                 }
-                return new ObservedLease(topology, owned, bootstrap, directory, prefix);
+                return new ObservedLease(topology, owned, bootstrap, directory, prefix, profile,
+                    !parallelBrokers && profile == "tls" && selector == "tcp");
             }
             catch
             {
@@ -569,10 +581,11 @@ public sealed class ManagedKafkaSecurityDockerTests
                 foreach (var broker in brokers)
                 {
                     var prefix = parallelBrokers ? broker + "-" : string.Empty;
-                    using var groups = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(directory, prefix + "consumer-groups.json")));
-                    Assert.True(groups.RootElement.GetProperty("groups").GetArrayLength() > 0);
-                    actualBootstraps.Add(groups.RootElement.GetProperty("bootstrap").GetString()!);
-                    Assert.Equal("0", await File.ReadAllTextAsync(Path.Combine(directory, prefix + "broker-log-observer.exit")));
+                    using var state = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(directory, prefix + "consumer-state.json")));
+                    var bootstrap = Assert.IsType<string>(state.RootElement.GetProperty("bootstrap").GetString());
+                    AssertManualConsumerState(state.RootElement, bootstrap);
+                    actualBootstraps.Add(bootstrap);
+                    Assert.Equal("0", await File.ReadAllTextAsync(Path.Combine(directory, prefix + "consumer-state.json.exit")));
                 }
                 Assert.Equal(brokers.Length, actualBootstraps.Count);
                 if (parallelBrokers) Assert.Equal(2, completed.Select(document => document.RootElement.GetProperty("runId").GetString()).Distinct().Count());
@@ -733,12 +746,12 @@ public sealed class ManagedKafkaSecurityDockerTests
         return start;
     }
 
-    private static async Task ProbeAsync(string probe, string mode, string bootstrap, string directory, string profile, string report, CancellationToken cancellationToken, string? foreign = null)
+    private static async Task ProbeAsync(string probe, string mode, string bootstrap, string directory, string profile, string report, CancellationToken cancellationToken, params string[] details)
     {
         var arguments = new List<string> { probe, mode, bootstrap, directory, profile, Path.Combine(directory, report) };
-        if (foreign is not null) arguments.Add(foreign);
+        arguments.AddRange(details);
         var result = await CaptureNativeProcessAsync(ProbeStartInfo(arguments),
-            TimeSpan.FromSeconds(mode == "negative" ? 35 : 15), cancellationToken);
+            TimeSpan.FromSeconds(mode is "negative" or "consumer-control" ? 35 : mode == "consumer-state" ? 25 : 15), cancellationToken);
         File.WriteAllText(Path.Combine(directory, report + ".exit"), result.Exit.ToString(System.Globalization.CultureInfo.InvariantCulture));
         Assert.Equal(string.Empty, result.Stdout);
         Assert.Equal(string.Empty, result.Stderr);
@@ -758,15 +771,20 @@ public sealed class ManagedKafkaSecurityDockerTests
         private readonly string _bootstrap;
         private readonly string _directory;
         private readonly string _prefix;
+        private readonly string _profile;
+        private readonly bool _proveObserver;
         private int _disposed;
 
-        internal ObservedLease(IKeptTopology inner, OwnedBroker owned, string bootstrap, string directory, string prefix)
+        internal ObservedLease(IKeptTopology inner, OwnedBroker owned, string bootstrap, string directory, string prefix,
+            string profile, bool proveObserver)
         {
             _inner = inner;
             _owned = owned;
             _bootstrap = bootstrap;
             _directory = directory;
             _prefix = prefix;
+            _profile = profile;
+            _proveObserver = proveObserver;
         }
 
         public IReadOnlyList<SecurityConfirmation> SecurityConfirmations => _inner.SecurityConfirmations;
@@ -780,45 +798,79 @@ public sealed class ManagedKafkaSecurityDockerTests
         public async ValueTask DisposeAsync()
         {
             if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
-            using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(90));
             try
             {
-                Assert.Equal(_owned, await OwnedBroker.InspectAsync(_owned.Id, _owned.Fixture, budget.Token));
-                var result = await DockerCaptureAsync(new[] { "logs", "--timestamps", "--tail", "500", _owned.Id }, budget.Token);
-                File.WriteAllText(Path.Combine(_directory, _prefix + "broker-log-observer.exit"), result.Exit.ToString(System.Globalization.CultureInfo.InvariantCulture));
-                Assert.Equal(0, result.Exit);
-                // Raw broker output can contain material paths. Only coordinator-derived IDs and timestamps leave memory.
-                Assert.True(result.Stdout.Length + result.Stderr.Length <= 2 * 1024 * 1024, "Bounded broker log tail exceeded the observation budget.");
-                var matches = ObserveCoordinatorGroups(result.Stdout + "\n" + result.Stderr);
-                File.WriteAllText(Path.Combine(_directory, _prefix + "consumer-groups.json"), JsonSerializer.Serialize(new
+                using (var identityBudget = new CancellationTokenSource(TimeSpan.FromSeconds(10)))
+                    Assert.Equal(_owned, await OwnedBroker.InspectAsync(_owned.Id, _owned.Fixture, identityBudget.Token));
+                // The provider manually assigns retained partitions: its unique GroupId is client
+                // configuration, not a subscribed/committed broker group. Rebalance logs cannot
+                // establish that contract. Independently read the retained log and broker group state.
+                using var before = await StateAsync("consumer-state.json", budget.Token);
+                AssertManualConsumerState(before.RootElement, _bootstrap);
+                if (_proveObserver)
                 {
-                    bootstrap = _bootstrap,
-                    containerId = _owned.Id,
-                    groups = matches.Select(match => match.Group).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray(),
-                    observations = matches,
-                }));
-                Assert.NotEmpty(matches);
+                    // This is explicit injected state, never attributed to the production step.
+                    // A real Subscribe/Commit must be visible and rejected by the SAME observer.
+                    var group = "vouchfx-expect-" + Guid.NewGuid().ToString("n");
+                    try
+                    {
+                        await ProbeAsync(Probe, "consumer-control", _bootstrap, _directory, _profile,
+                            _prefix + "consumer-control.json", budget.Token, "owned-orders", group);
+                        using var control = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(_directory, _prefix + "consumer-control.json"), budget.Token));
+                        Assert.Equal(group, control.RootElement.GetProperty("group").GetString());
+                        Assert.True(control.RootElement.GetProperty("joined").GetBoolean());
+                        Assert.False(string.IsNullOrEmpty(control.RootElement.GetProperty("member").GetString()));
+                        Assert.Equal(control.RootElement.GetProperty("consumedOffset").GetInt64() + 1,
+                            control.RootElement.GetProperty("committedOffset").GetInt64());
+                        using var injected = await StateAsync("consumer-injected.json", budget.Token);
+                        Assert.Contains(injected.RootElement.GetProperty("groups").EnumerateArray(), item => item.GetString() == group);
+                        var refusal = Assert.Throws<Xunit.Sdk.DoesNotContainException>(() => AssertManualConsumerState(injected.RootElement, _bootstrap));
+                        Assert.Contains(group, refusal.Message, StringComparison.Ordinal);
+                    }
+                    finally
+                    {
+                        // Only the exact unique group this control owns is removed. Topology disposal
+                        // below remains unconditional if any observer or control assertion fails.
+                        await ProbeAsync(Probe, "delete-control", _bootstrap, _directory, _profile,
+                            _prefix + "consumer-control-cleanup.json", budget.Token, group);
+                    }
+                    using var restored = await StateAsync("consumer-restored.json", budget.Token);
+                    AssertManualConsumerState(restored.RootElement, _bootstrap);
+                    Assert.Equal(before.RootElement.GetProperty("partitions").GetRawText(),
+                        restored.RootElement.GetProperty("partitions").GetRawText());
+                }
+                using var completionBudget = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                Assert.Equal(_owned, await OwnedBroker.InspectAsync(_owned.Id, _owned.Fixture, completionBudget.Token));
             }
             finally { await _inner.DisposeAsync(); }
         }
+
+        private static string Probe => Path.Combine(AppContext.BaseDirectory, "KafkaSecurityProbe", "Vouchfx.Kafka.Security.Probe.dll");
+
+        private async Task<JsonDocument> StateAsync(string report, CancellationToken cancellationToken)
+        {
+            await ProbeAsync(Probe, "consumer-state", _bootstrap, _directory, _profile,
+                _prefix + report, cancellationToken, "owned-orders");
+            return JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(_directory, _prefix + report), cancellationToken));
+        }
     }
 
-    private sealed record CoordinatorObservation(string Group, DateTimeOffset Timestamp);
-
-    private static CoordinatorObservation[] ObserveCoordinatorGroups(string log)
+    private static void AssertManualConsumerState(JsonElement state, string bootstrap)
     {
-        var observations = new List<CoordinatorObservation>();
-        foreach (var line in log.Split('\n'))
-        {
-            if (!line.Contains("GroupCoordinator", StringComparison.Ordinal) && !line.Contains("GroupMetadataManager", StringComparison.Ordinal)) continue;
-            var match = Regex.Match(line,
-                @"^(?<time>\S+).*?(?:Preparing to rebalance group |Stabilized group )(?<group>vouchfx-expect-[a-f0-9]{32})\b",
-                RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100));
-            if (match.Success && DateTimeOffset.TryParse(match.Groups["time"].Value, System.Globalization.CultureInfo.InvariantCulture,
-                System.Globalization.DateTimeStyles.RoundtripKind, out var timestamp))
-                observations.Add(new CoordinatorObservation(match.Groups["group"].Value, timestamp));
-        }
-        return observations.ToArray();
+        Assert.Equal(bootstrap, state.GetProperty("bootstrap").GetString());
+        var authority = new Uri("tcp://" + bootstrap);
+        Assert.Equal(authority.Host, state.GetProperty("Host").GetString());
+        Assert.Equal(authority.Port, state.GetProperty("Port").GetInt32());
+        Assert.Equal("owned-orders", state.GetProperty("topic").GetString());
+        var partitions = state.GetProperty("partitions").EnumerateArray().ToArray();
+        Assert.NotEmpty(partitions);
+        Assert.All(partitions, partition => Assert.True(partition.GetProperty("high").GetInt64() >= partition.GetProperty("low").GetInt64()));
+        Assert.Contains(partitions, partition => partition.GetProperty("readOffset").ValueKind == JsonValueKind.Number
+            && partition.GetProperty("readOffset").GetInt64() >= partition.GetProperty("low").GetInt64()
+            && partition.GetProperty("readOffset").GetInt64() < partition.GetProperty("high").GetInt64());
+        Assert.DoesNotContain(state.GetProperty("groups").EnumerateArray(),
+            group => group.GetString()!.StartsWith("vouchfx-expect-", StringComparison.Ordinal));
     }
 
     private sealed record OwnedBroker(string Id, string Name, string Fixture, string Image, string CreatorPid,
@@ -861,12 +913,125 @@ public sealed class ManagedKafkaSecurityDockerTests
             var creatorStart = Required("creatorStart");
             Assert.True(DateTimeOffset.TryParse(creatorStart, System.Globalization.CultureInfo.InvariantCulture,
                 System.Globalization.DateTimeStyles.RoundtripKind, out var started), "Missing owned DCP creator start time.");
-            Assert.InRange(Math.Abs((started - new DateTimeOffset(creator.StartTime)).TotalSeconds), 0, 1);
+            Assert.InRange(Math.Abs((started - CreatorIdentityTime(creator)).TotalSeconds), 0, 1);
             var uid = Required("uid");
             Assert.True(Guid.TryParse(uid, out _), "Missing owned DCP resource UID.");
             var lifecycle = Required("lifecycle");
             Assert.Matches("^[a-f0-9]{32}$", lifecycle);
             return new OwnedBroker(id, name, fixture, Required("image"), creatorPid, creatorStart, uid, lifecycle);
+        }
+    }
+
+    // DCP 0.24.3 uses boot-relative process identity on Linux, not wall-clock start time.
+    // Keep the same PID/name checks and one-second birth-time tolerance on every platform.
+    private static DateTimeOffset CreatorIdentityTime(Process process)
+    {
+        if (!OperatingSystem.IsLinux()) return new DateTimeOffset(process.StartTime);
+        string stat;
+        try { stat = File.ReadAllText($"/proc/{process.Id}/stat"); }
+        catch (IOException) { throw new InvalidOperationException("The owned DCP process identity could not be read."); }
+        catch (UnauthorizedAccessException) { throw new InvalidOperationException("The owned DCP process identity could not be read."); }
+        if (!TryParseLinuxCreatorIdentity(stat, process.Id, LinuxClockTicks(), out var identity))
+            throw new InvalidOperationException("The owned DCP process identity was malformed.");
+        return identity;
+    }
+
+    private static bool TryParseLinuxCreatorIdentity(string stat, int expectedPid, long clockTicks, out DateTimeOffset identity)
+    {
+        identity = default;
+        var open = stat.IndexOf('(');
+        var close = stat.LastIndexOf(')');
+        if (expectedPid <= 0 || clockTicks <= 0 || open <= 0 || close <= open || close + 1 >= stat.Length || stat[close + 1] != ' '
+            || !int.TryParse(stat.AsSpan(0, open).Trim(), System.Globalization.NumberStyles.None,
+                System.Globalization.CultureInfo.InvariantCulture, out var pid) || pid != expectedPid)
+            return false;
+        var fields = stat[(close + 2)..].Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+        if (fields.Length < 20 || !ulong.TryParse(fields[19], System.Globalization.NumberStyles.None,
+                System.Globalization.CultureInfo.InvariantCulture, out var ticks) || ticks == 0)
+            return false;
+        try
+        {
+            var frequency = (ulong)clockTicks;
+            var milliseconds = checked(ticks / frequency * 1000 + ticks % frequency * 1000 / frequency);
+            identity = DateTimeOffset.MinValue.AddTicks(checked((long)milliseconds * TimeSpan.TicksPerMillisecond));
+            return true;
+        }
+        catch (OverflowException) { return false; }
+        catch (ArgumentOutOfRangeException) { return false; }
+    }
+
+    [DllImport("libc", EntryPoint = "sysconf")]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]
+    private static extern long LinuxClockTicks(int name = 2);
+
+    [Theory]
+    [InlineData("dcp")]
+    [InlineData("dcp (owned control) worker")]
+    public void CreatorIdentity_LinuxStatUsesNativeBirthTicksDespiteComplexProcessNames(string name)
+    {
+        var fields = Enumerable.Repeat("0", 20).ToArray();
+        fields[0] = "S";
+        fields[19] = "12345";
+        Assert.True(TryParseLinuxCreatorIdentity($"123 ({name}) " + string.Join(' ', fields), 123, 100, out var identity));
+        Assert.Equal(DateTimeOffset.MinValue.AddMilliseconds(123450), identity);
+    }
+
+    [Fact]
+    public void CreatorIdentity_LinuxStatRefusesWrongPidMalformedOrMissingBirth()
+    {
+        var fields = Enumerable.Repeat("0", 20).ToArray();
+        fields[0] = "S";
+        fields[19] = "12345";
+        var stat = "123 (dcp) " + string.Join(' ', fields);
+        Assert.True(TryParseLinuxCreatorIdentity(stat, 123, 100, out var original));
+        fields[19] = "12545";
+        Assert.True(TryParseLinuxCreatorIdentity("123 (dcp) " + string.Join(' ', fields), 123, 100, out var reusedPid));
+        Assert.NotInRange(Math.Abs((original - reusedPid).TotalSeconds), 0, 1);
+        Assert.False(TryParseLinuxCreatorIdentity(stat, 456, 100, out _));
+        Assert.False(TryParseLinuxCreatorIdentity(stat, 123, 0, out _));
+        Assert.False(TryParseLinuxCreatorIdentity("123 (dcp) S", 123, 100, out _));
+        Assert.False(TryParseLinuxCreatorIdentity("123 dcp S", 123, 100, out _));
+        foreach (var invalid in new[] { "0", "invalid", ulong.MaxValue.ToString(System.Globalization.CultureInfo.InvariantCulture) })
+        {
+            fields[19] = invalid;
+            Assert.False(TryParseLinuxCreatorIdentity("123 (dcp) " + string.Join(' ', fields), 123, 1, out _));
+        }
+    }
+
+    [Fact]
+    public void CreatorIdentity_CurrentProcessPreservesItsPlatformClock()
+    {
+        using var process = Process.GetCurrentProcess();
+        var identity = CreatorIdentityTime(process);
+        if (OperatingSystem.IsLinux())
+        {
+            Assert.True(TryParseLinuxCreatorIdentity(File.ReadAllText($"/proc/{process.Id}/stat"), process.Id, LinuxClockTicks(), out var expected));
+            Assert.Equal(expected, identity);
+            Assert.NotInRange(Math.Abs((identity - new DateTimeOffset(process.StartTime)).TotalSeconds), 0, 1);
+        }
+        else Assert.Equal(new DateTimeOffset(process.StartTime), identity);
+    }
+
+    [Fact]
+    public async Task CreatorIdentity_RejectsAnotherLiveProcessBirthBeyondTheExistingTolerance()
+    {
+        var start = ProbeStartInfo(new[] { Path.Combine(AppContext.BaseDirectory, "KafkaSecurityProbe", "Vouchfx.Kafka.Security.Probe.dll"), "wait-for-termination" });
+        using var first = Process.Start(start)!;
+        Process? second = null;
+        try
+        {
+            await Task.Delay(TimeSpan.FromSeconds(2));
+            second = Process.Start(start)!;
+            Assert.NotEqual(first.Id, second.Id);
+            Assert.False(first.HasExited);
+            Assert.False(second.HasExited);
+            Assert.NotInRange(Math.Abs((CreatorIdentityTime(first) - CreatorIdentityTime(second)).TotalSeconds), 0, 1);
+        }
+        finally
+        {
+            if (second is not null) { ChildProcess.KillTreeQuietly(second); await ReapAsync(second); second.Dispose(); }
+            ChildProcess.KillTreeQuietly(first);
+            await ReapAsync(first);
         }
     }
 

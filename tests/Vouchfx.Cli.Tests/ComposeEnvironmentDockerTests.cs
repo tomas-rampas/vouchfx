@@ -116,8 +116,10 @@ public sealed class ComposeEnvironmentDockerTests
         await fixture.WaitForOwnedContainersAsync(deadline.Token);
         await Task.Delay(200, deadline.Token);
         stop.Cancel();
-        // The ordinary suite slot converts external cancellation to Inconclusive; no step executed.
-        Assert.Equal(4, await running);
+        // Normal runs rethrow caller cancellation after joining owned cleanup.
+        // The suite slot still records Inconclusive without executing any step.
+        var cancellation = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => running);
+        Assert.Equal(stop.Token, cancellation.CancellationToken);
         await fixture.WaitForCleanupAsync(deadline.Token);
         Assert.DoesNotContain(": PASS", cancelled.Text, StringComparison.Ordinal);
         Assert.Contains("INCONCLUSIVE", cancelled.Text, StringComparison.Ordinal);
@@ -161,6 +163,7 @@ public sealed class ComposeEnvironmentDockerTests
     {
         private readonly string _variable = "VOUCHFX_COMPOSE_TEST_" + Guid.NewGuid().ToString("N");
         private readonly string _sentinel = "vouchfx-sentinel-" + Guid.NewGuid().ToString("N");
+        private readonly string _ownedImageTag = "vouchfx-compose-fixture-" + Guid.NewGuid().ToString("N") + ":local";
         private readonly string _journalDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "vouchfx", "environments");
         private readonly HashSet<string> _initialJournals = new(StringComparer.Ordinal);
         private readonly Dictionary<string, string[]> _baseline = new(StringComparer.Ordinal);
@@ -198,7 +201,17 @@ public sealed class ComposeEnvironmentDockerTests
                 var yaml = await File.ReadAllTextAsync(Path.Combine(example, "compose.e2e.yaml"));
                 await File.WriteAllTextAsync(fixture.Suite, yaml.Replace("./environment.compose.yaml", "../external/environment.compose.yaml", StringComparison.Ordinal));
                 var config = await File.ReadAllTextAsync(Path.Combine(example, "environment.compose.yaml"));
-                config = config.Replace("./compose.yaml", Path.Combine(example, "compose.yaml").Replace('\\', '/'), StringComparison.Ordinal)
+                Assert.True(config.Contains("files: [./compose.yaml]", StringComparison.Ordinal),
+                    "The example files list changed; refuse to build under its shared image tag.");
+                // Keep the example's build context, but override its shared image tag only in
+                // this fixture's external input. Compose resolves builds relative to the first file.
+                await File.WriteAllTextAsync(Path.Combine(inputs, "test-image.compose.yaml"), $$"""
+                    services:
+                      web:
+                        image: {{fixture._ownedImageTag}}
+                    """);
+                config = config.Replace("files: [./compose.yaml]",
+                        "files: [" + Path.Combine(example, "compose.yaml").Replace('\\', '/') + ", ./test-image.compose.yaml]", StringComparison.Ordinal)
                     .Replace("${secret:env/VOUCHFX_COMPOSE_PASSWORD}", "${secret:env/" + fixture._variable + "}", StringComparison.Ordinal);
                 await File.WriteAllTextAsync(fixture.Config, config);
                 Environment.SetEnvironmentVariable(fixture._variable, fixture.Canary);
@@ -302,6 +315,9 @@ public sealed class ComposeEnvironmentDockerTests
             if (_container is not null) await DockerAsync("container", "rm", "--force", _container);
             if (_network is not null) await DockerAsync("network", "rm", _network);
             if (_volume is not null) await DockerAsync("volume", "rm", _volume);
+            // Remove only this fixture's tag. Never rebuild or retag the user example image.
+            if (!string.IsNullOrEmpty(await DockerAsync("image", "ls", "--quiet", _ownedImageTag)))
+                await DockerAsync("image", "rm", _ownedImageTag);
         }
         private static async Task<string[]> ListAsync(string kind)
         {

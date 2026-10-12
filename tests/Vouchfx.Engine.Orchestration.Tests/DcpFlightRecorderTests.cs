@@ -1,3 +1,4 @@
+using Aspire.Hosting.ApplicationModel;
 using Microsoft.Extensions.Logging;
 using Xunit;
 
@@ -27,6 +28,135 @@ namespace Vouchfx.Engine.Orchestration.Tests;
 /// </remarks>
 public sealed class DcpFlightRecorderTests
 {
+    // Private model context remains separate from native entries and public warning tails.
+    [Fact]
+    public void BindApplicationModel_CapturesRegisteredNamesWithoutInspectingEnvironmentOrInventingLogs()
+    {
+        var resource = new ContainerResource("orders-api");
+        const string Canary = "never-copy-environment-secret";
+        resource.Annotations.Add(new EnvironmentCallbackAnnotation("PASSWORD", () =>
+            throw new InvalidOperationException(Canary)));
+        var model = new DistributedApplicationModel(new[] { resource });
+        using var recorder = new DcpFlightRecorder();
+        var native = Entry("real controller warning");
+        recorder.Record(native);
+
+        recorder.BindApplicationModel(model);
+        var capture = recorder.FormatCapture(DateTimeOffset.UnixEpoch);
+        var sections = capture.Split("\n----\n", StringSplitOptions.None);
+
+        Assert.Equal(2, sections.Length);
+        Assert.Contains("application-model context: registered resource names; not native DCP traffic", sections[0], StringComparison.Ordinal);
+        Assert.Contains("resource: orders-api", sections[0].Split('\n'));
+        Assert.Equal(native.Line + "\n", sections[1]);
+        Assert.DoesNotContain(Canary, capture, StringComparison.Ordinal);
+        Assert.Equal(new[] { native }, recorder.Snapshot());
+        Assert.Equal(new[] { native.Line }, recorder.Tail(12, 384));
+    }
+
+    [Fact]
+    public void BindApplicationModel_BoundsCountAndNameLengthAndReportsTruncation()
+    {
+        // Deliberately exceed both published bounds. The last resource must not be retained.
+        var resources = Enumerable.Range(0, 65).Select(i =>
+            new ContainerResource(i == 0 ? new string('x', 1_000_000) : "resource-" + i)).ToArray();
+        using var recorder = new DcpFlightRecorder();
+        recorder.BindApplicationModel(new DistributedApplicationModel(resources));
+        var context = recorder.FormatCapture(DateTimeOffset.UnixEpoch)
+            .Split("application-model context: ", StringSplitOptions.None)[1]
+            .Split("\n----\n", StringSplitOptions.None)[0];
+        var names = context.Split('\n').Where(line => line.StartsWith("resource: ", StringComparison.Ordinal)).ToArray();
+
+        Assert.Equal(64, names.Length);
+        Assert.All(names, line => Assert.True(line.Length <= "resource: ".Length + 128));
+        Assert.EndsWith("...", names[0], StringComparison.Ordinal);
+        Assert.Contains("resources: 65, retained: 64, omitted: 1, truncated names: 1", context, StringComparison.Ordinal);
+        Assert.DoesNotContain("resource: resource-64\n", context, StringComparison.Ordinal);
+        Assert.True(context.Length <= 16 * 1024);
+        Assert.Empty(recorder.Snapshot());
+        Assert.Empty(recorder.Tail(12, 384));
+    }
+
+    [Fact]
+    public void BindApplicationModel_NameControlsCannotInjectHeaderOrNativeLines()
+    {
+        using var recorder = new DcpFlightRecorder();
+        recorder.BindApplicationModel(new DistributedApplicationModel(
+            new[] { new ContainerResource("api\n----\r\t" + (char)0x00E9) }));
+        var capture = recorder.FormatCapture(DateTimeOffset.UnixEpoch);
+
+        Assert.All(capture, c => Assert.True(c == '\n' || (c >= ' ' && c <= '~')));
+        Assert.Contains("resource: api?----???\n", capture, StringComparison.Ordinal);
+        Assert.Equal(2, capture.Split("\n----\n", StringSplitOptions.None).Length);
+        Assert.Empty(capture.Split("\n----\n", StringSplitOptions.None)[1]);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void BindApplicationModel_RejectsSameOrDifferentHostRebinding(bool differentHost)
+    {
+        var model = new DistributedApplicationModel(new[] { new ContainerResource("first-host") });
+        using var recorder = new DcpFlightRecorder();
+        recorder.BindApplicationModel(model);
+        var before = recorder.FormatCapture(DateTimeOffset.UnixEpoch);
+        var other = differentHost
+            ? new DistributedApplicationModel(new[] { new ContainerResource("other-host") })
+            : model;
+
+        Assert.Throws<InvalidOperationException>(() => recorder.BindApplicationModel(other));
+        Assert.Equal(before, recorder.FormatCapture(DateTimeOffset.UnixEpoch));
+    }
+
+    [Fact]
+    public async Task BindApplicationModel_ConcurrentHostsHaveExactlyOneOwner()
+    {
+        using var recorder = new DcpFlightRecorder();
+        using var release = new ManualResetEventSlim();
+        var tasks = Enumerable.Range(1, 2).Select(i => Task.Run(() =>
+        {
+            var name = "host-" + i;
+            var model = new DistributedApplicationModel(new[] { new ContainerResource(name) });
+            release.Wait();
+            try
+            {
+                recorder.BindApplicationModel(model);
+                return (Name: name, Bound: true);
+            }
+            catch (InvalidOperationException)
+            {
+                return (Name: name, Bound: false);
+            }
+        })).ToArray();
+        release.Set();
+        var results = await Task.WhenAll(tasks);
+        var owner = Assert.Single(results, result => result.Bound);
+        var rejected = Assert.Single(results, result => !result.Bound);
+        var capture = recorder.FormatCapture(DateTimeOffset.UnixEpoch);
+
+        Assert.Contains("resource: " + owner.Name + "\n", capture, StringComparison.Ordinal);
+        Assert.DoesNotContain(rejected.Name, capture, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BindApplicationModel_SnapshotsEachHostAndDisposeDropsContext()
+    {
+        var model = new DistributedApplicationModel(new[] { new ContainerResource("first-host") });
+        using var first = new DcpFlightRecorder();
+        using var second = new DcpFlightRecorder();
+        first.BindApplicationModel(model);
+        second.BindApplicationModel(new DistributedApplicationModel(new[] { new ContainerResource("second-host") }));
+        model.Resources.Add(new ContainerResource("added-after-binding"));
+
+        var capture = first.FormatCapture(DateTimeOffset.UnixEpoch);
+        Assert.DoesNotContain("second-host", capture, StringComparison.Ordinal);
+        Assert.DoesNotContain("added-after-binding", capture, StringComparison.Ordinal);
+        first.Dispose();
+        Assert.DoesNotContain("application-model context:", first.FormatCapture(DateTimeOffset.UnixEpoch), StringComparison.Ordinal);
+        Assert.Throws<ObjectDisposedException>(() => first.BindApplicationModel(model));
+        Assert.Contains("resource: second-host\n", second.FormatCapture(DateTimeOffset.UnixEpoch), StringComparison.Ordinal);
+    }
+
     // -----------------------------------------------------------------------
     // Bounds
     // -----------------------------------------------------------------------

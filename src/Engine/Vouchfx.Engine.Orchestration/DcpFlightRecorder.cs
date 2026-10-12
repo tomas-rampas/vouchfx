@@ -55,6 +55,7 @@
 // fix it. What it does is turn a fault nobody could catch into one that diagnoses itself.
 
 using System.Buffers;
+using Aspire.Hosting.ApplicationModel;
 using Microsoft.Extensions.Logging;
 
 namespace Vouchfx.Engine.Orchestration;
@@ -414,6 +415,11 @@ internal sealed class DcpFlightRecorder : ILoggerProvider
     /// </summary>
     internal const int DefaultCharLimit = 128 * 1024;
 
+    // Private application-model context has its own bounds, separate from native log entries.
+    internal const int ContextResourceLimit = 64;
+    internal const int ContextNameChars = 128;
+    internal const int ContextCharLimit = 16 * 1024;
+
     /// <summary>Per-line cap applied to a tail line before it is charged against the tail budget.</summary>
     internal const int TailLineChars = 120;
 
@@ -430,6 +436,7 @@ internal sealed class DcpFlightRecorder : ILoggerProvider
 
     private int _chars;
     private int _evicted;
+    private string? _modelContext;
 
     // Volatile, and read OUTSIDE the lock at the top of every Log call. The lock is the wrong
     // instrument for the hot path: after the drop, a --watch session goes on emitting DCP Debug
@@ -557,6 +564,67 @@ internal sealed class DcpFlightRecorder : ILoggerProvider
             .AddFilter<DcpFlightRecorder>(DcpCategoryPrefix, LogLevel.Debug);
     }
 
+    /// <summary>
+    /// Binds this recorder once to the built host's registered resource names, before start.
+    /// </summary>
+    /// <remarks>
+    /// Context is private capture metadata, never a synthetic log entry or a console tail.
+    /// Only names are read; annotations, environment values and secrets are not inspected.
+    /// Reject every second binding, including the same model, so a recorder cannot silently
+    /// acquire another host's context. Keep only bounded text, not the application model itself.
+    /// </remarks>
+    internal void BindApplicationModel(DistributedApplicationModel model)
+    {
+        ArgumentNullException.ThrowIfNull(model);
+
+        lock (_gate)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (_modelContext is not null)
+            {
+                throw new InvalidOperationException("The flight recorder's application model is already bound.");
+            }
+
+            var names = new System.Text.StringBuilder();
+            var resourceCount = model.Resources.Count;
+            var retained = 0;
+            var truncatedNames = 0;
+            foreach (var resource in model.Resources.Take(ContextResourceLimit))
+            {
+                var name = resource.Name;
+                var truncated = name.Length > ContextNameChars;
+                var length = truncated ? ContextNameChars - 3 : name.Length;
+                names.Append("resource: ");
+                for (var i = 0; i < length; i++)
+                {
+                    var c = name[i];
+                    names.Append(c is >= ' ' and <= '~' ? c : '?');
+                }
+
+                if (truncated)
+                {
+                    names.Append("...");
+                    truncatedNames++;
+                }
+
+                names.Append('\n');
+                retained++;
+            }
+
+            var context = new System.Text.StringBuilder();
+            context.Append("application-model context: registered resource names; not native DCP traffic\n")
+                .Append("resources: ").Append(resourceCount)
+                .Append(", retained: ").Append(retained)
+                .Append(", omitted: ").Append(resourceCount - retained)
+                .Append(", truncated names: ").Append(truncatedNames)
+                .Append(", context bounds: ").Append(ContextResourceLimit)
+                .Append(" resources / ").Append(ContextNameChars).Append(" chars per name / ")
+                .Append(ContextCharLimit).Append(" chars total\n")
+                .Append(names);
+            _modelContext = context.ToString();
+        }
+    }
+
     /// <inheritdoc />
     public ILogger CreateLogger(string categoryName) =>
         new RecordingLogger(this, categoryName);
@@ -670,7 +738,15 @@ internal sealed class DcpFlightRecorder : ILoggerProvider
     /// <param name="utcNow">The moment of the flush, recorded in the header.</param>
     internal string FormatCapture(DateTimeOffset utcNow)
     {
-        var (snapshot, evicted) = SnapshotWithEvictions();
+        IReadOnlyList<DcpFlightEntry> snapshot;
+        int evicted;
+        string? modelContext;
+        lock (_gate)
+        {
+            snapshot = _entries.ToArray();
+            evicted = _evicted;
+            modelContext = _modelContext;
+        }
 
         var builder = new System.Text.StringBuilder();
         builder.Append("vouchfx DCP flight recorder capture\n");
@@ -693,6 +769,7 @@ internal sealed class DcpFlightRecorder : ILoggerProvider
                 .Append(" entries were evicted by the bounds above.\n");
         }
 
+        builder.Append(modelContext);
         builder.Append("----\n");
 
         foreach (var entry in snapshot)
@@ -717,6 +794,7 @@ internal sealed class DcpFlightRecorder : ILoggerProvider
             _disposed = true;
             _entries.Clear();
             _chars = 0;
+            _modelContext = null;
         }
     }
 

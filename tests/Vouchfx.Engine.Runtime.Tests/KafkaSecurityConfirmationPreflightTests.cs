@@ -231,8 +231,8 @@ public sealed class KafkaSecurityConfirmationPreflightTests
     /// <para>
     /// A fixture that quietly stopped satisfying any of these would leave all three Docker rows
     /// GREEN while measuring nothing — the identical shape would pass Row 1 for the wrong reason,
-    /// and a sibling that became AST-unbuildable would take Row 1's exit code non-zero through
-    /// #415's whole-value rule instead of through anything this issue is about. Cheap to state, and
+    /// and a sibling that became AST-unbuildable would raise Row 1's security notice through
+    /// #415's whole-value rule. All three shapes independently exit 4 for authoring refusal. Cheap to state, and
     /// it runs on every machine rather than only where Docker is healthy.
     /// </para>
     /// <para>
@@ -288,8 +288,8 @@ public sealed class KafkaSecurityConfirmationPreflightTests
 
             // (2) Rejected OUTSIDE the security node, asserted through the engine's OWN predicate
             //     rather than a substring of the pointer. `SecurityDeclarationRejected` raises
-            //     unconditionally, which would take Row 1 non-zero and make Rows 2 and 3 pass
-            //     without the union or the fold ever being consulted.
+            //     unconditionally, which would raise Row 1's security notice and make Rows 2 and 3
+            //     satisfy the notice assertion without the union or the fold ever being consulted.
             Assert.All(
                 validation.Errors,
                 error => Assert.False(

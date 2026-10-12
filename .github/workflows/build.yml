@@ -385,7 +385,7 @@ jobs:
       #   confluentinc/cp-schema-registry:7.6.1  — EnvironmentMapper.cs (explicit
       #                                            AddContainer(..., "7.6.1")) for the
       #                                            Kafka+Avro schema-registry capstone.
-      #   traefik/whoami:latest                  — system-under-test image in the
+      #   traefik/whoami@sha256:c4717a8d1f0134a7444e24f881160e033991f23027c6c5a9a3f8fd22e70d1d44                  — system-under-test image in the
       #                                            http.rest / capture / Respawn capstones.
       #   hashicorp/vault:latest                 — VaultSecretSourceDockerTests dev-mode
       #                                            Vault container (§17 secret source).
@@ -979,7 +979,7 @@ jobs:
             confluentinc/confluent-local:8.2.0 \
             confluentinc/cp-schema-registry:7.6.1 \
             confluentinc/cp-kafka:7.6.1 \
-            traefik/whoami:latest \
+            traefik/whoami@sha256:c4717a8d1f0134a7444e24f881160e033991f23027c6c5a9a3f8fd22e70d1d44 \
             hashicorp/vault:latest \
             axllent/mailpit:v1.21 \
             rabbitmq:4.3-management \
