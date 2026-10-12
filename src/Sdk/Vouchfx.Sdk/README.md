@@ -73,7 +73,7 @@ only, via new optional interfaces.
 
 ## Status
 
-Ships as `1.0.0-alpha.x` pre-releases ahead of v1.0 GA. When available on NuGet.org, install with `dotnet add package Vouchfx.Sdk --prerelease`. Pre-release version numbers do **not** affect the contract guarantee above: the frozen v1 interfaces are stable now, for the whole `v1.x` series.
+When version `1.0.0` is available on NuGet.org, install with `dotnet add package Vouchfx.Sdk --version 1.0.0`. Before publication, build the matching source checkout and use its release package from a private feed. The frozen v1 interfaces are stable for the whole `v1.x` series.
 
 ## Contributing a provider
 

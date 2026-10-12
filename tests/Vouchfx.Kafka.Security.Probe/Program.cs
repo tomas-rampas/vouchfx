@@ -1,5 +1,6 @@
 using System.Net.Security;
 using System.Net.Sockets;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using Confluent.Kafka;
 using Confluent.Kafka.Admin;
@@ -11,6 +12,13 @@ internal static class Program
 {
     private static async Task<int> Main(string[] args)
     {
+        if (args is ["wait-for-creator-control"])
+        {
+            if (!OperatingSystem.IsLinux() || SetProcessName(15, System.Text.Encoding.UTF8.GetBytes("dcp-control\0"), UIntPtr.Zero, UIntPtr.Zero, UIntPtr.Zero) != 0) return 2;
+            Console.WriteLine("ready");
+            await Task.Delay(Timeout.InfiniteTimeSpan);
+            return 0;
+        }
         if (args is ["wait-for-termination"])
         {
             await Task.Delay(Timeout.InfiniteTimeSpan);
@@ -77,6 +85,10 @@ internal static class Program
                         if (!wrongCa || !plaintext || !wrongHostname || profile == "mtls" && (missingClient != true || foreignClient != true)) return 2;
                     }
                     break;
+                case "groups":
+                    using (var admin = Client(configuration))
+                        Write(report, new { bootstrap, groups = await ReadGroupsAsync(admin) });
+                    break;
                 case "consumer-state" when args.Length == 6:
                     using (var admin = Client(configuration))
                     using (var consumer = ObserverConsumer(configuration, "vouchfx-observer-" + Guid.NewGuid().ToString("n")))
@@ -85,7 +97,7 @@ internal static class Program
                         var topic = metadata.Topics.Single();
                         if (topic.Error.IsError) throw new KafkaException(topic.Error);
                         var broker = metadata.Brokers.Single();
-                        var groups = await admin.ListConsumerGroupsAsync(new ListConsumerGroupsOptions { RequestTimeout = TimeSpan.FromSeconds(5) });
+                        var groups = await ReadGroupsAsync(admin);
                         var partitions = new List<object>();
                         foreach (var partition in topic.Partitions)
                         {
@@ -110,7 +122,7 @@ internal static class Program
                             broker.Host,
                             broker.Port,
                             topic = topic.Topic,
-                            groups = groups.Valid.Select(group => group.GroupId).Order(StringComparer.Ordinal).ToArray(),
+                            groups,
                             partitions,
                         });
                     }
@@ -170,6 +182,39 @@ internal static class Program
             return 1;
         }
     }
+
+    private static async Task<string[]> ReadGroupsAsync(IAdminClient client)
+    {
+        // Tagged 2.14.2 source appears to free event-owned errors in ListConsumerGroupsAsync.
+        // Hosted observer dumps abort in rd_kafka_event_destroy after GroupLoadInProgress.
+        // Use the synchronous group API to avoid that suspected double-free result path.
+        var deadline = System.Diagnostics.Stopwatch.StartNew();
+        var budget = TimeSpan.FromSeconds(5);
+        while (true)
+        {
+            var remaining = budget - deadline.Elapsed;
+            if (remaining <= TimeSpan.Zero) throw new TimeoutException();
+            try
+            {
+                var groups = client.ListGroups(remaining);
+                foreach (var group in groups)
+                    if (group.Error.IsError) throw new KafkaException(group.Error);
+                return groups.Select(group => group.Group).Order(StringComparer.Ordinal).ToArray();
+            }
+            catch (KafkaException failure) when (failure.Error.Code == ErrorCode.GroupLoadInProgress)
+            {
+                // Coordinator loading is the measured startup state, not an empty group list.
+                // Every other error remains a refusal and this retry cannot reset the deadline.
+                var delay = budget - deadline.Elapsed;
+                if (delay <= TimeSpan.Zero) throw new TimeoutException();
+                await Task.Delay(delay < TimeSpan.FromMilliseconds(100) ? delay : TimeSpan.FromMilliseconds(100));
+            }
+        }
+    }
+
+    [DllImport("libc", EntryPoint = "prctl")]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]
+    private static extern int SetProcessName(int option, byte[] name, UIntPtr arg3, UIntPtr arg4, UIntPtr arg5);
 
     private static bool IsFixtureGroup(string group)
         => group.StartsWith("vouchfx-expect-", StringComparison.Ordinal)

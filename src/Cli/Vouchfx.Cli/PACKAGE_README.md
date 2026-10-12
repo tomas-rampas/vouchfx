@@ -6,9 +6,13 @@ vouchfx compiles declarative `.e2e.yaml` tests into memory-safe C# (via Roslyn),
 
 ## Install
 
+When version `1.0.0` is available on NuGet.org, install it with:
+
 ```bash
-dotnet tool install --global vouchfx --prerelease
+dotnet tool install --global vouchfx --version 1.0.0
 ```
+
+Before publication, build the matching source checkout or install its release package from a private feed. For preview releases, select the matching prerelease version explicitly.
 
 Requires the .NET 8 SDK and a running Docker engine with Linux containers. This package includes
 the matching Aspire DCP tools for Windows x64, Linux x64 (glibc), macOS x64 and macOS ARM64;
@@ -74,4 +78,4 @@ suites, you want these packages, not this one:
   out-of-repo test harness that runs a single-step `.e2e.yaml` scenario end to end
   without Docker. Reference this from your provider's test project.
 
-> **Pre-release note**: `1.0.0-alpha.x` versions are for pilot validation ahead of v1.0. The v1 language schema, provider SDK and event-wire contracts are frozen; within the v1.x series evolution is additive only.
+> **Release channels**: Install stable `1.0.0` when it is published; preview versions are for validation before their corresponding stable release. The v1 language schema, provider SDK and event-wire contracts are frozen; within the v1.x series evolution is additive only.

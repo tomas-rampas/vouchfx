@@ -69,6 +69,30 @@ public sealed class ManagedKafkaSecurityDockerTests
     }
 
     [Fact]
+    public async Task NativeGroupState_UnavailableBrokerRefusesWithoutCrashingTheObserver()
+    {
+        var directory = Directory.CreateTempSubdirectory("vouchfx-kafka443-groups-refusal-").FullName;
+        TestCertificateAuthority.WriteKafkaBrokerSuiteDirectory(directory);
+        using var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
+        var report = Path.Combine(directory, "groups.json");
+        var result = await CaptureNativeProcessAsync(ProbeStartInfo(new[]
+        {
+            Path.Combine(AppContext.BaseDirectory, "KafkaSecurityProbe", "Vouchfx.Kafka.Security.Probe.dll"),
+            "groups", "127.0.0.1:" + port, directory, "tls", report,
+        }), TimeSpan.FromSeconds(15), CancellationToken.None);
+        File.WriteAllText(report + ".exit", result.Exit.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        File.WriteAllText(report + ".stdout", result.Stdout);
+        File.WriteAllText(report + ".stderr", result.Stderr);
+        Assert.Equal(1, result.Exit);
+        Assert.Empty(result.Stdout);
+        Assert.Empty(result.Stderr);
+        using var refusal = JsonDocument.Parse(await File.ReadAllTextAsync(report));
+        Assert.Equal("KafkaException", refusal.RootElement.GetProperty("errorType").GetString());
+    }
+
+    [Fact]
     public async Task NativeProcessTimeout_KillsAndReapsTheActualCapturedChild()
     {
         Process? observed = null;
@@ -398,32 +422,139 @@ public sealed class ManagedKafkaSecurityDockerTests
             await VerifyAfterAsync(directory, baseline);
             if (owned is not null)
             {
-                var completion = CreatorCompletion.Capture(owned);
-                File.WriteAllText(Path.Combine(directory, "creator-completion.json"), JsonSerializer.Serialize(completion));
-                Assert.False(completion.OriginalProcessStillRunning, "The exact owned DCP creator survived completed topology disposal.");
+                var immediate = CreatorCompletion.Capture(owned);
+                File.WriteAllText(Path.Combine(directory, "creator-completion-immediate.json"), JsonSerializer.Serialize(immediate));
+                var observation = await CreatorCompletion.ObserveTerminalAsync(owned, immediate);
+                File.WriteAllText(Path.Combine(directory, "creator-completion.json"), JsonSerializer.Serialize(observation.Final));
+                File.WriteAllText(Path.Combine(directory, "creator-observation.json"), JsonSerializer.Serialize(observation));
+                Assert.False(observation.Final.OriginalProcessStillRunning, "The exact owned DCP creator survived its independent 10-second completion budget.");
             }
         }
     }
 
     private sealed record CreatorCompletion(DateTimeOffset CapturedAt, string Pid, string ExpectedStart,
-        bool PidPresent, bool OriginalProcessStillRunning)
+        bool PidPresent, bool OriginalProcessStillRunning, string? LinuxProcessStat)
     {
+        internal static async Task<CreatorObservation> ObserveTerminalAsync(OwnedBroker owned, CreatorCompletion immediate)
+        {
+            // Aspire waits for resource deletion; its detached daemon can finish stopping later.
+            // Observe only this PID/name/birth, with the native-child reap budget, never kill by PID.
+            var clock = Stopwatch.StartNew();
+            var current = immediate;
+            var samples = 1;
+            var budget = TimeSpan.FromSeconds(10);
+            while (current.OriginalProcessStillRunning)
+            {
+                var remaining = budget - clock.Elapsed;
+                if (remaining <= TimeSpan.Zero) break;
+                await Task.Delay(remaining < TimeSpan.FromMilliseconds(100) ? remaining : TimeSpan.FromMilliseconds(100));
+                current = Capture(owned);
+                samples++;
+            }
+            return new CreatorObservation(immediate, current, samples, clock.Elapsed.TotalMilliseconds);
+        }
+
         internal static CreatorCompletion Capture(OwnedBroker owned)
         {
             try
             {
                 using var process = Process.GetProcessById(int.Parse(owned.CreatorPid, System.Globalization.CultureInfo.InvariantCulture));
                 var expected = DateTimeOffset.Parse(owned.CreatorStart, System.Globalization.CultureInfo.InvariantCulture);
+                var nativeStat = OperatingSystem.IsLinux() ? File.ReadAllText($"/proc/{process.Id}/stat") : null;
+                DateTimeOffset identity;
+                if (nativeStat is null) identity = CreatorIdentityTime(process);
+                else if (!TryParseLinuxCreatorIdentity(nativeStat, process.Id, LinuxClockTicks(), out identity))
+                    throw new InvalidOperationException("The owned DCP process identity was malformed.");
                 var same = !process.HasExited && process.ProcessName.StartsWith("dcp", StringComparison.OrdinalIgnoreCase)
-                    && Math.Abs((expected - CreatorIdentityTime(process)).TotalSeconds) <= 1;
-                return new CreatorCompletion(DateTimeOffset.UtcNow, owned.CreatorPid, owned.CreatorStart, true, same);
+                    && Math.Abs((expected - identity).TotalSeconds) <= 1;
+                return new CreatorCompletion(DateTimeOffset.UtcNow, owned.CreatorPid, owned.CreatorStart, true, same, nativeStat);
             }
-            catch (ArgumentException)
+            catch (Exception failure) when (failure is ArgumentException or FileNotFoundException or DirectoryNotFoundException)
             {
-                return new CreatorCompletion(DateTimeOffset.UtcNow, owned.CreatorPid, owned.CreatorStart, false, false);
+                return new CreatorCompletion(DateTimeOffset.UtcNow, owned.CreatorPid, owned.CreatorStart, false, false, null);
             }
         }
     }
+
+    [Fact]
+    public async Task CreatorCompletion_MatchingLiveCreatorStillFailsAfterIndependentDeadline()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        using var process = await StartCreatorControlAsync();
+        try
+        {
+            var owned = CreatorControlOwnership(process, CreatorIdentityTime(process));
+            var immediate = CreatorCompletion.Capture(owned);
+            Assert.True(immediate.OriginalProcessStillRunning);
+            var observation = await CreatorCompletion.ObserveTerminalAsync(owned, immediate);
+            Assert.True(observation.Final.PidPresent);
+            Assert.True(observation.Final.OriginalProcessStillRunning);
+            Assert.InRange(observation.ElapsedMilliseconds, 9900, 13000);
+            Assert.True(observation.Samples > 1);
+            Assert.Throws<Xunit.Sdk.FalseException>(() => Assert.False(observation.Final.OriginalProcessStillRunning));
+            Assert.False(process.HasExited);
+        }
+        finally { ChildProcess.KillTreeQuietly(process); await ReapAsync(process); }
+    }
+
+    [Fact]
+    public async Task CreatorCompletion_OtherBirthDoesNotWaitForOrKillEitherLiveCreator()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        using var first = await StartCreatorControlAsync();
+        Process? second = null;
+        try
+        {
+            await Task.Delay(TimeSpan.FromSeconds(2));
+            second = await StartCreatorControlAsync();
+            var firstBirth = CreatorIdentityTime(first);
+            var secondBirth = CreatorIdentityTime(second);
+            Assert.NotInRange(Math.Abs((firstBirth - secondBirth).TotalSeconds), 0, 1);
+            var mismatched = CreatorControlOwnership(first, secondBirth);
+            var immediate = CreatorCompletion.Capture(mismatched);
+            Assert.True(immediate.PidPresent);
+            Assert.False(immediate.OriginalProcessStillRunning);
+            var observation = await CreatorCompletion.ObserveTerminalAsync(mismatched, immediate);
+            Assert.Equal(1, observation.Samples);
+            Assert.InRange(observation.ElapsedMilliseconds, 0, 1000);
+            Assert.False(first.HasExited);
+            Assert.False(second.HasExited);
+        }
+        finally
+        {
+            if (second is not null) { ChildProcess.KillTreeQuietly(second); await ReapAsync(second); second.Dispose(); }
+            ChildProcess.KillTreeQuietly(first);
+            await ReapAsync(first);
+        }
+    }
+
+    private static OwnedBroker CreatorControlOwnership(Process process, DateTimeOffset birth)
+        => new("native-control", "/native-control", "native-control", "native-control",
+            process.Id.ToString(System.Globalization.CultureInfo.InvariantCulture), birth.ToString("O", System.Globalization.CultureInfo.InvariantCulture),
+            "native-control", "native-control");
+
+    private static async Task<Process> StartCreatorControlAsync()
+    {
+        var process = Process.Start(ProbeStartInfo(new[]
+        {
+            Path.Combine(AppContext.BaseDirectory, "KafkaSecurityProbe", "Vouchfx.Kafka.Security.Probe.dll"), "wait-for-creator-control",
+        }))!;
+        try
+        {
+            Assert.Equal("ready", await process.StandardOutput.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(5)));
+            Assert.StartsWith("dcp", process.ProcessName, StringComparison.OrdinalIgnoreCase);
+            return process;
+        }
+        catch
+        {
+            ChildProcess.KillTreeQuietly(process);
+            await ReapAsync(process);
+            process.Dispose();
+            throw;
+        }
+    }
+
+    private sealed record CreatorObservation(CreatorCompletion Immediate, CreatorCompletion Final, int Samples, double ElapsedMilliseconds);
 
     private static string StartupScenario(string broker, bool cancel)
     {
@@ -753,6 +884,8 @@ public sealed class ManagedKafkaSecurityDockerTests
         var result = await CaptureNativeProcessAsync(ProbeStartInfo(arguments),
             TimeSpan.FromSeconds(mode is "negative" or "consumer-control" ? 35 : mode == "consumer-state" ? 25 : 15), cancellationToken);
         File.WriteAllText(Path.Combine(directory, report + ".exit"), result.Exit.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        File.WriteAllText(Path.Combine(directory, report + ".stdout"), result.Stdout);
+        File.WriteAllText(Path.Combine(directory, report + ".stderr"), result.Stderr);
         Assert.Equal(string.Empty, result.Stdout);
         Assert.Equal(string.Empty, result.Stderr);
         Assert.Equal(0, result.Exit);
