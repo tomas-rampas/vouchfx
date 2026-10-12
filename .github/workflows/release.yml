@@ -70,7 +70,7 @@
 # Source builds and custom AppHosts retain their own metadata/cache resolution.
 # No checkout or Aspire restore is a prerequisite for an installed candidate.
 # Native-tree checks, size checks, platform launch preflights and a clean-cache
-# installed-tool Docker smoke gate publish-release. PublishSingleFile stays off:
+# installed-tool Docker smoke gate every public channel. PublishSingleFile stays off:
 # provider discovery requires usable Assembly.Location values.
 # =============================================================================
 
@@ -612,20 +612,21 @@ jobs:
 
   # ===========================================================================
   # build-vsix
-  # Packages the VSCode extension using vsce.
+  # Builds the tag-versioned VSIX once. Publication consumes this exact artifact.
+  # Development package.json/package-lock.json remain at their source versions.
   # ===========================================================================
   build-vsix:
     name: Build VSCode extension (.vsix)
     runs-on: ubuntu-latest
+    needs: build-dotnet
     permissions:
       contents: read
 
-    # Secret presence is surfaced as a job-level env bool rather than testing
-    # the secrets context inside the step `if:` directly — matching this
-    # pipeline's established HAS_CODESIGN / HAS_GPG pattern so every
-    # secret-gated step reads the same way.
+    outputs:
+      sha256: ${{ steps.package-digest.outputs.sha256 }}
+
     env:
-      HAS_VSCE_PAT: ${{ secrets.VSCE_PAT != '' }}
+      VERSION: ${{ needs.build-dotnet.outputs.version }}
 
     defaults:
       run:
@@ -644,39 +645,95 @@ jobs:
       - name: Install dependencies (npm ci)
         run: npm ci
 
-      - name: Compile TypeScript
-        run: npm run compile
+      - name: Stamp release version without committing or tagging
+        run: npm version "$VERSION" --no-git-tag-version --ignore-scripts
 
+      # The existing vscode:prepublish hook compiles once during packaging.
       - name: Package extension (vsce package)
-        run: npm run package
+        run: npm run package -- --out "vouchfx-${VERSION}.vsix"
+
+      - name: Verify both packaged version manifests and record artifact digest
+        id: package-digest
+        run: |
+          set -euo pipefail
+          package="vouchfx-${VERSION}.vsix"
+          python ../../scripts/check_vsix.py --package "$package" --version "$VERSION"
+          digest=$(sha256sum "$package")
+          echo "sha256=${digest%% *}" >> "$GITHUB_OUTPUT"
 
       - name: Upload .vsix
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: vsix
-          path: tools/vscode-vouchfx/*.vsix
+          path: tools/vscode-vouchfx/vouchfx-${{ env.VERSION }}.vsix
           if-no-files-found: error
           retention-days: 30
 
-      # ── VS Code Marketplace publish (#121) ─────────────────────────────────
-      # Publishes the .vsix built above; vsce reads the PAT from the VSCE_PAT
-      # environment variable. Guarded three ways: the secret must exist, the
-      # run must be a real release/tag event (workflow_dispatch is the
-      # non-publishing smoke lane), and only the canonical repo may publish
-      # (forks with a stray VSCE_PAT must not). Marketplace publishes are
-      # idempotent per version — re-running a tag whose version is already
-      # live fails this step rather than silently double-publishing; ship a
-      # new extension version instead.
+  # ===========================================================================
+  # publish-marketplace (#121)
+  # No build or version bump occurs here. Require both smoke gates, signing, and
+  # completed GitHub/NuGet publication before publishing the verified VSIX.
+  # A failed/skipped dependency skips this job; do not add always() to its guard.
+  # ===========================================================================
+  publish-marketplace:
+    name: Publish verified VSIX to VS Code Marketplace
+    runs-on: ubuntu-latest
+    needs: [build-dotnet, build-vsix, sign-and-attest, smoke-test-packaged-tool, smoke-test-distribution-platforms, publish-release]
+    if: github.event_name != 'workflow_dispatch' && github.repository == 'tomas-rampas/vouchfx'
+    permissions:
+      contents: read
+
+    env:
+      VERSION: ${{ needs.build-dotnet.outputs.version }}
+      EXPECTED_VSIX_SHA256: ${{ needs.build-vsix.outputs.sha256 }}
+      HAS_VSCE_PAT: ${{ secrets.VSCE_PAT != '' }}
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Download the built and attested .vsix
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: vsix
+          path: ${{ runner.temp }}/marketplace/
+
+      - name: Verify exact artifact digest and release identity before publication
+        run: |
+          python scripts/check_vsix.py \
+            --package "$RUNNER_TEMP/marketplace/vouchfx-${VERSION}.vsix" \
+            --version "$VERSION" --sha256 "$EXPECTED_VSIX_SHA256"
+
+      - name: Set up Node.js (LTS 22)
+        if: ${{ env.HAS_VSCE_PAT == 'true' && !contains(env.VERSION, '-') }}
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: tools/vscode-vouchfx/package-lock.json
+
+      - name: Install locked publication tools without build scripts
+        if: ${{ env.HAS_VSCE_PAT == 'true' && !contains(env.VERSION, '-') }}
+        working-directory: tools/vscode-vouchfx
+        run: npm ci --ignore-scripts
+
+      # Marketplace supports only major.minor.patch, not SemVer RC suffixes.
+      # RC VSIX files still carry the exact RC version on the GitHub Release.
+      # Per-version publication is immutable; never replace a broken version.
       - name: Publish to VS Code Marketplace (vsce publish)
-        if: ${{ env.HAS_VSCE_PAT == 'true' && github.event_name != 'workflow_dispatch' && github.repository == 'tomas-rampas/vouchfx' }}
+        if: ${{ env.HAS_VSCE_PAT == 'true' && !contains(env.VERSION, '-') }}
+        working-directory: tools/vscode-vouchfx
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
-        run: npx vsce publish --packagePath ./*.vsix
+        run: npx --no-install vsce publish --packagePath "$RUNNER_TEMP/marketplace/vouchfx-${VERSION}.vsix"
 
-      - name: Marketplace publish skipped (VSCE_PAT not configured)
-        if: ${{ env.HAS_VSCE_PAT != 'true' }}
+      - name: Marketplace publication skipped
+        if: ${{ env.HAS_VSCE_PAT != 'true' || contains(env.VERSION, '-') }}
         run: |
-          echo "::notice title=VS Code Marketplace publish SKIPPED::VSCE_PAT is not configured. On release/tag runs the extension ships only as the .vsix attached to the GitHub Release (on workflow_dispatch smoke runs it is only a workflow artifact). To activate the Marketplace channel (#121): create the 'vouchfx' publisher on marketplace.visualstudio.com, mint a Marketplace-scoped PAT, and add it as the VSCE_PAT repo secret."
+          if [[ "$VERSION" == *-* ]]; then
+            echo "::notice title=VS Code Marketplace publish SKIPPED::Marketplace does not support SemVer prerelease suffixes. The exact ${VERSION} VSIX is attached to the GitHub Release; a stable tag publishes the matching extension version."
+          else
+            echo "::notice title=VS Code Marketplace publish SKIPPED::VSCE_PAT is not configured. The verified VSIX is attached to the GitHub Release. To activate the Marketplace channel (#121), create the 'vouchfx' publisher, mint a Marketplace-scoped PAT, and configure the VSCE_PAT repository secret."
+          fi
 
   # ===========================================================================
   # sign-and-attest
