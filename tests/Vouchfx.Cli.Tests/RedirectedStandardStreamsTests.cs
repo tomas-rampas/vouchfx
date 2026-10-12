@@ -147,6 +147,7 @@ public sealed class RedirectedStandardStreamsTests : IDisposable
             typeof(InvocationScope).Assembly.Location,
         }.Concat(arguments).ToArray();
         var request = Path.Combine(_root, Guid.NewGuid().ToString("N") + ".json");
+        var resultPath = Path.Combine(_root, Guid.NewGuid().ToString("N") + ".result.json");
         await File.WriteAllTextAsync(request, JsonSerializer.Serialize(new
         {
             Arguments = cliArguments,
@@ -166,6 +167,7 @@ public sealed class RedirectedStandardStreamsTests : IDisposable
         };
         start.ArgumentList.Add(Path.Combine(AppContext.BaseDirectory, "EncodingProbe", "Vouchfx.Cli.Encoding.Probe.dll"));
         start.ArgumentList.Add(request);
+        start.ArgumentList.Add(resultPath);
         using var probe = Process.Start(start) ?? throw new InvalidOperationException("Cannot launch private console probe.");
         try
         {
@@ -174,9 +176,10 @@ public sealed class RedirectedStandardStreamsTests : IDisposable
             var stderr = probe.StandardError.ReadToEndAsync();
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
             await probe.WaitForExitAsync(timeout.Token);
+            var probeOutput = await stdout;
             var error = await stderr;
-            Assert.True(probe.ExitCode == 0, "Private probe exit " + probe.ExitCode + ": " + error);
-            var result = JsonSerializer.Deserialize<ProbeResult>(await stdout)
+            Assert.True(probe.ExitCode == 0, "Private probe exit " + probe.ExitCode + ": " + error + probeOutput);
+            var result = JsonSerializer.Deserialize<ProbeResult>(await File.ReadAllTextAsync(resultPath))
                 ?? throw new InvalidOperationException("Missing private probe result.");
             Assert.Equal(result.OutputPageBefore, result.OutputPageAfter);
             Assert.Equal(result.InputPageBefore, result.InputPageAfter);

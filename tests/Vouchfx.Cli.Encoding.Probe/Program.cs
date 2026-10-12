@@ -90,7 +90,8 @@ try
             Stderr = record + ".stderr",
         }));
     }
-    Console.WriteLine(JsonSerializer.Serialize(new
+    // Inherited CLI output shares stdout on POSIX; keep the result off those handles.
+    await File.WriteAllTextAsync(args[1], JsonSerializer.Serialize(new
     {
         child.ExitCode,
         StdoutBase64 = Convert.ToBase64String(output.ToArray()),
