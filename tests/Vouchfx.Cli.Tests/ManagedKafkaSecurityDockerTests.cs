@@ -480,8 +480,7 @@ public sealed class ManagedKafkaSecurityDockerTests
     public async Task CreatorCompletion_MatchingLiveCreatorStillFailsAfterIndependentDeadline()
     {
         if (!OperatingSystem.IsLinux()) return;
-        using var process = await StartCreatorControlAsync();
-        try
+        await WithCreatorControlAsync(async process =>
         {
             var owned = CreatorControlOwnership(process, CreatorIdentityTime(process));
             var immediate = CreatorCompletion.Capture(owned);
@@ -493,39 +492,52 @@ public sealed class ManagedKafkaSecurityDockerTests
             Assert.True(observation.Samples > 1);
             Assert.Throws<Xunit.Sdk.FalseException>(() => Assert.False(observation.Final.OriginalProcessStillRunning));
             Assert.False(process.HasExited);
-        }
-        finally { ChildProcess.KillTreeQuietly(process); await ReapAsync(process); }
+        });
     }
 
     [Fact]
     public async Task CreatorCompletion_OtherBirthDoesNotWaitForOrKillEitherLiveCreator()
     {
         if (!OperatingSystem.IsLinux()) return;
-        using var first = await StartCreatorControlAsync();
-        Process? second = null;
-        try
+        await WithCreatorControlAsync(async first =>
         {
             await Task.Delay(TimeSpan.FromSeconds(2));
-            second = await StartCreatorControlAsync();
-            var firstBirth = CreatorIdentityTime(first);
-            var secondBirth = CreatorIdentityTime(second);
-            Assert.NotInRange(Math.Abs((firstBirth - secondBirth).TotalSeconds), 0, 1);
-            var mismatched = CreatorControlOwnership(first, secondBirth);
-            var immediate = CreatorCompletion.Capture(mismatched);
-            Assert.True(immediate.PidPresent);
-            Assert.False(immediate.OriginalProcessStillRunning);
-            var observation = await CreatorCompletion.ObserveTerminalAsync(mismatched, immediate);
-            Assert.Equal(1, observation.Samples);
-            Assert.InRange(observation.ElapsedMilliseconds, 0, 1000);
-            Assert.False(first.HasExited);
-            Assert.False(second.HasExited);
-        }
-        finally
+            await WithCreatorControlAsync(async second =>
+            {
+                var firstBirth = CreatorIdentityTime(first);
+                var secondBirth = CreatorIdentityTime(second);
+                Assert.NotInRange(Math.Abs((firstBirth - secondBirth).TotalSeconds), 0, 1);
+                var mismatched = CreatorControlOwnership(first, secondBirth);
+                var immediate = CreatorCompletion.Capture(mismatched);
+                Assert.True(immediate.PidPresent);
+                Assert.False(immediate.OriginalProcessStillRunning);
+                var observation = await CreatorCompletion.ObserveTerminalAsync(mismatched, immediate);
+                Assert.Equal(1, observation.Samples);
+                Assert.InRange(observation.ElapsedMilliseconds, 0, 1000);
+                Assert.False(first.HasExited);
+                Assert.False(second.HasExited);
+            });
+        });
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CreatorControl_CallbackFailureOrCancellation_ReapsOwnedProcess(bool cancel)
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        OwnedBroker? owned = null;
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        var control = WithCreatorControlAsync(process =>
         {
-            if (second is not null) { ChildProcess.KillTreeQuietly(second); await ReapAsync(second); second.Dispose(); }
-            ChildProcess.KillTreeQuietly(first);
-            await ReapAsync(first);
-        }
+            owned = CreatorControlOwnership(process, CreatorIdentityTime(process));
+            return cancel ? Task.FromCanceled(cancellation.Token) : Task.FromException(new InvalidOperationException("creator-control-failure"));
+        });
+        if (cancel) await Assert.ThrowsAnyAsync<OperationCanceledException>(() => control);
+        else await Assert.ThrowsAsync<InvalidOperationException>(() => control);
+        Assert.NotNull(owned);
+        Assert.False(CreatorCompletion.Capture(owned).OriginalProcessStillRunning);
     }
 
     private static OwnedBroker CreatorControlOwnership(Process process, DateTimeOffset birth)
@@ -533,24 +545,22 @@ public sealed class ManagedKafkaSecurityDockerTests
             process.Id.ToString(System.Globalization.CultureInfo.InvariantCulture), birth.ToString("O", System.Globalization.CultureInfo.InvariantCulture),
             "native-control", "native-control");
 
-    private static async Task<Process> StartCreatorControlAsync()
+    private static async Task WithCreatorControlAsync(Func<Process, Task> observe)
     {
-        var process = Process.Start(ProbeStartInfo(new[]
+        using var process = Process.Start(ProbeStartInfo(new[]
         {
             Path.Combine(AppContext.BaseDirectory, "KafkaSecurityProbe", "Vouchfx.Kafka.Security.Probe.dll"), "wait-for-creator-control",
-        }))!;
+        })) ?? throw new InvalidOperationException("The native creator control could not be started.");
         try
         {
             Assert.Equal("ready", await process.StandardOutput.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(5)));
             Assert.StartsWith("dcp", process.ProcessName, StringComparison.OrdinalIgnoreCase);
-            return process;
+            await observe(process);
         }
-        catch
+        finally
         {
             ChildProcess.KillTreeQuietly(process);
             await ReapAsync(process);
-            process.Dispose();
-            throw;
         }
     }
 

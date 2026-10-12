@@ -21,6 +21,7 @@ namespace Vouchfx.Steps.StorageAssert.S3.Tests;
 public sealed class StorageAssertS3ProtocolTests
 {
     private const string StepId = "s3-protocol";
+    private const string WarmupStepId = "s3-protocol-setup";
     private const int BodyCap = 16 * 1024 * 1024;
     private static readonly string[] s_headObject = { "HEAD object" };
     private static readonly string[] s_headThenBucket = { "HEAD object", "HEAD bucket" };
@@ -156,23 +157,57 @@ public sealed class StorageAssertS3ProtocolTests
     [InlineData(true)]
     public async Task ImmediateTimeout_DuringBucketConfirmationOrBodyRead_IsInconclusive(bool bodyRead)
     {
-        var held = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var armed = 0;
+        var setupCompleted = new TaskCompletionSource<StepOutcome?>(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var peer = new S3Peer(request =>
         {
-            var hold = bodyRead ? request.Method == "GET" : request.Kind == "bucket";
-            if (hold) held.TrySetResult();
+            var hold = Volatile.Read(ref armed) == 1 && (bodyRead ? request.Method == "GET" : request.Kind == "bucket");
             return Task.FromResult(new Reply(bodyRead ? 200 : request.Kind == "object" ? 404 : 200,
-                Body: new byte[100], HoldHeaders: hold && !bodyRead, HoldBody: hold && bodyRead));
+                Body: Enumerable.Repeat((byte)'x', 100).ToArray(), HoldHeaders: hold && !bodyRead, HoldBody: hold && bodyRead));
         });
-        var result = await RunAsync(peer, new StorageExpectation(true, null, null, null,
-            bodyRead ? "x" : null, null, null), timeoutMs: 1500);
-        Trace(peer, result);
+        var expectation = new StorageExpectation(true, null, null, null, bodyRead ? "x" : null, null, null);
+        // Exercise the same SDK/helper and real HTTP path before starting the short step budget.
+        // The setup completion signal arms the blocked response; setup time is not timeout evidence.
+        var invocation = PrepareRun(peer, expectation, timeoutMs: 1500,
+            warmupExpectation: bodyRead ? expectation : new StorageExpectation(false, null, null, null, null, null, null),
+            onWarmupCompleted: outcome =>
+            {
+                setupCompleted.TrySetResult(outcome);
+                if (outcome?.Verdict == Verdict.Pass)
+                    Volatile.Write(ref armed, 1);
+            });
+        using var safety = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var run = RoslynScriptCompiler.RunIsolatedAsync(invocation.Compiled, invocation.Globals, cancellationToken: safety.Token);
+        try
+        {
+            await run.WaitAsync(TimeSpan.FromSeconds(10));
+            var outcome = Assert.IsType<StepOutcome>(invocation.Vars[VarKeys.Outcome(CsxFragment.SanitiseId(StepId))]);
+            var result = new RunResult(outcome, new List<AttemptRecord>(), invocation.Live);
+            Trace(peer, result);
 
-        Assert.True(held.Task.IsCompletedSuccessfully, "The provider must reach the intended blocked request.");
-        Assert.Equal(Verdict.Inconclusive, result.Outcome.Verdict);
-        Assert.Equal("step-timeout", JsonDocument.Parse(result.Outcome.Observation!).RootElement.GetProperty("reason").GetString());
-        Assert.Equal(bodyRead ? s_headThenGet : s_headThenBucket,
-            peer.Requests.Select(x => x.Method + " " + x.Kind));
+            var setup = Assert.IsType<StepOutcome>(await setupCompleted.Task.WaitAsync(safety.Token));
+            Assert.Equal(Verdict.Pass, setup.Verdict);
+            Assert.Equal(2, invocation.Live.CompletionCount);
+            Assert.Same(setup, invocation.Live.Completions[WarmupStepId]);
+            Assert.Same(outcome, invocation.Live.Completions[StepId]);
+            Assert.True(peer.HeldOperation.IsCompletedSuccessfully, "The provider must reach the intended blocked request.");
+            var held = await peer.HeldOperation;
+            Assert.Equal(bodyRead ? "GET object" : "HEAD bucket", held);
+            Assert.Equal(held, await peer.ClientDisconnected.WaitAsync(safety.Token));
+            Assert.Equal(Verdict.Inconclusive, outcome.Verdict);
+            var observation = JsonDocument.Parse(outcome.Observation!);
+            Assert.Equal("step-timeout", observation.RootElement.GetProperty("reason").GetString());
+            Assert.Equal(1500, observation.RootElement.GetProperty("timeoutMs").GetInt64());
+            var expectedRequests = bodyRead ? s_headThenGet : s_headThenBucket;
+            Assert.Equal(expectedRequests.Concat(expectedRequests), peer.Requests.Select(x => x.Method + " " + x.Kind));
+        }
+        finally
+        {
+            safety.Cancel();
+            await peer.DisposeAsync();
+            try { await run.WaitAsync(TimeSpan.FromSeconds(10)); }
+            catch (OperationCanceledException) when (safety.IsCancellationRequested) { }
+        }
     }
 
     [Theory]
@@ -306,14 +341,19 @@ public sealed class StorageAssertS3ProtocolTests
 
     private static Invocation PrepareRun(S3Peer peer, StorageExpectation expectation,
         long? timeoutMs = null, bool retry = false, ISecretResolver? resolver = null,
-        Action<AttemptRecord>? onAttempt = null, string tail = "")
+        Action<AttemptRecord>? onAttempt = null, string tail = "",
+        StorageExpectation? warmupExpectation = null, Action<StepOutcome?>? onWarmupCompleted = null)
     {
         var provider = new StorageAssertS3Provider();
-        var fragment = provider.Emit(new StorageAssertS3Model("uploads", "reports", "object", expectation), new CompileContext());
-        var source = CsxAssembler.Assemble(new[]
+        var plans = new List<StepCompilePlan>();
+        if (warmupExpectation is not null)
         {
-            new StepCompilePlan(StepId, fragment, retry, timeoutMs ?? (retry ? 5000 : null), retry ? 100 : null),
-        }).CsxSource + "\n" + tail;
+            var setup = provider.Emit(new StorageAssertS3Model("uploads", "reports", "object", warmupExpectation), new CompileContext(WarmupStepId));
+            plans.Add(new StepCompilePlan(WarmupStepId, setup, false, null, null));
+        }
+        var fragment = provider.Emit(new StorageAssertS3Model("uploads", "reports", "object", expectation), new CompileContext());
+        plans.Add(new StepCompilePlan(StepId, fragment, retry, timeoutMs ?? (retry ? 5000 : null), retry ? 100 : null));
+        var source = CsxAssembler.Assemble(plans).CsxSource + "\n" + tail;
         var references = new[]
         {
             typeof(Amazon.S3.AmazonS3Client).Assembly.Location,
@@ -330,7 +370,7 @@ public sealed class StorageAssertS3ProtocolTests
         {
             [VarKeys.Connection("uploads")] = "ServiceURL=" + peer.Url + ";AccessKey=access-canary;SecretKey=credential-canary",
         };
-        var live = new LiveSink(onAttempt);
+        var live = new LiveSink(onAttempt, onWarmupCompleted);
         ISecretAccessor secrets = resolver is null ? NullSecretAccessor.Instance : new SecretAccessor(new SecretSourceCatalog(new[] { resolver }));
         var globals = new ScriptGlobalVariables(vars, new Dictionary<string, object>(), secrets,
             NullWebhookCaptureAccessor.Instance, NullTraceCaptureAccessor.Instance, live);
@@ -345,7 +385,10 @@ public sealed class StorageAssertS3ProtocolTests
     private sealed class LiveSink : IStepEventSink
     {
         private readonly Action<AttemptRecord>? _onAttempt;
-        public LiveSink(Action<AttemptRecord>? onAttempt) => _onAttempt = onAttempt;
+        private readonly Action<StepOutcome?>? _onWarmupCompleted;
+        public LiveSink(Action<AttemptRecord>? onAttempt, Action<StepOutcome?>? onWarmupCompleted)
+            => (_onAttempt, _onWarmupCompleted) = (onAttempt, onWarmupCompleted);
+        public Dictionary<string, StepOutcome?> Completions { get; } = new();
         public List<AttemptRecord> Attempts { get; } = new();
         public StepOutcome? Completed { get; private set; }
         public int CompletionCount { get; private set; }
@@ -359,13 +402,16 @@ public sealed class StorageAssertS3ProtocolTests
         {
             CompletionCount++;
             Completed = outcome;
+            Completions.Add(stepId, outcome);
+            if (stepId == WarmupStepId) _onWarmupCompleted?.Invoke(outcome);
         }
     }
 
     private sealed class CompileContext : ICompileContext
     {
+        public CompileContext(string stepId = StorageAssertS3ProtocolTests.StepId) => StepId = stepId;
         public string SuiteDirectory => Directory.GetCurrentDirectory();
-        public string StepId => StorageAssertS3ProtocolTests.StepId;
+        public string StepId { get; }
         public string SuiteNamespace => "Generated";
         public IReadOnlyDictionary<string, string> Captures { get; } = new Dictionary<string, string>();
         public IReadOnlyDictionary<string, CaptureExpr> CaptureExprs { get; } = new Dictionary<string, CaptureExpr>();
