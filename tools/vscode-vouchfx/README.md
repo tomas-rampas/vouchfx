@@ -16,8 +16,29 @@ files so that, inside VSCode, authors get:
 The intelligence itself is provided by the
 [Red Hat YAML language server](https://marketplace.visualstudio.com/items?itemName=redhat.vscode-yaml)
 (`redhat.vscode-yaml`), which is declared as an **extension dependency** and is
-installed automatically alongside this extension. This extension only supplies
-the schema and the file-association wiring.
+installed automatically alongside this extension. vouchfx supplies the schemas and
+file associations, C# syntax highlighting and Test Explorer integration.
+
+## Install
+
+Use VS Code 1.85 or later. Download `vouchfx-<version>.vsix` from the selected
+[published GitHub Release](https://github.com/tomas-rampas/vouchfx/releases).
+Run **Extensions: Install from VSIX…** in VS Code, or install the downloaded file:
+
+```bash
+code --install-extension /absolute/path/vouchfx-<version>.vsix
+```
+
+Marketplace publication is optional; the GitHub VSIX is the supported distribution
+when that channel is unavailable. For an unreleased candidate, use its supplied
+VSIX or build this checkout with the [development commands](#development).
+Install a compatible CLI and configure `vouchfx.cliPath` before using Test Explorer;
+see the engine's [version-specific installation prerequisites](../../docs/getting-started.md#installing-vouchfx).
+
+The extension also associates vouchfx environment-driver configuration files named
+`*.compose.yaml` with the separate Compose environment schema. Native Compose
+manifests use their own grammar. Validate the saved `*.e2e.yaml` suite with the
+matching CLI to check its external bindings before execution.
 
 ## How the schema is bound
 

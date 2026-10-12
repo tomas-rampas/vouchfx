@@ -7,7 +7,7 @@ secondary (self-contained exe) distribution channels.
 
 ## How to trigger a release
 
-The release pipeline (`release.yml`) fires on exactly two events:
+The release pipeline (`release.yml`) supports three triggers: a published GitHub Release, a pushed version tag, and a manual `workflow_dispatch` preflight. The two publication paths are:
 
 1. **GitHub Release published** (recommended)
    - Navigate to the GitHub Releases page for this repository.
@@ -26,8 +26,8 @@ The release pipeline (`release.yml`) fires on exactly two events:
    The pipeline creates a draft release, builds everything, and attaches the
    artifacts.  The maintainer should then review and publish the draft.
 
-**Never push a `v*` tag without intending a release.**  The pipeline cannot
-be cancelled mid-flight (concurrency policy: `cancel-in-progress: false`).
+**Never push a `v*` tag without intending a release.** A newer run does not automatically
+cancel an existing run (`cancel-in-progress: false`); manual cancellation remains possible.
 
 ---
 
@@ -85,12 +85,16 @@ After the first successful `Vouchfx.*` publish and NuGet.org processing (typical
 3. **Smoke-test without cutting a tag** (`workflow_dispatch`)
    - In the GitHub Actions UI, select `Release (signed, provenance)` and
      click **Run workflow**.
-   - Enter a test version such as `0.0.0-test`.
-   - The pipeline builds all artifacts (nupkg, per-RID tarballs, SBOM, vsix,
-     MSI, deb, pkg) and runs the full sign-and-attest job.
-   - **Release upload and NuGet push are skipped** on dispatch runs.
-   - Use this before the first real `v1.0.0` tag to validate the pipeline end-
-     to-end and confirm each OS installer builds on its native runner.
+   - Select the reviewed candidate ref and enter the version to validate.
+   - The pipeline builds all artifacts (nupkg, per-RID tarballs, SBOM, VSIX,
+     MSI, deb, pkg), creates provenance attestations and runs distribution checks.
+   - **NuGet, GitHub Release and Marketplace publication are skipped.** The
+     cosign steps are also skipped; optional certificate-based signing remains
+     dependent on configured secrets.
+   - **Attestations are public records**, including on preflight runs; skipping
+     package publication does not make the run private.
+   - Use this before the real `v1.0.0` tag to validate the pipeline and native
+     installer builds. It does not establish that the public packages are available.
 
 ---
 
