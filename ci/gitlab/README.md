@@ -85,14 +85,14 @@ ports the topology publishes on the sibling dind service.
 ## Build-from-source install
 
 vouchfx is published as a **NuGet global tool** and can be installed locally with
-`dotnet tool install --global vouchfx --prerelease` (the recommended approach for running
+`dotnet tool install --global vouchfx` (the latest stable release, recommended for running
 suites locally). This template nevertheless **deliberately builds vouchfx from source** at a
 pinned reference: it `git clone`s `VOUCHFX_REPO_URL` at `VOUCHFX_REF` into `.vouchfx-src`,
 runs `dotnet build … -c Release`, then invokes the CLI with `dotnet run --project … --no-build`.
 Pinning the `include:` `ref:` and `VOUCHFX_REF` together keeps the engine and template in
 lock-step; a SHA or tag-pinned source build is an immutable supply-chain reference, exactly as
 in the GitHub template. A consumer tracking a released engine pins `VOUCHFX_REF` to the release
-tag (e.g. `v1.0.0-alpha.9`), still as a source build. A packaged-tool install could become an
+tag (e.g. the stable `v1.0.0` baseline), still as a source build. A packaged-tool install could become an
 optional mode later; the install step is intentionally the only thing that would change.
 
 ## Exit-code gating (verdict taxonomy §12.1)

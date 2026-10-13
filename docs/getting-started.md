@@ -38,34 +38,34 @@ You should see version and runtime information. On Windows, this typically means
 
 ## Installing vouchfx
 
-Core `1.0.0` is published on NuGet.org as the `vouchfx` global tool. Install or upgrade to that
-stable version:
+Stable Core releases are published on NuGet.org as the `vouchfx` global tool. Install or upgrade
+to the latest stable release:
 
 ```bash
-# Install the published stable CLI
-dotnet tool install --global vouchfx --version 1.0.0
+# Install the latest stable CLI
+dotnet tool install --global vouchfx
 
-# Already installed? Upgrade to the same supported version
-dotnet tool update --global vouchfx --version 1.0.0
+# Already installed? Upgrade to the latest stable release
+dotnet tool update --global vouchfx
 
 vouchfx --version
 ```
 
-Omit `--version` to select the latest stable release. Use `--prerelease` only when intentionally
-testing a pre-release. Self-contained platform archives and installers are available on
-[GitHub Releases](https://github.com/tomas-rampas/vouchfx/releases/tag/v1.0.0).
+These commands omit `--version` to select the latest stable release. Use `--prerelease` only when
+intentionally testing a pre-release. Self-contained platform archives and installers are available on
+[the latest stable GitHub release](https://github.com/tomas-rampas/vouchfx/releases/latest).
 
 The installer places the `vouchfx` command in `~/.dotnet/tools` (`%USERPROFILE%\.dotnet\tools` on Windows). If your shell cannot find `vouchfx` afterwards, add that directory to your `PATH` or open a fresh shell — the installer only updates `PATH` for new sessions.
 
-**DCP distribution and supported platforms.** Published `1.0.0` distributions package the matching Aspire
-DCP tools with the CLI: `win-x64`, `linux-x64` (glibc), `osx-x64` and `osx-arm64`. The global tool
+**DCP distribution and supported platforms.** Core `1.0.0` introduced matching Aspire DCP tools
+bundled with the CLI: `win-x64`, `linux-x64` (glibc), `osx-x64` and `osx-arm64`. The global tool
 contains all four native trees; an archive or installer contains its own platform's tree. Installed
 distributions need no source checkout, Aspire workload or warmed NuGet cache. The engine selects the
 bundle beside its host assembly, so changing directories does not change the executable it uses.
 
 **Legacy rc.6 and source/custom AppHosts:** `1.0.0-rc.6` lacks this bundled payload; on a clean machine
-its container topology fails before Docker starts. Upgrade the global tool to `1.0.0`. If you must
-retain the legacy package or use an unbundled custom AppHost, supply the exact Aspire 13.4.2 tools
+its container topology fails before Docker starts. Upgrade the global tool to the latest stable release.
+If you must retain the legacy package or use an unbundled custom AppHost, supply the exact Aspire 13.4.2 tools
 through `ASPIRE_DCP_PATH`. Set it to the directory containing `dcp`/`dcp.exe`, not the executable:
 
 ```powershell

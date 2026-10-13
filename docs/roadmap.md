@@ -72,23 +72,23 @@ implementation, not a claim that every release requirement or open defect is res
 - **A signed release pipeline** — keyless cosign signatures, SLSA provenance attestations, CycloneDX SBOMs,
   and NuGet.org publication via Trusted Publishing (no long-lived keys).
 
-## Core 1.0.0 and remaining ecosystem release work
+## Stable Core and remaining ecosystem release work
 
 The first public releases shipped on 2026-07-08. The alpha and release-candidate series are
-historical; Core `1.0.0` is now available on
-[GitHub Releases](https://github.com/tomas-rampas/vouchfx/releases/tag/v1.0.0) and
-[NuGet.org](https://www.nuget.org/packages/vouchfx/1.0.0), with cosign signatures, SLSA provenance
-and CycloneDX SBOMs. Install the stable CLI:
+historical; Core `1.0.0` was the first stable CLI and SDK milestone. Current stable distributions
+are available on [GitHub Releases](https://github.com/tomas-rampas/vouchfx/releases/latest) and
+[NuGet.org](https://www.nuget.org/packages/vouchfx), with cosign signatures, SLSA provenance
+and CycloneDX SBOMs. Install the latest stable CLI:
 
 ```bash
-dotnet tool install --global vouchfx --version 1.0.0
+dotnet tool install --global vouchfx
 ```
 
 Core availability is one release milestone. The ecosystem still needs its remaining publication
-and acceptance work, including MCP tool publication and follow-up diagnostics and publishing fixes.
+and acceptance work, including stable MCP tool publication and follow-up diagnostics and publishing fixes.
 The ongoing work includes:
 
-- **User-supplied environments** — published Core `1.0.0` supports owned, fresh-per-scenario
+- **User-supplied environments** — Core `1.0.0` introduced owned, fresh-per-scenario
   HTTP/TCP/PostgreSQL Docker Compose environments through a format-neutral registered-driver boundary.
   Pure binding supplies logical targets; acquisition supplies a ready lease and owns resource cleanup,
   without changing assertion providers. Existing inline environments remain supported. Other external

@@ -73,7 +73,7 @@ only, via new optional interfaces.
 
 ## Status
 
-When version `1.0.0` is available on NuGet.org, install with `dotnet add package Vouchfx.Sdk --version 1.0.0`. Before publication, build the matching source checkout and use its release package from a private feed. The frozen v1 interfaces are stable for the whole `v1.x` series.
+Stable `Vouchfx.Sdk` packages are available on NuGet.org. To use the `1.0.0` provider-contract baseline, install with `dotnet add package Vouchfx.Sdk --version 1.0.0`. The frozen v1 interfaces are stable for the whole `v1.x` series.
 
 ## Contributing a provider
 

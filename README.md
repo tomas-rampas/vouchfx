@@ -18,10 +18,10 @@ outbound webhook — the seams where distributed systems actually break.
 
 It is **not** a unit-test framework and **not** a UI/browser tool.
 
-> **Core 1.0.0 is available.** Install the CLI from
-> [NuGet.org](https://www.nuget.org/packages/vouchfx/1.0.0) or use the distributions on
-> [GitHub Releases](https://github.com/tomas-rampas/vouchfx/releases/tag/v1.0.0).
-> This release supports inline `environment.services` images/projects and managed dependencies,
+> **Stable Core CLI and SDK packages are available.** Install the latest stable CLI from
+> [NuGet.org](https://www.nuget.org/packages/vouchfx) or use the distributions on
+> [GitHub Releases](https://github.com/tomas-rampas/vouchfx/releases/latest).
+> Core supports inline `environment.services` images/projects and managed dependencies,
 > plus owned HTTP/TCP/PostgreSQL [Docker Compose environments](https://vouchfx.io/compose-environments/)
 > through `environment.source`. Other external formats can use the format-neutral registered-driver
 > contract. Fleet validation and follow-up fixes remain in progress — see the
@@ -30,16 +30,16 @@ It is **not** a unit-test framework and **not** a UI/browser tool.
 ## Install
 
 ```bash
-dotnet tool install --global vouchfx --version 1.0.0
+dotnet tool install --global vouchfx
 ```
 
 Requires the [.NET 8 SDK](https://dotnet.microsoft.com/en-us/download/dotnet/8.0). Running a suite also
 needs a Docker daemon, since vouchfx starts real containers — but `vouchfx validate` and `vouchfx list`
 are Docker-free, so authoring and checking suites works on a machine without one. Machines without a
-.NET SDK can use the self-contained per-OS archives and MSI/deb/pkg installers attached to each
-[release](https://github.com/tomas-rampas/vouchfx/releases).
+.NET SDK can use the self-contained per-OS archives and MSI/deb/pkg installers available from the
+[latest stable release](https://github.com/tomas-rampas/vouchfx/releases/latest).
 
-Published `1.0.0` distributions bundle matching Aspire DCP tools for Windows x64, Linux x64 (glibc),
+Core `1.0.0` introduced bundled Aspire DCP tools for Windows x64, Linux x64 (glibc),
 macOS x64 and macOS ARM64. The installed CLI needs no source checkout, Aspire workload or warmed
 NuGet cache. Legacy `1.0.0-rc.6` packages still need external matching tools; see
 [installation and version-specific prerequisites](https://vouchfx.io/getting-started/#installing-vouchfx).
@@ -414,7 +414,10 @@ Report vulnerabilities via the private coordinated-disclosure process in
 Every release artefact carries a **keyless [Sigstore](https://sigstore.dev/) cosign signature**, an
 **SLSA build-provenance attestation** and a **CycloneDX SBOM**; the nupkg is published to NuGet.org via
 Trusted Publishing (OIDC). No long-lived signing or publishing keys are managed anywhere in the
-pipeline. For these commands, download the nupkg asset from the GitHub 1.0.0 release:
+pipeline. Download the nupkg asset and its matching cosign bundle from the
+[latest stable GitHub release](https://github.com/tomas-rampas/vouchfx/releases/latest).
+The historical `1.0.0` example below uses that release's filenames; substitute the filenames
+from the release you downloaded:
 
 ```bash
 gh attestation verify vouchfx.1.0.0.nupkg --repo tomas-rampas/vouchfx

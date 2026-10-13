@@ -1,16 +1,16 @@
 # Owned Docker Compose environments
 
-Use your own Compose project with existing vouchfx assertions. Select a registered environment driver in the suite; the adapter owns its separate configuration grammar. Omitting `source` retains inline provisioning. Published Core `1.0.0` supports Compose through the engine's binding/ready-lease boundary. That contract is format-neutral; other external formats require a registered driver implementation without changing step providers.
+Use your own Compose project with existing vouchfx assertions. Select a registered environment driver in the suite; the adapter owns its separate configuration grammar. Omitting `source` retains inline provisioning. Core `1.0.0` introduced Compose support through the engine's binding/ready-lease boundary. That contract is format-neutral; other external formats require a registered driver implementation without changing step providers.
 
-Install the published CLI with the .NET 8 SDK and verify the native Docker Compose plugin:
+Install the latest stable CLI with the .NET 8 SDK and verify the native Docker Compose plugin:
 
 ```sh
-dotnet tool install --global vouchfx --version 1.0.0
+dotnet tool install --global vouchfx
 vouchfx --version
 docker compose version
 ```
 
-Already installed? Use `dotnet tool update --global vouchfx --version 1.0.0`. Execution requires Docker running Linux containers on a supported local daemon; validation alone does not require Docker. Legacy `1.0.0-rc.6` does not accept `environment.source`; upgrade before using this guide.
+Already installed? Use `dotnet tool update --global vouchfx`. Execution requires Docker running Linux containers on a supported local daemon; validation alone does not require Docker. Legacy `1.0.0-rc.6` does not accept `environment.source`; upgrade before using this guide.
 
 For contributor work on unreleased source, build and select that checkout's DLL explicitly:
 

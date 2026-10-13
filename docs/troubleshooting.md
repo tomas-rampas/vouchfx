@@ -136,7 +136,7 @@ DCP override.
 **Legacy published rc.6 and older cache-based builds:** the native tools are not bundled. A fresh-cache
 `1.0.0-rc.6` installation was measured on 2026-10-10 to fail before Docker starts; an earlier cache
 fallback did not eliminate this prerequisite. Supply the exact platform's Aspire 13.4.2 tools and
-set `ASPIRE_DCP_PATH` to their **directory**, or upgrade to published `1.0.0`.
+set `ASPIRE_DCP_PATH` to their **directory**, or upgrade to the latest stable CLI.
 Do not infer the installed version from its error path: even newer legacy packages can display a
 packaging runner's stale path. Restoring an AppHost at the exact version populates tools for source
 builds, but is not a prerequisite for installed `1.0.0` distributions. The retired Aspire workload does not
@@ -435,11 +435,11 @@ Use one of these approaches:
 
 1. **Use the packaged vouchfx CLI (recommended):**
    ```bash
-   # Install the published stable CLI
-   dotnet tool install --global vouchfx --version 1.0.0
+   # Install the latest stable CLI
+   dotnet tool install --global vouchfx
 
    # Already installed? Upgrade instead
-   dotnet tool update --global vouchfx --version 1.0.0
+   dotnet tool update --global vouchfx
 
    # Then run from your current directory
    vouchfx run ./tests/e2e

@@ -1,8 +1,8 @@
 # Decision record: portable CLI and DCP distribution
 
-**Status:** implemented in current source; not yet part of published `1.0.0-rc.6`.
+**Status:** published in stable Core `1.0.0`; legacy `1.0.0-rc.6` remains cache-dependent.
 
-**Updated:** 2026-10-10. Original tool decision: 2026-06-25.
+**Updated:** 2026-10-13. Original tool decision: 2026-06-25.
 
 ## Problem and evidence
 

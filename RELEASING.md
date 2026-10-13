@@ -93,7 +93,7 @@ After the first successful `Vouchfx.*` publish and NuGet.org processing (typical
      dependent on configured secrets.
    - **Attestations are public records**, including on preflight runs; skipping
      package publication does not make the run private.
-   - Use this before the real `v1.0.0` tag to validate the pipeline and native
+   - Use this before the next stable release tag to validate the pipeline and native
      installer builds. It does not establish that the public packages are available.
 
 ---
@@ -193,12 +193,12 @@ Dependency-Check, Grype, Trivy, etc.) for vulnerability correlation.
 **Recommended for developers with .NET 8 SDK.**
 
 ```bash
-dotnet tool install -g vouchfx
+dotnet tool install --global vouchfx
 vouchfx --version
 ```
 
 The tool is framework-dependent and requires .NET 8 (runtime or SDK) on the
-target machine. Current source packages bundle the engine DLLs and the complete,
+target machine. Stable Core distributions, beginning with `1.0.0`, bundle the engine DLLs and the complete,
 version-matched DCP tools trees for `win-x64`, `linux-x64`, `osx-x64` and
 `osx-arm64`. A source checkout or prior Aspire restore is not an installation
 prerequisite. At topology start, `DcpPathResolver` selects the executing RID's
@@ -209,7 +209,7 @@ bundle beside the host assembly before stale build-machine cache metadata.
 **Legacy published rc.6:** this older package does not bundle DCP and requires
 `aspire.hosting.orchestration.<rid>` version 13.4.2 in the executing machine's
 NuGet cache, or an explicit `ASPIRE_DCP_PATH`. That legacy cache prerequisite
-does not describe packages built from current source. Installing the retired
+does not describe stable Core distributions from `1.0.0` onward. Installing the retired
 Aspire workload does not provide the required NuGet package.
 
 ### Secondary: self-contained executables and installers
@@ -335,7 +335,7 @@ gpg --export --armor <key-id> > docs/vouchfx-gpg-public.asc
 ### NuGet.org publish (Trusted Publishing)
 
 **What:** Pushes the nupkg to NuGet.org so users can install via
-`dotnet tool install -g vouchfx`.
+`dotnet tool install --global vouchfx`.
 
 **Secret required:** None — uses NuGet.org Trusted Publishing.
 
@@ -375,7 +375,7 @@ owner IDs in place.  If the policy shows as inactive and no publish has yet
 occurred, the activation window can be restarted at any time from the
 NuGet.org Trusted Publishing management page.
 
-**Before cutting the `v1.0.0` tag,** log in to NuGet.org, navigate to the
+**Before cutting a stable release tag,** log in to NuGet.org, navigate to the
 Trusted Publishing settings, and verify the policy's state.  If it has lapsed
 and no publish has succeeded, restart the activation window immediately.
 After the first successful publish, the policy will remain active permanently.
@@ -386,11 +386,11 @@ After the first successful publish, the policy will remain active permanently.
 
 The following topics belong in README.md or product documentation (not here):
 
-- **Getting started / installation** — `dotnet tool install -g vouchfx`,
+- **Getting started / installation** — `dotnet tool install --global vouchfx`,
   system requirements, the Aspire DCP prerequisite for new users.
 - **Verifying a downloaded binary** — a shorter consumer-facing version of
   the cosign and gh-attestation verification commands above.
-- **Upgrading** — `dotnet tool update -g vouchfx`.
+- **Upgrading** — `dotnet tool update --global vouchfx`.
 - **Building from source** — for the self-contained exe use case.
 - **The DCP prerequisite explained for users** — "why do I need Aspire
   packages installed?" belongs in README/docs, not in RELEASING.md.

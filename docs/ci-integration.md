@@ -372,7 +372,7 @@ on GitLab — so artefacts are available precisely when a suite does not pass:
 The vouchfx CLI is packaged as a `dotnet` global tool (`ToolCommandName: vouchfx`), live on NuGet.org:
 
 ```bash
-dotnet tool install --global vouchfx --prerelease
+dotnet tool install --global vouchfx
 ```
 
 That is the recommended path for local use. **Both CI integrations deliberately build from source** at
@@ -381,30 +381,30 @@ you pinned — pin a release tag or SHA to track a released engine.
 
 Published `1.0.0-rc.6` requires matching Aspire **13.4.2** native DCP tools provisioned separately for
 the host platform, usually through an AppHost restore; set `ASPIRE_DCP_PATH` to their existing tools
-directory. Current source candidates bundle matching native tools for their supported platforms and
-need no warmed NuGet cache after installation. See [version-specific installation prerequisites](getting-started.md#installing-vouchfx).
+directory. Core `1.0.0` introduced bundled matching native tools for installed distributions on
+supported platforms; these need no warmed NuGet cache. Source AppHosts retain their restore/metadata
+fallback. See [version-specific installation prerequisites](getting-started.md#installing-vouchfx).
 The global tool requires the .NET 8 runtime, and source builds require the pinned .NET 8 SDK. For
 machines without that runtime or SDK, use the self-contained per-OS archives and installers attached
-to the selected [GitHub release](https://github.com/tomas-rampas/vouchfx/releases), respecting that
+to the [latest stable GitHub release](https://github.com/tomas-rampas/vouchfx/releases/latest), respecting that
 version's DCP prerequisites.
 
 ### The floating convenience tags
 
 Three maintainer-moved tags exist as a convenience tier, maintained by
 [`.github/workflows/move-floating-tag.yml`](https://github.com/tomas-rampas/vouchfx/blob/main/.github/workflows/move-floating-tag.yml),
-which force-moves them to each published release's commit:
+which force-moves the matching tag to each published release's commit:
 
 | Tag | Tracks | State |
 |---|---|---|
 | `v1-alpha` | `v1.0.0-alpha.N` and `v1.0.0-beta.N` | Retired at `v1.0.0-alpha.10` — never deleted, simply no longer moved. |
-| `v1-rc` | `v1.0.0-rc.N` | Current pre-GA tag. Tracks the latest release candidate. Moving to v1 at GA is an explicit edit. |
-| `v1` | `v1.y.z` GA releases only | Starts moving once v1.0.0 ships. |
+| `v1-rc` | `v1.0.0-rc.N` | Historical release-candidate line; stable releases do not move this tag. Switch to `v1` explicitly for the stable line. |
+| `v1` | `v1.y.z` stable releases only | Stable convenience tag, advanced by published stable Core releases. |
 
-**Each pre-GA line gets its own tag on purpose.** A consumer who pinned `v1-alpha` chose the alpha
+**Each release line gets its own tag on purpose.** A consumer who pinned `v1-alpha` chose the alpha
 line; force-moving them onto a release candidate would change the engine under them without a ref
 change on their side, and leave the tag name describing something it no longer points at. Moving
-between lines is therefore an opt-in edit: switch `v1-alpha` → `v1-rc` when you are ready, and
-`v1-rc` → `v1` at GA.
+between lines is therefore an opt-in edit: switch `v1-alpha` or `v1-rc` → `v1` to select the stable line.
 
 None of the three is a production-grade pin — see [Supply-chain hygiene](#supply-chain-hygiene).
 
@@ -419,7 +419,7 @@ jobs:
   vouchfx-e2e:
     # Convenience tier — good for a first try or a low-stakes repo.
     # See "Supply-chain hygiene" for the SHA-pinned production tier.
-    uses: tomas-rampas/vouchfx/.github/workflows/vouchfx-run.yml@v1-rc
+    uses: tomas-rampas/vouchfx/.github/workflows/vouchfx-run.yml@v1
     with:
       scenario-path: ./tests/e2e
       fail-on-env-error: false
@@ -456,7 +456,7 @@ artefacts end-to-end.
 include:
   - project: tomas-rampas/vouchfx
     # Convenience tier — see "Supply-chain hygiene" for the SHA-pinned tier.
-    ref: v1-rc
+    ref: v1
     file: /ci/gitlab/vouchfx-run.gitlab-ci.yml
 
 vouchfx-run:

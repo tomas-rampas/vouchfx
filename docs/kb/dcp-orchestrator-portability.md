@@ -2,7 +2,7 @@
 
 **Applies to:** CLI global tools, archives and installers.
 
-**Updated:** 2026-10-13. Published Core `1.0.0` bundles DCP; legacy `1.0.0-rc.6` remains cache-dependent.
+**Updated:** 2026-10-13. Core `1.0.0` introduced bundled DCP; legacy `1.0.0-rc.6` remains cache-dependent.
 
 ## Symptoms and cause
 
@@ -17,7 +17,7 @@ restored an AppHost into that cache. It proved relocation, not a fresh installat
 `1.0.0-rc.6` installation on 2026-10-10 reproduced the missing tools; the same candidate started
 with matching Aspire 13.4.2 tools supplied through `ASPIRE_DCP_PATH`.
 
-## Published 1.0.0 behaviour
+## Behaviour introduced in Core 1.0.0
 
 The published `1.0.0` global tool carries complete `win-x64`, glibc `linux-x64`, `osx-x64` and `osx-arm64` DCP trees.
 Archives/installers carry their selected RID. Paths are relative to the resolved host assembly,
@@ -43,8 +43,8 @@ repair them. DCP resolution remains inside inline Aspire startup for future envi
 
 ## Remedy for published legacy packages
 
-Upgrade to the published bundled CLI with
-`dotnet tool update --global vouchfx --version 1.0.0`. Its installed path requires no source checkout,
+Upgrade to the latest stable bundled CLI with
+`dotnet tool update --global vouchfx`. Its installed path requires no source checkout,
 Aspire workload or warmed NuGet cache.
 
 If you must retain a legacy package, supply exact platform tools through `ASPIRE_DCP_PATH`.
