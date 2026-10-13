@@ -87,13 +87,13 @@ public sealed class MqExpectAzureServiceBusProvider
               "minLength": 1
             },
             "queue": {
-              "description": "The source queue to peek.  Set 'queue' for queue-based messaging, or 'topic'+'subscription' for topic-based messaging.",
-              "type": "string",
+              "description": "The source queue to peek.  Set 'queue' for queue-based messaging, or 'topic'+'subscription' for topic-based messaging. Bare numbers are retained as their literal text; quote boolean-looking names.",
+              "type": ["string", "integer", "number"],
               "minLength": 1
             },
             "topic": {
-              "description": "The source topic (requires 'subscription' to also be set).  May contain {placeholder} substitution tokens.",
-              "type": "string",
+              "description": "The source topic (requires 'subscription' to also be set).  May contain {placeholder} substitution tokens. Bare numbers are retained as their literal text; quote boolean-looking names.",
+              "type": ["string", "integer", "number"],
               "minLength": 1
             },
             "subscription": {

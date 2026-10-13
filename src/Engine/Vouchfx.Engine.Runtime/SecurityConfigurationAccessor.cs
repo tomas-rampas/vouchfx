@@ -339,7 +339,9 @@ internal sealed class SecurityConfigurationAccessor : ISecurityConfigurationAcce
         private readonly SecurityPathDisclosureLedger? _pathDisclosures;
 
         private readonly Lazy<X509Certificate2?> _caCertificate;
-        private readonly Lazy<X509Certificate2?> _clientCertificate;
+        private readonly Lazy<ClientIdentity?> _clientCertificate;
+
+        private sealed record ClientIdentity(X509Certificate2 Leaf, IReadOnlyList<X509Certificate2> Intermediates);
         private readonly Lazy<SecretString?> _clientKeyPassword;
 
         internal SecurityCertificateMaterial(
@@ -376,7 +378,7 @@ internal sealed class SecurityConfigurationAccessor : ISecurityConfigurationAcce
             // exception surfaces identically each time (a step-scoped EnvironmentError, §12.1),
             // so a poisoned target is loud, not silent.
             _caCertificate = new Lazy<X509Certificate2?>(LoadCa, LazyThreadSafetyMode.ExecutionAndPublication);
-            _clientCertificate = new Lazy<X509Certificate2?>(
+            _clientCertificate = new Lazy<ClientIdentity?>(
                 LoadClient, LazyThreadSafetyMode.ExecutionAndPublication);
 
             // The passphrase resolves on FIRST USE of the material and never at Build time
@@ -403,7 +405,10 @@ internal sealed class SecurityConfigurationAccessor : ISecurityConfigurationAcce
 
         public X509Certificate2? CaCertificate => _caCertificate.Value;
 
-        public X509Certificate2? ClientCertificate => _clientCertificate.Value;
+        public X509Certificate2? ClientCertificate => _clientCertificate.Value?.Leaf;
+
+        public IReadOnlyList<X509Certificate2> ClientCertificateIntermediates =>
+            _clientCertificate.Value?.Intermediates ?? Array.Empty<X509Certificate2>();
 
         /// <inheritdoc />
         /// <remarks>
@@ -488,31 +493,11 @@ internal sealed class SecurityConfigurationAccessor : ISecurityConfigurationAcce
                 // outbound request to an address the peer chose, made by the test host, during
                 // a handshake it is in the middle of rejecting.
                 //
-                // What this line does NOT close, because it covers HALF the traffic and reading
-                // it as "no outbound request happens" is the expensive mistake: this ChainPolicy
-                // governs the chain THIS method builds, and nothing else. Before the validation
-                // callback is ever entered, `SslStream` has already built its own chain against
-                // the default trust store — that build is what PRODUCES the `sslPolicyErrors`
-                // argument — and it honours no policy this engine sets.
-                //
-                // MEASURED, with a counting listener standing in for the AIA `caIssuers` URL, a
-                // fresh leaf and a fresh URL per process so no OS chain cache can mask a fetch,
-                // three runs of each arm, identical every time:
-                //   • a plain HttpClientHandler with NO custom callback — what any .NET client
-                //     on this host does, and so what this traffic cost before the slice: 2.
-                //   • this callback installed, fence sampled either side of the Build below:
-                //     2 before, 2 after — 0 attributable to the rebuilt chain.
-                // The residual is the platform's, unchanged by anything here.
-                //
-                // Closing it is possible and is deliberately not taken. It needs the handshake
-                // driven through `SocketsHttpHandler.SslOptions.CertificateChainPolicy` (a real
-                // net8.0 API) instead of `HttpClientHandler`, which changes the handler type in
-                // the emitted Security_Helpers block and in every provider that calls it — a
-                // materially larger change than the slice it would harden. What it buys back is a
-                // GET to a peer-chosen URL disclosing "a host here validated your certificate",
-                // plus a per-URL retrieval stall every .NET TLS client on this host already
-                // carries. Recorded rather than fixed, so a later reader inherits the
-                // measurement instead of the impression that the request is gone.
+                // This is the callback-owned chain only. Engine 1.0.2 additionally sets a
+                // no-download policy before the handshake in HttpTls_Helpers and both raw
+                // secured-probe connections. The frozen Security_Helpers source used by old
+                // external providers still has its original platform-handshake limitation.
+                // Policy construction alone is not evidence of platform wire/AIA behaviour.
                 chain.ChainPolicy.DisableCertificateDownloads = true;
 
                 // The platform enforces `serverAuth` on a server certificate; a custom callback
@@ -565,7 +550,15 @@ internal sealed class SecurityConfigurationAccessor : ISecurityConfigurationAcce
 
             if (_clientCertificate.IsValueCreated)
             {
-                _clientCertificate.Value?.Dispose();
+                var identity = _clientCertificate.Value;
+                identity?.Leaf.Dispose();
+                if (identity is not null)
+                {
+                    foreach (var certificate in identity.Intermediates)
+                    {
+                        certificate.Dispose();
+                    }
+                }
             }
         }
 
@@ -751,7 +744,7 @@ internal sealed class SecurityConfigurationAccessor : ISecurityConfigurationAcce
             return ledger.Scrub(message);
         }
 
-        private X509Certificate2? LoadClient()
+        private ClientIdentity? LoadClient()
         {
             if (_clientCert is null && _clientKey is null)
             {
@@ -894,7 +887,30 @@ internal sealed class SecurityConfigurationAccessor : ISecurityConfigurationAcce
                     // encrypted-key load has no reason to be exempt from any of this: skipping the
                     // round trip on that branch would ship a path that authenticates on Linux and
                     // fails on Windows.
-                    return new X509Certificate2(pkcs12, password, X509KeyStorageFlags.DefaultKeySet);
+                    var leaf = new X509Certificate2(pkcs12, password, X509KeyStorageFlags.DefaultKeySet);
+                    var intermediates = new List<X509Certificate2>();
+                    try
+                    {
+                        // Read the same contained clientCert path and bind its first certificate
+                        // to the key-validated leaf. A concurrently replaced file fails closed.
+                        var bundle = ClientCertificateBundle.Parse(File.ReadAllText(_clientCert.Resolved), leaf.RawData);
+                        foreach (var der in bundle.Skip(1))
+                        {
+                            var candidate = new X509Certificate2(der);
+                            intermediates.Add(candidate);
+                            if (!candidate.Extensions.OfType<X509BasicConstraintsExtension>().Any(extension => extension.CertificateAuthority))
+                            {
+                                throw new CryptographicException("Additional client certificate PEM entries must be CA certificates.");
+                            }
+                        }
+                        return new ClientIdentity(leaf, intermediates.AsReadOnly());
+                    }
+                    catch
+                    {
+                        leaf.Dispose();
+                        foreach (var certificate in intermediates) { certificate.Dispose(); }
+                        throw;
+                    }
                 }
                 finally
                 {

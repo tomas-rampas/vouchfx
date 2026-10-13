@@ -109,6 +109,33 @@ and is diagnosed before endpoint resolution or container-path shape checks.
 through a path constructor that auto-detects PEM and DER, so one field is format-tolerant and the
 other is not.
 
+## Engine 1.0.2 source capability
+
+The Core HTTP family and engine-owned secured-endpoint probe now construct an offline client
+certificate context from a leaf-first `clientCert` PEM and its supplied public CA certificates.
+The loader requires the key-matching leaf first; duplicate, malformed, non-CA tail, over-32-entry
+and PEM text exceeding 4,194,304 UTF-16 code units after file loading are refused. This is a decoded-text limit, not a byte bound on the initial file read. Additional certificates are borrowed from the scenario accessor,
+not installed into host stores or promoted to trust anchors. Single-leaf files and encrypted-key
+rules remain valid.
+
+Declared TLS/mTLS paths set `DisableCertificateDownloads` before the handshake and retain
+`NoCheck` revocation, hostname, server-authentication EKU and declared-CA checks. No-security
+HTTP targets retain platform defaults. Providers using frozen `SecurityHelper.Source` retain
+the old single-leaf/platform-chain limitation. New providers using `HttpTlsHelper.Source` must
+set `MinEngineVersion: "1.0.2"` and use `SocketsHttpHandler`.
+
+This describes the reviewed source change intended for 1.0.2, not a claim that existing public
+1.0.1 packages already contain it. Inert option/parser and compilation tests do not establish
+wire-chain presentation or platform AIA suppression; isolated runtime acceptance remains pending.
+
+### Hosted transport acceptance
+
+The reusable `TLS transport acceptance` workflow checks the selected commit on fresh GitHub-hosted Windows and Linux runners. Normal CI selects the pull-request head; releases select the tagged source commit. Each platform must report exactly four transport facts plus the existing final certificate guard: 5 passed, 0 skipped. The CI aggregate fails if either platform fails or is skipped, and release artifact building and publication depend on the transport jobs. Manual dispatch remains available; its SHA input selects source bytes and does not attest review approval.
+
+The HTTP AIA case uses the production material accessor and generated Core HTTP helper, an independent automatic-download control, and live checks of an owned issuer endpoint. Client-chain cases compare received TLS 1.2 Certificate messages with the exact supplied intermediate, then require omitted and mismatched candidates to refuse authentication. Each arm uses fresh issuers and keys. TLS 1.2 is the fixture’s observability choice; production protocol defaults are unchanged.
+
+This scope proves Core `http.rest` through the new shared helper. It does not independently prove SOAP, Prometheus, raw probes, TLS 1.3, unrelated network activity, older external providers, or global certificate/private-key cleanliness. The final guard checks Windows process-owned intermediate stores; unreadable stores remain unverified, and the guard performs no native store operation on Linux. Local compilation and inert controls do not establish native acceptance. Retain both platform TRXs and the four public evidence records per platform at the final shipping commit before publishing a release.
+
 ## How the division was derived
 
 The table below distinguishes accepted client configuration from working target orchestration.
@@ -335,3 +362,18 @@ Three honest options, in order of how often they apply:
    breaks.
 3. **Raise it.** If a specific kind blocks an adoption, say so on the issue tracker — the ordering
    within 1.1 is not fixed, and the deferred work is designed rather than merely intended.
+
+## Test certificate-store hygiene
+
+On Windows, the Runtime, Orchestration and CLI test hosts finish with a guard for certificates carrying their own process token in the intermediate-CA stores. The blocking Windows solution lane includes these Docker-free guards. Linux runs skip the Windows store operation; a Linux pass does not prove Windows store hygiene.
+
+The added CLI and Orchestration guards use exclusive final xUnit collections. Ordinary CLI collections retain their parallel execution and xUnit default relative ordering; Orchestration retains its existing assembly serialization. The final scan adds store-inspection time after those collections finish, without serialising every CLI test. The source census rejects a test host that creates or imports certificate material without the registered final guard. It recognises constructors, canonical authority factories, aliases and collection imports in C# syntax, ignoring comments and string examples; it is not whole-program analysis of dynamically generated code.
+
+For a source and metadata check that does not invoke certificate generation or a store scan, run:
+
+```powershell
+dotnet test tests/Vouchfx.Engine.Orchestration.Tests -c Release --filter "FullyQualifiedName~CertificateGuardWiringTests|FullyQualifiedName~CertificateGuardSourceCensusTests"
+dotnet test tests/Vouchfx.Cli.Tests -c Release --filter "FullyQualifiedName~CertificateGuardWiringTests"
+```
+
+The existing cleanup matches exact owned thumbprints or this process token. It does not remove older processes' residue or abandoned private-key files. Unreadable stores remain unverified, and a crash can prevent the final guard from running. No expired-certificate, subject-prefix or global-store cleanup is performed. Ownership-aware orphan reclamation requires separate work; this adoption does not establish zero residue across processes.

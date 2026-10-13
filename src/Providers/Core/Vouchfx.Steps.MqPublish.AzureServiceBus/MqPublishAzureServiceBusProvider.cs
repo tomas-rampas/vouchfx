@@ -88,13 +88,13 @@ public sealed class MqPublishAzureServiceBusProvider
               "minLength": 1
             },
             "queue": {
-              "description": "The target queue name.  Exactly one of 'queue' or 'topic' must be set.  May contain {placeholder} substitution tokens.",
-              "type": "string",
+              "description": "The target queue name.  Exactly one of 'queue' or 'topic' must be set.  May contain {placeholder} substitution tokens. Bare numbers are retained as their literal text; quote boolean-looking names.",
+              "type": ["string", "integer", "number"],
               "minLength": 1
             },
             "topic": {
-              "description": "The target topic name.  Exactly one of 'queue' or 'topic' must be set.  May contain {placeholder} substitution tokens.",
-              "type": "string",
+              "description": "The target topic name.  Exactly one of 'queue' or 'topic' must be set.  May contain {placeholder} substitution tokens. Bare numbers are retained as their literal text; quote boolean-looking names.",
+              "type": ["string", "integer", "number"],
               "minLength": 1
             },
             "payload": {

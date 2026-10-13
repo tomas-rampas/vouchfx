@@ -1010,10 +1010,14 @@
                 "minLength": 1
               },
               "index": {
-                "description": "Elasticsearch index to query. May not contain whitespace, '?', '#', or control characters (a malformed URL path segment); ',' (multi-index) and '*' (wildcard) are allowed.",
-                "type": "string",
+                "description": "Elasticsearch index to query. Must be one path segment: '/', backslash, whitespace, '?', '#', controls, and the exact names '.'/'..' are refused; ',' (multi-index) and '*' (wildcard) are allowed. Bare numbers are retained as their literal text; quote boolean-looking names.",
+                "type": [
+                  "string",
+                  "integer",
+                  "number"
+                ],
                 "minLength": 1,
-                "pattern": "^[^\\s?#\\x00-\\x1F\\x7F-\\x9F]*$"
+                "pattern": "^(?!\\.{1,2}$)[^ /?#\\\\\\x00-\\x1F\\x7F-\\x9F\\xA0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000]+$(?![\\s\\S])"
               },
               "query": {
                 "description": "Full Elasticsearch Query DSL JSON body (the entire request body, e.g. '{\"query\":{\"match\":{\"status\":\"active\"}}}').  When absent a match_all query is used.  May contain {placeholder} tokens resolved at execution time.",
@@ -1059,8 +1063,13 @@
                           "pattern": "^[^.]*$"
                         },
                         "value": {
-                          "description": "Expected string value.  May contain {placeholder} and ${secret:source/path} tokens.",
-                          "type": "string"
+                          "description": "Expected scalar compared as text. Bare numbers and booleans retain their literal YAML spelling; null is refused. May contain {placeholder} and ${secret:source/path} tokens.",
+                          "type": [
+                            "string",
+                            "integer",
+                            "number",
+                            "boolean"
+                          ]
                         }
                       },
                       "additionalProperties": false
@@ -2150,13 +2159,21 @@
                 "minLength": 1
               },
               "queue": {
-                "description": "The source queue to peek.  Set 'queue' for queue-based messaging, or 'topic'+'subscription' for topic-based messaging.",
-                "type": "string",
+                "description": "The source queue to peek.  Set 'queue' for queue-based messaging, or 'topic'+'subscription' for topic-based messaging. Bare numbers are retained as their literal text; quote boolean-looking names.",
+                "type": [
+                  "string",
+                  "integer",
+                  "number"
+                ],
                 "minLength": 1
               },
               "topic": {
-                "description": "The source topic (requires 'subscription' to also be set).  May contain {placeholder} substitution tokens.",
-                "type": "string",
+                "description": "The source topic (requires 'subscription' to also be set).  May contain {placeholder} substitution tokens. Bare numbers are retained as their literal text; quote boolean-looking names.",
+                "type": [
+                  "string",
+                  "integer",
+                  "number"
+                ],
                 "minLength": 1
               },
               "subscription": {
@@ -2214,8 +2231,12 @@
                 "minLength": 1
               },
               "topic": {
-                "description": "The Kafka topic to consume the message from.",
-                "type": "string",
+                "description": "The Kafka topic to consume the message from. Bare numbers are retained as their literal text; quote boolean-looking names.",
+                "type": [
+                  "string",
+                  "integer",
+                  "number"
+                ],
                 "minLength": 1
               },
               "match": {
@@ -2386,8 +2407,12 @@
                 "minLength": 1
               },
               "queue": {
-                "description": "The AMQP queue to consume messages from.",
-                "type": "string",
+                "description": "The AMQP queue to consume messages from. Bare numbers are retained as their literal text; quote boolean-looking names.",
+                "type": [
+                  "string",
+                  "integer",
+                  "number"
+                ],
                 "minLength": 1
               },
               "match": {
@@ -2533,13 +2558,21 @@
                 "minLength": 1
               },
               "queue": {
-                "description": "The target queue name.  Exactly one of 'queue' or 'topic' must be set.  May contain {placeholder} substitution tokens.",
-                "type": "string",
+                "description": "The target queue name.  Exactly one of 'queue' or 'topic' must be set.  May contain {placeholder} substitution tokens. Bare numbers are retained as their literal text; quote boolean-looking names.",
+                "type": [
+                  "string",
+                  "integer",
+                  "number"
+                ],
                 "minLength": 1
               },
               "topic": {
-                "description": "The target topic name.  Exactly one of 'queue' or 'topic' must be set.  May contain {placeholder} substitution tokens.",
-                "type": "string",
+                "description": "The target topic name.  Exactly one of 'queue' or 'topic' must be set.  May contain {placeholder} substitution tokens. Bare numbers are retained as their literal text; quote boolean-looking names.",
+                "type": [
+                  "string",
+                  "integer",
+                  "number"
+                ],
                 "minLength": 1
               },
               "payload": {
@@ -2594,8 +2627,12 @@
                 "minLength": 1
               },
               "topic": {
-                "description": "The Kafka topic to publish the message to.  May contain {placeholder} and ${secret:source/path} tokens.",
-                "type": "string",
+                "description": "The Kafka topic to publish the message to.  May contain {placeholder} and ${secret:source/path} tokens. Bare numbers are retained as their literal text; quote boolean-looking names.",
+                "type": [
+                  "string",
+                  "integer",
+                  "number"
+                ],
                 "minLength": 1
               },
               "key": {

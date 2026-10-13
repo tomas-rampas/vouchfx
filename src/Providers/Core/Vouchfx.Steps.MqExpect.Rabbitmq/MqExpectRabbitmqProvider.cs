@@ -57,8 +57,8 @@ public sealed class MqExpectRabbitmqProvider
               "minLength": 1
             },
             "queue": {
-              "description": "The AMQP queue to consume messages from.",
-              "type": "string",
+              "description": "The AMQP queue to consume messages from. Bare numbers are retained as their literal text; quote boolean-looking names.",
+              "type": ["string", "integer", "number"],
               "minLength": 1
             },
             "match": {

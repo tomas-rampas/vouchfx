@@ -83,6 +83,23 @@ env:
 
 # ── Blocking gate ─────────────────────────────────────────────────────────────
 jobs:
+  tls-transport:
+    name: TLS transport
+    uses: ./.github/workflows/tls-transport-acceptance.yml
+    with:
+      reviewed_sha: ${{ github.event.pull_request.head.sha || github.sha }}
+
+  tls-transport-gate:
+    name: TLS transport acceptance (Windows and Linux)
+    runs-on: ubuntu-latest
+    needs: tls-transport
+    if: always()
+    steps:
+      - name: Require both hosted platforms
+        env:
+          TRANSPORT_RESULT: ${{ needs.tls-transport.result }}
+        run: test "$TRANSPORT_RESULT" = success
+
   workflow-contract:
     name: Workflow lint & Docker pre-pull contract
     runs-on: ubuntu-latest

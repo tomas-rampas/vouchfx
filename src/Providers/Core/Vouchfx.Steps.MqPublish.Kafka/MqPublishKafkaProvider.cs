@@ -108,8 +108,8 @@ public sealed class MqPublishKafkaProvider
               "minLength": 1
             },
             "topic": {
-              "description": "The Kafka topic to publish the message to.  May contain {placeholder} and ${secret:source/path} tokens.",
-              "type": "string",
+              "description": "The Kafka topic to publish the message to.  May contain {placeholder} and ${secret:source/path} tokens. Bare numbers are retained as their literal text; quote boolean-looking names.",
+              "type": ["string", "integer", "number"],
               "minLength": 1
             },
             "key": {

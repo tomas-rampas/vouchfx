@@ -65,7 +65,7 @@ Set `type: cache-assert.elasticsearch` to use this step.
 | Field | Type | Description |
 | --- | --- | --- |
 | `expect` | `object` | Expected result-set characteristics. |
-| `index` | `string` | Elasticsearch index to query. May not contain whitespace, '?', '#', or control characters (a malformed URL path segment); ',' (multi-index) and '*' (wildcard) are allowed. |
+| `index` | `string` \| `integer` \| `number` | Elasticsearch index to query. Must be one path segment: '/', backslash, whitespace, '?', '#', controls, and the exact names '.'/'..' are refused; ',' (multi-index) and '*' (wildcard) are allowed. Bare numbers are retained as their literal text; quote boolean-looking names. |
 | `target` | `string` | Logical name of the elasticsearch dependency declared under environment.dependencies whose HTTP API this step queries. |
 
 **Optional fields**
@@ -285,9 +285,9 @@ Set `type: mq-expect.azureservicebus` to use this step.
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `queue` | `string` | The source queue to peek. Set 'queue' for queue-based messaging, or 'topic'+'subscription' for topic-based messaging. |
+| `queue` | `string` \| `integer` \| `number` | The source queue to peek. Set 'queue' for queue-based messaging, or 'topic'+'subscription' for topic-based messaging. Bare numbers are retained as their literal text; quote boolean-looking names. |
 | `subscription` | `string` | The subscription on the topic to peek. Required when 'topic' is set. May contain {placeholder} substitution tokens. |
-| `topic` | `string` | The source topic (requires 'subscription' to also be set). May contain {placeholder} substitution tokens. |
+| `topic` | `string` \| `integer` \| `number` | The source topic (requires 'subscription' to also be set). May contain {placeholder} substitution tokens. Bare numbers are retained as their literal text; quote boolean-looking names. |
 
 ### `mq-expect.kafka`
 
@@ -301,7 +301,7 @@ Set `type: mq-expect.kafka` to use this step.
 | --- | --- | --- |
 | `match` | `object` | The criteria a consumed message must satisfy. At least one criterion (key, headers, payloadContains, or json) must be declared. |
 | `target` | `string` | Logical name of a declared kafka dependency to consume from (environment.dependencies), or a declared service (environment.services) - a customer-supplied broker under its own entrypoint/config. A dependency target of any other type is rejected. A service target is reachable, not merely accepted: the engine stages that service's endpoint as the bare host:port bootstrap authority a Kafka client expects, and the provider reads the staged value under the key matching its target's own kind - a compile-time fact taken from the same declared-service map its own validation reconciled the target against, never guessed. A service-form broker must additionally advertise an address the host can reach (DSL section 3.2.6b). |
-| `topic` | `string` | The Kafka topic to consume the message from. |
+| `topic` | `string` \| `integer` \| `number` | The Kafka topic to consume the message from. Bare numbers are retained as their literal text; quote boolean-looking names. |
 
 **Optional fields**
 
@@ -340,7 +340,7 @@ Set `type: mq-expect.rabbitmq` to use this step.
 | Field | Type | Description |
 | --- | --- | --- |
 | `match` | `object` | The criteria a consumed message must satisfy. At least one criterion (payloadContains, headers, or json) must be declared. |
-| `queue` | `string` | The AMQP queue to consume messages from. |
+| `queue` | `string` \| `integer` \| `number` | The AMQP queue to consume messages from. Bare numbers are retained as their literal text; quote boolean-looking names. |
 | `target` | `string` | Logical name of the rabbitmq dependency to consume from, as declared under environment.dependencies. |
 
 ### `mq-expect.redis`
@@ -367,8 +367,8 @@ Set `type: mq-publish.azureservicebus` to use this step.
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `queue` | `string` | The target queue name. Exactly one of 'queue' or 'topic' must be set. May contain {placeholder} substitution tokens. |
-| `topic` | `string` | The target topic name. Exactly one of 'queue' or 'topic' must be set. May contain {placeholder} substitution tokens. |
+| `queue` | `string` \| `integer` \| `number` | The target queue name. Exactly one of 'queue' or 'topic' must be set. May contain {placeholder} substitution tokens. Bare numbers are retained as their literal text; quote boolean-looking names. |
+| `topic` | `string` \| `integer` \| `number` | The target topic name. Exactly one of 'queue' or 'topic' must be set. May contain {placeholder} substitution tokens. Bare numbers are retained as their literal text; quote boolean-looking names. |
 
 **Required fields**
 
@@ -395,7 +395,7 @@ Set `type: mq-publish.kafka` to use this step.
 | --- | --- | --- |
 | `payload` | `string` \| `integer` \| `number` \| `boolean` | The message payload sent as the Kafka message value. A UTF-8 string (literal or inline JSON). May contain {placeholder} and ${secret:source/path} tokens. May be written as a bare number/boolean scalar; it is sent as text either way. |
 | `target` | `string` | Logical name of a declared kafka dependency to publish to (environment.dependencies), or a declared service (environment.services) - a customer-supplied broker under its own entrypoint/config. A dependency target of any other type is rejected. A service target is reachable, not merely accepted: the engine stages that service's endpoint as the bare host:port bootstrap authority a Kafka client expects, and the provider reads the staged value under the key matching its target's own kind - a compile-time fact taken from the same declared-service map its own validation reconciled the target against, never guessed. A service-form broker must additionally advertise an address the host can reach (DSL section 3.2.6b). |
-| `topic` | `string` | The Kafka topic to publish the message to. May contain {placeholder} and ${secret:source/path} tokens. |
+| `topic` | `string` \| `integer` \| `number` | The Kafka topic to publish the message to. May contain {placeholder} and ${secret:source/path} tokens. Bare numbers are retained as their literal text; quote boolean-looking names. |
 
 **Optional fields**
 

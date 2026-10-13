@@ -18,10 +18,16 @@ to published pre-releases on 2026-07-14.
 
 ### Added
 
+- Isolated GitHub-hosted Windows/Linux HTTP TLS acceptance with owned AIA download controls and captured TLS 1.2 client-chain evidence. Normal CI and release jobs require all four transport facts and the final certificate guard without skips; public artifact build and publication await these checks.
 - Explicit reviewed publication inputs in `site-publication-inputs.json`. Documentation builds refuse unregistered pages, assets and templates before rendering; the deployment gate checks the manifest again. Reserved private paths cannot be registered, including case aliases. Content edits to approved files still require human review.
 
 ### Fixed
 
+- **Numeric queue/topic/index authoring parity (#342).** Step identifiers now accept bare numbers, retained as their original text; boolean-looking identifiers still require quotes. Elasticsearch field expectations accept numeric and boolean scalar text, while null remains refused. Elasticsearch index schema and typed validation now reject slash/backslash, exact `.`/`..` names and trailing whitespace; comma-separated indices and wildcard syntax remain supported. This corrects malformed path-segment acceptance in the v1 schema; percent-escape handling and runtime transport behaviour are unchanged.
+
+- Extend the Windows process-owned certificate-store final guard to CLI and Orchestration test hosts. Ordinary CLI collections retain parallel execution; a syntax census checks guard adoption. Older process residue, abandoned private keys and unreadable stores remain outside this guard’s proof.
+- Core HTTP TLS handlers use the additive `HttpTlsHelper` and `SocketsHttpHandler`; declared-security options suppress certificate downloads before the handshake. Engine-owned TLS probes apply the policy to identity-bearing and anonymous connections while retaining existing revocation mode, hostname, server-authentication EKU and declared-CA semantics.
+- Engine 1.0.2 source accepts leaf-first client-certificate PEM bundles with public CA candidates for offline client contexts. The scenario accessor owns the loaded certificates. Four earlier SDK helper bodies remain unchanged; external providers retaining `SecurityHelper` keep its existing single-leaf/platform-chain limit. Runtime wire-chain presentation and platform AIA suppression still require isolated acceptance.
 - Core provider diff tables and fixed diagnostic formatting use ASCII separators; literal pipes in cells are displayed as `\u007c`. Unicode authored and observed values are retained. Public schema descriptions use ASCII punctuation without changing validation grammar, frozen SDK helpers or event fields.
 - Pin the hidden Azure Service Bus SQL sidecar, Vault and whoami Docker fixtures by reviewed digests. SQL remains Linux amd64 only; authored emulator and S3 override precedence is retained. A read-only weekly audit verifies release-tag identity and platform coverage without updating pins.
 

@@ -101,9 +101,9 @@
 // collection has to run LAST — which is what CertificateStoreGuardLastOrderer arranges, and
 // which the DisableTestParallelization above turns into a real guarantee ON A HOST WHERE THE
 // GUARD DOES ANYTHING: collections run sequentially, in the order the orderer returns. The guard
-// itself is Windows-only (nothing else caches intermediates this way) and every job in
-// .github/workflows/build.yml runs on ubuntu-latest, so in CI the ordering is arranged for a
-// check that returns immediately. The enforcement surface is a developer's Windows machine.
+// itself is Windows-only (nothing else caches intermediates this way). The blocking
+// windows-unit solution lane in .github/workflows/build.yml runs this Docker-free guard;
+// Linux lanes return immediately without claiming store enforcement.
 //
 // If xUnit ever fails to load the orderer it logs a diagnostic and falls back to its default
 // order. The consequence is a guard that may run too early and find an already-swept store —

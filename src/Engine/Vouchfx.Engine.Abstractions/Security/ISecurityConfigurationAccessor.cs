@@ -183,6 +183,13 @@ public interface ISecurityCertificateMaterial
     /// </exception>
     X509Certificate2? ClientCertificate { get; }
 
+    /// <summary>
+    /// Additional public chain candidates supplied in the leaf-first clientCert PEM.
+    /// Engines before 1.0.2 and existing material implementations supply none. These
+    /// certificates are owned by the accessor, borrowed by consumers, and never trust anchors.
+    /// </summary>
+    IReadOnlyList<X509Certificate2> ClientCertificateIntermediates => Array.Empty<X509Certificate2>();
+
     // Internal correction history (not XML documentation):
     // What the type does NOT give is ledger membership, and an earlier draft
     // of these remarks claimed otherwise. SecretString's constructor is

@@ -125,8 +125,8 @@ public sealed class MqExpectKafkaProvider
               "minLength": 1
             },
             "topic": {
-              "description": "The Kafka topic to consume the message from.",
-              "type": "string",
+              "description": "The Kafka topic to consume the message from. Bare numbers are retained as their literal text; quote boolean-looking names.",
+              "type": ["string", "integer", "number"],
               "minLength": 1
             },
             "match": {

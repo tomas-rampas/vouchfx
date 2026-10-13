@@ -351,7 +351,7 @@ public sealed class HttpRestProvider
         "        // AllowAutoRedirect=false: a 3xx from the target must not silently\n" +
         "        // bounce the request to a different host (SSRF via redirect, §M1).\n" +
         "        // disposeHandler:true so client.Dispose() in finally releases the handler too.\n" +
-        "        var handler = new System.Net.Http.HttpClientHandler { AllowAutoRedirect = false };\n" +
+        "        var handler = new System.Net.Http.SocketsHttpHandler { AllowAutoRedirect = false };\n" +
         "        var client = new System.Net.Http.HttpClient(handler, disposeHandler: true);\n" +
         "        try\n" +
         "        {\n" +
@@ -361,7 +361,7 @@ public sealed class HttpRestProvider
         "            // catch below maps to a step-scoped EnvironmentError (§12.1) rather than\n" +
         "            // escaping the step. Before the first SendAsync, so the underlying handler is\n" +
         "            // still mutable. A target with no security block leaves the handler untouched.\n" +
-        "            Security_Helpers.ConfigureHandler(security, targetName, handler);\n" +
+        "            HttpTls_Helpers.ConfigureHandler(security, targetName, handler);\n" +
         "            // Step-timeout convention (#232): a declared step budget governs this call —\n" +
         "            // lift the transport bound (infinite) and let the step token (ct) be the sole\n" +
         "            // enforcement mechanism; otherwise keep the M2 30s stall-window convention.\n" +
@@ -1026,7 +1026,7 @@ public sealed class HttpRestProvider
     /// <inheritdoc />
     public ProviderMetadata Metadata { get; } = new ProviderMetadata(
         Version: "1.0.0",
-        MinEngineVersion: "1.0.0",
+        MinEngineVersion: "1.0.2",
         License: "Apache-2.0",
         Authors: new[] { "vouchfx-contributors" });
 
@@ -1612,7 +1612,7 @@ public sealed class HttpRestProvider
         {
             SubstituteHelper.Source,
             SecretHelper.Source,
-            SecurityHelper.Source,
+            HttpTlsHelper.Source,
         };
 
         return new CsxFragment(

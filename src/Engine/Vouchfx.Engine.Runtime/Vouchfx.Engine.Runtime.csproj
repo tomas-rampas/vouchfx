@@ -9,6 +9,10 @@
     <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
       <_Parameter1>Vouchfx.Engine.Runtime.Tests</_Parameter1>
     </AssemblyAttribute>
+    <!-- Isolated GitHub-hosted TLS acceptance drives the real material accessor. -->
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>Vouchfx.Engine.Runtime.TransportAcceptance.Tests</_Parameter1>
+    </AssemblyAttribute>
     <!-- The CLI runner reuses ScenarioRunner.Elevate (verdict precedence) so the CLI and
          the engine can never disagree about how verdicts aggregate (S07-C-01). -->
     <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">

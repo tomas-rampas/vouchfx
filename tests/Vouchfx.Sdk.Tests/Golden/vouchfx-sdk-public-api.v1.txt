@@ -29,6 +29,9 @@ record Vouchfx.Sdk.HostResourceRequirement : System.IEquatable<Vouchfx.Sdk.HostR
   property System.String Kind { get }
   property System.String VarName { get }
 
+class Vouchfx.Sdk.HttpTlsHelper
+  field const System.String Source
+
 interface Vouchfx.Sdk.IBindingContext
 
 interface Vouchfx.Sdk.ICompileContext
