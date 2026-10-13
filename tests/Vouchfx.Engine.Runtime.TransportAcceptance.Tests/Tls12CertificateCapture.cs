@@ -88,7 +88,13 @@ internal sealed class Tls12CertificateCapture
 internal sealed class CapturingStream : Stream
 {
     private readonly Stream _inner;
-    internal CapturingStream(Stream inner) => _inner = inner;
+    private Action? _beforeFirstWrite;
+    internal CapturingStream(Stream inner, Action? beforeFirstWrite = null)
+    {
+        _inner = inner;
+        _beforeFirstWrite = beforeFirstWrite;
+    }
+    private void BeforeFirstWrite() => Interlocked.Exchange(ref _beforeFirstWrite, null)?.Invoke();
     internal Tls12CertificateCapture Received { get; } = new();
     internal Tls12CertificateCapture Sent { get; } = new();
     public override bool CanRead => _inner.CanRead;
@@ -114,15 +120,18 @@ internal sealed class CapturingStream : Stream
     }
     public override void Write(byte[] buffer, int offset, int count)
     {
+        BeforeFirstWrite();
         _inner.Write(buffer, offset, count); Sent.Append(buffer.AsSpan(offset, count));
     }
     public override async Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
     {
+        BeforeFirstWrite();
         await _inner.WriteAsync(buffer.AsMemory(offset, count), cancellationToken).ConfigureAwait(false);
         Sent.Append(buffer.AsSpan(offset, count));
     }
     public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
     {
+        BeforeFirstWrite();
         await _inner.WriteAsync(buffer, cancellationToken).ConfigureAwait(false);
         Sent.Append(buffer.Span);
     }

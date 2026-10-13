@@ -1374,6 +1374,9 @@ internal static class SecuredEndpointProbe
         {
             TargetHost = host,
             EnabledSslProtocols = SslProtocols.None,
+            // The identity-bearing and anonymous arms must each negotiate a fresh TLS session.
+            // A resumed session can retain the first arm's identity despite a null client context.
+            AllowTlsResume = false,
             CertificateChainPolicy = policy,
             ClientCertificateContext = clientContext,
         };

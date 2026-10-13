@@ -14,6 +14,7 @@ public sealed class SecuredEndpointProbeTlsOptionsTests
         var options = SecuredEndpointProbe.CreateAuthenticationOptions(host, clientContext: null);
         Assert.Equal(host, options.TargetHost);
         Assert.Equal(SslProtocols.None, options.EnabledSslProtocols);
+        Assert.False(options.AllowTlsResume);
         Assert.Null(options.ClientCertificateContext);
         Assert.Null(options.ClientCertificates);
         Assert.Null(options.RemoteCertificateValidationCallback);

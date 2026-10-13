@@ -28,30 +28,70 @@ public sealed class HostedHttpTlsAcceptanceTests
         await using var aia = new OwnedAiaServer();
         var controlUrl = aia.IssuerUrl(Guid.NewGuid().ToString("N"));
         bool controlBuilt;
+        ServerObservation controlObservation;
+        object controlCertificates;
         using (var control = HostedHttpTlsCertificateBed.CreateAiaServer(controlUrl))
         {
             aia.Publish(controlUrl, control.Issuer.RawData);
             await aia.ProveAvailableAsync(controlUrl, control.Issuer.RawData);
-            using var chain = new X509Chain();
-            chain.ChainPolicy.TrustMode = X509ChainTrustMode.CustomRootTrust;
-            chain.ChainPolicy.CustomTrustStore.Add(control.Root);
-            chain.ChainPolicy.RevocationMode = X509RevocationMode.NoCheck;
-            chain.ChainPolicy.DisableCertificateDownloads = false;
-            chain.ChainPolicy.UrlRetrievalTimeout = TimeSpan.FromSeconds(5);
-            chain.ChainPolicy.ApplicationPolicy.Add(new Oid("1.3.6.1.5.5.7.3.1"));
-            controlBuilt = chain.Build(control.Server);
+            var beginControlHandshake = aia.DeferAutomaticResponsesUntilServerHandshake(controlUrl);
+            await using var controlServer = new OwnedTlsServer(control.Server, control.Root, clientRequired: false, beginControlHandshake);
+            var policy = new X509ChainPolicy
+            {
+                TrustMode = X509ChainTrustMode.CustomRootTrust,
+                RevocationMode = X509RevocationMode.NoCheck,
+                DisableCertificateDownloads = false,
+                UrlRetrievalTimeout = TimeSpan.FromSeconds(5),
+            };
+            policy.CustomTrustStore.Add(control.Root);
+            policy.ApplicationPolicy.Add(new Oid("1.3.6.1.5.5.7.3.1"));
+            using var handler = new SocketsHttpHandler { UseProxy = false, AllowAutoRedirect = false };
+            handler.SslOptions.CertificateChainPolicy = policy;
+            using var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) };
+            using var response = await client.GetAsync(controlServer.Url);
+            controlBuilt = response.IsSuccessStatusCode;
+            controlObservation = await controlServer.Completed;
+            controlCertificates = new
+            {
+                rootDer = Convert.ToBase64String(control.Root.RawData),
+                issuerDer = Convert.ToBase64String(control.Issuer.RawData),
+                serverDer = Convert.ToBase64String(control.Server.RawData),
+            };
+            // Same setup phase, leaf-only wire and live AIA endpoint as production.
+            // This must fetch successfully after setup: a cached 404 cannot be proof.
+            Assert.True(controlBuilt && controlObservation.Authenticated);
+            Assert.Equal(0x0303, controlObservation.Sent.ServerHelloVersion);
+            Assert.Equal(control.Server.RawData, Assert.Single(controlObservation.Sent.Certificates));
+            Assert.True(aia.AutomaticRequests(controlUrl) > 0);
         }
         var url = aia.IssuerUrl(Guid.NewGuid().ToString("N"));
         using var bed = HostedHttpTlsCertificateBed.CreateAiaServer(url);
         aia.Publish(url, bed.Issuer.RawData);
         await aia.ProveAvailableAsync(url, bed.Issuer.RawData);
-        await using var server = new OwnedTlsServer(bed.Server, bed.Root, clientRequired: false);
+        var beginProductionHandshake = aia.DeferAutomaticResponsesUntilServerHandshake(url);
+        await using var server = new OwnedTlsServer(bed.Server, bed.Root, clientRequired: false, beginProductionHandshake);
         using var security = BuildAccessor(bed, mtls: false);
         var outcome = await RunProviderAsync(server.Url, bed.SuiteDirectory, security);
         var observation = await server.Completed;
         await aia.ProveAvailableAsync(url, bed.Issuer.RawData);
         var publicEvidence = Evidence(nameof(DeclaredSecurity_OmittedServerIssuer_NoAutomaticAiaFetch), bed, observation, security, outcome,
-            new { nativeControlBuilt = controlBuilt, nativeControlAutomaticFetches = aia.AutomaticRequests(controlUrl), productionAutomaticFetches = aia.AutomaticRequests(url), endpointControlResponses = aia.Requests.Count(request => request.Control && request.Status == 200) });
+            new
+            {
+                nativeControlBuilt = controlBuilt,
+                nativeControlAiaPath = new Uri(controlUrl).AbsolutePath,
+                productionAiaPath = new Uri(url).AbsolutePath,
+                nativeControlAuthenticated = controlObservation.Authenticated,
+                nativeControlServerHelloVersion = controlObservation.Sent.ServerHelloVersion,
+                nativeControlProtocol = controlObservation.Protocol?.ToString(),
+                nativeControlCertificates = controlCertificates,
+                nativeControlServerCertificateMessage = Convert.ToBase64String(controlObservation.Sent.CertificateMessage!),
+                nativeControlAutomaticFetches = aia.AutomaticRequests(controlUrl),
+                nativeControlServerCredentialRequests = aia.ServerCredentialRequests(controlUrl),
+                productionAutomaticFetches = aia.AutomaticRequests(url),
+                productionServerCredentialRequests = aia.ServerCredentialRequests(url),
+                endpointControlResponses = aia.Requests.Count(request => request.Control && request.Status == 200),
+                requests = aia.Requests.ToArray(),
+            });
         WriteEvidence(publicEvidence);
         Assert.True(controlBuilt && aia.AutomaticRequests(controlUrl) > 0,
             "The independent native AIA control could not fetch/build on " + RuntimeInformation.OSDescription + "; no suppression proof is claimed for this platform.");
@@ -115,6 +155,7 @@ public sealed class HostedHttpTlsAcceptanceTests
         {
             Assert.Equal(Verdict.Pass, outcome.Verdict);
             Assert.True(observation.Authenticated);
+            Assert.True(Assert.IsType<ClientTrustDecision>(observation.ClientTrust).Trusted);
             Assert.Equal(SslProtocols.Tls12, observation.Protocol);
             Assert.Equal(bed.Client!.RawData, observation.Received.Certificates[0]);
             Assert.Contains(observation.Received.Certificates, certificate => certificate.AsSpan().SequenceEqual(bed.Issuer.RawData));
@@ -123,8 +164,16 @@ public sealed class HostedHttpTlsAcceptanceTests
         {
             Assert.Equal(Verdict.EnvironmentError, outcome.Verdict);
             Assert.False(observation.Authenticated);
+            Assert.Contains(observation.FailureType, new[] { nameof(AuthenticationException), nameof(IOException) });
+            var clientTrust = Assert.IsType<ClientTrustDecision>(observation.ClientTrust);
+            Assert.False(clientTrust.Trusted);
             Assert.DoesNotContain(observation.Received.Certificates, certificate => certificate.AsSpan().SequenceEqual(bed.Issuer.RawData));
-            if (observation.Received.Certificates.Count > 0) { Assert.Equal(bed.Client!.RawData, observation.Received.Certificates[0]); }
+            if (observation.Received.Certificates.Count > 0)
+            {
+                Assert.Equal(bed.Client!.RawData, observation.Received.Certificates[0]);
+                Assert.Contains(nameof(X509ChainStatusFlags.PartialChain), clientTrust.ChainErrors);
+            }
+            else { Assert.Contains("RemoteCertificateMissing", clientTrust.ChainErrors); }
         }
     }
 
@@ -157,7 +206,7 @@ public sealed class HostedHttpTlsAcceptanceTests
     private static string Sha(byte[] value) => Convert.ToHexString(SHA256.HashData(value)).ToLowerInvariant();
     private static object Evidence(string fact, HostedHttpTlsCertificateBed bed, ServerObservation observation, RecordingAccessor security, StepOutcome outcome, object controls) => new
     {
-        schemaVersion = 1,
+        schemaVersion = 2,
         fact,
         platform = RuntimeInformation.OSDescription,
         fixtureNonce = bed.Nonce,
@@ -172,6 +221,8 @@ public sealed class HostedHttpTlsAcceptanceTests
         authenticated = observation.Authenticated,
         protocol = observation.Protocol?.ToString(),
         failureType = observation.FailureType,
+        failurePhase = observation.FailureType is null ? null : observation.Authenticated ? "http" : "authentication",
+        clientTrust = observation.ClientTrust,
         verdict = outcome.Verdict.ToString(),
         decisions = security.Decisions.ToArray(),
         controls,

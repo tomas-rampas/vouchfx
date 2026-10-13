@@ -36,8 +36,20 @@ public sealed class HttpTlsProviderCompilationTests
         Assert.Equal(1, assembled.Split("static class HttpTls_Helpers", StringSplitOptions.None).Length - 1);
         Assert.Equal(3, assembled.Split("HttpTls_Helpers.ConfigureHandler(security, targetName, handler)", StringSplitOptions.None).Length - 1);
         Assert.DoesNotContain("using var", assembled, StringComparison.Ordinal);
-        var references = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!).Split(Path.PathSeparator)
-            .Append(typeof(Json.Path.JsonPath).Assembly.Location).ToArray();
+        // Use provider-contributed references and ordinary HTTP support types.
+        // The compiler must supply the shared TLS helper's framework references;
+        // a full-TPA test-only reference list would conceal a missing default.
+        var references = new ICompileReferenceContributor[] { rest, soap, metrics }
+            .SelectMany(provider => provider.CompileReferenceAssemblies)
+            .Concat(new[]
+            {
+                typeof(System.Net.HttpStatusCode).Assembly,
+                typeof(System.Text.Json.JsonSerializer).Assembly,
+                typeof(Uri).Assembly,
+            })
+            .Select(assembly => assembly.Location)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
         // Compile only: none of the emitted HTTP operations execute.
         Assert.NotNull(RoslynScriptCompiler.CompileOnce(assembled, additionalReferencePaths: references));
     }
