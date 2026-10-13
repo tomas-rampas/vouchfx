@@ -88,6 +88,230 @@ public sealed class SchemaErrorCollectorTests
         return doc.RootElement.Clone();
     }
 
+    // Issue #457: each author-controlled name keeps the same display bound as an
+    // offending scalar. Locations still carry the full, pointer-escaped name.
+    public static IEnumerable<object[]> NameDisplayCases()
+    {
+        yield return new object[] { "key/~", "key/~" };
+        yield return new object[] { new string('x', 200), new string('x', 200) };
+        yield return new object[] { new string('x', 201), new string('x', 200) + "... (201 chars total)" };
+        yield return new object[] { new string('x', 5000), new string('x', 200) + "... (5000 chars total)" };
+        yield return new object[] { new string('x', 199) + "😀tail", new string('x', 199) + "... (205 chars total)" };
+    }
+
+    private static string EscapeNamePointer(string name) =>
+        name.Replace("~", "~0", StringComparison.Ordinal).Replace("/", "~1", StringComparison.Ordinal);
+
+    [Theory]
+    [MemberData(nameof(NameDisplayCases))]
+    public void NameDisplay_UnevaluatedStep_BoundsPropertyAndType_WithAndWithoutInstance(string name, string display)
+    {
+        const string schema = """
+            {"properties":{"steps":{"items":{"properties":{"type":true},"unevaluatedProperties":false}}}}
+            """;
+        var instanceJson = $$"""{"steps":[{"type":{{JsonSerializer.Serialize(name)}},{{JsonSerializer.Serialize(name)}}:true}]}""";
+        var evaluation = Evaluate(schema, instanceJson);
+        Assert.False(evaluation.IsValid);
+
+        var withInstance = Assert.Single(SchemaErrorCollector.CollectErrors(
+            evaluation, instance: ParseSchemaElement(instanceJson)));
+        Assert.Equal("/steps/0/" + EscapeNamePointer(name), withInstance.InstanceLocation);
+        Assert.Equal($"[unevaluatedProperties] Unknown property '{display}' on step type '{display}'", withInstance.Message);
+
+        var withoutInstance = Assert.Single(SchemaErrorCollector.CollectErrors(evaluation));
+        Assert.Equal(withInstance.InstanceLocation, withoutInstance.InstanceLocation);
+        Assert.Equal($"[unevaluatedProperties] Unknown property '{display}'", withoutInstance.Message);
+    }
+
+    [Theory]
+    [MemberData(nameof(NameDisplayCases))]
+    public void NameDisplay_UnevaluatedEnvironment_BoundsEveryNamedPart(string name, string display)
+    {
+        const string nestedPrefix = "security.serverArtifacts[0].";
+        var quotedName = JsonSerializer.Serialize(name);
+        var scopes = new[]
+        {
+            (Schema: """{"unevaluatedProperties":false}""", Instance: $$"""{ {{quotedName}}:true }""", Path: "/", Nested: false),
+            (Schema: """{"properties":{"security":{"unevaluatedProperties":false}}}""",
+                Instance: $$"""{"security":{ {{quotedName}}:true } }""", Path: "/security/", Nested: false),
+            (Schema: """{"properties":{"security":{"properties":{"serverArtifacts":{"items":{"unevaluatedProperties":false}}}}}}""",
+                Instance: $$"""{"security":{"serverArtifacts":[{ {{quotedName}}:true }] } }""", Path: "/security/serverArtifacts/0/", Nested: true),
+        };
+
+        foreach (var (containerKind, map) in new[] { ("dependency", "dependencies"), ("service", "services") })
+        {
+            foreach (var scope in scopes)
+            {
+                var schema = $$"""{"properties":{"environment":{"properties":{"{{map}}":{"additionalProperties":{{scope.Schema}} } } } } }""";
+                var instanceJson = $$"""{"environment":{"{{map}}":{ {{quotedName}}:{{scope.Instance}} } } }""";
+                var evaluation = Evaluate(schema, instanceJson);
+                Assert.False(evaluation.IsValid);
+
+                var error = Assert.Single(SchemaErrorCollector.CollectErrors(evaluation));
+                Assert.Equal($"/environment/{map}/{EscapeNamePointer(name)}{scope.Path}{EscapeNamePointer(name)}", error.InstanceLocation);
+                var attribution = scope.Nested ? "in" : "on";
+                var subPath = nestedPrefix + name;
+                // The long fixtures are x-prefixed, so this cut falls before their astral character.
+                var displaySubPath = subPath.Length <= 200 ? subPath :
+                    nestedPrefix + new string('x', 200 - nestedPrefix.Length) + $"... ({subPath.Length} chars total)";
+                var suffix = scope.Nested ? $" (at {displaySubPath})" : string.Empty;
+                Assert.Equal($"[unevaluatedProperties] Unknown property '{display}' {attribution} {containerKind} '{display}'{suffix}", error.Message);
+            }
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(NameDisplayCases))]
+    public void NameDisplay_RequiredEnvironment_BoundsContainerAndPreservesMissingField(string name, string display)
+    {
+        foreach (var (kind, map) in new[] { ("dependency", "dependencies"), ("service", "services") })
+        {
+            var declaration = kind == "dependency" ? "type: kafka" : "image: myorg/app:1.0";
+            var yaml = $$"""
+                environment:
+                  {{map}}:
+                    ? {{JsonSerializer.Serialize(name)}}
+                    : {{declaration}}
+                      security:
+                        profile: tls
+                steps:
+                  - id: noop
+                    type: noop.echo
+                """;
+            var result = YamlSchemaValidator.Validate(yaml);
+            Assert.False(result.IsValid);
+            var error = Assert.Single(result.Errors);
+            Assert.Equal($"/environment/{map}/{EscapeNamePointer(name)}/security", error.InstanceLocation);
+            Assert.Equal($"[required] Required properties [\"endpoint\"] are not present on {kind} '{display}'", error.Message);
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(NameDisplayCases))]
+    public void NameDisplay_RequiredHealthCheck_BoundsServiceAndPreservesAttribution(string name, string display)
+    {
+        var yaml = $$"""
+            environment:
+              services:
+                ? {{JsonSerializer.Serialize(name)}}
+                : image: myorg/app:1.0
+                  ports: [9093]
+                  healthCheck: { port: 9093 }
+            steps:
+              - id: noop
+                type: noop.echo
+            """;
+        var result = YamlSchemaValidator.Validate(yaml);
+        Assert.False(result.IsValid);
+        var error = Assert.Single(result.Errors);
+        Assert.Equal($"/environment/services/{EscapeNamePointer(name)}/healthCheck", error.InstanceLocation);
+        Assert.Equal($"[required] Required properties [\"type\"] are not present in service '{display}' (at healthCheck)", error.Message);
+    }
+
+    [Theory]
+    [MemberData(nameof(NameDisplayCases))]
+    public void NameDisplay_Enum_BoundsPropertyAndPreservesSchemaValuesAndSuggestion(string name, string display)
+    {
+        var quotedName = JsonSerializer.Serialize(name);
+        var schema = $$"""{"properties":{ {{quotedName}}:{"enum":["good","better"]} } }""";
+        var instanceJson = $$"""{ {{quotedName}}:"GOOD" }""";
+        var evaluation = Evaluate(schema, instanceJson);
+        Assert.False(evaluation.IsValid);
+        var error = Assert.Single(SchemaErrorCollector.CollectErrors(
+            evaluation, instance: ParseSchemaElement(instanceJson), schema: ParseSchemaElement(schema)));
+        Assert.Equal("/" + EscapeNamePointer(name), error.InstanceLocation);
+        Assert.Equal($"[enum] Value 'GOOD' is not one of the accepted values for '{display}': good, better - write 'good'", error.Message);
+        Assert.True(Evaluate(schema, $$"""{ {{quotedName}}:"good" }""").IsValid);
+    }
+
+    [Theory]
+    [MemberData(nameof(NameDisplayCases))]
+    public void NameDisplay_EmptyCapture_BoundsVariableAndPreservesSchemaChoices(string name, string display)
+    {
+        var yaml = $$"""
+            steps:
+              - id: noop
+                type: noop.echo
+                capture:
+                  ? {{JsonSerializer.Serialize(name)}}
+                  : {}
+            """;
+        var result = YamlSchemaValidator.Validate(yaml);
+        Assert.False(result.IsValid);
+        var error = Assert.Single(result.Errors);
+        Assert.Equal("/steps/0/capture/" + EscapeNamePointer(name), error.InstanceLocation);
+        Assert.Equal($"[minProperties] Capture entry '{display}' must set at least one of 'jsonpath', 'xpath' - none is present (DSL section 6.1).", error.Message);
+        Assert.True(YamlSchemaValidator.Validate(yaml.Replace(": {}", ": { jsonpath: '$.id' }", StringComparison.Ordinal)).IsValid);
+    }
+
+    [Theory]
+    [MemberData(nameof(NameDisplayCases))]
+    public void NameDisplay_ReservedCapture_BoundsPropertyAndPreservesReason(string name, string display)
+    {
+        // Replace the first five characters to retain each boundary and surrogate position.
+        var reservedName = "svc::" + name[5..];
+        var reservedDisplay = "svc::" + display[5..];
+        var yaml = $$"""
+            steps:
+              - id: noop
+                type: noop.echo
+                capture:
+                  ? {{JsonSerializer.Serialize(reservedName)}}
+                  : { jsonpath: '$.id' }
+            """;
+        var result = YamlSchemaValidator.Validate(yaml);
+        Assert.False(result.IsValid);
+        var error = Assert.Single(result.Errors);
+        Assert.Equal("/steps/0/capture/" + EscapeNamePointer(reservedName), error.InstanceLocation);
+        Assert.Equal($"[pattern] Property name '{reservedDisplay}' begins with an engine-reserved bookkeeping prefix - see this field's own description for the reserved prefix list.", error.Message);
+    }
+
+    [Theory]
+    [MemberData(nameof(NameDisplayCases))]
+    public void NameDisplay_HealthCheckConst_BoundsServiceAndPreservesAdvice(string name, string display)
+    {
+        var yaml = $$"""
+            environment:
+              services:
+                ? {{JsonSerializer.Serialize(name)}}
+                : image: myorg/app:1.0
+                  ports: [9093]
+                  healthCheck: { type: http }
+            steps:
+              - id: noop
+                type: noop.echo
+            """;
+        var result = YamlSchemaValidator.Validate(yaml);
+        Assert.False(result.IsValid);
+        var error = Assert.Single(result.Errors);
+        Assert.Equal($"/environment/services/{EscapeNamePointer(name)}/healthCheck/type", error.InstanceLocation);
+        Assert.Equal($"[const] Service '{display}' declares 'healthCheck: {{ type: http }}', but its 'ports' declaration has no sibling 'httpPort' - no HTTP endpoint exists there for anything but a 'tcp' probe to target. Add 'httpPort:' to expose one, or write 'healthCheck: {{ type: tcp }}'.", error.Message);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void NameDisplay_NestedSecuritySubPath_BacksOffAtSurrogateBoundary(bool required)
+    {
+        const string prefix = "security.serverArtifacts[0].";
+        var name = new string('x', 199 - prefix.Length) + "😀tail";
+        var quotedName = JsonSerializer.Serialize(name);
+        var itemSchema = required ? $$"""{"properties":{ {{quotedName}}:{"required":["missing"]} } }""" :
+            """{"unevaluatedProperties":false}""";
+        var schema = $$"""{"properties":{"environment":{"properties":{"dependencies":{"additionalProperties":{"properties":{"security":{"properties":{"serverArtifacts":{"items":{{itemSchema}} } } } } } } } } } }""";
+        var instanceJson = $$"""{"environment":{"dependencies":{"events":{"security":{"serverArtifacts":[{ {{quotedName}}:{} }] } } } } }""";
+        var evaluation = Evaluate(schema, instanceJson);
+        Assert.False(evaluation.IsValid);
+        var error = Assert.Single(SchemaErrorCollector.CollectErrors(evaluation));
+        Assert.Equal("/environment/dependencies/events/security/serverArtifacts/0/" + EscapeNamePointer(name), error.InstanceLocation);
+        Assert.StartsWith(required ? "[required]" : "[unevaluatedProperties]", error.Message, StringComparison.Ordinal);
+        Assert.Contains($"in dependency 'events' (at {prefix}{new string('x', 199 - prefix.Length)}... (205 chars total))", error.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("😀", error.Message[(error.Message.IndexOf("(at ", StringComparison.Ordinal))..], StringComparison.Ordinal);
+        // JSON output must preserve the rendered message, without replacement characters.
+        Assert.Equal(error.Message, JsonSerializer.Deserialize<string>(JsonSerializer.Serialize(error.Message)));
+        Assert.DoesNotContain("\uFFFD", error.Message, StringComparison.Ordinal);
+    }
+
     private const string ThreeBranchOneOfSchema = """
         {
           "type": "object",

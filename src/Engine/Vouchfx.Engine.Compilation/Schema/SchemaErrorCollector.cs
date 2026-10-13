@@ -1137,12 +1137,13 @@ internal static class SchemaErrorCollector
                     instanceLocation, out var unevalContainerKind, out var unevalContainerName,
                     out var unevalIsNestedBelowSecurity, allowNestedSecurity: true))
             {
-                var unevalPropertyName = LastPointerSegment(instanceLocation);
+                var unevalPropertyName = TruncateForDisplay(LastPointerSegment(instanceLocation));
+                var displayContainer = TruncateForDisplay(unevalContainerName);
                 return unevalIsNestedBelowSecurity
                     ? $"[unevaluatedProperties] Unknown property '{unevalPropertyName}' in {unevalContainerKind} " +
-                      $"'{unevalContainerName}' (at {BuildSecuritySubPath(instanceLocation)})"
+                      $"'{displayContainer}' (at {TruncateForDisplay(BuildSecuritySubPath(instanceLocation))})"
                     : $"[unevaluatedProperties] Unknown property '{unevalPropertyName}' on {unevalContainerKind} " +
-                      $"'{unevalContainerName}'";
+                      $"'{displayContainer}'";
             }
 
             return FormatUnevaluatedPropertiesError(instanceLocation, instance);
@@ -1195,17 +1196,18 @@ internal static class SchemaErrorCollector
         {
             if (TryResolveHealthCheckContainer(instanceLocation, out var healthCheckContainerName))
             {
-                return $"[required] {message} in service '{healthCheckContainerName}' (at healthCheck)";
+                return $"[required] {message} in service '{TruncateForDisplay(healthCheckContainerName)}' (at healthCheck)";
             }
 
             if (TryResolveEnvironmentContainer(
                 instanceLocation, out var requiredContainerKind, out var requiredContainerName,
                 out var requiredIsNestedBelowSecurity, allowNestedSecurity: true))
             {
+                var displayContainer = TruncateForDisplay(requiredContainerName);
                 return requiredIsNestedBelowSecurity
-                    ? $"[required] {message} in {requiredContainerKind} '{requiredContainerName}' " +
-                      $"(at {BuildSecuritySubPath(instanceLocation)})"
-                    : $"[required] {message} on {requiredContainerKind} '{requiredContainerName}'";
+                    ? $"[required] {message} in {requiredContainerKind} '{displayContainer}' " +
+                      $"(at {TruncateForDisplay(BuildSecuritySubPath(instanceLocation))})"
+                    : $"[required] {message} on {requiredContainerKind} '{displayContainer}'";
             }
         }
 
@@ -1341,12 +1343,12 @@ internal static class SchemaErrorCollector
     /// </summary>
     private static string FormatUnevaluatedPropertiesError(string instanceLocation, JsonElement? instance)
     {
-        var propertyName = LastPointerSegment(instanceLocation);
+        var propertyName = TruncateForDisplay(LastPointerSegment(instanceLocation));
         var stepType = instance is { } root ? TryResolveContainerType(instanceLocation, root) : null;
 
         return stepType is null
             ? $"[unevaluatedProperties] Unknown property '{propertyName}'"
-            : $"[unevaluatedProperties] Unknown property '{propertyName}' on step type '{stepType}'";
+            : $"[unevaluatedProperties] Unknown property '{propertyName}' on step type '{TruncateForDisplay(stepType)}'";
     }
 
     /// <summary>
@@ -1910,7 +1912,7 @@ internal static class SchemaErrorCollector
     /// </summary>
     private static string FormatReservedPrefixError(string instanceLocation)
     {
-        var propertyName = LastPointerSegment(instanceLocation);
+        var propertyName = TruncateForDisplay(LastPointerSegment(instanceLocation));
 
         return $"[pattern] Property name '{propertyName}' begins with an engine-reserved bookkeeping " +
                "prefix - see this field's own description for the reserved prefix list.";
@@ -2016,7 +2018,7 @@ internal static class SchemaErrorCollector
             return "[enum] Value does not match any of the values accepted here.";
         }
 
-        var propertyName = LastPointerSegment(instanceLocation);
+        var propertyName = TruncateForDisplay(LastPointerSegment(instanceLocation));
         var allowedList = FormatAllowedValuesList(allowedValues);
 
         // Uniqueness, not merely existence (MINOR-6): the suggestion below
@@ -2071,10 +2073,9 @@ internal static class SchemaErrorCollector
     /// One bound, one reason, recorded HERE rather than restated at each call site. Two classes
     /// of value pass through it. The first is the offending SCALAR of an <c>enum</c> or
     /// <c>const</c> rejection, for the serialisation reason on
-    /// <see cref="MaxOffendingValueChars"/>. The second is the author's own YAML map keys that
-    /// <see cref="FormatAdditionalPropertiesError"/> and
-    /// <see cref="FormatForbiddenPropertyError"/> name back to them — a service or dependency
-    /// key, a dependency's declared <c>type</c>, a capture variable, the rejected property
+    /// <see cref="MaxOffendingValueChars"/>. The second is author-controlled names that
+    /// diagnostics name back to them — a service or dependency key, a declared <c>type</c>,
+    /// a capture variable, the rejected property
     /// itself. Those keys carry no length limit of their own, so one pasted at kilobyte scale
     /// turns a one-line rejection into a screenful and buries the sentence saying what to do.
     /// For that second class the bound is LEGIBILITY and nothing more: the value is the author's
@@ -2084,8 +2085,6 @@ internal static class SchemaErrorCollector
     /// <see cref="FormatForbiddenPropertyError"/> <c>security</c> branch carried this reasoning
     /// alone, in a comment whose closing sentence scoped it to that one branch and deferred
     /// widening to "a separate change" — and nothing propagated it until this became that change.
-    /// Not every interpolation in this class goes through this bound yet; grep before assuming
-    /// a given message is O(1) in the value it complains about.
     /// </para>
     /// <para>
     /// The cut index is a CHAR index, so a naive
@@ -2232,7 +2231,7 @@ internal static class SchemaErrorCollector
 
         if (TryResolveHealthCheckTypeContainer(instanceLocation, out var serviceName))
         {
-            return $"[const] Service '{serviceName}' declares 'healthCheck: {{ type: " +
+            return $"[const] Service '{TruncateForDisplay(serviceName)}' declares 'healthCheck: {{ type: " +
                    $"{TruncateForDisplay(offendingValue)} }}', but its 'ports' declaration has no " +
                    "sibling 'httpPort' - no HTTP endpoint exists there for anything but a 'tcp' " +
                    $"probe to target. Add 'httpPort:' to expose one, or write 'healthCheck: {{ " +
@@ -2283,7 +2282,7 @@ internal static class SchemaErrorCollector
         }
 
         var quotedChoices = string.Join(", ", choices.Select(c => $"'{c}'"));
-        return $"[minProperties] Capture entry '{variableName}' must set at least one of {quotedChoices} - " +
+        return $"[minProperties] Capture entry '{TruncateForDisplay(variableName)}' must set at least one of {quotedChoices} - " +
                "none is present (DSL section 6.1).";
     }
 
