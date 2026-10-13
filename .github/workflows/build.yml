@@ -104,6 +104,9 @@ jobs:
       - name: Exercise the actual Docker pre-pull script
         run: python -B -m unittest discover -s scripts/ci -p test_docker_ci_contract.py -v
 
+      - name: Check image pin source contracts and inert registry regressions
+        run: python -B -m unittest discover -s scripts/ci -p test_image_pins.py -v
+
       - name: Exercise DCP capture artefact contracts
         run: python -B -m unittest discover -s scripts/ci -p test_dcp_capture_artifacts.py -v
 
@@ -973,14 +976,14 @@ jobs:
           examined=0
           for image in \
             postgres:18.3 \
-            mcr.microsoft.com/mssql/server:2022-latest \
+            mcr.microsoft.com/mssql/server@sha256:cf8f0ab2ebe61feec2eed2629061a07d247f791c2a8ddda74a4ac9f06a291718 \
             mongo:7 \
             redis:7 \
             confluentinc/confluent-local:8.2.0 \
             confluentinc/cp-schema-registry:7.6.1 \
             confluentinc/cp-kafka:7.6.1 \
             traefik/whoami@sha256:c4717a8d1f0134a7444e24f881160e033991f23027c6c5a9a3f8fd22e70d1d44 \
-            hashicorp/vault:latest \
+            hashicorp/vault@sha256:c2f666266f383d2cf424d86b8bb8ce7d065562173ffec2b476d762943608bb55 \
             axllent/mailpit:v1.21 \
             rabbitmq:4.3-management \
             elasticsearch:8.17.3 \

@@ -103,7 +103,7 @@ public sealed class MqPublishKafkaProvider
           "required": ["target", "topic", "payload"],
           "properties": {
             "target": {
-              "description": "Logical name of a declared kafka dependency to publish to (environment.dependencies), or a declared service (environment.services) — a customer-supplied broker under its own entrypoint/config. A dependency target of any other type is rejected. A service target is reachable, not merely accepted: the engine stages that service's endpoint as the bare host:port bootstrap authority a Kafka client expects, and the provider reads the staged value under the key matching its target's own kind — a compile-time fact taken from the same declared-service map its own validation reconciled the target against, never guessed. A service-form broker must additionally advertise an address the host can reach (DSL §3.2.6b).",
+              "description": "Logical name of a declared kafka dependency to publish to (environment.dependencies), or a declared service (environment.services) - a customer-supplied broker under its own entrypoint/config. A dependency target of any other type is rejected. A service target is reachable, not merely accepted: the engine stages that service's endpoint as the bare host:port bootstrap authority a Kafka client expects, and the provider reads the staged value under the key matching its target's own kind - a compile-time fact taken from the same declared-service map its own validation reconciled the target against, never guessed. A service-form broker must additionally advertise an address the host can reach (DSL section 3.2.6b).",
               "type": "string",
               "minLength": 1
             },
@@ -123,7 +123,7 @@ public sealed class MqPublishKafkaProvider
               "minLength": 1
             },
             "headers": {
-              "description": "Optional map of message header names to their values, sent as text — a bare numeric or boolean scalar is read as its literal text.",
+              "description": "Optional map of message header names to their values, sent as text - a bare numeric or boolean scalar is read as its literal text.",
               "type": "object",
               "additionalProperties": { "type": ["string", "integer", "number", "boolean"] }
             },

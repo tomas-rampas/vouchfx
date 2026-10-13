@@ -150,7 +150,7 @@ public sealed class ScriptCsharpProvider
     public JsonSchemaFragment SchemaFragment { get; } = new JsonSchemaFragment(
         """
         {
-          "description": "Runs an author-supplied C# snippet — given inline or as a path to an external .csx file — against the shared step context. Exactly one of 'code' or 'file' must be set.",
+          "description": "Runs an author-supplied C# snippet - given inline or as a path to an external .csx file - against the shared step context. Exactly one of 'code' or 'file' must be set.",
           "type": "object",
           "oneOf": [
             { "required": ["code"] },

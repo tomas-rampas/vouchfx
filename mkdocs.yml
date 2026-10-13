@@ -24,7 +24,7 @@ exclude_docs: |
 # which copies the bespoke site/ landing page over the root of the build
 # after MkDocs finishes writing every other page.
 #
-# ORDER MATTERS for the first three (all four implement on_post_build, fired
+# ORDER MATTERS for landing, facts and redirects (on_post_build, fired
 # in exactly the order listed here — verified against mkdocs' own source
 # (config_options.Hooks.post_validation appends each hook module, in list
 # order, into the same PluginCollection regular plugins use) and empirically
@@ -45,13 +45,15 @@ exclude_docs: |
 #                    EDGE-001 requires. Independent of 1-3 (no read/write
 #                    dependency either way) — listed last by convention only.
 #
-# pin_mermaid.py (5th) is independent of all four above too — it only
+# pin_mermaid.py is independent of the post-build hooks above too — it only
 # rewrites MkDocs' own theme static asset (assets/javascripts/bundle*.min.js),
 # which MkDocs copies into site_dir as part of its own build, BEFORE any
 # on_post_build hook runs, same as sitemap.xml. It neither reads nor writes
 # anything the other four touch. Listed last by convention, same reasoning
 # as sitemap.py.
 hooks:
+  # Review every repository-origin page/asset before rendering or copying.
+  - scripts/site_hooks/publication_inputs.py
   - scripts/site_hooks/landing.py
   - scripts/site_hooks/facts.py
   - scripts/site_hooks/redirects.py

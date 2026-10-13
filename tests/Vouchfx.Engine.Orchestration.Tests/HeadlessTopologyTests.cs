@@ -39,7 +39,7 @@ public sealed class HeadlessTopologyTests
         // Arrange — add a lightweight container to prove the DCP-managed lifecycle works.
         await using var topology = await HeadlessTopology.StartAsync(
             appHostAssemblyName: AppHostAssemblyName,
-            configureResources: b => b.AddContainer("whoami", "traefik/whoami"));
+            configureResources: b => b.AddContainer("whoami", "traefik/whoami@sha256:c4717a8d1f0134a7444e24f881160e033991f23027c6c5a9a3f8fd22e70d1d44"));
 
         // Assert — if we reach this line the host started without throwing.
         Assert.NotNull(topology.Application);

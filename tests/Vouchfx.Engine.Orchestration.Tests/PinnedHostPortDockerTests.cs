@@ -235,7 +235,7 @@ public sealed class PinnedHostPortDockerTests
         environment:
           services:
             {{ServiceName}}:
-              image: traefik/whoami:latest
+              image: traefik/whoami@sha256:c4717a8d1f0134a7444e24f881160e033991f23027c6c5a9a3f8fd22e70d1d44
               ports: [{{string.Join(", ", portEntries.Select(e => $"\"{e}\""))}}]
               healthCheck: { type: tcp, port: {{ContainerPort}} }
         steps:

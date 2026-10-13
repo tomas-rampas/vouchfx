@@ -986,6 +986,9 @@ public sealed class StorageAssertS3Provider
 
     private static string RenderTable(string[] headers, string[] values)
     {
+        // Escape the delimiter before measuring cells; user Unicode is preserved.
+        values = Array.ConvertAll(values, static value => value.Replace("|", "\\u007c", StringComparison.Ordinal));
+
         var widths = new int[headers.Length];
         for (int i = 0; i < headers.Length; i++)
         {
@@ -999,8 +1002,8 @@ public sealed class StorageAssertS3Provider
         for (int i = 0; i < widths.Length; i++)
         {
             if (i > 0)
-                sb.Append('┼');
-            sb.Append(new string('─', widths[i] + 2));
+                sb.Append('+');
+            sb.Append(new string('-', widths[i] + 2));
         }
         sb.Append('\n');
 
@@ -1014,7 +1017,7 @@ public sealed class StorageAssertS3Provider
         for (int i = 0; i < cells.Length; i++)
         {
             if (i > 0)
-                sb.Append('│');
+                sb.Append('|');
             sb.Append(' ');
             sb.Append(cells[i].PadRight(widths[i]));
             sb.Append(' ');

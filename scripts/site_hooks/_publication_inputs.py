@@ -1,0 +1,175 @@
+"""Fail closed on unreviewed documentation inputs, without reading their bodies."""
+from __future__ import annotations
+
+import json
+import os
+import stat
+import unicodedata
+from pathlib import Path, PurePosixPath
+from typing import Any, Iterable
+
+MANIFEST_NAME = "site-publication-inputs.json"
+SOURCE_DIRS = ("docs", "site", "overrides")
+SNIPPET_INPUTS = frozenset({"README.md", "CHANGELOG.md", "GOVERNANCE.md"})
+PRIVATE_DOC = "docs/03_MVP_Project_Plan.md"
+PRIVATE_DIR = "docs/reviews"
+MAX_MANIFEST_BYTES = 64 * 1024
+
+
+class PublicationInputError(RuntimeError):
+    """Only input paths/categories belong in these diagnostics, never file content."""
+
+
+def _is_private(path: str) -> bool:
+    folded = path.casefold()
+    private_doc, private_dir = PRIVATE_DOC.casefold(), PRIVATE_DIR.casefold()
+    return folded == private_doc or folded == private_dir or folded.startswith(private_dir + "/")
+
+
+def _canonical_path(value: object) -> str:
+    if not isinstance(value, str) or not value:
+        raise PublicationInputError("manifest: input path must be a non-empty string")
+    path = PurePosixPath(value)
+    if (
+        not path.parts or path.is_absolute() or path.as_posix() != value
+        or "\\" in value or any(c in value for c in ':*?<>|')
+        or any(ord(c) < 32 or ord(c) == 127 for c in value)
+        or unicodedata.normalize("NFC", value) != value
+        or any(p in {".", ".."} or p.rstrip(". ") != p for p in path.parts)
+    ):
+        raise PublicationInputError("manifest: input path is not canonical")
+    return value
+
+
+def _unique_members(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise PublicationInputError("manifest: duplicate JSON member")
+        result[key] = value
+    return result
+
+
+def _check_regular(path: Path, relative: str, *, directory: bool = False) -> None:
+    try:
+        info = path.lstat()
+    except OSError as exc:
+        raise PublicationInputError(f"unreadable input: {relative} ({type(exc).__name__})") from None
+    reparse = getattr(info, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    if stat.S_ISLNK(info.st_mode) or reparse:
+        raise PublicationInputError(f"symlink/reparse input: {relative}")
+    expected = stat.S_ISDIR if directory else stat.S_ISREG
+    if not expected(info.st_mode):
+        raise PublicationInputError(f"non-regular input: {relative}")
+
+
+def load_manifest(repo_root: Path) -> frozenset[str]:
+    path = repo_root / MANIFEST_NAME
+    _check_regular(path, MANIFEST_NAME)
+    try:
+        with path.open("rb") as source:
+            raw = source.read(MAX_MANIFEST_BYTES + 1)
+        if len(raw) > MAX_MANIFEST_BYTES:
+            raise PublicationInputError("manifest: exceeds 64 KiB limit")
+        manifest = json.loads(raw, object_pairs_hook=_unique_members)
+    except (OSError, UnicodeError, ValueError, RecursionError) as exc:
+        raise PublicationInputError(f"manifest: cannot read/parse ({type(exc).__name__})") from None
+    if (
+        not isinstance(manifest, dict) or set(manifest) != {"version", "inputs"}
+        or type(manifest["version"]) is not int or manifest["version"] != 1
+        or not isinstance(manifest["inputs"], list) or not manifest["inputs"]
+    ):
+        raise PublicationInputError("manifest: expected version 1 and a non-empty inputs list")
+    inputs: set[str] = set()
+    aliases: set[str] = set()
+    for item in manifest["inputs"]:
+        relative = _canonical_path(item)
+        if relative not in SNIPPET_INPUTS and PurePosixPath(relative).parts[0] not in SOURCE_DIRS:
+            raise PublicationInputError(f"manifest: unsupported source path: {relative}")
+        if relative in SOURCE_DIRS or _is_private(relative):
+            raise PublicationInputError(f"manifest: excluded/non-file source path: {relative}")
+        alias = relative.casefold()
+        if alias in aliases:
+            raise PublicationInputError(f"manifest: duplicate/case-alias input: {relative}")
+        aliases.add(alias)
+        inputs.add(relative)
+    if not SNIPPET_INPUTS.issubset(inputs) or not any(p.startswith("docs/") and p.endswith(".md") for p in inputs):
+        raise PublicationInputError("manifest: root snippet inputs and public Markdown are required")
+    return frozenset(inputs)
+
+
+def validate_source_inputs(repo_root: Path) -> frozenset[str]:
+    """Inspect names/metadata only; tracked and untracked inputs obey the same policy."""
+    inputs = load_manifest(repo_root)
+    actual: set[str] = set()
+    aliases: set[str] = set()
+
+    def record(path: Path, *, directory: bool = False) -> str:
+        relative = path.relative_to(repo_root).as_posix()
+        _canonical_path(relative)
+        _check_regular(path, relative, directory=directory)
+        alias = relative.casefold()
+        if alias in aliases:
+            raise PublicationInputError(f"source case-alias: {relative}")
+        aliases.add(alias)
+        return relative
+
+    def walk_error(exc: OSError) -> None:
+        raise PublicationInputError(f"source directory: cannot enumerate ({type(exc).__name__})") from None
+
+    for name in SOURCE_DIRS:
+        source = repo_root / name
+        record(source, directory=True)
+        for directory, dirs, files in os.walk(source, followlinks=False, onerror=walk_error):
+            for child in sorted(dirs):
+                relative = record(Path(directory) / child, directory=True)
+                if _is_private(relative):
+                    dirs.remove(child)
+            for child in sorted(files):
+                relative = record(Path(directory) / child)
+                if _is_private(relative):
+                    continue
+                if relative not in inputs:
+                    category = "Markdown" if relative.endswith(".md") else "asset/metadata"
+                    raise PublicationInputError(f"unregistered {category}: {relative}")
+                actual.add(relative)
+    for relative in sorted(SNIPPET_INPUTS):
+        record(repo_root / relative)
+        actual.add(relative)
+    missing = sorted(inputs - actual)
+    if missing:
+        raise PublicationInputError(f"manifest input missing/case-mismatched: {missing[0]}")
+    return inputs
+
+
+def validate_mkdocs_files(
+    files: Iterable[Any], repo_root: Path, inputs: frozenset[str], theme_dirs: Iterable[str],
+) -> None:
+    """Check the final collection after blog generation, before render/copy events."""
+    docs_dir = repo_root / "docs"
+    theme_roots = tuple(Path(d).resolve() for d in theme_dirs)
+    public_pages = 0
+    for file in files:
+        relative = _canonical_path(file.src_uri)
+        source_dir = Path(file.src_dir) if file.src_dir is not None else None
+        if source_dir == docs_dir:
+            source = "docs/" + relative
+            if _is_private(source):
+                # EXCLUDED (-3) is never read, including by `mkdocs serve`.
+                if file.inclusion.value != -3:
+                    raise PublicationInputError(f"private source included in collection: {source}")
+                continue
+            if source not in inputs:
+                raise PublicationInputError(f"unregistered collection input: {source}")
+            public_pages += int(file.is_documentation_page() and file.inclusion.value > -2)
+            continue
+        # Material derives archive/category/pagination pages from registered posts.
+        # Its generated files are temporary, not additional repository inputs.
+        if file.generated_by == "material/blog" and relative.startswith("blog/") and relative.endswith(".md"):
+            continue
+        physical = Path(file.abs_src_path).resolve() if file.abs_src_path else None
+        if physical is not None and any(physical.is_relative_to(root) for root in theme_roots):
+            continue  # Installed theme assets/templates are dependency code.
+        raise PublicationInputError(f"unsupported collection input: {relative}")
+    if not public_pages:
+        raise PublicationInputError("collection: no registered public Markdown pages")

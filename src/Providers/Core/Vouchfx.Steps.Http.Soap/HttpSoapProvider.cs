@@ -103,7 +103,7 @@ public sealed class HttpSoapProvider
               "minLength": 1
             },
             "path": {
-              "description": "The request path; may contain {placeholder} and ${secret:...} tokens. Must be a rooted relative path (start with a single '/'); absolute URLs, protocol-relative paths ('//…'), and backslashes are rejected as an SSRF guard.",
+              "description": "The request path; may contain {placeholder} and ${secret:...} tokens. Must be a rooted relative path (start with a single '/'); absolute URLs, protocol-relative paths ('//...'), and backslashes are rejected as an SSRF guard.",
               "type": "string",
               "pattern": "^/(?!/)[^\\\\\\x00-\\x1F\\x7F-\\x9F]*(?![\\s\\S])"
             },

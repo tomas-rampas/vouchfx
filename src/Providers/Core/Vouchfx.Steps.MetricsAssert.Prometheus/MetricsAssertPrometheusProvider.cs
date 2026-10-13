@@ -110,12 +110,12 @@ public sealed class MetricsAssertPrometheusProvider
           "required": ["target", "metric", "expect"],
           "properties": {
             "target": {
-              "description": "Logical name of the service to scrape, as declared under environment.services — normally the system under test.",
+              "description": "Logical name of the service to scrape, as declared under environment.services - normally the system under test.",
               "type": "string",
               "minLength": 1
             },
             "path": {
-              "description": "The scrape path.  May contain {placeholder} and ${secret:source/path} tokens.  Defaults to '/metrics' when omitted. Must be a rooted relative path (start with a single '/'); absolute URLs, protocol-relative paths ('//…'), and backslashes are rejected as an SSRF guard.",
+              "description": "The scrape path.  May contain {placeholder} and ${secret:source/path} tokens.  Defaults to '/metrics' when omitted. Must be a rooted relative path (start with a single '/'); absolute URLs, protocol-relative paths ('//...'), and backslashes are rejected as an SSRF guard.",
               "type": "string",
               "pattern": "^/(?!/)[^\\\\\\x00-\\x1F\\x7F-\\x9F]*(?![\\s\\S])",
               "default": "/metrics"
@@ -126,7 +126,7 @@ public sealed class MetricsAssertPrometheusProvider
               "minLength": 1
             },
             "labels": {
-              "description": "Optional map of required label name to expected value.  A sample matches only when it carries every declared label with exactly the expected value (a subset match — the sample may carry additional labels).  Values may contain {placeholder} and ${secret:source/path} tokens.",
+              "description": "Optional map of required label name to expected value.  A sample matches only when it carries every declared label with exactly the expected value (a subset match - the sample may carry additional labels).  Values may contain {placeholder} and ${secret:source/path} tokens.",
               "type": "object",
               "additionalProperties": { "type": ["string", "integer", "number", "boolean"] }
             },
@@ -1021,6 +1021,9 @@ public sealed class MetricsAssertPrometheusProvider
         var headers = new[] { label, "expected", "actual" };
         var values = new[] { "(metric)", expected, actual };
 
+        // Escape the delimiter before measuring cells; user Unicode is preserved.
+        values = Array.ConvertAll(values, static value => value.Replace("|", "\\u007c", StringComparison.Ordinal));
+
         var widths = new int[headers.Length];
         for (int i = 0; i < headers.Length; i++)
             widths[i] = Math.Max(headers[i].Length, values[i].Length);
@@ -1032,8 +1035,8 @@ public sealed class MetricsAssertPrometheusProvider
         for (int i = 0; i < widths.Length; i++)
         {
             if (i > 0)
-                sb.Append('┼');
-            sb.Append(new string('─', widths[i] + 2));
+                sb.Append('+');
+            sb.Append(new string('-', widths[i] + 2));
         }
         sb.Append('\n');
 
@@ -1047,7 +1050,7 @@ public sealed class MetricsAssertPrometheusProvider
         for (int i = 0; i < cells.Length; i++)
         {
             if (i > 0)
-                sb.Append('│');
+                sb.Append('|');
             sb.Append(' ');
             sb.Append(cells[i].PadRight(widths[i]));
             sb.Append(' ');

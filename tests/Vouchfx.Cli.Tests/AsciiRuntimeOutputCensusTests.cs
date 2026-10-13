@@ -42,78 +42,33 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Text.Json;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Text;
+using Vouchfx.Cli;
+using Vouchfx.Engine.Compilation.Schema;
+using Vouchfx.Engine.Orchestration.Environments;
+using Vouchfx.Sdk;
 using Xunit;
 
 namespace Vouchfx.Cli.Tests;
 
 /// <summary>
-/// Issue #379: no string or character literal in the CLI or engine runtime-output surface contains
-/// a non-ASCII character, so nothing this tool prints can be degraded by a host console codepage.
+/// Issues #379 and #472: fixed output formatting and public schema descriptions use ASCII.
+/// Observation data remains Unicode; generated CSX comments and frozen helper bodies are excluded.
 /// </summary>
 public sealed class AsciiRuntimeOutputCensusTests
 {
     /// <summary>
-    /// THE BOUNDARY, and it is a decision rather than a discovery - stated here because a census
-    /// whose scope is implicit stops meaning anything the first time someone widens the tree.
+    /// CLI and engine C# literals are the original #379 output boundary. The #472 tests
+    /// below additionally cover provider diff-format methods and their local call graph,
+    /// SDK literals outside frozen generated CSX Source fields, and public schema descriptions.
+    /// Provider Emit/helpers remain outside the literal census because their raw strings contain
+    /// generated C# comments; changing them would also move frozen SDK helper-body contracts.
+    /// User-authored observation values, examples, defaults, enums and patterns may contain Unicode.
     /// </summary>
-    /// <remarks>
-    /// <para>
-    /// <strong>IN: the CLI and every engine assembly.</strong> These are where the strings a user
-    /// reads come from - <c>--help</c> text, validation and schema diagnostics, orchestration and
-    /// security errors, the scenario-level causes that reach the §14 event stream and every
-    /// renderer. All of it is written by the engine, all of it can end up on a console or in a CI
-    /// log, and none of it needs a typographic character to say what it says.
-    /// </para>
-    /// <para>
-    /// <strong>IN means the <c>.cs</c> SOURCES of those projects, not every file they ship.</strong>
-    /// The walk below enumerates <c>*.cs</c>, so the schema resource files inside the same
-    /// projects are not covered — <c>root-language-schema.json</c> alone carries around 45 em
-    /// dashes in its <c>description</c> strings. That is deliberate rather than an oversight in
-    /// the boundary: those strings reach an editor through LSP hover as UTF-8, where nothing
-    /// re-encodes them through a console codepage, which is the entire mechanism issue #379
-    /// measured. They are inventoried alongside #472's surface, and the consistency question they
-    /// raise — the schema says <c>(DSL §3.2)</c> where the validator now emits
-    /// <c>(DSL section 3.2)</c> for the same field — is recorded there rather than settled here.
-    /// </para>
-    /// <para>
-    /// <strong>OUT: <c>src/Providers</c> and <c>src/Sdk</c>, and the reason is measured, not
-    /// squeamish.</strong> A provider's literals are dominated by EMITTED CSX: the
-    /// <c>RequiredHelpers</c> arrays and the <c>$$"""..."""</c> step bodies are generated C# SOURCE,
-    /// one string literal per line, comments included. MEASURED on the pre-fix tree: of 523
-    /// offending literal tokens across <c>src/</c>, 396 were in those two trees; those 396 tokens
-    /// span 498 offending LINES (a multi-line raw string is one token over many lines), and 412 of
-    /// those lines are comment lines within generated source, which no console ever prints.
-    /// Including the trees would mean teaching this gate to tell a generated comment
-    /// from generated code - the same regex-shaped judgement the Roslyn approach exists to avoid -
-    /// and it would move the SDK helper <c>Source</c> constants, whose values are hash-pinned by
-    /// <c>SdkContractFreezeTests</c>.
-    /// </para>
-    /// <para>
-    /// <strong>What that exclusion leaves open is stated STRUCTURALLY, and deliberately so:</strong>
-    /// everything under <c>src/Providers</c> and <c>src/Sdk</c> is outside this gate, and some of
-    /// it is genuinely runtime-reachable and degrades on exactly the hosts #379 measured. The full
-    /// inventory lives in issue #472 and is maintained there, NOT here.
-    /// </para>
-    /// <para>
-    /// <strong>Why the boundary is stated as a rule rather than as a list.</strong> The first
-    /// version of this remark enumerated two classes it had seen — the diff-renderer tables and the
-    /// schema <c>description</c> strings — and the review found a third it had not (provider
-    /// validator and observation literals, which travel the identical
-    /// <c>ValidationFailure</c>-to-scenario-cause channel as the engine strings this gate now
-    /// covers). An enumeration in a comment is a claim of completeness that nothing checks and that
-    /// decays the moment a provider adds a literal; a structural statement cannot be incomplete.
-    /// A reader who needs the list should open #472, where a wrong list is a visible defect rather
-    /// than a quiet one.
-    /// </para>
-    /// <para>
-    /// <strong>OUT: test projects</strong>, which assert on Unicode deliberately - astral-plane
-    /// surrogate fixtures, hostile-input strings, and the assertion-failure prose that is written
-    /// for a human reading a test report rather than for a console.
-    /// </para>
-    /// </remarks>
     private static readonly string[] s_boundary =
     {
         Path.Combine("src", "Cli"),
@@ -248,6 +203,157 @@ public sealed class AsciiRuntimeOutputCensusTests
             + "repository writes British English prose with typographic punctuation deliberately.\n"
             + "\n"
             + string.Join("\n", offenders));
+    }
+
+    [Fact]
+    public void CoreProviderDiffFormattingLiterals_AreAscii()
+    {
+        var repoRoot = RepositoryRoot();
+        var providerRoot = Path.Combine(repoRoot, "src", "Providers", "Core");
+        var classes = SourceFiles(providerRoot)
+            .SelectMany(file => ParseSource(file).GetRoot().DescendantNodes().OfType<ClassDeclarationSyntax>())
+            .Where(type => type.BaseList?.Types.Any(t => t.Type.ToString().EndsWith("IStepDiffRenderer", StringComparison.Ordinal)) == true)
+            .ToArray();
+        var registered = ProviderRegistryFactory.BuildCoreRegistry().All
+            .Count(provider => provider.Instance is IStepDiffRenderer);
+        Assert.True(registered >= 9, "The provider diff census must include all nine table renderers.");
+        Assert.Equal(registered, classes.Length);
+
+        foreach (var type in classes)
+        {
+            var methods = type.Members.OfType<MethodDeclarationSyntax>()
+                .ToLookup(method => method.Identifier.ValueText, StringComparer.Ordinal);
+            var pending = new Queue<string>(new[] { "CanRender", "RenderDiff" });
+            var visited = new HashSet<string>(StringComparer.Ordinal);
+            while (pending.TryDequeue(out var name))
+            {
+                if (!visited.Add(name))
+                    continue;
+
+                var declarations = methods[name].ToArray();
+                Assert.NotEmpty(declarations);
+                foreach (var method in declarations)
+                {
+                    AssertAsciiLiterals(method.DescendantTokens(), type.Identifier.ValueText + "." + name);
+                    foreach (var call in method.DescendantNodes().OfType<InvocationExpressionSyntax>())
+                    {
+                        // Local helper calls belong to the formatting boundary. External client,
+                        // JSON and StringBuilder methods do not splice generated provider CSX.
+                        var localName = call.Expression switch
+                        {
+                            IdentifierNameSyntax identifier => identifier.Identifier.ValueText,
+                            MemberAccessExpressionSyntax { Expression: ThisExpressionSyntax } member => member.Name.Identifier.ValueText,
+                            _ => null,
+                        };
+                        if (localName is not null && methods.Contains(localName))
+                            pending.Enqueue(localName);
+                    }
+                }
+            }
+        }
+    }
+
+    [Fact]
+    public void SdkOutputLiterals_OutsideFrozenCsxSourceFields_AreAscii()
+    {
+        var files = SourceFiles(Path.Combine(RepositoryRoot(), "src", "Sdk")).ToArray();
+        Assert.NotEmpty(files);
+        var frozenFields = 0;
+        foreach (var file in files)
+        {
+            var root = ParseSource(file).GetRoot();
+            var sources = root.DescendantNodes().OfType<FieldDeclarationSyntax>()
+                .Where(field => field.Modifiers.Any(SyntaxKind.PublicKeyword)
+                    && field.Modifiers.Any(SyntaxKind.ConstKeyword)
+                    && field.Declaration.Variables.Any(variable => variable.Identifier.ValueText == "Source"))
+                .ToArray();
+            frozenFields += sources.Length;
+            AssertAsciiLiterals(root.DescendantTokens()
+                .Where(token => !sources.Any(field => field.Span.Contains(token.Span))), file);
+        }
+
+        Assert.True(frozenFields >= 4, "The four frozen SDK CSX Source bodies must retain their explicit exclusion.");
+    }
+
+    [Fact]
+    public void PublicSchemaDescriptions_AreAscii_InProvidersResourcesAndExports()
+    {
+        var repoRoot = RepositoryRoot();
+        var registry = ProviderRegistryFactory.BuildCoreRegistry();
+        Assert.Equal(25, registry.All.Count);
+        foreach (var provider in registry.All)
+        {
+            Assert.NotNull(provider.SchemaFragment);
+            AssertAsciiDescriptions(provider.SchemaFragment!.Json, provider.Kind.ToString());
+        }
+
+        foreach (var path in new[]
+        {
+            "src/Engine/Vouchfx.Engine.Compilation/Schema/root-language-schema.json",
+            "src/Engine/Vouchfx.Engine.Orchestration/Environments/compose-environment-schema.json",
+            "tests/Vouchfx.Engine.Compilation.Tests/Golden/composed-schema.v1.json",
+            "tools/vscode-vouchfx/src/schema/composed-schema.v1.json",
+        })
+        {
+            AssertAsciiDescriptions(File.ReadAllText(Path.Combine(repoRoot, path)), path);
+        }
+
+        AssertAsciiDescriptions(EngineExport.ComposeSchemaJson(registry), "composed CLI export");
+        AssertAsciiDescriptions(ComposeEnvironmentDriver.ExportConfigurationSchema(), "Compose adapter export");
+    }
+
+    private static void AssertAsciiDescriptions(string json, string source)
+    {
+        using var document = JsonDocument.Parse(json);
+        var count = 0;
+        Walk(document.RootElement, "");
+        Assert.True(count > 0, "No schema descriptions were inspected in " + source);
+
+        void Walk(JsonElement element, string path)
+        {
+            if (element.ValueKind == JsonValueKind.Object)
+            {
+                foreach (var property in element.EnumerateObject())
+                {
+                    if (property.Name == "description" && property.Value.ValueKind == JsonValueKind.String)
+                    {
+                        count++;
+                        Assert.True(property.Value.GetString()!.All(character => character <= 0x7f),
+                            source + path + "/description contains non-ASCII punctuation.");
+                    }
+                    else if (property.Name is not ("examples" or "default" or "const" or "enum"))
+                    {
+                        Walk(property.Value, path + "/" + property.Name);
+                    }
+                }
+            }
+            else if (element.ValueKind == JsonValueKind.Array)
+            {
+                var index = 0;
+                foreach (var value in element.EnumerateArray())
+                    Walk(value, path + "/" + index++);
+            }
+        }
+    }
+
+    private static void AssertAsciiLiterals(IEnumerable<SyntaxToken> tokens, string source)
+    {
+        var offenders = tokens.Where(token => Array.IndexOf(s_literalKinds, token.Kind()) >= 0)
+            .Where(token => token.Text.Any(character => character > 0x7f))
+            .Select(token => source + ":" + (token.GetLocation().GetLineSpan().StartLinePosition.Line + 1)
+                + " " + Excerpt(token.Text)).ToArray();
+        Assert.True(offenders.Length == 0, string.Join("\n", offenders));
+    }
+
+    private static SyntaxTree ParseSource(string path) => CSharpSyntaxTree.ParseText(
+        File.ReadAllText(path), new CSharpParseOptions(LanguageVersion.Preview), path);
+
+    private static IEnumerable<string> SourceFiles(string root)
+    {
+        Assert.True(Directory.Exists(root), "Missing census root: " + root);
+        return Directory.EnumerateFiles(root, "*.cs", SearchOption.AllDirectories)
+            .Where(file => !Path.GetRelativePath(root, file).Split(Path.DirectorySeparatorChar)
+                .Any(segment => segment is "bin" or "obj"));
     }
 
     /// <summary>

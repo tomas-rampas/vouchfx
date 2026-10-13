@@ -19,8 +19,16 @@ Five layers (§3), each exposing a narrow typed contract upward: **1 Authoring**
 - **Honour the hard invariants below.** They span multiple sections, were discovered in real spikes, and are non-negotiable.
 - **Follow the MVP build order (maintainer-local `docs/03`, tracked in maintainer-local `plan/`):** seven workstreams — A orchestration, B compiler/runtime, C tooling, D integration, E pilot, F Provider SDK, G reporting. On the maintainer's machine, read `plan/README.md` for conventions and the milestone gates, and the relevant `plan/sprint-NN.md` before starting work; where those files are absent, `docs/roadmap.md` is the public summary. The memory-leak regression test is a **Phase 1 (M1)** deliverable and a permanent CI gate, not an afterthought.
 - **Documentation prose is British English.** Match it when editing docs.
+- Fixed diagnostic formatting, Core provider diff separators and public schema descriptions use ASCII. Diff tables use `|`, `-` and `+`; a literal pipe in a cell is shown as `\u007c`. Preserve Unicode in authored or observed values. Generated CSX comments and frozen SDK `Source` constants retain their existing bytes.
 
 ## The authoritative documents
+
+Public site inputs are explicitly reviewed in `site-publication-inputs.json`.
+When adding or renaming a public page, asset or template under `docs/`, `site/`
+or `overrides/`, add its exact path in the same change after reviewing its
+content. Never bulk-register a directory. The build and deployment gate refuse
+unregistered files; this does not classify confidential prose pasted into an
+already approved file. Keep the established private paths excluded.
 
 - `docs/01_Technical_Architecture_and_Engineering_Blueprint.md` — single source of truth for how the system is built. §3 five layers; §4 Aspire/Testcontainers; §5 Roslyn compiler + memory model; §6 cloud fabric; §11 security; §12 verdict taxonomy; §13 provider architecture; §14 reporting/event stream; §16 test runner; §17 secrets; §18 risks; §19 technology table.
 - `docs/02_YAML_DSL_Specification_and_VSCode_Extension_Design.md` — the `.e2e.yaml` grammar + VSCode/LSP. §3 document structure; §4 common step fields; §5 step families; §6 capture/placeholder syntax; §7 verifyMode; §8 JSON Schema; §10 extension.

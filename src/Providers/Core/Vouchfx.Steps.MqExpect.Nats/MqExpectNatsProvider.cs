@@ -77,7 +77,7 @@ public sealed class MqExpectNatsProvider
     public JsonSchemaFragment SchemaFragment { get; } = new JsonSchemaFragment(
         """
         {
-          "description": "Asserts that a message matching the declared criteria is present on a NATS JetStream subject.  The consumer scans from the beginning of the retained log on every attempt (DeliverPolicy.All ordered consumer), mirroring mq-expect.kafka retained-log behaviour.  IMPORTANT: do NOT share a single nats dependency across scenarios that assert on the same subject — retained messages from prior runs produce a false Pass.  Use verifyMode: RETRY to poll until the message arrives.",
+          "description": "Asserts that a message matching the declared criteria is present on a NATS JetStream subject.  The consumer scans from the beginning of the retained log on every attempt (DeliverPolicy.All ordered consumer), mirroring mq-expect.kafka retained-log behaviour.  IMPORTANT: do NOT share a single nats dependency across scenarios that assert on the same subject - retained messages from prior runs produce a false Pass.  Use verifyMode: RETRY to poll until the message arrives.",
           "type": "object",
           "required": ["target", "subject", "match"],
           "properties": {
@@ -105,7 +105,7 @@ public sealed class MqExpectNatsProvider
                   "type": ["string", "integer", "number", "boolean"]
                 },
                 "json": {
-                  "description": "Optional map of JSONPath expressions to their expected values, compared as text and evaluated over the message payload parsed as JSON — a bare numeric or boolean scalar is read as its literal text.",
+                  "description": "Optional map of JSONPath expressions to their expected values, compared as text and evaluated over the message payload parsed as JSON - a bare numeric or boolean scalar is read as its literal text.",
                   "type": "object",
                   "additionalProperties": { "type": ["string", "integer", "number", "boolean"] }
                 }

@@ -4646,7 +4646,49 @@ public sealed class EnvironmentMapperTests : IDisposable
             .Annotations.OfType<ContainerImageAnnotation>().Single();
         Assert.Null(sidecarImage.Registry);
         Assert.Equal("mcr.microsoft.com/mssql/server", sidecarImage.Image);
-        Assert.Equal("2022-latest", sidecarImage.Tag);
+        Assert.Null(sidecarImage.Tag);
+        Assert.Equal("cf8f0ab2ebe61feec2eed2629061a07d247f791c2a8ddda74a4ac9f06a291718", sidecarImage.SHA256);
+        Assert.True(builder.Resources.Single(r => r.Name == "bus-sqledge").TryGetContainerImageName(out var sidecarReference));
+        Assert.Equal("mcr.microsoft.com/mssql/server@sha256:cf8f0ab2ebe61feec2eed2629061a07d247f791c2a8ddda74a4ac9f06a291718", sidecarReference);
+    }
+
+    /// <summary>
+    /// Author controls still select the emulator while the hidden persistence image remains
+    /// content-pinned, including when the environment uses a local-cache-only pull policy.
+    /// </summary>
+    [Theory]
+    [InlineData("1.1.3", null)]
+    [InlineData(null, "example.com/custom/servicebus:testing")]
+    public void Map_AzureServiceBusDependency_AuthorOverrideDoesNotChangePinnedSqlSidecar(string? version, string? imageOverride)
+    {
+        var env = new EnvironmentSpec(
+            Services: null,
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["bus"] = new DependencySpec(Type: "azureservicebus", Version: version, Extra: null)
+                {
+                    Image = imageOverride,
+                },
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: "Never");
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+        mapped.Configure(builder);
+
+        var sidecar = builder.Resources.Single(r => r.Name == "bus-sqledge");
+        var sidecarImage = Assert.Single(sidecar.Annotations.OfType<ContainerImageAnnotation>());
+        Assert.Equal("cf8f0ab2ebe61feec2eed2629061a07d247f791c2a8ddda74a4ac9f06a291718", sidecarImage.SHA256);
+        Assert.Null(sidecarImage.Tag);
+        Assert.True(sidecar.TryGetContainerImageName(out var reference));
+        Assert.Equal("mcr.microsoft.com/mssql/server@sha256:cf8f0ab2ebe61feec2eed2629061a07d247f791c2a8ddda74a4ac9f06a291718", reference);
+        var emulator = builder.Resources.Single(r => r.Name == "bus");
+        var emulatorImage = Assert.Single(emulator.Annotations.OfType<ContainerImageAnnotation>());
+        Assert.Equal(version ?? "testing", emulatorImage.Tag);
+        Assert.Null(emulatorImage.SHA256);
+        Assert.Equal(imageOverride is null ? "mcr.microsoft.com/azure-messaging/servicebus-emulator" : "example.com/custom/servicebus", emulatorImage.Image);
     }
 
     // -----------------------------------------------------------------------

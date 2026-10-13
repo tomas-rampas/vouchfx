@@ -237,6 +237,14 @@ public static class EnvironmentMapper
     internal const string S3RustfsImageDigest =
         "8cc9801755448b71a786705ce76692c77e14936cccd87cf2fc31842e58f4d1ff";
 
+    /// <summary>
+    /// SQL Server 2022 CU27 GDR1 persistence image for the Azure Service Bus emulator.
+    /// Upstream publishes only Linux/amd64 for SQL Server, not a multi-arch index.
+    /// The reviewed release tag and freshness policy live in scripts/ci/image-pins.json.
+    /// </summary>
+    internal const string AzureServiceBusSqlImageDigest =
+        "cf8f0ab2ebe61feec2eed2629061a07d247f791c2a8ddda74a4ac9f06a291718";
+
     // -----------------------------------------------------------------------
     // Registration table — one entry per supported dependency type.
     // -----------------------------------------------------------------------
@@ -512,9 +520,9 @@ public static class EnvironmentMapper
 
                     // SQL Server sidecar — required by the ASB emulator for persistence.
                     // MSSQL_SA_PASSWORD meets SQL Server complexity requirements.
-                    // The "2022-latest" tag is intentionally floating: SQL Server 2022 minor/CU
-                    // updates are backwards-compatible and this topology validates the ASB layer,
-                    // not SQL internals — pinning would add upgrade churn with no safety benefit.
+                    // Pin the hidden sidecar: authors cannot select its image or version.
+                    // spec.Version continues to select the emulator, never this SQL image.
+                    // The upstream Linux/amd64-only image retains SQL Server's platform limit.
                     // feat/dependency-image-override (§ item 6, sidecars out of scope): this
                     // sidecar has no independent identity in the YAML — spec.Image names only the
                     // emulator itself (below), never this SQL persistence sidecar; the author
@@ -523,7 +531,8 @@ public static class EnvironmentMapper
                     // they still apply here.
                     var sidecarBuilder = ApplySidecarRegistryAndPullPolicy(
                         builder
-                            .AddContainer(sidecarName, "mcr.microsoft.com/mssql/server", "2022-latest")
+                            .AddContainer(sidecarName, "mcr.microsoft.com/mssql/server")
+                            .WithImageSHA256(AzureServiceBusSqlImageDigest)
                             .WithEnvironment("ACCEPT_EULA", "Y")
                             .WithEnvironment("MSSQL_SA_PASSWORD", "Str0ng!P@ssword#1"),
                         imageRegistry,
@@ -4436,12 +4445,12 @@ public static class EnvironmentMapper
     /// <remarks>
     /// M1 fix: <paramref name="imageRegistry"/> is skipped when the sidecar's OWN hardcoded image
     /// literal already embeds a registry component — the azureservicebus SQL Edge sidecar is
-    /// registered as <c>AddContainer(sidecarName, "mcr.microsoft.com/mssql/server", "2022-latest")</c>,
+    /// registered as <c>AddContainer(sidecarName, "mcr.microsoft.com/mssql/server")</c> with a digest pin,
     /// so <c>ContainerImageAnnotation.Registry</c> is null (nothing for a naive
     /// "spec.Image only" check to see) while <c>ContainerImageAnnotation.Image</c> already carries
     /// "mcr.microsoft.com/...". Applying <paramref name="imageRegistry"/> unconditionally on top
     /// would double-prefix the pull reference
-    /// ("artifactory.example.com/mcr.microsoft.com/mssql/server:2022-latest") — exactly the same
+    /// ("artifactory.example.com/mcr.microsoft.com/mssql/server@sha256:...") — exactly the same
     /// failure mode <see cref="ApplyImageOverrides{T}"/>'s M1 fix addresses for the emulator
     /// container itself, checked the same way (the CURRENT annotation, not a raw image string this
     /// method never receives). The kafka schema-registry sidecar's own image

@@ -110,7 +110,7 @@ public sealed class DbAssertPostgresProvider
               "minLength": 1
             },
             "parameters": {
-              "description": "Optional map of SQL parameter names (without leading '@') to their values, passed as text — a bare numeric or boolean scalar is read as its literal text.",
+              "description": "Optional map of SQL parameter names (without leading '@') to their values, passed as text - a bare numeric or boolean scalar is read as its literal text.",
               "type": "object",
               "additionalProperties": { "type": ["string", "integer", "number", "boolean"] }
             },
@@ -128,7 +128,7 @@ public sealed class DbAssertPostgresProvider
                   "pattern": "^[0-9]+$"
                 },
                 "row": {
-                  "description": "Map of column name to expected value, compared as text against the first row — a bare numeric or boolean scalar is read as its literal text.",
+                  "description": "Map of column name to expected value, compared as text against the first row - a bare numeric or boolean scalar is read as its literal text.",
                   "type": "object",
                   "additionalProperties": { "type": ["string", "integer", "number", "boolean"] }
                 }
@@ -799,7 +799,7 @@ public sealed class DbAssertPostgresProvider
 
     /// <summary>
     /// Renders a two-data-column relational table for a column-value mismatch, using
-    /// the same box-drawing style as the terminal renderer.
+    /// the same ASCII style as the terminal renderer.
     /// </summary>
     private static string RenderColumnTable(string column, string expected, string actual)
     {
@@ -819,11 +819,14 @@ public sealed class DbAssertPostgresProvider
     }
 
     /// <summary>
-    /// Renders a single-row, fixed-column box-drawing table: a header row, a separator
+    /// Renders a single-row, fixed-column ASCII table: a header row, a separator
     /// rule, then one value row.  Column widths size to the widest of header/value.
     /// </summary>
     private static string RenderTable(string[] headers, string[] values)
     {
+        // Escape the delimiter before measuring cells; user Unicode is preserved.
+        values = Array.ConvertAll(values, static value => value.Replace("|", "\\u007c", StringComparison.Ordinal));
+
         var widths = new int[headers.Length];
         for (int i = 0; i < headers.Length; i++)
         {
@@ -835,12 +838,12 @@ public sealed class DbAssertPostgresProvider
         // Header row.
         AppendRow(sb, headers, widths);
 
-        // Separator rule: ─ segments joined by ┼ at each column boundary.
+        // Separator rule: - segments joined by + at each column boundary.
         for (int i = 0; i < widths.Length; i++)
         {
             if (i > 0)
-                sb.Append('┼');
-            sb.Append(new string('─', widths[i] + 2));
+                sb.Append('+');
+            sb.Append(new string('-', widths[i] + 2));
         }
         sb.Append('\n');
 
@@ -851,14 +854,14 @@ public sealed class DbAssertPostgresProvider
     }
 
     /// <summary>
-    /// Appends one padded, ' │ '-separated table row terminated by a newline.
+    /// Appends one padded, ' | '-separated table row terminated by a newline.
     /// </summary>
     private static void AppendRow(System.Text.StringBuilder sb, string[] cells, int[] widths)
     {
         for (int i = 0; i < cells.Length; i++)
         {
             if (i > 0)
-                sb.Append('│');
+                sb.Append('|');
             sb.Append(' ');
             sb.Append(cells[i].PadRight(widths[i]));
             sb.Append(' ');
