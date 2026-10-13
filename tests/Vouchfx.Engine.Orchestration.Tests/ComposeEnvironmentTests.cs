@@ -50,6 +50,45 @@ public sealed class ComposeEnvironmentTests
     }
 
     [Fact]
+    public async Task NonzeroStartupExit_PreservesProvisionDiagnostic_AfterOwnedCleanup()
+    {
+        var fixture = new Inputs();
+        var process = new FakeProcess(1) { FailUp = true, UpExitCode = 37 };
+        var error = await Assert.ThrowsAsync<OrchestrationException>(() => ComposeLease.StartAsync(fixture.Load(), process,
+            NullSecretAccessor.Instance, CancellationToken.None, fixture.Journals));
+        Assert.Equal(OrchestrationErrorKind.Provision, error.Info.Kind);
+        Assert.Contains("operation failed (exit 37)", error.Info.Detail, StringComparison.Ordinal);
+        Assert.DoesNotContain(Canary, error.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain(fixture.Manifest, error.ToString(), StringComparison.Ordinal);
+        Assert.Null(error.InnerException);
+        Assert.False(process.HasOwnedResources);
+        Assert.Empty(Directory.GetFiles(fixture.Journals));
+        Assert.Equal(1, process.RemovedContainers);
+        Assert.Equal(1, process.RemovedNetworks);
+        Assert.Equal(1, process.RemovedVolumes);
+        Assert.DoesNotContain(process.Calls, c => c.Arguments.Contains("port"));
+    }
+
+    [Fact]
+    public async Task MalformedDiscoveredPort_PreservesDiscoveryDiagnostic_AfterOwnedCleanup()
+    {
+        var fixture = new Inputs();
+        var process = new FakeProcess(1) { PortOutput = Canary };
+        var error = await Assert.ThrowsAsync<OrchestrationException>(() => ComposeLease.StartAsync(fixture.Load(), process,
+            NullSecretAccessor.Instance, CancellationToken.None, fixture.Journals));
+        Assert.Equal(OrchestrationErrorKind.Discovery, error.Info.Kind);
+        Assert.Contains("Selected port is absent", error.Info.Detail, StringComparison.Ordinal);
+        Assert.DoesNotContain(Canary, error.ToString(), StringComparison.Ordinal);
+        Assert.Null(error.InnerException);
+        Assert.False(process.HasOwnedResources);
+        Assert.Empty(Directory.GetFiles(fixture.Journals));
+        Assert.Equal(1, process.RemovedContainers);
+        Assert.Equal(1, process.RemovedNetworks);
+        Assert.Equal(1, process.RemovedVolumes);
+        Assert.Contains(process.Calls, c => c.Arguments.Contains("port"));
+    }
+
+    [Fact]
     public async Task PartialStartupCancellation_CleanupHasIndependentTokenAndRemovesOwnedResources()
     {
         var fixture = new Inputs();
@@ -430,6 +469,8 @@ public sealed class ComposeEnvironmentTests
         internal bool HasOwnedResources { get; set; }
         internal bool WrongOwner { get; init; }
         internal bool FailUp { get; init; }
+        internal int UpExitCode { get; init; } = 1;
+        internal string? PortOutput { get; init; }
         internal bool StallCleanup { get; init; }
         internal string ExtraServiceProperty { get; init; } = "";
         internal string? RawModel { get; init; }
@@ -461,9 +502,9 @@ public sealed class ComposeEnvironmentTests
                 {
                     HasOwnedResources = true;
                     if (OnUp is not null) await OnUp(standardInput, cancellationToken);
-                    if (FailUp) return new ComposeProcessResult(1, Canary);
+                    if (FailUp) return new ComposeProcessResult(UpExitCode, Canary);
                 }
-                else if (arguments.Contains("port")) output = "127.0.0.1:" + _port;
+                else if (arguments.Contains("port")) output = PortOutput ?? "127.0.0.1:" + _port;
             }
             else
             {

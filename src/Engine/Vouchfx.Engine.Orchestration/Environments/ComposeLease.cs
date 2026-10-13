@@ -143,6 +143,7 @@ internal sealed class ComposeLease : IKeptTopology
             }
             if (primary is ArgumentException) throw;
             if (primary is OperationCanceledException && ct.IsCancellationRequested) throw;
+            if (primary is OrchestrationException) throw;
             throw ComposeProcess.Failure("Compose startup or endpoint readiness failed before the deadline. Check published ports, readiness settings and credentials; subprocess output is suppressed.", OrchestrationErrorKind.HealthGate);
         }
     }
