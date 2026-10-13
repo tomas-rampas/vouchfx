@@ -3,7 +3,7 @@
 [![CI](https://github.com/tomas-rampas/vouchfx/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/tomas-rampas/vouchfx/actions/workflows/build.yml?query=branch%3Amain)
 [![CodeQL](https://github.com/tomas-rampas/vouchfx/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/tomas-rampas/vouchfx/actions/workflows/codeql.yml?query=branch%3Amain)
 [![Coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Ftomas-rampas%2Fvouchfx%2Fbadges%2Fcoverage-endpoint.json)](https://github.com/tomas-rampas/vouchfx/actions/workflows/build.yml?query=branch%3Amain)
-[![NuGet (prerelease)](https://img.shields.io/nuget/vpre/vouchfx)](https://www.nuget.org/packages/vouchfx)
+[![NuGet](https://img.shields.io/nuget/v/vouchfx)](https://www.nuget.org/packages/vouchfx)
 [![Core providers](https://img.shields.io/badge/providers-25_core-blue)](https://github.com/tomas-rampas/vouchfx-providers)
 [![Docs](https://img.shields.io/badge/docs-GitHub_Pages-blue)](https://vouchfx.io/)
 [![License](https://img.shields.io/github/license/tomas-rampas/vouchfx)](https://github.com/tomas-rampas/vouchfx/blob/main/LICENSE)
@@ -18,19 +18,19 @@ outbound webhook — the seams where distributed systems actually break.
 
 It is **not** a unit-test framework and **not** a UI/browser tool.
 
-> **Status: release candidate.** Published versions are listed on
-> [NuGet.org](https://www.nuget.org/packages/vouchfx/) and
-> [GitHub Releases](https://github.com/tomas-rampas/vouchfx/releases). Current source supports inline
-> `environment.services` images/projects and managed dependencies, plus owned HTTP/PostgreSQL
-> [Docker Compose environments](https://vouchfx.io/compose-environments/) through `environment.source`.
-> Published packages gain Compose support only after a new release. Resolving release-blocking defects
-> and validating installed packages across the repository fleet remain requirements for 1.0.0 — see the
+> **Core 1.0.0 is available.** Install the CLI from
+> [NuGet.org](https://www.nuget.org/packages/vouchfx/1.0.0) or use the distributions on
+> [GitHub Releases](https://github.com/tomas-rampas/vouchfx/releases/tag/v1.0.0).
+> This release supports inline `environment.services` images/projects and managed dependencies,
+> plus owned HTTP/TCP/PostgreSQL [Docker Compose environments](https://vouchfx.io/compose-environments/)
+> through `environment.source`. Other external formats can use the format-neutral registered-driver
+> contract. Fleet validation and follow-up fixes remain in progress — see the
 > [roadmap](https://vouchfx.io/roadmap/).
 
 ## Install
 
 ```bash
-dotnet tool install --global vouchfx --prerelease
+dotnet tool install --global vouchfx --version 1.0.0
 ```
 
 Requires the [.NET 8 SDK](https://dotnet.microsoft.com/en-us/download/dotnet/8.0). Running a suite also
@@ -39,8 +39,9 @@ are Docker-free, so authoring and checking suites works on a machine without one
 .NET SDK can use the self-contained per-OS archives and MSI/deb/pkg installers attached to each
 [release](https://github.com/tomas-rampas/vouchfx/releases).
 
-Current source candidates bundle matching Aspire DCP tools for Windows x64, Linux x64 (glibc),
-macOS x64 and macOS ARM64. Published `1.0.0-rc.6` still needs matching external DCP tools; see
+Published `1.0.0` distributions bundle matching Aspire DCP tools for Windows x64, Linux x64 (glibc),
+macOS x64 and macOS ARM64. The installed CLI needs no source checkout, Aspire workload or warmed
+NuGet cache. Legacy `1.0.0-rc.6` packages still need external matching tools; see
 [installation and version-specific prerequisites](https://vouchfx.io/getting-started/#installing-vouchfx).
 
 ## A test, in full
@@ -275,7 +276,7 @@ storage locations.
 | [Getting Started](https://vouchfx.io/getting-started/) | Your first test in 60 minutes. |
 | [vouchfx-samples](https://samples.vouchfx.io/) | Production-grade sample apps (C#, Python, Node.js, Java) with complete suites. |
 | [Recipes](https://vouchfx.io/recipes/) | Task-oriented: SQL seeding, WireMock doubles, secrets, Kafka, CI. |
-| [Owned Docker Compose environments](https://vouchfx.io/compose-environments/) | Bring your own manifests; bind HTTP/PostgreSQL targets, run fresh projects and recover interrupted cleanup. |
+| [Owned Docker Compose environments](https://vouchfx.io/compose-environments/) | Bring your own manifests; bind HTTP/TCP/PostgreSQL targets, run fresh projects and recover interrupted cleanup. |
 | [Common Patterns](https://vouchfx.io/common-patterns/) | File structure, state threading, scenario selection, multi-step workflows. |
 | [Troubleshooting](https://vouchfx.io/troubleshooting/) | Real failure modes — Docker, the Aspire 20-second cold-start gotcha, captures, verdicts. |
 
@@ -297,7 +298,7 @@ storage locations.
 ## Building from source
 
 **Prerequisites:** the .NET 8 SDK (pinned in `global.json`) and, for the integration tests only, a
-running Docker daemon. The unit tests need neither.
+running Docker daemon. The unit tests require the SDK but do not need Docker.
 
 ```bash
 dotnet build vouchfx.sln                             # C# 11, nullable, warnings-as-errors
@@ -413,13 +414,13 @@ Report vulnerabilities via the private coordinated-disclosure process in
 Every release artefact carries a **keyless [Sigstore](https://sigstore.dev/) cosign signature**, an
 **SLSA build-provenance attestation** and a **CycloneDX SBOM**; the nupkg is published to NuGet.org via
 Trusted Publishing (OIDC). No long-lived signing or publishing keys are managed anywhere in the
-pipeline. Verify a downloaded artefact with:
+pipeline. For these commands, download the nupkg asset from the GitHub 1.0.0 release:
 
 ```bash
-gh attestation verify vouchfx.1.0.0-rc.5.nupkg --repo tomas-rampas/vouchfx
+gh attestation verify vouchfx.1.0.0.nupkg --repo tomas-rampas/vouchfx
 
-cosign verify-blob vouchfx.1.0.0-rc.5.nupkg \
-  --bundle vouchfx.1.0.0-rc.5.nupkg.cosign.bundle \
+cosign verify-blob vouchfx.1.0.0.nupkg \
+  --bundle vouchfx.1.0.0.nupkg.cosign.bundle \
   --certificate-identity-regexp '^https://github\.com/tomas-rampas/vouchfx/\.github/workflows/release\.yml@.*' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```

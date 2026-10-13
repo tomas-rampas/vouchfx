@@ -2,11 +2,11 @@
 
 **Applies to:** CLI global tools, archives and installers.
 
-**Updated:** 2026-10-12. Published `1.0.0-rc.6` is still cache-dependent; current source bundles DCP.
+**Updated:** 2026-10-13. Published Core `1.0.0` bundles DCP; legacy `1.0.0-rc.6` remains cache-dependent.
 
 ## Symptoms and cause
 
-A clean installation reports `The Aspire orchestration component is not installed` or
+A legacy cache-based or incomplete installation can report `The Aspire orchestration component is not installed` or
 `could not be located`, often naming a packaging runner's NuGet directory. Aspire.AppHost.Sdk
 embeds an absolute build-machine path; that path and its RID are not portable. Topology never
 starts and no test steps execute. This is an **EnvironmentError**, not a failed product assertion.
@@ -17,9 +17,9 @@ restored an AppHost into that cache. It proved relocation, not a fresh installat
 `1.0.0-rc.6` installation on 2026-10-10 reproduced the missing tools; the same candidate started
 with matching Aspire 13.4.2 tools supplied through `ASPIRE_DCP_PATH`.
 
-## Current source behaviour
+## Published 1.0.0 behaviour
 
-Newly packed tools carry complete `win-x64`, glibc `linux-x64`, `osx-x64` and `osx-arm64` DCP trees.
+The published `1.0.0` global tool carries complete `win-x64`, glibc `linux-x64`, `osx-x64` and `osx-arm64` DCP trees.
 Archives/installers carry their selected RID. Paths are relative to the resolved host assembly,
 not the current directory: `dcp/13.4.2/<rid>/tools/`.
 
@@ -43,10 +43,14 @@ repair them. DCP resolution remains inside inline Aspire startup for future envi
 
 ## Remedy for published legacy packages
 
-Use a candidate containing the bundling change or supply exact platform tools through
-`ASPIRE_DCP_PATH`. It names the directory containing `dcp`/`dcp.exe`, not the executable. An
-AppHost restore at Aspire 13.4.2 can populate those tools for legacy/source builds; the retired
-Aspire workload cannot. Do not describe an rc.6 install with this override as a standalone pass.
+Upgrade to the published bundled CLI with
+`dotnet tool update --global vouchfx --version 1.0.0`. Its installed path requires no source checkout,
+Aspire workload or warmed NuGet cache.
+
+If you must retain a legacy package, supply exact platform tools through `ASPIRE_DCP_PATH`.
+It names the directory containing `dcp`/`dcp.exe`, not the executable. An AppHost restore at
+Aspire 13.4.2 can populate those tools for legacy/source builds; the retired Aspire workload cannot.
+Do not describe an rc.6 install with this override as a standalone pass.
 See [troubleshooting](../troubleshooting.md#the-aspire-orchestration-component-is-not-installed-could-not-be-located).
 
 ## Regression gates

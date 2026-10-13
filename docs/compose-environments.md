@@ -1,16 +1,23 @@
 # Owned Docker Compose environments
 
-Use your own Compose project with existing vouchfx assertions. Select a registered environment driver in the suite; the adapter owns its separate configuration grammar. Omitting `source` retains inline provisioning. Current source supports Compose through the engine's binding/ready-lease boundary, which also permits other registered drivers without changing step providers. Published `1.0.0-rc.6` does not support `environment.source`.
+Use your own Compose project with existing vouchfx assertions. Select a registered environment driver in the suite; the adapter owns its separate configuration grammar. Omitting `source` retains inline provisioning. Published Core `1.0.0` supports Compose through the engine's binding/ready-lease boundary. That contract is format-neutral; other external formats require a registered driver implementation without changing step providers.
 
-Use a CLI built from this compatible source checkout or an explicitly selected Compose-capable installed candidate. For the commands below, work from the repository root, build the Release CLI with the .NET 8 SDK, and verify the native Docker Compose plugin:
+Install the published CLI with the .NET 8 SDK and verify the native Docker Compose plugin:
+
+```sh
+dotnet tool install --global vouchfx --version 1.0.0
+vouchfx --version
+docker compose version
+```
+
+Already installed? Use `dotnet tool update --global vouchfx --version 1.0.0`. Execution requires Docker running Linux containers on a supported local daemon; validation alone does not require Docker. Legacy `1.0.0-rc.6` does not accept `environment.source`; upgrade before using this guide.
+
+For contributor work on unreleased source, build and select that checkout's DLL explicitly:
 
 ```sh
 dotnet build src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj -c Release -warnaserror
 dotnet src/Cli/Vouchfx.Cli/bin/Release/net8.0/vouchfx.dll --version
-docker compose version
 ```
-
-These commands select this checkout's built DLL explicitly. Execution requires Docker running Linux containers on a supported local daemon; validation alone does not require Docker. An installed candidate must declare its version and prerequisites; do not substitute the published rc.6 global tool.
 
 ```yaml
 environment:
@@ -74,10 +81,10 @@ Kafka retained-record assertions manually assign every actual topic partition at
 ## Validate, run and watch
 
 ```sh
-dotnet src/Cli/Vouchfx.Cli/bin/Release/net8.0/vouchfx.dll validate ./orders.e2e.yaml
-dotnet src/Cli/Vouchfx.Cli/bin/Release/net8.0/vouchfx.dll run ./orders.e2e.yaml --fail-on-env-error --fail-on-inconclusive --events ./events.jsonl
-dotnet src/Cli/Vouchfx.Cli/bin/Release/net8.0/vouchfx.dll run ./orders.e2e.yaml --watch
-dotnet src/Cli/Vouchfx.Cli/bin/Release/net8.0/vouchfx.dll schema --environment-driver compose --output ./compose-schema.json
+vouchfx validate ./orders.e2e.yaml
+vouchfx run ./orders.e2e.yaml --fail-on-env-error --fail-on-inconclusive --events ./events.jsonl
+vouchfx run ./orders.e2e.yaml --watch
+vouchfx schema --environment-driver compose --output ./compose-schema.json
 ```
 
 Validation is pure: it reads authoring files and compiles normalised targets without running subprocesses, resolving credentials or creating containers. Runtime uses the same declarations. Config, manifest and env-file edits invalidate the generic watch plan and trigger another run. Every Compose scenario/watch execution acquires a fresh project; logical dependency names remain available for `conn::` staging even though reset/reseed is prohibited.
@@ -95,7 +102,7 @@ Cleanup uses project-labelled Docker resource inventory, rechecks each resource'
 Hard termination cannot run `finally`. Recovery records live under `%LOCALAPPDATA%\vouchfx\environments` on Windows, or the platform's local application-data directory. Recover one interrupted project:
 
 ```sh
-dotnet src/Cli/Vouchfx.Cli/bin/Release/net8.0/vouchfx.dll environment cleanup --journal /path/to/vouchfx/environments/vouchfx-PROJECT_ID.json
+vouchfx environment cleanup --journal /path/to/vouchfx/environments/vouchfx-PROJECT_ID.json
 ```
 
 Recovery requires access to the recorded local daemon, not original manifests or credentials. Successful cleanup removes the journal; failed or timed-out cleanup retains it.

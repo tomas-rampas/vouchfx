@@ -38,31 +38,35 @@ You should see version and runtime information. On Windows, this typically means
 
 ## Installing vouchfx
 
-vouchfx is packaged as a `dotnet` global tool and is live on NuGet.org as a pre-release. Install and
-upgrade it straight from NuGet.org:
+Core `1.0.0` is published on NuGet.org as the `vouchfx` global tool. Install or upgrade to that
+stable version:
 
 ```bash
-# Install (pre-release channel — required while the published versions are pre-releases)
-dotnet tool install --global vouchfx --prerelease
+# Install the published stable CLI
+dotnet tool install --global vouchfx --version 1.0.0
 
-# Upgrade later
-dotnet tool update --global vouchfx --prerelease
+# Already installed? Upgrade to the same supported version
+dotnet tool update --global vouchfx --version 1.0.0
+
+vouchfx --version
 ```
 
-From the v1.0 GA release onwards the plain commands (without `--prerelease`) work too.
+Omit `--version` to select the latest stable release. Use `--prerelease` only when intentionally
+testing a pre-release. Self-contained platform archives and installers are available on
+[GitHub Releases](https://github.com/tomas-rampas/vouchfx/releases/tag/v1.0.0).
 
 The installer places the `vouchfx` command in `~/.dotnet/tools` (`%USERPROFILE%\.dotnet\tools` on Windows). If your shell cannot find `vouchfx` afterwards, add that directory to your `PATH` or open a fresh shell — the installer only updates `PATH` for new sessions.
 
-**DCP distribution and supported platforms.** Current source builds package the matching Aspire
+**DCP distribution and supported platforms.** Published `1.0.0` distributions package the matching Aspire
 DCP tools with the CLI: `win-x64`, `linux-x64` (glibc), `osx-x64` and `osx-arm64`. The global tool
 contains all four native trees; an archive or installer contains its own platform's tree. Installed
-candidates need no source checkout, Aspire workload or warmed NuGet cache. The engine selects the
+distributions need no source checkout, Aspire workload or warmed NuGet cache. The engine selects the
 bundle beside its host assembly, so changing directories does not change the executable it uses.
 
-**Published-version boundary:** `1.0.0-rc.6` still lacks this bundled payload. On a clean machine its
-container topology fails before Docker starts. Until a release includes this packaging change, use
-a candidate built from current source or supply the exact Aspire 13.4.2 tools through
-`ASPIRE_DCP_PATH`. Set this variable to the directory containing `dcp`/`dcp.exe`, not the executable:
+**Legacy rc.6 and source/custom AppHosts:** `1.0.0-rc.6` lacks this bundled payload; on a clean machine
+its container topology fails before Docker starts. Upgrade the global tool to `1.0.0`. If you must
+retain the legacy package or use an unbundled custom AppHost, supply the exact Aspire 13.4.2 tools
+through `ASPIRE_DCP_PATH`. Set it to the directory containing `dcp`/`dcp.exe`, not the executable:
 
 ```powershell
 $env:ASPIRE_DCP_PATH = "$env:USERPROFILE/.nuget/packages/aspire.hosting.orchestration.win-x64/13.4.2/tools"
@@ -387,7 +391,7 @@ This shape is the contract for integration with tooling such as [vouchfx-mcp](ht
 
 ## Redirected text and Unicode
 
-The current source CLI reads redirected stdin and writes redirected stdout and stderr as UTF-8.
+The published `1.0.0` CLI reads redirected stdin and writes redirected stdout and stderr as UTF-8.
 Output has no byte-order mark (BOM), including help, diagnostics, schema exports and scaffold YAML.
 Send UTF-8 JSON with `vouchfx scaffold --intent -`; a label such as `Café — naïve §1` remains
 identical whether the intent comes from stdin or a file, and whether YAML goes to stdout or `--output`.
@@ -397,7 +401,7 @@ Interactive terminal handles retain their existing encoding. The CLI replaces on
 redirected text wrappers; it does not change a shared Windows console's input or output page.
 No `chcp` workaround is needed. JSON commands retain their existing non-ASCII escaping and keys.
 Hosts must use an MCP release pinned to this engine's UTF-8 contract; an older MCP decoder must
-not be paired with this source build. Published pre-releases may predate this change.
+not be paired with this release. Earlier pre-releases may predate this change.
 
 ## Exporting the composed JSON Schema
 

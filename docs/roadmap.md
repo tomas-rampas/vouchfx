@@ -1,9 +1,9 @@
 # vouchfx public roadmap
 
 This is the public, capability-level roadmap for vouchfx. Progress is measured by implemented
-capabilities and passing release checks, rather than a calendar target. Published release candidates
-are available; current source includes the environment extension, while installed-package and fleet
-validation remain requirements for 1.0.0.
+capabilities and passing release checks, rather than a calendar target. Core `1.0.0` CLI and SDK
+packages are published, including Compose support and bundled DCP tools. Ecosystem publication,
+fleet validation and follow-up defect fixes remain in progress.
 
 For what changed when, see the [changelog](changelog.md). For how project decisions are made, see
 [governance](governance.md).
@@ -72,37 +72,37 @@ implementation, not a claim that every release requirement or open defect is res
 - **A signed release pipeline** — keyless cosign signatures, SLSA provenance attestations, CycloneDX SBOMs,
   and NuGet.org publication via Trusted Publishing (no long-lived keys).
 
-## Release candidates and the remaining 1.0.0 requirements
+## Core 1.0.0 and remaining ecosystem release work
 
-The first public releases shipped on 2026-07-08. The `v1.0.0-alpha` series ran to `v1.0.0-alpha.10`
-and the line has since moved to release candidates. Consult
-[GitHub Releases](https://github.com/tomas-rampas/vouchfx/releases) for the current version. Every
-pre-release is published with signed artefacts (cosign, SLSA provenance, CycloneDX SBOMs), and the
-`vouchfx` dotnet global tool is live on NuGet.org via Trusted Publishing (every pre-release has both a
-NuGet.org package and a published GitHub release page):
+The first public releases shipped on 2026-07-08. The alpha and release-candidate series are
+historical; Core `1.0.0` is now available on
+[GitHub Releases](https://github.com/tomas-rampas/vouchfx/releases/tag/v1.0.0) and
+[NuGet.org](https://www.nuget.org/packages/vouchfx/1.0.0), with cosign signatures, SLSA provenance
+and CycloneDX SBOMs. Install the stable CLI:
 
 ```bash
-dotnet tool install --global vouchfx --prerelease
+dotnet tool install --global vouchfx --version 1.0.0
 ```
 
-The pre-releases support real-world validation. The remaining GA work includes implementation,
-defect resolution, documentation and packaging:
+Core availability is one release milestone. The ecosystem still needs its remaining publication
+and acceptance work, including MCP tool publication and follow-up diagnostics and publishing fixes.
+The ongoing work includes:
 
-- **Releasing user-supplied environments** — current source supports owned, fresh-per-scenario
-  HTTP/PostgreSQL Docker Compose environments through a format-neutral registered-driver boundary.
+- **User-supplied environments** — published Core `1.0.0` supports owned, fresh-per-scenario
+  HTTP/TCP/PostgreSQL Docker Compose environments through a format-neutral registered-driver boundary.
   Pure binding supplies logical targets; acquisition supplies a ready lease and owns resource cleanup,
-  without changing assertion providers. Existing inline environments remain supported. Published
-  `1.0.0-rc.6` does not accept `environment.source`; installed-package and fleet acceptance of a
-  Compose-capable candidate remain release gates. See [the Compose guide](compose-environments.md)
-  for supported modes, prerequisites and recovery.
+  without changing assertion providers. Existing inline environments remain supported. Other external
+  formats require a registered driver implementation. Legacy `1.0.0-rc.6` does not accept
+  `environment.source`. See [the Compose guide](compose-environments.md) for supported modes,
+  prerequisites and recovery; further ecosystem acceptance remains separate.
 - **Release-blocking defects and execution evidence** — resolve failures in verdict reporting,
   secrets, lifecycle cleanup, supported security paths and consumer compatibility. Required runtime
   checks must prove that assertions executed; unavailable prerequisites or skipped probes do not
   establish release readiness.
-- **Installed-package and fleet compatibility** — validate the actual candidate CLI, MCP tool,
-  provider SDK/community provider, samples and telemetry backend together. Source-build success alone
-  does not establish clean-install compatibility.
-- **Current documentation** — run the documented quickstarts against the candidate versions and
+- **Installed-package and fleet compatibility** — validate the published Core CLI and SDK,
+  independently released community providers, MCP tool, samples and telemetry backend together.
+  Source-build success alone does not establish clean-install compatibility.
+- **Current documentation** — run the documented quickstarts against the selected release versions and
   validate all five built sites. Supported behaviour, prerequisites and known limits must match the
   implementation before release.
 
@@ -111,14 +111,14 @@ defect resolution, documentation and packaging:
   [migration guide](https://samples.vouchfx.io/docs/migrating.html) (worked Postman,
   xUnit and SpecFlow ports), and the [community provider hub](https://providers.vouchfx.io/),
   rather than a formal pilot cohort.
-- The Provider SDK (`Vouchfx.Sdk`, its `Vouchfx.Sdk.Testing` harness and their engine dependency closure) is published to NuGet.org through the release pipeline; the GA task narrows to stabilising the SDK at 1.0.0 final.
+- The Provider SDK (`Vouchfx.Sdk`, its `Vouchfx.Sdk.Testing` harness and their engine dependency closure) is published at `1.0.0` on NuGet.org. Its frozen provider contract remains the compatibility boundary for the v1.x series.
 - Some release artefacts gain further signatures (Windows Authenticode, macOS notarisation, GPG) only once
   the respective certificates are provisioned — cosign signatures and SLSA provenance are present on every
   artefact from day one, so verification is never blocked on those extras.
 
 ## The v1.x series — additive only
 
-After 1.0.0, the three public contracts carry an additive-only compatibility commitment for v1.x.
+The three public contracts carry an additive-only compatibility commitment for the v1.x series.
 Within that constraint, the near-term direction is:
 
 - **Provider breadth through the community pathway** — the Provider SDK is the mechanism by which new

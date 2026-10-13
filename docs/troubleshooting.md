@@ -115,17 +115,17 @@ vouchfx runs at all.
 System.IO.FileNotFoundException: The Aspire orchestration component is not installed
 at "/home/runner/.nuget/packages/aspire.hosting.orchestration.linux-x64/13.4.2/tools/dcp".
 ```
-or, from current engine versions:
+or, from legacy cache-based builds and unbundled source/custom AppHosts:
 ```
 EnvironmentError: The Aspire DCP orchestration component could not be located. …
 no 'aspire.hosting.orchestration.<rid>' version '13.4.2' package was found at '…'.
 ```
 
 **What it means:** the inline Aspire environment could not locate a matching native DCP tool.
-Current source distributions bundle Aspire 13.4.2 under `dcp/13.4.2/<rid>/tools/`, beside the CLI.
+Published `1.0.0` distributions bundle Aspire 13.4.2 under `dcp/13.4.2/<rid>/tools/`, beside the CLI.
 Supported process platforms are `win-x64`, glibc `linux-x64`, `osx-x64` and `osx-arm64`.
 
-**Fix for bundled candidates:** reinstall the complete matching package/archive. Keep the `dcp/`
+**Fix for published 1.0.0 distributions:** reinstall the complete matching package/archive. Keep the `dcp/`
 tree with the CLI; copying only the executable is insufficient. An incomplete declared bundle
 fails explicitly, even when another DCP happens to exist in a local NuGet cache. On Unix, archives
 and installers must preserve executable permissions on `dcp` and `dcptun_c`; global-tool startup
@@ -133,13 +133,13 @@ repairs those bits in its selected bundle. A read-only installation with missing
 repair by its owner. Unsupported RIDs require a supported distribution or an explicit matching
 DCP override.
 
-**Published rc.6 and older cache-based builds:** the native tools are not bundled. A fresh-cache
+**Legacy published rc.6 and older cache-based builds:** the native tools are not bundled. A fresh-cache
 `1.0.0-rc.6` installation was measured on 2026-10-10 to fail before Docker starts; an earlier cache
 fallback did not eliminate this prerequisite. Supply the exact platform's Aspire 13.4.2 tools and
-set `ASPIRE_DCP_PATH` to their **directory**, or use a candidate containing the bundling change.
+set `ASPIRE_DCP_PATH` to their **directory**, or upgrade to published `1.0.0`.
 Do not infer the installed version from its error path: even newer legacy packages can display a
 packaging runner's stale path. Restoring an AppHost at the exact version populates tools for source
-builds, but is not a prerequisite for new bundled candidates. The retired Aspire workload does not
+builds, but is not a prerequisite for installed `1.0.0` distributions. The retired Aspire workload does not
 provide these NuGet tools.
 
 ```powershell
@@ -253,7 +253,7 @@ On **Linux** the root follows `XDG_DATA_HOME` when you have set it, exactly as e
 
 The twelve most recent captures are kept; older ones are pruned automatically. Twelve rather than a handful because #420's last occurrence was eight consecutive failures in one session, and retention below that would delete the very captures the session produced.
 
-Current candidates also write a separate private `application-model context` header. The engine snapshots registered resource names before DCP starts, retaining at most 64 resources and 128 characters per name, and records omitted-resource and truncated-name counts. This header has its own 16 KiB bound. It helps identify the host's resource even when upstream initial-creation logs omit names. It reads no environment or annotation values, remains separate from actual native DCP entries, and never enters console warning tails.
+The `1.0.0` CLI also writes a separate private `application-model context` header. The engine snapshots registered resource names before DCP starts, retaining at most 64 resources and 128 characters per name, and records omitted-resource and truncated-name counts. This header has its own 16 KiB bound. It helps identify the host's resource even when upstream initial-creation logs omit names. It reads no environment or annotation values, remains separate from actual native DCP entries, and never enters console warning tails.
 
 The capture is written whenever a topology **fails to become ready** — the start itself, the health gates that follow it, service discovery, the secured-endpoint probe and the seed — because this fault can surface at any of them. On a platform with no per-user directory nothing is written and the Environment error says so rather than falling back to a shared temporary directory.
 
@@ -435,11 +435,11 @@ Use one of these approaches:
 
 1. **Use the packaged vouchfx CLI (recommended):**
    ```bash
-    # Install from the pre-release channel whilst the engine is before 1.0.0 GA
-   dotnet tool install --global vouchfx --prerelease
+   # Install the published stable CLI
+   dotnet tool install --global vouchfx --version 1.0.0
 
    # Already installed? Upgrade instead
-   dotnet tool update --global vouchfx --prerelease
+   dotnet tool update --global vouchfx --version 1.0.0
 
    # Then run from your current directory
    vouchfx run ./tests/e2e
@@ -465,7 +465,7 @@ Use one of these approaches:
    ```
    (On Windows: `dotnet run --project src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj -- run $((Get-Location).Path)/tests/e2e`)
 
-**Best practice:** For running container-backed vouchfx test suites, use the packaged CLI with the supported .NET 8 runtime, Docker running Linux containers and its [version-specific DCP prerequisites](getting-started.md#installing-vouchfx). Published rc.6 needs externally provisioned matching tools; bundled source candidates supply them. The packaged CLI runs from your current directory without path-resolution workarounds. If you are working on vouchfx itself from source, build the CLI once and run the binary directly — it is faster (skips compilation) and avoids `dotnet run` quirks altogether.
+**Best practice:** For running container-backed vouchfx test suites, use the packaged CLI with the supported .NET 8 runtime, Docker running Linux containers and its [version-specific DCP prerequisites](getting-started.md#installing-vouchfx). Published `1.0.0` bundles matching DCP tools without a source checkout, Aspire workload or warmed NuGet cache. Legacy rc.6 requires externally provisioned matching tools. The packaged CLI runs from your current directory without path-resolution workarounds. If you are working on vouchfx itself from source, build the CLI once and run the binary directly — it is faster (skips compilation) and avoids `dotnet run` quirks altogether.
 
 ---
 
@@ -788,16 +788,16 @@ A capture expression (JSONPath or XPath) did not match the step result, or a pla
      id: "$.id"  # Response has { "userId": 123 }, not { "id": 123 }
    ```
 
-3. **Use optional captures if a field might not always be present:**
+3. **Guard optional data explicitly before capturing it.** A missing JSONPath result is Inconclusive; captures have no implicit default:
    ```yaml
-   # If you want the capture to not fail when the field is missing,
-   # use a safe JSONPath expression that returns a default:
+   # A missing value does not silently receive a default.
+   # Check optional response fields in your assertion/script logic first:
    capture:
      error_code: "$.error.code"  # If 'error' is missing, the capture fails
      # Instead, check the response structure first in a script:
    ```
 
-4. **Use `continueOnFailure` if a capture is truly optional:**
+4. **Keep the capture verdict distinct from continuation.** `continueOnFailure` does not turn a missing capture into Pass:
    ```yaml
    - id: get-optional-data
      type: http.rest
@@ -808,7 +808,7 @@ A capture expression (JSONPath or XPath) did not match the step result, or a pla
        status: 200
      capture:
        optional_field: "$.optional"
-     continueOnFailure: true  # Step passes even if capture fails
+     continueOnFailure: true  # A capture miss still reports Inconclusive
    ```
 
 5. **Verify variable names match.** Placeholders are case-sensitive:
@@ -831,9 +831,16 @@ PEM type/location settings. Do not override the managed listener mechanics or re
 Aspire's allocated host address with a guessed port. The selected listener is secured;
 Schema Registry and container connection references use the other plaintext listener.
 
-The current consumer opens a fresh group per attempt and polls for roughly one second.
-For the local runnable recipe, set `KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: "0"` and use
-`verifyMode: RETRY`; a default rebalance delay can otherwise outlast every fresh attempt.
+The `1.0.0` assertion consumer manually assigns every actual topic partition at its earliest
+retained offset. It does not wait for a consumer-group rebalance. Metadata discovery and the
+record drain share a one-second attempt window; an empty partition does not stop the others.
+Use `verifyMode: RETRY` when the matching record may arrive later. The step timeout controls
+the overall retry budget, not a wider individual drain.
+
+Your application's own subscribing consumer may need group-startup tuning. That is separate
+from this assertion drain; `KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: "0"` is not a prerequisite
+for the vouchfx assertion. See [Compose broker bindings](compose-environments.md#bind-logical-targets)
+for host-reachable advertised listeners and native readiness.
 
 **Symptom:**
 An `mq-expect.kafka` step fails to find a message that was published earlier, even with `verifyMode: RETRY`.
@@ -841,10 +848,10 @@ An `mq-expect.kafka` step fails to find a message that was published earlier, ev
 **What it means:**
 Common causes:
 
-1. **Message expired or was evicted before the step ran.** Publishing before the consumer starts is NOT a cause: vouchfx's Kafka consumer uses a fresh consumer group with `AutoOffsetReset.Earliest`, so every attempt reads from the earliest retained offset and an attempt will see a message published before the step started — precisely because the offset is earliest, not in spite of it. What does break it is the message no longer being retained: check the topic's retention against the gap between the publish and the expect step.
+1. **Message expired or was evicted before the step ran.** Each assertion attempt explicitly assigns the topic's actual partitions at their earliest retained offsets, so a record published before the step starts remains eligible. A record already removed by retention cannot be recovered; check topic retention against the publish-to-expect interval.
 2. **Topic does not exist.** The message was published to a different topic.
 3. **Key or match criteria are too strict.** The message exists but does not match the filter.
-4. **Timing issue.** The publish step and expect step are running concurrently; the expect starts before the publish completes.
+4. **Timing issue.** The system under test has not yet published the matching record. Suite steps run in order; use `verifyMode: RETRY` for asynchronous application work.
 
 **Fix:**
 
@@ -884,7 +891,7 @@ Common causes:
    ```yaml
    match:
      # Removed strict key filter for debugging
-     bodyContains: "orderId"
+     payloadContains: "orderId"
    ```
 
 4. **Use `verifyMode: RETRY`** with a reasonable `timeout` (e.g., 10–30 seconds):
@@ -904,7 +911,7 @@ Common causes:
    docker logs <kafka-container-id>
    ```
 
-6. **Understand Kafka's offset management.** Each attempt uses a fresh consumer group and reads from the earliest offset, so a message present before the step starts will be visible. Ensure the publish step runs *before* the expect step so the message has been written to the broker by the time the consumer starts.
+6. **Understand Kafka's offset management.** Each attempt explicitly assigns every topic partition at its earliest retained offset. Discovery and consumption share the bounded attempt window; EOF on one partition does not end the others. Ensure the broker's advertised listener is reachable from the CLI host, the declared security material matches, and the publish step precedes the expect step. Retained data remains eligible, but a bounded attempt may need another RETRY attempt to find a match.
 
 ---
 
@@ -997,38 +1004,30 @@ An `mq-expect.nats` step times out with an `Inconclusive` verdict, but the messa
 **What it means:**
 NATS JetStream messages are **only retained if the stream exists before they are published.** If you publish to a subject before the stream is created, the message is lost and cannot be recovered. The step then polls indefinitely and times out.
 
-**Common scenario:**
-1. Publish step runs and tries to publish to `orders.created`.
-2. The provider creates the stream on first use (lazy initialisation).
-3. But if there is a race or ordering issue, the stream might not exist yet → message is lost.
-4. Expect step runs later, creates the stream, and polls — but the message is gone.
+**External-producer scenario:** the system under test publishes before a matching JetStream stream
+exists, then a later expect step creates the stream after that message has already been lost.
+Configure the stream and its subjects before triggering the system under test.
+
+The built-in `mq-publish.nats` provider creates the requested stream before publishing. A normal
+built-in publish → expect sequence does not require a deliberately failing warm-up assertion.
 
 **Fix:**
 
-1. **Ensure the stream exists before publishing.** The simplest approach is to have an expect step run *before* the publish to warm up the stream:
+1. **Create the stream before an external producer sends messages.** Declare it in the application or broker setup, with subjects matching the publication. When using the built-in publisher, use the same explicit stream and subject in the publish and expect steps:
    ```yaml
    steps:
-     # Step 1: Warm up the stream (ensures it exists)
-     - id: ensure-stream-exists
-       type: mq-expect.nats
-       target: nats-broker
-       subject: orders.created
-       match:
-         payloadContains: "dummy"  # A dummy criterion that will fail
-       continueOnFailure: true  # We expect this to fail; we just want the stream created
-
-     # Step 2: Now publish (stream is guaranteed to exist)
      - id: publish-order-event
        type: mq-publish.nats
        target: nats-broker
        subject: orders.created
+       stream: ORDERS_CREATED
        payload: '{"orderId":"123"}'
 
-     # Step 3: Assert (stream exists and message is retained)
      - id: assert-order-event
        type: mq-expect.nats
        target: nats-broker
        subject: orders.created
+       stream: ORDERS_CREATED
        match:
          payloadContains: "123"
        verifyMode: RETRY
