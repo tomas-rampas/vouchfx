@@ -226,9 +226,12 @@ jobs:
       # ephemeral tree — so the conclusion holds, but the trx is not what introduced
       # paths to this artifact and removing it would not make the artifact path-free.  If a self-hosted runner is ever added here, this
       # paragraph stops being true and the flag should be reconsidered with it.
+      # Bound cross-project contention while preserving every existing test and timeout.
+      # Per-project xUnit scheduling and exclusive certificate guards remain unchanged.
       - name: Unit tests (requires!=docker)
         run: >
           dotnet test vouchfx.sln
+          -m:1
           -c Release
           --no-build
           --filter "requires!=docker"
@@ -280,9 +283,12 @@ jobs:
 
       # Retain the project-specific VSTestLogger from Directory.Build.props;
       # a CLI --logger override would erase its unique per-project prefix.
+      # Bound cross-project contention while preserving every existing test and timeout.
+      # Per-project xUnit scheduling and exclusive certificate guards remain unchanged.
       - name: Unit tests (requires!=docker)
         run: >
           dotnet test vouchfx.sln
+          -m:1
           -c Release
           --no-build
           --filter "requires!=docker"

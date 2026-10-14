@@ -671,20 +671,24 @@ public sealed class EnvironmentTopologyDurabilityDockerTests
                 start.ArgumentList.Add(arg);
             foreach (var key in new[] { "LOCALAPPDATA", "XDG_DATA_HOME", "DOTNET_CLI_HOME", "NUGET_PACKAGES", "TMP", "TEMP", "TMPDIR" })
                 start.Environment[key] = System.IO.Directory.CreateDirectory(Path.Combine(profile, key.ToLowerInvariant())).FullName;
-            using var process = Process.Start(start) ?? throw new InvalidOperationException("The CLI could not start.");
-            var pid = process.Id;
-            var birthUtc = process.StartTime.ToUniversalTime();
+            // Finish filesystem preparation before there is a child to own.
             var evidenceRoot = Environment.GetEnvironmentVariable("VOUCHFX_TOPOLOGY_ACCEPTANCE_RESULTS");
             var retained = evidenceRoot is null ? profile : Path.Combine(evidenceRoot, "cold-cli", Path.GetFileName(profile));
             System.IO.Directory.CreateDirectory(retained);
-            var stdout = CaptureRawFileAsync(process.StandardOutput.BaseStream, Path.Combine(retained, "stdout.txt"), deadline.Token);
-            var stderr = CaptureRawFileAsync(process.StandardError.BaseStream, Path.Combine(retained, "stderr.txt"), deadline.Token);
+            Task<RawStreamBinding>? stdout = null;
+            Task<RawStreamBinding>? stderr = null;
             var observed = new HashSet<string>(StringComparer.Ordinal);
             var observedDcp = new HashSet<string>(StringComparer.Ordinal);
             var observedJournals = new HashSet<string>(StringComparer.Ordinal);
             ResourceInventory active = before;
+            using var process = Process.Start(start) ?? throw new InvalidOperationException("The CLI could not start.");
             try
             {
+                // Identity and reader setup are owned by the same finally as execution.
+                var pid = process.Id;
+                var birthUtc = process.StartTime.ToUniversalTime();
+                stdout = CaptureRawFileAsync(process.StandardOutput.BaseStream, Path.Combine(retained, "stdout.txt"), deadline.Token);
+                stderr = CaptureRawFileAsync(process.StandardError.BaseStream, Path.Combine(retained, "stderr.txt"), deadline.Token);
                 while (!process.HasExited)
                 {
                     RefuseFailedCapture(stdout);
@@ -706,7 +710,7 @@ public sealed class EnvironmentTopologyDurabilityDockerTests
             {
                 try
                 {
-                    if (!process.HasExited) process.Kill(entireProcessTree: true);
+                    ChildProcess.KillTreeQuietly(process);
                     using var reap = new CancellationTokenSource(TimeSpan.FromSeconds(10));
                     await process.WaitForExitAsync(reap.Token);
                 }
@@ -717,9 +721,17 @@ public sealed class EnvironmentTopologyDurabilityDockerTests
                     RawStreamBinding? stdoutBinding = null;
                     RawStreamBinding? stderrBinding = null;
                     string? captureError = null;
-                    try { stdoutBinding = await stdout; }
+                    try
+                    {
+                        if (stdout is null) captureError = "stdout:ReaderNotStarted";
+                        else stdoutBinding = await stdout;
+                    }
                     catch (Exception error) { captureError = "stdout:" + error.GetType().Name; }
-                    try { stderrBinding = await stderr; }
+                    try
+                    {
+                        if (stderr is null) captureError = (captureError is null ? "" : captureError + ";") + "stderr:ReaderNotStarted";
+                        else stderrBinding = await stderr;
+                    }
                     catch (Exception error) { captureError = (captureError is null ? "" : captureError + ";") + "stderr:" + error.GetType().Name; }
                     await File.WriteAllTextAsync(Path.Combine(retained, "captures.json"), JsonSerializer.Serialize(new
                     { SchemaVersion = 1, Stdout = stdoutBinding, Stderr = stderrBinding, CaptureError = captureError }), CancellationToken.None);
@@ -769,17 +781,17 @@ public sealed class EnvironmentTopologyDurabilityDockerTests
             var start = new ProcessStartInfo("docker") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true };
             foreach (var argument in arguments) start.ArgumentList.Add(argument);
             using var process = Process.Start(start) ?? throw new InvalidOperationException("Docker could not start.");
-            var stdout = ReadBoundedAsync(process.StandardOutput, deadline.Token);
-            var stderr = ReadBoundedAsync(process.StandardError, deadline.Token);
             try
             {
+                var stdout = ReadBoundedAsync(process.StandardOutput, deadline.Token);
+                var stderr = ReadBoundedAsync(process.StandardError, deadline.Token);
                 await Task.WhenAll(stdout, stderr, process.WaitForExitAsync(deadline.Token));
                 Assert.True(process.ExitCode == 0, "Owned topology fixture Docker operation failed (exit " + process.ExitCode.ToString(CultureInfo.InvariantCulture) + "); output withheld.");
                 return (await stdout).Trim();
             }
             finally
             {
-                if (!process.HasExited) process.Kill(entireProcessTree: true);
+                ChildProcess.KillTreeQuietly(process);
                 using var reap = new CancellationTokenSource(TimeSpan.FromSeconds(10));
                 await process.WaitForExitAsync(reap.Token);
             }

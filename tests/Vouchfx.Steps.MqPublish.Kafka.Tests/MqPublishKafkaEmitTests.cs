@@ -43,6 +43,7 @@ using Vouchfx.Engine.Compilation;
 using Vouchfx.Sdk;
 using Vouchfx.Steps.MqPublish.Kafka;
 using Xunit;
+using Xunit.Abstractions;
 
 namespace Vouchfx.Steps.MqPublish.Kafka.Tests;
 
@@ -54,6 +55,9 @@ namespace Vouchfx.Steps.MqPublish.Kafka.Tests;
 /// </summary>
 public sealed class MqPublishKafkaEmitTests
 {
+    private readonly ITestOutputHelper _output;
+
+    public MqPublishKafkaEmitTests(ITestOutputHelper output) => _output = output;
     // ── Stubs ─────────────────────────────────────────────────────────────────────
 
     /// <summary>Minimal <see cref="ICompileContext"/> for emit tests.</summary>
@@ -888,6 +892,7 @@ public sealed class MqPublishKafkaEmitTests
         // the two live in different assemblies and each needs its own budget-relative headroom.
         const long graceMs = 1_500;
 
+        using var diagnostics = new KafkaBudgetDiagnostics();
         var model = MakeModel("bus", "orders", "hello");
         var fragment = _provider.Emit(model, new StubCompileContext(stepId));
 
@@ -901,8 +906,10 @@ public sealed class MqPublishKafkaEmitTests
                 stepId, fragment, Retry: false, TimeoutMs: budgetMs, PollIntervalMs: null),
         }).CsxSource;
 
+        diagnostics.BeginCompile();
         var compiled = RoslynScriptCompiler.CompileOnce(
             csx, additionalReferencePaths: EmittedHelperReferencePaths);
+        diagnostics.EndCompile();
 
         var vars = new Dictionary<string, object?>(StringComparer.Ordinal)
         {
@@ -910,9 +917,20 @@ public sealed class MqPublishKafkaEmitTests
             [VarKeys.Connection("bus")] = "127.0.0.1:9",
         };
 
-        await RoslynScriptCompiler.RunIsolatedAsync(compiled, new ScriptGlobalVariables(vars));
+        diagnostics.BeginInvocation(budgetMs);
+        try
+        {
+            await RoslynScriptCompiler.RunIsolatedAsync(compiled, new ScriptGlobalVariables(vars));
+        }
+        finally
+        {
+            diagnostics.EndInvocation();
+            _output.WriteLine(diagnostics.Describe());
+        }
 
         var outcome = Assert.IsType<StepOutcome>(vars[VarKeys.Outcome(CsxFragment.SanitiseId(stepId))]);
+
+        _output.WriteLine(diagnostics.Describe(outcome.DurationMs));
 
         // The produce was cut by the step token and the wrapper classified it — proving the
         // teardown neither threw nor overwrote the outcome on its way out.
@@ -924,7 +942,7 @@ public sealed class MqPublishKafkaEmitTests
             outcome.DurationMs <= budgetMs + graceMs,
             $"step declared a {budgetMs} ms timeout but concluded in {outcome.DurationMs} ms — " +
             $"an overrun of {outcome.DurationMs - budgetMs} ms against an allowed grace of " +
-            $"{graceMs} ms (#367). Observation: {outcome.Observation}");
+            $"{graceMs} ms (#367). Observation: {outcome.Observation}. {diagnostics.Describe(outcome.DurationMs)}");
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────────
