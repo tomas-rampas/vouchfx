@@ -420,7 +420,11 @@ public sealed class SchemaValidateConstraintsTests
         // dependentRequired fires a specific, correctly-located message naming the pair.
         var located = result.Errors.Where(e => e.InstanceLocation == "/steps/0").ToList();
         Assert.True(located.Count > 0, $"Expected at least one error at '/steps/0'; got:{Environment.NewLine}{Dump(result.Errors)}");
-        Assert.Contains(located, e => e.Message.Contains("[dependentRequired]", StringComparison.Ordinal));
+        Assert.Equal(3, result.Errors.Count);
+        Assert.Collection(located,
+            error => Assert.Equal("(line 2) Some required property dependencies are missing: [\"subscription\"]", error.Message),
+            error => Assert.Equal("(line 2) Required properties [\"queue\"] are not present", error.Message),
+            error => Assert.Equal("(line 2) Required properties [\"subscription\"] are not present", error.Message));
     }
 
     [Fact]

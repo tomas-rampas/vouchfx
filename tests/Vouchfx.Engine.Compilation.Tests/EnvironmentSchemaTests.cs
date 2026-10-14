@@ -2674,7 +2674,7 @@ public sealed class EnvironmentSchemaTests
         Assert.False(result.IsValid, "An empty 'endpoint' names no endpoint and must be rejected (minLength: 1).");
         var onlyError = Assert.Single(result.Errors);
         Assert.Equal("/environment/services/app/endpoint", onlyError.InstanceLocation);
-        Assert.Contains("[minLength]", onlyError.Message, System.StringComparison.Ordinal);
+        Assert.Equal("Value should be at least 1 characters", onlyError.Message);
     }
 
     /// <summary>

@@ -182,7 +182,7 @@ public sealed class SchemaErrorCollectorTests
             Assert.False(result.IsValid);
             var error = Assert.Single(result.Errors);
             Assert.Equal($"/environment/{map}/{EscapeNamePointer(name)}/security", error.InstanceLocation);
-            Assert.Equal($"[required] Required properties [\"endpoint\"] are not present on {kind} '{display}'", error.Message);
+            Assert.Equal($"Required properties [\"endpoint\"] are not present on {kind} '{display}'", error.Message);
         }
     }
 
@@ -205,7 +205,7 @@ public sealed class SchemaErrorCollectorTests
         Assert.False(result.IsValid);
         var error = Assert.Single(result.Errors);
         Assert.Equal($"/environment/services/{EscapeNamePointer(name)}/healthCheck", error.InstanceLocation);
-        Assert.Equal($"[required] Required properties [\"type\"] are not present in service '{display}' (at healthCheck)", error.Message);
+        Assert.Equal($"Required properties [\"type\"] are not present in service '{display}' (at healthCheck)", error.Message);
     }
 
     [Theory]
@@ -240,7 +240,7 @@ public sealed class SchemaErrorCollectorTests
         Assert.False(result.IsValid);
         var error = Assert.Single(result.Errors);
         Assert.Equal("/steps/0/capture/" + EscapeNamePointer(name), error.InstanceLocation);
-        Assert.Equal($"[minProperties] Capture entry '{display}' must set at least one of 'jsonpath', 'xpath' - none is present (DSL section 6.1).", error.Message);
+        Assert.Equal($"Capture entry '{display}' must set at least one of 'jsonpath', 'xpath' - none is present (DSL section 6.1).", error.Message);
         Assert.True(YamlSchemaValidator.Validate(yaml.Replace(": {}", ": { jsonpath: '$.id' }", StringComparison.Ordinal)).IsValid);
     }
 
@@ -263,7 +263,7 @@ public sealed class SchemaErrorCollectorTests
         Assert.False(result.IsValid);
         var error = Assert.Single(result.Errors);
         Assert.Equal("/steps/0/capture/" + EscapeNamePointer(reservedName), error.InstanceLocation);
-        Assert.Equal($"[pattern] Property name '{reservedDisplay}' begins with an engine-reserved bookkeeping prefix - see this field's own description for the reserved prefix list.", error.Message);
+        Assert.Equal($"Property name '{reservedDisplay}' begins with an engine-reserved bookkeeping prefix - see this field's own description for the reserved prefix list.", error.Message);
     }
 
     [Theory]
@@ -285,7 +285,7 @@ public sealed class SchemaErrorCollectorTests
         Assert.False(result.IsValid);
         var error = Assert.Single(result.Errors);
         Assert.Equal($"/environment/services/{EscapeNamePointer(name)}/healthCheck/type", error.InstanceLocation);
-        Assert.Equal($"[const] Service '{display}' declares 'healthCheck: {{ type: http }}', but its 'ports' declaration has no sibling 'httpPort' - no HTTP endpoint exists there for anything but a 'tcp' probe to target. Add 'httpPort:' to expose one, or write 'healthCheck: {{ type: tcp }}'.", error.Message);
+        Assert.Equal($"Service '{display}' declares 'healthCheck: {{ type: http }}', but its 'ports' declaration has no sibling 'httpPort' - no HTTP endpoint exists there for anything but a 'tcp' probe to target. Add 'httpPort:' to expose one, or write 'healthCheck: {{ type: tcp }}'.", error.Message);
     }
 
     [Theory]

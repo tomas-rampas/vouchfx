@@ -1,4 +1,3 @@
-using System;
 using Vouchfx.Engine.Compilation.Schema;
 using Xunit;
 
@@ -32,8 +31,9 @@ public sealed class ExternalEnvironmentSchemaTests
             steps: [{id: noop, type: noop.echo}]
             """);
         Assert.False(result.IsValid);
-        Assert.Contains(result.Errors, error => error.InstanceLocation == "/environment"
-            && error.Message.Contains("maxProperties", StringComparison.Ordinal));
+        var onlyError = Assert.Single(result.Errors);
+        Assert.Equal("/environment", onlyError.InstanceLocation);
+        Assert.Equal("Value should have at most 1 properties", onlyError.Message);
     }
 
     [Fact]
