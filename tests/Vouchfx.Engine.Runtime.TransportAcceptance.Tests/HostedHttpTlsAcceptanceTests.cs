@@ -60,6 +60,7 @@ public sealed class HostedHttpTlsAcceptanceTests
             // Same setup phase, leaf-only wire and live AIA endpoint as production.
             // This must fetch successfully after setup: a cached 404 cannot be proof.
             Assert.True(controlBuilt && controlObservation.Authenticated);
+            Assert.True(controlObservation.ApplicationRequestBytesRead > 0);
             Assert.Equal(0x0303, controlObservation.Sent.ServerHelloVersion);
             Assert.Equal(control.Server.RawData, Assert.Single(controlObservation.Sent.Certificates));
             Assert.True(aia.AutomaticRequests(controlUrl) > 0);
@@ -81,6 +82,7 @@ public sealed class HostedHttpTlsAcceptanceTests
                 nativeControlAiaPath = new Uri(controlUrl).AbsolutePath,
                 productionAiaPath = new Uri(url).AbsolutePath,
                 nativeControlAuthenticated = controlObservation.Authenticated,
+                nativeControlApplicationRequestBytesRead = controlObservation.ApplicationRequestBytesRead,
                 nativeControlServerHelloVersion = controlObservation.Sent.ServerHelloVersion,
                 nativeControlProtocol = controlObservation.Protocol?.ToString(),
                 nativeControlCertificates = controlCertificates,
@@ -96,7 +98,9 @@ public sealed class HostedHttpTlsAcceptanceTests
         Assert.True(controlBuilt && aia.AutomaticRequests(controlUrl) > 0,
             "The independent native AIA control could not fetch/build on " + RuntimeInformation.OSDescription + "; no suppression proof is claimed for this platform.");
         Assert.Equal(Verdict.EnvironmentError, outcome.Verdict);
-        Assert.False(observation.Authenticated);
+        // Server native completion can precede the client's managed certificate
+        // rejection. The client callback and zero decrypted HTTP bytes prove refusal.
+        Assert.Equal(0, observation.ApplicationRequestBytesRead);
         Assert.Equal(0x0303, observation.Sent.ServerHelloVersion);
         Assert.Equal(bed.Server.RawData, Assert.Single(observation.Sent.Certificates));
         Assert.DoesNotContain(observation.Sent.Certificates, certificate => certificate.AsSpan().SequenceEqual(bed.Issuer.RawData));
@@ -206,7 +210,7 @@ public sealed class HostedHttpTlsAcceptanceTests
     private static string Sha(byte[] value) => Convert.ToHexString(SHA256.HashData(value)).ToLowerInvariant();
     private static object Evidence(string fact, HostedHttpTlsCertificateBed bed, ServerObservation observation, RecordingAccessor security, StepOutcome outcome, object controls) => new
     {
-        schemaVersion = 2,
+        schemaVersion = 3,
         fact,
         platform = RuntimeInformation.OSDescription,
         fixtureNonce = bed.Nonce,
@@ -219,6 +223,7 @@ public sealed class HostedHttpTlsAcceptanceTests
         serverCertificateMessage = observation.Sent.CertificateMessage is null ? null : Convert.ToBase64String(observation.Sent.CertificateMessage),
         serverHelloVersion = observation.Sent.ServerHelloVersion,
         authenticated = observation.Authenticated,
+        applicationRequestBytesRead = observation.ApplicationRequestBytesRead,
         protocol = observation.Protocol?.ToString(),
         failureType = observation.FailureType,
         failurePhase = observation.FailureType is null ? null : observation.Authenticated ? "http" : "authentication",

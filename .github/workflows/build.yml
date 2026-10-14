@@ -356,6 +356,8 @@ jobs:
     name: Integration tests — Docker / Aspire
     runs-on: ubuntu-latest
     needs: build
+    env:
+      VOUCHFX_TOPOLOGY_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
 
     steps:
       - name: Checkout
@@ -1262,6 +1264,20 @@ jobs:
             --source "${XDG_DATA_HOME:-$HOME/.local/share}/vouchfx" \
             --state "$RUNNER_TEMP/dcp-capture-baseline.json"
 
+      - name: Test topology evidence verifier (file-only controls)
+        run: python -B -m unittest discover -s scripts/tests -p test_owned_environment_acceptance.py -v
+
+      - name: Prepare first-attempt topology evidence
+        id: topology-evidence-preparation
+        env:
+          VOUCHFX_TOPOLOGY_ACCEPTANCE_RESULTS: ${{ runner.temp }}/vouchfx-topology-acceptance
+        run: |
+          python -B scripts/assert-owned-environment-acceptance.py --prepare \
+            --directory "$VOUCHFX_TOPOLOGY_ACCEPTANCE_RESULTS" \
+            --cli src/Cli/Vouchfx.Cli/bin/Release/net8.0/vouchfx.dll \
+            --checkout-sha "$(git rev-parse HEAD)" --head-sha "$VOUCHFX_TOPOLOGY_PR_HEAD_SHA"
+          echo "VOUCHFX_TOPOLOGY_ACCEPTANCE_RESULTS=$VOUCHFX_TOPOLOGY_ACCEPTANCE_RESULTS" >> "$GITHUB_ENV"
+
       - name: Integration tests (requires=docker)
         id: docker-tests
         run: >
@@ -1274,6 +1290,22 @@ jobs:
           --blame-crash-dump-type mini
           --collect:"XPlat Code Coverage"
           --results-directory TestResults
+
+      - name: Verify owned topology acceptance counts and closure
+        if: always() && steps.topology-evidence-preparation.outcome == 'success'
+        run: |
+          python -B scripts/assert-owned-environment-acceptance.py \
+            --directory "$VOUCHFX_TOPOLOGY_ACCEPTANCE_RESULTS" \
+            --cli src/Cli/Vouchfx.Cli/bin/Release/net8.0/vouchfx.dll
+
+      - name: Upload first-attempt owned topology evidence
+        if: always() && steps.topology-evidence-preparation.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: owned-environment-acceptance
+          path: ${{ runner.temp }}/vouchfx-topology-acceptance
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Collect new default-root DCP captures
         id: dcp-captures

@@ -87,13 +87,15 @@ internal sealed class OwnedAiaServer : IAsyncDisposable
             await stream.WriteAsync(body, _stop.Token).ConfigureAwait(false);
         }
     }
-    internal static async Task<string> ReadHeaderAsync(Stream stream, CancellationToken token)
+    internal static async Task<string> ReadHeaderAsync(Stream stream, CancellationToken token, Action<int>? observeBytesRead = null)
     {
         var bytes = new List<byte>();
         var one = new byte[1];
         while (bytes.Count < 16384)
         {
-            if (await stream.ReadAsync(one, token).ConfigureAwait(false) == 0) { throw new IOException("Fixture HTTP headers ended early."); }
+            var read = await stream.ReadAsync(one, token).ConfigureAwait(false);
+            observeBytesRead?.Invoke(read);
+            if (read == 0) { throw new IOException("Fixture HTTP headers ended early."); }
             bytes.Add(one[0]);
             if (bytes.Count >= 4 && bytes[^4] == 13 && bytes[^3] == 10 && bytes[^2] == 13 && bytes[^1] == 10) { return Encoding.ASCII.GetString(bytes.ToArray()); }
         }
@@ -109,7 +111,7 @@ internal sealed class OwnedAiaServer : IAsyncDisposable
 }
 
 internal sealed record ClientTrustDecision(bool Trusted, IReadOnlyList<string> ChainErrors);
-internal sealed record ServerObservation(bool Authenticated, string? FailureType, SslProtocols? Protocol, Tls12CertificateCapture Received, Tls12CertificateCapture Sent, ClientTrustDecision? ClientTrust);
+internal sealed record ServerObservation(bool Authenticated, string? FailureType, SslProtocols? Protocol, Tls12CertificateCapture Received, Tls12CertificateCapture Sent, ClientTrustDecision? ClientTrust, int ApplicationRequestBytesRead);
 internal sealed class OwnedTlsServer : IAsyncDisposable
 {
     private static readonly string[] s_missingClientErrors = { "RemoteCertificateMissing" };
@@ -139,6 +141,7 @@ internal sealed class OwnedTlsServer : IAsyncDisposable
             return clientTrust.Trusted;
         });
         var authenticated = false;
+        var applicationRequestBytesRead = 0;
         try
         {
             // A fresh server key/leaf and no additional issuers. Wire capture must confirm
@@ -152,13 +155,13 @@ internal sealed class OwnedTlsServer : IAsyncDisposable
                 CertificateChainPolicy = new X509ChainPolicy { DisableCertificateDownloads = true, RevocationMode = X509RevocationMode.NoCheck },
             }, _stop.Token).ConfigureAwait(false);
             authenticated = true;
-            await OwnedAiaServer.ReadHeaderAsync(tls, _stop.Token).ConfigureAwait(false);
+            await OwnedAiaServer.ReadHeaderAsync(tls, _stop.Token, read => applicationRequestBytesRead += read).ConfigureAwait(false);
             await tls.WriteAsync(Encoding.ASCII.GetBytes("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok"), _stop.Token).ConfigureAwait(false);
-            return new ServerObservation(true, null, tls.SslProtocol, capture.Received, capture.Sent, clientTrust);
+            return new ServerObservation(true, null, tls.SslProtocol, capture.Received, capture.Sent, clientTrust, applicationRequestBytesRead);
         }
         catch (Exception ex) when (ex is AuthenticationException or IOException)
         {
-            return new ServerObservation(authenticated, ex.GetType().Name, authenticated ? tls.SslProtocol : null, capture.Received, capture.Sent, clientTrust);
+            return new ServerObservation(authenticated, ex.GetType().Name, authenticated ? tls.SslProtocol : null, capture.Received, capture.Sent, clientTrust, applicationRequestBytesRead);
         }
     }
     private static ClientTrustDecision TrustClient(X509Certificate? remote, X509Chain? supplied, X509Certificate2 root)

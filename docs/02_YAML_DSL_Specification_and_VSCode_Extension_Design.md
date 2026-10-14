@@ -489,7 +489,7 @@ environment:
 
 The source configuration resolves relative to the suite. The source form is exclusive with inline services, dependencies, seed and image defaults. Its adapter owns the configuration schema and supplies normalised logical targets to the same validation, compilation and execution pipeline. Omitting `source` retains inline behaviour.
 
-The Compose driver currently supports owned, fresh-per-scenario HTTP and PostgreSQL environments, native Compose merging, random IPv4 ports and explicit readiness probes. Config/manifest/env-file changes trigger watch reruns; each run recreates its project. Unsupported borrowed resources, reuse, seed and external-driver TLS/mTLS declarations are refused before startup. See [Owned Docker Compose environments](compose-environments.md) for the complete grammar, limitations and recovery command. Export the separate schema with `vouchfx schema --environment-driver compose`; it is not the ordinary suite schema.
+The Compose driver currently supports owned, fresh-per-scenario HTTP/TCP services and PostgreSQL dependencies, native Compose merging, random IPv4 ports and explicit readiness probes. Config/manifest/env-file changes trigger watch reruns; each run recreates its project. Unsupported borrowed resources, reuse, seed and external-driver TLS/mTLS declarations are refused before startup. See [Owned Docker Compose environments](compose-environments.md) for the complete grammar, limitations and recovery command. Export the separate schema with `vouchfx schema --environment-driver compose`; it is not the ordinary suite schema.
 
 ### 3.3 The variables section
 

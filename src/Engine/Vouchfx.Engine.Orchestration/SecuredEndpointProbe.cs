@@ -1370,16 +1370,31 @@ internal static class SecuredEndpointProbe
             RevocationMode = X509RevocationMode.NoCheck,
         };
         policy.ApplicationPolicy.Add(new Oid("1.3.6.1.5.5.7.3.1"));
-        return new SslClientAuthenticationOptions
+        var options = new SslClientAuthenticationOptions
         {
             TargetHost = host,
             EnabledSslProtocols = SslProtocols.None,
             // The identity-bearing and anonymous arms must each negotiate a fresh TLS session.
-            // A resumed session can retain the first arm's identity despite a null client context.
             AllowTlsResume = false,
             CertificateChainPolicy = policy,
-            ClientCertificateContext = clientContext,
         };
+        if (clientContext is not null)
+        {
+            if (System.OperatingSystem.IsWindows())
+            {
+                // .NET 8's initial Windows credential acquisition can cache a supplied context
+                // under the anonymous key. Select its leaf when requested instead; the same
+                // offline context already prepared Schannel's supplied intermediate material.
+                options.ClientCertificates = new X509CertificateCollection { clientContext.TargetCertificate };
+                options.LocalCertificateSelectionCallback = (_, _, _, _, _) => clientContext.TargetCertificate;
+            }
+            else
+            {
+                options.ClientCertificateContext = clientContext;
+            }
+        }
+
+        return options;
     }
 
     /// <summary>

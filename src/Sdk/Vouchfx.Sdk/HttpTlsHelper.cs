@@ -41,8 +41,23 @@ public static class HttpTlsHelper
                     }
                     // Certificates are borrowed from the scenario-owned accessor. Offline
                     // context construction uses supplied candidates without downloading links.
-                    handler.SslOptions.ClientCertificateContext =
+                    var clientContext =
                         System.Net.Security.SslStreamCertificateContext.Create(leaf, intermediates, offline: true);
+                    if (System.OperatingSystem.IsWindows())
+                    {
+                        // Keep the offline context and its supplied intermediates alive.
+                        // Explicit selection avoids .NET 8 caching its initial Windows
+                        // identity-bearing credential under the anonymous cache key.
+                        handler.SslOptions.ClientCertificates =
+                            new System.Security.Cryptography.X509Certificates.X509CertificateCollection
+                            { clientContext.TargetCertificate };
+                        handler.SslOptions.LocalCertificateSelectionCallback =
+                            (_, _, _, _, _) => clientContext.TargetCertificate;
+                    }
+                    else
+                    {
+                        handler.SslOptions.ClientCertificateContext = clientContext;
+                    }
                 }
                 else if (string.Equals(profile, "tls", System.StringComparison.Ordinal))
                 {

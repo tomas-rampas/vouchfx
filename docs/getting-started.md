@@ -55,7 +55,40 @@ These commands omit `--version` to select the latest stable release. Use `--prer
 intentionally testing a pre-release. Self-contained platform archives and installers are available on
 [the latest stable GitHub release](https://github.com/tomas-rampas/vouchfx/releases/latest).
 
-The installer places the `vouchfx` command in `~/.dotnet/tools` (`%USERPROFILE%\.dotnet\tools` on Windows). If your shell cannot find `vouchfx` afterwards, add that directory to your `PATH` or open a fresh shell — the installer only updates `PATH` for new sessions.
+The global-tool installer places the `vouchfx` command in `~/.dotnet/tools` (`%USERPROFILE%\.dotnet\tools` on Windows). If your shell cannot find `vouchfx` afterwards, add that directory to your `PATH` or open a fresh shell.
+
+### Native installers
+
+The GitHub release also provides a Windows x64 MSI, a Linux x64 Debian package and a macOS
+Apple Silicon package. These contain the .NET runtime; they do not require the .NET SDK.
+Download the installer for your platform, then use the corresponding command:
+
+| Platform | Installation | Installed files | Removal |
+|----------|--------------|-----------------|---------|
+| Windows x64 | `msiexec /i vouchfx-VERSION-win-x64.msi` | `%ProgramFiles%\vouchfx`; system PATH entry | Windows **Installed apps**, or `msiexec /x vouchfx-VERSION-win-x64.msi` |
+| Linux x64 | `sudo dpkg --install vouchfx-VERSION-linux-x64.deb` | `/usr/lib/vouchfx`; link at `/usr/local/bin/vouchfx` | `sudo dpkg --purge vouchfx` |
+| macOS arm64 | `sudo installer -pkg vouchfx-VERSION-osx-arm64.pkg -target /` | `/usr/local/lib/vouchfx`; link at `/usr/local/bin/vouchfx` | Remove the package-owned files and receipt as described below. |
+
+Replace `VERSION` with the downloaded release version. Open a fresh shell after Windows installation,
+then run `vouchfx --version`. Intel macOS users can use the global tool or the `osx-x64` archive.
+
+A macOS package has no built-in uninstall action. Check `pkgutil --files com.vouchfx.cli` first:
+its CLI files must be confined to `usr/local/lib/vouchfx` and `usr/local/bin/vouchfx`. Remove those
+installed files, then forget the receipt:
+
+```bash
+sudo rm /usr/local/bin/vouchfx
+sudo rm -r /usr/local/lib/vouchfx
+sudo pkgutil --forget com.vouchfx.cli
+```
+
+Forgetting the receipt alone leaves the executable installed. After removal, open a fresh shell and
+confirm that `vouchfx` is unavailable.
+
+The release workflow gates each native installer upload on a hosted install, discovery through PATH,
+the exact candidate CLI version, and removal of its files and registration. Extraction and four-RID
+archive/tool launch checks remain separate. The helper is restricted to fresh GitHub-hosted runners;
+a configured gate is not evidence that an untested release candidate has passed.
 
 **DCP distribution and supported platforms.** Core `1.0.0` introduced matching Aspire DCP tools
 bundled with the CLI: `win-x64`, `linux-x64` (glibc), `osx-x64` and `osx-arm64`. The global tool

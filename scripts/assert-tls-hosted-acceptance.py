@@ -16,7 +16,7 @@ PREFIX = "Vouchfx.Engine.Runtime.TransportAcceptance.Tests."
 EXPECTED = {PREFIX + "HostedHttpTlsAcceptanceTests." + name for name in FACTS} | {
     PREFIX + "OwnedCertificateStoreGuardTests.FinalGuard_NoOwnedCertificateResidue"
 }
-KEYS = {"schemaVersion", "fact", "platform", "fixtureNonce", "scope", "rootDer", "issuerDer", "serverDer", "clientDer", "clientCertificateMessage", "serverCertificateMessage", "serverHelloVersion", "authenticated", "protocol", "failureType", "failurePhase", "clientTrust", "verdict", "decisions", "controls"}
+KEYS = {"schemaVersion", "fact", "platform", "fixtureNonce", "scope", "rootDer", "issuerDer", "serverDer", "clientDer", "clientCertificateMessage", "serverCertificateMessage", "serverHelloVersion", "authenticated", "applicationRequestBytesRead", "protocol", "failureType", "failurePhase", "clientTrust", "verdict", "decisions", "controls"}
 
 def certificate_message(encoded):
     data = base64.b64decode(encoded, validate=True)
@@ -64,23 +64,30 @@ def verify(root):
     nonces, issuers = set(), set()
     for name in FACTS:
         path = root / "evidence" / (name + ".json"); assert path.stat().st_size <= 512 * 1024
-        row = json.loads(path.read_text(encoding="utf-8")); assert set(row) == KEYS and row["schemaVersion"] == 2 and row["fact"] == name
+        row = json.loads(path.read_text(encoding="utf-8")); assert set(row) == KEYS and row["schemaVersion"] == 3 and row["fact"] == name
         assert row["fixtureNonce"] not in nonces; nonces.add(row["fixtureNonce"])
         issuer = der_certificate(row["issuerDer"]); assert issuer not in issuers; issuers.add(issuer)
         server = der_certificate(row["serverDer"]); der_certificate(row["rootDer"])
         assert row["serverHelloVersion"] == 0x0303
+        assert type(row["authenticated"]) is bool
+        assert type(row["applicationRequestBytesRead"]) is int and row["applicationRequestBytesRead"] >= 0
         decisions = row["decisions"]; assert decisions and all(set(decision) == {"Errors", "Trusted", "LeafSha256"} for decision in decisions)
         assert all(decision["LeafSha256"] == hashlib.sha256(server).hexdigest() for decision in decisions)
         if name == FACTS[0]:
-            assert row["clientDer"] is None and row["verdict"] == "EnvironmentError" and row["authenticated"] is False
+            assert row["clientDer"] is None and row["verdict"] == "EnvironmentError" and row["applicationRequestBytesRead"] == 0
             assert certificate_message(row["serverCertificateMessage"]) == [server]
             assert len(decisions) == 1 and decisions[0]["Trusted"] is False and decisions[0]["Errors"] == 4
-            assert row["failurePhase"] == "authentication" and row["failureType"] in {"AuthenticationException", "IOException"} and row["clientTrust"] is None
+            assert row["clientTrust"] is None
+            if row["authenticated"]:
+                assert row["protocol"] == "Tls12" and row["failurePhase"] == "http" and row["failureType"] == "IOException"
+            else:
+                assert row["protocol"] is None and row["failurePhase"] == "authentication" and row["failureType"] in {"AuthenticationException", "IOException"}
             control = row["controls"]
-            assert set(control) == {"nativeControlBuilt", "nativeControlAiaPath", "productionAiaPath", "nativeControlAuthenticated", "nativeControlServerHelloVersion", "nativeControlProtocol", "nativeControlCertificates", "nativeControlServerCertificateMessage", "nativeControlAutomaticFetches", "nativeControlServerCredentialRequests", "productionAutomaticFetches", "productionServerCredentialRequests", "endpointControlResponses", "requests"}
-            count_fields = ("nativeControlAutomaticFetches", "nativeControlServerCredentialRequests", "productionAutomaticFetches", "productionServerCredentialRequests", "endpointControlResponses")
+            assert set(control) == {"nativeControlBuilt", "nativeControlAiaPath", "productionAiaPath", "nativeControlAuthenticated", "nativeControlApplicationRequestBytesRead", "nativeControlServerHelloVersion", "nativeControlProtocol", "nativeControlCertificates", "nativeControlServerCertificateMessage", "nativeControlAutomaticFetches", "nativeControlServerCredentialRequests", "productionAutomaticFetches", "productionServerCredentialRequests", "endpointControlResponses", "requests"}
+            count_fields = ("nativeControlAutomaticFetches", "nativeControlServerCredentialRequests", "productionAutomaticFetches", "productionServerCredentialRequests", "endpointControlResponses", "nativeControlApplicationRequestBytesRead")
             assert all(type(control[key]) is int and control[key] >= 0 for key in count_fields)
             assert control["nativeControlBuilt"] is True and control["nativeControlAuthenticated"] is True
+            assert control["nativeControlApplicationRequestBytesRead"] > 0
             assert control["nativeControlServerHelloVersion"] == 0x0303 and control["nativeControlProtocol"] == "Tls12"
             native = control["nativeControlCertificates"]; assert set(native) == {"rootDer", "issuerDer", "serverDer"}
             native_root = der_certificate(native["rootDer"]); native_issuer = der_certificate(native["issuerDer"]); native_server = der_certificate(native["serverDer"])
@@ -108,10 +115,11 @@ def verify(root):
             if name == FACTS[1]:
                 assert row["verdict"] == "Pass" and row["authenticated"] is True and row["protocol"] == "Tls12"
                 assert sent and sent[0] == client and issuer in sent
-                assert row["failureType"] is None and row["failurePhase"] is None
+                assert row["failureType"] is None and row["failurePhase"] is None and row["applicationRequestBytesRead"] > 0
                 assert row["clientTrust"] is not None and row["clientTrust"]["Trusted"] is True
             else:
                 assert row["verdict"] == "EnvironmentError" and row["authenticated"] is False and issuer not in sent
+                assert row["applicationRequestBytesRead"] == 0
                 assert not sent or sent[0] == client
                 assert row["failurePhase"] == "authentication" and row["failureType"] in {"AuthenticationException", "IOException"}
                 trust = row["clientTrust"]; assert trust is not None and set(trust) == {"Trusted", "ChainErrors"} and trust["Trusted"] is False
