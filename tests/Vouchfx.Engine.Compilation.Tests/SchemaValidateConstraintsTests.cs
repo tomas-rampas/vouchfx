@@ -6,7 +6,7 @@
 // DocumentValidator directly (inline YAML), the same production path
 // SchemaStepSurfaceClosureTests and the Corpus/Accepted|Rejected gates exercise,
 // rather than a separate corpus file per case — more compact for a suite this wide
-// while still pinning exact InstanceLocation + keyword per the brief's requirement.
+// while still pinning the exact InstanceLocation and internal schema rule.
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -84,12 +84,18 @@ public sealed class SchemaValidateConstraintsTests
     {
         var result = DocumentValidator.Validate(yaml, Registry);
         Assert.False(result.IsValid, $"Expected rejection but the document validated. YAML:{Environment.NewLine}{yaml}");
-        var tag = $"[{expectedKeyword}]";
-        var matched = result.Errors.Any(e =>
-            string.Equals(e.InstanceLocation, expectedLocation, StringComparison.Ordinal) &&
-            e.Message.Contains(tag, StringComparison.Ordinal));
-        Assert.True(matched,
-            $"Expected a rejection at '{expectedLocation}' carrying '{tag}'; got:{Environment.NewLine}{Dump(result.Errors)}");
+        // Pin the schema rule at the internal seam; public messages carry its
+        // explanation and location rather than the JSON Schema keyword tag.
+        var tag = $"[{expectedKeyword}] ";
+        var raw = SchemaComposer.ValidateForDocument(Registry, yaml);
+        var expected = raw.Errors.Where(e => e.InstanceLocation == expectedLocation
+            && e.Message.StartsWith(tag, StringComparison.Ordinal)).ToList();
+        Assert.NotEmpty(expected);
+        Assert.All(expected, error => Assert.Contains(result.Errors, author =>
+            author.InstanceLocation == expectedLocation
+            && author.Message.EndsWith(error.Message[tag.Length..], StringComparison.Ordinal)));
+        Assert.All(result.Errors, error =>
+            Assert.DoesNotMatch(@"^(?:\(line \d+\) )?\[[A-Za-z$]*\] ", error.Message));
     }
 
     private static void AssertAccepted(string yaml)
@@ -313,7 +319,7 @@ public sealed class SchemaValidateConstraintsTests
         // real, independently-reportable defect (not noise: the composite as a
         // whole is unsatisfied, so SuppressSatisfiedCompositeBranchNoise leaves both).
         Assert.Contains(result.Errors, e =>
-            e.InstanceLocation == "/steps/0" && e.Message.Contains("[required]", StringComparison.Ordinal));
+            e.InstanceLocation == "/steps/0" && e.Message.Contains("Required properties", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -331,7 +337,7 @@ public sealed class SchemaValidateConstraintsTests
         var result = DocumentValidator.Validate(yaml, Registry);
         Assert.False(result.IsValid, "Expected rejection when both 'queue' and 'topic' are set.");
         // The too-many-oneOf-matches synthesis (SchemaErrorCollector) names both fields.
-        var oneOfError = Assert.Single(result.Errors, e => e.Message.Contains("[oneOf]", StringComparison.Ordinal));
+        var oneOfError = Assert.Single(result.Errors, e => e.Message.Contains("Exactly one", StringComparison.Ordinal));
         Assert.Contains("'queue'", oneOfError.Message, StringComparison.Ordinal);
         Assert.Contains("'topic'", oneOfError.Message, StringComparison.Ordinal);
     }
@@ -395,7 +401,7 @@ public sealed class SchemaValidateConstraintsTests
         var result = DocumentValidator.Validate(yaml, Registry);
         Assert.False(result.IsValid, "Expected rejection when neither expectPayloadContains nor expectProperties is set.");
         Assert.Contains(result.Errors, e =>
-            e.InstanceLocation == "/steps/0" && e.Message.Contains("[required]", StringComparison.Ordinal));
+            e.InstanceLocation == "/steps/0" && e.Message.Contains("Required properties", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -544,7 +550,7 @@ public sealed class SchemaValidateConstraintsTests
         Assert.False(result.IsValid,
             $"{operation}: expected rejection when expect.{offMember} is set instead of expect.{wrongMember}.");
         Assert.Contains(result.Errors, e =>
-            e.InstanceLocation == "/steps/0/expect" && e.Message.Contains("[required]", StringComparison.Ordinal));
+            e.InstanceLocation == "/steps/0/expect" && e.Message.Contains("Required properties", StringComparison.Ordinal));
     }
 
     // ── db-assert.{postgres,sqlserver,mysql}: expect needs rowCount and/or row ──
@@ -566,7 +572,7 @@ public sealed class SchemaValidateConstraintsTests
         var result = DocumentValidator.Validate(yaml, Registry);
         Assert.False(result.IsValid, $"{typeKey}: expected rejection when expect declares neither rowCount nor row.");
         Assert.Contains(result.Errors, e =>
-            e.InstanceLocation == "/steps/0/expect" && e.Message.Contains("[required]", StringComparison.Ordinal));
+            e.InstanceLocation == "/steps/0/expect" && e.Message.Contains("Required properties", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -584,7 +590,7 @@ public sealed class SchemaValidateConstraintsTests
         var result = DocumentValidator.Validate(yaml, Registry);
         Assert.False(result.IsValid, "Expected rejection when expect declares neither count nor document.");
         Assert.Contains(result.Errors, e =>
-            e.InstanceLocation == "/steps/0/expect" && e.Message.Contains("[required]", StringComparison.Ordinal));
+            e.InstanceLocation == "/steps/0/expect" && e.Message.Contains("Required properties", StringComparison.Ordinal));
     }
 
     // ── B2 (gatekeeper): the ["integer","string"] widening opened a silent-pass path ──
@@ -815,7 +821,7 @@ public sealed class SchemaValidateConstraintsTests
         var result = DocumentValidator.Validate(yaml, Registry);
         var error = Assert.Single(result.Errors);
         Assert.EndsWith(
-            "[properties] Property 'item' is not valid when 'exists' is false",
+            "Property 'item' is not valid when 'exists' is false",
             error.Message,
             StringComparison.Ordinal);
     }
@@ -859,7 +865,7 @@ public sealed class SchemaValidateConstraintsTests
         var result = DocumentValidator.Validate(yaml, Registry);
         var error = Assert.Single(result.Errors);
         Assert.EndsWith(
-            "[properties] Property 'minSize' cannot be combined with 'size' - exactly one of the two may be set",
+            "Property 'minSize' cannot be combined with 'size' - exactly one of the two may be set",
             error.Message,
             StringComparison.Ordinal);
     }
@@ -883,7 +889,7 @@ public sealed class SchemaValidateConstraintsTests
         var result = DocumentValidator.Validate(yaml, Registry);
         var error = Assert.Single(result.Errors);
         Assert.EndsWith(
-            "[properties] Property 'size' is not valid when 'exists' is false",
+            "Property 'size' is not valid when 'exists' is false",
             error.Message,
             StringComparison.Ordinal);
     }

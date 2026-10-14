@@ -113,7 +113,7 @@ public sealed class SeedSchemaTests
         Assert.False(result.IsValid, "A 'sql' entry that is a bare scalar (not an array) must be rejected.");
         Assert.Contains(result.Errors, e =>
             e.InstanceLocation == "/environment/seed/orders-db/sql" &&
-            e.Message.Contains("[type]", System.StringComparison.Ordinal));
+            e.Message.Contains("Value is", System.StringComparison.Ordinal));
     }
 
     [Fact]
@@ -135,7 +135,7 @@ public sealed class SeedSchemaTests
         Assert.False(result.IsValid, "A 'sql' item that is a mapping (not a scalar file path) must be rejected.");
         Assert.Contains(result.Errors, e =>
             e.InstanceLocation == "/environment/seed/orders-db/sql/0" &&
-            e.Message.Contains("[type]", System.StringComparison.Ordinal));
+            e.Message.Contains("Value is", System.StringComparison.Ordinal));
     }
 
     [Fact]
@@ -155,7 +155,7 @@ public sealed class SeedSchemaTests
         Assert.False(result.IsValid, "A bare-scalar seed dependency value must be rejected — it must be a mapping.");
         Assert.Contains(result.Errors, e =>
             e.InstanceLocation == "/environment/seed/orders-db" &&
-            e.Message.Contains("[type]", System.StringComparison.Ordinal));
+            e.Message.Contains("Value is", System.StringComparison.Ordinal));
     }
 
     /// <summary>
@@ -187,7 +187,7 @@ public sealed class SeedSchemaTests
         Assert.False(result.IsValid, "'publish' is no longer a recognised seed kind and must be rejected.");
         Assert.Contains(result.Errors, e =>
             e.InstanceLocation == "/environment/seed/events/publish" &&
-            e.Message.Contains("[additionalProperties]", System.StringComparison.Ordinal));
+            e.Message.Contains("Unknown property", System.StringComparison.Ordinal));
     }
 
     /// <summary>
@@ -217,7 +217,7 @@ public sealed class SeedSchemaTests
         Assert.False(result.IsValid, "'documents' is no longer a recognised seed kind and must be rejected.");
         Assert.Contains(result.Errors, e =>
             e.InstanceLocation == "/environment/seed/catalog-store/documents" &&
-            e.Message.Contains("[additionalProperties]", System.StringComparison.Ordinal));
+            e.Message.Contains("Unknown property", System.StringComparison.Ordinal));
     }
 
     [Fact]
@@ -239,6 +239,6 @@ public sealed class SeedSchemaTests
         Assert.False(result.IsValid, "An unrecognised seed dependency key must be rejected.");
         Assert.Contains(result.Errors, e =>
             e.InstanceLocation == "/environment/seed/orders-db/extra" &&
-            e.Message.Contains("[additionalProperties]", System.StringComparison.Ordinal));
+            e.Message.Contains("Unknown property", System.StringComparison.Ordinal));
     }
 }

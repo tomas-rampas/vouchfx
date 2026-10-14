@@ -100,7 +100,7 @@ public sealed class EnvironmentSchemaTests
         Assert.False(result.IsValid, "A misspelled/unknown service key must be rejected.");
         Assert.Contains(result.Errors, e =>
             e.InstanceLocation == "/environment/services/app/securty" &&
-            e.Message.Contains("[additionalProperties] Unknown property 'securty' on service 'app'", System.StringComparison.Ordinal));
+            e.Message.Contains("Unknown property 'securty' on service 'app'", System.StringComparison.Ordinal));
     }
 
     /// <summary>
@@ -133,7 +133,7 @@ public sealed class EnvironmentSchemaTests
         var onlyError = Assert.Single(result.Errors);
         Assert.Equal("/environment/services/app/project", onlyError.InstanceLocation);
         Assert.Contains(
-            "[properties] Property 'project' cannot be combined with 'image' on service 'app'",
+            "Property 'project' cannot be combined with 'image' on service 'app'",
             onlyError.Message,
             System.StringComparison.Ordinal);
     }
@@ -164,7 +164,7 @@ public sealed class EnvironmentSchemaTests
         Assert.All(result.Errors, e => Assert.Equal("/environment/services/app", e.InstanceLocation));
         Assert.Contains(result.Errors, e => e.Message.Contains("\"image\"", System.StringComparison.Ordinal));
         Assert.Contains(result.Errors, e => e.Message.Contains("\"project\"", System.StringComparison.Ordinal));
-        Assert.All(result.Errors, e => Assert.Contains("[required]", e.Message, System.StringComparison.Ordinal));
+        Assert.All(result.Errors, e => Assert.Contains("Required properties", e.Message, System.StringComparison.Ordinal));
     }
 
     [Fact]
@@ -184,7 +184,7 @@ public sealed class EnvironmentSchemaTests
         Assert.False(result.IsValid, "A bare-scalar service value must be rejected (unlike a bare-scalar dependency).");
         Assert.Contains(result.Errors, e =>
             e.InstanceLocation == "/environment/services/app" &&
-            e.Message.Contains("[type]", System.StringComparison.Ordinal));
+            e.Message.Contains("Value is", System.StringComparison.Ordinal));
     }
 
     [Theory]
@@ -247,7 +247,7 @@ public sealed class EnvironmentSchemaTests
         Assert.False(result.IsValid, "A lower-cased imagePullPolicy value must be rejected by the case-sensitive schema enum.");
         Assert.Contains(result.Errors, e =>
             e.InstanceLocation == "/environment/services/app/imagePullPolicy" &&
-            e.Message.Contains("[enum]", System.StringComparison.Ordinal) &&
+            e.Message.Contains("accepted values", System.StringComparison.Ordinal) &&
             e.Message.Contains("'always'", System.StringComparison.Ordinal) &&
             e.Message.Contains("Always", System.StringComparison.Ordinal) &&
             e.Message.Contains("Missing", System.StringComparison.Ordinal) &&
@@ -280,7 +280,7 @@ public sealed class EnvironmentSchemaTests
         Assert.False(result.IsValid);
         Assert.Contains(result.Errors, e =>
             e.InstanceLocation == "/environment/imagePullPolicy" &&
-            e.Message.Contains("[enum]", System.StringComparison.Ordinal) &&
+            e.Message.Contains("accepted values", System.StringComparison.Ordinal) &&
             e.Message.Contains("write 'Never'", System.StringComparison.Ordinal));
     }
 
@@ -309,7 +309,7 @@ public sealed class EnvironmentSchemaTests
         Assert.False(result.IsValid);
         Assert.Contains(result.Errors, e =>
             e.InstanceLocation == "/environment/services/app/imagePullPolicy" &&
-            e.Message.Contains("[enum]", System.StringComparison.Ordinal) &&
+            e.Message.Contains("accepted values", System.StringComparison.Ordinal) &&
             e.Message.Contains("'Sometimes'", System.StringComparison.Ordinal) &&
             e.Message.Contains("Always", System.StringComparison.Ordinal) &&
             !e.Message.Contains("write '", System.StringComparison.Ordinal));
@@ -373,8 +373,8 @@ public sealed class EnvironmentSchemaTests
         var onlyError = Assert.Single(result.Errors,
             e => e.InstanceLocation == "/environment/services/app/httpPort");
         Assert.True(
-            onlyError.Message.Contains("[minimum]", System.StringComparison.Ordinal) ||
-            onlyError.Message.Contains("[maximum]", System.StringComparison.Ordinal),
+            onlyError.Message.Contains("at least", System.StringComparison.Ordinal) ||
+            onlyError.Message.Contains("at most", System.StringComparison.Ordinal),
             $"Expected a [minimum]/[maximum] error, got: {onlyError.Message}");
     }
 
@@ -529,7 +529,7 @@ public sealed class EnvironmentSchemaTests
         // 'bad' still reports its genuine "neither field set" defect.
         Assert.Contains(result.Errors, e =>
             e.InstanceLocation == "/environment/services/bad" &&
-            e.Message.Contains("[required]", System.StringComparison.Ordinal));
+            e.Message.Contains("Required properties", System.StringComparison.Ordinal));
     }
 
     /// <summary>
@@ -597,7 +597,7 @@ public sealed class EnvironmentSchemaTests
         Assert.False(result.IsValid, $"httpPort \"{port}\" is port zero and must be rejected.");
         var onlyError = Assert.Single(result.Errors,
             e => e.InstanceLocation == "/environment/services/app/httpPort");
-        Assert.Contains("[pattern]", onlyError.Message, System.StringComparison.Ordinal);
+        Assert.Contains("regular expression", onlyError.Message, System.StringComparison.Ordinal);
     }
 
     [Fact]
@@ -716,7 +716,7 @@ public sealed class EnvironmentSchemaTests
         Assert.False(result.IsValid, "An explicit null env value must be rejected — the parser would set it to the literal string '~', never what an author means.");
         Assert.Contains(result.Errors, e =>
             e.InstanceLocation == "/environment/services/app/env/FOO" &&
-            e.Message.Contains("[type]", System.StringComparison.Ordinal));
+            e.Message.Contains("Value is", System.StringComparison.Ordinal));
     }
 
     // ── Dependency 'env' (dependency-env REQ-002 / EDGE-001, schema tier) ───
@@ -853,7 +853,7 @@ public sealed class EnvironmentSchemaTests
         Assert.False(result.IsValid, "An explicit null env value must be rejected — the parser would set it to the literal string '~', never what an author means.");
         Assert.Contains(result.Errors, e =>
             e.InstanceLocation == "/environment/dependencies/db/env/FOO" &&
-            e.Message.Contains("[type]", System.StringComparison.Ordinal));
+            e.Message.Contains("Value is", System.StringComparison.Ordinal));
     }
 
     /// <summary>
@@ -1022,7 +1022,7 @@ public sealed class EnvironmentSchemaTests
         Assert.False(result.IsValid, $"Quoted httpPort {quotedPort} is out of the real TCP port range and must be rejected, exactly like its bare-integer equivalent.");
         var onlyError = Assert.Single(result.Errors,
             e => e.InstanceLocation == "/environment/services/app/httpPort");
-        Assert.Contains("[pattern]", onlyError.Message, System.StringComparison.Ordinal);
+        Assert.Contains("regular expression", onlyError.Message, System.StringComparison.Ordinal);
     }
 
     // ── Part 2: environment.dependencies ────────────────────────────────────
@@ -1045,7 +1045,7 @@ public sealed class EnvironmentSchemaTests
         Assert.False(result.IsValid, "An object-shaped dependency missing 'type' must be rejected.");
         Assert.Contains(result.Errors, e =>
             e.InstanceLocation == "/environment/dependencies/db" &&
-            e.Message.Contains("[required]", System.StringComparison.Ordinal));
+            e.Message.Contains("Required properties", System.StringComparison.Ordinal));
     }
 
     /// <summary>
@@ -1094,7 +1094,7 @@ public sealed class EnvironmentSchemaTests
         Assert.False(result.IsValid, "A misspelled/unknown dependency key must be rejected.");
         Assert.Contains(result.Errors, e =>
             e.InstanceLocation == "/environment/dependencies/db/qeues" &&
-            e.Message.Contains("[additionalProperties] Unknown property 'qeues' on dependency 'db'", System.StringComparison.Ordinal));
+            e.Message.Contains("Unknown property 'qeues' on dependency 'db'", System.StringComparison.Ordinal));
     }
 
     [Fact]
@@ -1115,7 +1115,7 @@ public sealed class EnvironmentSchemaTests
         Assert.False(result.IsValid, "An unrecognised dependency 'type' must be rejected.");
         Assert.Contains(result.Errors, e =>
             e.InstanceLocation == "/environment/dependencies/db/type" &&
-            e.Message.Contains("[enum]", System.StringComparison.Ordinal) &&
+            e.Message.Contains("accepted values", System.StringComparison.Ordinal) &&
             e.Message.Contains("'cassandra'", System.StringComparison.Ordinal) &&
             // No accepted kind case-insensitively matches 'cassandra' — no
             // suggestion may be fabricated (FormatEnumError's no-guess rule).
@@ -1148,7 +1148,7 @@ public sealed class EnvironmentSchemaTests
         Assert.False(result.IsValid);
         Assert.Contains(result.Errors, e =>
             e.InstanceLocation == "/environment/dependencies/db/type" &&
-            e.Message.Contains("[enum]", System.StringComparison.Ordinal) &&
+            e.Message.Contains("accepted values", System.StringComparison.Ordinal) &&
             // Part C (feat/close-remaining-surfaces): the schema now rejects
             // wrong-case values FIRST on every production path, so the
             // helpful "write the right spelling" message must live here, not
@@ -1249,7 +1249,7 @@ public sealed class EnvironmentSchemaTests
         Assert.Contains(result.Errors, e =>
             e.InstanceLocation == "/environment/dependencies/db/schemaRegistry" &&
             e.Message.Contains(
-                "[properties] Property 'schemaRegistry' is not valid on a 'postgres' dependency",
+                "Property 'schemaRegistry' is not valid on a 'postgres' dependency",
                 System.StringComparison.Ordinal));
     }
 
@@ -1273,7 +1273,7 @@ public sealed class EnvironmentSchemaTests
         Assert.Contains(result.Errors, e =>
             e.InstanceLocation == "/environment/dependencies/db/queues" &&
             e.Message.Contains(
-                "[properties] Property 'queues' is not valid on a 'kafka' dependency",
+                "Property 'queues' is not valid on a 'kafka' dependency",
                 System.StringComparison.Ordinal));
     }
 
@@ -1297,7 +1297,7 @@ public sealed class EnvironmentSchemaTests
         Assert.Contains(result.Errors, e =>
             e.InstanceLocation == "/environment/dependencies/db/schemaRegistry" &&
             e.Message.Contains(
-                "[properties] Property 'schemaRegistry' is not valid on a 'azureservicebus' dependency",
+                "Property 'schemaRegistry' is not valid on a 'azureservicebus' dependency",
                 System.StringComparison.Ordinal));
     }
 
@@ -1382,7 +1382,7 @@ public sealed class EnvironmentSchemaTests
             string.Join(System.Environment.NewLine, result.Errors.Select(e => $"  at {e.InstanceLocation}: {e.Message}")));
         Assert.Equal("/environment/dependencies/db/schemaRegistry", result.Errors[0].InstanceLocation);
         Assert.Contains(
-            "[properties] Property 'schemaRegistry' is not valid on a 'postgres' dependency",
+            "Property 'schemaRegistry' is not valid on a 'postgres' dependency",
             result.Errors[0].Message,
             System.StringComparison.Ordinal);
     }
@@ -1407,7 +1407,7 @@ public sealed class EnvironmentSchemaTests
         Assert.False(result.IsValid, "A topics[] item missing 'name' must be rejected — ParseAsbTopics silently drops it otherwise.");
         Assert.Contains(result.Errors, e =>
             e.InstanceLocation == "/environment/dependencies/asb/topics/0" &&
-            e.Message.Contains("[required]", System.StringComparison.Ordinal));
+            e.Message.Contains("Required properties", System.StringComparison.Ordinal));
     }
 
     /// <summary>
@@ -1441,7 +1441,7 @@ public sealed class EnvironmentSchemaTests
         Assert.False(result.IsValid, "A topics[] item with an unknown key must be rejected.");
         Assert.Contains(result.Errors, e =>
             e.InstanceLocation == "/environment/dependencies/asb/topics/0/description" &&
-            e.Message.Contains("[additionalProperties] Unknown property 'description'", System.StringComparison.Ordinal));
+            e.Message.Contains("Unknown property 'description'", System.StringComparison.Ordinal));
     }
 
     // ── Part 4a: topics[].name explicit null (alignment fix) ────────────────
@@ -1487,7 +1487,7 @@ public sealed class EnvironmentSchemaTests
         Assert.False(result.IsValid, "A topics[] item with an explicit null 'name' must be rejected — the parser would keep the topic, literally named '~', never what an author means.");
         Assert.Contains(result.Errors, e =>
             e.InstanceLocation == "/environment/dependencies/asb/topics/0/name" &&
-            e.Message.Contains("[type]", System.StringComparison.Ordinal));
+            e.Message.Contains("Value is", System.StringComparison.Ordinal));
     }
 
     // ── Part 5: environment.services/dependencies 'security' block container
@@ -1530,7 +1530,7 @@ public sealed class EnvironmentSchemaTests
         Assert.False(result.IsValid, "A security block missing the required 'endpoint' must be rejected.");
         Assert.Contains(result.Errors, e =>
             e.InstanceLocation == "/environment/dependencies/events/security" &&
-            e.Message.Contains("[required]", System.StringComparison.Ordinal) &&
+            e.Message.Contains("Required properties", System.StringComparison.Ordinal) &&
             e.Message.Contains("on dependency 'events'", System.StringComparison.Ordinal));
     }
 
@@ -1578,7 +1578,7 @@ public sealed class EnvironmentSchemaTests
         Assert.Contains(result.Errors, e =>
             e.InstanceLocation == "/environment/dependencies/events/security/bogus" &&
             e.Message.Contains(
-                "[unevaluatedProperties] Unknown property 'bogus' on dependency 'events'",
+                "Unknown property 'bogus' on dependency 'events'",
                 System.StringComparison.Ordinal));
     }
 
@@ -1607,7 +1607,7 @@ public sealed class EnvironmentSchemaTests
         Assert.False(result.IsValid, "A service security block missing the required 'endpoint' must be rejected.");
         Assert.Contains(result.Errors, e =>
             e.InstanceLocation == "/environment/services/app/security" &&
-            e.Message.Contains("[required]", System.StringComparison.Ordinal) &&
+            e.Message.Contains("Required properties", System.StringComparison.Ordinal) &&
             e.Message.Contains("on service 'app'", System.StringComparison.Ordinal));
     }
 
@@ -1650,7 +1650,7 @@ public sealed class EnvironmentSchemaTests
         Assert.False(result.IsValid, "A serverArtifacts[] entry missing the required 'source' must be rejected.");
         Assert.Contains(result.Errors, e =>
             e.InstanceLocation == "/environment/dependencies/events-kafka/security/serverArtifacts/0" &&
-            e.Message.Contains("[required]", System.StringComparison.Ordinal) &&
+            e.Message.Contains("Required properties", System.StringComparison.Ordinal) &&
             e.Message.Contains(
                 "Required properties [\"source\"] are not present in dependency 'events-kafka' " +
                 "(at security.serverArtifacts[0])",
@@ -1690,7 +1690,7 @@ public sealed class EnvironmentSchemaTests
         Assert.Contains(result.Errors, e =>
             e.InstanceLocation == "/environment/dependencies/events-kafka/security/serverArtifacts/0/bogus" &&
             e.Message.Contains(
-                "[additionalProperties] Unknown property 'bogus' in dependency 'events-kafka' " +
+                "Unknown property 'bogus' in dependency 'events-kafka' " +
                 "(at security.serverArtifacts[0].bogus)",
                 System.StringComparison.Ordinal));
     }
@@ -2204,7 +2204,7 @@ public sealed class EnvironmentSchemaTests
         Assert.False(result.IsValid, "'healthCheck: { type: tcp }' with no 'port' must be rejected.");
         Assert.Contains(result.Errors, e =>
             e.InstanceLocation == "/environment/services/kafka-broker/healthCheck" &&
-            e.Message.Contains("[required]", System.StringComparison.Ordinal) &&
+            e.Message.Contains("Required properties", System.StringComparison.Ordinal) &&
             e.Message.Contains("in service 'kafka-broker' (at healthCheck)", System.StringComparison.Ordinal));
     }
 
@@ -2370,7 +2370,7 @@ public sealed class EnvironmentSchemaTests
         Assert.False(result.IsValid, "'healthCheck' with no 'type' must be rejected.");
         Assert.Contains(result.Errors, e =>
             e.InstanceLocation == "/environment/services/kafka-broker/healthCheck" &&
-            e.Message.Contains("[required]", System.StringComparison.Ordinal) &&
+            e.Message.Contains("Required properties", System.StringComparison.Ordinal) &&
             e.Message.Contains("in service 'kafka-broker' (at healthCheck)", System.StringComparison.Ordinal));
     }
 
@@ -2553,7 +2553,7 @@ public sealed class EnvironmentSchemaTests
         var onlyError = Assert.Single(result.Errors);
         Assert.Equal("/environment/services/app/httpPort", onlyError.InstanceLocation);
         Assert.Contains(
-            "[properties] Property 'httpPort' is not valid on the 'project'-form service 'app' - "
+            "Property 'httpPort' is not valid on the 'project'-form service 'app' - "
             + "a project's endpoints are discovered from its own launch profile, and 'httpPort' "
             + "names a container port rather than a listener. Remove the line; to choose WHICH "
             + "discovered endpoint this service is addressed on, use 'endpoint' (DSL section 3.2)",
@@ -2644,7 +2644,7 @@ public sealed class EnvironmentSchemaTests
         var onlyError = Assert.Single(result.Errors);
         Assert.Equal("/environment/services/app/endpoint", onlyError.InstanceLocation);
         Assert.Contains(
-            "[properties] Property 'endpoint' is not valid on service 'app'",
+            "Property 'endpoint' is not valid on service 'app'",
             onlyError.Message,
             System.StringComparison.Ordinal);
     }
@@ -2707,6 +2707,6 @@ public sealed class EnvironmentSchemaTests
         Assert.False(result.IsValid, "'endpoint' names a launch-profile endpoint, never a port, so a number must be rejected.");
         var onlyError = Assert.Single(result.Errors);
         Assert.Equal("/environment/services/app/endpoint", onlyError.InstanceLocation);
-        Assert.Contains("[type]", onlyError.Message, System.StringComparison.Ordinal);
+        Assert.Contains("Value is", onlyError.Message, System.StringComparison.Ordinal);
     }
 }

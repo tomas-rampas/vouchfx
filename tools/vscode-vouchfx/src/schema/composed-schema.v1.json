@@ -81,7 +81,7 @@
       ],
       "properties": {
         "source": {
-          "description": "Select a registered environment driver. Absence selects inline Aspire provisioning. Compose is the additional production driver; its own configuration resolves relative to the suite and owns native manifests, logical HTTP/PostgreSQL bindings and readiness.",
+          "description": "Select a registered environment driver. Absence selects inline Aspire provisioning. Compose is the additional production driver; its own configuration resolves relative to the suite and owns native manifests, logical HTTP/TCP/PostgreSQL bindings and readiness.",
           "type": "object",
           "required": [
             "driver",

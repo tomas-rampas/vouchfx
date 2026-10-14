@@ -46,21 +46,21 @@ public sealed class YamlDecimalIntegerParityTests
     }
 
     [Theory]
-    [InlineData("0", "[minimum]")]
-    [InlineData("00000", "[minimum]")]
-    [InlineData("65536", "[maximum]")]
-    [InlineData("0177777", "[maximum]")]
-    [InlineData("070000", "[maximum]")]
-    [InlineData("\"0\"", "[pattern]")]
-    [InlineData("\"0177777\"", "[pattern]")]
-    [InlineData("\"65536\"", "[pattern]")]
-    public void HttpPort_InvalidDecimal_IsRefusedAtTheField(string scalar, string keyword)
+    [InlineData("0", "at least")]
+    [InlineData("00000", "at least")]
+    [InlineData("65536", "at most")]
+    [InlineData("0177777", "at most")]
+    [InlineData("070000", "at most")]
+    [InlineData("\"0\"", "regular expression")]
+    [InlineData("\"0177777\"", "regular expression")]
+    [InlineData("\"65536\"", "regular expression")]
+    public void HttpPort_InvalidDecimal_IsRefusedAtTheField(string scalar, string explanation)
     {
         var result = YamlSchemaValidator.Validate(ServiceYaml(scalar));
         Assert.False(result.IsValid);
         var error = Assert.Single(result.Errors);
         Assert.Equal("/environment/services/app/httpPort", error.InstanceLocation);
-        Assert.Contains(keyword, error.Message, StringComparison.Ordinal);
+        Assert.Contains(explanation, error.Message, StringComparison.Ordinal);
         Assert.DoesNotContain("Failed to parse YAML", error.Message, StringComparison.Ordinal);
     }
 

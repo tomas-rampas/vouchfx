@@ -93,7 +93,7 @@ public sealed class HttpPathControlParityTests
 
         Assert.False(result.IsValid);
         Assert.Contains(result.Errors, error => error.InstanceLocation == "/steps/0/path"
-            && error.Message.Contains("[pattern]", StringComparison.Ordinal));
+            && error.Message.Contains("regular expression", StringComparison.Ordinal));
     }
 
     [Theory]
@@ -143,7 +143,7 @@ public sealed class HttpPathControlParityTests
 
         Assert.False(result.IsValid);
         Assert.Contains(result.Errors, error => error.InstanceLocation == "/steps/0/path"
-            && error.Message.Contains("[pattern]", StringComparison.Ordinal));
+            && error.Message.Contains("regular expression", StringComparison.Ordinal));
     }
 
     private static string ControlPath(int codePoint, bool atEnd) =>

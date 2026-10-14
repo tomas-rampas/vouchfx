@@ -128,7 +128,7 @@ public sealed class EnvironmentKeyValidationTests
         Assert.Single(errors, e => e.InstanceLocation == "/environment/services/owner/env"
             && e.Message.Contains("Environment variable names", StringComparison.Ordinal));
         Assert.Single(errors, e => e.InstanceLocation == "/environment/services/owner/env/VALID.key"
-            && e.Message.Contains("[type]", StringComparison.Ordinal));
+            && e.Message.Contains("Value is", StringComparison.Ordinal));
         Assert.All(errors, e => Assert.DoesNotContain(Canary, e.InstanceLocation + e.Message, StringComparison.Ordinal));
     }
 

@@ -767,4 +767,44 @@ public sealed class ValidateCommandTests : IDisposable
             StringComparison.Ordinal);
         Assert.Contains("not a single, whole secret reference", diagnostic.Message, StringComparison.Ordinal);
     }
+    [Fact]
+    public void Execute_SchemaDiagnostics_HumanAndJsonRetainTheSameExplanationsWithoutKeywordTags()
+    {
+        const string yaml = """
+            environment:
+              dependencies:
+                cache:
+                  type: redis
+                  security:
+                    profile: tls
+            steps:
+              - id: check
+                type: script.csharp
+                code: "// no execution"
+                taget: cache
+            """;
+        var scenario = Path.Combine(_root, "author-errors.e2e.yaml");
+        File.WriteAllText(scenario, yaml);
+        var human = new StringWriter();
+        var json = new StringWriter();
+
+        Assert.Equal(ExitCodes.Inconclusive, Execute(scenario, json: false, human));
+        Assert.Equal(ExitCodes.Inconclusive, Execute(scenario, json: true, json));
+
+        using var document = JsonDocument.Parse(json.ToString());
+        var diagnostics = Assert.Single(document.RootElement.GetProperty("scenarios").EnumerateArray())
+            .GetProperty("diagnostics").EnumerateArray().ToArray();
+        Assert.Equal(2, diagnostics.Length);
+        foreach (var diagnostic in diagnostics)
+        {
+            Assert.Equal(new[] { "stage", "message" }, diagnostic.EnumerateObject().Select(property => property.Name));
+            Assert.Equal("schema", diagnostic.GetProperty("stage").GetString());
+            var message = diagnostic.GetProperty("message").GetString()!;
+            Assert.Contains(message, human.ToString(), StringComparison.Ordinal);
+            Assert.DoesNotMatch(@"(?:^|: )(?:\(line \d+\) )?\[[A-Za-z$]*\] ", message);
+        }
+        Assert.Contains("Dependency 'cache' (type 'redis') declares 'security'", human.ToString(), StringComparison.Ordinal);
+        Assert.Contains("Unknown property 'taget' on step type 'script.csharp'", human.ToString(), StringComparison.Ordinal);
+    }
+
 }

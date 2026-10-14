@@ -38,11 +38,11 @@ namespace Vouchfx.Engine.Compilation.Schema;
 /// walking the original YAML RepresentationModel.  When any segment of the walk
 /// fails — unparseable YAML, root-level pointer, out-of-range index, absent
 /// mapping key — the <c>(line N)</c> prefix is omitted and the raw schema
-/// message is preserved unchanged.
+/// explanation is preserved without the internal JSON Schema keyword marker.
 /// </para>
 /// <para>
 /// <see cref="SchemaValidationError.InstanceLocation"/> is never modified;
-/// only <see cref="SchemaValidationError.Message"/> gains the prefix.
+/// only <see cref="SchemaValidationError.Message"/> is projected for authors and gains the prefix.
 /// </para>
 /// <para>
 /// <b>Unknown step types (#265).</b> <c>SchemaComposer</c>'s composed schema
@@ -162,7 +162,7 @@ public static class DocumentValidator
     {
         // Delegate to the composed-schema path; this is the authoritative
         // schema validation (root schema + provider fragments).
-        var raw = SchemaComposer.Validate(registry, yamlText);
+        var raw = SchemaComposer.ValidateForDocument(registry, yamlText);
 
         // Parse the YAML once into the RepresentationModel.  This single parse
         // serves two purposes: resolving JSON-Pointer segments back to concrete
@@ -252,9 +252,10 @@ public static class DocumentValidator
                 ? ResolveLineFromPointer(rootMapping, error.InstanceLocation)
                 : null;
 
+            var authorMessage = SchemaDiagnosticPresentation.ForAuthor(error.Message);
             var message = line.HasValue
-                ? $"(line {line.Value}) {error.Message}"
-                : error.Message;
+                ? $"(line {line.Value}) {authorMessage}"
+                : authorMessage;
 
             enriched[i] = new SchemaValidationError(error.InstanceLocation, message);
         }
