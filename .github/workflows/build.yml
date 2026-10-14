@@ -1284,6 +1284,8 @@ jobs:
             --checkout-sha "$(git rev-parse HEAD)" --head-sha "$VOUCHFX_TOPOLOGY_PR_HEAD_SHA"
           echo "VOUCHFX_TOPOLOGY_ACCEPTANCE_RESULTS=$VOUCHFX_TOPOLOGY_ACCEPTANCE_RESULTS" >> "$GITHUB_ENV"
 
+      # Keep this native-process lane uninstrumented: cold CLI acceptance compares exact
+      # canonical executable hashes. Unit coverage remains collected in the build job.
       - name: Integration tests (requires=docker)
         id: docker-tests
         run: >
@@ -1294,7 +1296,6 @@ jobs:
           --filter "requires=docker"
           --blame-crash
           --blame-crash-dump-type mini
-          --collect:"XPlat Code Coverage"
           --results-directory TestResults
 
       - name: Verify owned topology acceptance counts and closure
@@ -1350,7 +1351,7 @@ jobs:
       # Sequence*.xml is uploaded beside the dump because it is what names the test that was
       # executing when the host died — the attribution the 2026-08 occurrence lacked.
       #
-      # if-no-files-found: ignore — on a clean run TestResults holds only coverage, and a missing
+      # if-no-files-found: ignore — on a clean run TestResults holds only TRX files, and a missing
       # dump is the normal outcome rather than a fault worth warning about.
       - name: Upload crash dumps and blame output
         if: always()
@@ -1577,7 +1578,7 @@ jobs:
   #
   # Runs only for main pushes and the weekly schedule — PR runs must never move
   # the published badge.  The badge reflects UNIT coverage only (the blocking
-  # `build` job); Docker integration coverage is reported separately. A red
+  # `build` job); the native-process Docker lane is uninstrumented. A red
   # `build` skips this job via `needs`, so the last good badge is retained.
   coverage-badge:
     name: Coverage badge (main only)

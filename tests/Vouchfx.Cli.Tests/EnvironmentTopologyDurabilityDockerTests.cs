@@ -214,17 +214,13 @@ public sealed class EnvironmentTopologyDurabilityDockerTests
         var evidence = new AcceptanceEvidence("cold-host-compiler-profile", 5, fixture);
         try
         {
-            var cli = typeof(RunCommand).Assembly.Location;
-            var cliDirectory = Path.GetDirectoryName(cli)!;
-            // A solution build produces the executable's runtime configuration in its own output.
-            if (!File.Exists(Path.Combine(cliDirectory, "vouchfx.runtimeconfig.json")))
-            {
-                var configuration = new DirectoryInfo(AppContext.BaseDirectory).Parent!.Name;
-                cli = Path.Combine(RepoRoot.Resolve(), "src", "Cli", "Vouchfx.Cli", "bin", configuration, "net8.0", "vouchfx.dll");
-            }
+            // Execute the canonical built CLI, never an instrumented test-output copy.
+            var configuration = new DirectoryInfo(AppContext.BaseDirectory).Parent!.Name;
+            var cli = Path.Combine(RepoRoot.Resolve(), "src", "Cli", "Vouchfx.Cli", "bin", configuration, "net8.0", "vouchfx.dll");
             Assert.True(File.Exists(cli));
             Assert.True(File.Exists(Path.ChangeExtension(cli, ".runtimeconfig.json")));
             evidence.CliSha256 = Convert.ToHexString(SHA256.HashData(await File.ReadAllBytesAsync(cli, deadline.Token)));
+            Assert.Equal(evidence.BuiltCliSha256, evidence.CliSha256);
             var births = new HashSet<string>(StringComparer.Ordinal);
             for (var index = 0; index < 5; index++)
             {
@@ -248,14 +244,37 @@ public sealed class EnvironmentTopologyDurabilityDockerTests
                       - id: ready-database
                         type: db-assert.postgres
                         target: db
-                        query: SELECT 1 AS ready
-                        expect: {rowCount: 1, row: {ready: '1'}}
+                        query: >-
+                          CREATE TABLE topology_durability(marker text NOT NULL);
+                          INSERT INTO topology_durability VALUES ('written');
+                          SELECT marker FROM topology_durability
+                        expect: {rowCount: 1, row: {marker: written}}
                     """, deadline.Token);
                 var before = await fixture.CaptureAsync();
                 evidence.LastBefore = before;
                 var result = await fixture.RunColdCliAsync(cli, suite, profile, before, deadline.Token);
+                // Retain the attempt before any verdict assertion; a failed exit is still original evidence.
+                evidence.AttemptedColdResult = result;
+                evidence.LastActive = result.Active;
+                evidence.LastAfter = null;
+                evidence.LastReleaseCompleted = false;
+                await evidence.SaveAsync(_output);
+                Exception? releaseError = null;
+                try
+                {
+                    evidence.LastAfter = await fixture.AssertReleasedAsync(before, result.Active, CancellationToken.None, profile);
+                    evidence.LastReleaseCompleted = true;
+                }
+                catch (Exception error)
+                {
+                    releaseError = error;
+                    evidence.CleanupFailure = fixture.Scrub(error.ToString());
+                    evidence.LastAfter = fixture.LastClosureInventory;
+                }
+                await evidence.SaveAsync(_output);
                 Assert.True(births.Add(result.Pid.ToString(CultureInfo.InvariantCulture) + ":" + result.BirthUtc.Ticks.ToString(CultureInfo.InvariantCulture)));
                 Assert.Equal(0, result.ExitCode);
+                if (releaseError is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(releaseError).Throw();
                 Assert.True(result.ObservedContainers.Length > 0, "The observer must see an actual container; exit zero alone is insufficient.");
                 if (compose)
                 {
@@ -274,9 +293,7 @@ public sealed class EnvironmentTopologyDurabilityDockerTests
                     Assert.Equal("PASS", scenario.GetProperty("verdict").GetString());
                 }
                 finally { foreach (var document in completed) document.Dispose(); }
-                evidence.LastActive = result.Active;
-                var after = await fixture.AssertReleasedAsync(before, result.Active, deadline.Token);
-                evidence.LastAfter = after;
+                var after = evidence.LastAfter!;
                 Assert.Empty(Directory.GetFiles(profile, "vouchfx-*.json", SearchOption.AllDirectories));
                 evidence.Cycles.Add(new
                 {
@@ -522,6 +539,10 @@ public sealed class EnvironmentTopologyDurabilityDockerTests
         public ResourceInventory? LastBefore { get; set; }
         public ResourceInventory? LastActive { get; set; }
         public ResourceInventory? LastAfter { get; set; }
+        public ColdResult? AttemptedColdResult { get; set; }
+        public bool LastReleaseCompleted { get; set; }
+        public ResourceInventory? FixtureClosureLastInventory => Fixture.LastClosureInventory;
+        public IReadOnlyList<OwnedDcpResidual> ResidualDcpProcesses => Fixture.ResidualDcpProcesses;
         public string DockerCachePolicy { get; } = "existing image layers retained; no image prune or uncached-pull claim";
         public List<object> Cycles { get; } = new();
         internal async Task FinishAsync(ITestOutputHelper output)
@@ -546,6 +567,10 @@ public sealed class EnvironmentTopologyDurabilityDockerTests
     private sealed record ResourceInventory(string[] Containers, string[] Networks, string[] Volumes,
         IReadOnlyDictionary<string, string> Created, string[] DcpProcesses, string[] Journals);
     private sealed record ColdResult(int Pid, DateTime BirthUtc, int ExitCode, string[] ObservedContainers, string[] ObservedDcpProcesses, string[] ObservedJournals, RawStreamBinding Stdout, RawStreamBinding Stderr, ResourceInventory Active);
+    private sealed record LinuxProcessState(int Pid, long BirthUtcTicks, string State, int ParentPid);
+    private sealed record OwnedDcpIdentity(int Pid, long BirthUtcTicks, int CliPid, long CliBirthUtcTicks, string Profile);
+    private sealed record OwnedDcpResidual(string Identity, bool OwnershipProven, int? CliPid, long? CliBirthUtcTicks,
+        string? Profile, LinuxProcessState? LinuxState, string Detail);
 
     private sealed class OwnedFixture : IAsyncDisposable
     {
@@ -555,6 +580,9 @@ public sealed class EnvironmentTopologyDurabilityDockerTests
         private string? _network;
         private string? _volume;
         private ResourceInventory? _initial;
+        private readonly Dictionary<string, OwnedDcpIdentity> _ownedDcp = new(StringComparer.Ordinal);
+        internal ResourceInventory? LastClosureInventory { get; private set; }
+        internal IReadOnlyList<OwnedDcpResidual> ResidualDcpProcesses { get; private set; } = Array.Empty<OwnedDcpResidual>();
         private string Password { get; } = "fixture-" + Guid.NewGuid().ToString("N");
         internal string PasswordVariable { get; } = "VOUCHFX_TOPOLOGY_PASSWORD_" + Guid.NewGuid().ToString("N");
         internal string Directory { get; } = System.IO.Directory.CreateTempSubdirectory("vouchfx-topology-acceptance-").FullName;
@@ -620,39 +648,59 @@ public sealed class EnvironmentTopologyDurabilityDockerTests
             return config;
         }
 
-        internal async Task<ResourceInventory> CaptureAsync(string? profile = null, bool includeCreated = true)
+        internal async Task<ResourceInventory> CaptureAsync(string? profile = null, bool includeCreated = true, CancellationToken ct = default)
         {
-            var containers = await ListAsync("container");
-            var networks = await ListAsync("network");
-            var volumes = await ListAsync("volume");
+            ct.ThrowIfCancellationRequested();
+            var containers = await ListAsync("container", ct);
+            var networks = await ListAsync("network", ct);
+            var volumes = await ListAsync("volume", ct);
             var created = new Dictionary<string, string>(StringComparer.Ordinal);
             foreach (var (kind, ids) in includeCreated ? new[] { ("container", containers), ("network", networks), ("volume", volumes) } : Array.Empty<(string, string[])>())
-                foreach (var id in ids) created[kind + ":" + id] = await DockerAsync(kind, "inspect", "--format",
+                foreach (var id in ids) created[kind + ":" + id] = await DockerAsync(ct, kind, "inspect", "--format",
                     kind == "volume" ? "{{.CreatedAt}}" : "{{.Created}}", id);
             var journals = System.IO.Directory.Exists(_journalDirectory) ? System.IO.Directory.GetFiles(_journalDirectory) : Array.Empty<string>();
             if (profile is not null) journals = journals.Concat(System.IO.Directory.GetFiles(profile, "vouchfx-*.json", SearchOption.AllDirectories)).ToArray();
             return new ResourceInventory(containers, networks, volumes, created, DcpIdentities(), journals.Order(StringComparer.Ordinal).ToArray());
         }
 
-        internal async Task<ResourceInventory> AssertReleasedAsync(ResourceInventory before, ResourceInventory active, CancellationToken ct)
+        internal async Task<ResourceInventory> AssertReleasedAsync(ResourceInventory before, ResourceInventory active, CancellationToken ct, string? profile = null)
         {
-            using var join = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            join.CancelAfter(TimeSpan.FromSeconds(30));
-            ResourceInventory after;
-            while (true)
-            {
-                after = await CaptureAsync();
-                if (after.Containers.SequenceEqual(before.Containers) && after.Networks.SequenceEqual(before.Networks)
-                    && after.Volumes.SequenceEqual(before.Volumes) && after.DcpProcesses.SequenceEqual(before.DcpProcesses)
-                    && after.Journals.SequenceEqual(before.Journals)) break;
-                await Task.Delay(100, join.Token);
-            }
+            var after = await WaitForBaselineAsync(before, profile, ct);
             Assert.Equal(before.Created.OrderBy(pair => pair.Key, StringComparer.Ordinal), after.Created.OrderBy(pair => pair.Key, StringComparer.Ordinal));
             Assert.All(active.Containers.Except(before.Containers), id => Assert.DoesNotContain(id, after.Containers));
             Assert.All(active.Networks.Except(before.Networks), id => Assert.DoesNotContain(id, after.Networks));
             Assert.All(active.Volumes.Except(before.Volumes), id => Assert.DoesNotContain(id, after.Volumes));
             Assert.Equal("true", await DockerAsync("container", "inspect", "--format", "{{.State.Running}}", _container!));
             return after;
+        }
+
+        private async Task<ResourceInventory> WaitForBaselineAsync(ResourceInventory before, string? profile, CancellationToken ct)
+        {
+            LastClosureInventory = null;
+            using var join = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            join.CancelAfter(TimeSpan.FromSeconds(30));
+            try
+            {
+                while (true)
+                {
+                    join.Token.ThrowIfCancellationRequested();
+                    var after = await CaptureAsync(profile, ct: join.Token);
+                    LastClosureInventory = after;
+                    if (after.Containers.SequenceEqual(before.Containers) && after.Networks.SequenceEqual(before.Networks)
+                        && after.Volumes.SequenceEqual(before.Volumes) && after.DcpProcesses.SequenceEqual(before.DcpProcesses)
+                        && after.Journals.SequenceEqual(before.Journals))
+                    {
+                        Assert.Equal(before.Created.OrderBy(pair => pair.Key, StringComparer.Ordinal), after.Created.OrderBy(pair => pair.Key, StringComparer.Ordinal));
+                        return after;
+                    }
+                    await Task.Delay(100, join.Token);
+                }
+            }
+            catch
+            {
+                ResidualDcpProcesses = DescribeResidualDcp(LastClosureInventory?.DcpProcesses.Except(before.DcpProcesses) ?? Array.Empty<string>());
+                throw;
+            }
         }
 
         internal async Task<ColdResult> RunColdCliAsync(string cli, string suite, string profile, ResourceInventory before, CancellationToken ct)
@@ -693,9 +741,13 @@ public sealed class EnvironmentTopologyDurabilityDockerTests
                 {
                     RefuseFailedCapture(stdout);
                     RefuseFailedCapture(stderr);
-                    var sample = await CaptureAsync(profile, includeCreated: false);
+                    var sample = await CaptureAsync(profile, includeCreated: false, ct: deadline.Token);
                     foreach (var id in sample.Containers.Except(before.Containers)) observed.Add(id);
-                    foreach (var id in sample.DcpProcesses.Except(before.DcpProcesses)) observedDcp.Add(id);
+                    foreach (var id in sample.DcpProcesses.Except(before.DcpProcesses))
+                    {
+                        observedDcp.Add(id);
+                        ObserveOwnedDcp(id, process, birthUtc, profile);
+                    }
                     foreach (var journal in sample.Journals.Except(before.Journals)) observedJournals.Add(journal);
                     if (sample.Containers.Length > active.Containers.Length) active = sample;
                     await Task.Delay(100, deadline.Token);
@@ -749,6 +801,115 @@ public sealed class EnvironmentTopologyDurabilityDockerTests
             }
         }
 
+        private void ObserveOwnedDcp(string identity, Process cli, DateTime cliBirthUtc, string profile)
+        {
+            if (!OperatingSystem.IsLinux() || _ownedDcp.ContainsKey(identity) || cli.HasExited) return;
+            var parts = identity.Split(':');
+            if (parts.Length != 2 || !int.TryParse(parts[0], NumberStyles.None, CultureInfo.InvariantCulture, out var pid)
+                || !long.TryParse(parts[1], NumberStyles.None, CultureInfo.InvariantCulture, out var birthTicks)) return;
+            var rootBirth = cliBirthUtc.Ticks;
+            if (ProcessBirth(cli.Id) != rootBirth) return;
+            var ancestry = new List<LinuxProcessState>();
+            var visited = new HashSet<int>();
+            var current = pid;
+            var reachedRoot = false;
+            for (var depth = 0; depth < 32; depth++)
+            {
+                if (!visited.Add(current)) return;
+                var state = ReadLinuxState(current);
+                if (state is null || (current == pid && state.BirthUtcTicks != birthTicks)) return;
+                ancestry.Add(state);
+                if (current == cli.Id)
+                {
+                    if (state.BirthUtcTicks != rootBirth) return;
+                    reachedRoot = true;
+                    break;
+                }
+                if (state.ParentPid <= 0) return;
+                current = state.ParentPid;
+            }
+            if (!reachedRoot) return;
+            // Re-read every birth and parent link; a PID, path or transient parent is not ownership.
+            foreach (var original in ancestry)
+            {
+                var state = ReadLinuxState(original.Pid);
+                if (state is null || state.BirthUtcTicks != original.BirthUtcTicks || state.ParentPid != original.ParentPid) return;
+            }
+            if (cli.HasExited || ProcessBirth(cli.Id) != rootBirth) return;
+            _ownedDcp.Add(identity, new OwnedDcpIdentity(pid, birthTicks, cli.Id, rootBirth, profile));
+        }
+
+        private IReadOnlyList<OwnedDcpResidual> DescribeResidualDcp(IEnumerable<string> identities)
+        {
+            var residuals = new List<OwnedDcpResidual>();
+            foreach (var identity in identities.Order(StringComparer.Ordinal))
+            {
+                if (!_ownedDcp.TryGetValue(identity, out var owned))
+                {
+                    residuals.Add(new OwnedDcpResidual(identity, false, null, null, null, null,
+                        "No stable CLI-descendant ancestry was observed; details withheld."));
+                    continue;
+                }
+                var state = ReadLinuxState(owned.Pid);
+                if (state is null || state.BirthUtcTicks != owned.BirthUtcTicks)
+                {
+                    residuals.Add(new OwnedDcpResidual(identity, true, owned.CliPid, owned.CliBirthUtcTicks,
+                        owned.Profile, null, "Owned process birth could not be revalidated; details withheld."));
+                    continue;
+                }
+                var after = ReadLinuxState(owned.Pid);
+                if (after is null || after.BirthUtcTicks != owned.BirthUtcTicks || after.ParentPid != state.ParentPid)
+                {
+                    residuals.Add(new OwnedDcpResidual(identity, true, owned.CliPid, owned.CliBirthUtcTicks,
+                        owned.Profile, null, "Owned identity changed during metadata read; details withheld."));
+                    continue;
+                }
+                residuals.Add(new OwnedDcpResidual(identity, true, owned.CliPid, owned.CliBirthUtcTicks,
+                    owned.Profile, after, "CLI ancestry and exact birth observed; residual still fails closure."));
+            }
+            return residuals;
+        }
+
+        private static LinuxProcessState? ReadLinuxState(int pid)
+        {
+            var before = ProcessBirth(pid);
+            if (before is null) return null;
+            try
+            {
+                var bytes = ReadProcBytes("/proc/" + pid.ToString(CultureInfo.InvariantCulture) + "/stat", out var truncated);
+                if (truncated) return null;
+                var text = Encoding.UTF8.GetString(bytes);
+                var closing = text.LastIndexOf(')');
+                if (closing < 0 || closing + 2 >= text.Length) return null;
+                var fields = text[(closing + 2)..].Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                if (fields.Length < 2 || fields[0].Length != 1
+                    || !int.TryParse(fields[1], NumberStyles.None, CultureInfo.InvariantCulture, out var parent)) return null;
+                var after = ProcessBirth(pid);
+                return before == after ? new LinuxProcessState(pid, before.Value, fields[0], parent) : null;
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException) { return null; }
+        }
+
+        private static long? ProcessBirth(int pid)
+        {
+            try
+            {
+                using var process = Process.GetProcessById(pid);
+                return process.StartTime.ToUniversalTime().Ticks;
+            }
+            catch (Exception error) when (error is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception) { return null; }
+        }
+
+        private static byte[] ReadProcBytes(string path, out bool truncated)
+        {
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            var bytes = new byte[4097];
+            var count = 0;
+            int read;
+            while (count < bytes.Length && (read = stream.Read(bytes, count, bytes.Length - count)) != 0) count += read;
+            truncated = count > 4096;
+            return bytes[..Math.Min(count, 4096)];
+        }
         private static string[] DcpIdentities()
         {
             var identities = new List<string>();
@@ -767,17 +928,21 @@ public sealed class EnvironmentTopologyDurabilityDockerTests
             return identities.Order(StringComparer.Ordinal).ToArray();
         }
 
-        private static async Task<string[]> ListAsync(string kind)
+        private static async Task<string[]> ListAsync(string kind, CancellationToken ct)
         {
             var args = new List<string> { kind, "ls", "--quiet" };
             if (kind != "volume") args.Add("--no-trunc");
             if (kind == "container") args.Add("--all");
-            return (await DockerAsync(args.ToArray())).Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Order(StringComparer.Ordinal).ToArray();
+            return (await DockerAsync(ct, args.ToArray())).Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Order(StringComparer.Ordinal).ToArray();
         }
 
-        internal static async Task<string> DockerAsync(params string[] arguments)
+        internal static Task<string> DockerAsync(params string[] arguments) => DockerAsync(CancellationToken.None, arguments);
+
+        private static async Task<string> DockerAsync(CancellationToken ct, params string[] arguments)
         {
-            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            deadline.CancelAfter(TimeSpan.FromSeconds(30));
+            deadline.Token.ThrowIfCancellationRequested();
             var start = new ProcessStartInfo("docker") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true };
             foreach (var argument in arguments) start.ArgumentList.Add(argument);
             using var process = Process.Start(start) ?? throw new InvalidOperationException("Docker could not start.");
@@ -818,7 +983,7 @@ public sealed class EnvironmentTopologyDurabilityDockerTests
             if (_volume is not null) { await DockerAsync("volume", "rm", _volume); _volume = null; }
             if (_initial is not null)
             {
-                var after = await CaptureAsync();
+                var after = await WaitForBaselineAsync(_initial, Directory, CancellationToken.None);
                 Assert.Equal(_initial.Containers, after.Containers);
                 Assert.Equal(_initial.Networks, after.Networks);
                 Assert.Equal(_initial.Volumes, after.Volumes);
