@@ -161,8 +161,22 @@ source "$1"
         integration = data["jobs"]["integration"]
         self.assertFalse(integration.get("continue-on-error", False))
         command = shlex.split(step(TEST_NAME, data)["run"])
-        for value in ["-m:1", "--no-build", "requires=docker", "--blame-crash", "mini", "--collect:XPlat Code Coverage"]:
+        for value in ["-m:1", "--no-build", "requires=docker", "--blame-crash", "mini"]:
             self.assertIn(value, command)
+        # Docker tests execute the canonical CLI; collectors alter its PE bytes.
+        self.assertFalse(any(value.lower() == "--collect" or
+                             value.lower().startswith(("--collect:", "--collect="))
+                             for value in command))
+        build = data["jobs"]["build"]
+        self.assertFalse(build.get("continue-on-error", False))
+        unit_steps = [current for current in build["steps"]
+                      if current.get("name") == "Unit tests (requires!=docker)"]
+        self.assertEqual(1, len(unit_steps))
+        self.assertNotIn("if", unit_steps[0])
+        self.assertNotIn("continue-on-error", unit_steps[0])
+        unit_command = shlex.split(unit_steps[0]["run"])
+        for value in ["-m:1", "--no-build", "requires!=docker", "--collect:XPlat Code Coverage"]:
+            self.assertIn(value, unit_command)
         self.assertEqual("TestResults", command[command.index("--results-directory") + 1])
         self.assertNotIn("VOUCHFX_DCP_CAPTURE_DIR", json.dumps(integration))
         self.assertNotIn("secrets.", json.dumps(integration))
