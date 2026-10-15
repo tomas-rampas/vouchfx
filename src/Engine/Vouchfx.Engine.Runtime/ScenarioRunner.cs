@@ -4810,14 +4810,16 @@ public static class ScenarioRunner
         ISecurityConfigurationAccessor securityAccessor = NullSecurityConfigurationAccessor.Instance;
         try
         {
-            // The scenario's OWN accessor is handed the scenario's OWN secret accessor (REQ-009),
-            // so a `clientKeyPassword` resolved for a step is recorded in exactly the
-            // ResolvedSecrets ledger the runner's diagnostic and observation scrubbers read.
+            var scenarioSecrets = secretScope.CreateScenarioAccessor();
+
+            // The scenario security accessor uses the same local secret accessor as its script.
+            // Successful resolutions feed both its public scenario ledger and the separate
+            // aggregate accessor the diagnostic and observation scrubbers retain (REQ-009).
             // REQ-010 extends that to the probe: when the caller supplied a shared ledger, the
             // probe's separately-scoped accessor records into this same net, so neither path's
             // resolved value can escape through the other's emitted text.
             securityAccessor = SecurityConfigurationAccessor.Build(
-                ast, scriptBaseDirectory ?? seedBaseDirectory, secretAccessor, sharedPathLedger);
+                ast, scriptBaseDirectory ?? seedBaseDirectory, scenarioSecrets, sharedPathLedger);
 
             // Built once, up front (moved ahead of its former use inside the step loop below)
             // because the live sink needs it at construction time, issue #262: the map of
@@ -4845,7 +4847,7 @@ public static class ScenarioRunner
             var globals = new ScriptGlobalVariables(
                 vars,
                 suite.DiscoveredServices,
-                secretAccessor,
+                scenarioSecrets,
                 webhookAccessor,
                 traceAccessor,
                 liveSink,

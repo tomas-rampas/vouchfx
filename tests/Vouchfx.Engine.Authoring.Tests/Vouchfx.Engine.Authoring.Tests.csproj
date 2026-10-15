@@ -17,4 +17,10 @@
     <ProjectReference Include="..\..\src\Engine\Vouchfx.Engine.Authoring\Vouchfx.Engine.Authoring.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Content Include="Golden\vouchfx-engine-authoring-public-api.v1.txt" CopyToOutputDirectory="PreserveNewest" />
+    <Compile Include="..\Shared\GoldenRegenerationPolicyTests.cs" Link="GoldenRegenerationPolicyTests.cs" />
+    <ProjectReference Include="..\Vouchfx.TestSupport\Vouchfx.TestSupport.csproj" />
+  </ItemGroup>
+
 </Project>

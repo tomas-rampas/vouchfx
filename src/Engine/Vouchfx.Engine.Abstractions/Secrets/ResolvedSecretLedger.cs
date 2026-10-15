@@ -31,9 +31,10 @@
 //
 // LIFETIME IS THE CALLER'S CHOICE, not this type's (client-key-password REQ-010).  Built by
 // SecretAccessor's one-argument constructor it is private to that accessor; passed to the
-// two-argument constructor it is shared, and the engine shares ONE ledger across a whole run
-// so a value resolved by the topology probe is scrubbable from text emitted on the step path
-// and vice versa.  Either way it is Default-ALC and is collected with its last holder.
+// two-argument constructor it is shared. The engine gives each scenario a local ledger that
+// forwards registrations to a separate run/session reporting ledger. Probe and sibling values
+// remain scrubbable at reporting boundaries without entering the public local membership.
+// Either way it is Default-ALC and is collected with its last holder.
 //
 // RETAINED-PLAINTEXT FOOTPRINT: the ledger retains a plaintext `string` copy of each revealed
 // value for its own lifetime — a deliberate, necessary cost (you cannot scrub a value you do
@@ -58,9 +59,11 @@ namespace Vouchfx.Engine.Abstractions.Secrets;
 /// <strong>Scope.</strong>  How far a ledger reaches is decided by whoever constructs it, not
 /// here: <see cref="SecretAccessor(ISecretSourceCatalog)"/> gives an accessor a private one,
 /// while <see cref="SecretAccessor(ISecretSourceCatalog, ResolvedSecretLedger)"/> lets several
-/// accessors share one.  The engine shares a single instance across a run (the topology probe's
-/// accessor and each scenario's), which is what makes a value resolved on one of those paths
-/// scrubbable from text emitted on another.
+/// accessors share one. The engine exposes a local ledger per scenario and forwards its
+/// registrations, including explicit <see cref="Record"/> calls, to a separate run/session
+/// reporting ledger. The reporting ledger also retains topology-probe registrations; those
+/// values remain scrubbable in reports without becoming visible through another scenario's
+/// <see cref="Count"/> or <see cref="Scrub(string)"/>.
 /// </para>
 /// <para>
 /// The ledger records a value the moment it is resolved (see
@@ -81,15 +84,21 @@ namespace Vouchfx.Engine.Abstractions.Secrets;
 /// </remarks>
 public sealed class ResolvedSecretLedger
 {
-    // Ordinal set of revealed values seen over this ledger's lifetime — the whole run, as the
-    // engine constructs it (see the header and the type remarks; the scope is the CONSTRUCTOR's
-    // choice, not this field's).  A HashSet gives O(1) record and
-    // de-duplicates when the same secret is resolved at many sinks.  Plain strings only —
-    // never a SecretString — so the ledger cannot itself become a value-comparison oracle
-    // across the boundary (it lives wholly in the Default ALC).
+    // Membership is local. The engine alone may attach a reporting destination; it is never
+    // consulted by Count or Scrub and retains no reference back to this ledger or its scripts.
     private readonly HashSet<string> _values = new(StringComparer.Ordinal);
-
     private readonly object _gate = new();
+    private readonly ResolvedSecretLedger? _reportingLedger;
+
+    /// <summary>Creates an independent ledger with no reporting destination.</summary>
+    public ResolvedSecretLedger() { }
+
+    // Internal so hosts retain the existing constructor/API contract. Readonly destinations
+    // form an outward-only chain; recording never holds a local lock while forwarding.
+    internal ResolvedSecretLedger(ResolvedSecretLedger reportingLedger)
+    {
+        _reportingLedger = reportingLedger ?? throw new ArgumentNullException(nameof(reportingLedger));
+    }
 
     /// <summary>
     /// Records <paramref name="value"/> as a revealed secret to be scrubbed from later
@@ -108,6 +117,10 @@ public sealed class ResolvedSecretLedger
         {
             return;
         }
+
+        // Complete the reporting registration before returning, for both resolver calls and
+        // explicit provider/script Record calls. Never expose reporting membership locally.
+        _reportingLedger?.Record(value);
 
         lock (_gate)
         {

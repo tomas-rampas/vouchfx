@@ -21,6 +21,7 @@
       next to the test DLL so the test reads it from AppContext.BaseDirectory/Golden.
       Treated as a non-compiled Content item; CopyToOutputDirectory keeps it fresh.
     -->
+    <Content Include="Golden\vouchfx-engine-abstractions-public-api.v1.txt" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Golden\event-stream-wire-contract.v1.txt">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>

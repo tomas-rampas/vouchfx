@@ -34,7 +34,9 @@ namespace Vouchfx.Engine.Runtime.Secrets;
 /// N scenario scopes and no single scope object can carry both. Sharing only the ledger decouples
 /// "which values must be scrubbed" (run-scoped) from "who owns the Vault
 /// <see cref="System.Net.Http.HttpClient"/>" (unchanged, per-scope, disposed at each scope's own
-/// end). Omit the argument and the scope keeps a private ledger — the pre-REQ-010 behaviour.
+/// end). The scenario accessor has its own public ledger and forwards every meaningful registration
+/// into this reporting net, without exposing values resolved by the probe or other scenarios.
+/// Omit the argument and the reporting ledger is private to this scope.
 /// </para>
 /// <para>
 /// <strong>The <c>--watch</c> call site shares a SESSION-scoped ledger (EDGE-007), and the wider
@@ -53,6 +55,7 @@ namespace Vouchfx.Engine.Runtime.Secrets;
 internal sealed class SecretAccessorScope : IDisposable
 {
     private readonly ISecretResolver[] _resolvers;
+    private readonly SecretSourceCatalog _catalog;
     private bool _disposed;
 
     /// <summary>
@@ -66,13 +69,24 @@ internal sealed class SecretAccessorScope : IDisposable
     internal SecretAccessorScope(ISecretResolver[] resolvers, ResolvedSecretLedger? sharedLedger = null)
     {
         _resolvers = resolvers;
-        var catalog = new SecretSourceCatalog(resolvers);
+        _catalog = new SecretSourceCatalog(resolvers);
         Accessor = sharedLedger is null
-            ? new SecretAccessor(catalog)
-            : new SecretAccessor(catalog, sharedLedger);
+            ? new SecretAccessor(_catalog)
+            : new SecretAccessor(_catalog, sharedLedger);
     }
 
-    /// <summary>The accessor every resolution in this scope must go through (§17, REQ-010).</summary>
+    /// <summary>
+    /// Creates the accessor exposed to one scenario. Its public ledger contains only local
+    /// resolutions and manual Record calls; every registration also feeds the reporting net.
+    /// The scope remains the sole owner of the underlying resolvers.
+    /// </summary>
+    internal SecretAccessor CreateScenarioAccessor()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        return new SecretAccessor(_catalog, new ResolvedSecretLedger(Accessor.ResolvedSecrets));
+    }
+
+    /// <summary>The aggregate accessor retained by topology and reporting consumers (§17, REQ-010).</summary>
     internal SecretAccessor Accessor { get; }
 
     /// <summary>

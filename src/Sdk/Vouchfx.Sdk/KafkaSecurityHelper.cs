@@ -343,17 +343,10 @@ public static class KafkaSecurityHelper
         "                    \"declared client certificate, or remove both fields.\");\n" +
         "            }\n" +
         "\n" +
-        "            // NO PASSPHRASE READ HERE, AND THAT IS A DECISION, not an omission — do not\n" +
-        "            // 'fix' it in isolation. REQ-008 scopes its unconditional-read constraint to\n" +
-        "            // the 'mtls' branch, because the read exists to guard a key this branch never\n" +
-        "            // presents. The schema forbids 'clientKeyPassword' under 'tls' outright\n" +
-        "            // (the boolean-'false' subschema in the 'security' $def's own allOf, in\n" +
-        "            // root-language-schema.json), so the only way to declare one here is the\n" +
-        "            // same embedder bypass the contradiction guard above addresses, and the\n" +
-        "            // consequence is a missing diagnostic rather than a weakened connection:\n" +
-        "            // nothing is decrypted, nothing is presented, no key reaches librdkafka.\n" +
-        "            // Refusing the declaration belongs where declarations are refused, not in a\n" +
-        "            // read performed for its side effect.\n" +
+        "            // Keep the client-identity contradiction diagnostic above first. The lazy\n" +
+        "            // passphrase read also refuses a passphrase-only declaration from an\n" +
+        "            // embedder that bypassed schema validation; no client identity is presented.\n" +
+        "            _ = certificates?.ClientKeyPassword;\n" +
         "            config.SecurityProtocol = Confluent.Kafka.SecurityProtocol.Ssl;\n" +
         "        }\n" +
         "        else\n" +

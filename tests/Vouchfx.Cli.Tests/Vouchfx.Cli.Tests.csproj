@@ -102,4 +102,8 @@
     <Compile Include="..\Shared\GoldenRegenerationPolicyTests.cs" Link="GoldenRegenerationPolicyTests.cs" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Content Include="Golden\vouchfx-cli-public-api.v1.txt" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

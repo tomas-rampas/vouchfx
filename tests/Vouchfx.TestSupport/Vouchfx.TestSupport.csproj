@@ -23,7 +23,8 @@
     RepoRoot.Resolve (the repository-checkout-root walk, anchored on vouchfx.sln, lifted here
     by #551 once nine copies of the same FIXED-DEPTH walk - with no anchor check at all - were
     found drifting across two assemblies), and GoldenRegeneration (the shared CI refusal
-    policy used before test-only golden writers).
+    policy used before test-only golden writers), and EventWireContractSignature (the shared
+    canonical event metadata emitter used by Abstractions and Orchestration contract gates).
 
     THIS LIST IS AN INDEX, AND KEEPING IT CURRENT IS THE POINT OF IT: an entry that
     is missing is a helper the next author does not know exists, and a helper nobody

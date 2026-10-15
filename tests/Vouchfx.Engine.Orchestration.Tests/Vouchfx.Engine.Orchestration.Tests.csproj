@@ -139,4 +139,9 @@
     <PackageReference Include="JsonPath.Net" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Content Include="Golden\orchestration-event-stream-wire-contract.v1.txt" CopyToOutputDirectory="PreserveNewest" />
+    <Compile Include="..\Shared\GoldenRegenerationPolicyTests.cs" Link="GoldenRegenerationPolicyTests.cs" />
+  </ItemGroup>
+
 </Project>
