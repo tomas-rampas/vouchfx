@@ -1328,29 +1328,14 @@ public sealed class SecretObservationLeakPenetrationTests
     }
 
     /// <summary>
-    /// THE SCRUB ORDER IS SECRETS-FIRST AT EVERY COMPOSITION SITE, asserted over the source of all
-    /// four rather than behaviourally at one.
+    /// The shared diagnostic helper and both raw event compositions scrub values before paths.
     /// </summary>
     /// <remarks>
-    /// <para>
-    /// <strong>Why source and not behaviour.</strong> The discriminating behavioural arms live in
-    /// <c>SecurityPathDisclosureLedgerTests</c> and exercise <c>ScrubDiagnostic</c> — one of the
-    /// four. Reaching the other three the same way needs a real accessor, a real path ledger and a
-    /// crafted overlapping pair per site, and would still say nothing about a FIFTH site added
-    /// later. The property "the value scrub is written before the path scrub" is what actually has
-    /// to hold everywhere, and it is checkable everywhere.
-    /// </para>
-    /// <para>
-    /// <strong>What each pair is.</strong> Each site composes a value-ledger call with a
-    /// path-ledger call over one string; the order decides which net loses its exact match when
-    /// the two recorded strings overlap. Secrets-first degrades to a partially-redacted path;
-    /// paths-first degrades to a mangled, still-readable secret. The full argument is on
-    /// <c>ScenarioRunner.ScrubDiagnostic</c>.
-    /// </para>
-    /// <para>
-    /// Read over COMMENT-STRIPPED source, because that argument names both calls in prose several
-    /// times over and a raw index comparison would find the comment first.
-    /// </para>
+    /// <c>SecurityPathDisclosureLedgerTests</c> exercises overlapping values and paths through
+    /// <c>ScrubDiagnostic</c>. This source check pins the same order at the other compositions;
+    /// <c>DiagnosticCompositionCensusTests</c> inventories their callers across Runtime and CLI.
+    /// The disclosure trade-off is documented once on <c>DiagnosticText.Scrub</c>. Comments are
+    /// stripped so those explanations cannot satisfy the call-order check.
     /// </remarks>
     [Fact]
     public void EveryScrubComposition_AppliesTheValueLedgerBeforeThePathLedger()
@@ -1361,17 +1346,17 @@ public sealed class SecretObservationLeakPenetrationTests
             root, "src", "Engine", "Vouchfx.Engine.Runtime", "ScenarioRunner.cs")));
         var events = WithoutComments(File.ReadAllText(Path.Combine(
             root, "src", "Engine", "Vouchfx.Engine.Runtime", "StepEventBuilder.cs")));
-        var watch = WithoutComments(File.ReadAllText(Path.Combine(
-            root, "src", "Cli", "Vouchfx.Cli", "Watch", "WatchRunner.cs")));
+        var diagnostic = WithoutComments(File.ReadAllText(Path.Combine(
+            root, "src", "Engine", "Vouchfx.Engine.Runtime", "DiagnosticText.cs")));
 
         // (site, source, value-ledger call, path-ledger call). Each fragment is unique within its
         // file, so no per-method scoping is needed - and a rename that breaks that uniqueness is
         // caught by the vacuity check below rather than silently comparing the wrong pair.
         var sites = new (string Site, string Source, string ValueScrub, string PathScrub)[]
         {
-            ("ScenarioRunner.ScrubDiagnostic",
-             runner,
-             "concrete.ResolvedSecrets.Scrub(text)",
+            ("DiagnosticText.Scrub",
+             diagnostic,
+             "ledger.Scrub(text)",
              "pathLedger?.Scrub(scrubbed)"),
 
             ("ScenarioRunner.EnvironmentErrorLine",
@@ -1383,18 +1368,6 @@ public sealed class SecretObservationLeakPenetrationTests
              events,
              "ledger?.Scrub(message)",
              "pathLedger?.Scrub(cause)"),
-
-            // RE-POINTED, NOT RELAXED (#473). This site no longer calls `pathLedger.Scrub`
-            // directly: SecurityPathDisclosureLedger moved to Vouchfx.Engine.Orchestration, whose
-            // internals the CLI assembly is deliberately NOT granted, so the call goes through the
-            // Runtime forwarder SecurityPathScrub.Apply. The composition, and the ORDER this census
-            // exists to pin, are unchanged — the value scrub still runs first and this is still an
-            // offset comparison over the two calls. Only the spelling of the second one moved, and
-            // the census caught that itself rather than going quietly green.
-            ("WatchRunner.ScrubThenSanitise",
-             watch,
-             "ledger.Scrub(text)",
-             "SecurityPathScrub.Apply(pathLedger, scrubbed)"),
         };
 
         foreach (var (site, source, valueScrub, pathScrub) in sites)
@@ -1423,7 +1396,7 @@ public sealed class SecretObservationLeakPenetrationTests
                 + "value ledger's exact match then misses, and a mangled but still-readable "
                 + "credential reaches the archived event stream. Secrets-first accepts a "
                 + "partially-redacted path instead, which is strictly the lesser disclosure - the "
-                + "argument is written out on ScenarioRunner.ScrubDiagnostic and the two "
+                + "argument is written out on DiagnosticText.Scrub and the two "
                 + "discriminating behavioural arms are in SecurityPathDisclosureLedgerTests.");
         }
     }

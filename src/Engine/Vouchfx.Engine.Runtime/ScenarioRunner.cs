@@ -1155,8 +1155,8 @@ public static class ScenarioRunner
             // handed `runPathLedger` as well as `runSecretLedger`; a terminal write that applied
             // only one of them would print a resolved certificate path the archived record does
             // not contain, which is the divergence building the text once exists to prevent.
-            var environmentFault = runPathLedger.Scrub(
-                runSecretLedger.Scrub($"Environment configuration error: {aex.Message}")!)!;
+            var rawEnvironmentFault = $"Environment configuration error: {aex.Message}";
+            var environmentFault = DiagnosticText.Scrub(rawEnvironmentFault, runSecretLedger, runPathLedger);
             buffer.Add(StepEventBuilder.ScenarioCompletedLine(
                 runId,
                 now,
@@ -1169,7 +1169,7 @@ public static class ScenarioRunner
             // Issue #266, Item 4: aex.Message can echo untrusted YAML content (an
             // environment.services/dependencies reference) back verbatim — sanitise.
             await output.WriteLineAsync(
-                DisplaySanitiser.SanitiseForDisplay(environmentFault))
+                DiagnosticText.ScrubForDisplay(rawEnvironmentFault, runSecretLedger, runPathLedger))
                 .ConfigureAwait(false);
             livePump?.PostRange(buffer);
 
@@ -2524,11 +2524,10 @@ public static class ScenarioRunner
             //
             // Issue #266, Item 4: aex.Message can echo untrusted YAML content back
             // verbatim — sanitise before writing.
-            var environmentFault = runPathLedger.Scrub(
-                runSecretLedger.Scrub(
-                    $"RunSuiteAsync: environment configuration error - {aex.Message}")!)!;
+            var rawEnvironmentFault = $"RunSuiteAsync: environment configuration error - {aex.Message}";
+            var environmentFault = DiagnosticText.Scrub(rawEnvironmentFault, runSecretLedger, runPathLedger);
 
-            await output.WriteLineAsync(DisplaySanitiser.SanitiseForDisplay(environmentFault))
+            await output.WriteLineAsync(DiagnosticText.ScrubForDisplay(rawEnvironmentFault, runSecretLedger, runPathLedger))
                 .ConfigureAwait(false);
 
 
@@ -2573,11 +2572,10 @@ public static class ScenarioRunner
             // record, into --junit/--html/--events, so it must be scrubbed BEFORE it is stamped.
             // Sanitising is display hygiene (#266 Item 4) — it neutralises control bytes and ANSI
             // sequences for a terminal, and would not redact an ordinary printable passphrase.
-            var topologyFailure = runPathLedger.Scrub(
-                runSecretLedger.Scrub(
-                    $"RunSuiteAsync: topology failed to start - {oex.Message}"));
+            var rawTopologyFailure = $"RunSuiteAsync: topology failed to start - {oex.Message}";
+            var topologyFailure = DiagnosticText.Scrub(rawTopologyFailure, runSecretLedger, runPathLedger);
 
-            await output.WriteLineAsync(DisplaySanitiser.SanitiseForDisplay(topologyFailure))
+            await output.WriteLineAsync(DiagnosticText.ScrubForDisplay(rawTopologyFailure, runSecretLedger, runPathLedger))
                 .ConfigureAwait(false);
 
             // Classify through WithAcquisitionFailure, using the error kind plus typed
@@ -2850,8 +2848,7 @@ public static class ScenarioRunner
                         // above scrubs, so scrubbing one sink and not the other would leave the
                         // value on the terminal/CI log.
                         await output.WriteLineAsync(
-                            DisplaySanitiser.SanitiseForDisplay(
-                                runPathLedger.Scrub(runSecretLedger.Scrub(isolationFault))))
+                            DiagnosticText.ScrubForDisplay(isolationFault, runSecretLedger, runPathLedger))
                             .ConfigureAwait(false);
                         break;
                     }
@@ -2916,12 +2913,10 @@ public static class ScenarioRunner
                         // through the ledger the comment above calls "at its fullest here" —
                         // oex.Message interpolates the same Detail that event line scrubbed.
                         await output.WriteLineAsync(
-                            DisplaySanitiser.SanitiseForDisplay(
-                                runPathLedger.Scrub(
-                                    runSecretLedger.Scrub(
-                                        $"Isolation.EndScenarioAsync failed after '{name}': {oex.Message}; "
-                                        + "aborting suite - subsequent scenarios may run against "
-                                        + "unclean state."))))
+                            DiagnosticText.ScrubForDisplay(
+                                $"Isolation.EndScenarioAsync failed after '{name}': {oex.Message}; "
+                                + "aborting suite - subsequent scenarios may run against "
+                                + "unclean state.", runSecretLedger, runPathLedger))
                             .ConfigureAwait(false);
                         suiteAggregate = Elevate(suiteAggregate, Verdict.EnvironmentError);
                         break;
@@ -5010,10 +5005,10 @@ public static class ScenarioRunner
                 // ANSI escape sequences the (already-scrubbed) text might still carry (e.g. from
                 // a hostile step id or an author exception message), before any of it ever
                 // reaches the terminal/CI log.
-                var scrubbedDiagnosis = ScrubDiagnostic(secretAccessor, sharedPathLedger, diagnosis);
                 await output.WriteLineAsync(
                     "Compile/run error (Inconclusive): "
-                    + DisplaySanitiser.SanitiseForDisplay(scrubbedDiagnosis))
+                    + DiagnosticText.ScrubForDisplay(
+                        diagnosis, (secretAccessor as SecretAccessor)?.ResolvedSecrets, sharedPathLedger))
                     .ConfigureAwait(false);
 
                 return new ScenarioExecutionOutcome(Verdict.Inconclusive, authoringRefusalObserved);
@@ -5747,12 +5742,9 @@ public static class ScenarioRunner
     /// Applies the §17 defence-in-depth scrub net (S11-B-01) to a free-form diagnostic /
     /// observation <paramref name="text"/>: every verbatim occurrence of a value the run's
     /// <paramref name="accessor"/> revealed is replaced with the redaction marker.  This is
-    /// the SINGLE scrub call shared by both the step-observation path
-    /// (<see cref="BuildStepObservation"/>) and the scenario-level diagnostic writes to the
-    /// human <c>output</c> stream (the CSX-compile / unexpected-exception catch sites in
-    /// <see cref="RunScenarioCoreAsync"/>), so a secret that surfaces in an exception message
-    /// cannot reach the developer's terminal / CI log any more than it can reach the event
-    /// stream.
+    /// the step-observation adapter to <see cref="DiagnosticText.Scrub"/>. Human diagnostics use
+    /// <see cref="DiagnosticText.ScrubForDisplay"/>, which applies the same content scrubs before
+    /// display rewriting. The shared composition documents the secrets-before-paths trade-off.
     /// </summary>
     /// <param name="accessor">
     /// The Default-ALC secret accessor for this scenario.  When it is a
@@ -5777,47 +5769,7 @@ public static class ScenarioRunner
     internal static string? ScrubDiagnostic(
         ISecretAccessor accessor, SecurityPathDisclosureLedger? pathLedger, string? text)
     {
-        var scrubbed = accessor is SecretAccessor concrete
-            ? concrete.ResolvedSecrets.Scrub(text)
-            : text;
-
-        // The SECOND net (issue #375): a resolved security-material path this engine handed to a
-        // client library whose diagnostics it does not write. The value ledger above cannot see
-        // it — a path is not a resolved secret and is never recorded there — and the substitution
-        // is the field's own DECLARED text rather than a redaction marker, which is why it is a
-        // separate ledger rather than a second use of the first.
-        //
-        // THE ORDER IS SECRETS FIRST, AND IT IS LOAD-BEARING. THIS IS THE ONE PLACE THAT ARGUMENT
-        // IS WRITTEN OUT; every other composition of the two nets in this engine points here.
-        //
-        // Both nets replace EXACT occurrences, so whichever runs first can destroy the other's
-        // match. The two orders therefore fail differently, and the choice is which failure to
-        // accept:
-        //
-        //   SECRETS FIRST (what this does). If a recorded secret VALUE happens to occur inside a
-        //   recorded resolved PATH — a passphrase that is also a directory name is the realistic
-        //   shape, and an author who names a folder after the credential in it has done nothing
-        //   this engine forbids — the value scrub rewrites the middle of the path, so the path
-        //   ledger no longer finds its recorded form and the remainder survives:
-        //   `C:\work\[REDACTED]\ca.pem`. That is a partial HOST-LAYOUT disclosure. It is the
-        //   failure this order accepts.
-        //
-        //   PATHS FIRST. If a recorded resolved PATH occurs inside a recorded secret VALUE — any
-        //   credential that embeds a file location, a connection string with a certificate path
-        //   in it, a JSON blob a Vault resolver returned whole — the path substitution rewrites
-        //   the secret's interior, the value ledger's exact match then misses, and what reaches
-        //   the archived event stream is a MANGLED SECRET rather than a redacted one. Most of the
-        //   value is still there and is still readable.
-        //
-        // A partially-redacted path discloses where a file lives on a build agent. A mangled
-        // secret discloses most of a credential. The second is strictly worse, so the order is
-        // fixed at secrets-first and must not be reversed without a reason that outweighs that.
-        //
-        // WHAT WOULD ACTUALLY REMOVE THE TRADE-OFF, stated so nobody mistakes this for a defence
-        // of the current shape: one pass that considers both nets' recorded forms together,
-        // longest-first, and never re-scans text it has already replaced. That is a change to how
-        // the two ledgers compose, not to their order, and it is out of scope here.
-        return pathLedger?.Scrub(scrubbed) ?? scrubbed;
+        return DiagnosticText.Scrub(text, (accessor as SecretAccessor)?.ResolvedSecrets, pathLedger);
     }
 
     /// <summary>
