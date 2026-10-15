@@ -70,6 +70,7 @@ public sealed class KafkaTlsEmbedderDiagnosticTests
             }
             // Compile the provider's actual fragment, including its inlined SDK helper body.
             var assembled = CsxAssembler.Assemble(new[] { ("step", fragment) });
+            Assert.Contains("static class KafkaSecurity_V2_Helpers", assembled.CsxSource, StringComparison.Ordinal);
             var paths = ScenarioRunner.BclReferencePaths().Concat(
                 references.CompileReferenceAssemblies.Select(assembly => assembly.Location));
             var compiled = RoslynScriptCompiler.CompileOnce(assembled.CsxSource, additionalReferencePaths: paths.ToArray());

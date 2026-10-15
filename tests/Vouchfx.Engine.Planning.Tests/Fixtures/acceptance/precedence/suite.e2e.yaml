@@ -8,4 +8,6 @@ environment:
 steps:
   - id: publish-order-event
     type: mq-publish.kafka
+    topic: planner-events
+    payload: '{"event":"planner-fixture"}'
     target: events

@@ -206,66 +206,10 @@ public sealed class SchemaAcceptedCorpusTests
     // other accepted fixture — this theory (and its now-empty discovery method) is
     // deleted rather than left as a permanent no-op.
 
-    // ── Planning.Tests fixtures: real environment: blocks, never schema-checked ──
-    //
-    // tests/Vouchfx.Engine.Planning.Tests/Fixtures/**/*.e2e.yaml carries real
-    // suite bodies (environment: blocks and all) used to exercise the PLANNER
-    // (coverage, vocabulary, determinism, ingest, history). Nothing validated
-    // them against the language schema before this gate.
-    //
-    // MAJOR FINDING (contradicts part of the brief's framing — reported here
-    // rather than worked around silently): the brief's premise was that these
-    // fixtures "carry real environment: blocks" that "nothing validates
-    // today", implying the environment: shapes were the risk. Running the
-    // gate against the full, unfiltered fixture set (41 files) shows the
-    // environment: blocks are NOT the problem — they validate cleanly
-    // everywhere (environment.services/dependencies is barely constrained by
-    // the schema, as established by the accepted-corpus surface fixtures
-    // above). The actual, and much larger, finding is that 39 of the 41
-    // fixtures fail schema validation because their STEP bodies are
-    // deliberately minimal: the planner inspects only a step's 'id', 'type',
-    // 'target' and 'capture' (coverage/vocabulary graph shape), so these
-    // fixtures were authored WITHOUT the provider-required fields
-    // (http.rest's method/path, db-assert.postgres's query/expect,
-    // mq-publish.kafka's topic/payload, cache-assert.redis's
-    // key/operation/expect, …) a real compilable document needs. Only the
-    // three fixtures that happen to use script.csharp — the one Core
-    // provider whose schema requires nothing beyond 'code' or 'file' — pass
-    // as-is. None of the 39 are edited here to make them pass, and none are
-    // silently dropped from discovery: every one is excluded below by exact
-    // relative path, categorised by its real root cause, and paired with the
-    // precise DocumentValidator finding that justifies the exclusion
-    // (obtained by actually running the validator with zero exclusions —
-    // never guessed).
-    //
-    // Four categories, in order of how many fixtures they cover:
-    //   (A) Deliberately minimal step bodies (31 fixtures) — the systemic
-    //       case above: real steps present, but shaped for the planner's own
-    //       purposes, never meant to be schema-complete documents.
-    //   (B) Deliberately zero-step ('steps: []', 3 fixtures) — a suite that
-    //       exists only to declare an unreferenced/uncovered dependency or
-    //       service for a vocabulary/coverage-gap test. Violates the root
-    //       schema's 'steps' minItems: 1.
-    //   (C) Deliberately malformed (4 fixtures) — exercises the planner's own
-    //       malformed-suite handling: a step missing 'id', or (in the
-    //       secret-safety fixture) a 'type' replaced by an ~800-character
-    //       garbage token planted to prove SuiteSetLoader's
-    //       MaxParseErrorMessageChars bound truncates it out of a reported
-    //       error. Fails 'required'/'pattern', never a construct this gate's
-    //       narrowing-detection purpose cares about.
-    //   (D) Planner-only cross-cutting field on a provider that doesn't
-    //       declare it (1 fixture) — added by the typo-closing change
-    //       (branch feat/close-step-surface, $defs/step's
-    //       'unevaluatedProperties: false'). The planner treats 'target' as a
-    //       generic dependency-reference convention available on ANY step
-    //       type for graph-shape purposes (REQ-004/REQ-007); script.csharp's
-    //       own schema never declared 'target' as one of its fields (only
-    //       'code'/'file'). Before this change that was silently tolerated
-    //       (additionalProperties: true); now it is correctly rejected as an
-    //       unevaluated property — a genuine, and genuinely interesting,
-    //       tension between the planner's cross-cutting convention and the
-    //       schema's per-provider vocabulary, surfaced here rather than
-    //       resolved unilaterally (flagged for maintainer attention).
+    // Planning fixtures exercise the planner's graph and history rules. Positive
+    // fixtures are complete suite documents, validated against the composed Core
+    // language schema. Only deliberate negative-domain fixtures remain excluded:
+    // zero-step documents, malformed steps, and the unknown-kind/target case.
 
     private static string RepoRoot => FindRepoRoot();
 
@@ -281,167 +225,16 @@ public sealed class SchemaAcceptedCorpusTests
     /// guessed — together with why the fixture is deliberately shaped that way.
     /// </summary>
     /// <remarks>
-    /// Every one of these is a genuine schema-validation failure (per the
-    /// brief: "a fixture that fails schema validation is a genuine finding").
-    /// None are edited to make them pass, and none are silently dropped from
-    /// discovery without a reason recorded here. Only 2 of the 41 discovered
-    /// fixtures are NOT excluded (both use script.csharp exclusively, and
-    /// neither carries a planner-only 'target' field — see the section header
-    /// above for why) and remain actively gated by
-    /// <see cref="PlanningFixture_IsValid"/>.
+    /// The 33 positive fixtures are schema-gated; the eight exclusions retain
+    /// deliberately invalid input needed by the planner's negative-domain tests.
     /// </remarks>
     private static readonly Dictionary<string, string> ExcludedPlanningFixtures =
         new(StringComparer.OrdinalIgnoreCase)
         {
-            // ── (A) Deliberately minimal step bodies — planner tests coverage/
-            //        vocabulary/determinism/history graph shape only; steps
-            //        omit the provider-required fields a compilable document
-            //        needs. This is the dominant category (31 of 39).
-            ["acceptance/determinism/two-collisions/collision-alpha-1.e2e.yaml"] =
-                "Minimal http.rest step body (planner determinism fixture — only 'id'/'type'/'target' matter). " +
-                "at /steps/0: (line 5) Required properties [\"method\",\"path\"] are not present",
-
-            ["acceptance/determinism/two-collisions/collision-alpha-2.e2e.yaml"] =
-                "Minimal http.rest step body (planner determinism fixture). " +
-                "at /steps/0: (line 5) Required properties [\"method\",\"path\"] are not present",
-
-            ["acceptance/determinism/two-collisions/collision-beta-1.e2e.yaml"] =
-                "Minimal http.rest step body (planner determinism fixture). " +
-                "at /steps/0: (line 5) Required properties [\"method\",\"path\"] are not present",
-
-            ["acceptance/determinism/two-collisions/collision-beta-2.e2e.yaml"] =
-                "Minimal http.rest step body (planner determinism fixture). " +
-                "at /steps/0: (line 5) Required properties [\"method\",\"path\"] are not present",
-
-            ["acceptance/precedence/suite.e2e.yaml"] =
-                "Minimal mq-publish.kafka step body (planner precedence fixture). " +
-                "at /steps/0: (line 9) Required properties [\"topic\",\"payload\"] are not present",
-
-            ["acceptance/secret-safety/suite.e2e.yaml"] =
-                "Minimal http.rest step body (planner secret-safety fixture). " +
-                "at /steps/0: (line 5) Required properties [\"method\",\"path\"] are not present",
-
-            ["coverage/distinct-runid-same-stepid/suite-a.e2e.yaml"] =
-                "Minimal http.rest step body (planner coverage fixture). " +
-                "at /steps/0: (line 5) Required properties [\"method\",\"path\"] are not present",
-
-            ["coverage/distinct-runid-same-stepid/suite-b.e2e.yaml"] =
-                "Minimal http.rest step body (planner coverage fixture). " +
-                "at /steps/0: (line 5) Required properties [\"method\",\"path\"] are not present",
-
-            ["coverage/fully-exercised/suite.e2e.yaml"] =
-                "Minimal http.rest + db-assert.postgres step bodies (planner coverage fixture). " +
-                "at /steps/0: (line 13) Required properties [\"method\",\"path\"] are not present; " +
-                "at /steps/1: (line 16) Required properties [\"query\",\"expect\"] are not present",
-
-            ["coverage/interleaved-parallel-runs/suite-a.e2e.yaml"] =
-                "Minimal http.rest step body (planner coverage fixture). " +
-                "at /steps/0: (line 5) Required properties [\"method\",\"path\"] are not present",
-
-            ["coverage/interleaved-parallel-runs/suite-b.e2e.yaml"] =
-                "Minimal http.rest step body (planner coverage fixture). " +
-                "at /steps/0: (line 5) Required properties [\"method\",\"path\"] are not present",
-
-            ["coverage/listener-name-collision/suite.e2e.yaml"] =
-                "Minimal mq-publish.kafka step body (planner coverage fixture). " +
-                "at /steps/0: (line 13) Required properties [\"topic\",\"payload\"] are not present",
-
-            ["coverage/mixed-gaps/checkout.e2e.yaml"] =
-                "Minimal http.rest/db-assert.postgres/mq-publish.kafka step bodies (planner coverage fixture). " +
-                "at /steps/0: (line 15) Required properties [\"method\",\"path\"] are not present; " +
-                "at /steps/1: (line 18) Required properties [\"query\",\"expect\"] are not present; " +
-                "at /steps/2: (line 21) Required properties [\"topic\",\"payload\"] are not present; " +
-                "at /steps/3: (line 24) Required properties [\"method\",\"path\"] are not present",
-
-            ["coverage/mixed-gaps/shipping.e2e.yaml"] =
-                "Minimal http.rest step body (planner coverage fixture). " +
-                "at /steps/0: (line 5) Required properties [\"method\",\"path\"] are not present",
-
-            ["coverage/receiver-name-collision/suite.e2e.yaml"] =
-                "Minimal mq-publish.kafka step body (planner coverage fixture). " +
-                "at /steps/0: (line 13) Required properties [\"topic\",\"payload\"] are not present",
-
-            ["coverage/renamed-file-ambiguity/current.e2e.yaml"] =
-                "Minimal http.rest step body (planner coverage fixture). " +
-                "at /steps/0: (line 5) Required properties [\"method\",\"path\"] are not present",
-
-            ["coverage/scenario-id-collision/suite-one.e2e.yaml"] =
-                "Minimal http.rest step body (planner coverage fixture). " +
-                "at /steps/0: (line 5) Required properties [\"method\",\"path\"] are not present",
-
-            ["coverage/scenario-id-collision/suite-two.e2e.yaml"] =
-                "Minimal http.rest step body (planner coverage fixture). " +
-                "at /steps/0: (line 5) Required properties [\"method\",\"path\"] are not present",
-
-            ["coverage/unresolvable-targets/suite.e2e.yaml"] =
-                "Minimal http.rest + cache-assert.redis step bodies (planner coverage fixture). " +
-                "at /steps/0: (line 13) Required properties [\"method\",\"path\"] are not present; " +
-                "at /steps/1: (line 16) Required properties [\"key\",\"operation\",\"expect\"] are not present",
-
-            ["coverage/zero-step-dependency/suite.e2e.yaml"] =
-                "Minimal http.rest + mq-publish.kafka step bodies (planner coverage fixture — misleadingly " +
-                "named: it has steps, just none targeting the fixture's titular zero-coverage dependency). " +
-                "at /steps/0: (line 15) Required properties [\"method\",\"path\"] are not present; " +
-                "at /steps/1: (line 18) Required properties [\"topic\",\"payload\"] are not present",
-
-            ["history/default-thresholds/history-health.e2e.yaml"] =
-                "Minimal http.rest step bodies ×4 (planner history fixture). " +
-                "at /steps/0: (line 11) Required properties [\"method\",\"path\"] are not present; " +
-                "at /steps/1: (line 14) Required properties [\"method\",\"path\"] are not present; " +
-                "at /steps/2: (line 17) Required properties [\"method\",\"path\"] are not present; " +
-                "at /steps/3: (line 20) Required properties [\"method\",\"path\"] are not present",
-
-            ["history/phantom-step/phantom-step.e2e.yaml"] =
-                "Minimal http.rest step body (planner history fixture). " +
-                "at /steps/0: (line 10) Required properties [\"method\",\"path\"] are not present",
-
-            ["history/retry-noise/retry-noise.e2e.yaml"] =
-                "Minimal http.rest step body (planner history fixture). " +
-                "at /steps/0: (line 10) Required properties [\"method\",\"path\"] are not present",
-
-            ["ingest/basic-suites/checkout.e2e.yaml"] =
-                "Minimal http.rest + db-assert.postgres step bodies (planner ingest fixture). " +
-                "at /steps/0: (line 17) Required properties [\"method\",\"path\"] are not present; " +
-                "at /steps/1: (line 20) Required properties [\"query\",\"expect\"] are not present",
-
-            ["ingest/basic-suites/refund.e2e.yaml"] =
-                "Minimal mq-publish.kafka step body (planner ingest fixture). " +
-                "at /steps/0: (line 2) Required properties [\"topic\",\"payload\"] are not present",
-
-            ["ingest/one-malformed/good.e2e.yaml"] =
-                "Minimal http.rest step body (planner ingest fixture — 'good' relative to its malformed sibling, " +
-                "not relative to the schema). " +
-                "at /steps/0: (line 5) Required properties [\"method\",\"path\"] are not present",
-
-            ["vocabulary/fully-covered/suite.e2e.yaml"] =
-                "Minimal http.rest + db-assert.postgres step bodies (planner vocabulary fixture). " +
-                "at /steps/0: (line 10) Required properties [\"method\",\"path\"] are not present; " +
-                "at /steps/1: (line 13) Required properties [\"query\",\"expect\"] are not present",
-
-            ["vocabulary/kafka-published-only/suite.e2e.yaml"] =
-                "Minimal mq-publish.kafka step body (planner vocabulary fixture). " +
-                "at /steps/0: (line 7) Required properties [\"topic\",\"payload\"] are not present",
-
-            ["vocabulary/redis-partial-coverage/suite.e2e.yaml"] =
-                "Minimal cache-assert.redis step body (planner vocabulary fixture). " +
-                "at /steps/0: (line 7) Required properties [\"key\",\"operation\",\"expect\"] are not present",
-
-            ["vocabulary/service-no-http/suite.e2e.yaml"] =
-                "script.csharp step missing BOTH oneOf branches — the fixture declares neither 'code' nor " +
-                "'file' at all (planner vocabulary fixture; the step exists only to occupy the suite, its " +
-                "body is irrelevant to the vocabulary check). " +
-                "at /steps/0: (line 7) Required properties [\"code\"] are not present; " +
-                "at /steps/0: (line 7) Required properties [\"file\"] are not present",
-
-            ["vocabulary/two-suites-same-dependency-name/suite-b-covered.e2e.yaml"] =
-                "Minimal cache-assert.redis + http.rest step bodies (planner vocabulary fixture). " +
-                "at /steps/0: (line 21) Required properties [\"key\",\"operation\",\"expect\"] are not present; " +
-                "at /steps/1: (line 24) Required properties [\"method\",\"path\"] are not present",
-
             // ── (B) Deliberately zero-step — a suite that exists only to
             //        declare an unreferenced dependency/service for a
             //        vocabulary or coverage-gap test. Violates 'steps'
-            //        minItems: 1 (3 of 39).
+            //        minItems: 1 (3 fixtures).
             ["acceptance/loop-closure-dependency/suite.e2e.yaml"] =
                 "Deliberately zero-step: exercises a suite whose only dependency has no steps targeting it. " +
                 "at /steps: (line 6) [minItems] Value should have at least 1 items",
@@ -455,7 +248,7 @@ public sealed class SchemaAcceptedCorpusTests
                 "at /steps: (line 6) [minItems] Value should have at least 1 items",
 
             // ── (C) Deliberately malformed — exercises the planner's own
-            //        malformed-suite handling (4 of 39).
+            //        malformed-suite handling (4 fixtures).
             ["ingest/all-malformed/bad-one.e2e.yaml"] =
                 "Deliberately malformed for PlanIngestTests' malformed-suite handling: the one step omits " +
                 "'id' AND the http.rest-required fields. " +
@@ -483,7 +276,7 @@ public sealed class SchemaAcceptedCorpusTests
 
             // ── (D) Planner-only cross-cutting field on a provider that
             //        doesn't declare it — added by the typo-closing change,
-            //        see the section header above (1 of 39).
+            //        see the section header above (1 fixture).
             ["vocabulary/unknown-kind-targeted/suite.e2e.yaml"] =
                 "script.csharp step uses the planner's generic 'target' convention (REQ-004/REQ-007), which " +
                 "script.csharp's own schema never declares (only 'code'/'file'); previously silently tolerated " +
@@ -524,20 +317,13 @@ public sealed class SchemaAcceptedCorpusTests
     }
 
     /// <summary>
-    /// <see cref="PlanningFixtureFiles"/> must discover at least its known-safe
-    /// floor of files — otherwise a broken repo-root resolution, or a
-    /// mass-exclusion regression, would silently make this gate a no-op (or a
-    /// near-no-op) instead of failing loudly. The floor matches the current
-    /// committed count exactly (2 of 41 fixtures survive exclusion — see the
-    /// class remarks above <see cref="ExcludedPlanningFixtures"/>): unlike
-    /// <see cref="AcceptedFiles_DiscoversAtLeastOneFile"/>'s more comfortable
-    /// margin, there is no room to spare below the true count here without
-    /// the floor becoming meaningless (feat/close-remaining-surfaces, Part D).
+    /// Prevents broken discovery or additional exclusions from silently shrinking
+    /// the 33-document positive Planning corpus.
     /// </summary>
     [Fact]
     public void PlanningFixtureFiles_DiscoversAtLeastOneFile()
     {
-        const int minPlanningFixtureFiles = 2;
+        const int minPlanningFixtureFiles = 33;
 
         var count = PlanningFixtureFiles().Count();
 

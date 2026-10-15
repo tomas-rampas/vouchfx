@@ -592,7 +592,7 @@ public sealed class MqExpectKafkaProvider
         "            // which the catches below map to a step-scoped EnvironmentError (§12.1) naming the\n" +
         "            // declared path, rather than an opaque librdkafka transport failure. A target with\n" +
         "            // no security block leaves the config exactly as built above.\n" +
-        "            KafkaSecurity_Helpers.ConfigureClient(security, targetName, config);\n" +
+        "            KafkaSecurity_V2_Helpers.ConfigureClient(security, targetName, config);\n" +
         "            consumer = new Confluent.Kafka.ConsumerBuilder<string, string>(config).Build();\n" +
         "            var deadline = System.DateTime.UtcNow.AddMilliseconds(DrainWindowMs);\n" +
         "            var partitions = RetainedPartitions(consumer.Handle, topic, deadline, ct);\n" +
@@ -939,7 +939,7 @@ public sealed class MqExpectKafkaProvider
         "            // which the catches below map to a step-scoped EnvironmentError (§12.1) naming the\n" +
         "            // declared path, rather than an opaque librdkafka transport failure. A target with\n" +
         "            // no security block leaves the config exactly as built above.\n" +
-        "            KafkaSecurity_Helpers.ConfigureClient(security, targetName, config);\n" +
+        "            KafkaSecurity_V2_Helpers.ConfigureClient(security, targetName, config);\n" +
         "            consumer = new Confluent.Kafka.ConsumerBuilder<string, Avro.Generic.GenericRecord>(config)\n" +
         "                .SetValueDeserializer(Confluent.Kafka.SyncOverAsync.SyncOverAsyncDeserializerExtensionMethods.AsSyncOverAsync(deserializer))\n" +
         "                .Build();\n" +
@@ -1229,7 +1229,7 @@ public sealed class MqExpectKafkaProvider
             // see that provider's note for why an Emit-time branch on "does this target declare
             // security" is not available (ICompileContext carries no `environment` surface, and
             // the v1 contract is additive-only). CsxAssembler dedupes the two to one copy.
-            KafkaSecurityHelper.Source,
+            Vouchfx.Steps.Kafka.KafkaSecurityEmission.Source,
         };
 
         return new CsxFragment(

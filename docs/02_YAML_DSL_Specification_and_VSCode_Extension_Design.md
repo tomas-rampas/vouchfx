@@ -185,6 +185,8 @@ environment:
 
 When `image:` is supplied, it bypasses the Aspire-provisioned default entirely. If `image:` carries no tag or digest and `version:` is also present, `version:` supplies the tag — allowing authors to override only the registry or repository whilst adopting a pinned version. If **both** `image:` (with a tag or digest) **and** `version:` are set, that is rejected as ambiguous with a clear error naming both fields.
 
+When one `image:` reference includes both a tag and a digest, the digest wins and the tag is ignored. For example, `image: registry.example/mirror/store:1.2@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` resolves as `registry.example/mirror/store@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`. This accepted form differs from an `image:` containing a digest together with a separate sibling `version:`, which is rejected as ambiguous.
+
 An `image:` field that carries no tag or digest and no sibling `version:` is **rejected** with a clear error. A tagless reference without an explicit version would silently float on `:latest`, defeating the determinism invariant; authors must use `version:` to pin the tag, or include a tag in the `image:` itself.
 
 An `image:` or `version:` written with no value at all, or as an unquoted YAML null (`~`, `null`, `Null`, or `NULL`), is treated as absent — identical to omitting the field entirely. Quote the value (e.g. `version: "null"`) to keep it as literal text instead; the one exception is a quoted empty string (`image: ""`), which is still treated as absent, since empty means absent on these two fields.

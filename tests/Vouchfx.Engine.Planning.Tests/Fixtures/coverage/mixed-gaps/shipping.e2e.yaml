@@ -4,4 +4,6 @@ metadata:
 steps:
   - id: ship-order
     type: http.rest
+    method: GET
+    path: /health
     target: api

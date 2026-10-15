@@ -3950,6 +3950,38 @@ public sealed class EnvironmentMapperTests : IDisposable
         Assert.Null(image.Tag);
     }
 
+    [Theory]
+    [InlineData("mongodb")]
+    [InlineData("s3")]
+    public void Map_DependencyImage_TagAndDigest_ResolvesByDigest(string dependencyType)
+    {
+        const string digest = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+        var env = new EnvironmentSpec(
+            Services: null,
+            Dependencies: new Dictionary<string, DependencySpec>
+            {
+                ["store"] = new DependencySpec(Type: dependencyType, Version: null, Extra: null)
+                {
+                    Image = $"registry.example/mirror/store:1.2@sha256:{digest}",
+                },
+            },
+            Seed: null,
+            ImageRegistry: null,
+            ImagePullPolicy: null);
+
+        var mapped = EnvironmentMapper.Map(env);
+        var builder = CreateBuilder();
+        mapped.Configure(builder);
+
+        var resource = builder.Resources.Single(r => r.Name == "store");
+        var image = Assert.Single(resource.Annotations.OfType<ContainerImageAnnotation>());
+        Assert.Equal("registry.example/mirror/store", image.Image);
+        Assert.Equal(digest, image.SHA256);
+        Assert.Null(image.Tag);
+        Assert.True(resource.TryGetContainerImageName(out var reference));
+        Assert.Equal($"registry.example/mirror/store@sha256:{digest}", reference);
+    }
+
     /// <summary>
     /// The env-level imageRegistry now reaches a dependency that sets no 'image:' of its own —
     /// previously imageRegistry was captured by Map but consumed only inside the services loop,

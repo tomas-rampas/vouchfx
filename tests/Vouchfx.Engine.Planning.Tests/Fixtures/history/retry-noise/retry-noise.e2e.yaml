@@ -9,5 +9,7 @@ environment:
 steps:
   - id: retry-step
     type: http.rest
+    method: GET
+    path: /health
     target: api
     verifyMode: RETRY

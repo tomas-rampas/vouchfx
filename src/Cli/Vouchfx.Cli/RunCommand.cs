@@ -2187,9 +2187,10 @@ internal static class RunCommand
         //
         // The rule above closed "did the YAML parse". This closes the category the design never
         // named: a suite that parsed FINE and was then refused before any topology was built — a
-        // schema rejection, a secret-reference failure, a malformed `env:`, the both-families
-        // protocol conflict. Every one starts no container and runs no step, and every one exited
-        // 0 by default. As #369 puts it: the distinction the code drew was "did the YAML parse",
+        // schema rejection, a secret-reference failure, or the both-families protocol conflict.
+        // Every one starts no container and runs no step, and every one exited 0 by default. Parse
+        // failures, including malformed `env:`, are handled by #425 above. As #369 puts it: the
+        // distinction the code drew was "did the YAML parse",
         // but the distinction its own remarks argued for was "did anything execute".
         //
         // SCOPED TO Inconclusive, AND THAT SCOPE IS THE WHOLE CARE OF THIS CHANGE. A topology

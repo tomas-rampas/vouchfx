@@ -14,7 +14,11 @@ environment:
 steps:
   - id: create-order
     type: http.rest
+    method: GET
+    path: /health
     target: api
   - id: publish-to-queue
     type: mq-publish.kafka
+    topic: planner-events
+    payload: '{"event":"planner-fixture"}'
     target: queue

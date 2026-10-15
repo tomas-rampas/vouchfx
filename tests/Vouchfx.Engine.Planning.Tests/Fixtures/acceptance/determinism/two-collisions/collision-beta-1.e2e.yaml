@@ -4,4 +4,6 @@ metadata:
 steps:
   - id: step-beta-1
     type: http.rest
+    method: GET
+    path: /health
     target: api

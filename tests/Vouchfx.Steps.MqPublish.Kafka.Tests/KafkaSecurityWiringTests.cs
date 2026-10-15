@@ -4,7 +4,7 @@
 // them can see:
 //
 //   1. EMIT — the assembled CSX threads the Security accessor and the step's own target name into
-//      the helper, splices ONE copy of KafkaSecurity_Helpers, and bakes NO certificate path (§17:
+//      the helper, splices ONE copy of KafkaSecurity_V2_Helpers, and bakes NO certificate path (§17:
 //      security material is resolved at step-execution time, never at compile time).
 //
 //   2. RUNTIME — the emitted helper source is COMPILED AND RUN against a real ProducerConfig, and
@@ -111,7 +111,7 @@ public sealed class KafkaSecurityWiringTests
         Assert.Contains("MqPublishKafka_Helpers.PublishAsync(", csx, StringComparison.Ordinal);
         Assert.Contains("Security,", csx, StringComparison.Ordinal);
         Assert.Contains("\"broker\"", csx, StringComparison.Ordinal);
-        Assert.Contains("KafkaSecurity_Helpers.ConfigureClient(security, targetName, config)", csx, StringComparison.Ordinal);
+        Assert.Contains("KafkaSecurity_V2_Helpers.ConfigureClient(security, targetName, config)", csx, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -175,7 +175,7 @@ public sealed class KafkaSecurityWiringTests
 
         var csx = CsxAssembler.Assemble(plans).CsxSource;
 
-        var declarations = csx.Split("static class KafkaSecurity_Helpers", StringSplitOptions.None).Length - 1;
+        var declarations = csx.Split("static class KafkaSecurity_V2_Helpers", StringSplitOptions.None).Length - 1;
         Assert.Equal(1, declarations);
     }
 
@@ -196,7 +196,7 @@ public sealed class KafkaSecurityWiringTests
         Assert.True(initialiserIndex >= 0, "the plain producer path's initialiser is missing entirely");
 
         // The security call follows it, in the same guarded region, before the producer is built.
-        var configureIndex = csx.IndexOf("KafkaSecurity_Helpers.ConfigureClient", StringComparison.Ordinal);
+        var configureIndex = csx.IndexOf("KafkaSecurity_V2_Helpers.ConfigureClient", StringComparison.Ordinal);
         var buildIndex = csx.IndexOf("new Confluent.Kafka.ProducerBuilder", StringComparison.Ordinal);
         Assert.InRange(configureIndex, initialiserIndex, buildIndex);
     }
@@ -204,7 +204,7 @@ public sealed class KafkaSecurityWiringTests
     // ── 2. RUNTIME — what the emitted helper does to a real ClientConfig ───────────────────
 
     /// <summary>
-    /// Compiles the emitted helper source and runs <c>ConfigureClient</c> against a real
+    /// Compiles the frozen public SDK helper and runs <c>ConfigureClient</c> against a real
     /// <see cref="ProducerConfig"/>, returning that configuration's own key set and values.
     /// </summary>
     private static async Task<ProducerConfig> ConfigureAsync(
@@ -475,6 +475,16 @@ public sealed class KafkaSecurityWiringTests
         Assert.Equal(CaPath, config.SslCaLocation);
         Assert.False(HasKey(config, "ssl.certificate.location"));
         Assert.False(HasKey(config, "ssl.key.location"));
+    }
+
+    [Fact]
+    public async Task FrozenSdkSource_TlsPassphraseOnly_RetainsLegacyNoReadBehavior()
+    {
+        // Core emission uses V2; direct consumers of the unchanged SDK constant keep v1 behavior.
+        var config = await ConfigureAsync("tls", caCert: null, clientCert: null, clientKey: null,
+            clientKeyPasswordThrows: "the frozen legacy TLS helper must not read this property");
+        Assert.Equal(SecurityProtocol.Ssl, config.SecurityProtocol);
+        Assert.False(HasKey(config, "ssl.key.password"));
     }
 
     /// <summary>

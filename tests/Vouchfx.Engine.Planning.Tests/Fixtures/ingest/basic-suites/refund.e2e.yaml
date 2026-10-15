@@ -1,4 +1,6 @@
 steps:
   - id: publish-refund-event
     type: mq-publish.kafka
+    topic: planner-events
+    payload: '{"event":"planner-fixture"}'
     target: events

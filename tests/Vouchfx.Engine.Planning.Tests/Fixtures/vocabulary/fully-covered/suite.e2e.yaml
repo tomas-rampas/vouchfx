@@ -9,7 +9,12 @@ environment:
 steps:
   - id: create-order
     type: http.rest
+    method: GET
+    path: /health
     target: api
   - id: assert-order-row
     type: db-assert.postgres
+    query: SELECT 1
+    expect:
+      rowCount: 1
     target: orders-db

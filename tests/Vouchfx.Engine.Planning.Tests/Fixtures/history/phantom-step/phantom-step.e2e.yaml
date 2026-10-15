@@ -9,4 +9,6 @@ environment:
 steps:
   - id: current-step
     type: http.rest
+    method: GET
+    path: /health
     target: api

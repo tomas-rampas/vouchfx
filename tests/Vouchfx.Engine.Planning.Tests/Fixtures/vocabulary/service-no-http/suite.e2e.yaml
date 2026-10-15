@@ -6,3 +6,4 @@ environment:
 steps:
   - id: run-script
     type: script.csharp
+    code: "var plannerFixture = true;"

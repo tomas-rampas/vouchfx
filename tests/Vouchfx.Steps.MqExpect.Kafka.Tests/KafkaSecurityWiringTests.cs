@@ -88,7 +88,7 @@ public sealed class KafkaSecurityWiringTests
         var csx = EmitCsx("events");
 
         var configureCalls = csx
-            .Split("KafkaSecurity_Helpers.ConfigureClient(security, targetName, config)", StringSplitOptions.None)
+            .Split("KafkaSecurity_V2_Helpers.ConfigureClient(security, targetName, config)", StringSplitOptions.None)
             .Length - 1;
 
         // One per ConsumerConfig construction in the emitted helper: the plain path and the Avro
@@ -111,7 +111,7 @@ public sealed class KafkaSecurityWiringTests
     {
         var csx = EmitCsx("events");
 
-        var declarations = csx.Split("static class KafkaSecurity_Helpers", StringSplitOptions.None).Length - 1;
+        var declarations = csx.Split("static class KafkaSecurity_V2_Helpers", StringSplitOptions.None).Length - 1;
         Assert.Equal(1, declarations);
     }
 

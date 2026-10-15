@@ -21,4 +21,8 @@
     <PackageReference Include="Apache.Avro" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Compile Include="..\KafkaSecurityEmission.cs" Link="KafkaSecurityEmission.cs" />
+  </ItemGroup>
+
 </Project>
