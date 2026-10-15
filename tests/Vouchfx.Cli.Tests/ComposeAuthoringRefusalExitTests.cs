@@ -61,7 +61,7 @@ public sealed class ComposeAuthoringRefusalExitTests
         {
             var cases = new TheoryData<int?, string, bool>();
             foreach (var parallel in new int?[] { null, 2 })
-                foreach (var fault in new[] { "native-process", "native-malformed", "native-shape", "reload-fidelity",
+                foreach (var fault in new[] { "native-process", "native-malformed", "native-shape", "pre-up-deadline", "reload-fidelity",
                     "reload-malformed", "post-up-discovery", "post-up-process", "post-up-argument", "post-up-deadline" })
                     foreach (var strict in new[] { false, true }) cases.Add(parallel, fault, strict);
             return cases;
@@ -75,13 +75,17 @@ public sealed class ComposeAuthoringRefusalExitTests
         using var fixture = new Inputs(fault);
         var output = new StringWriter();
         var exit = await fixture.RunAsync(output, parallel, strict);
-        Assert.Equal(strict ? fault == "post-up-argument" ? 4 : 3 : 0, exit);
+        // Before up, cancellation remains Inconclusive; after up, Compose classifies it as a health-gate error.
+        var inconclusive = fault is "post-up-argument" or "pre-up-deadline";
+        Assert.Equal(strict ? inconclusive ? 4 : 3 : 0, exit);
         Assert.Contains("PASS", output.ToString(), StringComparison.Ordinal);
-        Assert.Contains(fault == "post-up-argument" ? "INCONCLUSIVE" : "ENV_ERROR", output.ToString(), StringComparison.Ordinal);
+        Assert.Contains(inconclusive ? "INCONCLUSIVE" : "ENV_ERROR", output.ToString(), StringComparison.Ordinal);
         Assert.Equal(1, fixture.Driver.StartCount);
         Assert.Equal(1, Assert.Single(fixture.Pass.Leases).DisposeCount);
         Assert.Equal(fault.StartsWith("post-up-", StringComparison.Ordinal) ? 1 : 0, fixture.Process.UpCount);
         Assert.False(fixture.Process.Owned);
+        Assert.False(fixture.Cancellation.IsCancellationRequested);
+        Assert.False(fixture.Process.CleanupTokenWasCancelled);
         Assert.Equal(fixture.Process.UpCount, fixture.Process.RemovedContainers);
         Assert.Empty(Directory.Exists(fixture.Journals) ? Directory.GetFiles(fixture.Journals) : Array.Empty<string>());
         Assert.DoesNotContain(Inputs.Canary, output + await File.ReadAllTextAsync(fixture.Events), StringComparison.Ordinal);
@@ -135,13 +139,12 @@ public sealed class ComposeAuthoringRefusalExitTests
                     type: script.csharp
                     code: 'return;'
                 """);
-            // Only the deadline case uses a short startup budget; caller cancellation is
-            // triggered explicitly by fake up after native startup is reached.
-            var startupTimeoutSeconds = fault == "post-up-deadline" ? 1 : 30;
-            File.WriteAllText(Path.Combine(Directory, "environment.compose.yaml"), $$"""
+            // Exit policy uses phase-specific cancellation signals below. Real startup timer
+            // expiry is covered by ComposeEnvironmentTests and ComposeTcpEnvironmentTests.
+            File.WriteAllText(Path.Combine(Directory, "environment.compose.yaml"), """
                 version: 1
                 files: [./compose.yaml]
-                startupTimeoutSeconds: {{startupTimeoutSeconds}}
+                startupTimeoutSeconds: 30
                 cleanupTimeoutSeconds: 1
                 services:
                   api: { service: api, port: 8080, readiness: { path: /health, status: 200 } }
@@ -235,6 +238,8 @@ public sealed class ComposeAuthoringRefusalExitTests
                     {
                         if (fault == "input-change") File.AppendAllText(manifest, "\n# changed authoring input\n");
                         if (fault == "invalid-input-reload") File.WriteAllText(manifest, "services: [" + Inputs.Canary);
+                        if (fault == "pre-up-deadline")
+                            return await Task.FromCanceled<ComposeProcessResult>(new CancellationToken(canceled: true));
                         if (fault == "native-process") return new ComposeProcessResult(7, Inputs.Canary);
                         if (fault == "native-malformed") return Result("{" + Inputs.Canary);
                         if (fault == "native-shape") return Result("{\"services\":17}");
@@ -255,7 +260,8 @@ public sealed class ComposeAuthoringRefusalExitTests
                     UpCount++;
                     Owned = true;
                     if (fault == "caller-cancel") { cancellation.Cancel(); cancellationToken.ThrowIfCancellationRequested(); }
-                    if (fault == "post-up-deadline") await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+                    if (fault == "post-up-deadline")
+                        return await Task.FromCanceled<ComposeProcessResult>(new CancellationToken(canceled: true));
                     if (fault == "post-up-process") return new ComposeProcessResult(7, Inputs.Canary);
                 }
                 if (arguments.Contains("port"))
