@@ -62,7 +62,7 @@ internal static class SecurityProfileWiringValidator
             foreach (var (name, spec) in services)
             {
                 var failure = ValidateOne(
-                    spec.Security, "services", name, SecurityProfileRegistry.ServiceTargetKind, registry);
+                    spec.Security, SecuredTargets.ServicesFieldSegment, name, SecurityProfileRegistry.ServiceTargetKind, registry);
                 if (failure is not null)
                 {
                     return failure;
@@ -75,7 +75,7 @@ internal static class SecurityProfileWiringValidator
         {
             foreach (var (name, spec) in dependencies)
             {
-                var failure = ValidateOne(spec.Security, "dependencies", name, spec.Type, registry);
+                var failure = ValidateOne(spec.Security, SecuredTargets.DependenciesFieldSegment, name, spec.Type, registry);
                 if (failure is not null)
                 {
                     return failure;

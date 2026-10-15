@@ -61,10 +61,10 @@ public sealed class EnvironmentKeyMapperTests : IDisposable
         var method = typeof(EnvironmentMapper).GetMethod("BuildEnvExpression", BindingFlags.NonPublic | BindingFlags.Static)!;
         var accessorType = method.GetParameters()[4].ParameterType.GetGenericArguments()[1];
         var accessors = Activator.CreateInstance(typeof(Dictionary<,>).MakeGenericType(typeof(string), accessorType))!;
-        var error = Assert.Throws<TargetInvocationException>(() => method.Invoke(null, new object[]
+        var error = Assert.Throws<TargetInvocationException>(() => method.Invoke(null, new object?[]
         {
             "Service", "app", "BAD=credential_canary_607", "${env:VOUCHFX_ENV607_DEFINITELY_ABSENT}",
-            accessors,
+            accessors, null,
         }));
         var cause = Assert.IsType<ArgumentException>(error.InnerException);
         Assert.DoesNotContain("credential_canary_607", cause.Message, StringComparison.Ordinal);

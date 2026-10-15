@@ -357,6 +357,456 @@ public sealed class DependencyEnvCensusTests
             + string.Join(Environment.NewLine + Environment.NewLine, failures));
     }
 
+    [Theory]
+    [InlineData("name", "sidecarName")]
+    [InlineData("sidecarName", "name")]
+    public void BranchingBuilderAssignments_FailCensusInEitherOrder(string thenName, string elseName)
+    {
+        var (variables, failures) = CensusSyntheticRegistration($$"""
+            object b;
+            if (condition)
+            {
+                b = builder.AddContainer({{thenName}}, image);
+            }
+            else
+            {
+                b = builder.AddContainer({{elseName}}, image);
+            }
+            b = b.WithEnvironment("BRANCH_ENGINE_KEY", "value");
+            """);
+
+        Assert.Empty(variables);
+        var failure = Assert.Single(failures);
+        Assert.Contains("BRANCH_ENGINE_KEY", failure, StringComparison.Ordinal);
+        Assert.Contains("branching or conditional assignment", failure, StringComparison.Ordinal);
+        Assert.Contains("single unconditional builder assignment", failure, StringComparison.Ordinal);
+        Assert.Contains("synthetic.cs(", failure, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("name", true)]
+    [InlineData("sidecarName", false)]
+    public void UnconditionalBuilderAssignment_PreservesResourceAttribution(string resourceName, bool authorAddressable)
+    {
+        var (variables, failures) = CensusSyntheticRegistration($$"""
+            var b = builder.AddContainer({{resourceName}}, image);
+            b = b.WithEnvironment("SIMPLE_ENGINE_KEY", "value");
+            """);
+
+        Assert.Empty(failures);
+        Assert.Equal(authorAddressable, variables.Contains("SIMPLE_ENGINE_KEY"));
+    }
+
+    [Fact]
+    public void BuilderAssignmentInsideSameBranch_PreservesResourceAttribution()
+    {
+        var (variables, failures) = CensusSyntheticRegistration("""
+            if (condition)
+            {
+                var b = builder.AddContainer(name, image);
+                b = b.WithEnvironment("SAME_BRANCH_KEY", "value");
+            }
+            """);
+
+        Assert.Empty(failures);
+        Assert.Contains("SAME_BRANCH_KEY", variables);
+    }
+
+    [Fact]
+    public void UnconditionalAssignmentAfterBranches_ReplacesAmbiguousResourceAttribution()
+    {
+        var (variables, failures) = CensusSyntheticRegistration("""
+            object b;
+            if (condition)
+                b = builder.AddContainer(name, image);
+            else
+                b = builder.AddContainer(sidecarName, image);
+            b = builder.AddContainer(name, image);
+            b = b.WithEnvironment("UNCONDITIONAL_KEY", "value");
+            """);
+
+        Assert.Empty(failures);
+        Assert.Contains("UNCONDITIONAL_KEY", variables);
+    }
+
+    [Theory]
+    [InlineData("Use(condition && ((b = builder.AddContainer(sidecarName, image)) != null));")]
+    [InlineData("Use(condition || ((b = builder.AddContainer(sidecarName, image)) != null));")]
+    [InlineData("Use(other ?? (b = builder.AddContainer(sidecarName, image)));")]
+    [InlineData("other?.Use(b = builder.AddContainer(sidecarName, image));")]
+    [InlineData("Use(condition ? (b = builder.AddContainer(sidecarName, image)) : other);")]
+    [InlineData("if (condition) { if (inner) { b = builder.AddContainer(sidecarName, image); } }")]
+    [InlineData("System.Action later = () => { b = builder.AddContainer(sidecarName, image); };")]
+    [InlineData("System.Action later = delegate { b = builder.AddContainer(sidecarName, image); };")]
+    [InlineData("void Later() { b = builder.AddContainer(sidecarName, image); }")]
+    public void ConditionalOrDeferredBuilderAssignment_FailsCensus(string assignment)
+    {
+        var (variables, failures) = CensusSyntheticRegistration($$"""
+            var b = builder.AddContainer(name, image);
+            {{assignment}}
+            b = b.WithEnvironment("CONDITIONAL_ENGINE_KEY", "value");
+            """);
+
+        Assert.Empty(variables);
+        var failure = Assert.Single(failures);
+        Assert.Contains("CONDITIONAL_ENGINE_KEY", failure, StringComparison.Ordinal);
+        Assert.Contains("single unconditional builder assignment", failure, StringComparison.Ordinal);
+        Assert.Contains("synthetic.cs(", failure, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("System.Action later = () => { b = builder.AddContainer(name, image); };", "later();")]
+    [InlineData("void Later() { b = builder.AddContainer(name, image); }", "Later();")]
+    public void DeferredBuilderAssignmentDeclaredAfterReceiver_FailsCensus(string declaration, string call)
+    {
+        var (variables, failures) = CensusSyntheticRegistration($$"""
+            var b = builder.AddContainer(sidecarName, image);
+            {{call}}
+            b = b.WithEnvironment("DEFERRED_ENGINE_KEY", "value");
+            {{declaration}}
+            """);
+
+        Assert.Empty(variables);
+        var failure = Assert.Single(failures);
+        Assert.Contains("DEFERRED_ENGINE_KEY", failure, StringComparison.Ordinal);
+        Assert.Contains("different lambda or local function", failure, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("Use(condition && ((b = builder.AddContainer(sidecarName, image)) != null));")]
+    [InlineData("Use(condition || ((b = builder.AddContainer(sidecarName, image)) != null));")]
+    [InlineData("Use(other ?? (b = builder.AddContainer(sidecarName, image)));")]
+    [InlineData("other?.Use(b = builder.AddContainer(sidecarName, image));")]
+    public void UnconditionalResetAfterConditionalExpression_PreservesAttribution(string assignment)
+    {
+        var (variables, failures) = CensusSyntheticRegistration($$"""
+            var b = builder.AddContainer(sidecarName, image);
+            {{assignment}}
+            b = builder.AddContainer(name, image);
+            b = b.WithEnvironment("RESET_ENGINE_KEY", "value");
+            """);
+
+        Assert.Empty(failures);
+        Assert.Contains("RESET_ENGINE_KEY", variables);
+    }
+
+    [Theory]
+    [InlineData("System.Action later = () =>", ";")]
+    [InlineData("void Later()", "")]
+    public void BuilderAssignmentAndWriteInSameDeferredBody_PreservesAttribution(string declaration, string suffix)
+    {
+        var (variables, failures) = CensusSyntheticRegistration($$"""
+            {{declaration}}
+            {
+                var b = builder.AddContainer(name, image);
+                b = b.WithEnvironment("SAME_CALLABLE_KEY", "value");
+            }{{suffix}}
+            """);
+
+        Assert.Empty(failures);
+        Assert.Contains("SAME_CALLABLE_KEY", variables);
+    }
+
+    [Theory]
+    [InlineData("if (condition) { b = builder.AddContainer(sidecarName, image); } else { b = b.WithEnvironment(\"REGION_KEY\", \"v\"); }")]
+    [InlineData("if (condition) b = builder.AddContainer(sidecarName, image); else b = b.WithEnvironment(\"REGION_KEY\", \"v\");")]
+    [InlineData("try { Throw(); b = builder.AddContainer(sidecarName, image); } catch { b = b.WithEnvironment(\"REGION_KEY\", \"v\"); }")]
+    [InlineData("try { Throw(); b = builder.AddContainer(sidecarName, image); } finally { b = b.WithEnvironment(\"REGION_KEY\", \"v\"); }")]
+    [InlineData("try { Throw(); } catch { b = builder.AddContainer(sidecarName, image); } finally { b = b.WithEnvironment(\"REGION_KEY\", \"v\"); }")]
+    [InlineData("switch (value) { case 1: b = builder.AddContainer(sidecarName, image); break; default: b = b.WithEnvironment(\"REGION_KEY\", \"v\"); break; }")]
+    [InlineData("while (condition) { b = builder.AddContainer(sidecarName, image); } b = b.WithEnvironment(\"REGION_KEY\", \"v\");")]
+    [InlineData("while (condition) b = builder.AddContainer(sidecarName, image); b = b.WithEnvironment(\"REGION_KEY\", \"v\");")]
+    [InlineData("for (; condition;) { b = builder.AddContainer(sidecarName, image); } b = b.WithEnvironment(\"REGION_KEY\", \"v\");")]
+    [InlineData("foreach (var item in items) { b = builder.AddContainer(sidecarName, image); } b = b.WithEnvironment(\"REGION_KEY\", \"v\");")]
+    [InlineData("do { b = builder.AddContainer(sidecarName, image); } while (condition); b = b.WithEnvironment(\"REGION_KEY\", \"v\");")]
+    public void DefinitionInAnotherExecutionRegion_FailsCensus(string body)
+    {
+        var (variables, failures) = CensusSyntheticRegistration($$"""
+            var b = builder.AddContainer(name, image);
+            {{body}}
+            """);
+
+        Assert.Empty(variables);
+        var failure = Assert.Single(failures);
+        Assert.Contains("REGION_KEY", failure, StringComparison.Ordinal);
+        Assert.Contains("single unconditional builder assignment", failure, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void LaterLoopWriteWithoutPerIterationReset_FailsCensus()
+    {
+        var (variables, failures) = CensusSyntheticRegistration("""
+            var b = builder.AddContainer(sidecarName, image);
+            while (condition)
+            {
+                b = b.WithEnvironment("LOOP_KEY", "value");
+                b = builder.AddContainer(name, image);
+            }
+            """);
+
+        Assert.Empty(variables);
+        Assert.Contains("loop-carried write", Assert.Single(failures), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("if (condition) { BODY } else { }")]
+    [InlineData("if (condition) { } else { BODY }")]
+    [InlineData("switch (value) { case 1: BODY break; default: break; }")]
+    [InlineData("try { BODY } catch { }")]
+    [InlineData("try { Throw(); } catch { BODY }")]
+    [InlineData("try { Throw(); } finally { BODY }")]
+    [InlineData("while (condition) { BODY }")]
+    [InlineData("for (; condition;) { BODY }")]
+    [InlineData("foreach (var item in items) { BODY }")]
+    [InlineData("do { BODY } while (condition);")]
+    public void DefinitionAndReceiverInSameExecutionRegion_PreserveAttribution(string wrapper)
+    {
+        var body = wrapper.Replace("BODY", """
+            var b = builder.AddContainer(name, image);
+            b = b.WithEnvironment("SAME_REGION_KEY", "value");
+            """, StringComparison.Ordinal);
+        var (variables, failures) = CensusSyntheticRegistration(body);
+
+        Assert.Empty(failures);
+        Assert.Contains("SAME_REGION_KEY", variables);
+    }
+
+    [Theory]
+    [InlineData("if (condition) { BODY } else { }")]
+    [InlineData("if (condition) { } else { BODY }")]
+    [InlineData("switch (value) { case 1: BODY break; default: break; }")]
+    [InlineData("try { Throw(); } catch { BODY }")]
+    [InlineData("try { Throw(); } finally { BODY }")]
+    [InlineData("while (condition) { BODY }")]
+    public void OuterUnconditionalDefinition_PreservesAttributionInsideNestedRegion(string wrapper)
+    {
+        var (variables, failures) = CensusSyntheticRegistration(
+            "var b = builder.AddContainer(name, image); "
+            + wrapper.Replace("BODY", "b = b.WithEnvironment(\"OUTER_REGION_KEY\", \"value\");", StringComparison.Ordinal));
+
+        Assert.Empty(failures);
+        Assert.Contains("OUTER_REGION_KEY", variables);
+    }
+
+    [Fact]
+    public void PerIterationUnconditionalReset_PreservesAttributionDespiteLaterLoopWrite()
+    {
+        var (variables, failures) = CensusSyntheticRegistration("""
+            var b = builder.AddContainer(sidecarName, image);
+            while (condition)
+            {
+                b = builder.AddContainer(name, image);
+                b = b.WithEnvironment("RESET_LOOP_KEY", "value");
+                b = builder.AddContainer(sidecarName, image);
+            }
+            """);
+
+        Assert.Empty(failures);
+        Assert.Contains("RESET_LOOP_KEY", variables);
+    }
+
+    [Theory]
+    [InlineData("var b = builder.AddContainer(name, image); if (condition) goto Write; b = builder.AddContainer(sidecarName, image); Write: b = b.WithEnvironment(\"JUMP_KEY\", \"v\");")]
+    [InlineData("var b = builder.AddContainer(sidecarName, image); Again: b = b.WithEnvironment(\"JUMP_KEY\", \"v\"); b = builder.AddContainer(name, image); if (condition) goto Again;")]
+    [InlineData("var b = builder.AddContainer(sidecarName, image); switch (value) { case 1: b = builder.AddContainer(name, image); goto default; default: b = b.WithEnvironment(\"JUMP_KEY\", \"v\"); break; }")]
+    [InlineData("var b = builder.AddContainer(sidecarName, image); switch (value) { case 1: b = b.WithEnvironment(\"JUMP_KEY\", \"v\"); break; default: b = builder.AddContainer(name, image); goto case 1; }")]
+    public void UnstructuredJump_FailsCensus(string body)
+    {
+        var (variables, failures) = CensusSyntheticRegistration(body);
+
+        Assert.Empty(variables);
+        var failure = Assert.Single(failures);
+        Assert.Contains("JUMP_KEY", failure, StringComparison.Ordinal);
+        Assert.Contains("goto control flow is unsupported", failure, StringComparison.Ordinal);
+        Assert.Contains("single unconditional builder assignment", failure, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("Mutate(ref b);")]
+    [InlineData("Mutate(out b);")]
+    [InlineData("Inspect(in b);")]
+    [InlineData("ref var alias = ref b; alias = builder.AddContainer(name, image);")]
+    [InlineData("ref var alias = ref (b); alias = builder.AddContainer(name, image);")]
+    public void LocalReferenceEscape_FailsCensus(string escape)
+    {
+        var (variables, failures) = CensusSyntheticRegistration($$"""
+            var b = builder.AddContainer(sidecarName, image);
+            {{escape}}
+            b = b.WithEnvironment("REFERENCE_KEY", "value");
+            """);
+
+        Assert.Empty(variables);
+        var failure = Assert.Single(failures);
+        Assert.Contains("REFERENCE_KEY", failure, StringComparison.Ordinal);
+        Assert.Contains("ref/out/in passing or a ref alias", failure, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("if (condition) return; BODY")]
+    [InlineData("if (condition) throw new System.Exception(); BODY")]
+    [InlineData("while (condition) { if (stop) break; BODY }")]
+    [InlineData("while (condition) { if (skip) continue; BODY }")]
+    public void StructuredPathExit_PreservesSameRegionAttribution(string wrapper)
+    {
+        var body = wrapper.Replace("BODY", """
+            var b = builder.AddContainer(name, image);
+            b = b.WithEnvironment("EXIT_KEY", "value");
+            """, StringComparison.Ordinal);
+        var (variables, failures) = CensusSyntheticRegistration(body);
+
+        Assert.Empty(failures);
+        Assert.Contains("EXIT_KEY", variables);
+    }
+
+    [Theory]
+    [InlineData("(b)")]
+    [InlineData("(((b)))")]
+    public void ParenthesizedDirectTarget_EstablishesCurrentOwnership(string target)
+    {
+        var (variables, failures) = CensusSyntheticRegistration($$"""
+            var b = builder.AddContainer(sidecarName, image);
+            {{target}} = builder.AddContainer(name, image);
+            b = b.WithEnvironment("TARGET_KEY", "value");
+            """);
+
+        Assert.Empty(failures);
+        Assert.Contains("TARGET_KEY", variables);
+    }
+
+    [Theory]
+    [InlineData("(_, b) = (0, builder.AddContainer(name, image));")]
+    [InlineData("(_, (b, _)) = (0, (builder.AddContainer(name, image), 1));")]
+    [InlineData("var (_, b) = (0, builder.AddContainer(name, image));")]
+    [InlineData("(int _, var b) = (0, builder.AddContainer(name, image));")]
+    [InlineData("b += builder.AddContainer(name, image);")]
+    [InlineData("(b) ??= builder.AddContainer(name, image);")]
+    [InlineData("b++;")]
+    [InlineData("--(b);")]
+    [InlineData("if (GetBuilder() is var b) { }")]
+    public void UnsupportedExplicitBindingTarget_FailsCensus(string write)
+    {
+        var (variables, failures) = CensusSyntheticRegistration($$"""
+            var b = builder.AddContainer(sidecarName, image);
+            {{write}}
+            b = b.WithEnvironment("UNSUPPORTED_TARGET_KEY", "value");
+            """);
+
+        Assert.Empty(variables);
+        var failure = Assert.Single(failures);
+        Assert.Contains("UNSUPPORTED_TARGET_KEY", failure, StringComparison.Ordinal);
+        Assert.Contains("single unconditional builder assignment", failure, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("(b) = builder.AddContainer(name, image);")]
+    [InlineData("(_, b) = (0, builder.AddContainer(name, image));")]
+    [InlineData("b++;")]
+    public void LaterLoopTargetWrite_FailsWithoutPerIterationReset(string write)
+    {
+        var (variables, failures) = CensusSyntheticRegistration($$"""
+            var b = builder.AddContainer(sidecarName, image);
+            while (condition)
+            {
+                b = b.WithEnvironment("LATER_TARGET_KEY", "value");
+                {{write}}
+            }
+            """);
+
+        Assert.Empty(variables);
+        Assert.Contains("loop-carried write", Assert.Single(failures), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("(b) = builder.AddContainer(name, image);")]
+    [InlineData("(_, b) = (0, builder.AddContainer(name, image));")]
+    [InlineData("b++;")]
+    public void DeferredTargetWrite_FailsEvenWhenDeclaredLater(string write)
+    {
+        var (variables, failures) = CensusSyntheticRegistration($$"""
+            var b = builder.AddContainer(sidecarName, image);
+            b = b.WithEnvironment("DEFERRED_TARGET_KEY", "value");
+            void Later() { {{write}} }
+            """);
+
+        Assert.Empty(variables);
+        Assert.Contains("different lambda or local function", Assert.Single(failures), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void UnconditionalResetAfterUnsupportedTarget_PreservesAttribution()
+    {
+        var (variables, failures) = CensusSyntheticRegistration("""
+            var b = builder.AddContainer(sidecarName, image);
+            (_, b) = (0, builder.AddContainer(sidecarName, image));
+            b = builder.AddContainer(name, image);
+            b = b.WithEnvironment("RESET_TARGET_KEY", "value");
+            """);
+
+        Assert.Empty(failures);
+        Assert.Contains("RESET_TARGET_KEY", variables);
+    }
+
+    [Theory]
+    [InlineData("if (condition) { (b) = builder.AddContainer(name, image); }")]
+    [InlineData("if (condition) { (_, b) = (0, builder.AddContainer(name, image)); }")]
+    [InlineData("while (condition) { (b) = builder.AddContainer(name, image); }")]
+    [InlineData("Use(condition && (((b) = builder.AddContainer(name, image)) != null));")]
+    public void ConditionalTargetWrite_CannotRetainStaleSidecarOwnership(string write)
+    {
+        var (variables, failures) = CensusSyntheticRegistration($$"""
+            var b = builder.AddContainer(sidecarName, image);
+            {{write}}
+            b = b.WithEnvironment("CONDITIONAL_TARGET_KEY", "value");
+            """);
+
+        Assert.Empty(variables);
+        Assert.Contains("single unconditional builder assignment", Assert.Single(failures), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("(b) = builder.AddContainer(sidecarName, image);")]
+    [InlineData("(_, b) = (0, builder.AddContainer(sidecarName, image));")]
+    [InlineData("b++;")]
+    public void PerIterationReset_PreservesAttributionBeforeLaterTargetWrite(string write)
+    {
+        var (variables, failures) = CensusSyntheticRegistration($$"""
+            var b = builder.AddContainer(sidecarName, image);
+            while (condition)
+            {
+                (b) = builder.AddContainer(name, image);
+                b = b.WithEnvironment("RESET_TARGET_LOOP_KEY", "value");
+                {{write}}
+            }
+            """);
+
+        Assert.Empty(failures);
+        Assert.Contains("RESET_TARGET_LOOP_KEY", variables);
+    }
+
+    private static (HashSet<string> Variables, List<string> Failures) CensusSyntheticRegistration(string body)
+    {
+        var tree = CSharpSyntaxTree.ParseText($$"""
+            class Synthetic
+            {
+                object s_dependencyRegistry = new Registry
+                {
+                    ["synthetic"] = new Registration((builder, name) =>
+                    {
+                        {{body}}
+                    }),
+                };
+            }
+            """);
+        Assert.DoesNotContain(tree.GetDiagnostics(), d => d.Severity == DiagnosticSeverity.Error);
+        var source = new EngineSource("synthetic.cs", "synthetic.cs", tree);
+        var blocks = RegistrationBlocks(source);
+        var variables = new HashSet<string>(StringComparer.Ordinal);
+        var byType = new Dictionary<string, HashSet<string>> { ["synthetic"] = variables };
+        var failures = new List<string>();
+        CensusSource(source, source, blocks, byType, failures);
+        return (variables, failures);
+    }
+
     // ── the census's source model ────────────────────────────────────────────────────────────
     //
     // Everything below is deliberately arranged so that "the census is unsure" and "the census
@@ -762,20 +1212,9 @@ public sealed class DependencyEnvCensusTests
     /// chain.
     /// <para>
     /// <b>Known limits.</b>  Accepting a bespoke attribution engine at all is defensible only if
-    /// its residuals are written down rather than discovered, so here they are — four, of which
-    /// exactly ONE is fail-open:
+    /// its residuals are written down rather than discovered, so here they are:
     /// </para>
     /// <list type="number">
-    /// <item><description>
-    /// <b>Local resolution is textual, not control-flow — and this one FAILS OPEN.</b>
-    /// <see cref="ResolveLocal"/> takes the textually-nearest preceding assignment, so given
-    /// <c>if (c) { b = builder.AddContainer(sidecarName, …); } else { b = builder.AddContainer(name, …); }</c>
-    /// followed by <c>b = b.WithEnvironment("X", "y");</c> it resolves to whichever branch is
-    /// written later.  If that is the sidecar, an engine-set variable on an AUTHOR-ADDRESSABLE
-    /// container is excluded from the census silently — precisely the outcome this file exists to
-    /// make impossible.  Nothing in <c>EnvironmentMapper</c> is shaped that way today; if a
-    /// registration ever branches like that, this is the assumption that breaks.
-    /// </description></item>
     /// <item><description>
     /// <b>The <c>With…</c> identity rule is a naming convention, not a semantic fact.</b>  A future
     /// extension named <c>WithX</c> that returned a DIFFERENT builder would be walked through as
@@ -873,7 +1312,8 @@ public sealed class DependencyEnvCensusTests
     /// declaration of it INSIDE the same registration and resolving that expression instead.  A
     /// self-assignment (<c>b = b.WithEnvironment(…)</c>) is stepped over rather than followed —
     /// its span CONTAINS the receiver being resolved — so resolution continues back to the call
-    /// that actually registered the resource.
+    /// that actually registered the resource. Definitions inside a control-flow scope that does
+    /// not contain the receiver are refused: text order cannot prove that branch executed.
     /// </summary>
     private static (ResourceOwner Kind, string Detail) ResolveLocal(
         EngineSource source, IdentifierNameSyntax local, RegistrationBlock block, int depth)
@@ -886,8 +1326,29 @@ public sealed class DependencyEnvCensusTests
         }
 
         var name = local.Identifier.ValueText;
+        // This census supports structured lexical ownership, not arbitrary C# data flow.
+        // Goto can bypass a definition or repeat a receiver without a syntactic loop. Ref/out/in
+        // passing and ref aliases can change a local without an assignment naming that local.
+        // Refuse either escape anywhere in the registration; textual order cannot prove safety.
+        var jump = block.Node.DescendantNodes().OfType<GotoStatementSyntax>().FirstOrDefault();
+        if (jump is not null)
+            return RefuseAssignment(jump, "goto control flow is unsupported in a dependency registration");
+
+        var referenceEscape = block.Node.DescendantNodes().FirstOrDefault(node => node switch
+        {
+            ArgumentSyntax argument => argument.RefKindKeyword.Kind() is SyntaxKind.RefKeyword
+                    or SyntaxKind.OutKeyword or SyntaxKind.InKeyword
+                && NamesLocal(argument.Expression),
+            RefExpressionSyntax reference => NamesLocal(reference.Expression),
+            _ => false,
+        });
+        if (referenceEscape is not null)
+            return RefuseAssignment(referenceEscape, "ref/out/in passing or a ref alias can mutate this local outside direct assignments");
+
         var position = local.SpanStart;
-        var candidates = new List<(int Position, ExpressionSyntax Value)>();
+        var candidates = new List<(SyntaxNode Site, ExpressionSyntax Value)>();
+        SyntaxNode? deferredWrite = null;
+        var laterLoopWrites = new List<SyntaxNode>();
 
         foreach (var node in block.Node.DescendantNodes())
         {
@@ -900,16 +1361,36 @@ public sealed class DependencyEnvCensusTests
                     break;
 
                 case AssignmentExpressionSyntax assignment
-                    when assignment.IsKind(SyntaxKind.SimpleAssignmentExpression)
-                        && assignment.Left is IdentifierNameSyntax target
-                        && string.Equals(target.Identifier.ValueText, name, StringComparison.Ordinal):
+                    when TargetWritesLocal(assignment.Left):
                     Consider(assignment, assignment.Right);
+                    break;
+
+                case SingleVariableDesignationSyntax designation
+                    when string.Equals(designation.Identifier.ValueText, name, StringComparison.Ordinal):
+                    // Deconstruction and pattern declarations have no VariableDeclarator. Their
+                    // value mapping is unsupported, but their binding must not disappear.
+                    Consider(designation, SyntaxFactory.IdentifierName(name));
+                    break;
+
+                case PrefixUnaryExpressionSyntax prefix
+                    when prefix.Kind() is SyntaxKind.PreIncrementExpression or SyntaxKind.PreDecrementExpression
+                        && TargetWritesLocal(prefix.Operand):
+                    Consider(prefix, prefix);
+                    break;
+
+                case PostfixUnaryExpressionSyntax postfix
+                    when postfix.Kind() is SyntaxKind.PostIncrementExpression or SyntaxKind.PostDecrementExpression
+                        && TargetWritesLocal(postfix.Operand):
+                    Consider(postfix, postfix);
                     break;
 
                 default:
                     break;
             }
         }
+
+        if (deferredWrite is not null)
+            return RefuseAssignment(deferredWrite, "a different lambda or local function can assign this local later");
 
         if (candidates.Count == 0)
         {
@@ -919,17 +1400,102 @@ public sealed class DependencyEnvCensusTests
                 + "census cannot tell which resource it denotes");
         }
 
-        var nearest = candidates.OrderByDescending(c => c.Position).First();
+        var nearest = candidates.OrderByDescending(c => c.Site.SpanStart).First();
+        // Ownership is established only by supported statement-level definitions. An assignment
+        // embedded in an expression may be short-circuited (&&, ||, ??, ?.), deferred, or hidden
+        // behind another execution rule. Refuse that shape instead of maintaining a blacklist of
+        // expression kinds. This is a syntax census, not an execution-order proof.
+        var supportedDefinition = nearest.Site switch
+        {
+            VariableDeclaratorSyntax { Parent.Parent: LocalDeclarationStatementSyntax } => true,
+            AssignmentExpressionSyntax assignment => assignment.IsKind(SyntaxKind.SimpleAssignmentExpression)
+                && assignment.Parent is ExpressionStatementSyntax && NamesLocal(assignment.Left),
+            _ => false,
+        };
+        if (!supportedDefinition)
+            return RefuseAssignment(nearest.Site, "only direct local declarations and standalone simple assignments are supported");
+
+        // Every lexical execution region containing the definition must also contain the
+        // receiver. A whole if/try spans mutually exclusive arms; its child blocks (or its
+        // unbraced controlled statements) are the regions that matter. Outer unconditional
+        // definitions remain valid inside nested regions, but sibling regions never establish
+        // ownership for each other. Unsupported control flow is refused, not inferred.
+        var uncertainRegion = nearest.Site.Ancestors()
+            .TakeWhile(node => node != block.Node)
+            .FirstOrDefault(node => IsExecutionRegion(node) && !node.Span.Contains(local.Span));
+        if (uncertainRegion is not null)
+            return RefuseAssignment(nearest.Site, "its lexical execution region does not contain this receiver");
+
+        // A later write in a loop may have run in a preceding iteration. Only a definition
+        // inside that same loop can reset ownership before this iteration's receiver.
+        if (laterLoopWrites.Any(loop => !loop.Span.Contains(nearest.Site.Span)))
+            return RefuseAssignment(nearest.Site, "a loop-carried write can change this local before a later iteration");
+
         return ResolveOwner(source, nearest.Value, block, depth + 1);
+
+        (ResourceOwner Kind, string Detail) RefuseAssignment(SyntaxNode site, string reason) =>
+            (ResourceOwner.Unresolved,
+                $"local '{name}' has a branching or conditional assignment at {source.Where(site)} "
+                + $"whose execution the census cannot establish: {reason}. Use a single unconditional builder "
+                + "assignment outside deferred functions, or extend the census before using this assignment shape");
+
+        bool NamesLocal(ExpressionSyntax expression)
+        {
+            while (expression is ParenthesizedExpressionSyntax parenthesised)
+                expression = parenthesised.Expression;
+            return expression is IdentifierNameSyntax identifier
+                && string.Equals(identifier.Identifier.ValueText, name, StringComparison.Ordinal);
+        }
+
+        // Discover binding targets before deciding whether their value mapping is supported.
+        // All discovered writes share Consider, including deferred and later loop-carried writes.
+        bool TargetWritesLocal(ExpressionSyntax target) => target switch
+        {
+            ParenthesizedExpressionSyntax parenthesised => TargetWritesLocal(parenthesised.Expression),
+            IdentifierNameSyntax => NamesLocal(target),
+            TupleExpressionSyntax tuple => tuple.Arguments.Any(argument => TargetWritesLocal(argument.Expression)),
+            DeclarationExpressionSyntax declaration => declaration.Designation.DescendantNodesAndSelf()
+                .OfType<SingleVariableDesignationSyntax>()
+                .Any(designation => string.Equals(designation.Identifier.ValueText, name, StringComparison.Ordinal)),
+            // Writing a member/element changes the object, not the local holding that object.
+            MemberAccessExpressionSyntax or ElementAccessExpressionSyntax => false,
+            // Unknown target shapes explicitly naming this local fail closed as candidates.
+            _ => target.DescendantNodesAndSelf().OfType<IdentifierNameSyntax>()
+                .Any(identifier => string.Equals(identifier.Identifier.ValueText, name, StringComparison.Ordinal)),
+        };
 
         void Consider(SyntaxNode site, ExpressionSyntax value)
         {
-            if (site.SpanStart >= position || site.Span.Contains(position))
-                return;
+            // A callable declared after the receiver can still execute before it. Textual order
+            // therefore cannot dismiss captured writes in a separate execution scope.
+            if (site.Ancestors().TakeWhile(node => node != block.Node).Any(node =>
+                    node is AnonymousFunctionExpressionSyntax or LocalFunctionStatementSyntax
+                    && !node.Span.Contains(local.Span)))
+                deferredWrite = site;
 
-            candidates.Add((site.SpanStart, value));
+            if (site.SpanStart >= position)
+            {
+                laterLoopWrites.AddRange(site.Ancestors().TakeWhile(node => node != block.Node)
+                    .Where(node => node is ForStatementSyntax or ForEachStatementSyntax
+                        or ForEachVariableStatementSyntax or WhileStatementSyntax or DoStatementSyntax)
+                    .Where(node => node.Span.Contains(local.Span)));
+                return;
+            }
+
+            if (!site.Span.Contains(position))
+                candidates.Add((site, value));
         }
     }
+
+    private static bool IsExecutionRegion(SyntaxNode node) => node switch
+    {
+        BlockSyntax or SwitchSectionSyntax or AnonymousFunctionExpressionSyntax
+            or LocalFunctionStatementSyntax => true,
+        // A statement directly controlled by if/else/loop/using/etc. is an unbraced region.
+        // Statements listed in a block or switch section execute within that parent's region.
+        StatementSyntax statement => statement.Parent is not (BlockSyntax or SwitchSectionSyntax),
+        _ => false,
+    };
 
     /// <summary>
     /// Classifies the resource a registration call names from its FIRST argument: the

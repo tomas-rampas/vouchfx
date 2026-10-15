@@ -1685,14 +1685,14 @@ public static class EnvironmentMapper
         foreach (var (name, spec) in services)
         {
             serviceArtifacts[name] = ServerArtifactInjection.Plan(
-                spec.Security, "services", name, resolvedSuiteDirectory, pathDisclosures);
+                spec.Security, SecuredTargets.ServicesFieldSegment, name, resolvedSuiteDirectory, pathDisclosures);
         }
 
         var dependencyArtifacts = new Dictionary<string, IReadOnlyList<ServerArtifactGroup>>(StringComparer.Ordinal);
         foreach (var (name, spec) in dependencies)
         {
             dependencyArtifacts[name] = ServerArtifactInjection.Plan(
-                spec.Security, "dependencies", name, resolvedSuiteDirectory, pathDisclosures);
+                spec.Security, SecuredTargets.DependenciesFieldSegment, name, resolvedSuiteDirectory, pathDisclosures);
         }
 
         // ----------------------------------------------------------------
@@ -2788,14 +2788,19 @@ public static class EnvironmentMapper
     /// names an <c>azureservicebus</c> dependency (unsupported by <c>env:</c> in v1), or uses
     /// an unsupported <c>.part</c> accessor for the referenced dependency's kind.
     /// </exception>
+    // The private lookup seam pins unset versus explicitly empty without mutating the process
+    // environment; normal topology mapping always uses the BCL lookup.
     private static void ValidateEnvValue(
         string ownerLabel,
         string ownerName,
         string envKey,
         string envValue,
         IReadOnlyDictionary<string, DependencySpec> dependencies,
-        bool connectionReferencesSupported)
+        bool connectionReferencesSupported,
+        Func<string, string?>? processEnvironmentLookup = null)
     {
+        processEnvironmentLookup ??= Environment.GetEnvironmentVariable;
+
         // Sigil-PRESENCE check (mirrors SecretReference.ValidateField, §17), not a well-formed-
         // token regex match: env: supports NO secret references at all, not even well-formed
         // ones, so a malformed token such as '${secret:env}' (missing '/path') must be rejected
@@ -2931,7 +2936,7 @@ public static class EnvironmentMapper
         {
             var varName = m.Groups[1].Value;
 
-            if (Environment.GetEnvironmentVariable(varName) is null)
+            if (processEnvironmentLookup(varName) is null)
             {
                 throw new ArgumentException(
                     $"{ownerLabel} '{ownerName}' env entry {DescribeEnvEntry(envKey)} references '{m.Value}', but the " +
@@ -3371,8 +3376,10 @@ public static class EnvironmentMapper
         string ownerName,
         string envKey,
         string value,
-        IReadOnlyDictionary<string, DependencyEnvAccess> envAccessByDependency)
+        IReadOnlyDictionary<string, DependencyEnvAccess> envAccessByDependency,
+        Func<string, string?>? processEnvironmentLookup = null)
     {
+        processEnvironmentLookup ??= Environment.GetEnvironmentVariable;
         var builder = new ReferenceExpressionBuilder();
         foreach (var token in TokeniseEnvValue(value))
         {
@@ -3406,7 +3413,7 @@ public static class EnvironmentMapper
                     // authors. Throwing the SAME ArgumentException ValidateEnvValue itself
                     // raises keeps this branch correct on its own terms, independent of
                     // whatever ran before it.
-                    var envVarValue = Environment.GetEnvironmentVariable(token.Name!)
+                    var envVarValue = processEnvironmentLookup(token.Name!)
                         ?? throw new ArgumentException(
                             $"{ownerLabel} '{ownerName}' env entry {DescribeEnvEntry(envKey)} references " +
                             $"'${{env:{token.Name}}}', but the engine process has no environment " +
