@@ -1,5 +1,3 @@
-using static Vouchfx.TestSupport.EventWireContractSignature;
-
 // S08-F-02 (T3 — Freeze the v1 event wire contract).
 //
 // The public event records under Vouchfx.Engine.Abstractions.Events ARE the v1
@@ -238,6 +236,7 @@ using Vouchfx.Engine.Abstractions.Events;
 using Vouchfx.Engine.Abstractions.Reproducibility;
 using Xunit;
 using Xunit.Abstractions;
+using static Vouchfx.TestSupport.EventWireContractSignature;
 
 namespace Vouchfx.Engine.Abstractions.Tests.Events;
 
