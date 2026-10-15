@@ -20,7 +20,13 @@ environment:
 steps:
   - id: assert-cache
     type: cache-assert.redis
+    key: planner-key
+    operation: exists
+    expect:
+      exists: true
     target: cache
   - id: call-web
     type: http.rest
+    method: GET
+    path: /health
     target: web

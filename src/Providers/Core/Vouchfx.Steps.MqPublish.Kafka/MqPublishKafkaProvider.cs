@@ -481,7 +481,7 @@ public sealed class MqPublishKafkaProvider
         "            // which the catches below map to a step-scoped EnvironmentError (§12.1) naming the\n" +
         "            // declared path, rather than an opaque librdkafka transport failure. A target with\n" +
         "            // no security block leaves the config exactly as built above.\n" +
-        "            KafkaSecurity_Helpers.ConfigureClient(security, targetName, config);\n" +
+        "            KafkaSecurity_V2_Helpers.ConfigureClient(security, targetName, config);\n" +
         "            producer = new Confluent.Kafka.ProducerBuilder<string, string>(config).Build();\n" +
         "            var msg = new Confluent.Kafka.Message<string, string>\n" +
         "            {\n" +
@@ -698,7 +698,7 @@ public sealed class MqPublishKafkaProvider
         "            // which the catches below map to a step-scoped EnvironmentError (§12.1) naming the\n" +
         "            // declared path, rather than an opaque librdkafka transport failure. A target with\n" +
         "            // no security block leaves the config exactly as built above.\n" +
-        "            KafkaSecurity_Helpers.ConfigureClient(security, targetName, config);\n" +
+        "            KafkaSecurity_V2_Helpers.ConfigureClient(security, targetName, config);\n" +
         "            producer = new Confluent.Kafka.ProducerBuilder<string, Avro.Generic.GenericRecord>(config)\n" +
         "                .SetValueSerializer(Confluent.Kafka.SyncOverAsync.SyncOverAsyncSerializerExtensionMethods.AsSyncOverAsync(serializer))\n" +
         "                .Build();\n" +
@@ -1001,7 +1001,7 @@ public sealed class MqPublishKafkaProvider
             // and nothing about `environment` — verified against the frozen v1 contract, which is
             // additive-only and so cannot gain such a member here. CsxAssembler dedupes this source
             // to one copy across every Kafka step in the suite.
-            KafkaSecurityHelper.Source,
+            Vouchfx.Steps.Kafka.KafkaSecurityEmission.Source,
         };
 
         return new CsxFragment(

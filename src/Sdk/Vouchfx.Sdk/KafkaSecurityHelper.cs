@@ -1,10 +1,11 @@
 // Vouchfx.Sdk — KafkaSecurityHelper (authenticated-infrastructure-mtls, slice E — REQ-015).
 //
-// Supplies the compile-time constant source for the KafkaSecurity_Helpers static class that
-// mq-publish.kafka and mq-expect.kafka splice into their RequiredHelpers set — the Kafka
+// Preserves the frozen legacy source for KafkaSecurity_Helpers used by existing providers.
+// Core Kafka providers emit a distinct private generation so their diagnostics can evolve
+// without changing this inlined public contract. This helper remains the Kafka
 // counterpart of slice D's SecurityHelper (which does the same job for the HTTP family's
 // HttpClientHandler). Deduplication is handled by the CsxAssembler helper-dedup logic
-// (§13.3.1), so a suite whose steps span both Kafka providers carries ONE copy.
+// (§13.3.1), so legacy providers sharing this body carry ONE copy per suite.
 //
 // WHY KAFKA NEEDS PROVIDER CODE AT ALL, when eleven other kinds do not (REQ-015). Confluent.Kafka's
 // ProducerConfig/ConsumerConfig do NOT derive SecurityProtocol from the bootstrap-servers string
@@ -41,8 +42,8 @@
 namespace Vouchfx.Sdk;
 
 /// <summary>
-/// Supplies the canonical source text for the <c>KafkaSecurity_Helpers</c> static class the
-/// <c>mq-publish.kafka</c> and <c>mq-expect.kafka</c> providers splice into their
+/// Supplies the frozen legacy source text for the <c>KafkaSecurity_Helpers</c> static class
+/// that existing providers can continue to splice into their
 /// <see cref="CsxFragment.RequiredHelpers"/> to set transport security on the emitted
 /// <c>ProducerConfig</c>/<c>ConsumerConfig</c> from the client security configuration declared
 /// for a step's own <c>target</c> (authenticated-infrastructure-mtls).
@@ -116,7 +117,7 @@ public static class KafkaSecurityHelper
     // so neither golden can see it. That was re-verified when this correction was written —
     // SdkContractFreezeTests stayed green with no regeneration.
     /// <summary>
-    /// The full C# source text of the <c>KafkaSecurity_Helpers</c> static class.
+    /// The frozen legacy C# source text of the <c>KafkaSecurity_Helpers</c> static class.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -343,10 +344,17 @@ public static class KafkaSecurityHelper
         "                    \"declared client certificate, or remove both fields.\");\n" +
         "            }\n" +
         "\n" +
-        "            // Keep the client-identity contradiction diagnostic above first. The lazy\n" +
-        "            // passphrase read also refuses a passphrase-only declaration from an\n" +
-        "            // embedder that bypassed schema validation; no client identity is presented.\n" +
-        "            _ = certificates?.ClientKeyPassword;\n" +
+        "            // NO PASSPHRASE READ HERE, AND THAT IS A DECISION, not an omission — do not\n" +
+        "            // 'fix' it in isolation. REQ-008 scopes its unconditional-read constraint to\n" +
+        "            // the 'mtls' branch, because the read exists to guard a key this branch never\n" +
+        "            // presents. The schema forbids 'clientKeyPassword' under 'tls' outright\n" +
+        "            // (the boolean-'false' subschema in the 'security' $def's own allOf, in\n" +
+        "            // root-language-schema.json), so the only way to declare one here is the\n" +
+        "            // same embedder bypass the contradiction guard above addresses, and the\n" +
+        "            // consequence is a missing diagnostic rather than a weakened connection:\n" +
+        "            // nothing is decrypted, nothing is presented, no key reaches librdkafka.\n" +
+        "            // Refusing the declaration belongs where declarations are refused, not in a\n" +
+        "            // read performed for its side effect.\n" +
         "            config.SecurityProtocol = Confluent.Kafka.SecurityProtocol.Ssl;\n" +
         "        }\n" +
         "        else\n" +

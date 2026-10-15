@@ -14,13 +14,22 @@ environment:
 steps:
   - id: create-order
     type: http.rest
+    method: GET
+    path: /health
     target: api
   - id: assert-order-row
     type: db-assert.postgres
+    query: SELECT 1
+    expect:
+      rowCount: 1
     target: orders-db
   - id: publish-order-event
     type: mq-publish.kafka
+    topic: planner-events
+    payload: '{"event":"planner-fixture"}'
     target: events
   - id: never-called-step
     type: http.rest
+    method: GET
+    path: /health
     target: api

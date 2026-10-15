@@ -3,7 +3,7 @@
 
 Vouchfx.Sdk.HttpTlsHelper.Source sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01ce6e1d5c chars=5019
 
-Vouchfx.Sdk.KafkaSecurityHelper.Source sha256=a569ec341f40fc3443f49533d8c31ba69e27816c8c60d121b6e10397fae08f17 chars=11600
+Vouchfx.Sdk.KafkaSecurityHelper.Source sha256=ba35bdff6ad5103a55cbf7ebb6e0f989506d314a470af75c231bf55df1299fd0 chars=12215
 
 Vouchfx.Sdk.SecretHelper.Source sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1 chars=5042
 

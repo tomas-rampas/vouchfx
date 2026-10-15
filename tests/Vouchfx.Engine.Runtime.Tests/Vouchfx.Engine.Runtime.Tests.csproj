@@ -128,4 +128,9 @@
     <PackageReference Include="AWSSDK.S3" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Frozen legacy body for the mixed-version provider compatibility regression. -->
+    <Content Include="Fixtures\kafka-security-helper.v1.csx" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

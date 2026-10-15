@@ -12,6 +12,8 @@ environment:
 steps:
   - id: publish-event
     type: mq-publish.kafka
+    topic: planner-events
+    payload: '{"event":"planner-fixture"}'
     target: events
   - id: watch-events-trace
     type: trace-expect.otlp

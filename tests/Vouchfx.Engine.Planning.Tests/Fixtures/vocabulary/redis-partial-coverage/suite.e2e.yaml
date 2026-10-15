@@ -6,4 +6,8 @@ environment:
 steps:
   - id: assert-session
     type: cache-assert.redis
+    key: planner-key
+    operation: exists
+    expect:
+      exists: true
     target: sessions

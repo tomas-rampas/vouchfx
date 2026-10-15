@@ -12,7 +12,13 @@ environment:
 steps:
   - id: call-api-with-placeholder-target
     type: http.rest
+    method: GET
+    path: /health
     target: "{apiName}"
   - id: assert-cache-with-secret-target
     type: cache-assert.redis
+    key: planner-key
+    operation: exists
+    expect:
+      exists: true
     target: "${secret:vault/cache-name}"

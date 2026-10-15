@@ -1731,7 +1731,8 @@ public static class ScenarioRunner
         // impossible: the value stays whole, `Unconfirmed` is `AuthoringFault ∧
         // SomeDeclaredTargetWentUnconfirmed`, and an empty `Declared` has no unconfirmed member, so
         // that value does not raise. `Worse` can select it only when the other side does not raise
-        // either, so the suite's `Unconfirmed` stays false and the run still exits 0. `--parallel`
+        // either, so the suite's `Unconfirmed` stays false; process exit remains governed by the
+        // independent verdict rules. `--parallel`
         // has always used this fold and has always neutralised the effect.
         //
         // WHAT THE GUARD DOES STILL DO, measured by removing it and rebuilding: it keeps
