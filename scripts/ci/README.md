@@ -8,6 +8,11 @@ Retry, classification, registry backoff, tally and workflow-command fencing chec
 fail when behaviour changes. Negative mutation controls confirm those checks detect
 a lost fatal exit and a changed YAML representation.
 
+The release contract also requires exactly one public publishing trigger
+(`release: published`) and preserves the non-publishing manual dispatch. It runs
+the actual version-step shell for stable, pre-release, dispatch and refused push
+events without invoking signing or publication.
+
 Run from the repository root with Python 3.12, Bash, yq 4.53.2 and ShellCheck 0.11.0:
 
 ```sh

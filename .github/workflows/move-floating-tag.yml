@@ -31,9 +31,9 @@
 # without a ref change on their side, and leaves the tag name describing
 # something it no longer points at. Separate tags make the move an opt-in edit.
 #
-# WHY `release: published`, NOT `push: tags` (RELEASING.md's own two-step
-# flow: a pushed tag first creates a DRAFT release the maintainer reviews
-# before publishing): gating on `published` guarantees a floating tag only
+# WHY `release: published`, NOT `push: tags`: as documented in RELEASING.md,
+# publication starts the signed-release pipeline; pushing a tag alone does
+# not. Gating on `published` guarantees a floating tag only
 # ever moves to a release the maintainer actually confirmed — the same
 # review gate every other artefact in this repo's release pipeline gets.
 #
