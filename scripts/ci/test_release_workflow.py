@@ -1,8 +1,10 @@
 """Release event contract and actual version-step regressions; no publication."""
 
+import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -66,6 +68,63 @@ class ReleaseWorkflowTests(unittest.TestCase):
                 else:
                     self.assertEqual([f"tag=v{expected_version}", f"version={expected_version}"],
                                      output.read_text(encoding="utf-8").splitlines())
+
+
+class ReleaseSbomTests(unittest.TestCase):
+    def fixture(self, version="1.0.3"):
+        return {"metadata": {"component": {"name": "vouchfx", "version": version,
+                                           "bom-ref": f"vouchfx@{version}"}},
+                "components": [{"name": "dependency", "version": "2.0.0",
+                                "bom-ref": "dependency@2.0.0"}],
+                "dependencies": [{"ref": f"vouchfx@{version}", "dependsOn": ["dependency@2.0.0"]},
+                                 {"ref": "dependency@2.0.0", "dependsOn": []}]}
+
+    def check(self, data, version="1.0.3", expected=0):
+        with tempfile.TemporaryDirectory() as scratch:
+            path = Path(scratch) / "release.bom.json"
+            path.write_text(json.dumps(data), encoding="utf-8")
+            command = [sys.executable, "-I", "-B", str(ROOT / "scripts/check_release_sbom.py"), str(path)]
+            if version is not None:
+                command.extend(["--version", version])
+            result = subprocess.run(command, capture_output=True, timeout=10)
+            self.assertEqual(expected, result.returncode, result.stdout + result.stderr)
+
+    def test_generator_sets_version_and_validates_before_upload(self):
+        steps = workflow(ROOT / ".github/workflows/release.yml")["jobs"]["build-dotnet"]["steps"]
+        step = next(s for s in steps if s.get("name") == "Generate SBOM (CycloneDX JSON, spec 1.7)")
+        self.assertEqual({"VERSION": "${{ steps.version.outputs.version }}"}, step["env"])
+        self.assertIn('--set-version "$VERSION"', step["run"])
+        self.assertIn('python scripts/check_release_sbom.py "artifacts/sbom/vouchfx-${VERSION}.bom.json" --version "$VERSION"', step["run"])
+        self.assertLess(steps.index(step), next(i for i, s in enumerate(steps) if s.get("name") == "Upload SBOM"))
+
+    def test_stable_and_prerelease_root_identity_and_references(self):
+        for version in ("1.0.3", "1.0.3-rc.1"):
+            with self.subTest(version=version):
+                self.check(self.fixture(version), version)
+
+    def test_default_version_or_stale_root_ref_refused(self):
+        self.check(self.fixture("0.0.0"), expected=1)
+        data = self.fixture()
+        data["metadata"]["component"]["bom-ref"] = "vouchfx@0.0.0"
+        self.check(data, expected=1)
+        data = self.fixture()
+        del data["metadata"]["component"]["version"]
+        self.check(data, expected=1)
+
+    def test_missing_root_and_dangling_dependency_references_refused(self):
+        for field in ("ref", "dependsOn", "provides"):
+            with self.subTest(field=field):
+                data = self.fixture()
+                data["dependencies"][0][field] = "vouchfx@0.0.0" if field == "ref" else ["missing@1.0.0"]
+                self.check(data, expected=1)
+        data = self.fixture()
+        data["dependencies"] = []
+        self.check(data, expected=1)
+
+    def test_invalid_empty_and_missing_expected_version_refused(self):
+        for version, expected in (("", 1), ("bad", 1), (None, 2)):
+            with self.subTest(version=version):
+                self.check(self.fixture(), version, expected)
 
 
 if __name__ == "__main__":

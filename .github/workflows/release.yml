@@ -306,7 +306,9 @@ jobs:
           dotnet tool install --global CycloneDX
           dotnet-CycloneDX vouchfx.sln \
             -o artifacts/sbom \
+            --set-version "$VERSION" \
             --filename "vouchfx-${VERSION}.bom.json"
+          python scripts/check_release_sbom.py "artifacts/sbom/vouchfx-${VERSION}.bom.json" --version "$VERSION"
           dotnet tool uninstall --global CycloneDX
           ls -lh artifacts/sbom/
 
