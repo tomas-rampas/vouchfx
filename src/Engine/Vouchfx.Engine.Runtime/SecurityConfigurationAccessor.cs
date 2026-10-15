@@ -126,7 +126,7 @@ internal sealed class SecurityConfigurationAccessor : ISecurityConfigurationAcce
                 if (spec.Security is { } security)
                 {
                     byTarget[name] = Project(
-                        name, "services", security, resolvedSuiteDirectory, secrets, pathDisclosures);
+                        name, SecuredTargets.ServicesFieldSegment, security, resolvedSuiteDirectory, secrets, pathDisclosures);
                 }
             }
         }
@@ -164,7 +164,7 @@ internal sealed class SecurityConfigurationAccessor : ISecurityConfigurationAcce
                 }
 
                 byTarget[name] = Project(
-                    name, "dependencies", security, resolvedSuiteDirectory, secrets, pathDisclosures);
+                    name, SecuredTargets.DependenciesFieldSegment, security, resolvedSuiteDirectory, secrets, pathDisclosures);
             }
         }
 
