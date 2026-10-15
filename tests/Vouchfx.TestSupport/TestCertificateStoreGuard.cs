@@ -84,8 +84,8 @@ public static class TestCertificateStoreGuard
             "did not run, or a copy cached under a thumbprint no bed listed. Removal was " +
             "attempted and each line records whether it succeeded; a line reading 'removal " +
             "failed' is still on the host and needs clearing by hand. Note that this check only " +
-            "runs on Windows, and every job in .github/workflows/build.yml runs on ubuntu-latest, " +
-            "so the run it fails is a local one." + Environment.NewLine +
+            "runs on Windows, including the blocking windows-unit solution lane in " +
+            ".github/workflows/build.yml; Linux passes do not examine Windows stores." + Environment.NewLine +
             string.Join(Environment.NewLine, census);
     }
 

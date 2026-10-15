@@ -140,7 +140,7 @@ public sealed class RootSchemaTests
             "A schemaVersion other than 'v1' must be rejected by the const constraint.");
         var onlyError = Assert.Single(result.Errors);
         Assert.Equal("/metadata/schemaVersion", onlyError.InstanceLocation);
-        Assert.Contains("[const]", onlyError.Message, System.StringComparison.Ordinal);
+        Assert.Contains("language schema version", onlyError.Message, System.StringComparison.Ordinal);
         Assert.Contains("'v2'", onlyError.Message, System.StringComparison.Ordinal);
         Assert.Contains("'v1'", onlyError.Message, System.StringComparison.Ordinal);
         Assert.Contains("omit", onlyError.Message, System.StringComparison.OrdinalIgnoreCase);
@@ -247,7 +247,7 @@ public sealed class RootSchemaTests
         Assert.False(result.IsValid, "A lower-cased verifyMode value must be rejected by the case-sensitive schema enum.");
         Assert.Contains(result.Errors, e =>
             e.InstanceLocation == "/steps/0/verifyMode" &&
-            e.Message.Contains("[enum]", System.StringComparison.Ordinal) &&
+            e.Message.Contains("accepted values", System.StringComparison.Ordinal) &&
             e.Message.Contains("'retry'", System.StringComparison.Ordinal) &&
             e.Message.Contains("IMMEDIATE", System.StringComparison.Ordinal) &&
             e.Message.Contains("write 'RETRY'", System.StringComparison.Ordinal));
@@ -277,7 +277,7 @@ public sealed class RootSchemaTests
         Assert.False(result.IsValid);
         Assert.Contains(result.Errors, e =>
             e.InstanceLocation == "/steps/0/verifyMode" &&
-            e.Message.Contains("[enum]", System.StringComparison.Ordinal) &&
+            e.Message.Contains("accepted values", System.StringComparison.Ordinal) &&
             e.Message.Contains("'SOMETIMES'", System.StringComparison.Ordinal) &&
             e.Message.Contains("IMMEDIATE", System.StringComparison.Ordinal) &&
             !e.Message.Contains("write '", System.StringComparison.Ordinal));
@@ -311,7 +311,7 @@ public sealed class RootSchemaTests
 
         Assert.False(result.IsValid);
         var onlyError = Assert.Single(result.Errors, e => e.InstanceLocation == "/steps/0/timeout");
-        Assert.Contains("[type]", onlyError.Message, System.StringComparison.Ordinal);
+        Assert.Contains("Value is", onlyError.Message, System.StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -585,14 +585,14 @@ public sealed class RootSchemaTests
         Assert.NotEmpty(result.Errors);
 
         // At least one error must be located at the step's 'type' property and
-        // reference the 'pattern' keyword, so this test cannot pass on some
+        // explain the regular-expression constraint, so this test cannot pass on some
         // unrelated schema failure (e.g. a missing 'id').
         var pointsAtTypePattern = result.Errors.Any(e =>
             e.InstanceLocation.EndsWith("/type", System.StringComparison.Ordinal) &&
-            e.Message.Contains("[pattern]", System.StringComparison.Ordinal));
+            e.Message.Contains("regular expression", System.StringComparison.Ordinal));
 
         Assert.True(pointsAtTypePattern,
-            $"Expected an error at .../type referencing the 'pattern' keyword, got: {string.Join("; ", result.Errors.Select(e => $"{e.InstanceLocation}: {e.Message}"))}");
+            $"Expected an error at .../type explaining the regular-expression constraint, got: {string.Join("; ", result.Errors.Select(e => $"{e.InstanceLocation}: {e.Message}"))}");
     }
 
     /// <summary>

@@ -102,9 +102,9 @@ public sealed class SchemaRejectedCorpusTests
     /// Every document under <c>Corpus/Rejected</c> must be rejected by
     /// <see cref="DocumentValidator"/> with at least one error whose
     /// <see cref="SchemaValidationError.InstanceLocation"/> equals the
-    /// fixture's pinned expectation AND whose message carries the pinned
-    /// keyword (in the <c>[keyword]</c> form <c>SchemaErrorCollector</c>
-    /// emits) — never a bare "some error happened somewhere" check.
+    /// fixture's pinned expectation and whose explanation comes from the pinned
+    /// internal schema rule. Keyword tags stay at the internal collection seam;
+    /// authors receive the same explanation without those tags.
     /// </summary>
     [Theory]
     [MemberData(nameof(RejectedFiles))]
@@ -116,15 +116,16 @@ public sealed class SchemaRejectedCorpusTests
         Assert.False(result.IsValid,
             $"{Path.GetFileName(path)}: expected this document to be REJECTED, but it validated successfully.");
 
-        var expectedKeywordTag = $"[{expectedKeyword}]";
-        var matched = result.Errors.Any(e =>
-            string.Equals(e.InstanceLocation, expectedLocation, StringComparison.Ordinal) &&
-            e.Message.Contains(expectedKeywordTag, StringComparison.Ordinal));
-
-        Assert.True(matched,
-            $"{Path.GetFileName(path)}: expected a rejection at '{expectedLocation}' carrying " +
-            $"'{expectedKeywordTag}', but got:{Environment.NewLine}" +
-            string.Join(Environment.NewLine, result.Errors.Select(e => $"  at {e.InstanceLocation}: {e.Message}")));
+        var tag = $"[{expectedKeyword}] ";
+        var raw = SchemaComposer.ValidateForDocument(Registry, yaml);
+        var expected = raw.Errors.Where(e => e.InstanceLocation == expectedLocation
+            && e.Message.StartsWith(tag, StringComparison.Ordinal)).ToList();
+        Assert.NotEmpty(expected);
+        Assert.All(expected, error => Assert.Contains(result.Errors, author =>
+            author.InstanceLocation == expectedLocation
+            && author.Message.EndsWith(error.Message[tag.Length..], StringComparison.Ordinal)));
+        Assert.All(result.Errors, error =>
+            Assert.DoesNotMatch(@"^(?:\(line \d+\) )?\[[A-Za-z$]*\] ", error.Message));
     }
 
     /// <summary>

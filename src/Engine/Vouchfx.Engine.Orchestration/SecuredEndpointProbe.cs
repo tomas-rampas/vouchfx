@@ -516,14 +516,21 @@ internal static class SecuredEndpointProbe
         // certificate that exists but is malformed surfaces HERE, before any container work is
         // wasted, naming the declared path.
         X509Certificate2? clientCertificate = null;
+        SslStreamCertificateContext? clientContext = null;
 
         if (presentsClientIdentity)
         {
             try
             {
                 clientCertificate = certificates?.ClientCertificate;
+                if (clientCertificate is not null)
+                {
+                    var candidates = new X509Certificate2Collection();
+                    candidates.AddRange(certificates!.ClientCertificateIntermediates.ToArray());
+                    clientContext = SslStreamCertificateContext.Create(clientCertificate, candidates, offline: true);
+                }
             }
-            catch (SecurityMaterialException ex)
+            catch (Exception ex) when (ex is SecurityMaterialException or CryptographicException)
             {
                 throw Failure(
                     name,
@@ -706,26 +713,7 @@ internal static class SecuredEndpointProbe
                 leaveInnerStreamOpen: false,
                 BuildValidationCallback(certificates));
 
-            var options = new SslClientAuthenticationOptions
-            {
-                // Hostname verification is NOT relaxed here, and a declared caCert never forgives
-                // it (REQ-024's rule, applied identically on this path): a CA says which issuer to
-                // trust, never which host. The system under test's own certificate must therefore
-                // be valid for the address the engine reaches it on — for an engine-started
-                // container that is the published loopback address, which is the same constraint
-                // the HTTP family already carries.
-                TargetHost = host,
-
-                // Leave protocol selection to the platform's own defaults rather than pinning a
-                // version here: pinning would silently diverge from what the step's own client
-                // negotiates, and the whole value of this probe is that it tests the same thing.
-                EnabledSslProtocols = SslProtocols.None,
-            };
-
-            if (clientCertificate is not null)
-            {
-                options.ClientCertificates = new X509CertificateCollection { clientCertificate };
-            }
+            var options = CreateAuthenticationOptions(host, clientContext);
 
             try
             {
@@ -1085,14 +1073,10 @@ internal static class SecuredEndpointProbe
                 tcp.GetStream(), leaveInnerStreamOpen: false, BuildValidationCallback(certificates));
 
             // Identical to the first connection except for the one variable under test: no
-            // ClientCertificates collection is set, so the platform has nothing to present even if
+            // client identity is set, so the platform has nothing to present even if
             // the peer asks.
             await tls.AuthenticateAsClientAsync(
-                    new SslClientAuthenticationOptions
-                    {
-                        TargetHost = host,
-                        EnabledSslProtocols = SslProtocols.None,
-                    },
+                    CreateAuthenticationOptions(host, clientContext: null),
                     cancellationToken)
                 .ConfigureAwait(false);
 
@@ -1375,12 +1359,50 @@ internal static class SecuredEndpointProbe
         }
     }
 
+    // Shared by the identity-bearing connection and its anonymous control. A null
+    // context must configure no identity; both connections have the same trust policy.
+    internal static SslClientAuthenticationOptions CreateAuthenticationOptions(
+        string host, SslStreamCertificateContext? clientContext)
+    {
+        var policy = new X509ChainPolicy
+        {
+            DisableCertificateDownloads = true,
+            RevocationMode = X509RevocationMode.NoCheck,
+        };
+        policy.ApplicationPolicy.Add(new Oid("1.3.6.1.5.5.7.3.1"));
+        var options = new SslClientAuthenticationOptions
+        {
+            TargetHost = host,
+            EnabledSslProtocols = SslProtocols.None,
+            // The identity-bearing and anonymous arms must each negotiate a fresh TLS session.
+            AllowTlsResume = false,
+            CertificateChainPolicy = policy,
+        };
+        if (clientContext is not null)
+        {
+            if (System.OperatingSystem.IsWindows())
+            {
+                // .NET 8's initial Windows credential acquisition can cache a supplied context
+                // under the anonymous key. Select its leaf when requested instead; the same
+                // offline context already prepared Schannel's supplied intermediate material.
+                options.ClientCertificates = new X509CertificateCollection { clientContext.TargetCertificate };
+                options.LocalCertificateSelectionCallback = (_, _, _, _, _) => clientContext.TargetCertificate;
+            }
+            else
+            {
+                options.ClientCertificateContext = clientContext;
+            }
+        }
+
+        return options;
+    }
+
     /// <summary>
     /// Builds the server-certificate validation callback for this target: the declared trust
     /// anchor's own verdict when a <c>caCert</c> is declared, and the platform's own otherwise.
     /// </summary>
     /// <remarks>
-    /// The two branches mirror <c>Security_Helpers.ConfigureHandler</c> exactly, and must: a probe
+    /// The two branches mirror <c>HttpTls_Helpers.ConfigureHandler</c> exactly, and must: a probe
     /// that judged the peer by a different rule than the step would could pass a topology the step
     /// then rejects, or — far worse — pass one the step should have rejected. With no
     /// <c>caCert</c> declared the engine installs no callback at all and the platform's verdict

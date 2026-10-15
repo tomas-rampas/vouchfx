@@ -299,144 +299,144 @@ public sealed class SchemaAcceptedCorpusTests
             //        needs. This is the dominant category (31 of 39).
             ["acceptance/determinism/two-collisions/collision-alpha-1.e2e.yaml"] =
                 "Minimal http.rest step body (planner determinism fixture — only 'id'/'type'/'target' matter). " +
-                "at /steps/0: (line 5) [required] Required properties [\"method\",\"path\"] are not present",
+                "at /steps/0: (line 5) Required properties [\"method\",\"path\"] are not present",
 
             ["acceptance/determinism/two-collisions/collision-alpha-2.e2e.yaml"] =
                 "Minimal http.rest step body (planner determinism fixture). " +
-                "at /steps/0: (line 5) [required] Required properties [\"method\",\"path\"] are not present",
+                "at /steps/0: (line 5) Required properties [\"method\",\"path\"] are not present",
 
             ["acceptance/determinism/two-collisions/collision-beta-1.e2e.yaml"] =
                 "Minimal http.rest step body (planner determinism fixture). " +
-                "at /steps/0: (line 5) [required] Required properties [\"method\",\"path\"] are not present",
+                "at /steps/0: (line 5) Required properties [\"method\",\"path\"] are not present",
 
             ["acceptance/determinism/two-collisions/collision-beta-2.e2e.yaml"] =
                 "Minimal http.rest step body (planner determinism fixture). " +
-                "at /steps/0: (line 5) [required] Required properties [\"method\",\"path\"] are not present",
+                "at /steps/0: (line 5) Required properties [\"method\",\"path\"] are not present",
 
             ["acceptance/precedence/suite.e2e.yaml"] =
                 "Minimal mq-publish.kafka step body (planner precedence fixture). " +
-                "at /steps/0: (line 9) [required] Required properties [\"topic\",\"payload\"] are not present",
+                "at /steps/0: (line 9) Required properties [\"topic\",\"payload\"] are not present",
 
             ["acceptance/secret-safety/suite.e2e.yaml"] =
                 "Minimal http.rest step body (planner secret-safety fixture). " +
-                "at /steps/0: (line 5) [required] Required properties [\"method\",\"path\"] are not present",
+                "at /steps/0: (line 5) Required properties [\"method\",\"path\"] are not present",
 
             ["coverage/distinct-runid-same-stepid/suite-a.e2e.yaml"] =
                 "Minimal http.rest step body (planner coverage fixture). " +
-                "at /steps/0: (line 5) [required] Required properties [\"method\",\"path\"] are not present",
+                "at /steps/0: (line 5) Required properties [\"method\",\"path\"] are not present",
 
             ["coverage/distinct-runid-same-stepid/suite-b.e2e.yaml"] =
                 "Minimal http.rest step body (planner coverage fixture). " +
-                "at /steps/0: (line 5) [required] Required properties [\"method\",\"path\"] are not present",
+                "at /steps/0: (line 5) Required properties [\"method\",\"path\"] are not present",
 
             ["coverage/fully-exercised/suite.e2e.yaml"] =
                 "Minimal http.rest + db-assert.postgres step bodies (planner coverage fixture). " +
-                "at /steps/0: (line 13) [required] Required properties [\"method\",\"path\"] are not present; " +
-                "at /steps/1: (line 16) [required] Required properties [\"query\",\"expect\"] are not present",
+                "at /steps/0: (line 13) Required properties [\"method\",\"path\"] are not present; " +
+                "at /steps/1: (line 16) Required properties [\"query\",\"expect\"] are not present",
 
             ["coverage/interleaved-parallel-runs/suite-a.e2e.yaml"] =
                 "Minimal http.rest step body (planner coverage fixture). " +
-                "at /steps/0: (line 5) [required] Required properties [\"method\",\"path\"] are not present",
+                "at /steps/0: (line 5) Required properties [\"method\",\"path\"] are not present",
 
             ["coverage/interleaved-parallel-runs/suite-b.e2e.yaml"] =
                 "Minimal http.rest step body (planner coverage fixture). " +
-                "at /steps/0: (line 5) [required] Required properties [\"method\",\"path\"] are not present",
+                "at /steps/0: (line 5) Required properties [\"method\",\"path\"] are not present",
 
             ["coverage/listener-name-collision/suite.e2e.yaml"] =
                 "Minimal mq-publish.kafka step body (planner coverage fixture). " +
-                "at /steps/0: (line 13) [required] Required properties [\"topic\",\"payload\"] are not present",
+                "at /steps/0: (line 13) Required properties [\"topic\",\"payload\"] are not present",
 
             ["coverage/mixed-gaps/checkout.e2e.yaml"] =
                 "Minimal http.rest/db-assert.postgres/mq-publish.kafka step bodies (planner coverage fixture). " +
-                "at /steps/0: (line 15) [required] Required properties [\"method\",\"path\"] are not present; " +
-                "at /steps/1: (line 18) [required] Required properties [\"query\",\"expect\"] are not present; " +
-                "at /steps/2: (line 21) [required] Required properties [\"topic\",\"payload\"] are not present; " +
-                "at /steps/3: (line 24) [required] Required properties [\"method\",\"path\"] are not present",
+                "at /steps/0: (line 15) Required properties [\"method\",\"path\"] are not present; " +
+                "at /steps/1: (line 18) Required properties [\"query\",\"expect\"] are not present; " +
+                "at /steps/2: (line 21) Required properties [\"topic\",\"payload\"] are not present; " +
+                "at /steps/3: (line 24) Required properties [\"method\",\"path\"] are not present",
 
             ["coverage/mixed-gaps/shipping.e2e.yaml"] =
                 "Minimal http.rest step body (planner coverage fixture). " +
-                "at /steps/0: (line 5) [required] Required properties [\"method\",\"path\"] are not present",
+                "at /steps/0: (line 5) Required properties [\"method\",\"path\"] are not present",
 
             ["coverage/receiver-name-collision/suite.e2e.yaml"] =
                 "Minimal mq-publish.kafka step body (planner coverage fixture). " +
-                "at /steps/0: (line 13) [required] Required properties [\"topic\",\"payload\"] are not present",
+                "at /steps/0: (line 13) Required properties [\"topic\",\"payload\"] are not present",
 
             ["coverage/renamed-file-ambiguity/current.e2e.yaml"] =
                 "Minimal http.rest step body (planner coverage fixture). " +
-                "at /steps/0: (line 5) [required] Required properties [\"method\",\"path\"] are not present",
+                "at /steps/0: (line 5) Required properties [\"method\",\"path\"] are not present",
 
             ["coverage/scenario-id-collision/suite-one.e2e.yaml"] =
                 "Minimal http.rest step body (planner coverage fixture). " +
-                "at /steps/0: (line 5) [required] Required properties [\"method\",\"path\"] are not present",
+                "at /steps/0: (line 5) Required properties [\"method\",\"path\"] are not present",
 
             ["coverage/scenario-id-collision/suite-two.e2e.yaml"] =
                 "Minimal http.rest step body (planner coverage fixture). " +
-                "at /steps/0: (line 5) [required] Required properties [\"method\",\"path\"] are not present",
+                "at /steps/0: (line 5) Required properties [\"method\",\"path\"] are not present",
 
             ["coverage/unresolvable-targets/suite.e2e.yaml"] =
                 "Minimal http.rest + cache-assert.redis step bodies (planner coverage fixture). " +
-                "at /steps/0: (line 13) [required] Required properties [\"method\",\"path\"] are not present; " +
-                "at /steps/1: (line 16) [required] Required properties [\"key\",\"operation\",\"expect\"] are not present",
+                "at /steps/0: (line 13) Required properties [\"method\",\"path\"] are not present; " +
+                "at /steps/1: (line 16) Required properties [\"key\",\"operation\",\"expect\"] are not present",
 
             ["coverage/zero-step-dependency/suite.e2e.yaml"] =
                 "Minimal http.rest + mq-publish.kafka step bodies (planner coverage fixture — misleadingly " +
                 "named: it has steps, just none targeting the fixture's titular zero-coverage dependency). " +
-                "at /steps/0: (line 15) [required] Required properties [\"method\",\"path\"] are not present; " +
-                "at /steps/1: (line 18) [required] Required properties [\"topic\",\"payload\"] are not present",
+                "at /steps/0: (line 15) Required properties [\"method\",\"path\"] are not present; " +
+                "at /steps/1: (line 18) Required properties [\"topic\",\"payload\"] are not present",
 
             ["history/default-thresholds/history-health.e2e.yaml"] =
                 "Minimal http.rest step bodies ×4 (planner history fixture). " +
-                "at /steps/0: (line 11) [required] Required properties [\"method\",\"path\"] are not present; " +
-                "at /steps/1: (line 14) [required] Required properties [\"method\",\"path\"] are not present; " +
-                "at /steps/2: (line 17) [required] Required properties [\"method\",\"path\"] are not present; " +
-                "at /steps/3: (line 20) [required] Required properties [\"method\",\"path\"] are not present",
+                "at /steps/0: (line 11) Required properties [\"method\",\"path\"] are not present; " +
+                "at /steps/1: (line 14) Required properties [\"method\",\"path\"] are not present; " +
+                "at /steps/2: (line 17) Required properties [\"method\",\"path\"] are not present; " +
+                "at /steps/3: (line 20) Required properties [\"method\",\"path\"] are not present",
 
             ["history/phantom-step/phantom-step.e2e.yaml"] =
                 "Minimal http.rest step body (planner history fixture). " +
-                "at /steps/0: (line 10) [required] Required properties [\"method\",\"path\"] are not present",
+                "at /steps/0: (line 10) Required properties [\"method\",\"path\"] are not present",
 
             ["history/retry-noise/retry-noise.e2e.yaml"] =
                 "Minimal http.rest step body (planner history fixture). " +
-                "at /steps/0: (line 10) [required] Required properties [\"method\",\"path\"] are not present",
+                "at /steps/0: (line 10) Required properties [\"method\",\"path\"] are not present",
 
             ["ingest/basic-suites/checkout.e2e.yaml"] =
                 "Minimal http.rest + db-assert.postgres step bodies (planner ingest fixture). " +
-                "at /steps/0: (line 17) [required] Required properties [\"method\",\"path\"] are not present; " +
-                "at /steps/1: (line 20) [required] Required properties [\"query\",\"expect\"] are not present",
+                "at /steps/0: (line 17) Required properties [\"method\",\"path\"] are not present; " +
+                "at /steps/1: (line 20) Required properties [\"query\",\"expect\"] are not present",
 
             ["ingest/basic-suites/refund.e2e.yaml"] =
                 "Minimal mq-publish.kafka step body (planner ingest fixture). " +
-                "at /steps/0: (line 2) [required] Required properties [\"topic\",\"payload\"] are not present",
+                "at /steps/0: (line 2) Required properties [\"topic\",\"payload\"] are not present",
 
             ["ingest/one-malformed/good.e2e.yaml"] =
                 "Minimal http.rest step body (planner ingest fixture — 'good' relative to its malformed sibling, " +
                 "not relative to the schema). " +
-                "at /steps/0: (line 5) [required] Required properties [\"method\",\"path\"] are not present",
+                "at /steps/0: (line 5) Required properties [\"method\",\"path\"] are not present",
 
             ["vocabulary/fully-covered/suite.e2e.yaml"] =
                 "Minimal http.rest + db-assert.postgres step bodies (planner vocabulary fixture). " +
-                "at /steps/0: (line 10) [required] Required properties [\"method\",\"path\"] are not present; " +
-                "at /steps/1: (line 13) [required] Required properties [\"query\",\"expect\"] are not present",
+                "at /steps/0: (line 10) Required properties [\"method\",\"path\"] are not present; " +
+                "at /steps/1: (line 13) Required properties [\"query\",\"expect\"] are not present",
 
             ["vocabulary/kafka-published-only/suite.e2e.yaml"] =
                 "Minimal mq-publish.kafka step body (planner vocabulary fixture). " +
-                "at /steps/0: (line 7) [required] Required properties [\"topic\",\"payload\"] are not present",
+                "at /steps/0: (line 7) Required properties [\"topic\",\"payload\"] are not present",
 
             ["vocabulary/redis-partial-coverage/suite.e2e.yaml"] =
                 "Minimal cache-assert.redis step body (planner vocabulary fixture). " +
-                "at /steps/0: (line 7) [required] Required properties [\"key\",\"operation\",\"expect\"] are not present",
+                "at /steps/0: (line 7) Required properties [\"key\",\"operation\",\"expect\"] are not present",
 
             ["vocabulary/service-no-http/suite.e2e.yaml"] =
                 "script.csharp step missing BOTH oneOf branches — the fixture declares neither 'code' nor " +
                 "'file' at all (planner vocabulary fixture; the step exists only to occupy the suite, its " +
                 "body is irrelevant to the vocabulary check). " +
-                "at /steps/0: (line 7) [required] Required properties [\"code\"] are not present; " +
-                "at /steps/0: (line 7) [required] Required properties [\"file\"] are not present",
+                "at /steps/0: (line 7) Required properties [\"code\"] are not present; " +
+                "at /steps/0: (line 7) Required properties [\"file\"] are not present",
 
             ["vocabulary/two-suites-same-dependency-name/suite-b-covered.e2e.yaml"] =
                 "Minimal cache-assert.redis + http.rest step bodies (planner vocabulary fixture). " +
-                "at /steps/0: (line 21) [required] Required properties [\"key\",\"operation\",\"expect\"] are not present; " +
-                "at /steps/1: (line 24) [required] Required properties [\"method\",\"path\"] are not present",
+                "at /steps/0: (line 21) Required properties [\"key\",\"operation\",\"expect\"] are not present; " +
+                "at /steps/1: (line 24) Required properties [\"method\",\"path\"] are not present",
 
             // ── (B) Deliberately zero-step — a suite that exists only to
             //        declare an unreferenced dependency/service for a
@@ -459,27 +459,27 @@ public sealed class SchemaAcceptedCorpusTests
             ["ingest/all-malformed/bad-one.e2e.yaml"] =
                 "Deliberately malformed for PlanIngestTests' malformed-suite handling: the one step omits " +
                 "'id' AND the http.rest-required fields. " +
-                "at /steps/0: (line 5) [required] Required properties [\"id\"] are not present; " +
-                "at /steps/0: (line 5) [required] Required properties [\"target\",\"method\",\"path\"] are not present",
+                "at /steps/0: (line 5) Required properties [\"id\"] are not present; " +
+                "at /steps/0: (line 5) Required properties [\"target\",\"method\",\"path\"] are not present",
 
             ["ingest/all-malformed/bad-two.e2e.yaml"] =
                 "Deliberately malformed for PlanIngestTests' malformed-suite handling: the one step omits " +
                 "'id' AND the db-assert.postgres-required fields. " +
-                "at /steps/0: (line 5) [required] Required properties [\"id\"] are not present; " +
-                "at /steps/0: (line 5) [required] Required properties [\"target\",\"query\",\"expect\"] are not present",
+                "at /steps/0: (line 5) Required properties [\"id\"] are not present; " +
+                "at /steps/0: (line 5) Required properties [\"target\",\"query\",\"expect\"] are not present",
 
             ["ingest/one-malformed/bad.e2e.yaml"] =
                 "Deliberately malformed for PlanIngestTests' malformed-suite handling: the one step omits " +
                 "'id' AND the http.rest-required fields. " +
-                "at /steps/0: (line 5) [required] Required properties [\"id\"] are not present; " +
-                "at /steps/0: (line 5) [required] Required properties [\"target\",\"method\",\"path\"] are not present",
+                "at /steps/0: (line 5) Required properties [\"id\"] are not present; " +
+                "at /steps/0: (line 5) Required properties [\"target\",\"method\",\"path\"] are not present",
 
             ["acceptance/secret-safety/malformed-with-planted-secret.e2e.yaml"] =
                 "Deliberately malformed for PlanSafetyTests: the step 'type' is an ~800-character garbage " +
                 "token (planted past SuiteSetLoader's MaxParseErrorMessageChars truncation bound) so the " +
                 "redaction test can prove the bound truncates it away. Fails the root schema's " +
                 "'^[a-z0-9-]+\\.[a-z0-9-]+$' type pattern. " +
-                "at /steps/0/type: (line 16) [pattern] The string value is not a match for the indicated regular expression",
+                "at /steps/0/type: (line 16) The string value is not a match for the indicated regular expression",
 
             // ── (D) Planner-only cross-cutting field on a provider that
             //        doesn't declare it — added by the typo-closing change,
@@ -488,7 +488,7 @@ public sealed class SchemaAcceptedCorpusTests
                 "script.csharp step uses the planner's generic 'target' convention (REQ-004/REQ-007), which " +
                 "script.csharp's own schema never declares (only 'code'/'file'); previously silently tolerated " +
                 "(additionalProperties: true), now correctly rejected as unevaluated. " +
-                "at /steps/0/target: (line 12) [unevaluatedProperties] Unknown property 'target' on step type 'script.csharp'. " +
+                "at /steps/0/target: (line 12) Unknown property 'target' on step type 'script.csharp'. " +
                 "UPDATE (feat/close-remaining-surfaces, Part A2): this fixture's own 'code:' is set, so " +
                 "script.csharp's frozen oneOf is SATISFIED — the 'required: [\"file\"]' branch noise this entry " +
                 "used to also document is now suppressed by SchemaErrorCollector's composite-branch-noise fix " +
@@ -497,7 +497,7 @@ public sealed class SchemaAcceptedCorpusTests
                 "independently (services/dependencies schema closure, branch feat/close-environment-surface): " +
                 "'legacy-cache' declares 'type: cassandra', not one of the kinds $defs/dependency's new " +
                 "'type' enum recognises (this fixture's own name — 'unknown-kind' — is exactly the shape that enum " +
-                "now catches at schema time) — at /environment/dependencies/legacy-cache/type: [enum] 'cassandra' " +
+                "now catches at schema time) — at /environment/dependencies/legacy-cache/type: 'cassandra' " +
                 "does not match one of the values in the enumeration.",
         };
 

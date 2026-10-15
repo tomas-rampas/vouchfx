@@ -100,7 +100,7 @@ public static class YamlSchemaValidator
             // enum violation (e.g. dependency 'type', 'imagePullPolicy') can
             // be enriched with its live accepted-values list.
             var errors = SchemaErrorCollector.CollectErrors(results, doc.RootElement, _schemaDocument.RootElement);
-            return new SchemaValidationResult(false, errors);
+            return SchemaDiagnosticPresentation.ForAuthor(new SchemaValidationResult(false, errors));
         }
     }
 

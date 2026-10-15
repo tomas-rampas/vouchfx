@@ -65,7 +65,7 @@ public sealed class MqExpectAzureServiceBusProvider
     public JsonSchemaFragment SchemaFragment { get; } = new JsonSchemaFragment(
         """
         {
-          "description": "Non-destructively peeks an Azure Service Bus queue or topic subscription and verifies at least one message matches the declared expectations.  Designed for verifyMode: RETRY — the engine retries on Fail until a matching message is found or the timeout is reached.  Note: each attempt scans at most 100 messages (PeekMessagesAsync window); a match beyond the first 100 retained messages in the entity will not be found.",
+          "description": "Non-destructively peeks an Azure Service Bus queue or topic subscription and verifies at least one message matches the declared expectations.  Designed for verifyMode: RETRY - the engine retries on Fail until a matching message is found or the timeout is reached.  Note: each attempt scans at most 100 messages (PeekMessagesAsync window); a match beyond the first 100 retained messages in the entity will not be found.",
           "type": "object",
           "required": ["target"],
           "oneOf": [
@@ -87,13 +87,13 @@ public sealed class MqExpectAzureServiceBusProvider
               "minLength": 1
             },
             "queue": {
-              "description": "The source queue to peek.  Set 'queue' for queue-based messaging, or 'topic'+'subscription' for topic-based messaging.",
-              "type": "string",
+              "description": "The source queue to peek.  Set 'queue' for queue-based messaging, or 'topic'+'subscription' for topic-based messaging. Bare numbers are retained as their literal text; quote boolean-looking names.",
+              "type": ["string", "integer", "number"],
               "minLength": 1
             },
             "topic": {
-              "description": "The source topic (requires 'subscription' to also be set).  May contain {placeholder} substitution tokens.",
-              "type": "string",
+              "description": "The source topic (requires 'subscription' to also be set).  May contain {placeholder} substitution tokens. Bare numbers are retained as their literal text; quote boolean-looking names.",
+              "type": ["string", "integer", "number"],
               "minLength": 1
             },
             "subscription": {

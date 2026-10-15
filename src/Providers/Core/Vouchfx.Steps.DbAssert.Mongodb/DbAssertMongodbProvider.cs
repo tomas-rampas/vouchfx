@@ -96,7 +96,7 @@ public sealed class DbAssertMongodbProvider
                   "pattern": "^[0-9]+$"
                 },
                 "document": {
-                  "description": "Map of flat (top-level) field name to expected value, compared as text against the first matched document — a bare numeric or boolean scalar is read as its literal text. Dot-notation paths are not supported in v1.",
+                  "description": "Map of flat (top-level) field name to expected value, compared as text against the first matched document - a bare numeric or boolean scalar is read as its literal text. Dot-notation paths are not supported in v1.",
                   "type": "object",
                   "additionalProperties": { "type": ["string", "integer", "number", "boolean"] }
                 }
@@ -799,6 +799,9 @@ public sealed class DbAssertMongodbProvider
 
     private static string RenderTable(string[] headers, string[] values)
     {
+        // Escape the delimiter before measuring cells; user Unicode is preserved.
+        values = Array.ConvertAll(values, static value => value.Replace("|", "\\u007c", StringComparison.Ordinal));
+
         var widths = new int[headers.Length];
         for (int i = 0; i < headers.Length; i++)
         {
@@ -812,8 +815,8 @@ public sealed class DbAssertMongodbProvider
         for (int i = 0; i < widths.Length; i++)
         {
             if (i > 0)
-                sb.Append('┼');
-            sb.Append(new string('─', widths[i] + 2));
+                sb.Append('+');
+            sb.Append(new string('-', widths[i] + 2));
         }
         sb.Append('\n');
 
@@ -827,7 +830,7 @@ public sealed class DbAssertMongodbProvider
         for (int i = 0; i < cells.Length; i++)
         {
             if (i > 0)
-                sb.Append('│');
+                sb.Append('|');
             sb.Append(' ');
             sb.Append(cells[i].PadRight(widths[i]));
             sb.Append(' ');

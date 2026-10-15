@@ -134,12 +134,12 @@ public sealed class TraceExpectOtlpProvider
               "minLength": 1
             },
             "match": {
-              "description": "The criteria a captured span must satisfy. 'traceId' is REQUIRED — this family asserts the causal chain of a SPECIFIC transaction, not a general shape any span might match; service/spanName/attributes are optional refinements layered on top of it.",
+              "description": "The criteria a captured span must satisfy. 'traceId' is REQUIRED - this family asserts the causal chain of a SPECIFIC transaction, not a general shape any span might match; service/spanName/attributes are optional refinements layered on top of it.",
               "type": "object",
               "required": ["traceId"],
               "properties": {
                 "traceId": {
-                  "description": "Required expected trace id — ties this assertion to the SPECIFIC transaction under test (never omit it: a match with no trace id would accept any span with the right service/spanName/attributes, from any trace, ever exported). May be a full W3C traceparent value (the 32-hex trace-id segment is extracted automatically) or a bare 32-hex trace id. May contain {placeholder} and ${secret:source/path} tokens.",
+                  "description": "Required expected trace id - ties this assertion to the SPECIFIC transaction under test (never omit it: a match with no trace id would accept any span with the right service/spanName/attributes, from any trace, ever exported). May be a full W3C traceparent value (the 32-hex trace-id segment is extracted automatically) or a bare 32-hex trace id. May contain {placeholder} and ${secret:source/path} tokens.",
                   "type": "string",
                   "minLength": 1
                 },
@@ -152,7 +152,7 @@ public sealed class TraceExpectOtlpProvider
                   "type": "string"
                 },
                 "attributes": {
-                  "description": "Optional map of expected span-attribute key to expected value, compared as text (subset match — the real span may carry additional attributes not mentioned here) — a bare numeric or boolean scalar is read as its literal text. Each value may contain {placeholder} and ${secret:source/path} tokens.",
+                  "description": "Optional map of expected span-attribute key to expected value, compared as text (subset match - the real span may carry additional attributes not mentioned here) - a bare numeric or boolean scalar is read as its literal text. Each value may contain {placeholder} and ${secret:source/path} tokens.",
                   "type": "object",
                   "additionalProperties": { "type": ["string", "integer", "number", "boolean"] }
                 }
@@ -865,11 +865,11 @@ public sealed class TraceExpectOtlpProvider
         {
             sb.Append("    spans evicted      : ")
               .Append(evicted.Value.ToString(CultureInfo.InvariantCulture))
-              .Append(" (ring buffer saturated — the SUT exported more spans than the receiver")
+              .Append(" (ring buffer saturated - the SUT exported more spans than the receiver")
               .Append(" retains; a flood may have pushed the real span out before this scan)")
               .Append('\n');
         }
-        sb.Append("    (span attribute values, span names, and the trace id are never rendered — §17)");
+        sb.Append("    (span attribute values, span names, and the trace id are never rendered - section 17)");
         return sb.ToString();
     }
 

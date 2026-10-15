@@ -52,7 +52,8 @@ public sealed class ComposeEnvironmentTests
     [Fact]
     public async Task NonzeroStartupExit_PreservesProvisionDiagnostic_AfterOwnedCleanup()
     {
-        var fixture = new Inputs();
+        // This test pins the injected failure category, not a one-second startup deadline.
+        var fixture = new Inputs(startupTimeoutSeconds: 30);
         var process = new FakeProcess(1) { FailUp = true, UpExitCode = 37 };
         var error = await Assert.ThrowsAsync<OrchestrationException>(() => ComposeLease.StartAsync(fixture.Load(), process,
             NullSecretAccessor.Instance, CancellationToken.None, fixture.Journals));
@@ -67,12 +68,14 @@ public sealed class ComposeEnvironmentTests
         Assert.Equal(1, process.RemovedNetworks);
         Assert.Equal(1, process.RemovedVolumes);
         Assert.DoesNotContain(process.Calls, c => c.Arguments.Contains("port"));
+        Assert.Single(process.Calls, c => c.Arguments.Contains("up"));
     }
 
     [Fact]
     public async Task MalformedDiscoveredPort_PreservesDiscoveryDiagnostic_AfterOwnedCleanup()
     {
-        var fixture = new Inputs();
+        // This test pins the injected failure category, not a one-second startup deadline.
+        var fixture = new Inputs(startupTimeoutSeconds: 30);
         var process = new FakeProcess(1) { PortOutput = Canary };
         var error = await Assert.ThrowsAsync<OrchestrationException>(() => ComposeLease.StartAsync(fixture.Load(), process,
             NullSecretAccessor.Instance, CancellationToken.None, fixture.Journals));
@@ -86,6 +89,8 @@ public sealed class ComposeEnvironmentTests
         Assert.Equal(1, process.RemovedNetworks);
         Assert.Equal(1, process.RemovedVolumes);
         Assert.Contains(process.Calls, c => c.Arguments.Contains("port"));
+        Assert.Single(process.Calls, c => c.Arguments.Contains("up"));
+        Assert.Single(process.Calls, c => c.Arguments.Contains("port"));
     }
 
     [Fact]
@@ -429,17 +434,17 @@ public sealed class ComposeEnvironmentTests
 
     private sealed class Inputs
     {
-        internal Inputs()
+        internal Inputs(int startupTimeoutSeconds = 1)
         {
             Directory = System.IO.Directory.CreateTempSubdirectory("vouchfx-compose-fake-").FullName;
             Manifest = Path.Combine(Directory, "compose.yaml");
             Config = Path.Combine(Directory, "environment.compose.yaml");
             Journals = Path.Combine(Directory, "journals");
             File.WriteAllText(Manifest, "services: { api: { image: app } }");
-            File.WriteAllText(Config, """
+            File.WriteAllText(Config, $$"""
                 version: 1
                 files: [./compose.yaml]
-                startupTimeoutSeconds: 1
+                startupTimeoutSeconds: {{startupTimeoutSeconds}}
                 cleanupTimeoutSeconds: 1
                 services:
                   api:

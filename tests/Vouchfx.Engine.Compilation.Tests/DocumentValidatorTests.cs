@@ -443,7 +443,7 @@ public sealed class DocumentValidatorTests
         // finding at the same /steps/0/type pointer.
         var onlyError = Assert.Single(result.Errors);
         Assert.Equal("/steps/0/type", onlyError.InstanceLocation);
-        Assert.Contains("pattern", onlyError.Message, System.StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("(line 3) The string value is not a match for the indicated regular expression", onlyError.Message);
         Assert.DoesNotContain("unknown step type", onlyError.Message, System.StringComparison.OrdinalIgnoreCase);
     }
 
@@ -469,7 +469,7 @@ public sealed class DocumentValidatorTests
 
         var onlyError = Assert.Single(result.Errors);
         Assert.Equal("/steps/0/type", onlyError.InstanceLocation);
-        Assert.Contains("pattern", onlyError.Message, System.StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("(line 3) The string value is not a match for the indicated regular expression", onlyError.Message);
         Assert.DoesNotContain("unknown step type", onlyError.Message, System.StringComparison.OrdinalIgnoreCase);
     }
 
@@ -651,7 +651,7 @@ public sealed class DocumentValidatorTests
 
         var onlyError = Assert.Single(result.Errors);
         Assert.Equal("/environment/services/app/security/profile", onlyError.InstanceLocation);
-        Assert.Contains("pattern", onlyError.Message, System.StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("(line 6) The string value is not a match for the indicated regular expression", onlyError.Message);
         Assert.DoesNotContain("unknown security profile", onlyError.Message, System.StringComparison.OrdinalIgnoreCase);
     }
 
@@ -868,7 +868,7 @@ public sealed class DocumentValidatorTests
 
         var onlyError = Assert.Single(result.Errors);
         Assert.Equal("/environment/services/c~0d/security/profile", onlyError.InstanceLocation);
-        Assert.Contains("pattern", onlyError.Message, System.StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("(line 6) The string value is not a match for the indicated regular expression", onlyError.Message);
         Assert.DoesNotContain("unknown security profile", onlyError.Message, System.StringComparison.OrdinalIgnoreCase);
     }
 

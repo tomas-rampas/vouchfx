@@ -130,7 +130,7 @@ public sealed class DbAssertDynamodbProvider
                   "default": true
                 },
                 "item": {
-                  "description": "Map of flat (top-level) attribute name to expected value, compared as text against the GetItem result (S as-is, N as the raw number string, BOOL as \"true\"/\"false\") — a bare numeric or boolean scalar is read as its literal text. Nested attributes are not supported in v1.",
+                  "description": "Map of flat (top-level) attribute name to expected value, compared as text against the GetItem result (S as-is, N as the raw number string, BOOL as \"true\"/\"false\") - a bare numeric or boolean scalar is read as its literal text. Nested attributes are not supported in v1.",
                   "type": "object",
                   "additionalProperties": { "type": ["string", "integer", "number", "boolean"] }
                 }
@@ -740,6 +740,9 @@ public sealed class DbAssertDynamodbProvider
 
     private static string RenderTable(string[] headers, string[] values)
     {
+        // Escape the delimiter before measuring cells; user Unicode is preserved.
+        values = Array.ConvertAll(values, static value => value.Replace("|", "\\u007c", StringComparison.Ordinal));
+
         var widths = new int[headers.Length];
         for (int i = 0; i < headers.Length; i++)
         {
@@ -753,8 +756,8 @@ public sealed class DbAssertDynamodbProvider
         for (int i = 0; i < widths.Length; i++)
         {
             if (i > 0)
-                sb.Append('┼');
-            sb.Append(new string('─', widths[i] + 2));
+                sb.Append('+');
+            sb.Append(new string('-', widths[i] + 2));
         }
         sb.Append('\n');
 
@@ -768,7 +771,7 @@ public sealed class DbAssertDynamodbProvider
         for (int i = 0; i < cells.Length; i++)
         {
             if (i > 0)
-                sb.Append('│');
+                sb.Append('|');
             sb.Append(' ');
             sb.Append(cells[i].PadRight(widths[i]));
             sb.Append(' ');

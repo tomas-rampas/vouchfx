@@ -80,7 +80,7 @@ public sealed class HttpSoapProvider
     /// <inheritdoc />
     public ProviderMetadata Metadata { get; } = new ProviderMetadata(
         Version: "1.0.0",
-        MinEngineVersion: "1.0.0",
+        MinEngineVersion: "1.0.2",
         License: "Apache-2.0",
         Authors: new[] { "vouchfx-contributors" });
 
@@ -103,7 +103,7 @@ public sealed class HttpSoapProvider
               "minLength": 1
             },
             "path": {
-              "description": "The request path; may contain {placeholder} and ${secret:...} tokens. Must be a rooted relative path (start with a single '/'); absolute URLs, protocol-relative paths ('//…'), and backslashes are rejected as an SSRF guard.",
+              "description": "The request path; may contain {placeholder} and ${secret:...} tokens. Must be a rooted relative path (start with a single '/'); absolute URLs, protocol-relative paths ('//...'), and backslashes are rejected as an SSRF guard.",
               "type": "string",
               "pattern": "^/(?!/)[^\\\\\\x00-\\x1F\\x7F-\\x9F]*(?![\\s\\S])"
             },
@@ -416,7 +416,7 @@ public sealed class HttpSoapProvider
                 string observation;
                 // AllowAutoRedirect=false: a 3xx from the target must not silently bounce the
                 // request to a different host (SSRF via redirect — mirrors http.rest's M1 guard).
-                var handler = new System.Net.Http.HttpClientHandler { AllowAutoRedirect = false };
+                var handler = new System.Net.Http.SocketsHttpHandler { AllowAutoRedirect = false };
                 var client = new System.Net.Http.HttpClient(handler, disposeHandler: true);
                 try
                 {
@@ -425,7 +425,7 @@ public sealed class HttpSoapProvider
                     // HttpRest_Helpers.ExecuteAsync (inside the guarded region so a malformed
                     // artefact is a step-scoped EnvironmentError; before the first SendAsync so
                     // the underlying handler is still mutable).
-                    Security_Helpers.ConfigureHandler(security, targetName, handler);
+                    HttpTls_Helpers.ConfigureHandler(security, targetName, handler);
                     // Step-timeout convention (#232): a declared step budget governs this call —
                     // lift the transport bound (infinite) and let the step token (ct) be the sole
                     // enforcement mechanism; otherwise keep the 30s stall-window convention.
@@ -769,7 +769,7 @@ public sealed class HttpSoapProvider
         var helpers = new List<string>(s_helpers)
         {
             SecretHelper.Source,
-            SecurityHelper.Source,
+            HttpTlsHelper.Source,
         };
 
         return new CsxFragment(

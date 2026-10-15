@@ -435,6 +435,7 @@ public sealed class SdkContractFreezeTests
         // not quietly write an empty golden. Do not "fix" the asymmetry by exempting it too.
         string[] expectedHelpers =
         {
+            "Vouchfx.Sdk.HttpTlsHelper",
             "Vouchfx.Sdk.KafkaSecurityHelper",
             "Vouchfx.Sdk.SecretHelper",
             "Vouchfx.Sdk.SecurityHelper",

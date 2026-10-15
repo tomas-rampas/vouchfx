@@ -453,8 +453,8 @@ public static class RoslynScriptCompiler
     /// </para>
     /// <para>
     /// We include only the subset of TPA entries that Roslyn needs to compile a simple
-    /// script body: <c>System.Private.CoreLib</c>, <c>System.Runtime</c>, and
-    /// <c>System.Collections</c>.  The filter uses simple file-name matching so the
+    /// script body and shared SDK helpers, including the HTTP TLS helper. The
+    /// filter uses simple file-name matching so the
     /// method is not sensitive to the exact runtime directory layout.
     /// </para>
     /// </remarks>
@@ -484,6 +484,11 @@ public static class RoslynScriptCompiler
             "System.Runtime.dll",
             "System.Collections.dll",
             "System.Text.RegularExpressions.dll",
+            // HttpTls_Helpers requires X509/Oid and SslStreamCertificateContext.
+            // These are separate framework assemblies; System.Net.Http does not
+            // make their metadata available to Roslyn transitively.
+            "System.Security.Cryptography.dll",
+            "System.Net.Security.dll",
         };
 
         var found = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);

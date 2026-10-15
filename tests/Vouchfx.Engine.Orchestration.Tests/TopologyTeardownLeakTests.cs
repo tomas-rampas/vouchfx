@@ -106,7 +106,7 @@ public sealed class TopologyTeardownLeakTests
             // Start a lightweight real topology.
             topology = await HeadlessTopology.StartAsync(
                 appHostAssemblyName: AppHostAssemblyName,
-                configureResources: b => b.AddContainer(runToken, "traefik/whoami"));
+                configureResources: b => b.AddContainer(runToken, "traefik/whoami@sha256:c4717a8d1f0134a7444e24f881160e033991f23027c6c5a9a3f8fd22e70d1d44"));
 
             // PROVE DCP actually created the container before we dispose — otherwise the test is
             // vacuous and would pass even on buggy code. Poll up to 60s for a DCP-labelled

@@ -1,0 +1,68 @@
+name: TLS transport acceptance
+on:
+  workflow_dispatch:
+    inputs:
+      reviewed_sha:
+        description: Exact source commit selected for manual acceptance; review approval is checked separately
+        required: true
+        type: string
+  workflow_call:
+    inputs:
+      reviewed_sha:
+        description: Exact source commit selected by the calling CI or release workflow
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  transport:
+    name: Hosted TLS (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      VOUCHFX_TLS_HOSTED_ACCEPTANCE: '1'
+      REVIEWED_SHA: ${{ inputs.reviewed_sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.reviewed_sha }}
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: '8.0.x'
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      - name: Confirm the explicitly selected commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$REVIEWED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$REVIEWED_SHA"
+      - name: Restore public packages and build the isolated host
+        shell: bash
+        run: |
+          set -euo pipefail
+          dotnet restore tests/Vouchfx.Engine.Runtime.TransportAcceptance.Tests --source https://api.nuget.org/v3/index.json
+          dotnet build tests/Vouchfx.Engine.Runtime.TransportAcceptance.Tests -c Release --no-restore -warnaserror -p:Version=1.0.2
+      - name: Run four opted-in transport facts and their final guard
+        env:
+          VOUCHFX_TLS_EVIDENCE_DIRECTORY: ${{ runner.temp }}/vouchfx-tls-acceptance/evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          dotnet test tests/Vouchfx.Engine.Runtime.TransportAcceptance.Tests -c Release --no-build --no-restore --logger 'trx;LogFileName=tls-hosted.trx' --results-directory "${{ runner.temp }}/vouchfx-tls-acceptance"
+          python scripts/assert-tls-hosted-acceptance.py "${{ runner.temp }}/vouchfx-tls-acceptance"
+      - name: Retain exact TRX and public certificate evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: tls-transport-${{ matrix.os }}
+          path: ${{ runner.temp }}/vouchfx-tls-acceptance
+          if-no-files-found: error
+          retention-days: 14

@@ -256,7 +256,7 @@ public sealed class SchemaErrorCollectionAtScaleTests
 
         var genuine = result.Errors[0];
         Assert.Equal("/steps/0/verifyMode", genuine.InstanceLocation);
-        Assert.Contains("enum", genuine.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("Value 'SOMETIMES' is not one of the accepted values for 'verifyMode': IMMEDIATE, RETRY", genuine.Message);
     }
 
     // ── Case C: valid suite stays valid — no false positives ───────────────────

@@ -202,7 +202,13 @@ public static class SchemaComposer
     /// A <see cref="SchemaValidationResult"/> carrying the outcome of the
     /// composed-schema evaluation.
     /// </returns>
-    public static SchemaValidationResult Validate(StepKindRegistry registry, string yamlText)
+    public static SchemaValidationResult Validate(StepKindRegistry registry, string yamlText) =>
+        SchemaDiagnosticPresentation.ForAuthor(ValidateForDocument(registry, yamlText));
+
+    // DocumentValidator needs the collector's raw keyword marker until its
+    // unknown-step-type cascade suppression is complete. This internal path
+    // must never be returned directly to an author-facing caller.
+    internal static SchemaValidationResult ValidateForDocument(StepKindRegistry registry, string yamlText)
     {
         if (string.IsNullOrWhiteSpace(yamlText))
         {

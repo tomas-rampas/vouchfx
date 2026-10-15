@@ -211,6 +211,7 @@ CHANGELOG_PATH = REPO_ROOT / "CHANGELOG.md"
 sys.path.insert(0, str(SCRIPT_DIR / "site_hooks"))
 from _redirect_table import build_redirect_table, relative_target  # noqa: E402
 from _text_like import TEXT_LIKE_SUFFIXES, iter_text_like_files  # noqa: E402
+from _publication_inputs import PublicationInputError, validate_source_inputs  # noqa: E402
 
 LANDING_MARKER = "brand__name"
 
@@ -2124,7 +2125,16 @@ def check_schema_descriptions_no_private_identifiers(_site_dir: Path) -> None:
             raise CheckFailed("A public schema could not be read or parsed safely.") from exc
 
 
+def check_publication_inputs(_site_dir: Path) -> None:
+    """The deployment gate also requires the reviewed source manifest."""
+    try:
+        validate_source_inputs(REPO_ROOT)
+    except PublicationInputError as exc:
+        raise CheckFailed(f"Publication inputs: {exc}") from None
+
+
 CHECKS = (
+    check_publication_inputs,
     check_no_private_identifiers,
     check_snippet_allowlist,
     check_landing_page,

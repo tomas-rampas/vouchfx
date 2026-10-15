@@ -182,7 +182,7 @@ public sealed class SchemaErrorCollectorTests
             Assert.False(result.IsValid);
             var error = Assert.Single(result.Errors);
             Assert.Equal($"/environment/{map}/{EscapeNamePointer(name)}/security", error.InstanceLocation);
-            Assert.Equal($"[required] Required properties [\"endpoint\"] are not present on {kind} '{display}'", error.Message);
+            Assert.Equal($"Required properties [\"endpoint\"] are not present on {kind} '{display}'", error.Message);
         }
     }
 
@@ -205,7 +205,7 @@ public sealed class SchemaErrorCollectorTests
         Assert.False(result.IsValid);
         var error = Assert.Single(result.Errors);
         Assert.Equal($"/environment/services/{EscapeNamePointer(name)}/healthCheck", error.InstanceLocation);
-        Assert.Equal($"[required] Required properties [\"type\"] are not present in service '{display}' (at healthCheck)", error.Message);
+        Assert.Equal($"Required properties [\"type\"] are not present in service '{display}' (at healthCheck)", error.Message);
     }
 
     [Theory]
@@ -240,7 +240,7 @@ public sealed class SchemaErrorCollectorTests
         Assert.False(result.IsValid);
         var error = Assert.Single(result.Errors);
         Assert.Equal("/steps/0/capture/" + EscapeNamePointer(name), error.InstanceLocation);
-        Assert.Equal($"[minProperties] Capture entry '{display}' must set at least one of 'jsonpath', 'xpath' - none is present (DSL section 6.1).", error.Message);
+        Assert.Equal($"Capture entry '{display}' must set at least one of 'jsonpath', 'xpath' - none is present (DSL section 6.1).", error.Message);
         Assert.True(YamlSchemaValidator.Validate(yaml.Replace(": {}", ": { jsonpath: '$.id' }", StringComparison.Ordinal)).IsValid);
     }
 
@@ -263,7 +263,7 @@ public sealed class SchemaErrorCollectorTests
         Assert.False(result.IsValid);
         var error = Assert.Single(result.Errors);
         Assert.Equal("/steps/0/capture/" + EscapeNamePointer(reservedName), error.InstanceLocation);
-        Assert.Equal($"[pattern] Property name '{reservedDisplay}' begins with an engine-reserved bookkeeping prefix - see this field's own description for the reserved prefix list.", error.Message);
+        Assert.Equal($"Property name '{reservedDisplay}' begins with an engine-reserved bookkeeping prefix - see this field's own description for the reserved prefix list.", error.Message);
     }
 
     [Theory]
@@ -285,7 +285,7 @@ public sealed class SchemaErrorCollectorTests
         Assert.False(result.IsValid);
         var error = Assert.Single(result.Errors);
         Assert.Equal($"/environment/services/{EscapeNamePointer(name)}/healthCheck/type", error.InstanceLocation);
-        Assert.Equal($"[const] Service '{display}' declares 'healthCheck: {{ type: http }}', but its 'ports' declaration has no sibling 'httpPort' - no HTTP endpoint exists there for anything but a 'tcp' probe to target. Add 'httpPort:' to expose one, or write 'healthCheck: {{ type: tcp }}'.", error.Message);
+        Assert.Equal($"Service '{display}' declares 'healthCheck: {{ type: http }}', but its 'ports' declaration has no sibling 'httpPort' - no HTTP endpoint exists there for anything but a 'tcp' probe to target. Add 'httpPort:' to expose one, or write 'healthCheck: {{ type: tcp }}'.", error.Message);
     }
 
     [Theory]
@@ -696,7 +696,7 @@ public sealed class SchemaErrorCollectorTests
 
         var onlyError = Assert.Single(result.Errors);
         Assert.Equal("/steps/0", onlyError.InstanceLocation);
-        Assert.Contains("[oneOf]", onlyError.Message, StringComparison.Ordinal);
+        Assert.Contains("Exactly one", onlyError.Message, StringComparison.Ordinal);
         Assert.Contains("'code'", onlyError.Message, StringComparison.Ordinal);
         Assert.Contains("'file'", onlyError.Message, StringComparison.Ordinal);
 
@@ -902,7 +902,7 @@ public sealed class SchemaErrorCollectorTests
         Assert.False(result.IsValid, "Redis 'operation' values are case-sensitive; 'GET' must be rejected.");
         Assert.Contains(result.Errors, e =>
             e.InstanceLocation == "/steps/0/operation" &&
-            e.Message.Contains("[enum]", StringComparison.Ordinal) &&
+            e.Message.Contains("accepted values", StringComparison.Ordinal) &&
             e.Message.Contains("'GET'", StringComparison.Ordinal) &&
             e.Message.Contains("get", StringComparison.Ordinal) &&
             e.Message.Contains("write 'get'", StringComparison.Ordinal));
@@ -1094,7 +1094,7 @@ public sealed class SchemaErrorCollectorTests
         Assert.False(result.IsValid);
         var only = Assert.Single(result.Errors);
         Assert.Equal("/steps/0/bogusField", only.InstanceLocation);
-        Assert.Contains("[unevaluatedProperties]", only.Message, StringComparison.Ordinal);
+        Assert.Contains("Unknown property", only.Message, StringComparison.Ordinal);
     }
 
     // ── [enum] enrichment: case-hint requires a UNIQUE match (MINOR-6) ──────────
@@ -1364,7 +1364,7 @@ public sealed class SchemaErrorCollectorTests
             "A capture entry declaring both 'jsonpath' and 'xpath' must be rejected — the format is ambiguous.");
         var onlyError = Assert.Single(result.Errors);
         Assert.Equal("/steps/0/capture/ambiguous/xpath", onlyError.InstanceLocation);
-        Assert.Contains("[properties]", onlyError.Message, StringComparison.Ordinal);
+        Assert.Contains("Property", onlyError.Message, StringComparison.Ordinal);
         Assert.Contains("'xpath'", onlyError.Message, StringComparison.Ordinal);
         Assert.Contains("'jsonpath'", onlyError.Message, StringComparison.Ordinal);
         Assert.Contains("cannot be combined with", onlyError.Message, StringComparison.Ordinal);
@@ -1393,7 +1393,7 @@ public sealed class SchemaErrorCollectorTests
         Assert.False(result.IsValid,
             "A capture entry declaring neither 'jsonpath' nor 'xpath' must be rejected.");
         var onlyError = Assert.Single(result.Errors, e => e.InstanceLocation == "/steps/0/capture/neither");
-        Assert.Contains("[minProperties]", onlyError.Message, StringComparison.Ordinal);
+        Assert.Contains("must set at least one", onlyError.Message, StringComparison.Ordinal);
         Assert.Contains("'jsonpath'", onlyError.Message, StringComparison.Ordinal);
         Assert.Contains("'xpath'", onlyError.Message, StringComparison.Ordinal);
         Assert.Contains("'neither'", onlyError.Message, StringComparison.Ordinal);
@@ -1427,7 +1427,7 @@ public sealed class SchemaErrorCollectorTests
 
         Assert.False(result.IsValid, "A capture entry with an unrecognised key must be rejected.");
         var onlyError = Assert.Single(result.Errors, e => e.InstanceLocation == "/steps/0/capture/orderId/badkey");
-        Assert.Contains("[additionalProperties]", onlyError.Message, StringComparison.Ordinal);
+        Assert.Contains("Unknown property", onlyError.Message, StringComparison.Ordinal);
         Assert.Contains("'badkey'", onlyError.Message, StringComparison.Ordinal);
         Assert.Contains("capture entry 'orderId'", onlyError.Message, StringComparison.Ordinal);
     }
@@ -1584,7 +1584,7 @@ public sealed class SchemaErrorCollectorTests
             string.Equals(e.InstanceLocation, location, StringComparison.Ordinal)).ToList();
 
         var only = Assert.Single(atLocation);
-        Assert.Contains("[enum]", only.Message, StringComparison.Ordinal);
+        Assert.Contains("accepted values", only.Message, StringComparison.Ordinal);
         Assert.Contains("write 'tcp'", only.Message, StringComparison.Ordinal);
         Assert.DoesNotContain("[const]", only.Message, StringComparison.Ordinal);
     }
@@ -1612,7 +1612,7 @@ public sealed class SchemaErrorCollectorTests
         var error = Assert.Single(result.Errors, e =>
             string.Equals(e.InstanceLocation, location, StringComparison.Ordinal));
 
-        Assert.Contains("[const]", error.Message, StringComparison.Ordinal);
+        Assert.Contains("healthCheck", error.Message, StringComparison.Ordinal);
         Assert.Contains("kafka-broker", error.Message, StringComparison.Ordinal);
         Assert.Contains("httpPort", error.Message, StringComparison.Ordinal);
         Assert.Contains("ports", error.Message, StringComparison.Ordinal);

@@ -57,6 +57,18 @@
   <ItemGroup>
     <ProjectReference Include="..\Vouchfx.Cli.Encoding.Probe\Vouchfx.Cli.Encoding.Probe.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
+  <!-- Lifetime fixture apphost and runtime files stay inside test output; no product reference. -->
+  <ItemGroup>
+    <ProjectReference Include="..\Vouchfx.Cli.Process.Probe\Vouchfx.Cli.Process.Probe.csproj" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+  <Target Name="CopyProcessProbe" AfterTargets="Build">
+    <ItemGroup>
+      <ProcessProbeFiles Include="..\Vouchfx.Cli.Process.Probe\bin\$(Configuration)\$(TargetFramework)\**\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(ProcessProbeFiles)"
+          DestinationFiles="@(ProcessProbeFiles->'$(OutDir)ProcessProbe\%(RecursiveDir)%(Filename)%(Extension)')" />
+  </Target>
+
   <Target Name="CopyEncodingProbe" AfterTargets="Build">
     <ItemGroup>
       <EncodingProbeFiles Include="..\Vouchfx.Cli.Encoding.Probe\bin\$(Configuration)\net8.0\**\*" />

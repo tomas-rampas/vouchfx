@@ -114,3 +114,29 @@ This driver supports owned HTTP/TCP/PostgreSQL environments with IPv4 published 
 In this matching source checkout, follow `examples/compose-orders/README.md` for the HTTP mutation and database example, including its identical inline assertion steps.
 
 The [shared-app .NET Compose orders sample](https://github.com/tomas-rampas/vouchfx-samples/tree/main/samples/orders-dotnet-compose) demonstrates all five business assertions: REST creation, the PostgreSQL row, the retained Kafka event, the outbound webhook and the final REST refetch. Its README describes the pinned images, native readiness checks and standard sample runner.
+
+## Contributor acceptance coverage
+
+The Linux Docker CI lane runs these ownership cases in the exclusive Compose acceptance collection. It retains first-attempt JSON evidence and the five cold CLI event/output files in the `owned-environment-acceptance` artefact, including partial records when a case fails. Its file-only admission gate requires all three cases and exact completed counts; a green exit without these records is insufficient.
+
+| Capability | Native regression case |
+| --- | --- |
+| Requested profile starts its service; another profile stays inactive | `Compose_RequestedProfileAndOrderedInterpolationFilesAndServiceEnvFile_AffectRealContainer` |
+| Later interpolation env-file wins; service `env_file` reaches its container independently | The same capability case inspects the actual hostname and container environment |
+| Ordered manifest override/build, credentials and published HTTP/PostgreSQL targets | `NormalWatch_ConfigEditOutsideSuite_TwoFreshPassingRuns_CleansOwnedResources` |
+| Fixed-port conflict and readiness deadline refuse a passing result | `TwoNormalScenarios_AreFresh_FixedPortConflictAndReadinessDeadlineCannotPass` |
+| Assertion failure and cancellation release only owned resources | `NormalRun_AssertionFailure_AndCancellationDuringReadiness_CleanOnlyOwnedResources` |
+| Repeated fresh state and topology release | `TwentyWarmAcquisitions_TenInlineAndTenCompose_ReuseOneCompiledImageAndReleaseFreshState` |
+| Fresh CLI/compiler process and writable profile | `FiveColdCliProcesses_ThreeInlineAndTwoCompose_FreshWritableProfilesAndOwnedClosure` |
+
+Warm means one test-host process and one emitted PostgreSQL assertion image across 20 fresh acquisitions, alternating ten inline and ten Compose environments. Each cycle proves an initially absent table, writes state, observes it through the compiled provider, and requires container/network/volume, journal and DCP release before continuing. Foreign resource IDs/creation times and native process birth identities must remain unchanged.
+
+Cold means five distinct CLI process birth identities with separate writable app-data, temporary and .NET/NuGet profile directories on Linux, covering three inline and two Compose runs. Each CLI must produce two passing steps, one passing scenario and exit zero; Compose must actually journal within its isolated profile, and inline acquisition must observe its DCP host. These are bounded regression samples with existing image layers and build artefacts retained. They do not measure uncached pulls, certify every OS, or replace the separate TLS/mTLS acceptance lane. Compose reset/reseed remains unsupported; fresh state is established by recreation.
+
+Run the focused cases on an isolated Linux Docker host:
+
+```sh
+dotnet test tests/Vouchfx.Cli.Tests -c Release --filter "requires=docker&FullyQualifiedName~EnvironmentTopologyDurabilityDockerTests"
+```
+
+The format-neutral driver boundary is unchanged. These cases exercise the built-in Compose adapter and inline provisioning; other formats still require their own registered driver.

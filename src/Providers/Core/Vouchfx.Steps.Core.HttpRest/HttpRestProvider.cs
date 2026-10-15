@@ -351,7 +351,7 @@ public sealed class HttpRestProvider
         "        // AllowAutoRedirect=false: a 3xx from the target must not silently\n" +
         "        // bounce the request to a different host (SSRF via redirect, §M1).\n" +
         "        // disposeHandler:true so client.Dispose() in finally releases the handler too.\n" +
-        "        var handler = new System.Net.Http.HttpClientHandler { AllowAutoRedirect = false };\n" +
+        "        var handler = new System.Net.Http.SocketsHttpHandler { AllowAutoRedirect = false };\n" +
         "        var client = new System.Net.Http.HttpClient(handler, disposeHandler: true);\n" +
         "        try\n" +
         "        {\n" +
@@ -361,7 +361,7 @@ public sealed class HttpRestProvider
         "            // catch below maps to a step-scoped EnvironmentError (§12.1) rather than\n" +
         "            // escaping the step. Before the first SendAsync, so the underlying handler is\n" +
         "            // still mutable. A target with no security block leaves the handler untouched.\n" +
-        "            Security_Helpers.ConfigureHandler(security, targetName, handler);\n" +
+        "            HttpTls_Helpers.ConfigureHandler(security, targetName, handler);\n" +
         "            // Step-timeout convention (#232): a declared step budget governs this call —\n" +
         "            // lift the transport bound (infinite) and let the step token (ct) be the sole\n" +
         "            // enforcement mechanism; otherwise keep the M2 30s stall-window convention.\n" +
@@ -1026,7 +1026,7 @@ public sealed class HttpRestProvider
     /// <inheritdoc />
     public ProviderMetadata Metadata { get; } = new ProviderMetadata(
         Version: "1.0.0",
-        MinEngineVersion: "1.0.0",
+        MinEngineVersion: "1.0.2",
         License: "Apache-2.0",
         Authors: new[] { "vouchfx-contributors" });
 
@@ -1061,7 +1061,7 @@ public sealed class HttpRestProvider
               "enum": ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]
             },
             "path": {
-              "description": "The request path; may contain variable placeholders. Must be a rooted relative path (start with a single '/'); absolute URLs, protocol-relative paths ('//…'), and backslashes are rejected as an SSRF guard.",
+              "description": "The request path; may contain variable placeholders. Must be a rooted relative path (start with a single '/'); absolute URLs, protocol-relative paths ('//...'), and backslashes are rejected as an SSRF guard.",
               "type": "string",
               "pattern": "^/(?!/)[^\\\\\\x00-\\x1F\\x7F-\\x9F]*(?![\\s\\S])"
             },
@@ -1612,7 +1612,7 @@ public sealed class HttpRestProvider
         {
             SubstituteHelper.Source,
             SecretHelper.Source,
-            SecurityHelper.Source,
+            HttpTlsHelper.Source,
         };
 
         return new CsxFragment(
@@ -1809,7 +1809,7 @@ public sealed class HttpRestProvider
 
     /// <summary>
     /// Keeps a table cell on one line and in one column. Author text can hold a line break,
-    /// which would split the row, or the <c>│</c> column delimiter, which would add a column;
+    /// which would split the row, or the <c>|</c> column delimiter, which would add a column;
     /// each is written as an escape sequence instead: <c>\r</c>, <c>\n</c> and <c>\t</c> by
     /// name, and the delimiter and the other line terminators (vertical tab, form feed, NEL,
     /// and the Unicode line and paragraph separators) as <c>\uXXXX</c>.
@@ -1830,7 +1830,7 @@ public sealed class HttpRestProvider
                 case '\t':
                     sb.Append("\\t");
                     break;
-                case '│':
+                case '|':
                 case '\v':
                 case '\f':
                 case '\u0085':
@@ -1848,7 +1848,7 @@ public sealed class HttpRestProvider
     }
 
     /// <summary>
-    /// Renders a single-row, fixed-column box-drawing table: a header row, a separator
+    /// Renders a single-row, fixed-column ASCII table: a header row, a separator
     /// rule, then one value row — the style the relational diff renderers use.
     /// </summary>
     private static string RenderTable(string[] headers, string[] values)
@@ -1864,8 +1864,8 @@ public sealed class HttpRestProvider
         for (var i = 0; i < widths.Length; i++)
         {
             if (i > 0)
-                sb.Append('┼');
-            sb.Append(new string('─', widths[i] + 2));
+                sb.Append('+');
+            sb.Append(new string('-', widths[i] + 2));
         }
 
         sb.Append('\n');
@@ -1874,14 +1874,14 @@ public sealed class HttpRestProvider
     }
 
     /// <summary>
-    /// Appends one padded, '│'-separated table row terminated by a newline.
+    /// Appends one padded, '|'-separated table row terminated by a newline.
     /// </summary>
     private static void AppendRow(System.Text.StringBuilder sb, string[] cells, int[] widths)
     {
         for (var i = 0; i < cells.Length; i++)
         {
             if (i > 0)
-                sb.Append('│');
+                sb.Append('|');
             sb.Append(' ');
             sb.Append(cells[i].PadRight(widths[i]));
             sb.Append(' ');

@@ -71,9 +71,9 @@ public sealed class HttpRestDiffRendererTests
         var diff = s_renderer.RenderDiff(element);
 
         Assert.Equal(
-            " assertion     │ expected │ actual   \n" +
-            "───────────────┼──────────┼──────────\n" +
-            " json $.status │ SHIPPED  │ (string) \n",
+            " assertion     | expected | actual   \n" +
+            "---------------+----------+----------\n" +
+            " json $.status | SHIPPED  | (string) \n",
             diff);
     }
 
@@ -98,7 +98,7 @@ public sealed class HttpRestDiffRendererTests
 
         Assert.NotNull(diff);
         var row = diff!.Split('\n')[2];
-        var cells = row.Split('│').Select(c => c.Trim()).ToArray();
+        var cells = row.Split('|').Select(c => c.Trim()).ToArray();
         Assert.Equal(3, cells.Length);
         Assert.Equal(expected, cells[1]);
         Assert.Equal(actual, cells[2]);
@@ -115,7 +115,7 @@ public sealed class HttpRestDiffRendererTests
             "{\"status\":200,\"expected\":200,\"body\":{\"failed\":1,\"of\":1,\"first\":" +
             "{\"assertion\":\"bodyContains\",\"reason\":\"notFound\",\"expected\":\"abc\"}}}"));
 
-        Assert.StartsWith(" bodyContains │", diff!.Split('\n')[2], StringComparison.Ordinal);
+        Assert.StartsWith(" bodyContains |", diff!.Split('\n')[2], StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -182,18 +182,18 @@ public sealed class HttpRestDiffRendererTests
     {
         var diff = s_renderer.RenderDiff(Parse(
             "{\"status\":200,\"expected\":200,\"body\":{\"failed\":1,\"of\":1,\"first\":" +
-            "{\"assertion\":\"json\",\"path\":\"$.a\u2502b\",\"reason\":\"missing\"," +
-            "\"expected\":\"x\u2502y\u2028z\u0085w\"}}}"));
+            "{\"assertion\":\"json\",\"path\":\"$.a|b\",\"reason\":\"missing\"," +
+            "\"expected\":\"x|y\u2028z\u0085w\"}}}"));
 
         var lines = diff!.Split('\n', StringSplitOptions.RemoveEmptyEntries);
         Assert.Equal(3, lines.Length);
 
         var row = lines[2];
-        Assert.Equal(2, row.Count(c => c == '│'));
+        Assert.Equal(2, row.Count(c => c == '|'));
         Assert.DoesNotContain('\u2028', row);
         Assert.DoesNotContain('\u0085', row);
-        Assert.Contains("json $.a\\u2502b", row, StringComparison.Ordinal);
-        Assert.Contains("x\\u2502y\\u2028z\\u0085w", row, StringComparison.Ordinal);
+        Assert.Contains("json $.a\\u007cb", row, StringComparison.Ordinal);
+        Assert.Contains("x\\u007cy\\u2028z\\u0085w", row, StringComparison.Ordinal);
     }
 
     /// <summary>

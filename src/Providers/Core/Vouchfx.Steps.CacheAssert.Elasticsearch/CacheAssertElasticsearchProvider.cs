@@ -157,10 +157,10 @@ public sealed class CacheAssertElasticsearchProvider
               "minLength": 1
             },
             "index": {
-              "description": "Elasticsearch index to query. May not contain whitespace, '?', '#', or control characters (a malformed URL path segment); ',' (multi-index) and '*' (wildcard) are allowed.",
-              "type": "string",
+              "description": "Elasticsearch index to query. Must be one path segment: '/', backslash, whitespace, '?', '#', controls, and the exact names '.'/'..' are refused; ',' (multi-index) and '*' (wildcard) are allowed. Bare numbers are retained as their literal text; quote boolean-looking names.",
+              "type": ["string", "integer", "number"],
               "minLength": 1,
-              "pattern": "^[^\\s?#\\x00-\\x1F\\x7F-\\x9F]*$"
+              "pattern": "^(?!\\.{1,2}$)[^ /?#\\\\\\x00-\\x1F\\x7F-\\x9F\\xA0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000]+$(?![\\s\\S])"
             },
             "query": {
               "description": "Full Elasticsearch Query DSL JSON body (the entire request body, e.g. '{\"query\":{\"match\":{\"status\":\"active\"}}}').  When absent a match_all query is used.  May contain {placeholder} tokens resolved at execution time.",
@@ -197,8 +197,8 @@ public sealed class CacheAssertElasticsearchProvider
                         "pattern": "^[^.]*$"
                       },
                       "value": {
-                        "description": "Expected string value.  May contain {placeholder} and ${secret:source/path} tokens.",
-                        "type": "string"
+                        "description": "Expected scalar compared as text. Bare numbers and booleans retain their literal YAML spelling; null is refused. May contain {placeholder} and ${secret:source/path} tokens.",
+                        "type": ["string", "integer", "number", "boolean"]
                       }
                     },
                     "additionalProperties": false
@@ -332,17 +332,21 @@ public sealed class CacheAssertElasticsearchProvider
             errors.Add("cache-assert.elasticsearch: 'index' must not be blank.");
 
         // index must not contain characters that make a malformed URL path segment.
-        // Whitespace, '?', '#', and control characters are rejected.
+        // '/', backslash, whitespace, '?', '#', and control characters are rejected.
+        // Exact '.' and '..' names would be normalised as path traversal, not indices.
         // ',' (multi-index syntax) and '*' (wildcard pattern) are intentionally allowed.
+        if (model.Index is "." or "..")
+            errors.Add("cache-assert.elasticsearch: 'index' must not be '.' or '..'.");
+
         if (!string.IsNullOrWhiteSpace(model.Index))
         {
             foreach (var ch in model.Index)
             {
-                if (char.IsWhiteSpace(ch) || ch == '?' || ch == '#' || char.IsControl(ch))
+                if (char.IsWhiteSpace(ch) || ch is '/' or '\\' or '?' or '#' || char.IsControl(ch))
                 {
                     errors.Add(
                         "cache-assert.elasticsearch: 'index' contains an invalid character. " +
-                        "Whitespace, '?', '#', and control characters are not permitted in index names; " +
+                        "'/', backslash, whitespace, '?', '#', and control characters are not permitted in index names; " +
                         "use ',' for multi-index and '*' for wildcard patterns.");
                     break;
                 }

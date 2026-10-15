@@ -124,6 +124,11 @@ public sealed class SecurityProfileRegistryTests
             new[] { SecurityProfileRegistry.ServiceTargetKind }
         },
         {
+            "HttpTls_Helpers",
+            HttpTlsHelper.Source,
+            new[] { SecurityProfileRegistry.ServiceTargetKind }
+        },
+        {
             "KafkaSecurity_Helpers",
             KafkaSecurityHelper.Source,
             new[] { "kafka", SecurityProfileRegistry.ServiceTargetKind }

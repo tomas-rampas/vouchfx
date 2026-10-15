@@ -110,7 +110,7 @@ public sealed class DbAssertSqlServerProvider
               "minLength": 1
             },
             "parameters": {
-              "description": "Optional map of SQL parameter names (without leading '@') to their values, passed as text — a bare numeric or boolean scalar is read as its literal text.",
+              "description": "Optional map of SQL parameter names (without leading '@') to their values, passed as text - a bare numeric or boolean scalar is read as its literal text.",
               "type": "object",
               "additionalProperties": { "type": ["string", "integer", "number", "boolean"] }
             },
@@ -128,7 +128,7 @@ public sealed class DbAssertSqlServerProvider
                   "pattern": "^[0-9]+$"
                 },
                 "row": {
-                  "description": "Map of column name to expected value, compared as text against the first row — a bare numeric or boolean scalar is read as its literal text.",
+                  "description": "Map of column name to expected value, compared as text against the first row - a bare numeric or boolean scalar is read as its literal text.",
                   "type": "object",
                   "additionalProperties": { "type": ["string", "integer", "number", "boolean"] }
                 }
@@ -737,6 +737,9 @@ public sealed class DbAssertSqlServerProvider
 
     private static string RenderTable(string[] headers, string[] values)
     {
+        // Escape the delimiter before measuring cells; user Unicode is preserved.
+        values = Array.ConvertAll(values, static value => value.Replace("|", "\\u007c", StringComparison.Ordinal));
+
         var widths = new int[headers.Length];
         for (int i = 0; i < headers.Length; i++)
         {
@@ -750,8 +753,8 @@ public sealed class DbAssertSqlServerProvider
         for (int i = 0; i < widths.Length; i++)
         {
             if (i > 0)
-                sb.Append('┼');
-            sb.Append(new string('─', widths[i] + 2));
+                sb.Append('+');
+            sb.Append(new string('-', widths[i] + 2));
         }
         sb.Append('\n');
 
@@ -765,7 +768,7 @@ public sealed class DbAssertSqlServerProvider
         for (int i = 0; i < cells.Length; i++)
         {
             if (i > 0)
-                sb.Append('│');
+                sb.Append('|');
             sb.Append(' ');
             sb.Append(cells[i].PadRight(widths[i]));
             sb.Append(' ');

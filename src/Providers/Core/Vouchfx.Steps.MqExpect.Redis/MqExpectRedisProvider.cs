@@ -104,7 +104,7 @@ public sealed class MqExpectRedisProvider
     public JsonSchemaFragment SchemaFragment { get; } = new JsonSchemaFragment(
         """
         {
-          "description": "Asserts that a message matching the declared criteria is present on a Redis Stream, scanned from the beginning via XRANGE <stream> - + COUNT 10000 on every attempt (only entries carrying a field named 'payload' are matched — the convention mq-publish.redis writes). IMPORTANT: do NOT share a single redis dependency across scenarios that assert on the same stream — entries from prior runs produce a false Pass. A stream retaining more than 10 000 entries only has its first 10 000 (oldest first) inspected. Use verifyMode: RETRY to poll until the message arrives.",
+          "description": "Asserts that a message matching the declared criteria is present on a Redis Stream, scanned from the beginning via XRANGE <stream> - + COUNT 10000 on every attempt (only entries carrying a field named 'payload' are matched - the convention mq-publish.redis writes). IMPORTANT: do NOT share a single redis dependency across scenarios that assert on the same stream - entries from prior runs produce a false Pass. A stream retaining more than 10 000 entries only has its first 10 000 (oldest first) inspected. Use verifyMode: RETRY to poll until the message arrives.",
           "type": "object",
           "required": ["target", "stream", "match"],
           "properties": {
@@ -128,7 +128,7 @@ public sealed class MqExpectRedisProvider
                   "type": ["string", "integer", "number", "boolean"]
                 },
                 "json": {
-                  "description": "Optional map of JSONPath expressions to their expected values, compared as text and evaluated over the message payload parsed as JSON — a bare numeric or boolean scalar is read as its literal text.",
+                  "description": "Optional map of JSONPath expressions to their expected values, compared as text and evaluated over the message payload parsed as JSON - a bare numeric or boolean scalar is read as its literal text.",
                   "type": "object",
                   "additionalProperties": { "type": ["string", "integer", "number", "boolean"] }
                 }

@@ -51,9 +51,13 @@ public sealed class HttpsClientCertificateTests
 
     private sealed class StubCompileContext : ICompileContext
     {
-        public StubCompileContext(string stepId) => StepId = stepId;
+        public StubCompileContext(string stepId, string? suiteDirectory = null)
+        {
+            StepId = stepId;
+            SuiteDirectory = suiteDirectory ?? Directory.GetCurrentDirectory();
+        }
 
-        public string SuiteDirectory => Directory.GetCurrentDirectory();
+        public string SuiteDirectory { get; }
 
         public string StepId { get; }
 
@@ -738,16 +742,16 @@ public sealed class HttpsClientCertificateTests
         // The handler configuration itself: the trust anchor and the client-certificate
         // assignment, both present in the spliced helper.
         Assert.Contains(
-            "Security_Helpers.ConfigureHandler(security, targetName, handler)", csx, StringComparison.Ordinal);
-        Assert.Contains("handler.ClientCertificates.Add(clientCertificate)", csx, StringComparison.Ordinal);
-        Assert.Contains("handler.ServerCertificateCustomValidationCallback", csx, StringComparison.Ordinal);
+            "HttpTls_Helpers.ConfigureHandler(security, targetName, handler)", csx, StringComparison.Ordinal);
+        Assert.Contains("handler.SslOptions.ClientCertificateContext =", csx, StringComparison.Ordinal);
+        Assert.Contains("handler.SslOptions.RemoteCertificateValidationCallback", csx, StringComparison.Ordinal);
 
         // The callback's `chain` argument is FORWARDED, not discarded: it carries the
         // intermediates the peer sent, which a two-tier PKI needs for path building. Pinned as
         // a string because dropping it back to a two-argument call is a silent regression that
         // only a two-tier topology would otherwise reveal.
         Assert.Contains(
-            "certificates.TrustsRemoteCertificate(remoteCertificate, chain, sslPolicyErrors)",
+            "certificates.TrustsRemoteCertificate(typed, chain, errors)",
             csx,
             StringComparison.Ordinal);
     }
@@ -771,11 +775,11 @@ public sealed class HttpsClientCertificateTests
 
         var csx = CsxAssembler.Assemble(plans).CsxSource;
 
-        var definitions = csx.Split("static class Security_Helpers", StringSplitOptions.None).Length - 1;
+        var definitions = csx.Split("static class HttpTls_Helpers", StringSplitOptions.None).Length - 1;
         Assert.Equal(1, definitions);
 
         var callSites = csx.Split(
-            "Security_Helpers.ConfigureHandler(security, targetName, handler)", StringSplitOptions.None).Length - 1;
+            "HttpTls_Helpers.ConfigureHandler(security, targetName, handler)", StringSplitOptions.None).Length - 1;
         Assert.Equal(3, callSites);
     }
 
@@ -788,16 +792,30 @@ public sealed class HttpsClientCertificateTests
     [Fact]
     public void CompiledCsx_ForASecuredSuite_ContainsNoDeclaredCertificatePath()
     {
-        using var bed = TestCertificateAuthority.CreateSuiteDirectory();
-
+        // This is an emission-only control. Synthetic declarations need no files,
+        // certificate authority, material accessor, native certificate objects or teardown.
+        var security = new SecuritySpec(
+            Profile: "mtls",
+            Endpoint: "8443",
+            CaCert: "certs/compiler-only-ca-sentinel.pem",
+            ClientCert: "certs/compiler-only-client-sentinel.pem",
+            ClientKey: "certs/compiler-only-key-sentinel.pem",
+            ServerArtifacts: null);
+        var ast = AstWith(security);
+        var declaredService = Assert.Single(ast.Environment!.Services!);
+        Assert.Same(security, declaredService.Value.Security);
+        var suiteDirectory = Path.Combine(Path.GetTempPath(), "vouchfx-inert-emission-never-created");
+        var context = new StubCompileContext("call-api", suiteDirectory);
         var provider = new HttpRestProvider();
-        var fragment = provider.Emit(GetModel(), new StubCompileContext("call-api"));
+        var model = GetModel() with { Target = declaredService.Key };
+        var fragment = provider.Emit(model, context);
         var csx = CsxAssembler.Assemble(new[] { ("call-api", fragment) }).CsxSource;
 
-        Assert.DoesNotContain(TestCertificateAuthority.CaFileName, csx, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain(TestCertificateAuthority.ClientCertFileName, csx, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain(TestCertificateAuthority.ClientKeyFileName, csx, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain(bed.SuiteDirectory, csx, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Security,", csx, StringComparison.Ordinal);
+        Assert.DoesNotContain(security.CaCert!, csx, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(security.ClientCert!, csx, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(security.ClientKey!, csx, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(context.SuiteDirectory, csx, StringComparison.OrdinalIgnoreCase);
     }
 
     private static CsxFragment EmitSoap(string stepId) =>

@@ -1,0 +1,37 @@
+{
+  "checkedAtUtc": "2026-10-13T15:44:58.311617+00:00",
+  "images": [
+    {
+      "name": "asb-sql",
+      "registry": "mcr.microsoft.com",
+      "repository": "mssql/server",
+      "tag": "2022-CU27-GDR1-ubuntu-22.04",
+      "digest": "sha256:cf8f0ab2ebe61feec2eed2629061a07d247f791c2a8ddda74a4ac9f06a291718",
+      "platformPolicy": "linux-amd64-only"
+    },
+    {
+      "name": "vault",
+      "registry": "registry-1.docker.io",
+      "repository": "hashicorp/vault",
+      "tag": "2.1.2",
+      "digest": "sha256:c2f666266f383d2cf424d86b8bb8ce7d065562173ffec2b476d762943608bb55",
+      "platformPolicy": "multiarch"
+    },
+    {
+      "name": "whoami",
+      "registry": "registry-1.docker.io",
+      "repository": "traefik/whoami",
+      "tag": "v1.12.0",
+      "digest": "sha256:c4717a8d1f0134a7444e24f881160e033991f23027c6c5a9a3f8fd22e70d1d44",
+      "platformPolicy": "multiarch"
+    },
+    {
+      "name": "rustfs",
+      "registry": "registry-1.docker.io",
+      "repository": "rustfs/rustfs",
+      "tag": "1.0.0",
+      "digest": "sha256:8cc9801755448b71a786705ce76692c77e14936cccd87cf2fc31842e58f4d1ff",
+      "platformPolicy": "multiarch"
+    }
+  ]
+}

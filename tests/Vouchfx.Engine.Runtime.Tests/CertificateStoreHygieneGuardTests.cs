@@ -91,12 +91,10 @@ public sealed class CertificateStoreHygieneGuardTests
     /// which is the correct behaviour and not a flake.
     /// </para>
     /// <para>
-    /// <strong>Enforcement is local-Windows-only today.</strong>
-    /// <see cref="TestCertificateStoreGuard.SweepProcessResidue"/> is a no-op off Windows and
-    /// every job in <c>.github/workflows/build.yml</c> runs on <c>ubuntu-latest</c>, so in CI this
-    /// test passes without examining anything. It catches the leak on a developer's Windows
-    /// machine — which is where #374 was found by hand, twice — and nowhere else. A Windows CI
-    /// lane would change that and is deliberately not part of this change.
+    /// <strong>Enforcement is Windows-only.</strong>
+    /// The blocking <c>windows-unit</c> solution lane in <c>.github/workflows/build.yml</c>
+    /// includes this Docker-free guard. Linux runs return without examining Windows stores,
+    /// so their pass is not evidence of store hygiene.
     /// </para>
     /// </remarks>
     [Fact]

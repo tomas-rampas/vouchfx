@@ -281,7 +281,7 @@ public sealed class DcpFlightRecorderDockerTests
             // recorder ARMED. Disarming here would turn the assertion below into a tautology.
             await using (var topology = await HeadlessTopology.StartAsync(
                 appHostAssemblyName: AppHostAssemblyName,
-                configureResources: b => b.AddContainer(_healthyResourceName, "traefik/whoami")
+                configureResources: b => b.AddContainer(_healthyResourceName, "traefik/whoami@sha256:c4717a8d1f0134a7444e24f881160e033991f23027c6c5a9a3f8fd22e70d1d44")
                     .WithImageSHA256("c4717a8d1f0134a7444e24f881160e033991f23027c6c5a9a3f8fd22e70d1d44")))
             {
                 Assert.NotNull(topology.Application);

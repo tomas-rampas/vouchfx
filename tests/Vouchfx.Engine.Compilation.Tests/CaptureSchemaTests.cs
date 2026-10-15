@@ -152,7 +152,7 @@ public sealed class CaptureSchemaTests
         Assert.False(result.IsValid,
             "A capture entry declaring neither 'jsonpath' nor 'xpath' must be rejected.");
         var onlyError = Assert.Single(result.Errors, e => e.InstanceLocation == "/steps/0/capture/neither");
-        Assert.Contains("[minProperties]", onlyError.Message, System.StringComparison.Ordinal);
+        Assert.Contains("must set at least one", onlyError.Message, System.StringComparison.Ordinal);
     }
 
     // ── A1: captureEntry de-branching (composite-branch noise, prong 1) ────────
@@ -285,7 +285,7 @@ public sealed class CaptureSchemaTests
         // FormatReservedPrefixError).
         Assert.Contains(result.Errors, e =>
             e.InstanceLocation == $"/steps/0/capture/{reservedKey}" &&
-            e.Message.Contains("[pattern]", System.StringComparison.Ordinal) &&
+            e.Message.Contains("engine-reserved", System.StringComparison.Ordinal) &&
             e.Message.Contains($"'{reservedKey}'", System.StringComparison.Ordinal) &&
             e.Message.Contains("engine-reserved", System.StringComparison.Ordinal));
     }
@@ -316,7 +316,7 @@ public sealed class CaptureSchemaTests
             $"A variables key beginning with an engine-reserved prefix ('{reservedKey}') must be rejected.");
         Assert.Contains(result.Errors, e =>
             e.InstanceLocation == $"/variables/{reservedKey}" &&
-            e.Message.Contains("[pattern]", System.StringComparison.Ordinal) &&
+            e.Message.Contains("engine-reserved", System.StringComparison.Ordinal) &&
             e.Message.Contains($"'{reservedKey}'", System.StringComparison.Ordinal) &&
             e.Message.Contains("engine-reserved", System.StringComparison.Ordinal));
     }

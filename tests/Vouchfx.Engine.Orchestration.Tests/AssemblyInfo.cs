@@ -77,3 +77,7 @@
 using Xunit;
 
 [assembly: CollectionBehavior(DisableTestParallelization = true)]
+
+// Final exclusive certificate-store guard; other collection ordering remains xUnit default.
+[assembly: TestCollectionOrderer(
+    "Vouchfx.Engine.Orchestration.Tests.CertificateStoreGuardLastOrderer", "Vouchfx.Engine.Orchestration.Tests")]

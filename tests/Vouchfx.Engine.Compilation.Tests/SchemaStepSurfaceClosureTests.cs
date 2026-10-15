@@ -700,7 +700,7 @@ public sealed class SchemaStepSurfaceClosureTests
         var located = result.Errors.Where(e => e.InstanceLocation == "/steps/0/avro/unknownAvroKey").ToList();
         Assert.True(located.Count > 0,
             $"Expected an error located exactly at '/steps/0/avro/unknownAvroKey'; got: {Dump(result.Errors)}");
-        Assert.All(located, e => Assert.Contains("[additionalProperties]", e.Message, StringComparison.Ordinal));
+        Assert.All(located, e => Assert.Contains("Unknown property", e.Message, StringComparison.Ordinal));
     }
 
     /// <summary>
@@ -730,7 +730,7 @@ public sealed class SchemaStepSurfaceClosureTests
         var located = result.Errors.Where(e => e.InstanceLocation == "/steps/0/match/unknownMatchKey").ToList();
         Assert.True(located.Count > 0,
             $"Expected an error located exactly at '/steps/0/match/unknownMatchKey'; got: {Dump(result.Errors)}");
-        Assert.All(located, e => Assert.Contains("[additionalProperties]", e.Message, StringComparison.Ordinal));
+        Assert.All(located, e => Assert.Contains("Unknown property", e.Message, StringComparison.Ordinal));
     }
 
     /// <summary>
@@ -762,7 +762,7 @@ public sealed class SchemaStepSurfaceClosureTests
         var located = result.Errors.Where(e => e.InstanceLocation == "/steps/0/expect/unknownExpectKey").ToList();
         Assert.True(located.Count > 0,
             $"Expected an error located exactly at '/steps/0/expect/unknownExpectKey'; got: {Dump(result.Errors)}");
-        Assert.All(located, e => Assert.Contains("[additionalProperties]", e.Message, StringComparison.Ordinal));
+        Assert.All(located, e => Assert.Contains("Unknown property", e.Message, StringComparison.Ordinal));
     }
 
     // ── Finding 1, re-proved directly against the REAL (already-fixed) schema ──

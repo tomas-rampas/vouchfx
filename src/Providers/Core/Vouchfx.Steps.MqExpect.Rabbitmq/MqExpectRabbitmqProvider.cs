@@ -47,7 +47,7 @@ public sealed class MqExpectRabbitmqProvider
     public JsonSchemaFragment SchemaFragment { get; } = new JsonSchemaFragment(
         """
         {
-          "description": "Consumes a message from an AMQP queue and asserts it matches the declared criteria (payload substring, headers, and/or JSONPath-evaluated fields).  Each attempt is a SINGLE non-blocking drain of the messages already ready on the queue — at most 200 BasicGet fetches, stopping the moment none is ready — so it never waits for a message to arrive.  Under the default verifyMode: IMMEDIATE a declared timeout does NOT change that: it is an upper bound, not a wait. Use verifyMode: RETRY to poll until the message arrives.",
+          "description": "Consumes a message from an AMQP queue and asserts it matches the declared criteria (payload substring, headers, and/or JSONPath-evaluated fields).  Each attempt is a SINGLE non-blocking drain of the messages already ready on the queue - at most 200 BasicGet fetches, stopping the moment none is ready - so it never waits for a message to arrive.  Under the default verifyMode: IMMEDIATE a declared timeout does NOT change that: it is an upper bound, not a wait. Use verifyMode: RETRY to poll until the message arrives.",
           "type": "object",
           "required": ["target", "queue", "match"],
           "properties": {
@@ -57,8 +57,8 @@ public sealed class MqExpectRabbitmqProvider
               "minLength": 1
             },
             "queue": {
-              "description": "The AMQP queue to consume messages from.",
-              "type": "string",
+              "description": "The AMQP queue to consume messages from. Bare numbers are retained as their literal text; quote boolean-looking names.",
+              "type": ["string", "integer", "number"],
               "minLength": 1
             },
             "match": {
@@ -71,12 +71,12 @@ public sealed class MqExpectRabbitmqProvider
                   "type": ["string", "integer", "number", "boolean"]
                 },
                 "headers": {
-                  "description": "Optional map of expected AMQP header names to their expected values, compared as text — a bare numeric or boolean scalar is read as its literal text.",
+                  "description": "Optional map of expected AMQP header names to their expected values, compared as text - a bare numeric or boolean scalar is read as its literal text.",
                   "type": "object",
                   "additionalProperties": { "type": ["string", "integer", "number", "boolean"] }
                 },
                 "json": {
-                  "description": "Optional map of JSONPath expressions to their expected values, compared as text and evaluated over the message body parsed as JSON — a bare numeric or boolean scalar is read as its literal text.",
+                  "description": "Optional map of JSONPath expressions to their expected values, compared as text and evaluated over the message body parsed as JSON - a bare numeric or boolean scalar is read as its literal text.",
                   "type": "object",
                   "additionalProperties": { "type": ["string", "integer", "number", "boolean"] }
                 }

@@ -85,7 +85,7 @@ public sealed class VaultSecretSourceDockerTests
             configureResources: builder =>
             {
                 var vault = builder
-                    .AddContainer(VaultResource, "hashicorp/vault")
+                    .AddContainer(VaultResource, "hashicorp/vault@sha256:c2f666266f383d2cf424d86b8bb8ce7d065562173ffec2b476d762943608bb55")
                     // Dev mode with a FIXED root token (the task brief's requirement) and an
                     // explicit dev listen address so the mapped 8200 endpoint serves HTTP.
                     .WithEnvironment("VAULT_DEV_ROOT_TOKEN_ID", RootToken)

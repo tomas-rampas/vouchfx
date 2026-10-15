@@ -19,9 +19,9 @@ These fields may appear on **any** step, regardless of its `type`. `id` and `typ
 | `id` | yes | `string` | A unique identifier for the step within the file; used in reporting and failure messages. Must start with a letter or underscore and contain only letters, digits, underscores, and hyphens. |
 | `type` | yes | `string` | The kind of step. Must be in dotted family.provider notation, e.g. http.rest or db-assert.postgres; a bare family name (e.g. http) is not accepted. |
 | `description` | no | `string` | A short human-readable explanation shown in test output. |
-| `capture` | no | `object` | A map of variable names to extractor expressions that write values from this step's result into the shared context (DSL §6.1). Each value is either a bare scalar JSONPath expression (e.g. '"$.id"', back-compat default) or a single-key mapping selecting the format explicitly ('{ jsonpath: "$.id" }' or '{ xpath: "//id" }'); use the XPath form for XML response bodies. A variable name may not begin with an engine-reserved bookkeeping prefix: svc::, conn::, __outcome::, __capture_status::, __attempts::. |
+| `capture` | no | `object` | A map of variable names to extractor expressions that write values from this step's result into the shared context (DSL section 6.1). Each value is either a bare scalar JSONPath expression (e.g. '"$.id"', back-compat default) or a single-key mapping selecting the format explicitly ('{ jsonpath: "$.id" }' or '{ xpath: "//id" }'); use the XPath form for XML response bodies. A variable name may not begin with an engine-reserved bookkeeping prefix: svc::, conn::, __outcome::, __capture_status::, __attempts::. |
 | `verifyMode` | no | `string` | Either IMMEDIATE (default) or RETRY. RETRY instructs the engine to poll with bounded exponential backoff. |
-| `timeout` | no | `string` \| `number` | An upper bound on how long the step may take, expressed as a duration string (e.g. 30s) or a number of seconds — enforced for every verify mode. An IMMEDIATE step that exceeds it resolves as Inconclusive (step-timeout, never Fail); where the provider's emitted body sets a built-in transport timeout (the HTTP, AWS and SQL command-timeout conventions), the declared value replaces it as the governing bound. For a RETRY step it bounds the polling window. It is an upper bound and never a lower one: it does not extend a provider's per-attempt drain window, so on a single-shot expect step (the mq-expect family) a longer timeout does not make the step wait longer for a message to arrive — waiting is verifyMode: RETRY's job. |
+| `timeout` | no | `string` \| `number` | An upper bound on how long the step may take, expressed as a duration string (e.g. 30s) or a number of seconds - enforced for every verify mode. An IMMEDIATE step that exceeds it resolves as Inconclusive (step-timeout, never Fail); where the provider's emitted body sets a built-in transport timeout (the HTTP, AWS and SQL command-timeout conventions), the declared value replaces it as the governing bound. For a RETRY step it bounds the polling window. It is an upper bound and never a lower one: it does not extend a provider's per-attempt drain window, so on a single-shot expect step (the mq-expect family) a longer timeout does not make the step wait longer for a message to arrive - waiting is verifyMode: RETRY's job. |
 | `continueOnFailure` | no | `boolean` | When true, a failed assertion is recorded but does not abort the remaining steps. Defaults to false. |
 
 ## Step types
@@ -65,7 +65,7 @@ Set `type: cache-assert.elasticsearch` to use this step.
 | Field | Type | Description |
 | --- | --- | --- |
 | `expect` | `object` | Expected result-set characteristics. |
-| `index` | `string` | Elasticsearch index to query. May not contain whitespace, '?', '#', or control characters (a malformed URL path segment); ',' (multi-index) and '*' (wildcard) are allowed. |
+| `index` | `string` \| `integer` \| `number` | Elasticsearch index to query. Must be one path segment: '/', backslash, whitespace, '?', '#', controls, and the exact names '.'/'..' are refused; ',' (multi-index) and '*' (wildcard) are allowed. Bare numbers are retained as their literal text; quote boolean-looking names. |
 | `target` | `string` | Logical name of the elasticsearch dependency declared under environment.dependencies whose HTTP API this step queries. |
 
 **Optional fields**
@@ -143,7 +143,7 @@ Set `type: db-assert.mysql` to use this step.
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `parameters` | `object` | Optional map of SQL parameter names (without leading '@') to their values, passed as text — a bare numeric or boolean scalar is read as its literal text. |
+| `parameters` | `object` | Optional map of SQL parameter names (without leading '@') to their values, passed as text - a bare numeric or boolean scalar is read as its literal text. |
 
 ### `db-assert.postgres`
 
@@ -163,7 +163,7 @@ Set `type: db-assert.postgres` to use this step.
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `parameters` | `object` | Optional map of SQL parameter names (without leading '@') to their values, passed as text — a bare numeric or boolean scalar is read as its literal text. |
+| `parameters` | `object` | Optional map of SQL parameter names (without leading '@') to their values, passed as text - a bare numeric or boolean scalar is read as its literal text. |
 
 ### `db-assert.sqlserver`
 
@@ -183,7 +183,7 @@ Set `type: db-assert.sqlserver` to use this step.
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `parameters` | `object` | Optional map of SQL parameter names (without leading '@') to their values, passed as text — a bare numeric or boolean scalar is read as its literal text. |
+| `parameters` | `object` | Optional map of SQL parameter names (without leading '@') to their values, passed as text - a bare numeric or boolean scalar is read as its literal text. |
 
 ### `http.rest`
 
@@ -196,7 +196,7 @@ Set `type: http.rest` to use this step.
 | Field | Type | Description |
 | --- | --- | --- |
 | `method` | `string` | The HTTP verb. |
-| `path` | `string` | The request path; may contain variable placeholders. Must be a rooted relative path (start with a single '/'); absolute URLs, protocol-relative paths ('//…'), and backslashes are rejected as an SSRF guard. |
+| `path` | `string` | The request path; may contain variable placeholders. Must be a rooted relative path (start with a single '/'); absolute URLs, protocol-relative paths ('//...'), and backslashes are rejected as an SSRF guard. |
 | `target` | `string` | Logical name of the service to call, as declared under environment.services. |
 
 **Optional fields**
@@ -218,7 +218,7 @@ Set `type: http.soap` to use this step.
 | Field | Type | Description |
 | --- | --- | --- |
 | `envelope` | `string` | The FULL SOAP request envelope XML, given as a raw template string (no auto-wrapping). Sent as Content-Type: text/xml; charset=utf-8. May contain {placeholder} and ${secret:...} tokens. |
-| `path` | `string` | The request path; may contain {placeholder} and ${secret:...} tokens. Must be a rooted relative path (start with a single '/'); absolute URLs, protocol-relative paths ('//…'), and backslashes are rejected as an SSRF guard. |
+| `path` | `string` | The request path; may contain {placeholder} and ${secret:...} tokens. Must be a rooted relative path (start with a single '/'); absolute URLs, protocol-relative paths ('//...'), and backslashes are rejected as an SSRF guard. |
 | `target` | `string` | Logical name of the service to call, as declared under environment.services. |
 
 **Optional fields**
@@ -253,18 +253,18 @@ Set `type: metrics-assert.prometheus` to use this step.
 | --- | --- | --- |
 | `expect` | `object` | The value assertion block. At least one of value, min, or max must be declared; all three may combine. Each is a decimal string (may contain {placeholder} / ${secret:source/path} tokens) parsed as a double at execution time. |
 | `metric` | `string` | The Prometheus sample (metric) name to select, e.g. 'orders_processed_total'. May contain {placeholder} and ${secret:source/path} tokens. |
-| `target` | `string` | Logical name of the service to scrape, as declared under environment.services — normally the system under test. |
+| `target` | `string` | Logical name of the service to scrape, as declared under environment.services - normally the system under test. |
 
 **Optional fields**
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `labels` | `object` | Optional map of required label name to expected value. A sample matches only when it carries every declared label with exactly the expected value (a subset match — the sample may carry additional labels). Values may contain {placeholder} and ${secret:source/path} tokens. |
-| `path` | `string` | The scrape path. May contain {placeholder} and ${secret:source/path} tokens. Defaults to '/metrics' when omitted. Must be a rooted relative path (start with a single '/'); absolute URLs, protocol-relative paths ('//…'), and backslashes are rejected as an SSRF guard. |
+| `labels` | `object` | Optional map of required label name to expected value. A sample matches only when it carries every declared label with exactly the expected value (a subset match - the sample may carry additional labels). Values may contain {placeholder} and ${secret:source/path} tokens. |
+| `path` | `string` | The scrape path. May contain {placeholder} and ${secret:source/path} tokens. Defaults to '/metrics' when omitted. Must be a rooted relative path (start with a single '/'); absolute URLs, protocol-relative paths ('//...'), and backslashes are rejected as an SSRF guard. |
 
 ### `mq-expect.azureservicebus`
 
-Non-destructively peeks an Azure Service Bus queue or topic subscription and verifies at least one message matches the declared expectations. Designed for verifyMode: RETRY — the engine retries on Fail until a matching message is found or the timeout is reached. Note: each attempt scans at most 100 messages (PeekMessagesAsync window); a match beyond the first 100 retained messages in the entity will not be found.
+Non-destructively peeks an Azure Service Bus queue or topic subscription and verifies at least one message matches the declared expectations. Designed for verifyMode: RETRY - the engine retries on Fail until a matching message is found or the timeout is reached. Note: each attempt scans at most 100 messages (PeekMessagesAsync window); a match beyond the first 100 retained messages in the entity will not be found.
 
 Set `type: mq-expect.azureservicebus` to use this step.
 
@@ -285,13 +285,13 @@ Set `type: mq-expect.azureservicebus` to use this step.
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `queue` | `string` | The source queue to peek. Set 'queue' for queue-based messaging, or 'topic'+'subscription' for topic-based messaging. |
+| `queue` | `string` \| `integer` \| `number` | The source queue to peek. Set 'queue' for queue-based messaging, or 'topic'+'subscription' for topic-based messaging. Bare numbers are retained as their literal text; quote boolean-looking names. |
 | `subscription` | `string` | The subscription on the topic to peek. Required when 'topic' is set. May contain {placeholder} substitution tokens. |
-| `topic` | `string` | The source topic (requires 'subscription' to also be set). May contain {placeholder} substitution tokens. |
+| `topic` | `string` \| `integer` \| `number` | The source topic (requires 'subscription' to also be set). May contain {placeholder} substitution tokens. Bare numbers are retained as their literal text; quote boolean-looking names. |
 
 ### `mq-expect.kafka`
 
-Consumes a message from a Kafka topic and asserts it matches the declared criteria (key, headers, payload substring, and/or JSONPath-evaluated fields), optionally Avro-decoding the value first. Each attempt is a SINGLE drain of the retained log as it already stands — manual assignment of every actual topic partition at the earliest offset, stopping when all partitions reach EOF — bounded at about one second. Under the default verifyMode: IMMEDIATE a declared timeout does NOT widen that window: it is an upper bound, not a wait. Use verifyMode: RETRY to poll until the message arrives.
+Consumes a message from a Kafka topic and asserts it matches the declared criteria (key, headers, payload substring, and/or JSONPath-evaluated fields), optionally Avro-decoding the value first. Each attempt is a SINGLE drain of the retained log as it already stands - manual assignment of every actual topic partition at the earliest offset, stopping when all partitions reach EOF - bounded at about one second. Under the default verifyMode: IMMEDIATE a declared timeout does NOT widen that window: it is an upper bound, not a wait. Use verifyMode: RETRY to poll until the message arrives.
 
 Set `type: mq-expect.kafka` to use this step.
 
@@ -300,8 +300,8 @@ Set `type: mq-expect.kafka` to use this step.
 | Field | Type | Description |
 | --- | --- | --- |
 | `match` | `object` | The criteria a consumed message must satisfy. At least one criterion (key, headers, payloadContains, or json) must be declared. |
-| `target` | `string` | Logical name of a declared kafka dependency to consume from (environment.dependencies), or a declared service (environment.services) — a customer-supplied broker under its own entrypoint/config. A dependency target of any other type is rejected. A service target is reachable, not merely accepted: the engine stages that service's endpoint as the bare host:port bootstrap authority a Kafka client expects, and the provider reads the staged value under the key matching its target's own kind — a compile-time fact taken from the same declared-service map its own validation reconciled the target against, never guessed. A service-form broker must additionally advertise an address the host can reach (DSL §3.2.6b). |
-| `topic` | `string` | The Kafka topic to consume the message from. |
+| `target` | `string` | Logical name of a declared kafka dependency to consume from (environment.dependencies), or a declared service (environment.services) - a customer-supplied broker under its own entrypoint/config. A dependency target of any other type is rejected. A service target is reachable, not merely accepted: the engine stages that service's endpoint as the bare host:port bootstrap authority a Kafka client expects, and the provider reads the staged value under the key matching its target's own kind - a compile-time fact taken from the same declared-service map its own validation reconciled the target against, never guessed. A service-form broker must additionally advertise an address the host can reach (DSL section 3.2.6b). |
+| `topic` | `string` \| `integer` \| `number` | The Kafka topic to consume the message from. Bare numbers are retained as their literal text; quote boolean-looking names. |
 
 **Optional fields**
 
@@ -311,7 +311,7 @@ Set `type: mq-expect.kafka` to use this step.
 
 ### `mq-expect.nats`
 
-Asserts that a message matching the declared criteria is present on a NATS JetStream subject. The consumer scans from the beginning of the retained log on every attempt (DeliverPolicy.All ordered consumer), mirroring mq-expect.kafka retained-log behaviour. IMPORTANT: do NOT share a single nats dependency across scenarios that assert on the same subject — retained messages from prior runs produce a false Pass. Use verifyMode: RETRY to poll until the message arrives.
+Asserts that a message matching the declared criteria is present on a NATS JetStream subject. The consumer scans from the beginning of the retained log on every attempt (DeliverPolicy.All ordered consumer), mirroring mq-expect.kafka retained-log behaviour. IMPORTANT: do NOT share a single nats dependency across scenarios that assert on the same subject - retained messages from prior runs produce a false Pass. Use verifyMode: RETRY to poll until the message arrives.
 
 Set `type: mq-expect.nats` to use this step.
 
@@ -331,7 +331,7 @@ Set `type: mq-expect.nats` to use this step.
 
 ### `mq-expect.rabbitmq`
 
-Consumes a message from an AMQP queue and asserts it matches the declared criteria (payload substring, headers, and/or JSONPath-evaluated fields). Each attempt is a SINGLE non-blocking drain of the messages already ready on the queue — at most 200 BasicGet fetches, stopping the moment none is ready — so it never waits for a message to arrive. Under the default verifyMode: IMMEDIATE a declared timeout does NOT change that: it is an upper bound, not a wait. Use verifyMode: RETRY to poll until the message arrives.
+Consumes a message from an AMQP queue and asserts it matches the declared criteria (payload substring, headers, and/or JSONPath-evaluated fields). Each attempt is a SINGLE non-blocking drain of the messages already ready on the queue - at most 200 BasicGet fetches, stopping the moment none is ready - so it never waits for a message to arrive. Under the default verifyMode: IMMEDIATE a declared timeout does NOT change that: it is an upper bound, not a wait. Use verifyMode: RETRY to poll until the message arrives.
 
 Set `type: mq-expect.rabbitmq` to use this step.
 
@@ -340,12 +340,12 @@ Set `type: mq-expect.rabbitmq` to use this step.
 | Field | Type | Description |
 | --- | --- | --- |
 | `match` | `object` | The criteria a consumed message must satisfy. At least one criterion (payloadContains, headers, or json) must be declared. |
-| `queue` | `string` | The AMQP queue to consume messages from. |
+| `queue` | `string` \| `integer` \| `number` | The AMQP queue to consume messages from. Bare numbers are retained as their literal text; quote boolean-looking names. |
 | `target` | `string` | Logical name of the rabbitmq dependency to consume from, as declared under environment.dependencies. |
 
 ### `mq-expect.redis`
 
-Asserts that a message matching the declared criteria is present on a Redis Stream, scanned from the beginning via XRANGE <stream> - + COUNT 10000 on every attempt (only entries carrying a field named 'payload' are matched — the convention mq-publish.redis writes). IMPORTANT: do NOT share a single redis dependency across scenarios that assert on the same stream — entries from prior runs produce a false Pass. A stream retaining more than 10 000 entries only has its first 10 000 (oldest first) inspected. Use verifyMode: RETRY to poll until the message arrives.
+Asserts that a message matching the declared criteria is present on a Redis Stream, scanned from the beginning via XRANGE <stream> - + COUNT 10000 on every attempt (only entries carrying a field named 'payload' are matched - the convention mq-publish.redis writes). IMPORTANT: do NOT share a single redis dependency across scenarios that assert on the same stream - entries from prior runs produce a false Pass. A stream retaining more than 10 000 entries only has its first 10 000 (oldest first) inspected. Use verifyMode: RETRY to poll until the message arrives.
 
 Set `type: mq-expect.redis` to use this step.
 
@@ -367,8 +367,8 @@ Set `type: mq-publish.azureservicebus` to use this step.
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `queue` | `string` | The target queue name. Exactly one of 'queue' or 'topic' must be set. May contain {placeholder} substitution tokens. |
-| `topic` | `string` | The target topic name. Exactly one of 'queue' or 'topic' must be set. May contain {placeholder} substitution tokens. |
+| `queue` | `string` \| `integer` \| `number` | The target queue name. Exactly one of 'queue' or 'topic' must be set. May contain {placeholder} substitution tokens. Bare numbers are retained as their literal text; quote boolean-looking names. |
+| `topic` | `string` \| `integer` \| `number` | The target topic name. Exactly one of 'queue' or 'topic' must be set. May contain {placeholder} substitution tokens. Bare numbers are retained as their literal text; quote boolean-looking names. |
 
 **Required fields**
 
@@ -394,15 +394,15 @@ Set `type: mq-publish.kafka` to use this step.
 | Field | Type | Description |
 | --- | --- | --- |
 | `payload` | `string` \| `integer` \| `number` \| `boolean` | The message payload sent as the Kafka message value. A UTF-8 string (literal or inline JSON). May contain {placeholder} and ${secret:source/path} tokens. May be written as a bare number/boolean scalar; it is sent as text either way. |
-| `target` | `string` | Logical name of a declared kafka dependency to publish to (environment.dependencies), or a declared service (environment.services) — a customer-supplied broker under its own entrypoint/config. A dependency target of any other type is rejected. A service target is reachable, not merely accepted: the engine stages that service's endpoint as the bare host:port bootstrap authority a Kafka client expects, and the provider reads the staged value under the key matching its target's own kind — a compile-time fact taken from the same declared-service map its own validation reconciled the target against, never guessed. A service-form broker must additionally advertise an address the host can reach (DSL §3.2.6b). |
-| `topic` | `string` | The Kafka topic to publish the message to. May contain {placeholder} and ${secret:source/path} tokens. |
+| `target` | `string` | Logical name of a declared kafka dependency to publish to (environment.dependencies), or a declared service (environment.services) - a customer-supplied broker under its own entrypoint/config. A dependency target of any other type is rejected. A service target is reachable, not merely accepted: the engine stages that service's endpoint as the bare host:port bootstrap authority a Kafka client expects, and the provider reads the staged value under the key matching its target's own kind - a compile-time fact taken from the same declared-service map its own validation reconciled the target against, never guessed. A service-form broker must additionally advertise an address the host can reach (DSL section 3.2.6b). |
+| `topic` | `string` \| `integer` \| `number` | The Kafka topic to publish the message to. May contain {placeholder} and ${secret:source/path} tokens. Bare numbers are retained as their literal text; quote boolean-looking names. |
 
 **Optional fields**
 
 | Field | Type | Description |
 | --- | --- | --- |
 | `avro` | `object` | Optional Avro / schema-registry encoding. When present, the message value is built as an Avro GenericRecord from 'schema' + 'record' and produced via the Confluent Schema Registry Avro serializer; the plain 'payload' is ignored. |
-| `headers` | `object` | Optional map of message header names to their values, sent as text — a bare numeric or boolean scalar is read as its literal text. |
+| `headers` | `object` | Optional map of message header names to their values, sent as text - a bare numeric or boolean scalar is read as its literal text. |
 | `key` | `string` \| `integer` \| `number` \| `boolean` | Optional message key. May contain {placeholder} and ${secret:source/path} tokens. May be written as a bare number/boolean scalar; it is sent as text either way. |
 
 ### `mq-publish.nats`
@@ -444,7 +444,7 @@ Set `type: mq-publish.rabbitmq` to use this step.
 | Field | Type | Description |
 | --- | --- | --- |
 | `exchange` | `string` | Optional AMQP exchange name. Empty or absent routes to the default exchange. May contain {placeholder} and ${secret:source/path} tokens. |
-| `headers` | `object` | Optional map of AMQP message header names to their values, sent as text — a bare numeric or boolean scalar is read as its literal text. |
+| `headers` | `object` | Optional map of AMQP message header names to their values, sent as text - a bare numeric or boolean scalar is read as its literal text. |
 
 ### `mq-publish.redis`
 
@@ -462,7 +462,7 @@ Set `type: mq-publish.redis` to use this step.
 
 ### `script.csharp`
 
-Runs an author-supplied C# snippet — given inline or as a path to an external .csx file — against the shared step context. Exactly one of 'code' or 'file' must be set.
+Runs an author-supplied C# snippet - given inline or as a path to an external .csx file - against the shared step context. Exactly one of 'code' or 'file' must be set.
 
 Set `type: script.csharp` to use this step.
 
@@ -498,7 +498,7 @@ Set `type: trace-expect.otlp` to use this step.
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `match` | `object` | The criteria a captured span must satisfy. 'traceId' is REQUIRED — this family asserts the causal chain of a SPECIFIC transaction, not a general shape any span might match; service/spanName/attributes are optional refinements layered on top of it. |
+| `match` | `object` | The criteria a captured span must satisfy. 'traceId' is REQUIRED - this family asserts the causal chain of a SPECIFIC transaction, not a general shape any span might match; service/spanName/attributes are optional refinements layered on top of it. |
 | `receiver` | `string` | Logical name of the host-owned OTLP/HTTP receiver whose captured spans this step asserts against. The engine stands the receiver up and stages its base URL at svc::<receiver> (and at the plain <receiver> Vars key so an earlier step can hand it to the SUT's OTel SDK configuration, e.g. OTEL_EXPORTER_OTLP_ENDPOINT: "{svc::<receiver>}"). |
 
 ### `webhook-listen.http`

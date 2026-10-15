@@ -247,6 +247,11 @@
 // grandchild's — and a shape whose child cannot be killed in teardown is exactly the leak these
 // rows exist to avoid.
 //
+// Windows lifetime fixtures use a separate test-only .NET executable. PowerShell startup
+// timings and mutation drills recorded below describe the previous fixture, not this probe.
+// The original deadlines, PID reader, birth guards and teardown remain unchanged; POSIX still
+// uses /bin/sh. The probe does not read stdin or initialise an interactive shell.
+//
 // No Docker, no trait: these rows belong to the fast `requires!=docker` lane.
 using System.Diagnostics;
 using System.Globalization;
@@ -1640,7 +1645,7 @@ public sealed class SystemProcessRunnerTests
     /// Pins <see cref="ReadPid"/>'s contract (#528) shape by shape: the SAME digits read as "not
     /// yet" unterminated and as a pid terminated, so a reader that filtered digits out of whatever
     /// it happened to catch fails here rather than in a teardown that kills a stranger. The newline
-    /// is the delimiter because every child writer appends one — <c>Set-Content</c> and <c>echo</c>
+    /// is the delimiter because every child writer appends one — the Windows probe and POSIX <c>echo</c>
     /// in <see cref="NeverExitingChild"/> and <see cref="GrandchildHoldingPipesChild"/> — so a file
     /// without one is a write still in flight. That those two writers DO append it is the other
     /// half of the same contract and is pinned separately, by
@@ -1741,7 +1746,8 @@ public sealed class SystemProcessRunnerTests
     /// will not find the two-character edit that caused it. What #541 added is a red that names
     /// the contract instead, landing in the same run as theirs: <see cref="ReadPid"/> accepts
     /// ONLY a complete, newline-terminated ASCII digit line (#528), and every child writer in
-    /// this file appends that terminator — <c>Set-Content</c> on Windows, <c>echo</c> on POSIX.
+    /// this file appends that terminator — the Windows probe uses UTF-8 without a BOM and
+    /// Environment.NewLine; POSIX uses <c>echo</c>.
     /// </para>
     /// <para>
     /// <strong>The failure message states the three readings and stops.</strong> It reports the
@@ -1773,9 +1779,10 @@ public sealed class SystemProcessRunnerTests
     /// <see cref="Process.HasExited"/>, because on <see cref="GrandchildHoldingPipesChild"/> the
     /// shell exits at once BY DESIGN (#392) and exiting is therefore no signal at all there. What
     /// carries the reading is the CODE: non-zero on either shape, and on
-    /// <see cref="NeverExitingChild"/> any exit whatever, that shell being asleep for
-    /// <see cref="ChildLifetime"/> — <c>Start-Sleep</c> on Windows, <c>sleep</c> on POSIX —
-    /// across the whole of the ceiling. The remaining pair runs the ranking BACKWARDS: "still
+    /// <see cref="NeverExitingChild"/> any exit whatever, because the direct child holds for
+    /// <see cref="ChildLifetime"/> — Thread.Sleep in the Windows probe, <c>sleep</c> on POSIX —
+    /// across the whole of the ceiling.
+    /// The remaining pair runs the ranking BACKWARDS: "still
     /// running" on <see cref="GrandchildHoldingPipesChild"/> means a shell that never reached its
     /// write, that write being its last act, so the host reading leads there and the contract
     /// readings are the distant ones. The message says so at the line rather than leaving it to
@@ -1785,10 +1792,10 @@ public sealed class SystemProcessRunnerTests
     /// </para>
     /// <para>
     /// <strong>THE PID ITSELF IS THE SECOND ASSERTION, AND IT DIFFERS BY SHAPE.</strong>
-    /// <see cref="NeverExitingChild"/> writes <c>$PID</c>/<c>$$</c> — the shell's own pid, which
+    /// <see cref="NeverExitingChild"/> writes Environment.ProcessId/<c>$$</c> — the direct child's PID, which
     /// is the process this row started, so the pin is an equality against
     /// <see cref="Process.Id"/>. <see cref="GrandchildHoldingPipesChild"/> writes
-    /// <c>(Start-Process -PassThru).Id</c>/<c>$!</c> — the GRANDCHILD, deliberately, because the
+    /// Process.Id/<c>$!</c> — the GRANDCHILD, deliberately, because the
     /// shell exits at once and the grandchild is what keeps the inherited pipes open (#392); so
     /// the pin there is the inequality plus <see cref="IsAlive"/>, which is the same
     /// <see cref="TryOpen"/> guard row 2's teardown kills through. A writer that published the
@@ -1861,19 +1868,16 @@ public sealed class SystemProcessRunnerTests
     [InlineData(GrandchildPidFileName)]
     public async Task PidFileWriters_PublishAPidTheReaderAccepts(string pidFileName)
     {
-        var announcesTheShellItself =
+        var announcesTheChildItself =
             string.Equals(pidFileName, PidFileName, StringComparison.Ordinal);
-        var shape = announcesTheShellItself ? NeverExitingChild() : GrandchildHoldingPipesChild();
+        var shape = announcesTheChildItself ? NeverExitingChild() : GrandchildHoldingPipesChild();
         var startedUtc = DateTime.UtcNow;
         var directory = CreateScratchDirectory();
         var pidFile = Path.Combine(directory, pidFileName);
 
         // No redirection, and nothing here reads: that is what keeps this launch clear of the
-        // pending-read machinery the runner rows exist for. The streams are the test host's, and
-        // what reaches them differs by platform — on Windows the grandchild shape's `ping -n 60`
-        // puts a reply line a second on them (they surface on the launching console), while the
-        // POSIX `sleep 60 &` writes nothing. Neither can wedge this row the way #392 wedges a
-        // runner, because no pipe of this row's is waiting to be drained.
+        // pending-read machinery the runner rows exist for. Both lifetime fixtures inherit the
+        // test host's streams and write no output. No pipe of this row's waits to be drained.
         var startInfo = new ProcessStartInfo(shape.FileName)
         {
             UseShellExecute = false,
@@ -1910,21 +1914,26 @@ public sealed class SystemProcessRunnerTests
                     Assert.True(
                         pid is not null,
                         FormattableString.Invariant(
-                            $"No pid line ReadPid accepts, for '{pidFileName}'. OBSERVED: shell {ProcessExitState(process)}; file bytes {PidFileBytes(pidFile)}; waited {clock.Elapsed.TotalSeconds:F1}s. Read them in that order — the exit state first, because this row holds the handle and the bytes cannot explain a shell that never ran. A non-zero code, or any exit at all on '{PidFileName}', means the shell died instead of writing (#512, not a newline defect); 'exited 0' is normal on '{GrandchildPidFileName}' but 'still running' there means it never reached its write, which is its last act. With the shell accounted for, the bytes name the fault: digits and no terminator is a writer that stopped appending one, a complete line refused is a reader that stopped accepting one (#528). This row's remarks set out why that ranking, and why 'a host that cannot start a shell' — the label rows 1, 2 and 5 produce for this same breach — is not the reading here."));
+                            $"No accepted PID line for '{pidFileName}'. OBSERVED: direct child {ProcessExitState(process)}; file bytes {PidFileBytes(pidFile)}; waited {clock.Elapsed.TotalSeconds:F1}s. An exited child or absent file indicates a launch/writer failure; digits without a terminator indicate a torn writer; a complete line refused indicates a reader failure. The grandchild launcher may exit 0 after publishing; the self-announcing child must remain alive."));
 
-                    if (announcesTheShellItself)
+                    if (announcesTheChildItself)
                     {
                         Assert.True(
                             pid == process.Id,
                             FormattableString.Invariant(
-                                $"'{pidFileName}' holds pid {pid}, but the shell this row started is pid {process.Id}. NeverExitingChild publishes $PID on Windows and $$ on POSIX — the shell's OWN pid, which is the process Process.Start handed back — so either these are the same number or the writer has changed what it announces. Rows 1, 2 and 5 kill whatever this file holds, so a writer announcing anything else aims their teardown at a process they did not start."));
+                                $"'{pidFileName}' holds pid {pid}, but the direct child is pid {process.Id}. NeverExitingChild publishes Environment.ProcessId on Windows and $$ on POSIX. The published PID must name the process this row started; rows 1, 2 and 5 use it for guarded teardown."));
+
+                        Assert.True(
+                            IsAlive(pid, startedUtc, pidFile, PidBounds.Both),
+                            FormattableString.Invariant(
+                                $"'{pidFileName}' names the direct child, but it is not both alive and corroborated by the PID-file birth bounds. The fixture must hold its inherited handles for {ChildLifetime.TotalSeconds:F0}s rather than merely publish a PID and exit."));
                     }
                     else
                     {
                         Assert.True(
                             pid != process.Id,
                             FormattableString.Invariant(
-                                $"'{pidFileName}' holds pid {pid}, which is the shell this row started rather than its grandchild. GrandchildHoldingPipesChild announces (Start-Process -PassThru).Id on Windows and $! on POSIX deliberately: the shell exits at once, and the GRANDCHILD is what keeps the runner's inherited pipes open (#392). A writer that announced the shell instead would satisfy the newline contract unchanged, leave row 2's teardown killing a process that had already exited, and leave the grandchild running for the whole {ChildLifetime.TotalSeconds:F0}s."));
+                                $"'{pidFileName}' holds pid {pid}, which names the direct child instead of its grandchild. GrandchildHoldingPipesChild publishes the spawned probe's Process.Id on Windows and $! on POSIX. That grandchild must hold the inherited pipes after the launcher exits; publishing the launcher's PID would leave it outside row 2's guarded teardown for {ChildLifetime.TotalSeconds:F0}s."));
 
                         // Both bounds, deliberately: this row claims CORROBORATED liveness — the
                         // announced process is alive AND is the one that wrote the file — and a
@@ -2402,7 +2411,7 @@ public sealed class SystemProcessRunnerTests
     /// </para>
     /// <para>
     /// <strong>Both shapes, because they bracket the quantity.</strong>
-    /// <see cref="NeverExitingChild"/> announces its own pid after a whole interpreter start-up;
+    /// <see cref="NeverExitingChild"/> announces its own PID after the fixture executable starts;
     /// <see cref="GrandchildHoldingPipesChild"/> announces a process spawned immediately before
     /// the write, which is the tighter of the two and the one that decides whether a tolerance is
     /// big enough. Launched directly, for the reasons
@@ -2415,9 +2424,9 @@ public sealed class SystemProcessRunnerTests
     [InlineData(GrandchildPidFileName)]
     public async Task TheGuardsAnchors_StayInTheOrderARealChildProduces(string pidFileName)
     {
-        var announcesTheShellItself =
+        var announcesTheChildItself =
             string.Equals(pidFileName, PidFileName, StringComparison.Ordinal);
-        var shape = announcesTheShellItself ? NeverExitingChild() : GrandchildHoldingPipesChild();
+        var shape = announcesTheChildItself ? NeverExitingChild() : GrandchildHoldingPipesChild();
         var startedUtc = DateTime.UtcNow;
         var directory = CreateScratchDirectory();
         var pidFile = Path.Combine(directory, pidFileName);
@@ -2467,7 +2476,7 @@ public sealed class SystemProcessRunnerTests
                     Assert.True(
                         announcedStartUtc is not null,
                         FormattableString.Invariant(
-                            $"'{pidFileName}' held pid {pid}, but no start time could be read for it — the process has exited since ReadPid accepted the line, or the query was refused. Either way this row has nothing to compare against the file's write time and measured nothing; it is not evidence about #529's bounds. A shape whose announced process does not outlive its own row is a defect in the shape, and {(announcesTheShellItself ? "NeverExitingChild sleeps for" : "GrandchildHoldingPipesChild pings for")} {ChildLifetime.TotalSeconds:F0}s precisely so that it does."));
+                            $"'{pidFileName}' held pid {pid}, but no start time could be read for it — the process has exited since ReadPid accepted the line, or the query was refused. Either way this row has nothing to compare against the file's write time and measured nothing; it is not evidence about #529's bounds. A shape whose announced process does not outlive its own row is a defect in the shape, and {(announcesTheChildItself ? "NeverExitingChild sleeps for" : "GrandchildHoldingPipesChild holds for")} {ChildLifetime.TotalSeconds:F0}s precisely so that it does."));
 
                     var skew = announcedStartUtc!.Value - writtenUtc!.Value;
 
@@ -3860,20 +3869,11 @@ public sealed class SystemProcessRunnerTests
     {
         if (OperatingSystem.IsWindows())
         {
-            // Single quotes throughout: the argument reaches CreateProcess quoted by the runtime,
-            // and an embedded double quote would have to survive both that escaping and
-            // powershell.exe's own command-line parsing. Nothing here needs one — and nothing
-            // spliced in can contain a single quote either, which is why PidFileName is a constant
-            // rather than a path.
+            // Announce before holding the inherited handles, without PowerShell startup or
+            // console input. The existing real-child rows still verify the published PID.
             return new ChildShape(
-                WindowsPowerShell,
-                new[]
-                {
-                    "-NoProfile",
-                    "-NonInteractive",
-                    "-Command",
-                    $"$PID | Set-Content -LiteralPath '{PidFileName}'; Start-Sleep -Seconds {ChildLifetimeSeconds}",
-                });
+                WindowsProcessProbe,
+                new[] { "self", PidFileName, ChildLifetimeSeconds });
         }
 
         return new ChildShape(
@@ -3886,23 +3886,18 @@ public sealed class SystemProcessRunnerTests
     /// grandchild holding an inherited copy of the runner's stdout/stderr pipes (#392).
     /// </summary>
     /// <remarks>
-    /// On Windows, <c>Start-Process -NoNewWindow</c> means UseShellExecute=false with no
-    /// redirection, which hands the child the parent's std handles — here, the runner's pipes.
-    /// On POSIX the background job inherits them through fork/exec, and <c>$!</c> is its pid.
+    /// On Windows the probe starts its own apphost with UseShellExecute=false and no
+    /// redirection, so the grandchild inherits the runner's stdout/stderr handles. The probe
+    /// publishes that grandchild's PID and exits without waiting for it. On POSIX the background
+    /// job inherits the handles through fork/exec, and <c>$!</c> is its PID.
     /// </remarks>
     private static ChildShape GrandchildHoldingPipesChild()
     {
         if (OperatingSystem.IsWindows())
         {
             return new ChildShape(
-                WindowsPowerShell,
-                new[]
-                {
-                    "-NoProfile",
-                    "-NonInteractive",
-                    "-Command",
-                    $"(Start-Process -FilePath 'ping.exe' -ArgumentList '-n','{ChildLifetimeSeconds}','127.0.0.1' -NoNewWindow -PassThru).Id | Set-Content -LiteralPath '{GrandchildPidFileName}'",
-                });
+                WindowsProcessProbe,
+                new[] { "grandchild", GrandchildPidFileName, ChildLifetimeSeconds });
         }
 
         return new ChildShape(
@@ -3974,18 +3969,16 @@ public sealed class SystemProcessRunnerTests
     }
 
     /// <summary>
-    /// Windows PowerShell's fully qualified path, because the runner refuses an unqualified one.
+    /// The separately built Windows lifetime probe's fully qualified apphost path.
     /// </summary>
     /// <remarks>
-    /// These shapes named <c>powershell.exe</c> and <c>cmd.exe</c> bare until
-    /// <see cref="SystemProcessRunner.Run"/> began enforcing the fully-qualified contract
-    /// <see cref="IProcessRunner"/> documents. Rooting them is not test bookkeeping: a bare name
-    /// here would have been resolved by the very operating-system search #499 exists to remove, so
-    /// these rows were measuring the runner through the mechanism the change forbids. The POSIX
-    /// branches already named <c>/bin/sh</c>, which is fully qualified, and are unchanged.
+    /// The test project's CopyProcessProbe target copies the apphost, DLL, deps and runtimeconfig
+    /// together under ProcessProbe. The probe has no reference to the CLI or engine and is not
+    /// packable. A missing build output fails the existing launch assertions rather than falling
+    /// back to PATH or a shell. The POSIX branches retain their fully qualified /bin/sh path.
     /// </remarks>
-    private static string WindowsPowerShell =>
-        Path.Combine(Environment.SystemDirectory, "WindowsPowerShell", "v1.0", "powershell.exe");
+    private static string WindowsProcessProbe =>
+        Path.Combine(AppContext.BaseDirectory, "ProcessProbe", "Vouchfx.Cli.Process.Probe.exe");
 
     // ── teardown machinery ───────────────────────────────────────────────────────────────────
 
