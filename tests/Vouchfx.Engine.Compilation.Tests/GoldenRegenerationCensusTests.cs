@@ -22,6 +22,12 @@ public sealed class GoldenRegenerationCensusTests
             ["Vouchfx.Sdk.Testing.Tests/SdkTestingContractFreezeTests.cs"] = "VOUCHFX_REGEN_SDK_TESTING_CONTRACT",
             ["Vouchfx.Cli.Tests/ValidateJsonGoldenTests.cs"] = "VOUCHFX_REGEN_VALIDATE_JSON",
             ["Vouchfx.Cli.Tests/ListJsonGoldenTests.cs"] = "VOUCHFX_REGEN_LIST_JSON",
+            ["Vouchfx.Cli.Tests/CliPublicApiContractTests.cs"] = "VOUCHFX_REGEN_CLI_CONTRACT",
+            ["Vouchfx.Engine.Abstractions.Tests/AbstractionsContractFreezeTests.cs"] = "VOUCHFX_REGEN_ABSTRACTIONS_CONTRACT",
+            ["Vouchfx.Engine.Authoring.Tests/AuthoringPublicApiContractTests.cs"] = "VOUCHFX_REGEN_AUTHORING_CONTRACT",
+            ["Vouchfx.Engine.Compilation.Tests/CompilationPublicApiContractTests.cs"] = "VOUCHFX_REGEN_COMPILATION_CONTRACT",
+            ["Vouchfx.Engine.Orchestration.Tests/OrchestrationEventContractFreezeTests.cs"] = "VOUCHFX_REGEN_ORCHESTRATION_EVENT_CONTRACT",
+            ["Vouchfx.Engine.Planning.Tests/PlanningPublicApiContractTests.cs"] = "VOUCHFX_REGEN_PLANNING_CONTRACT",
         };
         var testsRoot = Path.Combine(RepoRoot.Resolve(), "tests");
         var actual = new Dictionary<string, string>(StringComparer.Ordinal);
