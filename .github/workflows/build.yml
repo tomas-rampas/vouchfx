@@ -418,7 +418,7 @@ jobs:
       #                                            Kafka+Avro schema-registry capstone.
       #   traefik/whoami@sha256:c4717a8d1f0134a7444e24f881160e033991f23027c6c5a9a3f8fd22e70d1d44                  — system-under-test image in the
       #                                            http.rest / capture / Respawn capstones.
-      #   hashicorp/vault:latest                 — VaultSecretSourceDockerTests dev-mode
+      #   hashicorp/vault@sha256:c2f666266f383d2cf424d86b8bb8ce7d065562173ffec2b476d762943608bb55                 — VaultSecretSourceDockerTests dev-mode
       #                                            Vault container (§17 secret source).
       #   axllent/mailpit:v1.21                  — MailExpectSmtpDockerTests SMTP capture
       #                                            container (mail-expect.smtp provider);
@@ -1300,6 +1300,16 @@ jobs:
           --blame-crash
           --blame-crash-dump-type mini
           --results-directory TestResults
+
+      # Keep per-project TRX files so database test outcomes remain inspectable.
+      - name: Upload Docker integration test results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: docker-integration-test-results
+          path: TestResults/**/*.trx
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Verify owned topology acceptance counts and closure
         if: always() && steps.topology-evidence-preparation.outcome == 'success'
