@@ -38,7 +38,11 @@ public sealed class PlanningPublicApiContractTests
         Assert.Empty(defaults);
     }
 
-    private static bool IsRegenRequested() => GoldenRegeneration.IsRequested(RegenEnvVar);
+    private static bool IsRegenRequested()
+    {
+        return Vouchfx.TestSupport.GoldenRegeneration.IsRequested(RegenEnvVar);
+    }
+
     private static string Normalise(string value) =>
         value.Replace("\r\n", "\n").Replace("\r", "\n").TrimEnd('\n');
 }

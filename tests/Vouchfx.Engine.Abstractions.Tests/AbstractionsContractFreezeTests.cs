@@ -49,7 +49,11 @@ public sealed class AbstractionsContractFreezeTests
         Assert.True(expected.SequenceEqual(actual, StringComparer.Ordinal), string.Join(Environment.NewLine, actual));
     }
 
-    private static bool IsRegenRequested() => GoldenRegeneration.IsRequested(RegenEnvVar);
+    private static bool IsRegenRequested()
+    {
+        return Vouchfx.TestSupport.GoldenRegeneration.IsRequested(RegenEnvVar);
+    }
+
     private static string Normalise(string value) =>
         value.Replace("\r\n", "\n").Replace("\r", "\n").TrimEnd('\n');
 }
