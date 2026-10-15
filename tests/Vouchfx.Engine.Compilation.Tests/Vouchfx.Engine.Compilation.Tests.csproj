@@ -143,4 +143,8 @@
     <ProjectReference Include="..\Vouchfx.TestSupport\Vouchfx.TestSupport.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Content Include="Golden\vouchfx-engine-compilation-public-api.v1.txt" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

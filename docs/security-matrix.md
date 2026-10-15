@@ -89,6 +89,12 @@ a reference resolving to an empty value are each refused with a diagnostic rathe
 client identity is refused during pre-topology validation, including direct engine embedding
 that bypasses the document schema; its value is neither resolved nor included in the diagnostic.
 
+In the current source, engine-provided `Secrets` accessors expose a scenario-local
+`ResolvedSecrets` ledger. Resolutions and explicit `Record` registrations also populate
+a separate run-wide (watch: session-wide) reporting ledger, so probe and sibling values remain redacted from
+diagnostics and event artefacts. The public `SecretAccessor(catalog, ledger)` constructor
+still shares the caller-supplied ledger when an embedding host explicitly chooses it.
+
 What remains unavailable is a **PKCS#12/PFX bundle** carrying the certificate and key together —
 there is no field for one — and a passphrase for `caCert`, a trust anchor being a public certificate
 with no private key to unlock.
@@ -124,13 +130,11 @@ HTTP targets retain platform defaults. Providers using frozen `SecurityHelper.So
 the old single-leaf/platform-chain limitation. New providers using `HttpTlsHelper.Source` must
 set `MinEngineVersion: "1.0.2"` and use `SocketsHttpHandler`.
 
-This describes the reviewed source change intended for 1.0.2, not a claim that existing public
-1.0.1 packages already contain it. Inert option/parser and compilation tests do not establish
-wire-chain presentation or platform AIA suppression; isolated runtime acceptance remains pending.
+Hosted runtime acceptance for engine 1.0.3 passed on Windows and Linux: [release run 38792849566](https://github.com/tomas-rampas/vouchfx/actions/runs/38792849566), source `b864c40bea2e4e0fcef4084ace0ec59bb97b4365`, retained 5 passed, 0 failed, 0 skipped on each platform. The Core `http.rest` TLS 1.2 wire evidence contains the supplied client intermediate, refuses omitted and mismatched intermediates, and records zero production automatic AIA fetches against a native control that fetched the issuer. The scope and exclusions below still apply.
 
 The secured-endpoint probe disables TLS session resumption in both the identity-bearing connection and its anonymous control, so the second connection cannot reuse an authenticated session.
 
-On Windows, the HTTP TLS helper and secured-endpoint probe retain the offline certificate context with the supplied intermediates, then select its leaf explicitly when the server requests a client identity. Other platforms attach the context directly. For an uncached Windows handshake, this keeps initial credential acquisition anonymous while preserving offline chain preparation and the probe's anonymous control. Hosted confirmation of this Windows selection path remains a release gate.
+On Windows, the HTTP TLS helper and secured-endpoint probe retain the offline certificate context with the supplied intermediates, then select its leaf explicitly when the server requests a client identity. Other platforms attach the context directly. For an uncached Windows handshake, this keeps initial credential acquisition anonymous while preserving offline chain preparation and the probe's anonymous control. The hosted Windows acceptance above exercised this selection path; it remains a blocking transport check for subsequent shipping commits.
 
 ### Hosted transport acceptance
 

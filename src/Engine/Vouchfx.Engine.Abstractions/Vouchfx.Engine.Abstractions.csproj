@@ -50,6 +50,11 @@
     </AssemblyAttribute>
   </ItemGroup>
 
+  <!-- Runtime attaches the internal scenario-to-reporting ledger destination. -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="Vouchfx.Engine.Runtime" />
+  </ItemGroup>
+
   <ItemGroup>
     <None Include="README.md" Pack="true" PackagePath="\" />
   </ItemGroup>

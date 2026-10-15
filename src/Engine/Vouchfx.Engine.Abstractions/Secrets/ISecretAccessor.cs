@@ -54,8 +54,9 @@ public sealed class SecretAccessor : ISecretAccessor
     private readonly ISecretSourceCatalog _catalog;
 
     /// <summary>
-    /// The Default-ALC record of every value this accessor has revealed (§17).
-    /// Populated on each successful <see cref="Resolve"/> and consumed by the runner as a
+    /// The Default-ALC record of values revealed through this accessor or registered explicitly (§17).
+    /// Populated on each successful <see cref="Resolve"/> or explicit <see cref="ResolvedSecretLedger.Record"/>
+    /// and used by the runner as a
     /// DEFENCE-IN-DEPTH scrub net for free-form provider observation text before it enters the
     /// event stream.  Type-based <see cref="SecretString"/> redaction remains the primary
     /// mechanism; this is a backstop for the one surface the engine cannot type-check (a
@@ -77,25 +78,20 @@ public sealed class SecretAccessor : ISecretAccessor
     /// <see cref="SecretAccessor(ISecretSourceCatalog, ResolvedSecretLedger)"/> the caller
     /// supplies one it also hands to other accessors, so a value resolved through any of them
     /// is scrubbable from text emitted on any other's path.  The engine uses the second shape
-    /// to give the topology probe and the per-scenario steps ONE ledger for a whole run, because
-    /// those two have genuinely different lifetimes (one probe scope, N scenario scopes) and no
-    /// single accessor can span both.
+    /// for its aggregate reporting accessor. Scripts receive a separate scenario-local accessor
+    /// whose successful resolutions and explicit <see cref="ResolvedSecretLedger.Record"/> registrations
+    /// also feed that reporting ledger. The probe and scenarios retain separate resolver lifetimes.
     /// </para>
     /// <para>
-    /// <strong>KNOWN CONSEQUENCE — this property is a CONFIRMATION ORACLE for author script
-    /// code, and run-scoping widens it.</strong>  <c>SecretAccessor</c> is public in a package
-    /// that is in the emitted CSX script's reference closure, so a <c>script.csharp</c> body can
-    /// write <c>((SecretAccessor)Vars.Secrets).ResolvedSecrets.Scrub(candidate)</c> and learn
-    /// from whether the result changed whether <c>candidate</c> is a resolved secret value;
-    /// <see cref="ResolvedSecretLedger.Count"/> likewise reveals how many distinct values a run
-    /// has revealed.  It is CONFIRM-ONLY, not extraction: <see cref="ResolvedSecretLedger.Scrub"/>
-    /// replaces exact occurrences and never returns a recorded value, so an attacker must already
-    /// hold the candidate.  The oracle itself predates the shared ledger, but was previously
-    /// scenario-local; sharing one ledger across a run makes it answer for values resolved in
-    /// OTHER scenarios and — on the shared-topology suite path — for the topology probe's
-    /// <c>clientKeyPassword</c>, which no step resolves and the script has no other route to.
-    /// The accessibility is deliberately left unchanged here: this type ships in a released
-    /// package, so narrowing it is a breaking change needing its own decision.
+    /// <strong>Sharing this public ledger is an explicit caller choice.</strong> A caller
+    /// supplying the same ledger to several accessors exposes its combined membership through
+    /// <see cref="ResolvedSecretLedger.Scrub"/> and <see cref="ResolvedSecretLedger.Count"/>.
+    /// Scrub confirms an already-known candidate by replacing exact occurrences; it does not
+    /// enumerate or return recorded values. The engine supplies scripts with a separate
+    /// scenario-local accessor: its public ledger contains only that scenario's resolutions and
+    /// explicit <see cref="ResolvedSecretLedger.Record"/> registrations. Both operations also populate
+    /// an aggregate reporting ledger, so topology-probe and sibling values remain redacted without
+    /// appearing in this ledger.
     /// </para>
     /// </remarks>
     public ResolvedSecretLedger ResolvedSecrets { get; }

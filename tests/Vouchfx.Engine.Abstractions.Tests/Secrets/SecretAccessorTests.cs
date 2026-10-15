@@ -155,4 +155,18 @@ public sealed class SecretAccessorTests
 
         Assert.Equal(0, accessor.ResolvedSecrets.Count);
     }
+
+    [Fact]
+    public void SharedLedgerConstructor_PreservesIdentityAndExplicitCrossAccessorSharing()
+    {
+        var ledger = new ResolvedSecretLedger();
+        var catalog = new SecretSourceCatalog(new[] { new FakeResolver("env", "explicit-shared-value") });
+        var first = new SecretAccessor(catalog, ledger);
+        var second = new SecretAccessor(catalog, ledger);
+        Assert.Same(ledger, first.ResolvedSecrets);
+        Assert.Same(ledger, second.ResolvedSecrets);
+        _ = first.Resolve("env/API_TOKEN");
+        Assert.Equal(1, second.ResolvedSecrets.Count);
+        Assert.Equal(SecretString.RedactedMarker, second.ResolvedSecrets.Scrub("explicit-shared-value"));
+    }
 }
