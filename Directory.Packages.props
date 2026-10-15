@@ -43,6 +43,7 @@
          advisory (fixed in 0.48.0), which is why Dependabot's own 0.48.0 pin in #213
          could not restore. -->
     <PackageVersion Include="SharpCompress" Version="1.0.0" />
+    <PackageVersion Include="System.Security.Cryptography.Pkcs" Version="10.0.13" />
     <!-- Azure.Messaging.ServiceBus 7.18.2 (via System.Memory.Data) floors System.Text.Json
          at a 6.0.x build vulnerable to CVE-2024-43485 (GHSA-8g4q-xg66-9fp4, .NET DoS;
          Dependabot alerts #31/#32/#56/#57 on the two azureservicebus providers and their
