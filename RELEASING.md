@@ -7,27 +7,24 @@ secondary (self-contained exe) distribution channels.
 
 ## How to trigger a release
 
-The release pipeline (`release.yml`) supports three triggers: a published GitHub Release, a pushed version tag, and a manual `workflow_dispatch` preflight. The two publication paths are:
+The release pipeline (`release.yml`) publishes only when a GitHub Release is
+published. Pushing a version tag alone does not start the pipeline. Manual
+`workflow_dispatch` remains available as a non-publishing preflight.
 
-1. **GitHub Release published** (recommended)
-   - Navigate to the GitHub Releases page for this repository.
-   - Click **Draft a new release**.
-   - Create a new tag in the format `v<semver>` (e.g. `v1.2.3`).
-   - Fill in the release notes.
-   - Click **Publish release**.
-   - The pipeline starts, builds all artifacts, signs them, and attaches
-     them to the release automatically.
+1. Navigate to the GitHub Releases page for this repository.
+2. Click **Draft a new release**.
+3. Create a new tag in the format `v<semver>` (e.g. `v1.2.3`) at the reviewed
+   commit, or select an existing reviewed version tag.
+4. Fill in the release notes. Mark alpha, beta and release candidate versions
+   as pre-releases.
+5. Click **Publish release**. Publishing a reviewed draft or creating a published
+   Release through the GitHub API emits the same event.
+6. The pipeline builds all artifacts, signs them, and attaches them to the
+   release automatically.
 
-2. **Version tag pushed directly**
-   ```
-   git tag v1.2.3
-   git push origin v1.2.3
-   ```
-   The pipeline creates a draft release, builds everything, and attaches the
-   artifacts.  The maintainer should then review and publish the draft.
-
-**Never push a `v*` tag without intending a release.** A newer run does not automatically
-cancel an existing run (`cancel-in-progress: false`); manual cancellation remains possible.
+A tag push followed by Release publication starts one publishing run. A newer
+run does not automatically cancel an existing run (`cancel-in-progress: false`);
+manual cancellation remains possible.
 
 ---
 
@@ -93,7 +90,7 @@ After the first successful `Vouchfx.*` publish and NuGet.org processing (typical
      dependent on configured secrets.
    - **Attestations are public records**, including on preflight runs; skipping
      package publication does not make the run private.
-   - Use this before the next stable release tag to validate the pipeline and native
+   - Use this before publishing the next stable Release to validate the pipeline and native
      installer builds. It does not establish that the public packages are available.
 
 ---

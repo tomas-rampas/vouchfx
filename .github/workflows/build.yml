@@ -118,6 +118,9 @@ jobs:
       - name: Lint every workflow
         run: python -B scripts/ci/lint_workflows.py
 
+      - name: Require one release trigger and non-publishing dispatch
+        run: python -B -m unittest discover -s scripts/ci -p test_release_workflow.py -v
+
       - name: Exercise the actual Docker pre-pull script
         run: python -B -m unittest discover -s scripts/ci -p test_docker_ci_contract.py -v
 
