@@ -89,7 +89,7 @@ public sealed class WatchRunnerSecurityLedgerTests
     /// redacted from it.
     /// </summary>
     /// <remarks>
-    /// This is the seam the review found unguarded: <c>ScrubThenSanitise</c> composed the value
+    /// This is the seam the review found unguarded: <c>DiagnosticText.ScrubForDisplay</c> composed the value
     /// ledger with the sanitiser and nothing else, so the watch loop's three terminal writes were
     /// the one family of sinks the path ledger did not reach. Behavioural rather than source-only,
     /// because the source census below can prove the argument is PASSED and cannot prove it is
@@ -225,11 +225,15 @@ public sealed class WatchRunnerSecurityLedgerTests
     /// first sees the value exactly as it was resolved, replaces it whole, and hands the
     /// sanitiser a marker it passes through unchanged.
     /// </remarks>
-    [Fact]
-    public async Task APassphraseCarryingAControlByte_IsScrubbedBeforeTheSanitiserRewritesIt()
+    [Theory]
+    [InlineData("\u001b")]
+    [InlineData("\r")]
+    [InlineData("\u009b")]
+    [InlineData("\u007f")]
+    public async Task APassphraseCarryingAControlByte_IsScrubbedBeforeTheSanitiserRewritesIt(string control)
     {
         var ledger = new ResolvedSecretLedger();
-        var passphrase = "alpha" + (char)0x1B + "omega";
+        var passphrase = "alpha" + control + "omega";
         ResolveThroughRealAccessor(ledger, passphrase);
 
         var output = new StringWriter();
@@ -413,7 +417,7 @@ public sealed class WatchRunnerSecurityLedgerTests
     /// <remarks>
     /// <para>
     /// <strong>Why this is enumerated from writes rather than from helper calls.</strong> The
-    /// first version of this gate counted <c>ScrubThenSanitise</c> calls and
+    /// first version of this gate counted <c>DiagnosticText.ScrubForDisplay</c> calls and
     /// <c>SanitiseForDisplay</c> calls, and claimed on that basis that every post-probe sink went
     /// through the helper. It could not have detected the counter-example, which was present and
     /// green at the time: the <c>could not read</c> IOException sink wrote raw, calling neither.
@@ -439,7 +443,7 @@ public sealed class WatchRunnerSecurityLedgerTests
     /// <strong>Known assumption in the extractor.</strong> Each write's statement is sliced to the
     /// FIRST <c>;</c> after it, which would end the statement early if a string literal in the
     /// arguments contained a semicolon. It cannot misclassify a compliant sink as raw today,
-    /// because <c>ScrubThenSanitise(</c> is the first argument at all four scrubbing sinks and so
+    /// because <c>DiagnosticText.ScrubForDisplay(</c> is the first argument at all four scrubbing sinks and so
     /// precedes any literal; it is recorded rather than fixed because the fix (a brace/paren
     /// matcher) costs more than the failure mode is worth.
     /// </para>
@@ -473,7 +477,7 @@ public sealed class WatchRunnerSecurityLedgerTests
             Assert.True(end > write.Index, "every write site must terminate in a statement");
             var statement = source[write.Index..end];
 
-            if (statement.Contains("ScrubThenSanitise(", StringComparison.Ordinal))
+            if (statement.Contains("DiagnosticText.ScrubForDisplay(", StringComparison.Ordinal))
             {
                 scrubbed.Add(statement);
             }
@@ -508,15 +512,15 @@ public sealed class WatchRunnerSecurityLedgerTests
         // of them on a tree whose behaviour was correct. A gate that fails on formatting teaches
         // the next author to weaken it.
         Assert.Matches(
-            @"ScrubThenSanitise\(\s*\$""--watch: environment error during run: \{oex\.Message\}""",
+            @"DiagnosticText\.ScrubForDisplay\(\s*\$""--watch: environment error during run: \{oex\.Message\}""",
             source);
-        Assert.Matches(@"ScrubThenSanitise\(\s*line,\s*sessionSecretLedger", source);
+        Assert.Matches(@"DiagnosticText\.ScrubForDisplay\(\s*line,\s*sessionSecretLedger", source);
         Assert.Matches(
             @"\$""--watch: could not read '\{filePath\}': \{ex\.Message\}""", source);
 
         // ISSUE #375's THIRD SEAM, pinned where the buckets already are. EVERY scrubbing sink
         // must pass the session PATH ledger as well as the value ledger. This is the omission the
-        // review found: ScrubThenSanitise composed the value ledger with the sanitiser and nothing
+        // review found: DiagnosticText.ScrubForDisplay composed the value ledger with the sanitiser and nothing
         // else, so all four of these writes sat outside the path net while their event
         // counterparts sat inside it - and nothing failed, because a missing net is silent.
         //
@@ -529,13 +533,9 @@ public sealed class WatchRunnerSecurityLedgerTests
         }
 
         // And the helper is used ONLY by those writes — no other caller composes it differently.
-        // Call sites only; the DECLARATION is excluded by matching its return type rather than by
-        // a lookahead on the first parameter, which stopped working the moment the parameter list
-        // wrapped onto the next line.
-        var helperMentions = Regex.Count(source, @"ScrubThenSanitise\(");
-        var helperDeclarations = Regex.Count(source, @"string\?\s+ScrubThenSanitise\(");
-        Assert.Equal(1, helperDeclarations);
-        Assert.Equal(4, helperMentions - helperDeclarations);
+        // The shared declaration lives in Runtime; this file contains only its callers.
+        var helperMentions = Regex.Count(source, @"DiagnosticText\.ScrubForDisplay\(");
+        Assert.Equal(scrubbed.Count, helperMentions);
     }
 
     /// <summary>

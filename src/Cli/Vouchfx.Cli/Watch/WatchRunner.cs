@@ -376,7 +376,7 @@ internal static class WatchRunner
             // this call today and any future WatchSession _report call without needing a
             // separate fix at each call site.
             //
-            // EDGE-007: scrubbed through the session ledger first — see ScrubThenSanitise for why
+            // EDGE-007: scrubbed through the session ledger first — see DiagnosticText.ScrubForDisplay for why
             // that order, and not the other one, is the one that holds.
             //
             // A PRE-TOPOLOGY REFUSAL NEVER ARRIVES HERE (#370): the compile seam renders it — the
@@ -384,7 +384,7 @@ internal static class WatchRunner
             // whose Error is null, so WatchSession's guarded call prints nothing further. Only a
             // parse/AST failure, which has no events to render, still reaches this sink.
             report: line => output.WriteLine(
-                ScrubThenSanitise(line, sessionSecretLedger, sessionPathLedger)),
+                DiagnosticText.ScrubForDisplay(line, sessionSecretLedger, sessionPathLedger)),
             allowsReuse: planned => ((WatchIterationPlan)planned).StatePolicy.Reuse
                 == Vouchfx.Engine.Orchestration.Environments.EnvironmentReusePolicy.Reuse);
     }
@@ -422,7 +422,7 @@ internal static class WatchRunner
             // may already hold a resolved passphrase, and defence-in-depth does not get to pick
             // which sink an unexpected value arrives at.
             await output.WriteLineAsync(
-                ScrubThenSanitise(
+                DiagnosticText.ScrubForDisplay(
                     $"--watch: could not read '{filePath}': {ex.Message}",
                     sessionSecretLedger,
                     sessionPathLedger))
@@ -495,7 +495,7 @@ internal static class WatchRunner
             // EDGE-007: and scrub first — this is the sink a failed secured build reaches, and a
             // SecuredEndpointProbe failure folds a SecurityMaterialException's text into it.
             await output.WriteLineAsync(
-                ScrubThenSanitise(
+                DiagnosticText.ScrubForDisplay(
                     $"--watch: environment error during run: {oex.Message}",
                     sessionSecretLedger,
                     sessionPathLedger))
@@ -518,72 +518,12 @@ internal static class WatchRunner
             // the "never any captured secret/token" claim above is a property of the message
             // SHAPE, which says nothing about what an arbitrary ex.Message interpolated.
             await output.WriteLineAsync(
-                ScrubThenSanitise(
+                DiagnosticText.ScrubForDisplay(
                     $"--watch: error during run ({ex.GetType().Name}): {ex.Message}",
                     sessionSecretLedger,
                     sessionPathLedger))
                 .ConfigureAwait(false);
         }
-    }
-
-    /// <summary>
-    /// Redacts any secret value the watch session has resolved from <paramref name="text"/>, then
-    /// renders what remains inert for a terminal — the one composition every post-probe sink in
-    /// this class writes through (EDGE-007).
-    /// </summary>
-    /// <param name="text">The free-form diagnostic text about to be written.</param>
-    /// <param name="ledger">
-    /// The session ledger, or <see langword="null"/> to skip the scrub (pre-EDGE-007 behaviour,
-    /// and what the tests that predate it exercise).
-    /// </param>
-    /// <param name="pathLedger">
-    /// The session's security-path disclosure ledger (issue #375), or <see langword="null"/> to
-    /// skip its substitution. Applied BETWEEN the value scrub and the sanitiser, for the reasons
-    /// in the remarks below.
-    /// </param>
-    /// <remarks>
-    /// <para>
-    /// <strong>BOTH NETS RUN BEFORE THE SANITISER, SECRETS FIRST, THEN PATHS.</strong> The
-    /// secrets-before-paths order is argued at length on
-    /// <c>ScenarioRunner.ScrubDiagnostic</c>; this seam follows that decision rather than
-    /// restating it, and must not diverge from it.
-    /// </para>
-    /// <para>
-    /// <strong>THE SCRUB-BEFORE-SANITISE ORDER IS LOAD-BEARING, AND IT IS SCRUB FIRST.</strong>
-    /// <see cref="DisplaySanitiser"/> REWRITES text — control bytes and ANSI escape sequences are
-    /// its whole subject — so a passphrase containing one no longer matches the ledger's recorded
-    /// form once the sanitiser has been over it, and scrubbing second would leave the printable
-    /// remainder on the terminal. Scrubbing first sees the value exactly as it was resolved,
-    /// replaces it whole, and hands the sanitiser a redaction marker it passes through unchanged.
-    /// (<c>ScenarioRunner</c>'s isolation-failure sink composes them in this same order, for this
-    /// same reason.)
-    /// </para>
-    /// <para>
-    /// <strong>The sanitiser is NOT redundant and is not being replaced.</strong> It is
-    /// control-character/ANSI-aware only, by its own header — an ordinary printable passphrase
-    /// passes through it unchanged, so it was never the guard against a secret. The ledger scrub
-    /// is that guard; the sanitiser remains the guard against a terminal-corrupting byte. Each
-    /// covers what the other cannot.
-    /// </para>
-    /// </remarks>
-    internal static string? ScrubThenSanitise(
-        string? text, ResolvedSecretLedger? ledger, SecurityPathDisclosureLedger? pathLedger)
-    {
-        // Null-in/null-out, matching BOTH components it composes — so it drops into any sink
-        // that already tolerated the sanitiser's own nullable contract.
-        var scrubbed = ledger is null ? text : ledger.Scrub(text);
-
-        // Issue #375's net, and it belongs HERE rather than after the sanitiser for the same
-        // reason the value scrub does: the sanitiser REWRITES text, so a resolved path carrying a
-        // byte it neutralises would no longer match the recorded form once it had been over it.
-        // Through the Runtime forwarder, not `pathLedger.Scrub` directly: `Scrub` is internal to
-        // Vouchfx.Engine.Orchestration and this assembly is not one of its friends. See
-        // SecurityPathScrub's own header for why that is a deliberate seam rather than an
-        // obstacle — the alternative was granting the CLI Orchestration's entire internal surface
-        // to reach one method.
-        scrubbed = SecurityPathScrub.Apply(pathLedger, scrubbed);
-
-        return DisplaySanitiser.SanitiseForDisplay(scrubbed);
     }
 
     /// <summary>
