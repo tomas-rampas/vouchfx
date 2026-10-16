@@ -305,13 +305,12 @@ public sealed class ScenarioRunnerTests
     /// <remarks>
     /// Pins issue #437: two published surfaces
     /// (<c>docs/02_YAML_DSL_Specification_and_VSCode_Extension_Design.md</c> and this project's
-    /// <c>CHANGELOG.md</c>) told authors an unset <c>${env:NAME}</c> reference is reported as an
-    /// <b>Environment error</b>, gated by <c>--fail-on-env-error</c>. Measured against the built
-    /// CLI, it is <see cref="Verdict.Inconclusive"/> — gated by <c>--fail-on-inconclusive</c>
-    /// instead, exactly as the taxonomy already treats the sibling
-    /// <c>${conn:typo}</c>/malformed-secret refusals above — and nothing pinned that before this
-    /// test. The variable name is GUID-suffixed so this test cannot collide with a variable the
-    /// host process genuinely has set.
+    /// <c>CHANGELOG.md</c>) described an unset <c>${env:NAME}</c> reference as an
+    /// <b>Environment error</b>. This test pins <see cref="Verdict.Inconclusive"/> before topology
+    /// acquisition. The CLI separately applies the authoring-refusal and no-execution guards:
+    /// alone, this refusal exits 4 regardless of either gating flag; a passing sibling cannot
+    /// hide it, and an already-selected non-zero code is preserved. The variable name is
+    /// GUID-suffixed so this test cannot collide with a variable the host process genuinely has set.
     /// </remarks>
     [Fact]
     public async Task RunAsync_EnvConfigReferencesUnsetEnvironmentVariable_ReturnsInconclusive_NoTopology()

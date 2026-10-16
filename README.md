@@ -192,18 +192,18 @@ in `Vouchfx.Engine.Compilation` and `Vouchfx.Engine.Planning` instead of shellin
 | `1` | **Fail** — a genuine defect | **Always** |
 | `2` | UsageError — bad option, missing path | Always |
 | `3` | EnvironmentError | Only with `--fail-on-env-error` — except an unconfirmable `security:` declaration |
-| `4` | Inconclusive or refusal | Only with `--fail-on-inconclusive` for genuine runtime inconclusive results; parse, authoring/schema/compilation and provider/engine refusals never exit 0, nor does an unconfirmable `security:` declaration |
+| `4` | Inconclusive or refusal | Only with `--fail-on-inconclusive` for genuine runtime inconclusive results; see [the exit-code reference](https://vouchfx.io/01_Technical_Architecture_and_Engineering_Blueprint/#164-exit-codes) for unconditional refusals |
 | `5` | Gaps found | Only with `vouchfx plan --fail-on-gap` |
 
 These are `run` and `run --parallel` codes. **`--watch` applies no verdict-based exit gating** — it
 returns a usage error for a selection that is not exactly one parseable file, and 0 otherwise,
 whatever the verdicts.
 
-Five exceptions ignore the gating flags: **any parse failure**, **typed authoring/schema/compilation
-refusal**, **an Inconclusive suite with no executed scenario**, **a provider- or engine-surface
-refusal**, and **an unconfirmable `security:` declaration**. A refused document cannot be hidden by a
-passing sibling. Invalid CSX is recorded at the compilation boundary; genuine runtime timeouts and
-unmet captures still require `--fail-on-inconclusive` to break CI.
+The [exit-code reference](https://vouchfx.io/01_Technical_Architecture_and_Engineering_Blueprint/#164-exit-codes)
+lists the unconditional refusal and security checks. [CI integration](https://vouchfx.io/ci-integration/)
+explains their precedence, including why a refused document cannot be hidden by a passing sibling.
+Invalid CSX is recorded at the compilation boundary; genuine runtime timeouts and unmet captures
+still require `--fail-on-inconclusive` to break CI.
 
 These checks never replace an already selected nonzero code: a failing sibling still exits 1, and a
 gated environment error still exits 3. An ordinary topology startup failure with no authoring,
