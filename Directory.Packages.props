@@ -36,7 +36,7 @@
   <ItemGroup Label="Transitive security pins (Dependabot alerts) — CentralPackageTransitivePinningEnabled">
     <!-- Pulled in via Aspire.Hosting -> StreamJsonRpc 2.22.23 (>= 2.5.192); pinned to the
          advisory-fixed 2.5.x build. -->
-    <PackageVersion Include="MessagePack" Version="2.5.301" />
+    <PackageVersion Include="MessagePack" Version="2.5.303" />
     <!-- Aspire.Hosting.MongoDB 13.4.2 transitively requires >= 1.0.0; pin to the exact
          required minimum to avoid NU1109 downgrade errors under
          CentralPackageTransitivePinningEnabled. 1.0.0 also covers the Dependabot
