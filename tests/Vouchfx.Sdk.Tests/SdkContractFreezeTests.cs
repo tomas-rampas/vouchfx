@@ -437,6 +437,7 @@ public sealed class SdkContractFreezeTests
         {
             "Vouchfx.Sdk.HttpTlsHelper",
             "Vouchfx.Sdk.KafkaSecurityHelper",
+            "Vouchfx.Sdk.KafkaSecurityV2Helper",
             "Vouchfx.Sdk.SecretHelper",
             "Vouchfx.Sdk.SecurityHelper",
             "Vouchfx.Sdk.SubstituteHelper",

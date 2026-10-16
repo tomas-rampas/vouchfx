@@ -1,8 +1,8 @@
 // Vouchfx.Sdk — KafkaSecurityHelper (authenticated-infrastructure-mtls, slice E — REQ-015).
 //
 // Preserves the frozen legacy source for KafkaSecurity_Helpers used by existing providers.
-// Core Kafka providers emit a distinct private generation so their diagnostics can evolve
-// without changing this inlined public contract. This helper remains the Kafka
+// Core and opting-in custom Kafka providers emit KafkaSecurityV2Helper.Source with a distinct
+// generation identity, without changing this inlined public contract. This helper remains the Kafka
 // counterpart of slice D's SecurityHelper (which does the same job for the HTTP family's
 // HttpClientHandler). Deduplication is handled by the CsxAssembler helper-dedup logic
 // (§13.3.1), so legacy providers sharing this body carry ONE copy per suite.

@@ -1001,7 +1001,7 @@ public sealed class MqPublishKafkaProvider
             // and nothing about `environment` — verified against the frozen v1 contract, which is
             // additive-only and so cannot gain such a member here. CsxAssembler dedupes this source
             // to one copy across every Kafka step in the suite.
-            Vouchfx.Steps.Kafka.KafkaSecurityEmission.Source,
+            KafkaSecurityV2Helper.Source,
         };
 
         return new CsxFragment(

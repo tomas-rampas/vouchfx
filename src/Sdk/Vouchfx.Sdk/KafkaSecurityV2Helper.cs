@@ -1,13 +1,31 @@
-namespace Vouchfx.Steps.Kafka;
+namespace Vouchfx.Sdk;
 
-// Linked privately into both Core Kafka providers; this adds no SDK public surface.
-// Once shipped, this source and its emitted class identity are immutable. A behavior change
-// requires a new identity so providers carrying older generations can coexist in one suite.
-internal static class KafkaSecurityEmission
+/// <summary>
+/// Supplies the versioned Kafka security helper used by Core Kafka providers and available
+/// for custom providers to opt into, alongside the frozen legacy <see cref="KafkaSecurityHelper"/>.
+/// </summary>
+/// <remarks>
+/// This helper diagnoses a passphrase-only <c>tls</c> declaration from a host bypassing schema
+/// validation. Both its source bytes and emitted <c>KafkaSecurity_V2_Helpers</c> identity are
+/// immutable; later behaviour changes require another generation. Existing providers do not
+/// need rebuilding to coexist with this generation. Adopting it requires changing the provider's
+/// emitted calls and rebuilding that provider; rebuilding an unchanged legacy consumer does not
+/// change its diagnostics. The constant is inlined, so consuming it adds no runtime SDK API call
+/// and does not itself require a newer minimum engine version.
+/// </remarks>
+public static class KafkaSecurityV2Helper
 {
-    internal static string Source => Version2Source;
-
-    private const string Version2Source =
+    /// <summary>
+    /// The complete, frozen source of the <c>KafkaSecurity_V2_Helpers</c> static class.
+    /// </summary>
+    /// <remarks>
+    /// Splice this constant into <see cref="CsxFragment.RequiredHelpers"/> and call
+    /// <c>KafkaSecurity_V2_Helpers.ConfigureClient</c> from the emitted statement block.
+    /// The provider must contribute the <c>Confluent.Kafka</c> assembly through
+    /// <see cref="ICompileReferenceContributor"/>. The assembler deduplicates identical
+    /// copies from Core and custom providers while allowing the legacy helper to coexist.
+    /// </remarks>
+    public const string Source =
         "static class KafkaSecurity_V2_Helpers\n" +
         "{\n" +
         "    /// <summary>\n" +

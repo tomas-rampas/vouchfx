@@ -104,6 +104,48 @@ public sealed class KafkaTlsEmbedderDiagnosticTests
         }
     }
 
+    [Theory]
+    [InlineData("tls-passphrase")]
+    [InlineData("tls-full-pair")]
+    [InlineData("unknown-profile")]
+    [InlineData("mtls-passphrase")]
+    public async Task PublicV2Source_RefusesWithProfileSpecificDiagnosticPriority(string fault)
+    {
+        var realSecurity = SecurityConfigurationAccessor.Build(PassphraseOnlyAst(),
+            Path.GetTempPath(), NullSecretAccessor.Instance, pathDisclosures: null);
+        try
+        {
+            var profile = fault == "unknown-profile" ? "future.sasl" : fault == "mtls-passphrase" ? "mtls" : "tls";
+            var material = new ProbeMaterial(fault == "tls-full-pair",
+                fault == "tls-passphrase" ? realSecurity.For("broker")!.Certificates : null);
+            var security = new StubAccessor(profile, material);
+            var fragment = new CsxFragment(Array.Empty<string>(), new[] { KafkaSecurityV2Helper.Source },
+                "{ KafkaSecurity_V2_Helpers.ConfigureClient(Security, \"broker\", new Confluent.Kafka.ProducerConfig()); }");
+            var assembled = CsxAssembler.Assemble(new[] { ("custom", fragment) });
+            var paths = ScenarioRunner.BclReferencePaths().Append(typeof(Confluent.Kafka.ProducerConfig).Assembly.Location);
+            var compiled = RoslynScriptCompiler.CompileOnce(assembled.CsxSource, additionalReferencePaths: paths.ToArray());
+            var globals = new ScriptGlobalVariables(new Dictionary<string, object?>(), new Dictionary<string, object>(),
+                NullSecretAccessor.Instance, Vouchfx.Engine.Abstractions.Webhooks.NullWebhookCaptureAccessor.Instance,
+                Vouchfx.Engine.Abstractions.Traces.NullTraceCaptureAccessor.Instance, stepEvents: null, security);
+            var error = await Assert.ThrowsAsync<SecurityMaterialException>(
+                () => RoslynScriptCompiler.RunIsolatedAsync(compiled, globals));
+            var expected = fault switch
+            {
+                "tls-full-pair" => "presents no client identity",
+                "unknown-profile" => "has no defined Kafka client behaviour",
+                _ => MissingKey,
+            };
+            Assert.Contains(expected, error.Message, StringComparison.Ordinal);
+            Assert.DoesNotContain(UnexpectedCaRead, error.Message, StringComparison.Ordinal);
+            Assert.Equal(fault is "tls-full-pair" or "unknown-profile" ? 0 : 1, material.PasswordReads);
+            Assert.Equal(0, material.CaReads);
+        }
+        finally
+        {
+            (realSecurity as IDisposable)?.Dispose();
+        }
+    }
+
     private static ScenarioAst PassphraseOnlyAst() => new(
         Metadata: null,
         Environment: new EnvironmentSpec(new Dictionary<string, ServiceSpec>
