@@ -24,8 +24,8 @@ It is **not** a unit-test framework and **not** a UI/browser tool.
 > Core supports inline `environment.services` images/projects and managed dependencies,
 > plus owned HTTP/TCP/PostgreSQL [Docker Compose environments](https://vouchfx.io/compose-environments/)
 > through `environment.source`. Other external formats can use the format-neutral registered-driver
-> contract. Fleet validation and follow-up fixes remain in progress — see the
-> [roadmap](https://vouchfx.io/roadmap/).
+> contract. See the [roadmap](https://vouchfx.io/roadmap/) for release checks and
+> planned capabilities.
 
 ## Install
 
