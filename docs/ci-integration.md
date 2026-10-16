@@ -27,16 +27,15 @@ a product defect:
 | **1** | **Fail** — one or more scenarios failed (a genuine defect) | **Always** | `run` only |
 | **2** | UsageError — unrecognised option, bad arguments, missing path | Always | All commands |
 | **3** | EnvironmentError (run) or catalogue error (tools) — unhealthy container, image-pull/seed failure, or incomplete provider metadata | Only when opted in (`run`) — **except** an unconfirmable `security:` declaration, which always breaks CI (see below) | `run` with `--fail-on-env-error`; `list`, `schema`, `validate`, `scaffold`, `plan` on metadata failure |
-| **4** | Inconclusive or refusal — timeout, unmet capture, parse failure or refused test input | Only when opted in for runtime inconclusive; the five unconditional exceptions below never exit 0 | `run` with `--fail-on-inconclusive`, or an unconditional refusal check |
+| **4** | Inconclusive or refusal — timeout, unmet capture or refused test input | Only when opted in for runtime inconclusive; the unconditional checks in [§16.4](01_Technical_Architecture_and_Engineering_Blueprint.md#164-exit-codes) prevent exit 0 | `run` with `--fail-on-inconclusive`, or an unconditional refusal check |
 | **5** | Gaps found — the Planner detected at least one coverage or vocabulary gap AND the caller opted in | Only when opted in | `plan` with `--fail-on-gap` |
 
 The distinction lets CI systems handle each outcome independently: fail the build on a product `Fail`,
 page on-call for `EnvironmentError`, and escalate `Inconclusive` to reliability engineering.
 
-**Unconditional exceptions.** Five checks prevent success whatever the opt-in flags say: parse
-failure, typed authoring/schema/compilation refusal, an Inconclusive suite with no executed scenario,
-provider/engine-surface refusal, and an unconfirmable security declaration. None replaces a code
-already selected: a failing scenario still exits 1 and a gated environment error still exits 3.
+**Unconditional checks.** The authoritative list is in [§16.4](01_Technical_Architecture_and_Engineering_Blueprint.md#164-exit-codes).
+None replaces a code already selected: a failing scenario still exits 1 and a gated environment
+error still exits 3. The sections below explain how the checks behave in CI.
 
 **Any parse failure** — a malformed document, a file the runner cannot read, one over the 1 MiB cap.
 This does not require that *every* scenario failed: one unreadable file beside a suite that otherwise

@@ -541,8 +541,8 @@ vouchfx distinguishes four outcomes (see `docs/01` §12.1 for the full taxonomy)
 |---------|---------|---------|----------------------|
 | **Pass** | All assertions passed. | A test runs end-to-end and all steps succeed. | 0 (success) |
 | **Fail** | An assertion failed — a genuine product defect. | `expect: { status: 200 }` but the API returned 500. | 1 (always breaks CI) |
-| **EnvironmentError** | Infrastructure problem, not a product defect. | Docker daemon unreachable, image pull fails, seed SQL fails. | 0 by default; 3 with `--fail-on-env-error` or an unconfirmable declared security target |
-| **Inconclusive** | The engine could not decide; the assertion may pass if retried. | A RETRY step's polling window expires; a capture expression fails to match. | 0 by default; 4 if `--fail-on-inconclusive`; never 0 on a parse failure, or on an Inconclusive suite refused before anything ran |
+| **EnvironmentError** | Infrastructure problem, not a product defect. | Docker daemon unreachable, image pull fails, seed SQL fails. | 0 by default; 3 with `--fail-on-env-error`; a security refusal follows the [exit-code policy](01_Technical_Architecture_and_Engineering_Blueprint.md#164-exit-codes) |
+| **Inconclusive** | The engine could not decide; the assertion may pass if retried. | A RETRY step's polling window expires; a capture expression fails to match. | 0 by default; 4 with `--fail-on-inconclusive`; refusals follow the [exit-code policy](01_Technical_Architecture_and_Engineering_Blueprint.md#164-exit-codes) |
 
 **Why the distinction?**
 
@@ -556,9 +556,9 @@ An aggregate **Fail** exits 1. Ordinary unrelated or unattributed infrastructure
 
 **Refusals can break CI without the gating flags.** A security declaration raises the default exit when it is refused for its contents, fails confirmation, or its own named readiness, discovery or server-material access fails before confirmation. An unrelated or unattributed topology failure remains opt-in; the presence of a security block does not make every infrastructure failure unconditional. The run prints a security notice on stdout when this rule applies.
 
-Any parse failure, typed authoring refusal, or provider/engine-surface guard refusal also prevents exit 0, including beside a passing sibling. Provider guards cover `Bind`, `Validate`, `Resources`, `HostResources`, `Emit`, `CompileReferenceAssemblies` and fragment assembly. Read the diagnostic before assigning a provider bug: a guard can also expose an engine dispatch or host filesystem failure. A suite whose aggregate is Inconclusive and executed nothing likewise cannot exit 0.
+Parse, authoring, no-execution and provider/engine refusal rules are listed in the [exit-code policy](01_Technical_Architecture_and_Engineering_Blueprint.md#164-exit-codes). Provider guards cover `Bind`, `Validate`, `Resources`, `HostResources`, `Emit`, `CompileReferenceAssemblies` and fragment assembly. Read the diagnostic before assigning a provider bug: a guard can also expose an engine dispatch or host filesystem failure.
 
-These refusal rules preserve a non-zero exit already selected by another policy. An aggregate `Fail` exits 1; the existing aggregate ranking places `EnvironmentError` above `Fail`, so a completed assertion failure beside an unconfirmed secured target's own readiness failure aggregates to `EnvironmentError` and exits 3. A topology failure with no attributable security failure or other refusal still exits 0 by default, or 3 with `--fail-on-env-error`. See [CI integration](ci-integration.md) for the complete policy.
+An aggregate `Fail` exits 1. The existing aggregate ranking places `EnvironmentError` above `Fail`, so a completed assertion failure beside an unconfirmed secured target's own readiness failure aggregates to `EnvironmentError` and exits 3. A topology failure with no attributable security failure or other refusal still exits 0 by default, or 3 with `--fail-on-env-error`. See [CI integration](ci-integration.md) for mixed-result precedence.
 
 **Opt into stricter gating with flags:**
 ```bash

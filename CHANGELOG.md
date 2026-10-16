@@ -21,6 +21,10 @@ to published pre-releases on 2026-07-14.
 
 ## [Unreleased]
 
+### Fixed
+
+- Consolidate the unconditional exit checks in the exit-code reference and correct environment-variable guidance: an unset service or dependency `${env:NAME}` is an authoring refusal that prevents exit 0 regardless of either gating flag, while an explicitly set empty value is preserved. The v1.0.0-rc.6 entry below records historical behavior; use the current exit-code reference for the active policy.
+
 ## [1.0.4] — 2026-10-16
 
 ### Added
