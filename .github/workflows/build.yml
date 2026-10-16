@@ -255,7 +255,7 @@ jobs:
       # for local inspection of a CI run's coverage.
       - name: Upload coverage artefacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage
           path: TestResults/
@@ -307,7 +307,7 @@ jobs:
 
       - name: Upload Windows unit test results
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: windows-unit-test-results
           path: TestResults/Windows/*.trx
@@ -1310,7 +1310,7 @@ jobs:
       # Keep per-project TRX files so database test outcomes remain inspectable.
       - name: Upload Docker integration test results
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: docker-integration-test-results
           path: TestResults/**/*.trx
@@ -1326,7 +1326,7 @@ jobs:
 
       - name: Upload first-attempt owned topology evidence
         if: always() && steps.topology-evidence-preparation.outcome == 'success'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: owned-environment-acceptance
           path: ${{ runner.temp }}/vouchfx-topology-acceptance
@@ -1357,7 +1357,7 @@ jobs:
       # only the safe run/count manifest; missing promised output is an error.
       - name: Upload DCP capture artefact
         if: always() && steps.dcp-captures.outcome == 'success'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: integration-dcp-captures
           path: ${{ runner.temp }}/vouchfx-dcp-captures
@@ -1374,7 +1374,7 @@ jobs:
       # dump is the normal outcome rather than a fault worth warning about.
       - name: Upload crash dumps and blame output
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: integration-crash-dumps
           path: |
@@ -1499,7 +1499,7 @@ jobs:
       # artefact is captured even if a later step in this non-blocking job fails.
       - name: Upload .vsix artefact
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: vscode-vouchfx-vsix
           path: tools/vscode-vouchfx/*.vsix
