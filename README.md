@@ -123,7 +123,10 @@ backoff (Polly v8) — authors never write `Thread.Sleep`.
   re-running.
 - **Frozen public contracts.** Golden files guard the language schema, `Vouchfx.Sdk` provider surface
   and event wire format. Preserve the frozen provider APIs, helper bodies and event fields when
-  extending the environment layer; evolution within v1.x is additive only.
+  extending the environment layer; evolution within v1.x is additive only. The current source
+  offers custom Kafka providers the same versioned helper as Core through
+  [`KafkaSecurityV2Helper.Source`](src/Sdk/Vouchfx.Sdk/README.md#versioned-kafka-security-helper);
+  the legacy helper stays frozen and existing providers need no rebuild to compose with V2.
 - **Topological parity.** The compiled delegate depends *only* on a typed `ScriptGlobalVariables`, and
   orchestration is its sole producer. That one contract is what lets a suite run unchanged on a laptop,
   in CI, or against a remote fabric.

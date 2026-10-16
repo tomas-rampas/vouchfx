@@ -88,6 +88,11 @@ a reference resolving to an empty value are each refused with a diagnostic rathe
 `clientKeyPassword` belongs to `profile: mtls`. A TLS declaration with a passphrase but no
 client identity is refused during pre-topology validation, including direct engine embedding
 that bypasses the document schema; its value is neither resolved nor included in the diagnostic.
+An embedder bypassing both schema and preflight also receives that diagnostic from Core Kafka
+emission or the current source's public `KafkaSecurityV2Helper.Source`. Frozen
+`KafkaSecurityHelper.Source` consumers retain the legacy TLS diagnostic behaviour; they must
+explicitly [adopt the versioned helper](https://github.com/tomas-rampas/vouchfx/blob/main/src/Sdk/Vouchfx.Sdk/README.md#versioned-kafka-security-helper)
+to change it. Existing providers need no rebuild merely to compose with the new generation.
 
 In the current source, engine-provided `Secrets` accessors expose a scenario-local
 `ResolvedSecrets` ledger. Resolutions and explicit `Record` registrations also populate

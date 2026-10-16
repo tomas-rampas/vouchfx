@@ -215,12 +215,14 @@ public sealed class KafkaSecurityWiringTests
         string stepTarget = "events",
         string declaredTarget = "events",
         SecretString? clientKeyPassword = null,
-        string? clientKeyPasswordThrows = null)
+        string? clientKeyPasswordThrows = null,
+        bool publicV2 = false)
     {
+        var helperIdentity = publicV2 ? "KafkaSecurity_V2_Helpers" : "KafkaSecurity_Helpers";
         var csx =
-            KafkaSecurityHelper.Source + "\n" +
+            (publicV2 ? KafkaSecurityV2Helper.Source : KafkaSecurityHelper.Source) + "\n" +
             "var config = new Confluent.Kafka.ProducerConfig { BootstrapServers = \"h:9092\" };\n" +
-            $"KafkaSecurity_Helpers.ConfigureClient(Security, \"{stepTarget}\", config);\n" +
+            $"{helperIdentity}.ConfigureClient(Security, \"{stepTarget}\", config);\n" +
             // TEST-ONLY, AND NOT A PRECEDENT: this parks a ClientConfig that may carry a live
             // ssl.key.password in Vars so the assertions below can read the bag back. A PROVIDER
             // MUST NEVER DO THIS. It is safe only because of two things measured here and true of
@@ -503,6 +505,24 @@ public sealed class KafkaSecurityWiringTests
         Assert.False(HasKey(config, "ssl.ca.location"));
         Assert.False(HasKey(config, "ssl.certificate.location"));
         Assert.False(HasKey(config, "ssl.key.location"));
+    }
+
+    [Theory]
+    [InlineData("tls", false)]
+    [InlineData("mtls", false)]
+    [InlineData("mtls", true)]
+    public async Task PublicV2Source_PreservesTlsMtlsAndAbsentSecurityConfiguration(string profile, bool absent)
+    {
+        var config = await ConfigureAsync(profile, CaPath,
+            profile == "mtls" ? ClientCertPath : null, profile == "mtls" ? ClientKeyPath : null,
+            stepTarget: absent ? "other" : "events", publicV2: true);
+        Assert.Equal(absent ? null : SecurityProtocol.Ssl, config.SecurityProtocol);
+        Assert.Equal(absent ? null : CaPath, config.SslCaLocation);
+        Assert.Equal(!absent && profile == "mtls" ? ClientCertPath : null, config.SslCertificateLocation);
+        Assert.Equal(!absent && profile == "mtls" ? ClientKeyPath : null, config.SslKeyLocation);
+        Assert.False(HasKey(config, "ssl.key.password"));
+        if (absent)
+            Assert.Equal(new KeyValuePair<string, string>("bootstrap.servers", "h:9092"), Assert.Single(config));
     }
 
     // ── Fail-closed arms ──────────────────────────────────────────────────────────────────

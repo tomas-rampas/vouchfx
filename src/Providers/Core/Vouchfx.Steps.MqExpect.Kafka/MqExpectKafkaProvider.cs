@@ -1229,7 +1229,7 @@ public sealed class MqExpectKafkaProvider
             // see that provider's note for why an Emit-time branch on "does this target declare
             // security" is not available (ICompileContext carries no `environment` surface, and
             // the v1 contract is additive-only). CsxAssembler dedupes the two to one copy.
-            Vouchfx.Steps.Kafka.KafkaSecurityEmission.Source,
+            KafkaSecurityV2Helper.Source,
         };
 
         return new CsxFragment(

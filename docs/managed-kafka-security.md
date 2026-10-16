@@ -129,6 +129,12 @@ prevents confirmation produces a non-zero default exit. Unrelated or unattribute
 infrastructure failures retain the opt-in policy described in
 [CI integration](ci-integration.md).
 
+Custom Kafka provider authors can use the current source's public
+`KafkaSecurityV2Helper.Source` and emitted `KafkaSecurity_V2_Helpers.ConfigureClient` call.
+The [SDK opt-in guide](https://github.com/tomas-rampas/vouchfx/blob/main/src/Sdk/Vouchfx.Sdk/README.md#versioned-kafka-security-helper)
+explains the Confluent compile reference and frozen legacy generation's diagnostic limit.
+Existing providers need no rebuild merely to coexist with it.
+
 The suite aggregate still ranks `EnvironmentError` above `Fail`. For example, a completed
 assertion failure beside the declared broker's own unconfirmed readiness failure aggregates
 to `EnvironmentError` and exits 3. A suite whose aggregate remains `Fail` exits 1.

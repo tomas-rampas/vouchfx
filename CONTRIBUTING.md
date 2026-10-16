@@ -14,6 +14,14 @@ vouchfx is built on a **compile-time, source-level plugin model** — there is n
 <PackageReference Include="Vouchfx.Sdk" Version="1.0.0" />
 ```
 
+**Kafka security emission.** The current source exposes `KafkaSecurityV2Helper.Source` for
+custom providers to share Core's versioned helper. Follow the
+[SDK opt-in example](src/Sdk/Vouchfx.Sdk/README.md#versioned-kafka-security-helper): update the
+helper and emitted call together, contribute Confluent.Kafka compile references, and rebuild only
+the provider opting in. Existing providers remain compatible without a rebuild; unchanged
+`KafkaSecurityHelper.Source` consumers keep the legacy diagnostics. Never edit a shipped helper
+generation's source or reuse its identity for different bytes.
+
 **Use the worked example as a template.** The repository contains [`examples/Example.Steps.Echo`](examples/Example.Steps.Echo) — a complete worked example that walks you through implementing a provider end-to-end, with a friction log and authoring journey documented in its README. [`Example.Steps.Hello`](examples/Example.Steps.Hello) is an even more minimal template: a non-Docker provider that emits a message and asserts it equals a constant, explicitly designed as a copyable skeleton. Start with Echo to see the full journey; copy Hello if you want to build from an ultra-minimal scaffold.
 
 ### The Step Type Model

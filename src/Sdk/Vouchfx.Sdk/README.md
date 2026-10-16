@@ -69,7 +69,34 @@ and (if the step needs infrastructure) `IResourceContributor<TModel>` for your m
 - Cross-step state passes **only** through the `Vars` global.
 
 The **v1 interface contract is frozen for the v1.x engine series** — evolution is additive
-only, via new optional interfaces.
+only, through compatible optional capabilities and separately named, immutable helper generations.
+
+## Versioned Kafka security helper
+
+The current source adds `KafkaSecurityV2Helper.Source` as an explicit opt-in for custom Kafka
+providers. Core Kafka providers use this same canonical value. To adopt it, put the constant in
+`CsxFragment.RequiredHelpers` and update the emitted call together:
+
+```csharp
+new CsxFragment(
+    Array.Empty<string>(),
+    new[] { KafkaSecurityV2Helper.Source },
+    "{ KafkaSecurity_V2_Helpers.ConfigureClient(Security, \"broker\", new Confluent.Kafka.ProducerConfig()); }");
+```
+
+A provider must also implement `ICompileReferenceContributor` and contribute the
+`Confluent.Kafka` assembly. Substitute the provider's runtime target/configuration in the emitted
+call; never bake certificate paths or passphrases into the script. V2 preserves TLS/mTLS selection
+and diagnoses a passphrase-only `tls` declaration from an embedder bypassing schema validation,
+after checking contradictory client identity. Normal schema validation already forbids that field.
+
+Existing providers need no rebuild to compose with V2. The legacy `KafkaSecurityHelper.Source`
+and its `KafkaSecurity_Helpers` identity remain frozen, including their older diagnostic behaviour.
+Upgrading the SDK or rebuilding unchanged source does not opt a provider in: change the helper
+and call identity, then rebuild only that provider. V2 is also immutable; future behaviour changes
+require a new emitted identity. Identical V2 copies deduplicate across Core and custom providers.
+The constant is inlined, so this opt-in adds no runtime SDK API call; set `MinEngineVersion` from
+the runtime APIs actually used, rather than automatically requiring the SDK's release version.
 
 ## Status
 
