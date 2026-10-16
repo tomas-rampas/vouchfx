@@ -1,4 +1,4 @@
-// Vouchfx.Cli.Tests — ShutdownBackstop tests (vouchfx-mcp#17; security-review MAJOR-1 fix). No
+// Vouchfx.Cli.Tests — ShutdownBackstop tests (vouchfx-mcp#17). No
 // Docker, no Console, no real Environment.Exit.
 //
 // ShutdownBackstop is the wall-clock force-exit backstop the stdin-EOF graceful-shutdown seam

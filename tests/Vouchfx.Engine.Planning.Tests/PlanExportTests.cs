@@ -173,7 +173,7 @@ public sealed class PlanExportTests
 
     // ── EDGE-001 / REQ-009: every declared suite and step is reported never-run ────────
     //
-    // MAJOR fix-round: this exact acceptance criterion — "an absent event history reports
+    // This exact acceptance criterion — "an absent event history reports
     // EVERY declared suite and step as never-run" — was never actually asserted anywhere in
     // this test suite. The deferral this file's own header used to record ("exercised once
     // T2 lands, in T6's acceptance suite") was never picked up once T2 landed: a grep for
@@ -261,7 +261,7 @@ public sealed class PlanExportTests
         Assert.True(report.Inventory.UnmatchedObservations > 0);
     }
 
-    // ── M2 regression (fix-round) ───────────────────────────────────────────────
+    // ── Regression ───────────────────────────────────────────────
     // A scenario-started event carrying a `file` that resolves under the analysed root but
     // no longer exists on disk is a REQ-008 rule-2 renamed-file ambiguity. Both PlanInputs.cs
     // and the frozen PlanReportDocument.cs XML docs say UnmatchedObservations excludes
@@ -278,7 +278,7 @@ public sealed class PlanExportTests
         Assert.Equal(0, report.Inventory.UnmatchedObservations);
     }
 
-    // ── NEW-1 regression (fix-round-2) ──────────────────────────────────────────
+    // ── Regression ──────────────────────────────────────────
     // An oversized event-history file is a configuration problem, not corrupt data — it must
     // throw PlanInputException (loud, EDGE-009's philosophy) rather than being silently
     // folded into SkippedEventLines, which is frozen documentation for a LINE count and would
@@ -309,7 +309,7 @@ public sealed class PlanExportTests
         }
     }
 
-    // ── MINOR fix-round: threshold validation ───────────────────────────────────
+    // ── threshold validation ───────────────────────────────────
     // PlanThresholds and the four CLI options previously accepted any int — `--stale-days -1`
     // would silently mark every step with any observed history as stale (a negative "more
     // than N days" test is vacuously true), and a count threshold of 0 degenerates the same

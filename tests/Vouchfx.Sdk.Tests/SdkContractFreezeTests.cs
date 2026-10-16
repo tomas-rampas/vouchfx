@@ -222,8 +222,8 @@ public sealed class SdkContractFreezeTests
     [Fact]
     public void DefaultImplementedInterfaceMembers_AreExactlyTheKnownSet()
     {
-        // NonPublic and Static are in the census flags deliberately (m4 — gatekeeper m3 /
-        // security NIT-2, fix round five). The census once read Public | Instance | DeclaredOnly,
+        // NonPublic and Static are in the census flags deliberately (
+        // to cover every member). The census once read Public | Instance | DeclaredOnly,
         // which left the same blind spot this gate exists to close, one axis over: a
         // `static virtual` / `static abstract` member, or a non-public default implementation,
         // added to a v1 interface would escape BOTH the byte-for-byte golden (whose emitter takes

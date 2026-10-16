@@ -1491,7 +1491,7 @@ public sealed class EnvironmentSchemaTests
     }
 
     // ── Part 5: environment.services/dependencies 'security' block container
-    // enrichment (REQ-002; gatekeeper NOTE-1) ───────────────────────────────
+    // enrichment (REQ-002) ───────────────────────────────
 
     /// <summary>
     /// A 'security' block present but missing its required 'endpoint' must name the
@@ -1502,7 +1502,7 @@ public sealed class EnvironmentSchemaTests
     /// own missing fields, a dependency's missing 'type', ...).
     /// </summary>
     /// <remarks>
-    /// Declared on a KAFKA dependency (M1, second peer-review round): a 'security' block on
+    /// Declared on a KAFKA dependency: a 'security' block on
     /// any other dependency kind is now rejected outright, and
     /// <c>SchemaErrorCollector.SuppressErrorsInsideForbiddenContainer</c> correctly subsumes
     /// this 'required' finding into that one — <c>required</c> reports against the CONTAINER
@@ -1554,7 +1554,7 @@ public sealed class EnvironmentSchemaTests
     [Fact]
     public void Dependency_Security_UnknownKey_NamesTheDependency()
     {
-        // A KAFKA dependency (M1, second peer-review round): on any other kind the whole
+        // A KAFKA dependency: on any other kind the whole
         // 'security' block is now rejected and SuppressErrorsInsideForbiddenContainer subsumes
         // this nested finding into that one — leaving nothing at the pinned location. Kafka
         // accepts the block, so this keeps pinning REQ-020's closure and nothing else.
@@ -1611,7 +1611,7 @@ public sealed class EnvironmentSchemaTests
             e.Message.Contains("on service 'app'", System.StringComparison.Ordinal));
     }
 
-    // ── Part 5b: honest nested attribution below the security object (critic MINOR-6) ──
+    // ── Part 5b: honest nested attribution below the security object ──
     //
     // The three tests above pin the boundary's "on" side: a 'required'/'additionalProperties'
     // violation AT the security object itself (missing 'endpoint') or directly ON it (an
@@ -1625,7 +1625,7 @@ public sealed class EnvironmentSchemaTests
     /// <summary>
     /// A serverArtifacts[] entry missing its required 'source' names the owning
     /// dependency with "in" (not "on") and locates the specific entry via the dotted
-    /// sub-path — the worked example from the critic's own MINOR-6 finding.
+    /// sub-path — the nested-attribution worked example.
     /// </summary>
     [Fact]
     public void Dependency_Security_ServerArtifactMissingSource_NamesTheDependencyWithSubPath()
@@ -1704,7 +1704,7 @@ public sealed class EnvironmentSchemaTests
     // because it is a NARROWING (REQ-021's own rationale): added after 1.0 it would reject
     // suites that validated before.
     //
-    // M1 (second peer-review round) TIGHTENED this from a 'profile'-pinned-to-'tls' clause
+    // This was TIGHTENED from a 'profile'-pinned-to-'tls' clause
     // to an outright block rejection. The old shape legalised 'profile: tls' on kinds
     // nothing in this release stages a TLS client connection for, so the engine-side
     // REQ-005 probe would confirm the endpoint speaks TLS while the step's own client
@@ -1720,7 +1720,7 @@ public sealed class EnvironmentSchemaTests
     /// corpus gate's own coverage.
     /// </summary>
     /// <remarks>
-    /// The pinned location moved one segment shallower in M1 — from
+    /// The pinned location moved one segment shallower with the schema tightening — from
     /// <c>.../security/profile</c> (the old <c>const</c> pin) to <c>.../security</c> (the
     /// block the clause now rejects) — and the message deliberately no longer names the
     /// offending PROFILE, because the profile is not what is wrong: no profile is wired for
@@ -1824,13 +1824,13 @@ public sealed class EnvironmentSchemaTests
     /// author sees, so a partial regression that re-legalised one kind is caught.
     /// </summary>
     /// <remarks>
-    /// m2 + M1 (second peer-review round). This theory previously asserted the OPPOSITE —
+    /// This theory previously asserted the OPPOSITE —
     /// that 'tls' stayed valid on every kind — and its docstring drew a conclusion the
     /// fixtures never supported: "proven to be 'mtls'-specific, not an accidental blanket
     /// restriction". It proved only that 'tls' was legal everywhere; nothing here ever
     /// exercised a THIRD profile, which the old clause rejected on these kinds just as
     /// firmly as 'mtls' (the schema's own $comment and the CHANGELOG both said so at the
-    /// time — this test contradicted them). M1 then removed the distinction entirely: no
+    /// time — this test contradicted them). The schema tightening then removed the distinction entirely: no
     /// profile is legal on a non-kafka dependency at 1.0, so the inverted assertion below is
     /// now the accurate one.
     /// </remarks>
@@ -1838,7 +1838,7 @@ public sealed class EnvironmentSchemaTests
     [InlineData("postgres")]
     [InlineData("mongodb")]
     [InlineData("rabbitmq")]
-    // NIT-1 (peer review, fix round 3): 'elasticsearch' and 'azureservicebus' are the two
+    // 'elasticsearch' and 'azureservicebus' are the two
     // vowel-initial kinds, and are here so the message's own article agreement is exercised
     // rather than reasoned about. The message names the kind without an article at all —
     // "dependency kind 'elasticsearch'" — because the article cannot agree with a value that
@@ -1903,7 +1903,7 @@ public sealed class EnvironmentSchemaTests
     /// The narrowing is a WHOLE-BLOCK rejection, not a rejection of the 'profile' field:
     /// every other field an author might have written inside the block is rejected with it,
     /// and — the point this pins — with EXACTLY ONE error, not one per field. See
-    /// <c>SchemaErrorCollector.SuppressErrorsInsideForbiddenContainer</c> (H-A).
+    /// <c>SchemaErrorCollector.SuppressErrorsInsideForbiddenContainer</c>.
     /// </summary>
     [Fact]
     public void Dependency_Security_OnNonKafkaKind_YieldsExactlyOneError_WhateverIsInsideTheBlock()
@@ -1938,7 +1938,7 @@ public sealed class EnvironmentSchemaTests
     }
 
     /// <summary>
-    /// MAJOR-1 (peer review, fix round 3) — the SURVIVES half of the pair above.
+    /// The SURVIVES half of the pair above.
     /// <c>SchemaErrorCollector.SuppressErrorsInsideForbiddenContainer</c> is the widest
     /// suppression rule in that class: it drops EVERY error at or below any location a
     /// boolean-<c>false</c> subschema rejected. Every other test for it asserts
@@ -2021,9 +2021,9 @@ public sealed class EnvironmentSchemaTests
     }
 
     /// <summary>
-    /// SEC-4 (security review, fix round 3): both author-controlled values this message
+    /// Both author-controlled values this message
     /// interpolates — the dependency's NAME and its declared <c>type</c> — are bounded at
-    /// <c>SchemaErrorCollector</c>'s own 200-character display limit. M1 made this the message an
+    /// <c>SchemaErrorCollector</c>'s own 200-character display limit. The schema tightening made this the message an
     /// author hits first for a misplaced <c>security</c> block, and neither value has a length
     /// limit of its own: the name is a YAML key, and the kind is whatever <c>type</c> holds,
     /// which on this exact path has already failed its own closed enum and so may be arbitrary.
@@ -2034,7 +2034,7 @@ public sealed class EnvironmentSchemaTests
     /// clause's <c>not: { const: "kafka" }</c> condition, so the <c>then</c> branch fires and the
     /// block is rejected with the long value in hand. The enum violation on <c>type</c> is a
     /// SIBLING of the forbidden container, not a descendant, so it survives alongside — asserted
-    /// here too, because it is the same containment property MAJOR-1's survivorship test pins.
+    /// here too, because it is the same containment property the survivorship test above pins.
     /// </remarks>
     [Fact]
     public void Dependency_Security_ForbiddenMessage_BoundsTheDependencyNameAndKind()
@@ -2375,7 +2375,7 @@ public sealed class EnvironmentSchemaTests
     }
 
     /// <summary>
-    /// MINOR-2(a) (peer review, fix round 4): two NESTED forbidden containers BOTH survive
+    /// Two NESTED forbidden containers BOTH survive
     /// <c>SchemaErrorCollector.SuppressErrorsInsideForbiddenContainer</c> — the outer one does
     /// not subsume the inner one, because every forbidden-shape error short-circuits into the
     /// survivor list before the containment test runs.
@@ -2424,7 +2424,7 @@ public sealed class EnvironmentSchemaTests
     }
 
     /// <summary>
-    /// MAJOR-1 (peer review, fix round 4): the <c>dependencyKind is null</c> branch of
+    /// The <c>dependencyKind is null</c> branch of
     /// <c>SchemaErrorCollector.FormatForbiddenPropertyError</c>'s <c>security</c> case is
     /// reachable, and carries the same corrected text as the qualified branch.
     /// </summary>

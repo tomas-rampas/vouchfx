@@ -369,7 +369,7 @@ public sealed class MqRabbitmqDockerTests
     }
 
     /// <summary>
-    /// Regression test for the drain-loop head-of-queue starvation bug (B1).
+    /// Regression test for the drain-loop head-of-queue starvation bug.
     /// Seeds a NON-MATCHING message first, then the MATCHING message.  The drain
     /// loop must advance past the non-matching head to find the matching message
     /// behind it and yield <see cref="Verdict.Pass"/>.

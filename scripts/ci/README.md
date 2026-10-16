@@ -1,12 +1,16 @@
 # Workflow and Docker CI checks
 
 The blocking `workflow-contract` job lints every workflow and executes the literal
-pre-pull script from `.github/workflows/build.yml`. Tests substitute only its image
-list, with fixture Docker, timeout and sleep commands; no containers or images are
-changed. Source extraction must agree byte-for-byte with the parsed YAML block.
-Retry, classification, registry backoff, tally and workflow-command fencing checks
-fail when behaviour changes. Negative mutation controls confirm those checks detect
-a lost fatal exit and a changed YAML representation.
+pre-pull script from `.github/workflows/build.yml` and the prewarm script from
+`.github/workflows/vouchfx-run.yml`. Source extraction must agree byte-for-byte with
+the parsed YAML blocks. The pre-pull tests substitute its image-list boundary; the
+prewarm tests bind `PREWARM_IMAGES` as the workflow does. Both use fixture Docker
+commands, so no containers or images are changed. The pre-pull checks cover retry,
+classification, registry backoff and tally; the prewarm checks cover whitespace
+trimming, unmatched quotes, annotation escaping and log fencing. Negative mutation
+controls confirm the pre-pull checks detect a lost fatal exit and changed YAML
+representation, and that the prewarm fence check detects a missing newline before
+the resume command.
 
 The release contract also requires exactly one public publishing trigger
 (`release: published`) and preserves the non-publishing manual dispatch. It runs

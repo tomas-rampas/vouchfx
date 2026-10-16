@@ -243,7 +243,9 @@ at the paragraph above would be contradicted by their own terminal. It is printe
 also reaches the JSON Lines event stream as a `transport-notice` record — so the announcement
 survives into an archive, not just a console. **Its reach is `--events` and `--events-stream`
 only:** the JUnit and HTML renderers ignore an event type they do not recognise, and `--watch` is
-wired to no report artefact whatever.
+terminal-only: combining it with `--events` (or `--json`), `--events-stream`, `--junit` or
+`--html` is refused as a usage error (exit 2) before discovery or startup. Remove the output
+options to watch, or remove `--watch` to write reports.
 
 **What is absent in that state is engine-configured trust, not verification**, and conflating the
 two in either direction is wrong. vouchfx contributes no trust anchor, pins no peer, presents no

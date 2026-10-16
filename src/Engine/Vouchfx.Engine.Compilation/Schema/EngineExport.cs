@@ -355,7 +355,7 @@ public static class EngineExport
     // (script.csharp's code/file; mq-publish.azureservicebus's
     // queue/topic). anyOf → StepCatalogueEntry.AtLeastOneOfGroups
     // (mq-expect.azureservicebus's expectPayloadContains/expectProperties —
-    // this ALSO fixes the corollary M4 finding: relying on
+    // this ALSO fixes the corollary defect: relying on
     // StepCatalogueEntry.RequiredFields alone for that type
     // previously under-specified a minimal document — target plus
     // nothing else — that the composed schema rejects). Either fires
@@ -364,7 +364,7 @@ public static class EngineExport
     // ordinary required entries too).
     // Internal correction history (not XML documentation):
     // Degrade-don't-fabricate (mirrors SchemaErrorCollector's own
-    // HasUnattributableBranch guard, M1-r): when any branch's
+    // HasUnattributableBranch guard): when any branch's
     // required does NOT name exactly one field and nothing else —
     // mq-expect.azureservicebus's
     // oneOf: [{required:[queue]}, {required:[topic,subscription]}], a
@@ -375,7 +375,7 @@ public static class EngineExport
     // subscription"). Those field names fall back to plain
     // required/properties handling exactly as before this fix.
     // The qualifying shape is intentionally narrow — code, not merely this
-    // comment, enforces it (gatekeeper finding #4): a branch qualifies only
+    // comment, enforces it: a branch qualifies only
     // when it is EXACTLY {"required": ["<name>"]} and nothing
     // else (see TryReadSingleRequiredGroupNames), the safer
     // direction for a synthesis that other tooling trusts verbatim.
@@ -387,7 +387,7 @@ public static class EngineExport
     // RequiredFields: [], an outright lie (an agent/editor reading the
     // catalogue would believe an empty step body validates).
     // Internal correction history (not XML documentation):
-    // B1 correction (gatekeeper, proven against the built CLI): the
+    // Correction proven against the built CLI: the
     // first cut of this fix synthesised a PROSE string ("exactly one of:
     // code, file") into StepCatalogueEntry.RequiredFields —
     // but that list is consumed by SuiteScaffolder as bare field
@@ -508,10 +508,10 @@ public static class EngineExport
             // Stable ordinal sort for goldens / diffs.
             allProperties.Sort(StringComparer.Ordinal);
 
-            // T1 (feat/fragment-completeness, B1-corrected): a root-level oneOf/anyOf
+            // T1 (feat/fragment-completeness): a root-level oneOf/anyOf
             // whose every branch names exactly one required field, and nothing else,
             // becomes a typed group — see the method's own remarks for why (script.csharp's
-            // real bug, and the B1 prose-in-a-names-list defect this replaces) and the
+            // real bug, and the prose-in-a-names-list defect this replaces) and the
             // degrade-don't-fabricate guard for mixed-cardinality branches
             // (mq-expect.azureservicebus's real shape).
             var exactlyOneOfNames = TryReadSingleRequiredGroupNames(root, "oneOf");

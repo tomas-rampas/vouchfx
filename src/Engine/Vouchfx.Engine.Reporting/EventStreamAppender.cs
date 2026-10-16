@@ -221,7 +221,7 @@ public sealed class EventStreamAppender : IDisposable, IAsyncDisposable
     }
 
     /// <summary>
-    /// TEST-ONLY seam (issue #258 peer-review follow-up): closes the underlying file
+    /// TEST-ONLY seam (issue #258 follow-up): closes the underlying file
     /// <see cref="Stream"/> out from under this appender WITHOUT going through
     /// <see cref="Dispose"/>, so a test can deterministically simulate a mid-run write failure
     /// (destination deleted, disk removed, handle revoked) without needing a genuinely

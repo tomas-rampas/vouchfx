@@ -43,9 +43,9 @@ public sealed class SuiteScaffolderTests
             new DbAssertPostgresProvider(),
         });
 
-    // ── B1 crown deliverable (gatekeeper): all-25-registered-types scaffold round-trip ──
+    // ── all-25-registered-types scaffold round-trip ──
     //
-    // The reason B1 (prose synthesised into RequiredFields breaking SuiteScaffolder's
+    // The reason the defect (prose synthesised into RequiredFields breaking SuiteScaffolder's
     // YAML emission) could never recur: for EVERY type in the full Core registry,
     // scaffold a minimal document from nothing but the catalogue-driven intent, then
     // run it through DocumentValidator against the SAME composed schema — the actual

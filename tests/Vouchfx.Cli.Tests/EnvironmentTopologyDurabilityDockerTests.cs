@@ -572,6 +572,28 @@ public sealed class EnvironmentTopologyDurabilityDockerTests
     private sealed record OwnedDcpResidual(string Identity, bool OwnershipProven, int? CliPid, long? CliBirthUtcTicks,
         string? Profile, LinuxProcessState? LinuxState, string Detail);
 
+    internal static string[] ReadDcpSnapshot(Func<Process[]> enumerate, Func<Process, string?> readIdentity)
+    {
+        // Enumeration or a name/birth read can race an exiting process. Retry the
+        // entire snapshot; never publish a partial or fabricated empty inventory.
+        for (var attempt = 0; ; attempt++)
+        {
+            var processes = Array.Empty<Process>();
+            try
+            {
+                processes = enumerate();
+                return processes.Select(readIdentity).Where(identity => identity is not null)
+                    .Select(identity => identity!).Order(StringComparer.Ordinal).ToArray();
+            }
+            catch (System.ComponentModel.Win32Exception) when (attempt < 2) { }
+            finally
+            {
+                // Dispose unvisited candidates too if an earlier identity read failed.
+                foreach (var process in processes) process.Dispose();
+            }
+        }
+    }
+
     private sealed class OwnedFixture : IAsyncDisposable
     {
         private readonly string _sentinel = "vouchfx-durability-sentinel-" + Guid.NewGuid().ToString("N");
@@ -912,20 +934,17 @@ public sealed class EnvironmentTopologyDurabilityDockerTests
         }
         private static string[] DcpIdentities()
         {
-            var identities = new List<string>();
-            foreach (var process in Process.GetProcesses())
+            return ReadDcpSnapshot(Process.GetProcesses, process =>
             {
-                using (process)
+                try
                 {
-                    try
-                    {
-                        if (process.ProcessName is "dcp" or "dcpctrl") identities.Add(process.Id.ToString(CultureInfo.InvariantCulture) + ":" +
-                            process.StartTime.ToUniversalTime().Ticks.ToString(CultureInfo.InvariantCulture));
-                    }
-                    catch (InvalidOperationException) { }
+                    return process.ProcessName is "dcp" or "dcpctrl"
+                        ? process.Id.ToString(CultureInfo.InvariantCulture) + ":" +
+                            process.StartTime.ToUniversalTime().Ticks.ToString(CultureInfo.InvariantCulture)
+                        : null;
                 }
-            }
-            return identities.Order(StringComparer.Ordinal).ToArray();
+                catch (InvalidOperationException) { return null; }
+            });
         }
 
         private static async Task<string[]> ListAsync(string kind, CancellationToken ct)

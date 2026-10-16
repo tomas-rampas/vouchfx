@@ -17,14 +17,14 @@
 //   Rewrites Golden/plan-report-document.v1.json from the freshly-serialised fixture.
 //   Review the diff (must be additive only), then commit.
 //
-// MINOR fix-round: every `Detail` string below is hand-derived (not pipeline-generated —
+// Every `Detail` string below is hand-derived (not pipeline-generated —
 // this file still never calls a real analyser) to match the CURRENT wording each analyser's
 // own template produces for the literal values chosen here (suite paths, step ids, counts,
 // thresholds) — so this fixture doubles as a real, trustworthy reference sample of the
 // report's prose, not only its shape. This is NOT enforced by any test (a future analyser
 // wording change will not fail this gate — only a shape/token change will, which remains this
 // file's actual freeze), so keeping it in sync is a courtesy to future readers, not a
-// guarantee. Same treatment already applied, before this fix-round, to
+// guarantee. Same treatment already applied, before this correction, to
 // UnmappableDependencies[0].Reason below (see its own comment) — this generalises that same
 // distinction (frozen SHAPE vs. illustrative-but-real prose) to every Detail string.
 
@@ -54,7 +54,7 @@ public sealed class PlanReportContractFreezeTests
         var findings = new List<PlanFinding>
         {
             new(
-                // MAJOR fix-round: Suite is the declaring suite, never null, for this kind —
+                // Suite is the declaring suite, never null, for this kind —
                 // VocabularyGapAnalyser now scopes every dependency-missing-step-type /
                 // service-missing-http-step finding to the suite that declares the
                 // dependency/service (see that analyser's own header comment).
@@ -84,7 +84,7 @@ public sealed class PlanReportContractFreezeTests
                 Detail: "Dependency 'events' is targeted by a declared step but by no step of an asserting family.",
                 RelatedSuites: Array.Empty<string>()),
             new(
-                // MAJOR fix-round: Suite is the declaring suite, never null — see the same
+                // Suite is the declaring suite, never null — see the same
                 // note on the DependencyMissingStepType finding above.
                 Kind: PlanFindingKinds.ServiceMissingHttpStep,
                 Suite: "checkout.e2e.yaml",
@@ -109,7 +109,7 @@ public sealed class PlanReportContractFreezeTests
                 Ambiguous: false,
                 AmbiguityReason: null,
                 History: new PlanStepHistory(3, 2, 0, 0, 2, lastObserved, 1),
-                // MINOR fix-round: kept byte-for-byte in sync with HistoryHealthAnalyser's
+                // Kept byte-for-byte in sync with HistoryHealthAnalyser's
                 // real template (hand-derived from the source, not pipeline-generated — see
                 // the class remarks below) rather than a loosely-paraphrased stand-in, so this
                 // golden is a genuinely usable reference sample for the wire shape AND the
@@ -169,7 +169,7 @@ public sealed class PlanReportContractFreezeTests
                 Detail: "Step 'create-order' (http.rest) in suite 'checkout.e2e.yaml' was last observed 45 day(s) before the newest event in the analysed history (stale threshold: 30 day(s)).",
                 RelatedSuites: Array.Empty<string>()),
             new(
-                // MAJOR fix-round: Suite is null (never a bound suite path) — rule 1 fires
+                // Suite is null (never a bound suite path) — rule 1 fires
                 // only when ZERO declared suites match a given scenarioId, so there is no
                 // single suite this finding is "of"; the OLD "checkout.e2e.yaml" binding here
                 // was not merely arbitrary, it was IMPOSSIBLE (PlanFinding.Suite's own XML
@@ -187,17 +187,17 @@ public sealed class PlanReportContractFreezeTests
                 Ambiguous: true,
                 AmbiguityReason: PlanAmbiguityReasons.ScenarioIdCollision,
                 History: null,
-                // MINOR fix-round: "2 suites" (numeral), matching CoverageGapAnalyser's real
+                // "2 suites" (numeral), matching CoverageGapAnalyser's real
                 // template exactly ("{collision.SuitePaths.Count} suites") — the golden
                 // previously spelled it out as "two suites", which no real report would ever
                 // produce.
                 Detail: "Scenario id 'checkout-flow' is declared by 2 suites: checkout.e2e.yaml, checkout-v2.e2e.yaml.",
                 RelatedSuites: new[] { "checkout.e2e.yaml", "checkout-v2.e2e.yaml" }),
             new(
-                // Fix-round B2: an 11th canonical finding is REQUIRED (not decorative) —
+                // An 11th canonical finding is REQUIRED (not decorative) —
                 // before this, "history-references-missing-file" appeared in NO golden
                 // anywhere, so a typo in that frozen token could not fail any CI gate.
-                // MAJOR fix-round: Suite is null for the same reason as the collision finding
+                // Suite is null for the same reason as the collision finding
                 // above — a rule-2 renamed-file ambiguity means ZERO declared suites matched
                 // at all, so there is no suite to bind. RelatedSuites also stays empty: unlike
                 // a collision, there is no colliding SUITE here either (just a missing file
@@ -212,7 +212,7 @@ public sealed class PlanReportContractFreezeTests
                 Ambiguous: true,
                 AmbiguityReason: PlanAmbiguityReasons.HistoryReferencesMissingFile,
                 History: null,
-                // MINOR fix-round: the golden previously omitted the ": '<path>'" suffix
+                // The golden previously omitted the ": '<path>'" suffix
                 // CoverageGapAnalyser's real template always appends
                 // ($"...on disk: '{renamed.RecordedFile}'.") — added here so the golden
                 // matches the real shape, not an abridged paraphrase of it.
@@ -242,10 +242,10 @@ public sealed class PlanReportContractFreezeTests
             Services: new[] { "api" },
             Dependencies: new[]
             {
-                // MAJOR fix-round: Suite is required (REQ-011 additive) — both dependencies
+                // Suite is required (REQ-011 additive) — both dependencies
                 // here are declared inside checkout.e2e.yaml's own environment section.
                 new PlanDependencyEntry("events", "kafka", "checkout.e2e.yaml"),
-                // Fix-round: legacy-cache is the dependency the UnmappableDependencies entry
+                // legacy-cache is the dependency the UnmappableDependencies entry
                 // below refers to. BuildInventory derives unmappable entries BY FILTERING
                 // dependencies (PlanPipeline.BuildInventory), so every unmappable entry is
                 // necessarily also a Dependencies entry — omitting it here made the fixture
@@ -261,14 +261,14 @@ public sealed class PlanReportContractFreezeTests
             SkippedEventLines: 2,
             UnmatchedObservations: 1,
             UnanalysableSuites: new[] { new PlanUnanalysableSuite("bad.e2e.yaml", "Parse / AST error: a step is missing the required 'id' field.") },
-            // Fix-round-2 NEW-6: this Reason string is a hand-written literal, NOT derived by
+            // This Reason string is a hand-written literal, NOT derived by
             // calling DependencyKindStepMap.DescribeUnmappable — it happens to match that
             // method's current case-(b) output, but a future rewording there would not be
             // caught here (Reason is frozen as prose, not as a token; see PlanFindingKinds'
             // freeze for what IS token-frozen). That divergence is acceptable: this fixture's
             // job is pinning the wire SHAPE (a Reason property exists, is a string, sits at
             // this JsonPropertyOrder), not pinning DescribeUnmappable's exact wording.
-            // MAJOR fix-round: Suite is required (REQ-011 additive) — see PlanDependencyEntry.Suite's remarks.
+            // Suite is required (REQ-011 additive) — see PlanDependencyEntry.Suite's remarks.
             UnmappableDependencies: new[] { new PlanUnmappableDependency("legacy-cache", "cassandra", "Dependency kind is not recognised by the engine's dependency-kind vocabulary.", "refund.e2e.yaml") });
 
         return new PlanReportDocument(
@@ -290,7 +290,7 @@ public sealed class PlanReportContractFreezeTests
             var goldenPath = Path.Combine(
                 repoRoot, "tests", "Vouchfx.Engine.Planning.Tests", "Golden",
                 "plan-report-document.v1.json");
-            // N7: write \n-only line endings regardless of host OS, so a checkout on a
+            // Write \n-only line endings regardless of host OS, so a checkout on a
             // different platform (or a future run on this one) never introduces a spurious
             // CRLF/LF diff against the committed golden.
             File.WriteAllText(goldenPath, Normalise(actual));
@@ -306,7 +306,7 @@ public sealed class PlanReportContractFreezeTests
     {
         var golden = ReadGolden();
 
-        // B2: all three frozen wire-token families — a finding kind, target kind, or
+        // All three frozen wire-token families — a finding kind, target kind, or
         // ambiguity reason typo'd by a future analyser must fail this gate. Before this fix,
         // PlanTargetKinds/PlanAmbiguityReasons did not exist as named constants at all, and
         // "history-references-missing-file" appeared in NO golden, so nothing could catch it.

@@ -109,11 +109,11 @@ internal static class SuiteSetLoader
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
-                // MINOR fix-round (reviewed question, resolved: harden rather than accept
+                // Harden rather than accept
                 // parity with ScenarioDiscovery.Discover, which has this identical gap — a
                 // raw BCL exception escaping this PUBLIC library API's entry point is worse
                 // than parity with an internal CLI helper whose caller already wraps every
-                // call site). SearchOption.AllDirectories walks lazily, so a permission
+                // call site. SearchOption.AllDirectories walks lazily, so a permission
                 // denial or delete race on any subdirectory beneath an otherwise-accessible
                 // root surfaces here, not at the top-level Directory.Exists check above.
                 // Wrapped as PlanInputException (never the raw type) so BuildPlan's contract
@@ -121,8 +121,8 @@ internal static class SuiteSetLoader
                 // for this path too; never silently treated as "zero suites discovered"
                 // (EDGE-009's message), which would misleadingly suggest an empty folder
                 // rather than a folder this process could not fully walk.
-                // MINOR fix-round (reviewed question, resolved — keep exit 2, but the message
-                // must not read like a bad-argument complaint): '{suitePath}' itself is a
+                // Keep exit 2, but the message
+                // must not read like a bad-argument complaint: '{suitePath}' itself is a
                 // confirmed-valid, existing directory (this catch only fires once
                 // EnumerateFiles has begun walking it), so this is an ENVIRONMENT/
                 // infrastructure fault encountered mid-scan, not a usage mistake about the
@@ -220,7 +220,7 @@ internal static class SuiteSetLoader
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            // Security minor (fix-round): BCL IOException/UnauthorizedAccessException
+            // BCL IOException/UnauthorizedAccessException
             // messages typically embed the file's ABSOLUTE path. Every other field in this
             // report is analysed-root-relative (a shareable artefact must not leak local
             // machine/user path structure), so the exception TYPE is named instead of its
@@ -244,7 +244,7 @@ internal static class SuiteSetLoader
         {
             // Mirrors ScenarioDiscovery.ParseFile: a parse / AST-build failure must not
             // abort the rest of the suite set (EDGE-003), so every exception is captured
-            // here rather than propagated. MINOR fix-round: ex.Message is bounded to
+            // here rather than propagated. ex.Message is bounded to
             // MaxParseErrorMessageChars before it is embedded — see that constant's own
             // remarks for why (a bad step's raw YAML content can otherwise reach the report
             // with no length limit at all).

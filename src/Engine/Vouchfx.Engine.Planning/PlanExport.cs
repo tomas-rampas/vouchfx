@@ -102,7 +102,7 @@ public static class PlanExport
         // folder against a BROKEN registry — the two can never race for the same invocation.
         var loadResult = SuiteSetLoader.Load(request.SuitePath, registry);
 
-        // MINOR fix-round: this call is a FAIL-CLOSED GUARD, not a data source — its return
+        // This call is a FAIL-CLOSED GUARD, not a data source — its return
         // value is intentionally discarded. REQ-005's vocabulary-gap analyser and REQ-007's
         // hand-off-hint validation both classify against the CURRENT registration via
         // StepKindRegistry.TryGet directly (PlanInputs.Registry), never via a parsed

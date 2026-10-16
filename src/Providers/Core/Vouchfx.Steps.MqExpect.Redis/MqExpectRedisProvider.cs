@@ -17,14 +17,14 @@
 // converts a sustained Fail to Inconclusive on timeout (§12.1).  The helper NEVER
 // writes Inconclusive.
 //
-// Shared-stream caution (mirrors mq-expect.nats's FIX M3 constraint):
+// Shared-stream caution (mirrors mq-expect.nats's shared-stream constraint):
 //   mq-expect.redis scans the retained stream on every attempt (XRANGE - + COUNT 10000,
 //   from the start — no MAXLEN trimming is applied by this provider).  Do NOT share a
 //   single redis dependency across scenarios that assert on the same stream key: entries
 //   from prior runs will produce a false Pass.  Use separate dependency declarations per
 //   scenario, or distinct stream names.
 //
-// Scan bound (mirrors mq-expect.nats's MaxMsgs=10000 N7 documented bound exactly):
+// Scan bound (mirrors mq-expect.nats's MaxMsgs=10000 documented bound exactly):
 //   COUNT 10000 caps the single-attempt scan.  If a stream retains more than 10 000
 //   entries, only the first 10 000 (starting from "-", the oldest) are inspected — a
 //   matching entry beyond that offset will not be found.  Authors who need a longer

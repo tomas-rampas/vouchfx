@@ -1228,7 +1228,7 @@ public sealed class HttpRestProvider
         {
             if (ctx.DeclaredDependencies.ContainsKey(model.Target))
             {
-                // M1 fix (fix round 2, narrows REQ-012's literal wording — see
+                // This narrows REQ-012's literal wording (see
                 // specs/authenticated-infrastructure-mtls.md's REQ-012 note): http.rest
                 // resolves 'target' EXCLUSIVELY against declared services
                 // (VarKeys.Service(model.Target), staged only for services — never
@@ -1241,7 +1241,7 @@ public sealed class HttpRestProvider
                     : string.Join(", ", ctx.DeclaredServices.Keys.OrderBy(k => k, StringComparer.Ordinal));
                 errors.Add(
                     $"http.rest: 'target' '{model.Target}' names a dependency declared in " +
-                    "environment.dependencies, which http.rest cannot reach — it resolves " +
+                    "environment.dependencies, which http.rest cannot reach - it resolves " +
                     "'target' only against declared services. Declared services: " +
                     services + ".");
             }
@@ -1270,7 +1270,7 @@ public sealed class HttpRestProvider
         }
         else
         {
-            // SSRF guard (M1): path must be a safe rooted relative reference.
+            // SSRF guard: path must be a safe rooted relative reference.
             // Reject absolute URLs, protocol-relative paths, backslash paths, and
             // paths that do not start with '/' (§security hardening PR #131).
             //

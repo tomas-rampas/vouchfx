@@ -45,8 +45,8 @@
     </AssemblyAttribute>
   </ItemGroup>
 
-  <!-- Security-profile registry seam (authenticated-infrastructure-mtls, slice C — M2 of the
-       second peer-review round).  This project is PACKABLE with GenerateDocumentationFile=true,
+  <!-- Security-profile registry seam (authenticated-infrastructure-mtls, slice C).
+       This project is PACKABLE with GenerateDocumentationFile=true,
        so anything `public` in it ships on NuGet with its XML docs.  The spec's Out-of-scope
        section records that no security-profile extension interface is published until a second
        profile exists to design a frozen abstraction from; ISecurityProfileWiring,

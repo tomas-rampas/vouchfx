@@ -1,5 +1,5 @@
-// Vouchfx.Engine.Planning.Report — PlanAmbiguityReasons (M3 Planner, REQ-008, EDGE-002,
-// fix-round B2). Frozen v1 discriminator tokens for PlanFinding.AmbiguityReason — see
+// Vouchfx.Engine.Planning.Report — PlanAmbiguityReasons (M3 Planner, REQ-008, EDGE-002).
+// Frozen v1 discriminator tokens for PlanFinding.AmbiguityReason — see
 // PlanReportContractFreezeTests.
 //
 // CoverageGapAnalyser (T2) is the sole emitter of these tokens today, but centralising them

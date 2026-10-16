@@ -9,27 +9,59 @@ CI gates; within v1.x, evolution is additive only. Historical alpha/rc entries r
 contract corrections under their `Breaking`/`Changed` headings.
 
 The first public pre-releases shipped beginning 2026-07-08. Stable v1.0.0 and v1.0.1 were
-published on 2026-10-13. `Unreleased` records changes after the latest published release;
-dated sections record shipped capabilities and retain earlier corrections. Note: GitHub Releases for v1.0.0-alpha.3 and v1.0.0-alpha.4 were
+published on 2026-10-13; v1.0.2 and v1.0.3 were published on 2026-10-15.
+
+`Unreleased` records changes after the latest published release; versioned sections collect changes
+assigned to a release and may be prepared before publication. Public availability begins when the
+corresponding GitHub Release is published.
+
+Note: GitHub Releases for v1.0.0-alpha.3 and v1.0.0-alpha.4 were
 left in draft status at the time of publication (packages shipped to NuGet.org regardless) and were promoted
 to published pre-releases on 2026-07-14.
 
 ## [Unreleased]
 
+## [1.0.4] — 2026-10-16
+
 ### Added
 
-- Isolated GitHub-hosted Windows/Linux HTTP TLS acceptance with owned AIA download controls and captured TLS 1.2 client-chain evidence. Normal CI and release jobs require all four transport facts and the final certificate guard without skips; public artifact build and publication await these checks.
+- Each scenario's public secret ledger now scopes `Count` and `Scrub` to that scenario while forwarding registrations to a hidden run/watch reporting aggregate. Explicitly shared-ledger construction retains shared identity. Runtime and CLI diagnostics apply redaction, declared-path scrubbing and terminal sanitisation; raw event observations retain content scrubbing without terminal sanitisation. Scripts remain trusted C# and the ledger is not a sandbox against deliberate exfiltration.
+- The SDK adds `KafkaSecurityV2Helper.Source` for Core's existing V2 payload while preserving the public v1 helper, its fingerprint and serialized Core fragments. Existing providers embedding the legacy literal remain compatible; a provider adopting V2 updates its helper and emitted call, then rebuilds.
+
+### Fixed
+
+- Historical erratum for the #369 entry: the malformed dependency `env:` example in that entry belongs to the parse-failure path, not the parsed-document no-execution path. `ScenarioDiscovery.ParseFile` rejects it before producing a recovered document; its mixed-directory exit is governed by #425's parse-failure rule. #369 applies to documents that parse but are refused before any scenario executes. The previously recorded measurements are retained; this clarification makes no new runtime measurement claim.
+- Plain unquoted null service images normalize as missing values; direct binds refuse unless a service supplies an image or project. This changes no schema.
+- For HTTP responses, telemetry retries only status 408, 429 and 500–599. Other non-2xx statuses cause permanent refusal with a fixed payload-free stderr message; later batches continue, and a broken stderr writer does not change the disposition.
+- Ten active Core provider validation and local size-limit diagnostic messages now use ASCII hyphens in place of em dashes. Authored and observed Unicode data is unchanged; generated runtime strings and frozen SDK helper sources are unchanged.
+- Watch mode refuses `--html`, `--junit`, `--events`/`--json`, and `--events-stream` before discovery, and leaves report files untouched.
+
+## [1.0.3] — 2026-10-15
+
+### Fixed
+
+- Start package publication only after a GitHub Release is published, avoiding duplicate publishers when a version tag and Release are created together; manual preflight remains non-publishing. Set the CycloneDX root component to the release version and reject stale root identities or unresolved dependency references before uploading the SBOM. The historical v1.0.2 SBOM root remains `vouchfx@0.0.0`; its tag, Release and assets are preserved, and v1.0.3 carries the corrected SBOM identity. This patch contains no product C# or provider SDK changes.
+
+## [1.0.2] — 2026-10-15
+
+### Added
+
+- Run user-supplied Docker Compose environments through the extensible environment-driver contract, combining predefined containers, provider-independent HTTP/script steps and reusable providers.
+- Isolated GitHub-hosted Windows/Linux HTTP TLS acceptance with owned AIA download controls and captured TLS 1.2 client-chain evidence. Normal CI and release jobs require all four transport facts and the final certificate guard without skips; the v1.0.2 public artifact build and publication were gated on these checks.
 - Explicit reviewed publication inputs in `site-publication-inputs.json`. Documentation builds refuse unregistered pages, assets and templates before rendering; the deployment gate checks the manifest again. Reserved private paths cannot be registered, including case aliases. Content edits to approved files still require human review.
 
 ### Fixed
 
 - **Numeric queue/topic/index authoring parity (#342).** Step identifiers now accept bare numbers, retained as their original text; boolean-looking identifiers still require quotes. Elasticsearch field expectations accept numeric and boolean scalar text, while null remains refused. Elasticsearch index schema and typed validation now reject slash/backslash, exact `.`/`..` names and trailing whitespace; comma-separated indices and wildcard syntax remain supported. This corrects malformed path-segment acceptance in the v1 schema; percent-escape handling and runtime transport behaviour are unchanged.
-
+- Improve diagnostics, native TLS execution, packaged DCP distribution and owned environment cleanup. Stabilize Windows process lifetime tests with a small .NET apphost that publishes its real PID.
 - Extend the Windows process-owned certificate-store final guard to CLI and Orchestration test hosts. Ordinary CLI collections retain parallel execution; a syntax census checks guard adoption. Older process residue, abandoned private keys and unreadable stores remain outside this guard’s proof.
+- Engine 1.0.2 source accepts leaf-first client-certificate PEM bundles with public CA candidates for offline client contexts. The scenario accessor owns the loaded certificates. Four earlier SDK helper bodies remain unchanged; external providers retaining `SecurityHelper` keep its existing single-leaf/platform-chain limit. The release-blocking isolated Core `http.rest` TLS 1.2 acceptance passed on Windows and Linux; this does not expand external-provider compatibility.
+
+### Changed
+
 - Core HTTP TLS handlers use the additive `HttpTlsHelper` and `SocketsHttpHandler`; declared-security options suppress certificate downloads before the handshake. Engine-owned TLS probes apply the policy to identity-bearing and anonymous connections while retaining existing revocation mode, hostname, server-authentication EKU and declared-CA semantics.
-- Engine 1.0.2 source accepts leaf-first client-certificate PEM bundles with public CA candidates for offline client contexts. The scenario accessor owns the loaded certificates. Four earlier SDK helper bodies remain unchanged; external providers retaining `SecurityHelper` keep its existing single-leaf/platform-chain limit. Runtime wire-chain presentation and platform AIA suppression still require isolated acceptance.
-- Core provider diff tables and fixed diagnostic formatting use ASCII separators; literal pipes in cells are displayed as `\u007c`. Unicode authored and observed values are retained. Public schema descriptions use ASCII punctuation without changing validation grammar, frozen SDK helpers or event fields.
 - Pin the hidden Azure Service Bus SQL sidecar, Vault and whoami Docker fixtures by reviewed digests. SQL remains Linux amd64 only; authored emulator and S3 override precedence is retained. A read-only weekly audit verifies release-tag identity and platform coverage without updating pins.
+- Core provider diff tables use ASCII separators; literal pipes in cells are displayed as `\u007c`. Unicode authored and observed values are retained. Public schema descriptions use ASCII punctuation; validation grammar, frozen SDK helpers and event fields are unchanged.
 
 ## [1.0.1] — 2026-10-13
 

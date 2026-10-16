@@ -1,4 +1,4 @@
-// Vouchfx.Engine.Planning.Tests — SuiteSetLoaderTests (M3 Planner, MINOR fix-round).
+// Vouchfx.Engine.Planning.Tests — SuiteSetLoaderTests (M3 Planner).
 //
 // Direct, deterministic unit coverage for SuiteSetLoader.TruncateParseErrorMessage — the
 // EDGE-003 parse-error-message bound that PlanSafetyTests' end-to-end fixture already proves
@@ -44,7 +44,7 @@ public sealed class SuiteSetLoaderTests
             result);
     }
 
-    // ── MINOR fix-round regression pin: the naive `message[..MaxParseErrorMessageChars]`
+    // ── Regression pin: the naive `message[..MaxParseErrorMessageChars]`
     // slice this replaced could land exactly between a high surrogate and its low-surrogate
     // partner, leaving a lone, unpaired high surrogate — invalid UTF-16 that can throw when
     // later serialised. Build a message where the astral-plane character (a UTF-16 surrogate

@@ -1,6 +1,6 @@
 // REQ-011 + REQ-023 (as amended 2026-08-04) — a Kafka broker authored as a SERVICE, proven by
-// execution against a real broker (authenticated-infrastructure-mtls, slice E; peer review fix
-// round three, MAJOR-2).
+// execution against a real broker (authenticated-infrastructure-mtls, slice E).
+//
 //
 // WHAT WAS BROKEN, and why inspection could not have settled it. `mq-publish.kafka` and
 // `mq-expect.kafka` have accepted a `target` naming a declared SERVICE since REQ-011 — the shape

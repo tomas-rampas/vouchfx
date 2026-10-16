@@ -1319,7 +1319,7 @@ public static class YamlDocumentParser
     }
 
     // Internal correction history (not XML documentation):
-    // #417, fix round 2. YamlDotNet rejects a duplicate key of its own accord, but the check it
+    // #417. YamlDotNet rejects a duplicate key of its own accord, but the check it
     // applies is YamlScalarNode equality — which includes the TAG. Measured on the
     // pinned YamlDotNet: "environment": and 'environment': beside a plain
     // environment: ARE both refused by the loader (quoting style is no part of a scalar

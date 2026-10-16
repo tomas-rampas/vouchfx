@@ -1,4 +1,4 @@
-// Vouchfx.Sdk.Tests — ProjectContextDescriptions (G-C, gatekeeper, fix round 3).
+// Vouchfx.Sdk.Tests — ProjectContextDescriptions.
 //
 // ProjectContextDescriptions.DescribeDeclaredSurfaces had no dedicated test file at all before
 // this one — it replaced five byte-identical private copies (HttpRestProvider,
@@ -30,7 +30,7 @@ file sealed class StubProjectContext : IProjectContext
 public sealed class ProjectContextDescriptionsTests
 {
     /// <summary>
-    /// G-C (gatekeeper, fix round 3): unlike the five private copies this helper replaced,
+    /// Unlike the five private copies this helper replaced,
     /// <c>DescribeDeclaredSurfaces</c> is a PUBLIC API on a contract frozen for the whole v1.x
     /// engine series — a null <c>ctx</c> argument must fail fast with a located
     /// <see cref="ArgumentNullException"/>, not an NRE from whichever line happens to

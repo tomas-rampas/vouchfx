@@ -36,7 +36,7 @@ public sealed class ListJsonGoldenTests
     private static readonly string[] MqExpectAsbRequired = new[] { "target" };
     private static readonly string[] MqExpectAsbOptional = new[] { "queue", "subscription", "topic" };
 
-    // M2 (gatekeeper, third round): the fixture must PIN the two array-of-arrays shapes
+    // The fixture must PIN the two array-of-arrays shapes
     // ListCommand actually emits, not merely default them to null via the 7-arg ctor — an
     // entry with no root oneOf/anyOf gets an explicit EMPTY array (proving the golden freezes
     // "[]", not merely tolerating an omitted property), and at least one entry per group kind

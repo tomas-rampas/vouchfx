@@ -497,7 +497,7 @@ public sealed class SchemaValidateConstraintsTests
     }
 
     /// <summary>
-    /// M3 (gatekeeper): EXACT PARITY with CacheAssertRedisProvider.Validate, not
+    /// EXACT PARITY with CacheAssertRedisProvider.Validate, not
     /// merely documentation of intent. Validate's own emptiness check
     /// (<c>model.Operation == RedisOp.HGet &amp;&amp; string.IsNullOrWhiteSpace(model.Field)</c>)
     /// fires ONLY for hget — an empty 'field' on a NON-hget operation (here,
@@ -597,11 +597,11 @@ public sealed class SchemaValidateConstraintsTests
             e.InstanceLocation == "/steps/0/expect" && e.Message.Contains("Required properties", StringComparison.Ordinal));
     }
 
-    // ── B2 (gatekeeper): the ["integer","string"] widening opened a silent-pass path ──
+    // ── The ["integer","string"] widening opened a silent-pass path ──
     //
     // expect.status: "abc" -> int.TryParse fails -> null -> the provider asserts
-    // NOTHING -> a green run that proves nothing (proven against the built CLI by the
-    // gatekeeper). Fixed by adding "pattern": "^[0-9]+$" alongside the existing
+    // NOTHING -> a green run that proves nothing (proven against the built CLI).
+    // Fixed by adding "pattern": "^[0-9]+$" alongside the existing
     // ["integer","string"] union on all ten widened integer fields (a no-op on the
     // integer branch — JSON Schema's 'pattern' keyword only ever applies to string
     // instances — the same no-op-keyword trick httpPort already established in this
@@ -612,7 +612,7 @@ public sealed class SchemaValidateConstraintsTests
     // to fail int.TryParse and silently no-op — the pattern restores that original
     // REJECTION at the schema layer instead of leaving it as a silent runtime no-op).
     //
-    // Verified count (gatekeeper said eleven; the actual, grepped count of
+    // Verified count (previously reported eleven; the actual, grepped count of
     // '"type": ["integer", "string"]' occurrences across every provider fragment is
     // TEN — reported as a discrepancy, not silently reconciled): http.rest and
     // http.soap's expect.status; db-assert.postgres/sqlserver/mysql's expect.rowCount;
@@ -820,7 +820,7 @@ public sealed class SchemaValidateConstraintsTests
             """;
         AssertRejectedAt(yaml, "/steps/0/expect/item", "properties");
 
-        // M5 (gatekeeper): the message must name WHY, not just WHAT — derived from
+        // The message must name WHY, not just WHAT — derived from
         // the live schema's own if.properties.exists.const, never hardcoded.
         var result = DocumentValidator.Validate(yaml, Registry);
         var error = Assert.Single(result.Errors);
@@ -864,7 +864,7 @@ public sealed class SchemaValidateConstraintsTests
             """;
         AssertRejectedAt(yaml, "/steps/0/expect/minSize", "properties");
 
-        // M5 (gatekeeper): named via the live schema's own sibling if.required,
+        // Named via the live schema's own sibling if.required,
         // never hardcoded field names.
         var result = DocumentValidator.Validate(yaml, Registry);
         var error = Assert.Single(result.Errors);
@@ -944,7 +944,7 @@ public sealed class SchemaValidateConstraintsTests
         AssertRejectedAt(yaml, "/steps/0/expect/match", "minProperties");
     }
 
-    // ── m3 (gatekeeper, third round): mail-expect.smtp's expect.count is the only
+    // ── mail-expect.smtp's expect.count is the only
     // widened integer field with a non-zero `minimum` — its string branch needed its own,
     // narrower pattern (^[1-9][0-9]*$, not the shared ^[0-9]+$) so the two branches agree:
     // `minimum: 1` already rejects a bare 0, but was always a no-op against a JSON string
@@ -988,7 +988,7 @@ public sealed class SchemaValidateConstraintsTests
     {
         // Unaffected by the pattern narrowing — a bare YAML 0 matches the "integer" branch,
         // where `minimum: 1` genuinely applies (unlike against a string instance) and was
-        // already rejecting this before m3. Pinned here so a future change to the pattern
+        // already rejecting this before the count-pattern correction. Pinned here so a future change to the pattern
         // can't accidentally weaken this side too without a visible failure.
         const string yaml = """
             steps:

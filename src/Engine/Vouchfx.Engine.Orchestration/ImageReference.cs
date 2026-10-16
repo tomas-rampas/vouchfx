@@ -172,7 +172,7 @@ internal static class ImageReferenceParser
                     nameof(reference));
             }
 
-            // M4 fix: "mongo@sha256:" previously passed this far — digest.Length is 7
+            // "mongo@sha256:" previously passed this far — digest.Length is 7
             // ("sha256:"), so the check above never fires — and ApplyImageOverrides went on to
             // call WithImageSHA256("") with the empty hash body, which Aspire/Docker silently
             // resolves as if no digest (and no tag) had been given at all, i.e. ":latest". A
@@ -271,7 +271,7 @@ internal static class ImageReferenceParser
     /// <summary>
     /// Returns <see langword="true"/> when every character in <paramref name="value"/> is a
     /// valid hexadecimal digit (<c>0-9</c>, <c>a-f</c>, <c>A-F</c>). Used to validate a digest's
-    /// hash body (see the M4 fix remarks at its call site) — <paramref name="value"/> is assumed
+    /// hash body (see the empty-digest remarks at its call site) — <paramref name="value"/> is assumed
     /// non-empty by the caller.
     /// </summary>
     private static bool IsHexString(string value)

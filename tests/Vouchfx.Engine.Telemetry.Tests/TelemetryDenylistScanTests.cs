@@ -55,7 +55,7 @@ public sealed class TelemetryDenylistScanTests
                 RawStepText = RawStepText,
             }),
 
-            // Issue #588 (security MINOR-5): a genuinely UNREADABLE line that ALSO
+            // Issue #588: a genuinely UNREADABLE line that ALSO
             // carries a sensitive marker in its raw text — the envelope parse fails
             // (JsonException), so it is counted via SkippedEventLines (a plain int),
             // never copied.  Proves the count itself is the ONLY trace this line

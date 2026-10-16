@@ -267,7 +267,7 @@ public sealed class TraceExpectOtlpProvider
                 "trace-expect.otlp: 'match.traceId' is required. This family asserts the " +
                 "causal chain of a SPECIFIC transaction, not a general span shape any trace " +
                 "might satisfy: inject a traceparent header on an earlier step (e.g. an " +
-                "http.rest request) and match its trace id here — a full traceparent value " +
+                "http.rest request) and match its trace id here - a full traceparent value " +
                 "or a bare 32-hex trace id both work, the 32-hex segment is extracted " +
                 "automatically. 'service', 'spanName', and 'attributes' are optional " +
                 "refinements layered on top of the trace id; none of them may substitute " +

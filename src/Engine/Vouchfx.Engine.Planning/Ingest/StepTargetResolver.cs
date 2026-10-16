@@ -1,5 +1,5 @@
 // Vouchfx.Engine.Planning.Ingest — StepTargetResolver (M3 Planner, REQ-004 target
-// resolution, flags F-16 and F-17, fix-round M3).
+// resolution, flags F-16 and F-17).
 //
 // A step targets a dependency/service via its `target` scalar. Two exclusions (REQ-004):
 //   - a `target` containing a {placeholder} or ${secret:...} reference is structurally

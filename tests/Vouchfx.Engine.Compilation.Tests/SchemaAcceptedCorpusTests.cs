@@ -141,7 +141,7 @@ public sealed class SchemaAcceptedCorpusTests
     /// concern, but for a PARTIAL loss rather than a total one).
     /// </summary>
     /// <remarks>
-    /// Raised from 15 to 34 (critic NIT-8, 2026-08-12). 15 was set when the
+    /// Raised from 15 to 34 (2026-08-12). 15 was set when the
     /// corpus was young and never tightened as fixtures accumulated: the
     /// committed count is <b>38</b> — counted directly off the tree on
     /// 2026-08-28 (every <c>*.e2e.yaml</c> under <c>Corpus/Accepted</c>,

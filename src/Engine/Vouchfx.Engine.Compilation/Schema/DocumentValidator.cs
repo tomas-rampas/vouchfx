@@ -109,7 +109,7 @@ public static class DocumentValidator
         Validate(yamlText, registry, SecurityProfileRegistry.BuiltIn);
 
     // Internal correction history (not XML documentation):
-    // M2 + M3 (peer review, fix round 2). The registry parameter previously hung off the PUBLIC
+    // The registry parameter previously hung off the PUBLIC
     // overload with a null default — a shipped, documented API surface whose
     // own documentation promised a test that did not exist, on a package that was not supposed
     // to publish this type at all. Every call site passed two arguments: 81 of them, re-measured
@@ -127,7 +127,7 @@ public static class DocumentValidator
     // consult SecurityProfileRegistry.BuiltIn directly from a REQ-021 const branch,
     // so an injected registry would have left the two paths disagreeing on every dependency
     // kind but kafka (a profile registered HERE but absent from BuiltIn would have been reported as
-    // "unknown" by the schema path while being genuinely registered). M1's schema tightening
+    // "unknown" by the schema path while being genuinely registered). The schema tightening
     // deleted that branch outright — no const on security.profile survives anywhere
     // in the composed schema — so there is now exactly ONE path that consults a registry, and the
     // two can no longer disagree by construction rather than by discipline.
@@ -376,9 +376,9 @@ public static class DocumentValidator
     }
 
     // Internal correction history (not XML documentation):
-    // n4 (peer review, fix round 2): this summary previously hardcoded
+    // This summary previously hardcoded
     // "SecurityProfileRegistry.BuiltIn" although the method has taken an injected
-    // registry since G-MINOR-8 — its <param> was already correct, so the two
+    // registry — its <param> was already correct, so the two
     // disagreed.
     // Internal correction history (not XML documentation):
     // Copilot 2: the pointer is built by ESCAPING each map key per
@@ -529,7 +529,7 @@ public static class DocumentValidator
 
                 // Defer to the schema on BOTH shapes: a `profile` that violates the root
                 // schema's own pattern already has a [pattern] error at this exact pointer,
-                // and a `security` block the schema rejected outright (M1's per-kind
+                // and a `security` block the schema rejected outright (the per-kind
                 // narrowing) already has an error one segment shallower — reporting an
                 // unknown profile INSIDE a block that may not be declared at all would be
                 // the same double-report, one level up. See this method's own remarks.

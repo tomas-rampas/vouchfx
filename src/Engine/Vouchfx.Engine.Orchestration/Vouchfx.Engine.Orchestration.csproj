@@ -21,7 +21,7 @@
     <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
       <_Parameter1>Vouchfx.Engine.Runtime</_Parameter1>
     </AssemblyAttribute>
-    <!-- authenticated-infrastructure-mtls, slice E (m3, peer-review fix round three): the drift
+    <!-- authenticated-infrastructure-mtls, slice E: the drift
          guard pinning SecuredEndpointProbe's profile vocabulary to the security-profile REGISTRY
          needs to see internals of BOTH assemblies at once, and no test project could. The choice
          was between granting Vouchfx.Engine.Compilation's internals to

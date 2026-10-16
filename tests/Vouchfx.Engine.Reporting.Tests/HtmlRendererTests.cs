@@ -978,9 +978,9 @@ public sealed class HtmlRendererTests
     [Fact]
     public void Render_ScenarioCompletedWithUnreadableMessage_StillStoresCountsAndDuration_BeforeAbortingTheLine()
     {
-        // Issue #588 (gatekeeper MINOR, probe P4): BuildModel's ScenarioCompleted case
+        // Issue #588: BuildModel's ScenarioCompleted case
         // used to read scenario.Message BEFORE scenario.Counts / scenario.DurationMs.
-        // Now that GetStr throws on an unreadable value (MAJOR-1), keeping that order
+        // Now that GetStr throws on an unreadable value, keeping that order
         // would let an unreadable `message` abort the line before the counts were ever
         // stored — the run-summary FAIL row would undercount to 0 and the duration would
         // be lost, even though the line IS still (correctly) counted as skipped. Message
@@ -1095,7 +1095,7 @@ public sealed class HtmlRendererTests
     }
 
     // -------------------------------------------------------------------------
-    // Issue #588 (peer review M1): EVERY event-stream read HtmlRenderer makes sits inside
+    // Issue #588: EVERY event-stream read HtmlRenderer makes sits inside
     // BuildModel's per-line guard. One row per read that once ran while the document was
     // being written, outside that guard: the provenance thread (captured
     // name/path/matched, substitution placeholder/secretDerived/originStepId), the

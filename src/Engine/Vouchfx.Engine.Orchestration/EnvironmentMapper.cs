@@ -396,7 +396,7 @@ public static class EnvironmentMapper
                     // WithJetStream() appends the '-js' flag so the NATS container starts with
                     // JetStream enabled.  Without it, CreateStreamAsync / PublishAsync throw
                     // NatsJSApiException and every mq-publish.nats / mq-expect.nats step
-                    // returns EnvironmentError — FIX B1.
+                    // returns EnvironmentError.
                     var serverBuilder = ApplyImageOverrides(
                         builder.AddNats(name).WithJetStream(), spec, imageRegistry, pullPolicy);
                     var retained = (IResourceBuilder<IResource>)(object)serverBuilder;
@@ -1280,7 +1280,7 @@ public static class EnvironmentMapper
             // Validated eagerly, before any builder mutation, so a bad reference fails with a
             // clear, located diagnostic instead of deep inside Aspire's own GetEndpoint.
             //
-            // G-M2 (gatekeeper): gated on 'spec.Image is not null' — 'healthCheck'/'ports' are
+            // Gated on 'spec.Image is not null' — 'healthCheck'/'ports' are
             // meaningless on a project-form service; the services loop below never reads
             // either field once 'spec.Project is not null' (Aspire's own AddProject
             // auto-discovers the project's launch-profile endpoints instead), so this
@@ -1318,7 +1318,7 @@ public static class EnvironmentMapper
                             nameof(env));
                     }
 
-                    // m3 fix (fix round 3): for the HYBRID shape (ports + a sibling
+                    // For the HYBRID shape (ports + a sibling
                     // httpPort), declaredPorts previously omitted httpPort entirely — so a
                     // hybrid service could never tcp-probe its own httpPort: the port number
                     // was never "among the service's declared ports" by this check's own
@@ -1438,7 +1438,7 @@ public static class EnvironmentMapper
         // feat/dependency-image-override — validate the env-level imagePullPolicy eagerly,
         // rejecting an unrecognised value loudly rather than silently ignoring it (air-gapped
         // users rely on Never/Missing actually taking effect). Each SERVICE's own override is
-        // validated once, below, by the servicePullPolicies-building loop (N3 tidy: that loop
+        // validated once, below, by the servicePullPolicies-building loop (that loop
         // already calls ParseImagePullPolicy for every service with its own override and runs
         // entirely within Map(), before Configure is ever invoked, so a second dedicated
         // validate-only pass over the same services here was pure duplicate parsing).
@@ -1700,7 +1700,7 @@ public static class EnvironmentMapper
         // ----------------------------------------------------------------
         Action<IDistributedApplicationBuilder> configure = builder =>
         {
-            // IDEMPOTENCE, to match the neighbours (peer-review MINOR). The three captured
+            // IDEMPOTENCE, to match the neighbours. The three captured
             // dictionaries — serviceEndpoints, dependencyBuilders, depConnBuilders — are written
             // by KEYED ASSIGNMENT, so a second invocation of this closure overwrites rather than
             // accumulates. The two notice lists are Lists whose only write is an Add, so without
@@ -2524,8 +2524,8 @@ public static class EnvironmentMapper
     /// <c>{placeholder}</c> substitution cannot address a prefixed key at all.
     /// </para>
     /// <para>
-    /// <strong>The authority is rendered through <see cref="AuthorityText"/></strong> (m1,
-    /// peer-review critic, fix round eight), not by raw interpolation. That helper exists to
+    /// <strong>The authority is rendered through <see cref="AuthorityText"/></strong>,
+    /// rather than by raw interpolation. That helper exists to
     /// eliminate exactly the <c>$"{host}:{port}"</c> spelling that used to stand here, and this is
     /// one of the values whose bracket-freeness is INFERRED rather than measured — it comes from
     /// Aspire's <c>EndpointReference.Host</c> — which is precisely the kind of caller
@@ -2587,7 +2587,7 @@ public static class EnvironmentMapper
         RegexOptions.Compiled);
 
     /// <summary>
-    /// Matches ONLY the <c>${env:</c> sigil itself (m5 fix, fix round 2) — case-INSENSITIVE,
+    /// Matches ONLY the <c>${env:</c> sigil itself — case-INSENSITIVE,
     /// unlike <see cref="s_envRefPattern"/> — used by <see cref="ValidateEnvValue"/> as a
     /// PRESENCE check, mirroring the existing <c>${secret:...}</c> sigil-presence check
     /// (<see cref="SecretReference.Sigil"/>'s own rationale): a malformed or wrong-case
@@ -2898,7 +2898,7 @@ public static class EnvironmentMapper
             }
         }
 
-        // m5 fix (fix round 2): sigil-PRESENCE check, mirroring the ${secret:...} check
+        // Sigil-PRESENCE check, mirroring the ${secret:...} check
         // above — env: previously used a well-formed-match-ONLY scan (below), which by
         // construction never sees anything malformed, so '${env:}', '${env:2BAD}',
         // '${ENV:GOOD}', and '${env: SPACED }' all validated PASS and reached the container
@@ -3315,7 +3315,7 @@ public static class EnvironmentMapper
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <b>BLOCKER fix (peer review, runtime-probed against the pinned Aspire 13.4.2 DLL):</b>
+    /// <b>Runtime probe (against the pinned Aspire 13.4.2 DLL):</b>
     /// <c>ReferenceExpressionBuilder.AppendLiteral</c> appends the literal text VERBATIM into
     /// the internal composite-format string that the <see cref="ReferenceExpression"/> returned by
     /// <see cref="ReferenceExpressionBuilder.Build"/> later
@@ -3340,7 +3340,7 @@ public static class EnvironmentMapper
     ///     throws <c>FormatException</c> when Aspire materialises the env var during
     ///     <c>StartAsync</c>, which <c>SuiteTopology.StartAsync</c> wraps as
     ///     <see cref="Vouchfx.Engine.Orchestration.OrchestrationException"/> →
-    ///     <c>Verdict.EnvironmentError</c> — the exact §12.1 misclassification the M2 fix
+    ///     <c>Verdict.EnvironmentError</c> — the exact §12.1 misclassification the authoring-error classification fix
     ///     (ArgumentException → Inconclusive) targeted, just one layer further downstream.
     ///   </description></item>
     /// </list>
@@ -3364,7 +3364,7 @@ public static class EnvironmentMapper
     /// </param>
     /// <param name="ownerName">
     /// The owning service's or dependency's own name, used ONLY to build a matching, fail-closed
-    /// <see cref="ArgumentException"/> message (G-M1) if <paramref name="envKey"/>'s value
+    /// <see cref="ArgumentException"/> message if <paramref name="envKey"/>'s value
     /// somehow reaches this method referencing an unset <c>${env:NAME}</c> variable, or a
     /// <c>${conn:...}</c> dependency with no resolved accessor — see each case's own remarks
     /// below.
@@ -3399,7 +3399,7 @@ public static class EnvironmentMapper
                     // already confirmed this variable is SET (non-null) before Configure (and
                     // so this method) ever runs, in the real Map()→Configure() pipeline.
                     //
-                    // G-M1 (gatekeeper): the throw below is FAIL-CLOSED, not a defensive
+                    // The throw below is FAIL-CLOSED, not a defensive
                     // fallback — EDGE-008 is strict precisely because a silent empty-string
                     // substitution could turn a secured configuration value into an empty
                     // (and possibly insecure-by-default) one with no visible error (see
@@ -3580,7 +3580,7 @@ public static class EnvironmentMapper
     /// </param>
     /// <param name="ownerName">
     /// The owning service's or dependency's own name — threaded through to
-    /// <see cref="BuildEnvExpression"/> so a fail-closed <c>${env:NAME}</c> throw (G-M1) can name
+    /// <see cref="BuildEnvExpression"/> so a fail-closed <c>${env:NAME}</c> throw can name
     /// the same subject/key <see cref="ValidateEnvValue"/>'s own eager-pass throw would have
     /// named.
     /// </param>
@@ -3630,7 +3630,7 @@ public static class EnvironmentMapper
     ///   </description></item>
     ///   <item><description>
     ///     No <c>healthCheck</c> declared, WITH explicit <c>ports</c> AND a sibling
-    ///     <c>httpPort</c> (the hybrid shape) — M4 fix (fix round 2): treat it as what it
+    ///     <c>httpPort</c> (the hybrid shape) — treat it as what it
     ///     actually is, an image-form HTTP service, and apply the SAME default HTTP probe
     ///     (<c>WithHttpHealthCheck(path: "/", endpointName: "http")</c>) rather than leaving
     ///     it ungated. Before this fix a hybrid service with no explicit <c>healthCheck</c>
@@ -3641,15 +3641,15 @@ public static class EnvironmentMapper
     ///   </description></item>
     ///   <item><description>
     ///     No <c>healthCheck</c> declared, WITH explicit <c>ports</c> and NO <c>httpPort</c>
-    ///     (ports-only) — M4 fix (fix round 2): default to a <c>tcp</c> probe on the FIRST
+    ///     (ports-only) — default to a <c>tcp</c> probe on the FIRST
     ///     declared port (<c>spec.Ports[0]</c>) via the SAME <see cref="ApplyTcpHealthCheck"/>
     ///     helper the explicit <c>type: tcp</c> branch below uses. Before this fix the service
     ///     was left with NO <see cref="HealthCheckAnnotation"/> at all, so per the pinned
     ///     Aspire 13.4.2 XML docs for <c>WaitForResourceHealthyAsync</c>, a resource with no
     ///     health-check annotation "will be considered healthy once it reaches a Running
-    ///     state" — combined with B1 (the tcp health check that could never fail), BOTH shapes
+    ///     state" — combined with the tcp health check that could never fail, BOTH shapes
     ///     available to a non-HTTP system under test were ungated. A protocol-agnostic tcp
-    ///     probe is strictly better than "Running" and costs nothing once B1's bounded
+    ///     probe is strictly better than "Running" and costs nothing once the bounded
     ///     zero-byte-read discriminator makes a bare tcp probe meaningful.
     ///   </description></item>
     ///   <item><description>
@@ -3657,7 +3657,7 @@ public static class EnvironmentMapper
     ///     endpointName: "http")</c>, the explicit spelling of the same default.
     ///   </description></item>
     ///   <item><description>
-    ///     <c>type: tcp</c> — a raw TCP connect (plus B1's bounded zero-byte-read
+    ///     <c>type: tcp</c> — a raw TCP connect (plus the bounded zero-byte-read
     ///     discriminator — see <see cref="ApplyTcpHealthCheck"/>) against the resolved
     ///     endpoint, registered as a named async health check
     ///     (<c>IServiceCollection.AddHealthChecks().AddAsyncCheck</c>) and attached via
@@ -3718,13 +3718,13 @@ public static class EnvironmentMapper
 
             if (spec.HttpPort is not null)
             {
-                // M4 fix: hybrid shape (ports + httpPort, no explicit healthCheck) — it IS an
+                // Hybrid shape (ports + httpPort, no explicit healthCheck) — it IS an
                 // image-form HTTP service, so it gets the same default HTTP probe one.
                 return containerBuilder.WithHttpHealthCheck(
                     path: "/", endpointName: ServiceEndpointNaming.HttpEndpointName);
             }
 
-            // M4 fix: ports-only, no explicit healthCheck — default to a tcp probe on the
+            // Ports-only, no explicit healthCheck — default to a tcp probe on the
             // first declared port rather than leaving the service ungated. This is
             // STRICTLY BETTER than Aspire's own "healthy once Running" default (it proves a
             // listener actually accepted a connection) but it is NOT a readiness guarantee:
@@ -3787,11 +3787,11 @@ public static class EnvironmentMapper
     /// attaches it via Aspire's generic <c>WithHealthCheck(key)</c>.
     /// </summary>
     /// <remarks>
-    /// <b>B1 fix (fix round 2 — the tcp health check that could never fail).</b> A bare
+    /// <b>The tcp health check that could never fail.</b> A bare
     /// <c>ConnectAsync</c> success does NOT prove a backend is listening: the endpoint this
     /// method probes is the HOST-PUBLISHED, DCP-PROXIED address, and DCP's proxy accepts the
     /// TCP connection UNCONDITIONALLY — before it has even attempted to reach the real
-    /// backend — and only then tries the backend itself. Measured (peer review of this
+    /// backend — and only then tries the backend itself. Measured (against this
     /// branch's first commit, 4414931): a service with <c>ports: [9093]</c>,
     /// <c>healthCheck: { type: tcp, port: 9093 }</c>, and NOTHING listening on 9093 was
     /// declared "healthy" in ~18 seconds by the pre-fix connect-only check; the same dead port
@@ -3803,7 +3803,7 @@ public static class EnvironmentMapper
     /// up front when the endpoint is not yet allocated (pre-<c>StartAsync</c> — an Aspire-only
     /// concern a unit test against a real socket has no equivalent of), and register/attach the
     /// named health check. The actual connect/read discriminator that decides Healthy/Unhealthy
-    /// is <see cref="ProbeAsync"/> — extracted into its own method (M4 fix, fix round 3) so it
+    /// is <see cref="ProbeAsync"/> — extracted into its own method so it
     /// has a unit test that runs with no Docker/DCP dependency; see its own remarks for the
     /// branch-by-branch logic and what it proves.
     /// </para>
@@ -3880,7 +3880,7 @@ public static class EnvironmentMapper
     }
 
     /// <summary>
-    /// The B1 discriminator (fix round 2 — the tcp health check that could never fail):
+    /// The TCP health-check discriminator:
     /// connects to <paramref name="host"/>:<paramref name="port"/> and, on a successful
     /// connect, performs a bounded, small-buffer read to distinguish a live backend from
     /// whatever merely ACCEPTED the connection — in production, DCP's host-published TCP proxy,
@@ -3907,7 +3907,7 @@ public static class EnvironmentMapper
     ///     <see cref="HealthCheckResult.Healthy"/>.
     ///   </description></item>
     /// </list>
-    /// Measured (fix round 2, on this exact tree): against RAW DOCKER-PUBLISHED PORTS, not
+    /// Measured (on this exact tree): against RAW DOCKER-PUBLISHED PORTS, not
     /// through a DCP-proxied endpoint, three trials in each direction, run independently by two
     /// parties: <c>good=CONNECT_OK READ_TIMEOUT (alive-ish)</c>, <c>bad=CONNECT_OK
     /// READ_BYTES=0</c> — exactly the discriminator this method implements. <b>Measured on
@@ -3927,7 +3927,7 @@ public static class EnvironmentMapper
     /// readiness signal; see docs/02 §3.2.6a's "What a tcp health check does not prove" note.
     /// </para>
     /// <para>
-    /// <b>Side effect on the probed connection (n-1, fix round 3).</b> Every poll holds the
+    /// <b>Side effect on the probed connection.</b> Every poll holds the
     /// connection open for up to the 1-second read bound before this method (and the caller's
     /// own disposal of the returned <c>TcpClient</c>) tears it down — and on a server-speaks-
     /// first protocol, consumes exactly one byte of whatever the server sent (the read buffer
@@ -3956,7 +3956,7 @@ public static class EnvironmentMapper
             await tcpClient.ConnectAsync(host, port, connectTimeoutCts.Token)
                 .ConfigureAwait(false);
 
-            // B1 fix: connect succeeded — this proves only that whatever accepted the
+            // Connect succeeded — this proves only that whatever accepted the
             // connection did so, never that a real backend is listening behind it (see this
             // method's own remarks). Discriminate with a bounded zero-byte-buffer read.
             using var readTimeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -3994,7 +3994,7 @@ public static class EnvironmentMapper
             // re-throws only if the AMBIENT ct itself requested cancellation (the caller
             // genuinely cancelled the check), which HealthCheckService is expected to
             // observe rather than have swallowed into an Unhealthy result.
-            // m3 (gatekeeper, fix round six): rendered through AuthorityText.Format, the same
+            // Rendered through AuthorityText.Format, the same
             // bracket rule SecuredEndpointProbe's observed-address messages use. `host` is
             // bracket-free — that is what the caller above holds, NOT something the ConnectAsync
             // above requires (that reason was asserted across this branch and is refuted: measured
@@ -4038,7 +4038,7 @@ public static class EnvironmentMapper
     }
 
     // -----------------------------------------------------------------------
-    // Dependency sidecar svc::-key naming (m1 fix, fix round 2).
+    // Dependency sidecar svc::-key naming.
     // -----------------------------------------------------------------------
     // A dependency's Build lambda ordinarily stages exactly one svc::<name>-shaped key
     // per kind (or none, for the pure dependency-only kinds) — see the class remarks'
@@ -4070,8 +4070,8 @@ public static class EnvironmentMapper
     /// Purely declarative — reads only <paramref name="spec"/>, never invokes any dependency
     /// registration's <c>Build</c> lambda — so it is safe to call at validation time, before
     /// any <c>IDistributedApplicationBuilder</c> exists. <c>ProviderPipeline.
-    /// BuildProjectContext</c>'s host-resource-vs-declared-name collision guard (m1 fix, fix
-    /// round 2) calls this for every declared dependency so a host resource (e.g. a webhook
+    /// BuildProjectContext</c>'s host-resource-vs-declared-name collision guard
+    /// calls this for every declared dependency so a host resource (e.g. a webhook
     /// listener) cannot silently shadow one of these sidecar keys the way a listener named
     /// <c>mail-smtp</c> alongside a <c>mailpit</c> dependency <c>mail</c>, or a listener named
     /// <c>bus-sr</c> alongside a <c>kafka</c> dependency <c>bus</c> with
@@ -4234,7 +4234,7 @@ public static class EnvironmentMapper
     /// Precedence (Map's eager validation block has already rejected both ambiguous
     /// combinations — an <c>image:</c> that already carries its own tag or digest together with
     /// a sibling <c>version:</c>, and a tagless/digestless <c>image:</c> with NO sibling
-    /// <c>version:</c> either (the M3 fix — such a combination would float on <c>:latest</c>) —
+    /// <c>version:</c> either (such a combination would float on <c>:latest</c>) —
     /// before <c>Configure</c> ever runs, so at most one of (embedded tag, embedded digest,
     /// <paramref name="spec"/>.Version) survives to reach here, and an image-with-neither-tag-
     /// nor-digest case reaching here always has a non-empty <paramref name="spec"/>.Version):
@@ -4244,11 +4244,11 @@ public static class EnvironmentMapper
     ///     <see cref="DependencySpec.Image"/> set → <c>WithImage(repository[, tag])</c> (a digest
     ///     routes to <c>WithImageSHA256</c> instead). When the image carries no tag/digest of its
     ///     own, <see cref="DependencySpec.Version"/> supplies the tag (Map's eager validation
-    ///     guarantees it is present and non-empty in this case — see the M3 fix above).
+    ///     guarantees it is present and non-empty in this case — see the validation above).
     ///   </description></item>
     ///   <item><description>
     ///     <see cref="DependencySpec.Image"/> unset, <see cref="DependencySpec.Version"/> set (and
-    ///     non-empty — MN3 fix: an empty <c>version: ""</c> is treated identically to an absent
+    ///     non-empty — an empty <c>version: ""</c> is treated identically to an absent
     ///     one, matching the <see cref="DependencySpec.Image"/>-set branch's own treatment) →
     ///     <c>WithImageTag(version)</c> (today's pre-existing behaviour, unchanged).
     ///   </description></item>
@@ -4266,14 +4266,14 @@ public static class EnvironmentMapper
     /// 'localhost'" rule <see cref="ResolveImage"/> already applies for services), in which case
     /// any pre-existing registry is explicitly CLEARED (<c>WithImageRegistry(null)</c>) instead.
     /// Two independent sources can supply that explicit registry component, and both are checked
-    /// (M1/M2 fix — see the inline remarks at each check site below):
+    /// (see the inline remarks at each check site below):
     /// </para>
     /// <list type="bullet">
     ///   <item><description>
     ///     <see cref="DependencySpec.Image"/> itself names one (e.g.
     ///     <c>"nexus.corp.local:5000/platform/mongo:8.0"</c>) — checked against the PARSED
     ///     <see cref="ImageReference.Repository"/>, and the registry is cleared UNCONDITIONALLY
-    ///     whenever <see cref="DependencySpec.Image"/> is set at all (M2 fix: 'image:' always
+    ///     whenever <see cref="DependencySpec.Image"/> is set at all ('image:' always
     ///     means exactly what it says, never inheriting a provider's built-in registry default —
     ///     previously this clear only fired when the image ITSELF carried a registry, so an
     ///     unqualified sqlserver image silently inherited AddSqlServer's own "mcr.microsoft.com"
@@ -4283,7 +4283,7 @@ public static class EnvironmentMapper
     ///     No <see cref="DependencySpec.Image"/> override at all, but the CURRENT
     ///     <see cref="ContainerImageAnnotation.Image"/> the resource already carries embeds a
     ///     registry component directly in its image string rather than in the separate
-    ///     <see cref="ContainerImageAnnotation.Registry"/> field (M1 fix — this is exactly the
+    ///     <see cref="ContainerImageAnnotation.Registry"/> field (this is exactly the
     ///     azureservicebus shape: both its <c>AddContainer</c> calls pass
     ///     <c>"mcr.microsoft.com/..."</c> as the image argument itself, so
     ///     <c>ContainerImageAnnotation.Registry</c> stays null and a check against ONLY
@@ -4346,7 +4346,7 @@ public static class EnvironmentMapper
                 // (its own documented contract), so it must be stripped here too — passing it
                 // through unstripped would double the prefix.
                 //
-                // MINOR-2 fix: the prefix is no longer VALIDATED here — Map()'s eager
+                // The prefix is no longer VALIDATED here — Map()'s eager
                 // dependency-validation loop (before Configure is ever built) already rejects any
                 // spec.Image whose digest lacks the 'sha256:' prefix, and every call site below
                 // is reached only from inside that same Configure closure, always after Map()'s
@@ -4375,7 +4375,7 @@ public static class EnvironmentMapper
                     : builder.WithImage(parsedImage.Repository);
             }
 
-            // M2 fix: clear the registry UNCONDITIONALLY whenever 'image:' is set — regardless of
+            // Clear the registry UNCONDITIONALLY whenever 'image:' is set — regardless of
             // whether the author's own image string carries an explicit registry component.
             // Previously this only ran inside `if (imageHasExplicitRegistry)`, so an UNQUALIFIED
             // image (e.g. sqlserver + 'image: myorg/mssql-mirror:2022') left the provider's own
@@ -4399,7 +4399,7 @@ public static class EnvironmentMapper
                 builder = builder.WithImageTag(spec.Version);
             }
 
-            // M1 fix: no 'image:' override was supplied, so nothing above touched the registry —
+            // No 'image:' override was supplied, so nothing above touched the registry —
             // but the resource's CURRENT image annotation (whatever its own AddXxx/AddContainer
             // registration already established) may still embed a registry component directly in
             // its Image string rather than in the separate Registry field. This is exactly the
@@ -4450,7 +4450,7 @@ public static class EnvironmentMapper
     /// customer's <c>imagePullPolicy: Never</c> must reach every container, sidecars included.
     /// </summary>
     /// <remarks>
-    /// M1 fix: <paramref name="imageRegistry"/> is skipped when the sidecar's OWN hardcoded image
+    /// <paramref name="imageRegistry"/> is skipped when the sidecar's OWN hardcoded image
     /// literal already embeds a registry component — the azureservicebus SQL Edge sidecar is
     /// registered as <c>AddContainer(sidecarName, "mcr.microsoft.com/mssql/server")</c> with a digest pin,
     /// so <c>ContainerImageAnnotation.Registry</c> is null (nothing for a naive
@@ -4458,7 +4458,7 @@ public static class EnvironmentMapper
     /// "mcr.microsoft.com/...". Applying <paramref name="imageRegistry"/> unconditionally on top
     /// would double-prefix the pull reference
     /// ("artifactory.example.com/mcr.microsoft.com/mssql/server@sha256:...") — exactly the same
-    /// failure mode <see cref="ApplyImageOverrides{T}"/>'s M1 fix addresses for the emulator
+    /// failure mode <see cref="ApplyImageOverrides{T}"/> addresses for the emulator
     /// container itself, checked the same way (the CURRENT annotation, not a raw image string this
     /// method never receives). The kafka schema-registry sidecar's own image
     /// ("confluentinc/cp-schema-registry") carries no such component, so imageRegistry still
@@ -4500,7 +4500,7 @@ public static class EnvironmentMapper
     /// <see cref="ImageReferenceParser"/>'s own header remarks independently document). Callers
     /// pass either an ALREADY tag/digest-stripped <see cref="ImageReference.Repository"/> (from a
     /// parsed <see cref="DependencySpec.Image"/>), or a resource's CURRENT
-    /// <see cref="ContainerImageAnnotation.Image"/> (the M1 fix — Aspire's own annotation shape
+    /// <see cref="ContainerImageAnnotation.Image"/> (Aspire's own annotation shape
     /// keeps <c>Image</c> tag/digest-free the same way, so both are equally valid inputs here).
     /// </summary>
     private static bool HasExplicitRegistryComponent(string repository)

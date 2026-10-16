@@ -45,7 +45,7 @@ public sealed class DcpPathResolverTests
 
     // -----------------------------------------------------------------------
     // ASPIRE_DCP_PATH short-circuit — the user's own escape hatch must never be
-    // shadowed (MAJOR 2, gatekeeper review): Aspire honours it itself at priority 2,
+    // shadowed: Aspire honours it itself at priority 2,
     // above the dead metadata this self-heal reacts to.
     // -----------------------------------------------------------------------
 
@@ -213,7 +213,7 @@ public sealed class DcpPathResolverTests
     [Fact]
     public void Resolve_MetadataPathIsADirectoryNotAFile_FileExistsFalse_SelfHealProceeds()
     {
-        // Arrange — PINS intended behaviour (MINOR 4b, gatekeeper review): Resolve() only
+        // Arrange — PINS intended behaviour: Resolve() only
         // ever calls the injected fileExists predicate; it has no notion of "exists as a
         // directory" versus "exists as a file". Production wires fileExists to File.Exists,
         // which returns false for a path that is a directory rather than a file (an
@@ -315,7 +315,7 @@ public sealed class DcpPathResolverTests
     [Fact]
     public void Resolve_NugetPackagesEnv_WrappedInDoubleQuotes_QuotesAreStripped()
     {
-        // Arrange — PINS intended behaviour (MINOR 4c, gatekeeper review): Windows
+        // Arrange — PINS intended behaviour: Windows
         // batch/cmd's `set VAR="value"` idiom embeds the quote characters literally in the
         // environment-variable value (unlike POSIX shells, which strip quoting before the
         // process ever sees it). A NUGET_PACKAGES value set that way — or pasted with
@@ -346,7 +346,7 @@ public sealed class DcpPathResolverTests
     [Fact]
     public void Resolve_NugetPackagesEnv_TrailingSeparator_StillResolves()
     {
-        // Arrange — PINS intended behaviour (MINOR 4c, gatekeeper review): a NUGET_PACKAGES
+        // Arrange — PINS intended behaviour: a NUGET_PACKAGES
         // value with a trailing directory separator needs no special-case handling in this
         // resolver — Path.Combine already avoids inserting a DOUBLED separator when the
         // preceding segment already ends with one — but this test documents and locks in
@@ -464,7 +464,7 @@ public sealed class DcpPathResolverTests
         Assert.Contains("ASPIRE_DCP_PATH", detail, StringComparison.Ordinal);
         Assert.Contains("Aspire.AppHost.Sdk", detail, StringComparison.Ordinal);
         Assert.Contains("dotnet restore", detail, StringComparison.Ordinal);
-        // MAJOR 2 (gatekeeper review): ASPIRE_DCP_PATH names a DIRECTORY, not the
+        // ASPIRE_DCP_PATH names a DIRECTORY, not the
         // executable file — the remedy wording must say so, matching the pinned
         // ConfigureDefaultDcpOptions/BundleDiscovery.GetDcpExecutablePath source.
         Assert.Contains("directory containing the dcp executable", detail, StringComparison.Ordinal);
@@ -473,7 +473,7 @@ public sealed class DcpPathResolverTests
     [Fact]
     public void Resolve_VersionFolderPresent_DcpBinaryMissing_UnresolvableNamesProbedPath()
     {
-        // Arrange — PINS intended behaviour (MINOR 4d, gatekeeper review): a real-world
+        // Arrange — PINS intended behaviour: a real-world
         // shape distinct from "nothing was ever restored" — the user's cache DOES contain
         // OTHER files under the exact version folder (simulated here via a sibling path
         // that fileExists reports as present, e.g. an extension DLL), but the dcp

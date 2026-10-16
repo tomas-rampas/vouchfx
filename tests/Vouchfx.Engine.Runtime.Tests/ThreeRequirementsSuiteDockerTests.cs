@@ -233,7 +233,7 @@ public sealed class ThreeRequirementsSuiteDockerTests
             // IS one line: `SecurityConfirmation.ToString()` renders name, declared profile, declared
             // endpoint, observed protocol, observed address, client-identity state, LEVEL and Detail
             // into a single string, and ScenarioRunner writes each one with a single WriteLineAsync
-            // (its `SecurityConfirmations` loop). The level joined that list in slice F's peer-review
+            // (its `SecurityConfirmations` loop). The level joined that list in slice F's rendering
             // fix and is now what each pair below is bound on — see the note at the assertions.
             //
             // The SANITISER on that write is NOT what keeps a confirmation on one line, and an earlier
@@ -256,7 +256,7 @@ public sealed class ThreeRequirementsSuiteDockerTests
                 .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
             //   THE LEVEL TOKEN IS NOW HALF OF EACH PAIR, and it is the half a customer can actually
-            //   gate on. Before slice F's peer-review fix the rendered line omitted the level entirely,
+            //   gate on. Before slice F's rendering fix the rendered line omitted the level entirely,
             //   so the only thing distinguishing these two confirmations was the trailing Detail prose
             //   — an operator wanting "every secured target reached the strong level" had a sentence to
             //   grep and nothing else. Each assertion below binds the target name, the level token and

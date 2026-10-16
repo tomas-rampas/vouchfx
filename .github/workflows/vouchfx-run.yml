@@ -380,6 +380,9 @@ jobs:
             echo "::stop-commands::$log_token"
             pull_ok=yes
             docker pull "$image" || pull_ok=no
+            # Docker output may not end with a newline. Keep the resume command
+            # on its own line so the runner can recognise it and re-enable parsing.
+            printf '\n'
             echo "::${log_token}::"
             echo "::endgroup::"
             # ONE VISIBLE DIFFERENCE from the pre-fence shape, recorded because the

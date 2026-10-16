@@ -70,7 +70,7 @@ public sealed class SchemaRejectedCorpusTests
     /// files — a bare "at least one" would still pass if a glob/path
     /// regression silently dropped all but a single fixture, letting every
     /// OTHER <see cref="RejectedDocument_IsInvalidAtExpectedLocation"/> case
-    /// vanish instead of failing loudly. Raised from 15 to 40 (critic NIT-9),
+    /// vanish instead of failing loudly. Raised from 15 to 40,
     /// then from 40 to 55: the original floor was set when the committed count
     /// was 25 and never tightened as fixtures accumulated, and 40 had gone the
     /// same way — it was set against a committed count of 45 and left standing

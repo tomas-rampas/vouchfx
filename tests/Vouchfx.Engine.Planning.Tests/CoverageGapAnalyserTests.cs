@@ -57,7 +57,7 @@ public sealed class CoverageGapAnalyserTests
         Assert.Equal("never-called-step", checkoutNeverExercised.StepId);
         Assert.Equal(HttpRestTypes, checkoutNeverExercised.SuggestedTypes);
         Assert.Equal("never-called-step", checkoutNeverExercised.SuggestedStepId);
-        // BLOCKER fix-round: "never-called-step" declares `target: api`, and checkout.e2e.yaml
+        // "never-called-step" declares `target: api`, and checkout.e2e.yaml
         // DOES declare `environment.services.api` — the target resolves AND classifies, so
         // this finding must name it, letting a host bind the scaffolded step back to the
         // service the original step addressed (REQ-007's whole reason for existing).
@@ -72,7 +72,7 @@ public sealed class CoverageGapAnalyserTests
         Assert.Equal("ship-order", shippingNeverExercised.StepId);
         Assert.Equal(HttpRestTypes, shippingNeverExercised.SuggestedTypes);
         Assert.Equal("ship-order", shippingNeverExercised.SuggestedStepId);
-        // BLOCKER fix-round: "ship-order" ALSO declares `target: api`, but shipping.e2e.yaml
+        // "ship-order" ALSO declares `target: api`, but shipping.e2e.yaml
         // declares NO `environment` block at all — the target cannot classify against
         // anything, so Target/TargetKind correctly stay null (never a fabricated binding to
         // a service this suite never even declares).
@@ -141,7 +141,7 @@ public sealed class CoverageGapAnalyserTests
             report.Findings,
             f => f.Kind == PlanFindingKinds.DependencyNotAsserted && f.Target == "cache");
 
-        // MAJOR fix-round: the spec's LITERAL clause — "a zero-step dependency yields exactly
+        // The spec's LITERAL clause — "a zero-step dependency yields exactly
         // one finding TOTAL ACROSS REQ-004 AND REQ-005" — needs a count over BOTH analysers'
         // output naming "cache", not just proof that REQ-004's own kind is absent (the
         // assertion above). Redis has two REQ-005 candidates (cache-assert.redis,

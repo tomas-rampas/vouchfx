@@ -17,7 +17,8 @@ import sys
 import tempfile
 import unittest
 
-from docker_ci_support import BASH, PULL_NAME, ROOT, TEST_NAME, WORKFLOW, extract_pull, fixture_images, image_boundary, sha, step, workflow
+from docker_ci_support import (BASH, PREWARM_WORKFLOW, PULL_NAME, ROOT, TEST_NAME, WORKFLOW,
+                               extract_prewarm, extract_pull, fixture_images, image_boundary, sha, step, workflow)
 
 
 SCRATCH = Path(tempfile.mkdtemp(prefix="vouchfx-docker-ci-contract-"))
@@ -141,8 +142,10 @@ source "$1"
 
     def test_source_extraction_and_bash_shellcheck(self):
         images = shlex.split(image_boundary(self.script).group().decode().replace("for image in", "", 1).rsplit("; do", 1)[0].replace("\\\n", ""))
-        self.assertEqual(19, len(images))
-        self.assertEqual(19, len(set(images)))
+        # Actual default parity is enforced by ManagedDefaultImagePullCoverageTests;
+        # this boundary check also retains the explicit Docker-test inventory.
+        self.assertEqual(23, len(images))
+        self.assertEqual(23, len(set(images)))
         for command, args in [(BASH, ["-n"]), (shutil.which("shellcheck"), ["--shell=bash"])]:
             self.assertTrue(command, "ShellCheck 0.11.0 is mandatory")
             if args == ["--shell=bash"]:
@@ -190,6 +193,12 @@ source "$1"
         self.assertIn("python -B scripts/ci/lint_workflows.py", [s.get("run") for s in gate["steps"]])
         self.assertIn("python -B -m unittest discover -s scripts/ci -p test_docker_ci_contract.py -v",
                       [s.get("run") for s in gate["steps"]])
+        self.assertEqual([{"cron": "0 6 * * 1"}], data["on"]["schedule"])
+        self.assertEqual("build", integration["needs"])
+        self.assertNotIn("if", integration)
+        self.assertNotIn("if", step(PULL_NAME, data))
+        self.assertNotIn("continue-on-error", step(PULL_NAME, data))
+        self.assertNotIn("paths", data["on"]["push"])
         self.assertNotIn("paths", data["on"]["pull_request"])
 
     def test_success_visits_every_image(self):
@@ -322,6 +331,160 @@ source "$1"
     def tearDownClass(cls):
         if WORKFLOW.read_bytes() != cls.workflow_bytes:
             raise AssertionError("Harness mutated its workflow source")
+
+
+class ReusableWorkflowPrewarmTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.script = extract_prewarm()
+        cls.workflow_bytes = PREWARM_WORKFLOW.read_bytes()
+        (SCRATCH / "actual-prewarm.sh").write_bytes(cls.script)
+        (SCRATCH / "prewarm-extraction.json").write_text(json.dumps({
+            "workflow_sha256": sha(cls.workflow_bytes), "script_sha256": sha(cls.script),
+            "script_bytes": len(cls.script), "parser_equals_source": True,
+        }, indent=2))
+
+    def run_prewarm_case(self, name, prewarm_images, scenario, fail_token=False, script=None):
+        root = Path(tempfile.mkdtemp(prefix="prewarm-" + name + "-", dir=SCRATCH))
+        binary = root / "bin"
+        binary.mkdir()
+        (root / "scenario.json").write_text(json.dumps(scenario), encoding="utf-8")
+        actual = self.script if script is None else script
+        target = root / "prewarm.sh"
+        target.write_bytes(actual)
+        commands = ["docker"] + (["head"] if fail_token else [])
+        for command in commands:
+            stub = binary / command
+            stub.write_text('#!/usr/bin/env bash\nexec "$VOUCHFX_CI_PYTHON" "$VOUCHFX_CI_STUB" ' + command + ' "$@"\n',
+                            encoding="utf-8")
+            stub.chmod(0o755)
+        env = os.environ.copy()
+        env.update(PATH=str(binary) + os.pathsep + env["PATH"], PREWARM_IMAGES=prewarm_images,
+                   VOUCHFX_CI_CASE=str(root), VOUCHFX_CI_PYTHON=Path(sys.executable).as_posix(),
+                   VOUCHFX_CI_STUB=STUB.as_posix(), VOUCHFX_CI_BASH=Path(BASH).as_posix(),
+                   VOUCHFX_CI_BIN=binary.as_posix(), VOUCHFX_CI_WINDOWS="1" if os.name == "nt" else "0")
+        launcher = '''set -euo pipefail
+fixture_bin="$VOUCHFX_CI_BIN"
+if [ "$VOUCHFX_CI_WINDOWS" = 1 ]; then fixture_bin=$(cygpath -u "$fixture_bin"); fi
+export PATH="$fixture_bin:$PATH"
+for command in docker; do
+  [ "$(command -v "$command")" = "$fixture_bin/$command" ] || exit 91
+done
+if [ "${VOUCHFX_CI_FAIL_TOKEN:-0}" = 1 ]; then
+  [ "$(command -v head)" = "$fixture_bin/head" ] || exit 92
+fi
+source "$1"
+'''
+        if fail_token:
+            env["VOUCHFX_CI_FAIL_TOKEN"] = "1"
+        process = subprocess.Popen([BASH, "--noprofile", "--norc", "-c", launcher, "prewarm-fixture", str(target)],
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env,
+                                   start_new_session=os.name != "nt")
+        timed_out = False
+        try:
+            stdout, stderr = process.communicate(timeout=30)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            if os.name == "nt":
+                cleanup = subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                                         capture_output=True, timeout=10)
+                (root / "timeout-cleanup.exit").write_text(str(cleanup.returncode))
+                (root / "timeout-cleanup.stdout").write_bytes(cleanup.stdout)
+                (root / "timeout-cleanup.stderr").write_bytes(cleanup.stderr)
+            else:
+                os.killpg(process.pid, signal.SIGKILL)
+            stdout, stderr = process.communicate(timeout=5)
+        (root / "stdout").write_bytes(stdout)
+        (root / "stderr").write_bytes(stderr)
+        (root / "script.exit").write_text(str(process.returncode))
+        (root / "result.json").write_text(json.dumps({
+            "expected_exit": 0, "actual_exit": process.returncode,
+            "source_script_sha256": sha(actual), "workflow_extracted_script_sha256": sha(self.script),
+            "is_unmodified_workflow_block": actual == self.script, "timed_out": timed_out,
+        }, indent=2))
+        self.assertFalse(timed_out, f"Fixture exceeded its 30-second deadline: {root}")
+        self.assertEqual(0, process.returncode, f"prewarm exit {process.returncode}; {root}; {stderr!r}")
+        calls = [json.loads(line) for line in (root / "calls.jsonl").read_text().splitlines()] if (root / "calls.jsonl").exists() else []
+        try:
+            commands, tokens = interpreted_commands(stdout)
+        except AssertionError as error:
+            (root / "interpreter.exit").write_text("1")
+            (root / "interpreter.stderr").write_text(str(error), encoding="utf-8")
+            raise
+        (root / "interpreter.exit").write_text("0")
+        if not fail_token:
+            self.assertEqual(len(calls), len(tokens))
+            self.assertEqual(len(calls), sum(command.startswith(b"::group::") for command in commands))
+            self.assertEqual(len(calls), commands.count(b"::endgroup::"))
+        return root, subprocess.CompletedProcess(process.args, process.returncode, stdout, stderr), calls, commands
+
+    def test_source_extraction_and_bash_shellcheck(self):
+        for command, args in [(BASH, ["-n"]), (shutil.which("shellcheck"), ["--shell=bash"])]:
+            self.assertTrue(command, "ShellCheck 0.11.0 is mandatory")
+            if args == ["--shell=bash"]:
+                version = subprocess.run([command, "--version"], capture_output=True, timeout=10)
+                self.assertEqual(0, version.returncode)
+                self.assertIn(b"version: 0.11.0", version.stdout)
+            result = subprocess.run([command, *args, str(SCRATCH / "actual-prewarm.sh")], capture_output=True, timeout=30)
+            stem = "prewarm-bash-n" if args == ["-n"] else "prewarm-shellcheck"
+            (SCRATCH / (stem + ".stdout")).write_bytes(result.stdout)
+            (SCRATCH / (stem + ".stderr")).write_bytes(result.stderr)
+            (SCRATCH / (stem + ".exit")).write_text(str(result.returncode))
+            self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+
+    def test_normal_quote_trimming_and_blank_rows(self):
+        images = ["postgres:18", "alpine@sha256:0123456789"]
+        source = "\n  postgres:18 \t\n \t\nalpine@sha256:0123456789  \n"
+        _, _, calls, commands = self.run_prewarm_case("trim", source, {image: [reply()] for image in images})
+        self.assertEqual(images, [call["args"][1] for call in calls])
+        self.assertFalse(any(command.startswith(b"::warning::") for command in commands))
+
+    def test_unbalanced_quote_is_passed_verbatim_and_failure_stays_nonfatal(self):
+        image = 'foo"bar:1'
+        _, result, calls, commands = self.run_prewarm_case("unbalanced-quote", f"  {image} \t\n",
+                                                            {image: [reply(1, b"manifest unknown")]})
+        self.assertEqual([image], [call["args"][1] for call in calls])
+        self.assertEqual(0, result.returncode)
+        warnings = [command for command in commands if command.startswith(b"::warning::")]
+        self.assertEqual(1, len(warnings))
+        self.assertIn(b"pre-pull of foo\"bar:1 failed", warnings[0])
+
+    def test_pre_warm_image_annotations_are_escaped_and_pull_output_is_fenced(self):
+        image = "registry.example/app%0A:1"
+        output = b"::warning::INJECTED\r::set-output name=x::EVIL"
+        _, result, calls, commands = self.run_prewarm_case("fence", f"{image}\n", {image: [reply(0, output)]})
+        self.assertEqual([image], [call["args"][1] for call in calls])
+        self.assertIn(output, result.stdout)
+        self.assertIn(b"::group::docker pull registry.example/app%250A:1", commands)
+        self.assertFalse(any(command.startswith((b"::warning::", b"::set-output")) for command in commands))
+
+    def test_token_failure_skips_pull_without_failing_best_effort_step(self):
+        image = "registry.example/app:1"
+        _, result, calls, commands = self.run_prewarm_case("token-refusal", f"{image}\n",
+                                                             {image: [reply()]}, fail_token=True)
+        self.assertEqual(["head"], [call["command"] for call in calls])
+        self.assertIn(b"could not generate a random log-fencing token", commands[0])
+        self.assertNotIn(b"::group::", commands)
+        self.assertEqual(0, result.returncode)
+
+    def test_fence_regression_control_detects_missing_newline_separator(self):
+        separator = next(line for line in self.script.splitlines(keepends=True)
+                         if line.strip() == b"printf " + bytes((39, 92, 110, 39)))
+        self.assertEqual(1, self.script.count(separator))
+        mutant = self.script.replace(separator, b"", 1)
+        self.assertNotEqual(self.script, mutant)
+        with self.assertRaisesRegex(AssertionError, "left workflow commands stopped"):
+            self.run_prewarm_case("missing-resume-separator", "registry.example/app:1\n",
+                                  {"registry.example/app:1": [reply()]}, script=mutant)
+        cases = list(SCRATCH.glob("prewarm-missing-resume-separator-*"))
+        self.assertEqual(1, len(cases))
+        self.assertEqual("1", (cases[0] / "interpreter.exit").read_text())
+        self.assertIn("left workflow commands stopped", (cases[0] / "interpreter.stderr").read_text())
+
+    @classmethod
+    def tearDownClass(cls):
+        if PREWARM_WORKFLOW.read_bytes() != cls.workflow_bytes:
+            raise AssertionError("Harness mutated its reusable workflow source")
 
 
 class WorkflowLintExtensionTests(unittest.TestCase):

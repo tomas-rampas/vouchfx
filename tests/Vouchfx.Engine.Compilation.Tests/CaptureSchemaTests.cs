@@ -277,7 +277,7 @@ public sealed class CaptureSchemaTests
         // keyword ('pattern', from the negative-lookahead regex — not a literal
         // '[propertyNames]' tag) and reports it at the property's own instance
         // location (the value's pointer, not a synthetic key-only pointer).
-        // MINOR-7 (second-round gatekeeper finding): the raw JsonSchema.Net
+        // The raw JsonSchema.Net
         // message ("The string value is not a match for the indicated
         // regular expression") is unactionable — SchemaErrorCollector now
         // enriches this exact shape, naming the offending key and explaining

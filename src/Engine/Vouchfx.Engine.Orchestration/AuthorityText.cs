@@ -1,11 +1,11 @@
-// Shared host:port rendering for orchestration diagnostics (m1 fix round five / m3 fix round six).
+// Shared host:port rendering for orchestration diagnostics.
 //
 // WHY THIS EXISTS AS ITS OWN TYPE. Several places in this assembly hold a bracket-free host and a
 // port and render them back into an authority: SecuredEndpointProbe's declared-versus-observed
-// messages, EnvironmentMapper's TCP health-check diagnostics, and — since fix round eight —
-// EnvironmentMapper.StageServiceEndpoint's Kafka bootstrap value. Fix round five fixed the first by
+// messages, EnvironmentMapper's TCP health-check diagnostics, and
+// EnvironmentMapper.StageServiceEndpoint's Kafka bootstrap value. The first was fixed by
 // adding a private FormatAuthority to SecuredEndpointProbe and left the second interpolating
-// "{host}:{port}" raw, which was the same defect one file over; round eight found the third, which
+// "{host}:{port}" raw, which was the same defect one file over; the later probe found the third, which
 // had been missed because it stages a value rather than printing one. Every caller lives in THIS
 // assembly and THIS namespace (measured: src/Engine/Vouchfx.Engine.Orchestration/
 // SecuredEndpointProbe.cs and .../EnvironmentMapper.cs), so hoisting the rule costs no project
@@ -45,7 +45,7 @@ internal static class AuthorityText
     /// already left the parser as <c>DnsSafeHost</c>.
     /// </para>
     /// <para>
-    /// <strong>Idempotent on an already-bracketed host</strong> (m5, gatekeeper, fix round seven).
+    /// <strong>Idempotent on an already-bracketed host</strong>.
     /// The colon test alone rendered <c>[::1]</c> as <c>[[::1]]:9093</c>, because a bracketed IPv6
     /// literal still contains a colon.
     /// </para>
@@ -64,7 +64,7 @@ internal static class AuthorityText
     /// a defect anyone has observed.
     /// </para>
     /// <para>
-    /// <strong>No longer display-only</strong> (m1, peer-review critic, fix round eight). Most
+    /// <strong>No longer display-only</strong>. Most
     /// callers render a diagnostic, but <c>EnvironmentMapper.StageServiceEndpoint</c> stages the
     /// Kafka bootstrap authority a step's own client then CONNECTS to. That does not change the
     /// rule — the bracketed form is what a bootstrap parser expects, and it is the unbracketed

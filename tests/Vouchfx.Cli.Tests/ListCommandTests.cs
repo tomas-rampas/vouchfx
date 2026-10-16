@@ -90,7 +90,7 @@ public sealed class ListCommandTests
             // expectPayloadContains/expectProperties) legitimately has an EMPTY flat
             // RequiredFields/OptionalFields pair — the constraint is expressed in the typed
             // groups instead (StepCatalogueEntry.ExactlyOneOfGroups/AtLeastOneOfGroups), not
-            // omitted. Checking only the flat lists here would resurrect exactly the bug B1
+            // omitted. Checking only the flat lists here would resurrect exactly the bug this typed-group handling
             // fixed: a step type that looks unconstrained when it is not.
             var hasAnyFieldInfo =
                 st.RequiredFields.Count > 0
@@ -115,7 +115,7 @@ public sealed class ListCommandTests
         Assert.Contains("data store", pg.FamilyIntent, StringComparison.OrdinalIgnoreCase);
 
         // script.csharp is the specific case that motivates the widened check above: empty
-        // flat lists, but a real constraint expressed as a typed group (B1).
+        // flat lists, but a real constraint expressed as a typed group.
         var scriptCsharp = Assert.Single(document.StepTypes, st => st.Type == "script.csharp");
         Assert.Empty(scriptCsharp.RequiredFields);
         Assert.Empty(scriptCsharp.OptionalFields);

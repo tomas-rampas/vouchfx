@@ -684,7 +684,7 @@ public sealed class KafkaSecurityConfirmationDrillDockerTests
         // carries a verdict, a buffer and the security flag and no confirmations at all, and reaching
         // SuiteTopology.SecurityConfirmations would mean the test owning the topology instead of
         // running the scenario this control is about) AND SecurityConfirmation.ToString() omitted the
-        // Level entirely. The second half stopped being true in slice F's peer-review fix: the
+        // Level entirely. The second half stopped being true in slice F's rendering fix: the
         // rendered line now carries `level AuthenticatedRoundTrip` immediately after the
         // client-identity clause. The symbol is still unreachable; its NAME now is.
         //

@@ -183,7 +183,7 @@ public sealed class SchemaSecuritySurfaceClosureTests
             "fragment's own discriminator ('profile: acme-sasl') does not match — otherwise " +
             "the positive companion test proves nothing.");
 
-        // G-MINOR-3 (gatekeeper): a bare IsValid == false is not enough — this negative
+        // A bare IsValid == false is not enough — this negative
         // control's WHOLE POINT is proving the positive test above is not vacuous, so it must
         // not itself pass for an unrelated reason (e.g. a stray typo elsewhere in the mutated
         // instance). Pin the exact rejected location to the field this test is actually about.
@@ -223,8 +223,8 @@ public sealed class SchemaSecuritySurfaceClosureTests
         var mutatedSchema = JsonSchema.FromText(rootObj.ToJsonString());
 
         // An unrecognised key ('bogus') that would normally be rejected by
-        // unevaluatedProperties: false. Declared on a KAFKA dependency (M1, second
-        // peer-review round): on any other kind the whole 'security' block is now rejected by
+        // unevaluatedProperties: false. Declared on a KAFKA dependency
+        // because on any other kind the whole 'security' block is now rejected by
         // $defs/dependency's own final allOf clause, which would make this instance invalid
         // regardless of the sibling-keyword trap — the WRONG reason, leaving the guard
         // vacuous. Kafka accepts the block, so the only thing that can decide this
@@ -262,7 +262,7 @@ public sealed class SchemaSecuritySurfaceClosureTests
     // ── G-POSITIVE: pin the cascade that did NOT happen on the environment surface ────
 
     /// <summary>
-    /// G-POSITIVE (gatekeeper): switching <c>$defs/security</c> to <c>unevaluatedProperties:
+    /// Switching <c>$defs/security</c> to <c>unevaluatedProperties:
     /// false</c> did NOT trigger the same annotation-dropping cascade that forced
     /// <c>SchemaErrorCollector.SuppressUnevaluatedPropertiesCascade</c> into existence
     /// for <c>$defs/step</c> — verified empirically (see the class remarks and this file's own
@@ -283,8 +283,8 @@ public sealed class SchemaSecuritySurfaceClosureTests
     /// <c>serverArtifacts[0].target</c> pattern miss.
     /// </summary>
     /// <remarks>
-    /// The caCert and endpoint fixtures moved from a redis dependency to a kafka one in M1
-    /// (second peer-review round): a 'security' block on any non-kafka dependency kind is now
+    /// The caCert and endpoint fixtures moved from a redis dependency to a kafka one because
+    /// a 'security' block on any non-kafka dependency kind is now
     /// rejected outright, which would make those documents single-error for a reason that has
     /// nothing to do with an annotation cascade — the guard would still be green while
     /// proving nothing. Kafka accepts the block, so the single error each fixture yields is
@@ -821,7 +821,7 @@ public sealed class SchemaSecuritySurfaceClosureTests
 
         // Derivation, not a hand-written list: the fixture must DECLARE every schema key.
         // Scoped to the 'security:' BLOCK (its own line excluded, everything indented under it
-        // included) rather than to the whole document (NIT-E, peer review): a future
+        // included) rather than to the whole document: a future
         // $defs/security property whose name is already used elsewhere in this fixture — 'type',
         // declared on the dependency two lines above, is the live example — would otherwise be
         // counted as declared by that unrelated line. The null sweep below would still redden,

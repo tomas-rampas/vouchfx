@@ -29,7 +29,7 @@
 // an out-of-tree profile would use), not beside it — exercising the seam rather than merely
 // reserving it.
 //
-// NOTHING IN THIS FILE IS PUBLISHED (M2, peer review — fix round 2). Vouchfx.Engine.Compilation
+// NOTHING IN THIS FILE IS PUBLISHED. Vouchfx.Engine.Compilation
 // is a PACKABLE assembly with GenerateDocumentationFile=true, so a `public` type here ships in
 // the NuGet package with its XML docs attached. A previous round left ISecurityProfileWiring,
 // SecurityProfileRegistry, RegisteredSecurityProfileWiring and DuplicateSecurityProfileException
@@ -203,12 +203,12 @@ internal sealed class SecurityProfileRegistry
         string.Join(", ", All.Select(w => w.Profile).OrderBy(p => p, StringComparer.Ordinal));
 
     // Internal correction history (not XML documentation):
-    // n1 + M1 (peer review, fix round 2). This method previously claimed BYTE-IDENTICAL wording
+    // This method previously claimed BYTE-IDENTICAL wording
     // across TWO call sites — DocumentValidator.CollectUnknownSecurityProfileErrors and
-    // SchemaErrorCollector.FormatConstError's REQ-021 branch (the G-MAJOR-1 fix) — and
+    // SchemaErrorCollector.FormatConstError's REQ-021 branch — and
     // the claim was false above 200 characters, because only the FormatConstError path
     // passed the value through that class's own TruncateForDisplay bound. Both halves of
-    // that problem are gone: M1's schema tightening removed the REQ-021 const clause
+    // that problem are gone: the schema tightening removed the REQ-021 const clause
     // entirely (no profile is legal on a non-kafka dependency at 1.0, so there is nothing left
     // for a const to pin), which deleted the second call site, and the truncation now
     // lives HERE so the single remaining call site cannot lose it.
@@ -216,8 +216,8 @@ internal sealed class SecurityProfileRegistry
     // of its own, this text is serialised verbatim into vouchfx validate --json's
     // golden-pinned ValidateJsonDiagnostic(Stage, Message) document (and written to
     // stdout), and the same author-controlled-value reasoning that produced
-    // SchemaErrorCollector.MaxOffendingValueChars applies unchanged. MINOR-1 (peer
-    // review, fix round 4) corrected the PREMISE only, never the conclusion: this text does NOT
+    // SchemaErrorCollector.MaxOffendingValueChars applies unchanged. A later correction
+    // changed the PREMISE only, never the conclusion: this text does NOT
     // reach the §14 JSON Lines event stream. Traced: for a schema-invalid suite
     // ScenarioRunner emits only ScenarioStartedEvent/ScenarioCompletedEvent
     // and assigns the message to its own earlyMessage local, which reaches
@@ -262,7 +262,7 @@ internal sealed class SecurityProfileRegistry
     internal const int MaxOffendingValueChars = 200;
 
     // Internal correction history (not XML documentation):
-    // SEC-2 (peer review, fix round 3): the cut index is a CHAR index, so a naive
+    // The cut index is a CHAR index, so a naive
     // value[..MaxOffendingValueChars] slice can land between a high surrogate and its
     // low-surrogate partner, leaving invalid UTF-16 that throws or renders as U+FFFD when this
     // text is later serialised. The defect was pre-existing in
@@ -270,7 +270,7 @@ internal sealed class SecurityProfileRegistry
     // copies are fixed together, because a known correctness bug duplicated across two files is
     // how one becomes permanent. Same back-off idiom as
     // SuiteSetLoader.TruncateParseErrorMessage.
-    // SEC-1 (peer review, fix round 3): internal, not
+    // Internal, not
     // private, so SecurityProfileWiringValidator (Vouchfx.Engine.Runtime,
     // reached through this project's own InternalsVisibleTo) bounds its own
     // author-controlled profile interpolation through THIS helper rather than growing a
@@ -436,12 +436,12 @@ internal sealed class SecurityProfileRegistry
 // Internal correction history (not XML documentation):
 // The set of target kinds 1.0 wires a security profile for, both delivered (slices D and E):
 // a kafka dependency, or any declared service.
-// M1 (peer review, fix round 2). Both built-in wirings share this ONE predicate, so the two
+// Both built-in wirings share this ONE predicate, so the two
 // cannot drift apart by editing only one of them. The set is deliberately NOT "every kind the
 // schema happens to accept": a service gets its TLS/mTLS client material through
 // REQ-023/REQ-024 (slice D, landed), a kafka dependency through REQ-015 (slice E, landed), and
 // NOTHING ELSE is planned for 1.0.
-// MAJOR-2 (peer review, fix round 4): this paragraph previously called the set "measured
+// This paragraph previously called the set "measured
 // against the slices that do the wiring". It was not measured then — it was a FORECAST, and at
 // that commit NEITHER member was wired: REQ-024 recorded that all three HTTP-family providers
 // emitted a bare HttpClientHandler, and REQ-015 that both Kafka providers emitted a bare
@@ -494,7 +494,7 @@ internal sealed class SecurityProfileRegistry
 // REQ-022 exists to close. Tightening that in 1.1 would then reject suites that validated at
 // 1.0. Rejecting more now and widening later is the only safe direction across a freeze.
 // What the set costs an author, stated against what a provider actually does at step-execution
-// time rather than against what the schema accepts (MAJOR-1, fix round 4). A REST or SOAP API
+// time rather than against what the schema accepts. A REST or SOAP API
 // under test is a declared service, and http.rest/http.soap/
 // metrics-assert.prometheus resolve target exclusively through
 // IProjectContext.DeclaredServices, so the service member costs that author nothing. A

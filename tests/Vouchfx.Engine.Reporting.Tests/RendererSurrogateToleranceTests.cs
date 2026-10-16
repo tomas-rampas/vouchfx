@@ -1,7 +1,7 @@
 // Tests for the §14 per-line tolerance guard against an UNREADABLE string value
 // (S09 robustness fix — lone-surrogate tolerance).
 //
-// The defect these tests pin (found by peer review):
+// The defect these tests pin:
 //   Every renderer consumes a buffered JSON Lines event stream, parses each line, then
 //   reads string fields out of EventEnvelope.Extra via GetStr(...) -> JsonElement.GetString().
 //   The §14 per-line tolerance guard originally wrapped only the PARSE in catch (JsonException).
@@ -150,7 +150,7 @@ public sealed class RendererSurrogateToleranceTests
         Assert.Contains("before-bad", output, StringComparison.Ordinal);
         Assert.Contains("after-bad", output, StringComparison.Ordinal);
 
-        // Issue #588 (MAJOR-1 correction): HtmlRenderer.GetStr no longer catches its
+        // Issue #588: HtmlRenderer.GetStr no longer catches its
         // own read failure — all 16 of its call sites are inside BuildModel's per-line
         // try, so a lone-surrogate scenarioId now propagates to and IS counted by that
         // per-line catch, exactly like the terminal/JUnit renderers. This line is
@@ -251,7 +251,7 @@ public sealed class RendererSurrogateToleranceTests
     // UTF-16 surrogate that escapes cuts the HTML file off mid-document (the writer
     // streams straight to the output), and one that is caught leaves a stand-in with
     // nothing counted: a default in place of an entry's field, or no diff at all for an
-    // unreadable observation (issue #588 peer review M1).  Some of these fields are
+    // unreadable observation (issue #588).  Some of these fields are
     // SUT-derived (a captured value, an observation), so reachability is real.
     //
     // Now every one of those reads happens inside BuildModel's per-line try, as in the

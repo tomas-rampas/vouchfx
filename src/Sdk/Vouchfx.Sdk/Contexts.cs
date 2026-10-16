@@ -36,7 +36,7 @@ public interface IBindingContext { }
 // This context is engine-supplied and provider-consumed:
 // providers receive an instance and read its members but never implement the
 // interface. Adding a member is therefore non-breaking for providers — the ENGINE
-// is the only PRODUCTION implementor that must satisfy it. (n5 fix, fix round 2:
+// is the only PRODUCTION implementor that must satisfy it. (
 // this remark previously claimed the engine as "the single in-tree implementor",
 // which the services-generalisation spec's own DeclaredServices
 // addition below made visibly false — adding that member required updating ~22

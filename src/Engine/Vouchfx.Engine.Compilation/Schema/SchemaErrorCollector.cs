@@ -52,8 +52,8 @@
 // instance itself lets it be resolved without guessing, the property's
 // container. See FormatAdditionalPropertiesError / FormatForbiddenPropertyError.
 //
-// Composite-branch noise (feat/close-remaining-surfaces, combined peer-review +
-// gatekeeper findings on #337): OutputFormat.List's flat reporting (see the
+// Composite-branch noise (#337):
+// OutputFormat.List's flat reporting (see the
 // class remarks below) means a non-selected `oneOf`/`anyOf` branch's own
 // failing sub-evaluation is reported exactly like IsIfDiscriminatorNoise's
 // non-matching `if` clause — a schema-machinery artefact, not a document
@@ -77,10 +77,10 @@
 // SuppressSatisfiedCompositeBranchNoise, and SchemaErrorCollectorTests for
 // the disambiguation proof.
 //
-// Second-round gatekeeper findings (same branch, follow-up fix — CRITICAL-1
-// and MAJOR-4, both addressed by the SAME rewrite):
+// Composite satisfaction and suppression corrections
+// (both addressed by the SAME rewrite):
 //
-//   CRITICAL-1 — satisfaction must be COUNTED, not merely flagged. The first
+//   Satisfaction must be COUNTED, not merely flagged. The first
 //   cut marked a group "satisfied" the instant ANY single branch validated —
 //   correct for `anyOf` (>= 1 match IS satisfaction) but WRONG for `oneOf`,
 //   whose own semantics require EXACTLY one match: two or more matching
@@ -96,7 +96,7 @@
 //   afterwards: `oneOf` needs count == 1, `anyOf` needs count >= 1. See
 //   CompositeGroupState.IsSatisfied.
 //
-//   MAJOR-4 — suppression must be depth-independent, mirroring
+//   Suppression must be depth-independent, mirroring
 //   IsIfDiscriminatorNoise's OWN deliberate depth-independence (see that
 //   method's remarks). The first cut only recognised a branch's error when
 //   the FAILING node's own EvaluationPath terminated EXACTLY at
@@ -117,16 +117,16 @@
 //   UNSATISFIED composite (the count rule says "not satisfied") survives —
 //   see SchemaErrorCollectorTests' NestedAnyOf_* pair.
 //
-// Third-round gatekeeper findings (same branch, second follow-up — M1):
+// Required-field synthesis correction:
 //
-//   M1 — the too-many-matches synthesis above (MINOR-8) assumed every
+//   The too-many-matches synthesis above assumed every
 //   matching oneOf branch contributes exactly one name to
 //   ValidBranchFieldNames — true only for the two real composites that
 //   motivated it (script.csharp's code/file, each a single-field
 //   `required`). A matching branch with no `required` member at all (a
 //   bare `type`/scalar constraint) contributes NO name, so whenever such a
 //   branch is one of the matches the whole synthesis went dark — the exact
-//   CRITICAL-1 symptom (a genuine "too many matches" failure with no
+//   missing-diagnostic symptom (a genuine "too many matches" failure with no
 //   message at all), reproduced by TypeShapedOneOf_*. A branch whose
 //   `required` lists MORE than one name (a paired requirement, e.g.
 //   `required: ["a","b"]`) contributes several names for ONE match,
@@ -143,12 +143,12 @@
 //   oneOf/anyOf are public extension points a provider fragment can shape
 //   however it needs, so the generic path must be correct on its own
 //   rather than merely correct for the SDK surfaces reviewed so far — the
-//   same reasoning CRITICAL-1's own count fix already rests on. See
+//   same reasoning the composite match-count fix already rests on. See
 //   SchemaErrorCollectorTests' TypeShapedOneOf_*,
 //   MixedRequiredAndTypeOnlyOneOf_*, and MultiRequiredPairOneOf_* for the
 //   three measured failure modes this closes.
 //
-//   M1-r (fourth-round re-review, same finding) — count-equality ALONE is
+//   Count-equality ALONE is
 //   necessary but was claimed above as sufficient ("if and only if"),
 //   which is FALSE: measured counter-example `oneOf
 //   [{required:["a"]},{required:["b","c"]},{type:"object"}]` against
@@ -264,13 +264,13 @@ internal static class SchemaErrorCollector
         CollectErrorsRecursive(results, collected, groupStates, instance, schema);
 
         // Synthesise the genuine defect a oneOf's "too many matches" failure
-        // represents (MINOR-8): JsonSchema.Net attaches NO message of its
+        // represents: JsonSchema.Net attaches NO message of its
         // own to this case (verified empirically — every matching branch is
-        // individually valid, so none carries an error), and the CRITICAL-1
+        // individually valid, so none carries an error), and the match-count
         // count fix correctly leaves the group unsatisfied, so without this
         // the ONLY symptom would be every matched branch's own fields wrongly
         // reported as "unknown" by the unevaluatedProperties cascade below.
-        // Inserted at the FRONT of 'collected' (nit n1 — this names the
+        // Inserted at the FRONT of 'collected' (this names the
         // actual defect directly and should be the first thing an author
         // reads, not buried after whatever the recursive walk happened to
         // visit first) but still BEFORE both suppression passes run so this
@@ -284,11 +284,11 @@ internal static class SchemaErrorCollector
         // drop the two misleading unevaluatedProperties entries once this
         // genuine error registers the step as having "another error".
         //
-        // M1/M1-r guard: only NAME the matched branches' fields when EVERY
+        // Only NAME the matched branches' fields when EVERY
         // matching branch individually contributed exactly one name
         // (!HasUnattributableBranch) AND the running total still equals the
         // branch count (ValidBranchFieldNames.Count == ValidBranchCount) —
-        // see the class remarks' "Third-round gatekeeper findings" and
+        // see the class remarks' "Required-field synthesis correction" and
         // HasUnattributableBranch's own remarks for why count-equality
         // alone is necessary but not sufficient. Any other shape falls back
         // to FormatUnnamedTooManyOneOfMatchesError's honest count-only
@@ -327,7 +327,7 @@ internal static class SchemaErrorCollector
         var afterEnumConstDedup = SuppressRedundantConstWhenEnumPresent(afterCompositeSuppression);
         var afterForbiddenContainerSubsumption = SuppressErrorsInsideForbiddenContainer(afterEnumConstDedup);
 
-        // QUESTION-1 (peer review, fix round 4) — why SuppressErrorsInsideForbiddenContainer
+        // Why SuppressErrorsInsideForbiddenContainer
         // running BEFORE the cascade cannot change the cascade's decision. The cascade drops a
         // step's unevaluatedProperties entries only when that step still carries some OTHER
         // error, so a pass that removes errors ahead of it could in principle flip that. It
@@ -462,10 +462,10 @@ internal static class SchemaErrorCollector
     /// <c>oneOf</c>/<c>anyOf</c> application, built up during the walk and
     /// consulted afterwards by <see cref="SuppressSatisfiedCompositeBranchNoise"/>
     /// and (for a <c>oneOf</c> specifically) by the too-many-matches
-    /// synthesis in <see cref="CollectErrors"/> (MINOR-8).
+    /// synthesis in <see cref="CollectErrors"/>.
     /// </summary>
     /// <remarks>
-    /// <see cref="IsSatisfied"/> encodes the CRITICAL-1 fix: <c>oneOf</c>
+    /// <see cref="IsSatisfied"/> encodes the match-count rule: <c>oneOf</c>
     /// requires EXACTLY one matching branch (two or more is itself a genuine
     /// violation of "exactly one" — nothing here is noise), while
     /// <c>anyOf</c> only ever requires AT LEAST one. A mutable class, not a
@@ -555,13 +555,13 @@ internal static class SchemaErrorCollector
             state.ValidBranchCount++;
 
             // Only ever consulted for a oneOf that ends up with 2+ matches
-            // (MINOR-8) — reading it for anyOf groups too would be wasted
+            // Reading it for anyOf groups too would be wasted
             // work, since HasTooManyOneOfMatches is oneOf-only by definition.
             if (branchIsOneOf && schema is { } schemaRootForFieldNames)
             {
                 var fieldNames = TryReadRequiredFieldNames(schemaRootForFieldNames, node.SchemaLocation);
 
-                // M1-r: judge THIS branch's own contribution in isolation —
+                // Judge THIS branch's own contribution in isolation —
                 // exactly one name is attributable to exactly one branch;
                 // zero or two-or-more breaks that correspondence for the
                 // WHOLE group, permanently, regardless of what the running
@@ -613,11 +613,11 @@ internal static class SchemaErrorCollector
     /// <summary>
     /// Drops a composite-branch error whose EvaluationPath passes through a
     /// SATISFIED <c>oneOf</c>/<c>anyOf</c> group's branch, at ANY depth (see
-    /// <see cref="FindCompositeBranchOccurrences"/> and the class remarks —
-    /// MAJOR-4's depth-independence fix). When a group has NO satisfied
+    /// <see cref="FindCompositeBranchOccurrences"/> and the class remarks on
+    /// depth-independent suppression). When a group has NO satisfied
     /// branch (the composite genuinely failed — e.g. a service with neither
     /// 'image' nor 'project' — or a <c>oneOf</c> with two-or-more matches,
-    /// CRITICAL-1's fix), every branch's error is a genuine,
+    /// as required by its semantics), every branch's error is a genuine,
     /// independently-reportable defect and survives untouched.
     /// </summary>
     private static List<CollectedError> SuppressSatisfiedCompositeBranchNoise(
@@ -748,15 +748,15 @@ internal static class SchemaErrorCollector
     // errors (the [pattern] miss and the per-kind narrowing's own finding) where the same
     // value on a SERVICE — which carries no per-kind narrowing — emitted ONE. Three review
     // rounds passed over the asymmetry because both the corpus fixture and the unit assertion
-    // for a wrong-cased profile exercised it only on a service. The gatekeeper's original remedy
+    // for a wrong-cased profile exercised it only on a service. The original remedy
     // (mirror SuppressRedundantConstWhenEnumPresent, keyed on pattern
     // instead of enum) was written against the OLD schema, where the second error was a
-    // sibling const at the identical location; M1 replaced that const with a
+    // sibling const at the identical location; the schema tightening replaced that const with a
     // boolean false one level UP, so a same-location keyword-pair rule no longer matches
     // the shape at all. Subsumption by container is the rule that does — and it is strictly more
     // general, covering the required, unevaluatedProperties and
     // minLength children the keyword-pair rule never reached.
-    // MINOR-2 (peer review, fix round 4). The paragraph above used to end "…and two NESTED
+    // The paragraph above used to end "…and two NESTED
     // forbidden containers collapse to the outermost — the one an author must act on". The code
     // does the opposite, and always has: the short-circuit is unconditional, so a forbidden-shape
     // error nested INSIDE another forbidden container is never subsumed by it and both are
@@ -873,7 +873,7 @@ internal static class SchemaErrorCollector
             var subsumed = false;
             foreach (var forbiddenLocation in forbiddenLocations)
             {
-                // MAJOR-1 (peer review, fix round 3): the shared helper, not an inline
+                // The shared helper, not an inline
                 // equality-or-StartsWith pair re-derived here. The two were equivalent, but the
                 // helper is where the segment-boundary trap is DOCUMENTED ('/steps/10' is not a
                 // descendant of '/steps/1'), and a rule whose rationale lives on a method it does
@@ -907,7 +907,7 @@ internal static class SchemaErrorCollector
     /// which needs a branch's own aggregate <c>IsValid</c>; the (separate,
     /// depth-independent) suppression check is
     /// <see cref="FindCompositeBranchOccurrences"/>, deliberately not this
-    /// method — see the class remarks on why the two must differ (MAJOR-4).
+    /// method — see the class remarks on why the two must differ.
     /// Deliberately excludes <c>allOf</c>: an <c>allOf</c> branch is never
     /// exploration noise (EVERY branch must pass, so a failing one is always
     /// diagnostic) — that is exactly why the existing <c>if</c>/<c>then</c>
@@ -944,7 +944,7 @@ internal static class SchemaErrorCollector
     /// deep inside that branch's own nested sub-schema (e.g.
     /// <c>.../anyOf/1/properties/x</c>, not merely <c>.../anyOf/1</c> itself),
     /// and every such descendant belongs to that SAME branch for suppression
-    /// purposes (MAJOR-4).
+    /// purposes.
     /// </summary>
     /// <remarks>
     /// Segment-based reconstruction (split, then rejoin the prefix with a
@@ -1097,7 +1097,7 @@ internal static class SchemaErrorCollector
     /// <c>security</c> block (e.g. the missing-<c>endpoint</c>
     /// case), enriching an <c>enum</c> violation with the offending value
     /// and the live accepted list (see <see cref="FormatEnumError"/>),
-    /// enriching a <c>const</c> violation similarly (m4 — see
+    /// enriching a <c>const</c> violation similarly (see
     /// <see cref="FormatConstError"/>), and falling back to the original
     /// <c>[{keyword}] {message}</c> format for every other, genuinely-named
     /// keyword — including a <c>required</c> violation anywhere OUTSIDE a
@@ -1126,7 +1126,7 @@ internal static class SchemaErrorCollector
             // never matches this environment-rooted check and falls through to the step-naming
             // formatter unchanged.
             //
-            // MINOR-2 (fix round 4): the first sentence above used to read "directly inside a
+            // The first sentence above used to read "directly inside a
             // security block (or one of its own serverArtifacts[] entries)". The parenthetical is
             // false and is dropped — serverArtifacts items $ref $defs/securityServerArtifact,
             // which retains 'additionalProperties: false', so an unknown key on an artifact entry
@@ -1159,7 +1159,7 @@ internal static class SchemaErrorCollector
             return FormatForbiddenPropertyError(instanceLocation, instance, schema, schemaLocation);
         }
 
-        // REQ-002 / gatekeeper NOTE-1 (refined by MINOR-6, honest nested attribution): a
+        // REQ-002 (honest nested attribution): a
         // 'required' violation AT the dependency's/service's own 'security' sub-object
         // itself — the missing-'endpoint' case above all, and mtls's paired
         // 'clientCert'/'clientKey' — names the owning dependency/service with "on",
@@ -1177,7 +1177,7 @@ internal static class SchemaErrorCollector
         // untouched: TryResolveEnvironmentContainer only resolves outside a security
         // context at exactly depth 4 (any field directly on the dependency/service).
         //
-        // CORRECTION (G1, gatekeeper MAJOR-1): the paragraph above used to end "…which no
+        // CORRECTION: the paragraph above used to end "…which no
         // OTHER 'required' clause in this schema currently reaches" — FALSE once
         // $defs/serviceHealthCheck shipped. Its own 'required: ["type"]', and its
         // conditional 'required: ["port"]' for a 'type: tcp' healthCheck, ALSO instantiate
@@ -1302,7 +1302,7 @@ internal static class SchemaErrorCollector
     /// other current property-name guards retain the reserved-prefix reason. Neither
     /// dispatch infers the rule from human regex error text — see
     /// <see cref="FormatReservedPrefixError"/>'s own generic-but-specific
-    /// message, which deliberately never hardcodes the prefix list (MINOR-7:
+    /// message, which deliberately never hardcodes the prefix list (because
     /// that list already lives in one place, VarKeys, and the schema's own
     /// 'description' — repeating it here would be a THIRD place to keep in
     /// sync).
@@ -1530,7 +1530,7 @@ internal static class SchemaErrorCollector
                 var dependencyKind = instance is { } root ? TryResolveContainerType(instanceLocation, root) : null;
                 var displayKind = dependencyKind is null ? null : TruncateForDisplay(dependencyKind);
 
-                // REQ-021, as tightened by M1 (peer review, fix round 2): 'security' is forbidden
+                // REQ-021: 'security' is forbidden
                 // on every dependency kind except kafka, and the generic "Property 'x' is not
                 // valid on a 'redis' dependency" wording above is the WRONG diagnosis for it. An
                 // author reading that concludes they wrote the block in the wrong PLACE, or under
@@ -1540,7 +1540,7 @@ internal static class SchemaErrorCollector
                 // block rather than a pin on 'security.profile': pinning the profile can only
                 // ever say "you picked the wrong value", which would be a lie — no value works.
                 //
-                // MAJOR-1 (peer review, fix round 4): this message used to end "declare it under
+                // This message used to end "declare it under
                 // 'environment.services' instead, where every registered profile is wired", and
                 // that remedy is a dead end for every kind the message can fire on. Measured
                 // against the 25 Core providers: 17 resolve 'target' only through
@@ -1585,7 +1585,7 @@ internal static class SchemaErrorCollector
                 // a detector for the real thing, not a search that trips over its own obituary.)
                 if (propertyName == "security")
                 {
-                    // NIT-1 (peer review, fix round 3): the kind is named as "dependency kind
+                    // The kind is named as "dependency kind
                     // '<x>'", never "a '<x>' dependency" — the article cannot agree with a value
                     // that is DATA (a 'azureservicebus' / a 'elasticsearch'), and picking it from
                     // the next character's vowel-ness would still be wrong for a kind such as
@@ -1674,7 +1674,7 @@ internal static class SchemaErrorCollector
             return $"[properties] Property '{displayProperty}' is not valid on capture entry '{displayVariable}'";
         }
 
-        // M5: the generic allOf/if/then exclusion case (storage-assert.s3's
+        // The generic allOf/if/then exclusion case (storage-assert.s3's
         // size/minSize and exists:false shapes; db-assert.dynamodb's exists:false
         // shape) — read the sibling 'if' condition directly from the live schema.
         if (schema is { } schemaRootForIf)
@@ -1904,7 +1904,7 @@ internal static class SchemaErrorCollector
 
     /// <summary>
     /// Builds the actionable message for a <c>propertyNames</c>
-    /// reserved-prefix rejection (MINOR-7): names the offending key and
+    /// reserved-prefix rejection: names the offending key and
     /// explains WHY, generically — never hardcoding the actual prefix list
     /// (that authoritative list lives in VarKeys and the schema's own
     /// 'description'; hardcoding it a third time here is exactly the
@@ -1920,7 +1920,7 @@ internal static class SchemaErrorCollector
 
     /// <summary>
     /// Builds the actionable message for a <c>oneOf</c> that failed via
-    /// "too many matches" (MINOR-8) — e.g. script.csharp's <c>code</c>/
+    /// "too many matches" — e.g. script.csharp's <c>code</c>/
     /// <c>file</c> both set. Named generically from
     /// <paramref name="matchedFieldNames"/> (each matching branch's own
     /// <c>required</c> member, read from the live schema — see
@@ -2021,7 +2021,7 @@ internal static class SchemaErrorCollector
         var propertyName = TruncateForDisplay(LastPointerSegment(instanceLocation));
         var allowedList = FormatAllowedValuesList(allowedValues);
 
-        // Uniqueness, not merely existence (MINOR-6): the suggestion below
+        // Uniqueness, not merely existence: the suggestion below
         // claims to name THE correct spelling, so it must never be offered
         // when two-or-more accepted values case-insensitively match the
         // offending value — an arbitrary pick (the original FirstOrDefault)
@@ -2135,14 +2135,14 @@ internal static class SchemaErrorCollector
     }
 
     // Internal correction history (not XML documentation):
-    // H-B (peer review, held item — corrected in fix round 2, and the correction is now
-    // self-enforcing). This paragraph used to assert that every OTHER const in the
+    // The corrected claim below is now
+    // self-enforcing. This paragraph used to assert that every OTHER const in the
     // composed schema belongs to a discriminator clause "which IsIfDiscriminatorNoise
     // filters out before this method is ever reached". That was false while REQ-021's own
     // narrowing pinned security.profile to const: "tls": that const sat in
     // a then, not an if, so it was NOT filtered and did reach this method — which
     // is exactly why this method carried a third, security.profile-specific branch.
-    // M1's schema tightening deleted that clause (a non-kafka dependency now rejects the whole
+    // The schema tightening deleted that clause (a non-kafka dependency now rejects the whole
     // security block via a boolean false subschema, a properties shape
     // handled by FormatForbiddenPropertyError, never a const), and the
     // branch went with it. The claim is therefore true again TODAY — measured, not assumed:
@@ -2151,8 +2151,8 @@ internal static class SchemaErrorCollector
     // const appears, so the next one to be added is caught here rather than silently
     // inheriting the generic message.
     // Internal correction history (not XML documentation):
-    // The composed schema has TWO user-facing const shapes (m8 fix, fix round 2
-    // corrects this remark — it previously claimed exactly one; that was already wrong
+    // The composed schema has TWO user-facing const shapes (this
+    // corrects the earlier remark — it previously claimed exactly one; that was already wrong
     // the day $defs/service's ports-only conditional shipped, and the second
     // branch below closes the gap): metadata.schemaVersion, and
     // environment.services.<name>.healthCheck.type's conditional pin to
@@ -2167,7 +2167,7 @@ internal static class SchemaErrorCollector
     // healthCheck.type const that has no enum sibling — a valid enum member (e.g.
     // "http") failing the narrower ports-only conditional.
     /// <summary>
-    /// Builds the actionable message for a <c>const</c> rejection (m4) —
+    /// Builds the actionable message for a <c>const</c> rejection —
     /// e.g. <c>metadata.schemaVersion: v2</c>, previously surfacing raw
     /// JsonSchema.Net library text with literal Unicode escape sequences
     /// around the expected value rather than an actual quote mark: measured
@@ -2244,7 +2244,7 @@ internal static class SchemaErrorCollector
 
     /// <summary>
     /// Builds the actionable message for a captureEntry <c>minProperties: 1</c>
-    /// rejection (m6, the empty-mapping case — <c>capture: {{ x: {{}} }}</c>).
+    /// rejection (the empty-mapping case — <c>capture: {{ x: {{}} }}</c>).
     /// Before this, the raw library default ("Value should have at least 1
     /// properties") named neither the field nor the choice an author must
     /// make. Names the accepted keys read from the LIVE schema's own
@@ -2337,7 +2337,7 @@ internal static class SchemaErrorCollector
     /// Reads the <c>const</c> value a failing node's own <c>SchemaLocation</c>
     /// points at, from a parsed copy of the composed schema's JSON text — the
     /// <c>const</c> analogue of <see cref="TryReadEnumArray"/>, same pointer
-    /// resolution, same schema-is-the-only-source-of-truth discipline (m4).
+    /// resolution, same schema-is-the-only-source-of-truth discipline.
     /// Only a string-typed <c>const</c> is read — the language's one
     /// user-facing <c>const</c> today, <c>metadata.schemaVersion</c>,
     /// constrains a string; a non-string <c>const</c> degrades to
@@ -2365,7 +2365,7 @@ internal static class SchemaErrorCollector
     }
 
     /// <summary>
-    /// Reads a container schema's own sibling <c>properties</c> names (m6),
+    /// Reads a container schema's own sibling <c>properties</c> names,
     /// optionally excluding one — used both by
     /// <see cref="FormatForbiddenPropertyError"/>'s captureEntry branch
     /// (exclude the offending property, name the other one that makes it
@@ -2428,7 +2428,7 @@ internal static class SchemaErrorCollector
     /// BRANCH's own <c>SchemaLocation</c> points at directly (unlike
     /// <see cref="TryReadEnumArray"/>, no further descent is needed — a
     /// branch root's SchemaLocation already IS that branch's own schema
-    /// object, e.g. <c>{"required":["code"]}</c>) — MINOR-8's too-many-
+    /// object, e.g. <c>{"required":["code"]}</c>) — the too-many-
     /// matches synthesis, so the field name(s) named in the synthesised
     /// message are read from the LIVE schema rather than hardcoded to any
     /// one provider's own vocabulary (e.g. script.csharp's 'code'/'file').
@@ -2601,7 +2601,7 @@ internal static class SchemaErrorCollector
     /// security object itself (<c>.../security</c>, depth 4) and an unrecognised key
     /// directly inside it (<c>.../security/&lt;bogus&gt;</c>, depth 5): both of those are
     /// still accurately described as "on" the dependency/service, since the security
-    /// block IS a property of that container (MINOR-6, honest nested attribution — see
+    /// block IS a property of that container (honest nested attribution — see
     /// <see cref="FormatError"/>'s own <c>required</c> branch and
     /// <see cref="FormatAdditionalPropertiesError"/> for how callers use this to choose
     /// between "on &lt;kind&gt; '&lt;name&gt;'" and "in &lt;kind&gt; '&lt;name&gt;' (at
@@ -2729,7 +2729,7 @@ internal static class SchemaErrorCollector
 
     /// <summary>
     /// Renders <paramref name="instanceLocation"/> from its <c>security</c> segment
-    /// (index 3) onward as a dotted/bracketed sub-path (MINOR-6) — e.g.
+    /// (index 3) onward as a dotted/bracketed sub-path — e.g.
     /// <c>/environment/dependencies/events-kafka/security/serverArtifacts/0</c> becomes
     /// <c>security.serverArtifacts[0]</c>, and
     /// <c>.../security/serverArtifacts/0/bogus</c> becomes
@@ -2774,7 +2774,7 @@ internal static class SchemaErrorCollector
     /// with one trailing property segment, e.g.
     /// <c>/steps/&lt;N&gt;/capture/&lt;varName&gt;/xpath</c> (the forbidden-
     /// property shape) — and extracts the capture variable's own map key
-    /// (m6). Same pointer-only extraction principle as
+    /// — same pointer-only extraction principle as
     /// <see cref="TryResolveEnvironmentContainer"/>: a capture entry's
     /// variable name is the YAML map key an author wrote, directly present
     /// in the pointer, never something read back out of the instance.

@@ -236,7 +236,7 @@ public sealed class SuiteTopology : IAsyncDisposable, IKeptTopology
     /// </param>
     /// <param name="seedBaseDirectory">
     /// The SUITE directory — the base every relative path this method resolves is measured from.
-    /// Despite the name it has TWO consumers, not one (Copilot, fix round seven: the doc named only
+    /// Despite the name it has TWO consumers, not one (the doc previously named only
     /// the first, and an embedder who passed a seed-only directory would silently break artefact
     /// containment):
     /// <list type="bullet">
@@ -876,7 +876,7 @@ public sealed class SuiteTopology : IAsyncDisposable, IKeptTopology
     /// configuration.
     /// </summary>
     /// <remarks>
-    /// Reads the same declaration the probe walks — literally the same code (m5, fix round three):
+    /// Reads the same declaration the probe walks — literally the same code:
     /// both are <see cref="SecuredTargets"/>, so the guard fires for exactly the suites the probe
     /// would otherwise probe with nothing in hand, and that agreement is now structural rather
     /// than asserted in prose.

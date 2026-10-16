@@ -1,5 +1,5 @@
 // REQ-011 + REQ-023 (as amended 2026-08-04) — which Vars key mq-publish.kafka emits for its
-// target (authenticated-infrastructure-mtls, slice E; peer review fix round three, MAJOR-2).
+// target (authenticated-infrastructure-mtls, slice E).
 //
 // THE DEFECT THESE PIN. `target` has accepted a declared SERVICE since REQ-011 — the shape a
 // customer-supplied broker takes, because it runs its own entrypoint and configuration rather
@@ -58,7 +58,7 @@ public sealed class MqPublishKafkaTargetKeyTests
 
     /// <summary>
     /// A target naming a DECLARED SERVICE stages at <c>svc::&lt;name&gt;</c>, which is where the
-    /// engine actually puts a service's endpoint — the half of MAJOR-2 that lives in the provider.
+    /// engine actually puts a service's endpoint — the service-target correction in the provider.
     /// </summary>
     [Fact]
     public void Emit_ServiceTarget_ReadsTheServiceKey()

@@ -244,7 +244,7 @@ public static class TestCertificateAuthority
         var clientCertificate = IssueLeaf(ca, ClientSubjectCommonName, includeLocalhostSans: false, now);
 
         // Two extra server leaves from the SAME anchor, for the extended-key-usage arms of the
-        // trust decision (slice D fix round one). Issued here rather than by a later helper
+        // trust decision. Issued here rather than by a later helper
         // because the bed deliberately does not retain the CA's private key — see below.
         var clientAuthOnlyLeaf = IssueLeaf(
             ca,

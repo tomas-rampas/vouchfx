@@ -1,5 +1,5 @@
 // REQ-016 / EDGE-005 — live-container evidence for `security.serverArtifacts`
-// (authenticated-infrastructure-mtls, slice E; peer review fix round three, MAJOR-3).
+// (authenticated-infrastructure-mtls, slice E).
 //
 // WHY A DOCKER TEST, WHEN THE UNIT TESTS ALREADY PASS. ServerArtifactInjectionTests proves what
 // this engine ASKS FOR — one ContainerFileSystemCallbackAnnotation per destination directory, no

@@ -7,11 +7,11 @@
 // deliberately never 1 (TestFailure is reserved for a genuine run Fail). Never starts a
 // topology: ScenarioValidator's pipeline stops before SuiteTopology.StartAsync.
 //
-// Code-review MINOR-2 (--json stdout purity) and MINOR-3 (discovery I/O errors losing
-// their message) are each covered by a dedicated test below.
+// Regression coverage: --json stdout purity and discovery I/O errors losing
+// their message are each covered by a dedicated test below.
 //
-// Issue #268 (validate-vs-run base-directory drift, superseding the #260 peer-review
-// MAJOR finding below): a recursive multi-directory scan MUST resolve EACH scenario's
+// Issue #268 (validate-vs-run base-directory drift, superseding the #260
+// discovery failure below): a recursive multi-directory scan MUST resolve EACH scenario's
 // compile-time relative file-path fields (e.g. script.csharp's `file:`) against THAT
 // scenario's OWN directory — never a single suite-wide directory shared by every
 // scenario (the #260 behaviour these tests originally pinned, and which #268 replaces).
@@ -58,7 +58,7 @@ public sealed class ValidateCommandTests : IDisposable
     }
 
     // 'svc' must be a DECLARED service (services-generalisation spec, REQ-012 as narrowed by
-    // M1: http.rest's target must name an entry under environment.services, and a target
+    // http.rest's target must name an entry under environment.services, and a target
     // naming a declared dependency is rejected at validation time — a dependency stages a
     // connection string, not a service endpoint, so it could never have worked at run time)
     // — this fixture predates that target-reconciliation check, when http.rest accepted any
@@ -86,7 +86,7 @@ public sealed class ValidateCommandTests : IDisposable
     // Genuinely fails ScenarioDiscovery.ParseFile's own YAML parse (unterminated flow
     // sequence) — Ast stays null and ParseError is set to "Parse / AST error: ...". This
     // is the deterministic, cross-platform way to produce a Failed DiscoveredScenario
-    // (MINOR-3): simulating a true unreadable-file I/O error portably across Windows/Linux
+    // Simulating a true unreadable-file I/O error portably across Windows/Linux
     // CI is not reliable, but discovery's Failed/ParseError code path is IDENTICAL for
     // both causes (see ScenarioDiscovery.ParseFile), so this exercises the same fix.
     private const string DiscoveryParseFailureScenario = "steps: [\n  - id: bad\n";
@@ -123,7 +123,7 @@ public sealed class ValidateCommandTests : IDisposable
         Assert.Contains(".e2e.yaml", sw.ToString(), StringComparison.Ordinal);
     }
 
-    // ── Copilot review finding #1: ScenarioDiscovery.Discover's OWN Path.GetFullPath /
+    // ── ScenarioDiscovery.Discover's OWN Path.GetFullPath /
     //    Directory.EnumerateFiles calls can throw exceptions beyond DirectoryNotFoundException
     //    / ScenarioDiscoveryException (ArgumentException, NotSupportedException,
     //    PathTooLongException, UnauthorizedAccessException, IOException,
@@ -257,7 +257,7 @@ public sealed class ValidateCommandTests : IDisposable
         Assert.False(string.IsNullOrWhiteSpace(document.EngineVersion));
     }
 
-    // ── MINOR-2: --json stdout purity (usage-error diagnostics move to stderr) ─────────
+    // ── --json stdout purity (usage-error diagnostics move to stderr) ─────────
 
     [Fact]
     public void Execute_MissingRoot_Json_StdoutIsEmpty_MessageGoesToStderr()
@@ -306,7 +306,7 @@ public sealed class ValidateCommandTests : IDisposable
         Assert.Equal(string.Empty, stderr.ToString());
     }
 
-    // ── MINOR-3: a Failed discovery surfaces its OWN ParseError, not a re-validation ───
+    // ── a Failed discovery surfaces its OWN ParseError, not a re-validation ───
 
     [Fact]
     public void Execute_FileFailsDiscoveryParse_SurfacesOriginalParseErrorAtParseStage()

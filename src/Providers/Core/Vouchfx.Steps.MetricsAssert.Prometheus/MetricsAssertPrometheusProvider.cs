@@ -228,7 +228,7 @@ public sealed class MetricsAssertPrometheusProvider
         {
             if (ctx.DeclaredDependencies.ContainsKey(model.Target))
             {
-                // M1 fix (fix round 2) — mirrors HttpRestProvider.Validate's own identical
+                // Mirrors HttpRestProvider.Validate's own identical
                 // fix and rationale: metrics-assert.prometheus resolves 'target' exclusively
                 // against declared services; a dependency target validated PASS before this
                 // fix and could never work at run time.
@@ -238,7 +238,7 @@ public sealed class MetricsAssertPrometheusProvider
                 errors.Add(
                     $"metrics-assert.prometheus: 'target' '{model.Target}' names a dependency " +
                     "declared in environment.dependencies, which metrics-assert.prometheus " +
-                    "cannot reach — it resolves 'target' only against declared services. " +
+                    "cannot reach - it resolves 'target' only against declared services. " +
                     "Declared services: " + services + ".");
             }
             else
@@ -261,7 +261,7 @@ public sealed class MetricsAssertPrometheusProvider
         else
         {
             // SSRF guard, mirrors HttpRestProvider.Validate's rooted-path checks exactly
-            // (M1): path must be a safe rooted relative reference.  Reject absolute URLs,
+            // Path must be a safe rooted relative reference.  Reject absolute URLs,
             // protocol-relative paths, backslash paths, and paths that do not start with
             // '/'.
             //

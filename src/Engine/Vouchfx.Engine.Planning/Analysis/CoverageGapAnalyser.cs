@@ -130,7 +130,7 @@ internal static class CoverageGapAnalyser
                 continue;
             }
 
-            // BLOCKER fix-round: a step-never-exercised finding names the service/dependency
+            // A step-never-exercised finding names the service/dependency
             // its own declared `target` addresses whenever that target resolves (REQ-004's
             // two exclusions — a {placeholder}/${secret:...} reference, never substituted —
             // still apply via StepTargetResolver.ResolveTarget) AND classifies against THIS
@@ -243,7 +243,7 @@ internal static class CoverageGapAnalyser
                 Ambiguous: true,
                 AmbiguityReason: PlanAmbiguityReasons.ScenarioIdCollision,
                 History: null,
-                // MAJOR fix-round (additive, REQ-011-compatible): the colliding suite paths,
+                // Additive, REQ-011-compatible: the colliding suite paths,
                 // machine-readably — Detail already names them in prose, but an MCP consumer
                 // should not have to regex a sentence to find them. Already ordinal-sorted
                 // (RunCorrelator.Correlate).

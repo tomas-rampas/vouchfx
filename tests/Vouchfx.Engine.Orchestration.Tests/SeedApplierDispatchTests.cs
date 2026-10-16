@@ -1,4 +1,4 @@
-// Non-docker tests for SeedApplier's type-dispatch (NIT-1): a seed kind that does
+// Non-docker tests for SeedApplier's type-dispatch: a seed kind that does
 // not match its dependency's declared type is rejected as a Provision error
 // before any I/O against a live resource.
 //
@@ -10,7 +10,7 @@
 // both were removed before general availability (see SeedSpec.cs's header
 // remarks); the seam-specific tests that exercised IBrokerWarmupSink /
 // IDocumentSeedSink were removed along with the feature. What remains here is
-// the NIT-1 dispatch behaviour for the surviving `sql` kind.
+// the type-mismatch dispatch behaviour for the surviving `sql` kind.
 
 using System.Collections.Frozen;
 using Vouchfx.Engine.Abstractions;
@@ -22,7 +22,7 @@ namespace Vouchfx.Engine.Orchestration.Tests;
 
 /// <summary>
 /// Non-docker tests for <see cref="SeedApplier.ApplyAsync"/> type-dispatch: a
-/// seed kind that does not match its dependency's declared type (NIT-1) is
+/// seed kind that does not match its dependency's declared type is
 /// rejected as a Provision error, and <c>sql</c> is accepted (dispatch-only,
 /// past the file-existence check) on every relational kind.
 /// </summary>
@@ -38,7 +38,7 @@ public sealed class SeedApplierDispatchTests
         return dir;
     }
 
-    // ── NIT-1: a seed kind that does not match the dependency type → Provision ─
+    // ── A seed kind that does not match the dependency type → Provision ─
 
     [Fact]
     public async Task ApplyAsync_SqlUnderKafkaDependency_ThrowsMismatchProvision()
@@ -46,7 +46,7 @@ public sealed class SeedApplierDispatchTests
         var dir = NewTempDir();
         try
         {
-            // Arrange — 'sql' declared under a kafka dependency (the NIT-1 case:
+            // Arrange — 'sql' declared under a kafka dependency (the type-mismatch case:
             // without dispatch the applier would dial Npgsql with a Kafka conn string).
             await File.WriteAllTextAsync(Path.Combine(dir, "a.sql"), "SELECT 1;");
             var seed = new SeedSpec(new Dictionary<string, DependencySeed>(StringComparer.Ordinal)
@@ -96,7 +96,7 @@ public sealed class SeedApplierDispatchTests
     // of SeedApplier.cs), so an intentionally-missing fixture proves "accepted for
     // dispatch" (the SQL-specific code path was reached) without a database, and
     // the resulting failure classification is asserted the same way the existing
-    // NIT-1 mismatch tests above do.
+    // type-mismatch tests above do.
 
     /// <summary>
     /// Syntactically-valid connection strings for each relational kind. The
@@ -151,12 +151,12 @@ public sealed class SeedApplierDispatchTests
 
             // Accepted, not rejected: the error is the SQL-specific "file not found"
             // detail (reached only once dispatch has matched `relationalType` to a
-            // relational kind) — never the NIT-1 "not supported" mismatch message.
+            // relational kind) — never the "not supported" mismatch message.
             Assert.DoesNotContain("is not supported for its declared type", ex.Info.Detail, StringComparison.Ordinal);
             Assert.Contains("seed SQL file not found", ex.Info.Detail, StringComparison.Ordinal);
             Assert.Contains("'seed.sql'", ex.Info.Detail, StringComparison.Ordinal);
 
-            // BLOCKER B2: this detail becomes an OrchestrationException message, reaches the §14
+            // This detail becomes an OrchestrationException message, reaches the §14
             // environment-error event (built four lines below) and, on the suite path, is stamped
             // onto every scenario's ScenarioCompletedEvent.message. The declared name is the
             // actionable half; the resolved absolute path is a host-layout disclosure into an
@@ -180,7 +180,7 @@ public sealed class SeedApplierDispatchTests
 
     /// <summary>
     /// The accepted set must not accidentally widen to everything: a broker, a
-    /// cache and two document stores must all still reject `sql` with the NIT-1
+    /// cache and two document stores must all still reject `sql` with the type-mismatch
     /// mismatch, exactly as the existing kafka case above does.
     /// </summary>
     [Theory]
@@ -233,7 +233,7 @@ public sealed class SeedApplierDispatchTests
 
     /// <summary>
     /// A relational type spelled with the wrong case (e.g. <c>Postgres</c>) is not treated as
-    /// relational by the seed dispatcher: a <c>sql</c> seed under it throws the same NIT-1
+    /// relational by the seed dispatcher: a <c>sql</c> seed under it throws the same type-mismatch
     /// mismatch as any other non-relational type — proving the seed and reset paths agree via
     /// the shared <c>MapRelationalKind</c>, rather than one silently accepting the wrong case
     /// while the other rejects it.

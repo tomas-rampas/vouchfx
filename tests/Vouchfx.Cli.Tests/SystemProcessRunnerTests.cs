@@ -1587,7 +1587,7 @@ public sealed class SystemProcessRunnerTests
     /// </para>
     /// <para>
     /// The three spellings are chosen for what each would do if it got through, not for variety.
-    /// <c>git</c> is the original defect verbatim, and the M1 mutation drill confirmed it: with the
+    /// <c>git</c> is the original defect verbatim, and the mutation drill confirmed it: with the
     /// guard removed, that call LAUNCHED — the operating system's search found a real git, which is
     /// the hole rather than a hypothetical one. <c>./git</c> is relative, and a relative name is
     /// resolved against the calling process's current directory — the term <c>GitChangeSet</c>'s

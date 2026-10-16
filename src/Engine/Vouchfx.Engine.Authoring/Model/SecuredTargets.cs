@@ -1,5 +1,5 @@
-// Vouchfx.Engine.Authoring — SecuredTargets (authenticated-infrastructure-mtls, slice E —
-// m5, peer review fix round three).
+// Vouchfx.Engine.Authoring — SecuredTargets (authenticated-infrastructure-mtls, slice E).
+//
 //
 // ONE spelling of "which declared targets carry a `security` block, and in what order".
 //

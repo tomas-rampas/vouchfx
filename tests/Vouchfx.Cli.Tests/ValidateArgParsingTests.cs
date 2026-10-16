@@ -91,7 +91,7 @@ public sealed class ValidateArgParsingTests
         Assert.Empty(result.Errors);
     }
 
-    // Peer-review QUESTION-1: an unrecognised flag must be a genuine System.CommandLine
+    // An unrecognised flag must be a genuine System.CommandLine
     // parse error. Two things had to be got right to exercise this honestly, and the
     // second one surfaced a PRE-EXISTING inaccuracy worth recording:
     //   • A bare unrecognised token must NOT be swallowed by `validate`'s own optional

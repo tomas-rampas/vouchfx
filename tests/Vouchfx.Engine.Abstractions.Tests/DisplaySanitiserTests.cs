@@ -4,7 +4,7 @@
 // are preserved, every other C0/C1 control character is stripped, a bare escape / a full
 // 7-bit CSI sequence (colour codes, cursor movement, screen clear) is neutralised in one
 // step rather than merely dropping the introducer and letting the rest of the sequence
-// print, and (MINOR-4, added when the sanitiser moved here from Vouchfx.Engine.Runtime) an
+// print, and (added when the sanitiser moved here from Vouchfx.Engine.Runtime) an
 // OSC sequence (window-title / hyperlink) and an 8-bit (C1) CSI sequence are neutralised the
 // same way.
 //
@@ -220,7 +220,7 @@ public sealed class DisplaySanitiserTests
         Assert.Equal("before", result);
     }
 
-    // -- MINOR-4: an 8-bit (C1) CSI sequence is neutralised the same way -------------
+    // -- an 8-bit (C1) CSI sequence is neutralised the same way -------------
 
     [Fact]
     public void SanitiseForDisplay_C1CsiColourSequence_IsNeutralised()
@@ -244,7 +244,7 @@ public sealed class DisplaySanitiserTests
         Assert.Equal("before", result);
     }
 
-    // -- MINOR-4: an OSC sequence (window title / OSC 8 hyperlink) is neutralised ----
+    // -- an OSC sequence (window title / OSC 8 hyperlink) is neutralised ----
 
     [Fact]
     public void SanitiseForDisplay_OscSequenceTerminatedByBel_IsNeutralised()

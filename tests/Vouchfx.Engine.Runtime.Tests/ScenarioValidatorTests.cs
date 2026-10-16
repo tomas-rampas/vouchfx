@@ -142,7 +142,7 @@ public sealed class ScenarioValidatorTests
         var diagnostic = Assert.Single(result.Diagnostics);
         Assert.Equal(ValidationStage.Pipeline, diagnostic.Stage);
         // Pinned to DbAssertPostgresProvider.Validate's own reconciliation message
-        // (minor, gatekeeper review): a loose "is not a" substring would equally
+        // because a loose "is not a" substring would equally
         // pass for an unrelated message accidentally containing that fragment.
         Assert.Contains(
             "db-assert.postgres: 'target' 'undeclared-db' is not a postgres dependency declared in environment.dependencies.",

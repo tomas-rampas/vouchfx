@@ -201,7 +201,7 @@ public sealed class StubTopology : IAsyncDisposable
 
         // HeadlessTopology.StartAsync returned successfully: live containers are running.
         // If anything below throws (health-gate timeout, endpoint resolution failure) the
-        // started topology must be disposed so containers do not leak (BLOCKER B1).
+        // started topology must be disposed so containers do not leak.
         try
         {
             // Both builders are guaranteed non-null: the configureResources callback always assigns them.

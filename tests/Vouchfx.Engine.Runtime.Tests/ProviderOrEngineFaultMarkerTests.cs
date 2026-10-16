@@ -34,7 +34,7 @@
 // `ProviderBindThrowTaxonomyTests`' parallel row, both untraited). Believing otherwise is why the
 // hop from the pipeline's failure onto `ScenarioCoreResult.ProviderOrEngineFaultObserved` — the
 // single line the parallel path's whole fold is fed by — went unasserted in the blocking lane
-// until peer review found it. Those two rows now assert the marker, covering all six provider
+// until the missing assertion was identified. Those two rows now assert the marker, covering all six provider
 // surfaces on that hop; the direct-`Compile` rows below stay the per-guard census.
 //
 // THE STUBS ARE REUSED, NOT REDECLARED. All seven step types below are already declared as

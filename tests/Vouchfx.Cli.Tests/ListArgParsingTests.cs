@@ -92,7 +92,7 @@ public sealed class ListArgParsingTests
         Assert.Empty(result.Errors);
     }
 
-    // Peer-review QUESTION-1: mirrors ValidateArgParsingTests' pair — an unrecognised
+    // Mirrors ValidateArgParsingTests' pair — an unrecognised
     // flag on `list` must also be a genuine System.CommandLine parse error. Unlike
     // `validate`, `list` has no positional argument to swallow a bare unrecognised token,
     // so a single bad flag is enough here. See ValidateArgParsingTests' remarks for why a

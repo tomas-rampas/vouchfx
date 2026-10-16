@@ -248,7 +248,7 @@ public sealed class HttpSoapProvider
         {
             if (ctx.DeclaredDependencies.ContainsKey(model.Target))
             {
-                // M1 fix (fix round 2) — mirrors HttpRestProvider.Validate's own identical
+                // Mirrors HttpRestProvider.Validate's own identical
                 // fix and rationale: http.soap resolves 'target' exclusively against declared
                 // services; a dependency target validated PASS before this fix and could
                 // never work at run time.
@@ -257,7 +257,7 @@ public sealed class HttpSoapProvider
                     : string.Join(", ", ctx.DeclaredServices.Keys.OrderBy(k => k, StringComparer.Ordinal));
                 errors.Add(
                     $"http.soap: 'target' '{model.Target}' names a dependency declared in " +
-                    "environment.dependencies, which http.soap cannot reach — it resolves " +
+                    "environment.dependencies, which http.soap cannot reach - it resolves " +
                     "'target' only against declared services. Declared services: " +
                     services + ".");
             }
@@ -316,7 +316,7 @@ public sealed class HttpSoapProvider
         {
             errors.Add(
                 "http.soap: 'envelope' is not well-formed XML (checked with placeholders left " +
-                "as literal text — {placeholder} and ${secret:...} tokens inside element text " +
+                "as literal text - {placeholder} and ${secret:...} tokens inside element text " +
                 "or attribute values do not affect well-formedness). Verify the envelope parses " +
                 "as XML independent of any substitution.");
         }

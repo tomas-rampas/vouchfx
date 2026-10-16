@@ -361,7 +361,7 @@ public sealed class ScriptCsharpProvider
         var singularUnit = unit.EndsWith('s') ? unit[..^1] : unit;
         return $"script.csharp: {fieldName} size {length} {unit} exceeds the "
             + $"{MaxBodyLength}-{singularUnit} limit (a plain resource bound, not a security "
-            + "control — see this file's header comment); reduce its size or split the script.";
+            + "control - see this file's header comment); reduce its size or split the script.";
     }
 
     // ── IStepCompiler<ScriptCsharpModel> ─────────────────────────────────────
@@ -386,7 +386,7 @@ public sealed class ScriptCsharpProvider
     /// </list>
     /// </para>
     /// <para>
-    /// <strong>Security — local-function containment property (M3 fix).</strong>
+    /// <strong>Security — local-function containment property.</strong>
     /// The author body is spliced verbatim inside an <c>async</c> local function.
     /// A <c>return;</c> statement in the author body returns from the local
     /// function only — not from the Roslyn submission delegate — so the engine's
@@ -445,7 +445,7 @@ public sealed class ScriptCsharpProvider
         // The author body is appended VERBATIM — no escaping, no interpolation hole.
         // Every other part of the wrapper is a fixed string literal appended around it.
         //
-        // M3 fix — local-function containment: the author body is placed inside an
+        // Local-function containment: the author body is placed inside an
         // async local function (__body_<safeId>) so that a 'return;' in the author
         // code returns from the local function only, not from the Roslyn submission
         // delegate.  This ensures the engine's outcome write and all downstream step

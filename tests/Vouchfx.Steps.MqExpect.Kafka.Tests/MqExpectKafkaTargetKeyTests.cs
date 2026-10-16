@@ -1,5 +1,5 @@
 // REQ-011 + REQ-023 (as amended 2026-08-04) — which Vars key mq-expect.kafka emits for its
-// target (authenticated-infrastructure-mtls, slice E; peer review fix round three, MAJOR-2).
+// target (authenticated-infrastructure-mtls, slice E).
 //
 // The twin of MqPublishKafkaTargetKeyTests, and it is a separate assertion rather than a shared
 // one because the two providers emit independently: a fix applied to one and not the other leaves
@@ -45,7 +45,7 @@ public sealed class MqExpectKafkaTargetKeyTests
 
     /// <summary>
     /// A target naming a DECLARED SERVICE stages at <c>svc::&lt;name&gt;</c>, which is where the
-    /// engine actually puts a service's endpoint — the half of MAJOR-2 that lives in the provider.
+    /// engine actually puts a service's endpoint — the service-target correction in the provider.
     /// </summary>
     [Fact]
     public void Emit_ServiceTarget_ReadsTheServiceKey()

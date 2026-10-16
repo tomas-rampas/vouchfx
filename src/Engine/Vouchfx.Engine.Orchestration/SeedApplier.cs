@@ -17,7 +17,7 @@
 //                                   seeding and per-scenario reset.
 //   • A seed KIND that does not match the dependency's declared TYPE (e.g. `sql`
 //     under a kafka dependency) → a clear Provision error naming the dependency,
-//     its type and the unsupported kind (NIT-1: never dial a relational driver
+//     its type and the unsupported kind (never dial a relational driver
 //     against a non-relational connection string).
 //   • An unknown/unsupported dependency type that carries any seed → Provision.
 //
@@ -89,7 +89,7 @@ internal static class SeedApplier
     /// Map from logical dependency name to its declared <c>type</c> (e.g.
     /// <c>postgres</c>, <c>kafka</c>), from <c>environment.dependencies</c>.  Used to
     /// dispatch each seeded dependency and to reject a seed kind that does not match
-    /// the dependency's type (NIT-1).
+    /// the dependency's type.
     /// </param>
     /// <param name="seedBaseDirectory">
     /// The base directory against which relative fixture file paths are resolved.
@@ -147,7 +147,7 @@ internal static class SeedApplier
 
     /// <summary>
     /// Dispatches a single dependency's seed on its declared type, after rejecting
-    /// any seed kind that does not match that type (NIT-1).
+    /// any seed kind that does not match that type.
     /// </summary>
     private static async Task ApplyDependencySeedAsync(
         string dependencyName,
@@ -166,7 +166,7 @@ internal static class SeedApplier
             return;
         }
 
-        // Resolve the declared dependency type up front so a mismatch (NIT-1) or an
+        // Resolve the declared dependency type up front so a mismatch or an
         // unknown type is reported with a clear message before any I/O.
         if (!dependencyTypes.TryGetValue(dependencyName, out var declaredType) ||
             string.IsNullOrEmpty(declaredType))
@@ -179,7 +179,7 @@ internal static class SeedApplier
 
         var relationalKind = ScenarioIsolationFactory.MapRelationalKind(declaredType);
 
-        // NIT-1: a seed kind that does not match the dependency's declared type is a
+        // A seed kind that does not match the dependency's declared type is a
         // Provision error — never blindly dial a relational driver against (say) a
         // Kafka conn string.
         if (relationalKind is null)
@@ -407,7 +407,7 @@ internal static class SeedApplier
         };
 
     /// <summary>
-    /// Builds the NIT-1 mismatch <see cref="OrchestrationException"/>: a seed kind
+    /// Builds the type-mismatch <see cref="OrchestrationException"/>: a seed kind
     /// was declared under a dependency whose type cannot accept it (e.g. <c>sql</c>
     /// under a kafka dependency).  Names the dependency, its declared type, the
     /// unsupported seed kind, and the type that kind expects.

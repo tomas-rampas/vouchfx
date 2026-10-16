@@ -406,6 +406,10 @@ jobs:
       #
       # Image list (exact refs the requires=docker suite uses)
       # ------------------------------------------------------
+      # Also covers every managed default emitted by EnvironmentMapper, checked
+      # without Docker by ManagedDefaultImagePullCoverageTests. Retain explicit
+      # Docker-test tags alongside the current Aspire defaults:
+      # mongo:8.3, redis:8.6, rabbitmq:4.3, and SQL Server:2022-latest.
       #   postgres:18.3                          — Aspire.Hosting.PostgreSQL 13.4.2
       #                                            default (PostgresContainerImageTags:
       #                                            docker.io/library/postgres:18.3);
@@ -429,13 +433,9 @@ jobs:
       #                                            AddRedis default image family.
       #   rabbitmq:4.3-management                — MqRabbitmqDockerTests AMQP broker container
       #                                            (mq-publish.rabbitmq / mq-expect.rabbitmq);
-      #                                            Aspire.Hosting.RabbitMQ 13.4.2 default tag
-      #                                            (RabbitMQContainerImageTags: confirmed by
-      #                                            inspecting the installed package — this list
-      #                                            previously said "4-management", a DIFFERENT,
-      #                                            floating tag Aspire never actually requests,
-      #                                            so the pre-pull silently warmed nothing for
-      #                                            this dependency); management variant includes
+      #                                            explicit management variant; the managed
+      #                                            AddRabbitMQ default is rabbitmq:4.3.
+      #                                            The management variant includes
       #                                            the HTTP API for exchange/queue management.
       #   nats:2.14                              — MqNatsDockerTests JetStream broker container
       #                                            (mq-publish.nats / mq-expect.nats);
@@ -512,11 +512,11 @@ jobs:
       # WHAT RETRYING COSTS, stated per image because that is the honest unit.
       # An earlier version of this comment claimed "at most ~45s on a run"; that
       # was simply wrong. The backoff is 15s + 30s = 45s PER FAILING IMAGE, and the
-      # loop walks all 19 entries serially, so 48s (that backoff plus three refused
-      # attempts) is the cost of ONE doomed image and the run-level figure is 19x
+      # loop walks all 23 entries serially, so 48s (that backoff plus three refused
+      # attempts) is the cost of ONE doomed image and the run-level figure is 23x
       # that. Combined with the per-pull bound
       # below, a run in which every pin fails would otherwise spend
-      # 19 x (3 x 120s + 45s) = 2h 8m before aborting. That is why the step carries
+      # 23 x (3 x 120s + 45s) = 2h 35m before aborting. That is why the step carries
       # a declarative `timeout-minutes` budget — see the arithmetic at the
       # per-pull-bound comment below, which is where the two numbers are reconciled.
       #
@@ -621,9 +621,9 @@ jobs:
       # named annotation also improves diagnosis: it arrives in a few minutes
       # instead of a 44-minute run that never says which image. Be precise
       # about that number rather than saying "within seconds": the pulls run
-      # serially in list order, and the minio pin is eighteenth of
-      # nineteen, so on a cold cache its annotation arrives only after the
-      # seventeen before it. The measured cold sweep is 164.4s of per-image pulls; substitute
+      # serially in list order. On the historical nineteen-image list the minio
+      # pin was eighteenth; the current twenty-three-image list puts it twenty-second.
+      # The historical cold sweep was 164.4s of per-image pulls; substitute
       # a small image's few-second success (the pre-#580 minio pin measured 3.8s)
       # for the 48s a failing image costs, giving 164.4 - 3.8 + 48 = 208.6s, about
       # 3.5 minutes. The gain over a 44-minute anonymous health-gate timeout is an
@@ -635,9 +635,9 @@ jobs:
         # of our own. Neither this job nor this step previously set one, so the
         # effective bound was GitHub's 360-minute job default. Derivation of the 25
         # is in the `per_pull_timeout` comment inside the script and is driven by
-        # the MIXED failure case — one stalling image plus eighteen fail-fast ones
-        # is 1,269s, so the budget must exceed 21m 9s for a fully misconfigured
-        # list to finish being read. A registry-wide stall (2h 8m) deliberately does
+        # the MIXED failure case — one stalling image plus twenty-two fail-fast ones
+        # is 1,461s, so the budget must exceed 24m 21s for a fully misconfigured
+        # list to finish being read. A registry-wide stall (2h 35m) deliberately does
         # NOT fit; see that comment for what the operator sees when it truncates.
         timeout-minutes: 25
         run: |
@@ -819,6 +819,8 @@ jobs:
           # version of this note derived it from "all 18 cold + ONE stall" and set
           # 15 minutes; that covered only the single-failure case and two scenarios
           # this block's own prose calls expected fell outside it.
+          # The examples through the outage trade-off below retain the historical
+          # 19-image calculation; the current 23-ref budget is stated after them.
           #
           # THE ONE COST ASSUMPTION, stated once here and used by every figure in
           # this file: a REFUSED attempt costs ~1s (the registry answers 4xx
@@ -875,9 +877,11 @@ jobs:
           # here is: cover every single-stall shape completely, accept truncation
           # beyond that, and make the truncation legible.
           #
-          # `timeout-minutes: 25` therefore comes from the mixed case: 1,269s plus
-          # ~18% for runner variance is ~1,500s. It still aborts a registry outage
-          # in 25 minutes rather than the 2h 8m the loop would otherwise take, or
+          # The timing examples above describe the previous 19-image inventory.
+          # With 23 refs, one stall plus 22 fail-fast absents costs 1,461s,
+          # leaving 39s of the unchanged 1,500s budget for runner variance.
+          # It still aborts a registry outage in 25 minutes rather than the
+          # 2h 35m (23 x 405s) the loop would otherwise take, or
           # the 6h the runner's own default allowed before this step declared one.
           #
           # IF `timeout` IS MISSING the bound degrades, but not to nothing: the
@@ -905,28 +909,26 @@ jobs:
           # wall. But that same fact bounds the cap: a Hub limit says NOTHING about
           # quay.io or mcr.microsoft.com, and capping those would remove a real
           # defence against an unrelated blip while saving nothing, since they were
-          # never going to be limited. MEASURED composition of the list below (#580
-          # moved minio onto the unqualified Docker Hub path, and #581 added the
-          # rustfs pin there): 16 of the 19 pins are Docker Hub, 1 quay.io,
-          # 2 mcr.microsoft.com.
+          # never going to be limited. Current list composition: 19 of the 23 refs
+          # are Docker Hub, 1 quay.io, and 3 mcr.microsoft.com.
           #
           # SCOPED TO THE BACKOFF, not to the attempts — and the arithmetic is the
           # argument, not a preference. For a RATE-LIMITED failure, on this file's
           # one cost assumption (~1s per refused attempt, plus 15s + 30s of backoff)
-          # and over the 16 Hub pins:
-          #   no cap ..................... 16 x 48s = 768s
-          #   cap the ATTEMPTS to 1 ...... 48s + 15 x  1s =  63s   (saves 705s)
-          #   cap the BACKOFF to 0 ....... 48s + 15 x  3s =  93s   (saves 675s)
+          # and over the 19 Hub refs:
+          #   no cap ..................... 19 x 48s = 912s
+          #   cap the ATTEMPTS to 1 ...... 48s + 18 x  1s =  66s   (saves 846s)
+          #   cap the BACKOFF to 0 ....... 48s + 18 x  3s = 102s   (saves 810s)
           # The backoff is essentially the whole saving; for a rate-limited failure
-          # keeping all three attempts costs 30s, which is 2.0% of the step's 1500s
+          # keeping all three attempts costs 36s, which is 2.4% of the step's 1500s
           # budget. Note the limit of that figure: the cap bounds SLEEP time, not
           # wall time, and it arms on a `transient` classification but then applies
           # to every later failure on that registry — so a capped image that STALLS
           # costs 3 x 120s = 360s where the retired attempt-cap would have bounded
           # it at one 120s attempt. That case is covered by the outage assumption
-          # above, not by the 30s figure. An earlier version
-          # of this block capped the ATTEMPTS instead, and bought that 2.0% by
-          # disarming the retry defence for the fifteen remaining Hub pins: the
+          # above, not by the 36s figure. An earlier version
+          # of this block capped the ATTEMPTS instead, disarming the retry defence
+          # (now eighteen remaining Hub refs): the
           # next one to fail for any unclassifiable reason — a TLS handshake
           # timeout, say — went straight to the fatal `unknown` bucket with no
           # second try, re-introducing exactly the intermittent red the retry-first
@@ -1004,9 +1006,12 @@ jobs:
           examined=0
           for image in \
             postgres:18.3 \
+            mcr.microsoft.com/mssql/server:2022-latest \
             mcr.microsoft.com/mssql/server@sha256:cf8f0ab2ebe61feec2eed2629061a07d247f791c2a8ddda74a4ac9f06a291718 \
             mongo:7 \
+            mongo:8.3 \
             redis:7 \
+            redis:8.6 \
             confluentinc/confluent-local:8.2.0 \
             confluentinc/cp-schema-registry:7.6.1 \
             confluentinc/cp-kafka:7.6.1 \
@@ -1014,6 +1019,7 @@ jobs:
             hashicorp/vault@sha256:c2f666266f383d2cf424d86b8bb8ce7d065562173ffec2b476d762943608bb55 \
             axllent/mailpit:v1.21 \
             rabbitmq:4.3-management \
+            rabbitmq:4.3 \
             elasticsearch:8.17.3 \
             nats:2.14 \
             mysql:9.7 \
