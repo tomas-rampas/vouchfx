@@ -1,7 +1,7 @@
 // Vouchfx.Engine.Planning.Analysis — PlanPipeline (M3 Planner).
 //
 // THE COMPOSITION / REGISTRATION POINT. Written once by T1 and never edited again except for
-// the two fix-round MINOR items called out at the sort helper and BuildInventory below: T2/T3/
+// the two corrections called out at the sort helper and BuildInventory below: T2/T3/
 // T4 each fill in their own already-registered analyser stub file without touching this one, so
 // none of their work can conflict on a shared "registration list" file. Runs the three
 // analysers, enriches every gap finding with REQ-007 hand-off hints, sorts findings into the
@@ -49,7 +49,7 @@ internal static class PlanPipeline
     // ── EDGE-005 deterministic order ─────────────────────────────────────────────
 
     // Internal correction history (not XML documentation):
-    // MINOR fix-round: the original four-key claim that no analyser emits a tie past those
+    // The original four-key claim that no analyser emits a tie past those
     // four keys was false the moment CoverageGapAnalyser went from a T1 stub
     // to real: two PlanFindingKinds.SuiteIdentityAmbiguous findings (kind,
     // target, suite, and step id all null on both — see
@@ -137,7 +137,7 @@ internal static class PlanPipeline
             .OrderBy(n => n, StringComparer.Ordinal)
             .ToArray();
 
-        // MAJOR fix-round: scoped to (suite, name, type), never name alone — a dependency is
+        // Scoped to (suite, name, type), never name alone — a dependency is
         // declared inside exactly one suite's environment, and two suites may declare a
         // same-named dependency (optionally with different Type values), so Suite is carried
         // on every entry (PlanDependencyEntry.Suite's own remarks) rather than deduplicating

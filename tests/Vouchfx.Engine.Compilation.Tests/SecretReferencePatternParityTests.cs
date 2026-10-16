@@ -409,7 +409,7 @@ public sealed class SecretReferencePatternParityTests
     /// excluded from the comparison.
     /// </para>
     /// <para>
-    /// It excludes exactly that one, and not "every lookaround" (critic NIT-7). An earlier
+    /// It excludes exactly that one, and not "every lookaround". An earlier
     /// revision stripped all of them on the premise that a lookaround consumes nothing and is
     /// therefore anchoring machinery rather than grammar. That is true of <c>(?![\s\S])</c>
     /// and is NOT a general property: a lookaround can carry a semantic constraint — a

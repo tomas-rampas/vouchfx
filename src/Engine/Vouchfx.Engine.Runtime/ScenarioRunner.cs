@@ -1722,7 +1722,7 @@ public static class ScenarioRunner
         // drift `SecurityAssurance` exists to remove.
         //
         // NOTHING IS CONTRIBUTED BY A DOCUMENT THAT DECLARED NOTHING — and what that guard buys is
-        // NOT issue #390's fence, which is what this note used to claim (T2 review, m3).
+        // NOT issue #390's fence, which is what this note used to claim.
         //
         // THE RETIRED CLAIM, and why it is retired. Under the UNION this fold replaced, `Assure`
         // returning `Declaring([]).Refusing(AuthoringFault)` unconditionally would have stamped an
@@ -1876,7 +1876,7 @@ public static class ScenarioRunner
         // will start (issue #451, security review) ────────────────────────────────────────────────
         //
         // COMPUTED HERE — the first line after the baseline is known, and BEFORE the divergence
-        // guard below — rather than after it (peer-review MAJOR-1 + MINOR-3). The value is captured
+        // guard below — rather than after it. The value is captured
         // by `WithUnbuiltDocuments`, which every door from the guard onward calls; computing it
         // later meant the closure read a mutable local that a door inserted in between would have
         // silently seen as `None`. Nothing between here and the topology build can now get the
@@ -1991,7 +1991,7 @@ public static class ScenarioRunner
                 // terms every other pre-topology refusal is. An unsecured one is untouched.
                 //
                 // RETURNED THROUGH CompleteWithoutTopologyAsync, NOT AS A BARE SuiteResult
-                // (peer-review MAJOR-1, fix round ten). This was the THIRD instance of the defect
+                // — this was the THIRD instance of the defect
                 // that branch already diagnosed and fixed at the two seams below — a bare return
                 // skips the ScenarioStarted/Completed events, the --events-stream pump, the
                 // terminal render and FileReportWriter.WriteFileReports. MEASURED on this shape
@@ -2171,7 +2171,7 @@ public static class ScenarioRunner
         // for seeding from the wrong folder.
         //
         // THE FOURTH CLAUSE IS WHAT KEEPS THIS FROM BEING THE VERY OVER-REFUSAL #451 REMOVED
-        // (peer-review, final round). Multi-directory suites are legal since #268, so without it
+        // Multi-directory suites are legal since #268, so without it
         // this guard fired on a perfectly ordinary shape: two scenarios in two folders declaring a
         // BYTE-IDENTICAL environment, a seed, and a steps-level typo in the first file. Nothing has
         // moved there — the seed strings the baseline supplies are character-for-character the ones
@@ -2256,9 +2256,9 @@ public static class ScenarioRunner
         // longer be evidence about those steps, which is the whole basis of its verdict. Refused
         // rather than silently picked, and refused only for suites that declare security at all.
         //
-        // RETURNED THROUGH CompleteWithoutTopologyAsync, NOT AS A BARE SuiteResult (gatekeeper
-        // MAJOR-1 + security MINOR-1, fix round six). This guard is 40 lines above the protocol
-        // -conflict seam that fix round five moved onto the shared completion path, and it had the
+        // RETURNED THROUGH CompleteWithoutTopologyAsync, NOT AS A BARE SuiteResult.
+        // This guard is 40 lines above the protocol
+        // -conflict seam moved onto the shared completion path, and it had the
         // SAME hole: a bare return skips the ScenarioStarted/Completed events, the --events-stream
         // pump, the terminal render and FileReportWriter.WriteFileReports. MEASURED on the
         // divergence shape with --junit/--html/--events all requested: `junit exists = False,
@@ -2275,7 +2275,7 @@ public static class ScenarioRunner
         // suite that declares security, so `Declared` is non-empty by construction whenever it runs.
         //
         // WHY THIS ONE ITERATES ALL COMPILATIONS WHILE ITS NEIGHBOUR FILTERS TO RUNNABLE
-        // (m-runnability, gatekeeper, fix round nine). Two adjacent guards apply opposite
+        // Two adjacent guards apply opposite
         // runnability rules to the same list, both correctly, and the difference is what each one
         // protects. The protocol-conflict guard below protects STAGING — what the shared topology
         // puts in front of steps that will actually execute — so a scenario that runs nothing
@@ -2288,7 +2288,7 @@ public static class ScenarioRunner
         // one, so filtering here would also change which directory is the reference.
         //
         // AND `compilations[0]` STAYS THE REFERENCE HERE WHILE THE ENVIRONMENT ARGUMENT USES
-        // `topologyIndex` — deliberate, not an oversight of #451's reindexing (peer-review Q3). The
+        // `topologyIndex` — deliberate, not an oversight of #451's reindexing. The
         // two cannot disagree about a suite this guard has anything to say about: it requires EVERY
         // compilation's directory to be equal, so on any suite it passes, `compilations[0]` and
         // `compilations[topologyIndex]` name the same directory, and on any suite it fails the run
@@ -2300,7 +2300,7 @@ public static class ScenarioRunner
         {
             // Issue #266, Item 4: the message splices scenario names straight from untrusted YAML.
             // Printed HERE, once, for the suite; the completion path is told what was printed so it
-            // does not repeat it when it walks the per-scenario messages (see MAJOR-3's note on
+            // does not repeat it when it walks the per-scenario messages (see the note below on
             // StampWhereUnjudged).
             await output.WriteLineAsync(DisplaySanitiser.SanitiseForDisplay(divergence))
                 .ConfigureAwait(false);
@@ -2323,11 +2323,11 @@ public static class ScenarioRunner
                 .ConfigureAwait(false);
         }
 
-        // REQ-023 (amended): the suite half of the both-families rejection (gatekeeper MAJOR, fix
-        // round four). ProviderPipeline.Compile already rejects a target addressed by both families
+        // REQ-023 (amended): the suite half of the both-families rejection.
+        // ProviderPipeline.Compile already rejects a target addressed by both families
         // — but it runs once PER SCENARIO, so it only ever sees one scenario's steps, while the
         // staging it protects is suite-level: the StartAsync call below passes
-        // SuiteProtocolTargets.KafkaSpeaking over the union of the RUNNABLE scenarios (see m7
+        // SuiteProtocolTargets.KafkaSpeaking over the union of the RUNNABLE scenarios (see the runnability note
         // below for why runnable and not all), because ONE shared topology serves them all. When
         // this guard was written that union was taken across every scenario; the rule it enforces
         // is unchanged by the narrowing, since both reads come from the one local built below.
@@ -2339,8 +2339,8 @@ public static class ScenarioRunner
         // route the per-scenario guard was written to close. MEASURED, red first, by
         // ProtocolTargetConflictValidationTests' split row.
         //
-        // THE INPUT IS THE RUNNABLE SCENARIOS, NOT ALL OF THEM (m7, peer-review critic, fix round
-        // eight), and it is ONE LOCAL passed to both this guard and the KafkaSpeaking staging call
+        // THE INPUT IS THE RUNNABLE SCENARIOS, NOT ALL OF THEM;
+        // it is ONE LOCAL passed to both this guard and the KafkaSpeaking staging call
         // below — so the two literally cannot disagree about which targets speak what. That parity
         // is the invariant this slice re-broke five times; binding it to a single variable is what
         // makes it structural rather than a convention two call sites have to keep.
@@ -2381,8 +2381,8 @@ public static class ScenarioRunner
         // USER-VISIBLE: a secured suite whose scenarios split the two protocol families now reddens
         // a build that was green. That is the widening, stated rather than discovered.
         //
-        // RETURNED THROUGH CompleteWithoutTopologyAsync, NOT AS A BARE SuiteResult (gatekeeper
-        // MAJOR, fix round five). Parity between the two seams is what this whole guard is for, and
+        // RETURNED THROUGH CompleteWithoutTopologyAsync, NOT AS A BARE SuiteResult.
+        // Parity between the two seams is what this whole guard is for, and
         // an earlier form of this branch delivered it at the diagnostic layer only: a bare return
         // skips the ScenarioStarted/Completed events, the --events-stream pump, the terminal render
         // and — the one that reaches CI — FileReportWriter.WriteFileReports. MEASURED, red first:
@@ -2405,7 +2405,7 @@ public static class ScenarioRunner
             // Printed HERE, once for the suite. The conflict is ONE suite-level fact, so the
             // terminal must show it once however many scenarios the suite has — but each scenario
             // is Inconclusive BECAUSE of it, so each scenario's own record must carry it as its
-            // cause. Both properties are delivered together (MAJOR-3, fix round six): the stamp
+            // cause. Both properties are delivered together: the stamp
             // below puts the text on every scenario that has no more specific message of its own,
             // and `alreadyPrintedMessage` tells the completion path that this exact text has
             // already reached the terminal so it prints no duplicate.
@@ -2487,7 +2487,7 @@ public static class ScenarioRunner
             // sets from the SAME `runnableScenarios` list the protocol-conflict guard above was
             // handed — one variable, so the guard and the staging cannot disagree about the set,
             // which is the invariant this seam re-broke five times before it was bound to a single
-            // local. See that guard's own note (m7) for why scenarios carrying an early verdict are
+            // local. See that guard's own note for why scenarios carrying an early verdict are
             // excluded: one executes nothing, so it stages nothing, and it must not be able to make
             // a project-form service look targeted (#348) for a step that was never going to run.
             var request = TopologyRequest.ForSuite(
@@ -2954,7 +2954,7 @@ public static class ScenarioRunner
                 EventsArchiveWritten = eventsArchiveWritten,
                 AuthoringRefusalObserved = authoringRefusalObserved,
                 // Threaded on the normal-completion path too, and REACHABLE carrying a refusal —
-                // corrected in fix round eight (m3, peer-review critic). This note twice claimed
+                // corrected after measurement. This note twice claimed
                 // the opposite, and the reasoning is recorded rather than the conclusion, because
                 // "unreachable" is what licenses a later reader to delete the assignment.
                 //
@@ -3200,19 +3200,19 @@ public static class ScenarioRunner
     /// list from its parameters instead. A caller that leaves an <c>EarlyVerdict</c>
     /// null gets an <see cref="InvalidOperationException"/> here, deliberately — <c>earlyVerdict</c>
     /// is a <c>Nullable&lt;Verdict&gt;</c>, and <c>.Value</c> on an empty one throws
-    /// <c>"Nullable object must have a value"</c>, not a <see cref="NullReferenceException"/> (m1,
-    /// gatekeeper, fix round six: the type was named wrongly here, which matters because it is the
+    /// <c>"Nullable object must have a value"</c>, not a <see cref="NullReferenceException"/> (
+    /// the type was named wrongly here, which matters because it is the
     /// exception a caller would have to catch or a maintainer would have to recognise in a stack
     /// trace). A scenario with no verdict has no place in a completion that never runs anything.
     /// </para>
     /// <para>
-    /// The emitted <c>counts</c> are DERIVED from that verdict rather than hardcoded (security
-    /// NIT-3, same fix round): the previous form paired a parameterised
+    /// The emitted <c>counts</c> are DERIVED from that verdict rather than hardcoded because
+    /// the previous form paired a parameterised
     /// <c>Verdict = earlyVerdict.Value</c> with a fixed <c>Inconclusive = 1</c>, so the first caller
     /// to stamp anything other than Inconclusive would have emitted a record whose verdict and
     /// counts contradicted each other. THAT CALLER NOW EXISTS: the shared-<c>environment</c>
     /// divergence guard stamps <see cref="Verdict.EnvironmentError"/>, and its scenarios emit
-    /// <c>envError = 1</c> — the trap was removed one fix round before the path that would have
+    /// <c>envError = 1</c> — the trap was removed before the path that would have
     /// sprung it.
     /// </para>
     /// </remarks>
@@ -3231,7 +3231,7 @@ public static class ScenarioRunner
     /// channel: it reaches the events stream, the JUnit <c>message</c> attribute and the HTML
     /// report. This is what lets a suite-level fact be
     /// stamped as every affected scenario's cause
-    /// while still appearing on the terminal exactly once (MAJOR-3, fix round six). The
+    /// while still appearing on the terminal exactly once. The
     /// all-early-verdict caller passes <see langword="null"/> and is therefore byte-identically
     /// unchanged: per-scenario messages that merely happen to coincide are still each printed.
     /// </param>
@@ -3389,7 +3389,7 @@ public static class ScenarioRunner
 
     /// <summary>
     /// The per-verdict step counts emitted for a scenario that never ran a step, derived from the
-    /// verdict it was stamped with so the two can never contradict each other (security NIT-3).
+    /// verdict it was stamped with so the two can never contradict each other.
     /// </summary>
     /// <remarks>
     /// A scenario stopped before the topology ran no steps at all, so these counts are not a tally
@@ -3462,7 +3462,7 @@ public static class ScenarioRunner
     /// <remarks>
     /// <para>
     /// <strong>Extracted rather than inlined so the DECISION can be tabled, not merely the folded
-    /// value</strong> (peer-review MAJOR-1). Its four cells — rejected+divergent+declaring,
+    /// value</strong>. Its four cells — rejected+divergent+declaring,
     /// rejected+equal-environment, rejected+divergent+unsecured, schema-valid — are pinned by
     /// <c>FoldRejectedDivergentTests</c> without a container. Inline, only the third of those was
     /// reachable from an end-to-end test on this machine, and inverting the equality gate left the
@@ -3556,8 +3556,8 @@ public static class ScenarioRunner
     /// way the sentence it replaced did.
     /// </para>
     /// <para>
-    /// EXTRACTED RATHER THAN COPIED (MAJOR-1, fix round six). The protocol-conflict guard grew this
-    /// loop in fix round five; the base-directory-divergence guard forty lines above it still
+    /// EXTRACTED RATHER THAN COPIED. The protocol-conflict guard grew this
+    /// loop first; the base-directory-divergence guard forty lines above it still
     /// returned a bare <see cref="SuiteResult"/> and had to grow the same one. Two copies of a
     /// completion preamble is precisely how those two seams diverged in the first place, so there
     /// is one.
@@ -3643,7 +3643,7 @@ public static class ScenarioRunner
     /// wrong material, but the probe stops being evidence about those steps.
     /// </para>
     /// <para>
-    /// <strong>Scenario against seed root</strong> (m4, peer-review critic, fix round eight). The
+    /// <strong>Scenario against seed root</strong>. The
     /// CLIENT material — the probe's and the steps' <c>caCert</c>/<c>clientCert</c>/<c>clientKey</c>
     /// — resolves against <c>compilations[topologyIndex].ScenarioBaseDirectory</c> (the scenario the
     /// topology is built from: the first schema-valid one, index 0 unless a rejected document sits
@@ -3669,7 +3669,7 @@ public static class ScenarioRunner
     /// multi-directory suite is untouched.
     /// </para>
     /// <para>
-    /// <strong>Comparison is normalised</strong> (n1, peer-review critic, fix round eight). It used
+    /// <strong>Comparison is normalised</strong>. It used
     /// to be a raw <see cref="StringComparison.Ordinal"/> compare of two strings that reach here
     /// from different producers, so <c>D:\Suite</c> against <c>d:\suite\</c> — the same directory —
     /// refused a correct suite. <see cref="NormaliseDirectoryForComparison"/> applies
@@ -4079,7 +4079,7 @@ public static class ScenarioRunner
         // Printed on EVERY re-run, not once per topology, because each re-run's output block is
         // read on its own and a reader who cannot see the level cannot tell the two apart.
         //
-        // n6 (peer review, fix round three): they are NOT re-measured per re-run, and they are
+        // They are NOT re-measured per re-run, and they are
         // printed BEFORE the run rather than after it, so describing them as "a property of the
         // infrastructure this run just ran against" — as this comment previously did — over-claimed
         // their freshness twice over. They are the build-time probe's output, replayed. The
@@ -6312,7 +6312,7 @@ public static class ScenarioRunner
     /// <remarks>
     /// <para>
     /// <strong>KNOWN RESIDUAL, and it is a property of <see cref="FixtureDigest"/> rather than
-    /// of this method (SEC-MINOR-2).</strong> The envelope distinguishes "no fixture" (no row)
+    /// of this method.</strong> The envelope distinguishes "no fixture" (no row)
     /// from "a fixture that could not be hashed" (a row that omits <c>contentHash</c> on the
     /// wire — <c>WhenWritingNull</c>), but it does NOT distinguish the REASONS: an absent file
     /// and a present-but-unreadable one produce the identical row. Two runs whose fixture was

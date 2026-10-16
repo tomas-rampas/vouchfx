@@ -71,7 +71,7 @@ internal static class EnvironmentSecurityValidator
     /// <remarks>
     /// The cheap question "does this suite claim any security at all", asked by callers that must
     /// apply a security-only rule without paying for the full validation walk. A one-line forward
-    /// to <see cref="SecuredTargets.Any"/> (m5, fix round three), which is the single spelling of
+    /// to <see cref="SecuredTargets.Any"/>, which is the single spelling of
     /// this walk — kept as a name rather than deleted so this class's own callers and tests keep
     /// reading in this class's idiom.
     /// </remarks>
@@ -573,7 +573,7 @@ internal static class EnvironmentSecurityValidator
         // REQ-003's own wording: every path-valued security field "MUST be resolved
         // relative to the directory containing the .e2e.yaml file". Reject a ROOTED
         // declaredPath here, BEFORE Path.Combine, rather than let it reach Path.Combine
-        // and rely on containment to catch it (critic MAJOR-2). Path.Combine DISCARDS
+        // and rely on containment to catch it. Path.Combine DISCARDS
         // its first argument outright when the second is rooted (documented .NET
         // behaviour) — so a rooted declaredPath was never actually resolved "relative to
         // the suite directory" at all, regardless of what IsContainedWithin went on to

@@ -62,7 +62,7 @@ public sealed class MetricsAssertPrometheusProviderTests
 
     /// <summary>
     /// A <see cref="StubProjectContext"/> declaring service <c>"sut"</c> — the target every
-    /// Validate test in this file uses (REQ-012 as narrowed by M1: target reconciliation needs
+    /// Validate test in this file uses (REQ-012 as narrowed: target reconciliation needs
     /// it declared under <c>environment.services</c> to pass, and a target naming a declared
     /// dependency is rejected outright — a dependency stages a connection string, not a service
     /// endpoint; these tests are about metric/path/expect shape, not target reconciliation).
@@ -281,7 +281,7 @@ public sealed class MetricsAssertPrometheusProviderTests
     }
 
     /// <summary>
-    /// M1 fix (fix round 2, PR #349 follow-up): a <c>target</c> naming a declared
+    /// PR #349 follow-up: a <c>target</c> naming a declared
     /// DEPENDENCY (never a service) must be rejected — mirrors HttpRestProvider's own
     /// identical fix and rationale. The message must name the dependency and list the
     /// services it CAN reach.

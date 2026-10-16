@@ -253,7 +253,7 @@ public sealed class DbAssertDynamodbProvider
         {
             errors.Add(
                 "db-assert.dynamodb: 'expect.exists: false' cannot be combined with " +
-                "'expect.item' — an absent item has no fields to assert on.");
+                "'expect.item' - an absent item has no fields to assert on.");
         }
 
         // Dependency reconciliation: target must name a declared dynamodb dependency.

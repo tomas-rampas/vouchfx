@@ -168,7 +168,7 @@ public sealed class SeedApplierTests
 
     /// <summary>
     /// A relative seed path missing under the base directory is a Provision error naming the
-    /// DECLARED path — never the resolved absolute one (BLOCKER B2, extending #357's rule).
+    /// DECLARED path — never the resolved absolute one (extending #357's rule).
     /// </summary>
     /// <remarks>
     /// This test used to be <c>…_NamesResolvedAbsolutePath</c>, asserting the resolved path was

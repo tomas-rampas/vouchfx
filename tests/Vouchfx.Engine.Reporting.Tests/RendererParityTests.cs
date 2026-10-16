@@ -1107,7 +1107,7 @@ public sealed class RendererParityTests
         // scenarioId line (parses, throws on GetString — RendererSurrogateToleranceTests).
         //
         // scenarioId is read by ALL THREE renderers' per-line-guarded extraction (issue
-        // #588, MAJOR-1 correction: HtmlRenderer.GetStr no longer catches its own read
+        // #588: HtmlRenderer.GetStr no longer catches its own read
         // failure — see its remarks), so this particular poison line is one every
         // renderer rejects identically: all three surface 4 (2 malformed + 1 null-runId
         // + 1 lone-surrogate). This is the "value all three read" case from this
@@ -1183,7 +1183,7 @@ public sealed class RendererParityTests
         Assert.Equal("4", (string?)junitSkipped.Attribute("value"));
 
         // HTML: also 4 — GetStr propagates the lone-surrogate scenarioId failure to
-        // BuildModel's own per-line catch exactly like its siblings (MAJOR-1).
+        // BuildModel's own per-line catch exactly like its siblings.
         Assert.Contains(
             "<p class=\"skipped-lines\">4 event-stream lines could not be read, so this report may be incomplete.</p>",
             htmlOutput,

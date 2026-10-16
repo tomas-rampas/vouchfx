@@ -86,7 +86,7 @@
 // declared identity the SAME exchange against the SAME enforcing listener succeeds in ~5 ms. Cost
 // is one extra connection per `mtls` Kafka-speaking target, inside the same perTargetTimeout.
 //
-// AND THE ASYMMETRY STOPS AT THE CONNECT (MAJOR-1, peer review fix round three). "A failure of the
+// AND THE ASYMMETRY STOPS AT THE CONNECT. "A failure of the
 // second arm is attributable to the one thing that changed" holds for the TLS and application
 // phases and FAILS for the connect phase, because the connect is not the thing that changed. A
 // refused connection, a reset, a full backlog, an exhausted ephemeral-port range or a container
@@ -236,7 +236,7 @@ public sealed record SecurityConfirmation(
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <strong>The <see cref="Level"/> is rendered, and it was not until the peer review of slice
+    /// <strong>The <see cref="Level"/> is rendered, after being omitted before slice
     /// F.</strong> Eight of this record's nine members reached the line and the LEVEL — the one
     /// member REQ-005 introduced instead of a boolean — did not, so a <c>TransportConfirmed</c> run
     /// and an <c>AuthenticatedRoundTrip</c> one differed only in the trailing prose of
@@ -295,7 +295,7 @@ internal static class SecuredEndpointProbe
     /// </summary>
     /// <remarks>
     /// <para>
-    /// m3 (peer review, fix round three). This was a bare <c>"mtls"</c> literal compared inline. It
+    /// This was a bare <c>"mtls"</c> literal compared inline. It
     /// degrades safely — an unrecognised profile takes the no-client-identity path — but the
     /// degradation is exactly the wrong one for THIS component: a future registered profile that
     /// DOES present a client identity (a SASL mechanism, a bearer token, Kerberos) would silently
@@ -311,13 +311,13 @@ internal static class SecuredEndpointProbe
     /// profile", and only the second is a drift signal.
     /// </para>
     /// <para>
-    /// m3 (fix round four) wired that third answer through to BEHAVIOUR, which round three left
+    /// The third answer is now wired through to BEHAVIOUR, which the initial implementation left
     /// undone: the call site folded "absent" into "presents nothing" via a
     /// <c>TryGetValue(…) &amp;&amp; presents</c> short-circuit, so an unrecognised profile silently
     /// took the no-client-identity path. <see cref="ConfirmOneAsync"/> now refuses it. The
     /// build-time half — this map's key set pinned to the registry's, so the drift turns a build
     /// red when the profile is ADDED rather than when a suite meets it — is
-    /// <c>SecurityProfileVocabularyDriftTests</c>, which round three already put in place; the two
+    /// <c>SecurityProfileVocabularyDriftTests</c>, already in place; the two
     /// halves are complementary, not alternatives.
     /// </para>
     /// </remarks>
@@ -392,7 +392,7 @@ internal static class SecuredEndpointProbe
     {
         var confirmations = new List<SecurityConfirmation>();
 
-        // m5 (fix round three): the walk itself is SecuredTargets.Enumerate — the single spelling
+        // The walk itself is SecuredTargets.Enumerate — the single spelling
         // shared with EnvironmentSecurityValidator's cheap "does this suite claim anything" check
         // and SuiteTopology's no-accessor guard, so the three cannot drift about which targets are
         // secured or in what order they are reported.
@@ -436,7 +436,7 @@ internal static class SecuredEndpointProbe
         var declaredProfile = spec.Profile ?? string.Empty;
         var declaredEndpoint = spec.Endpoint ?? string.Empty;
 
-        // m3 (security review, fix round four): the map's third answer is USED. TryGetValue
+        // The map's third answer is USED. TryGetValue
         // returning false means "this probe has never heard of this profile" — a distinct fact from
         // ["tls"] = false, which is why this is an exhaustive map rather than a set of
         // identity-presenting profiles (see ProfilesPresentingAClientIdentity's own remarks). Folded
@@ -450,13 +450,13 @@ internal static class SecuredEndpointProbe
         // identity" from "the broker accepts anybody" — cannot be run, and a confirmation that
         // silently skips it is worth less than no confirmation at all.
         //
-        // FIRST, before the address is even resolved (m7, security review, fix round five). It
+        // FIRST, before the address is even resolved. It
         // depends on nothing but the declared profile, and running it after TryResolveAddress meant
         // an unrecognised profile on a target with no staged address reported "staged no reachable
         // address" — true, but not the fact that matters. Both orderings fail closed; this one names
         // the cause. Free to move: no measurement below feeds it.
         //
-        // REACHABILITY, corrected by measurement (MAJOR-2, fix round five; the previous note here
+        // REACHABILITY, corrected by measurement (the previous note here
         // claimed this throw was "UNREACHABLE BY AN AUTHOR TODAY", which is false on one path):
         //
         //   • The engine's profile VOCABULARY is closed at build time, and by a stronger route than
@@ -550,7 +550,7 @@ internal static class SecuredEndpointProbe
         }
 
         // The TRUST ANCHOR, loaded here for the same reason the client identity above is — and this
-        // one was a DEFECT until fix round eight (B1, peer-review critic), not merely a tidiness.
+        // one was a DEFECT before the eager load, not merely a tidiness.
         //
         // BuildValidationCallback reads only CaCertificatePath (containment, no load), so the anchor
         // used to load LAZILY on the first line of TrustsRemoteCertificate — i.e. INSIDE the
@@ -568,7 +568,7 @@ internal static class SecuredEndpointProbe
         // catch: a stack trace instead of a verdict, with no report artefacts and a non-taxonomy
         // exit code.
         //
-        // WHAT THIS FIX CLOSES, AND WHAT IT DOES NOT (m-B1-scope, gatekeeper, fix round nine;
+        // WHAT THIS FIX CLOSES, AND WHAT IT DOES NOT (
         // scoped by measurement in the slice F hygiene pass, which found the artefact claim true of
         // one runner path and false of the other). Classifying the failure closes two of those
         // three on every path: the run yields a verdict, and REQ-018's taxonomy exit code, instead
@@ -626,15 +626,15 @@ internal static class SecuredEndpointProbe
         // but it is a pure path computation whose containment verdict cannot change between two
         // calls in the same probe.
         //
-        // B1's SIBLING — the other traveller on this same raw-escape route — IS NOW CLOSED, and
+        // THE RELATED CALLBACK FAILURE — the other traveller on this same raw-escape route — IS NOW CLOSED, and
         // not here. X509Chain.Build inside TrustsRemoteCertificate, and the X509Certificate2 copy
         // fallback in BuildValidationCallback, can each throw a CryptographicException from inside
         // the validation callback; both were escaping exactly as the load above used to.
         //
         // NOT HYPOTHETICAL — stated precisely because the obvious wording ("has never been
         // observed") was written here first and was wrong within the hour. `X509Chain.Build` was
-        // MEASURED throwing "An unknown chain building error occurred." on this host during fix
-        // round eight, against the two-tier test bed, reproducibly and outside any test host.
+        // MEASURED throwing "An unknown chain building error occurred." on this host
+        // against the two-tier test bed, reproducibly and outside any test host.
         //
         // WHERE THE CATCH LIVES: one per arm, each spanning the WHOLE of its arm's use of the
         // connection — the outer try below, and the body of ConfirmAnonymousClientIsRefusedAsync —
@@ -833,17 +833,17 @@ internal static class SecuredEndpointProbe
         }
         catch (CryptographicException ex)
         {
-            // B1's SIBLING (peer-review critic, fix round nine): the validation callback's own
+            // The related failure: the validation callback's own
             // machinery failing, as distinct from the peer failing it. MEASURED on .NET 8.0.29 /
             // Windows 10.0.26200, three runs, unanimous: a CryptographicException thrown from a
             // RemoteCertificateValidationCallback propagates RAW out of AuthenticateAsClientAsync
-            // — not AuthenticationException, not IOException — so before this catch it took B1's
+            // — not AuthenticationException, not IOException — so before this catch it took the anchor-load failure's
             // escape route out of the probe entirely (measured end to end through ConfirmAsync:
             // `is OrchestrationException: False`).
             //
             // Two reachable sources, both measured on this host: X509Chain.Build inside
             // TrustsRemoteCertificate ("An unknown chain building error occurred.", observed
-            // during fix round eight against the two-tier bed — a polluted CurrentUser\CA store
+            // against the two-tier bed — a polluted CurrentUser\CA store
             // is the known trigger; and "A null or disposed certificate was present in
             // CustomTrustStore." for a disposed anchor, with the throw confirmed to come from
             // Build and not from CustomTrustStore.Add), and the X509Certificate2 copy fallback in
@@ -856,7 +856,7 @@ internal static class SecuredEndpointProbe
             // fault is the test host's own. Reporting a local chain-builder failure as a verdict on
             // the peer is the same class of false detail this file spends its length refusing.
             //
-            // ON THE OUTER TRY, NOT BESIDE AuthenticateAsClientAsync (the critic's residual, closed
+            // ON THE OUTER TRY, NOT BESIDE AuthenticateAsClientAsync (scope widened
             // in the slice F hygiene pass). This arm's catch used to wrap the handshake call ALONE
             // while the anonymous arm's wrapped connect + handshake + exchange, and the asymmetry
             // was not merely untidy: the validation callback can be re-entered AFTER the handshake
@@ -865,7 +865,7 @@ internal static class SecuredEndpointProbe
             // so a 1.2 session is not excluded, and AllowRenegotiation was MEASURED defaulting to
             // True on the pinned runtime (net8.0, a bare SslClientAuthenticationOptions). A fault
             // raised during ConfirmKafkaRoundTripAsync or ReadForRejectionAsync therefore left by
-            // B1's raw-escape route. No reachability was demonstrated — it needs a peer that
+            // the anchor-load raw-escape route. No reachability was demonstrated — it needs a peer that
             // renegotiates mid-exchange AND a coincident host crypto fault — so this is symmetry
             // restored cheaply, not an observed defect fixed. Widening recaptures nothing that
             // already had a verdict: the anonymous arm converts its own cryptographic fault to an
@@ -947,7 +947,7 @@ internal static class SecuredEndpointProbe
     /// <remarks>
     /// <para>
     /// <strong>Only a failure AT OR AFTER THE HANDSHAKE is evidence here</strong> — and the
-    /// qualifier is the whole of MAJOR-1 (peer review, fix round three). The asymmetry is
+    /// qualifier defines the evidence boundary. The asymmetry is
     /// deliberate but it is narrower than "any failure of this arm": the first connection has
     /// already proved, moments earlier and against the same address, that the server's certificate
     /// satisfies the declared anchor and that the endpoint answers Kafka framing, so a failure
@@ -998,14 +998,14 @@ internal static class SecuredEndpointProbe
     /// </list>
     /// <para>
     /// <strong>Abortive versus graceful is the whole difference between those rows, and it is
-    /// spelled out because a review round disagreed about it — a disagreement now CLOSED by
-    /// measurement rather than by hypothesis.</strong> The security review of fix round three
-    /// reported the reset row as producing <c>EndOfStreamException</c>. Round four re-measured the
-    /// abortive and graceful rows and got the two different results above; the security review of
-    /// round four independently reproduced both and WITHDREW its finding. What round four could only
-    /// offer as "the most likely reconciliation" — that a test double's close is a FIN — is now the
+    /// spelled out because the original reset claim was corrected by
+    /// measurement rather than by hypothesis.</strong> The original claim
+    /// reported the reset row as producing <c>EndOfStreamException</c>. Remeasuring the
+    /// abortive and graceful rows gave the two different results above; an independent probe
+    /// reproduced both and corrected the claim. What was initially only
+    /// offered as "the most likely reconciliation" — that a test double's close is a FIN — is now the
     /// third row, MEASURED on .NET 8.0.29 / Windows 10.0.26200, three runs, unanimous, by both that
-    /// review and this one: a bare <c>SslStream.Dispose()</c> yields <c>EndOfStreamException</c>.
+    /// independent probe and the later measurement: a bare <c>SslStream.Dispose()</c> yields <c>EndOfStreamException</c>.
     /// That is the whole reconciliation; the rows were right and so was the original report, about
     /// different closes.
     /// </para>
@@ -1165,7 +1165,7 @@ internal static class SecuredEndpointProbe
 
         throw Failure(
             name,
-            // m5 (spec-compliance review, fix round five): the profile is INTERPOLATED, not the
+            // The profile is INTERPOLATED, not the
             // literal 'mtls' the round-four sweep left here while converting its three siblings.
             // Correct either way today — only mtls presents a client identity, so only mtls reaches
             // this method — but this sits on the path a future identity-presenting profile would
@@ -1517,7 +1517,7 @@ internal static class SecuredEndpointProbe
     /// <c>security.endpoint</c> names a CONTAINER-side port, while the value staged here is the
     /// HOST-side published address for the dependency's own endpoint. Nothing in this release
     /// constructs a second, secured endpoint for a dependency the way REQ-023 does for a service —
-    /// measured (m1, fix round three; the previous wording said "<c>EnvironmentMapper</c> never
+    /// measured (the previous wording said "<c>EnvironmentMapper</c> never
     /// reads a dependency's <c>Security</c>", which this same commit falsified by adding REQ-016's
     /// <c>ServerArtifactInjection.Plan(spec.Security, "dependencies", …)</c> call): the mapper
     /// reads a dependency's <c>Security</c> only for its <c>serverArtifacts</c>, and constructs no
@@ -1528,7 +1528,7 @@ internal static class SecuredEndpointProbe
     /// way), and the diagnostic names both halves so the cause is legible.
     /// </para>
     /// <para>
-    /// <strong>IPv6 (n7, fix round three; FIXED in fix round four).</strong> Both halves of this
+    /// <strong>IPv6.</strong> Both halves of this
     /// method used to mishandle an IPv6 authority. The URL half read <c>Uri.Host</c>, which retains
     /// the brackets (<c>https://[::1]:8443</c> → <c>[::1]</c>); it now reads
     /// <c>Uri.DnsSafeHost</c>. Earlier rounds justified that with a connect failure, and the
@@ -1572,14 +1572,14 @@ internal static class SecuredEndpointProbe
         // form the bare-authority half yields, the form a diagnostic should render, and the form
         // safe to hand to a consumer that does not share .NET's tolerance of the brackets.
         //
-        // DELIBERATELY LAXER THAN THE BARE HALF (m3, gatekeeper, fix round five): this branch reads
+        // DELIBERATELY LAXER THAN THE BARE HALF: this branch reads
         // host and port and ignores user info, path, query and fragment, where TryParseBareAuthority
         // refuses a value carrying any of them. That asymmetry is intended, not an oversight — a URL
         // legitimately carries a path, so refusing one would refuse a well-formed staged endpoint,
         // while a value with no scheme carrying a path is not an authority at all.
         //
-        // The two halves of "ignored" are not the same, and an earlier wording lumped them (m2,
-        // gatekeeper + security, fix round six). RFC 3986 §3.2 defines
+        // The two halves of "ignored" are not the same, and an earlier wording lumped them.
+        // RFC 3986 §3.2 defines
         // `authority = [ userinfo "@" ] host [ ":" port ]`, so USER INFO IS PART OF THE AUTHORITY,
         // not something past it: it is discarded here by the URL parser itself, which yields host
         // and port as separate components and never folds user info into either. MEASURED, on the
@@ -1598,13 +1598,13 @@ internal static class SecuredEndpointProbe
 
         // A bare 'host:port' authority — REQ-023's Kafka-family staging, and every dependency
         // connection string. Parsed by borrowing the framework's authority parser rather than by
-        // hand (n7, fix round three, upgraded from "noted" to "fixed" by fix round four).
+        // hand (previously only noted, now fixed).
         return TryParseBareAuthority(value, out host, out port);
     }
 
-    // The bracket rule this probe's observed-address rendering depends on (m1, gatekeeper, fix
-    // round five) now lives in AuthorityText.Format — hoisted out of this file in fix round six
-    // (m3) because EnvironmentMapper's TCP health-check diagnostics have the same bracket-free host
+    // The bracket rule this probe's observed-address rendering depends on
+    // now lives in AuthorityText.Format — hoisted out of this file
+    // because EnvironmentMapper's TCP health-check diagnostics have the same bracket-free host
     // and had the same raw {host}:{port} defect. TryResolveAddress deliberately yields the
     // BRACKET-FREE host because that is what Uri.DnsSafeHost gives and what a consumer with no
     // obligation to match .NET's leniency can take — NOT because TcpClient.ConnectAsync requires
@@ -1631,8 +1631,8 @@ internal static class SecuredEndpointProbe
     /// <c>host:port</c> and wrong for every IPv6 spelling.
     /// </para>
     /// <para>
-    /// <strong>MEASURED, on the pinned runtime, against the split it replaces</strong> (n7 recorded
-    /// the first two as known-wrong-but-unreachable; the security review's fix round four resolved
+    /// <strong>MEASURED, on the pinned runtime, against the split it replaces</strong> (the initial implementation recorded
+    /// the first two as known-wrong-but-unreachable; the subsequent correction resolved
     /// them rather than re-recording them):
     /// <list type="bullet">
     ///   <item><description>
@@ -1660,13 +1660,13 @@ internal static class SecuredEndpointProbe
     /// <para>
     /// <strong>Anything beyond a bare host and port is refused, not ignored — in THIS half.</strong>
     /// The rule is scoped to the bare-authority branch and does not govern the URL branch above it
-    /// (m3, gatekeeper, fix round five): a staged value with no scheme is a host and a port and
+    /// because a staged value with no scheme is a host and a port and
     /// nothing else, so anything carrying user info, a path, a query or a fragment is not the thing
     /// this is parsing, and reinterpreting it would be a silent guess in the one component that must
     /// not guess. Note that user info is INSIDE the authority per RFC 3986 §3.2
     /// (<c>authority = [ userinfo "@" ] host [ ":" port ]</c>) while path, query and fragment are
-    /// past it — the four are refused together here, but they are not one category (m2, fix round
-    /// six). A staged URL legitimately carries a path, which is why that branch reads host and port
+    /// past it — the four are refused together here, but they are not one category (
+    /// see the RFC grammar). A staged URL legitimately carries a path, which is why that branch reads host and port
     /// off the parsed <see cref="Uri"/> and lets the rest be — see the call site's own note.
     /// Measured: <c>user@host:9093</c> parses with <c>UserInfo</c> set (the previous split
     /// produced the host <c>user@host</c>), <c>host:9093/path</c> keeps its path, and
@@ -1675,7 +1675,7 @@ internal static class SecuredEndpointProbe
     /// </para>
     /// <para>
     /// <strong>The user-info test is on the delimiter as well as on <c>UserInfo</c></strong>
-    /// (m2 / NIT-1, security review, fix round five; wording corrected in round six — the
+    /// (the
     /// <c>UserInfo.Length</c> check was RETAINED alongside the new <c>@</c> guard as belt and
     /// braces, not replaced by it, and the previous "not on <c>UserInfo</c>" phrasing read as if it
     /// had been). The rule above says "anything carrying user info"; asking

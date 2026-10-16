@@ -1,5 +1,5 @@
-// Vouchfx.Engine.Planning.Tests — PlanSafetyTests (M3 Planner, REQ-013, EDGE-006,
-// fix-round B3, T6 scope).
+// Vouchfx.Engine.Planning.Tests — PlanSafetyTests (M3 Planner, REQ-013, EDGE-006;
+// T6 scope).
 //
 // T1 authored only REQ-013's "a test asserts the suite fixture folder is byte-identical after
 // an analysis" acceptance criterion below. T6 EXTENDS this same file (never recreates it) with
@@ -12,7 +12,7 @@
 //     (and its CLI wiring in PlanCommand.cs) must contain no reference to a model SDK,
 //     endpoint, or credential shape.
 //
-// MINOR fix-round: this file previously ALSO planted the secret as the value of a process
+// This file previously ALSO planted the secret as the value of a process
 // environment variable, mutated for the duration of the test. That mutation was removed —
 // not merely restored-in-a-finally — because the Planner never reads an environment variable
 // anywhere on its code path (confirmed by grep; PlannerSourceAndCliWiring_
@@ -38,7 +38,7 @@ public sealed class PlanSafetyTests
     // token) so a false-positive match against unrelated report content is not plausible. It
     // is planted verbatim inside the committed Fixtures/acceptance/secret-safety-events/
     // history.jsonl fixture's step-completed `observation` payload — see that file — and
-    // (MINOR fix-round) inside Fixtures/acceptance/secret-safety/
+    // inside Fixtures/acceptance/secret-safety/
     // malformed-with-planted-secret.e2e.yaml's deliberately garbage step `type` value, padded
     // past SuiteSetLoader.MaxParseErrorMessageChars. The observation-payload channel is NOT
     // real on its own (the Planner never reads a step-completed event's `observation` payload
@@ -48,7 +48,7 @@ public sealed class PlanSafetyTests
     // real: AstBuilder.ResolveKind echoes an unrecognised step `type` verbatim into its
     // exception message, which SuiteSetLoader.ParseFile captures into
     // PlanUnanalysableSuite.Error — genuinely reachable suite-file content flowing into the
-    // report. This fixture proves the length bound added in the same fix-round actually
+    // report. This fixture proves the length bound added alongside it actually
     // truncates it away, rather than merely asserting a channel that was never exercised.
     private const string FakeSecretValue = "sk-vfx-test-9f2b6d41-e006-4c2a-8c58-4b6a9a3d0e21";
 
@@ -110,7 +110,7 @@ public sealed class PlanSafetyTests
 
         Assert.DoesNotContain(FakeSecretValue, json, StringComparison.Ordinal);
 
-        // MINOR fix-round: prove the malformed-suite channel is genuinely exercised — not
+        // Prove the malformed-suite channel is genuinely exercised — not
         // merely absent because the file failed to be discovered/scanned at all — by
         // asserting the report DOES carry a bounded, truncated stand-in for it. A regression
         // that stopped bounding ex.Message (or stopped scanning the fixture at all) would

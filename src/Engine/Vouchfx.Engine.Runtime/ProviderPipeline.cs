@@ -84,7 +84,7 @@ internal sealed record HostResourcePlanEntry(
 
 /// <summary>
 /// One step's <see cref="IStepBinder{TModel}.Bind"/> result, retained across
-/// <see cref="ProviderPipeline.Compile"/>'s two passes (M5 fix, fix round 2 — see the
+/// <see cref="ProviderPipeline.Compile"/>'s two passes (see the
 /// class remarks for the redesign this replaces).
 /// </summary>
 /// <param name="Node">The step's normalised AST node.</param>
@@ -104,7 +104,7 @@ internal sealed record HostResourcePlanEntry(
 /// naming an API the code does not actually call) — never a partially-materialised list.
 /// </param>
 /// <param name="HostResourcesFailure">
-/// G-A (gatekeeper, fix round 3): captures an exception thrown while materialising
+/// Captures an exception thrown while materialising
 /// <paramref name="HostResources"/> in <see cref="ProviderPipeline.BindAllSteps"/> (Pass 1),
 /// rather than letting it propagate immediately — see <see cref="ProviderPipeline.BindAllSteps"/>'s
 /// own remarks for why. <see langword="null"/> when materialisation succeeded (the overwhelming
@@ -153,7 +153,7 @@ internal sealed record ValidationFailure(string Message)
     /// pre-topology security-preflight checks — <see cref="EnvironmentSecurityValidator"/>
     /// (path containment/existence for a declared <c>security</c> artefact, REQ-003/REQ-004)
     /// or <see cref="SecurityProfileWiringValidator"/> (an unresolved <c>(profile, target-kind)</c>
-    /// pair, REQ-022, G-MINOR-1) — both called from <see cref="ProviderPipeline.Compile"/>
+    /// pair, REQ-022) — both called from <see cref="ProviderPipeline.Compile"/>
     /// back-to-back, before any step is bound; <see langword="false"/> for every other
     /// <see cref="ValidationFailure"/> in this pipeline (a step's own bind/validate failure,
     /// the registry-lookup internal error, a host-resource collision, …). Init-only rather
@@ -172,7 +172,7 @@ internal sealed record ValidationFailure(string Message)
     /// from an ordinary authoring-error Inconclusive. This PR does not itself change
     /// any verdict mapping, exit code, or <c>ScenarioRunner</c> flow.
     /// <para>
-    /// G-MINOR-1 (gatekeeper, this slice): <see cref="SecurityProfileWiringValidator"/>'s
+    /// <see cref="SecurityProfileWiringValidator"/>'s
     /// own failure site (added for REQ-022) also sets this marker true, widening it beyond
     /// its original "EnvironmentSecurityValidator only" scope. Recorded here as a DELIBERATE
     /// decision, not an oversight the doc comment merely failed to keep up with: a REQ-022
@@ -322,7 +322,7 @@ internal static class ProviderPipeline
     /// The security-profile registry <see cref="SecurityProfileWiringValidator"/> checks every
     /// declared <c>security</c> block's <c>(profile, target-kind)</c> pair against (REQ-022).
     /// Defaults to <see cref="SecurityProfileRegistry.BuiltIn"/> when omitted — the production
-    /// registry. Injectable (G-MINOR-8, gatekeeper) so a caller can prove REQ-022's own
+    /// registry. Injectable so a caller can prove REQ-022's own
     /// red-first behaviour end-to-end through THIS front door with a reduced/explicit registry,
     /// mirroring how <paramref name="registry"/> itself is always a parameter rather than a
     /// hardcoded <c>StepKindRegistry</c> default.
@@ -483,7 +483,7 @@ internal static class ProviderPipeline
         // scenario and collectively in conflict. It therefore carries its OWN call to the same
         // helper at its own seam (ScenarioRunner.RunSuiteAsync), from the SAME local it stages from,
         // so the guard and the staging cannot disagree about the set. Both seams call this one
-        // helper, which owns the single spelling of the diagnostic (gatekeeper MAJOR, fix round four
+        // helper, which owns the single spelling of the diagnostic (centralised here
         // — before it, the message was written out at this call site alone).
         var protocolConflict = SuiteProtocolTargets.DescribeProtocolConflict(new[] { (ScenarioAst?)ast });
         if (protocolConflict is not null)
@@ -492,7 +492,7 @@ internal static class ProviderPipeline
         }
 
         // ── Pass 1: Bind every step exactly ONCE, retaining the model and its
-        // IHostResourceContributor contribution (M5 fix, fix round 2 — replaces the
+        // IHostResourceContributor contribution (replaces the
         // previous speculative pre-pass that called Bind a SECOND time per step, purely
         // to discover host-resource names before the main loop reached that step). See
         // BuildProjectContext's own remarks for why deriving DeclaredServices needs
@@ -509,7 +509,7 @@ internal static class ProviderPipeline
             ast, resolvedSuiteDirectory, boundSteps, out var hostResourceServiceCollision,
             ast.Environment?.Source is null ? null : environmentPlan.Declarations);
 
-        // G5 (gatekeeper MAJOR-5): a step's own host-resource contribution (e.g. a
+        // A step's own host-resource contribution (e.g. a
         // webhook-listen.http listener) named identically to a DECLARED SERVICE must be
         // rejected here, before any Roslyn compile or topology build — see
         // BuildProjectContext's own remarks for why the collision is a real, silent
@@ -590,7 +590,7 @@ internal static class ProviderPipeline
 
             if (!validResult.IsValid)
             {
-                // SCRUBBED (SEC-MAJOR-1 follow-up, issue #466). `validResult.Errors` is
+                // SCRUBBED (issue #466). `validResult.Errors` is
                 // FREE-FORM PROVIDER-AUTHORED TEXT — the same category as the exception
                 // messages the six guards splice, on the same channel, reaching the same
                 // archived artefacts — and it reached them unscrubbed while the guard three
@@ -610,14 +610,14 @@ internal static class ProviderPipeline
                         string.Join("; ", validResult.Errors), resolvedSuiteDirectory)));
             }
 
-            // G-A (gatekeeper, fix round 3): a HostResources() throw captured back in Pass 1
+            // A HostResources() throw captured back in Pass 1
             // (BindAllSteps) is surfaced HERE — after this exact step's OWN Validate, just
             // above, has already had its chance to turn whatever invalid model condition
             // triggered it into the clean ValidationFailure returned above instead. Reaching
             // this line means Validate found the model FINE, so whatever HostResources threw
             // is a genuine bug Validate does not already cover.
             //
-            // THE POSITION IS G-A's AND IS LOAD-BEARING; THE TERMINAL SHAPE IS #466's. This
+            // THE POSITION AFTER VALIDATION IS LOAD-BEARING; THE TERMINAL SHAPE IS #466's. This
             // line still sits exactly where the rethrow sat — after this step's Validate, so a
             // model problem still becomes a clean ValidationFailure first, and still unable to
             // pre-empt a diagnosable error from a DIFFERENT, earlier-bound step (BindAllSteps
@@ -842,7 +842,7 @@ internal static class ProviderPipeline
             }
         }
 
-        // ── CSX assembly (GUARDED — GATE-MAJOR-1, issue #466) ─────────────────────
+        // ── CSX assembly (GUARDED — issue #466) ─────────────────────
         // THE SIXTH ESCAPE ROUTE, and the one the six per-step guards above cannot reach.
         // CsxAssembler.Assemble refuses provider-EMITTED content that breaks §13.3.1 — a
         // RequiredUsings entry that is not a bare namespace, or two fragments declaring one
@@ -1163,7 +1163,7 @@ internal static class ProviderPipeline
     /// <summary>
     /// Replaces every occurrence of the resolved suite directory in free-form diagnostic text
     /// with the literal words <c>the suite directory</c> — in both the raw spelling and the
-    /// JSON-escaped one (SEC-MAJOR-1, issue #466).
+    /// JSON-escaped one (issue #466).
     /// </summary>
     /// <param name="text">The exception message as the provider (or the BCL) wrote it.</param>
     /// <param name="resolvedSuiteDirectory">
@@ -1571,7 +1571,7 @@ internal static class ProviderPipeline
     /// <summary>
     /// The suite-level counterpart of <see cref="DescribeProviderFault"/>, for a failure of
     /// <see cref="CsxAssembler.Assemble(IReadOnlyList{StepCompilePlan})"/> over the fragments the providers emitted
-    /// (GATE-MAJOR-1, issue #466).
+    /// (issue #466).
     /// </summary>
     /// <param name="ex">The exception <c>Assemble</c> threw.</param>
     /// <param name="resolvedSuiteDirectory">Threaded to <see cref="ScrubSuiteDirectory"/>.</param>
@@ -1582,7 +1582,7 @@ internal static class ProviderPipeline
     /// message and nothing else, and neither of its two throw sites records which fragment was
     /// at fault: the helper-collision site names the CLASS declared twice, and the bare-namespace
     /// site names the offending <c>RequiredUsings</c> ENTRY. Guessing a step from either would be
-    /// a confident wrong answer of exactly the kind <c>BindAllSteps</c>' own R-1 remark documents
+    /// a confident wrong answer of exactly the kind <c>BindAllSteps</c>' own cross-step trade-off remark documents
     /// the cost of. The entry or class name the exception does carry is spliced through, so the
     /// author still has the string to grep their providers for.
     /// </para>
@@ -1677,7 +1677,7 @@ internal static class ProviderPipeline
         cause is IOException or UnauthorizedAccessException;
 
     /// <summary>
-    /// Pass 1 of <see cref="Compile"/> (M5 fix, fix round 2): binds every step in
+    /// Pass 1 of <see cref="Compile"/>: binds every step in
     /// <paramref name="ast"/> exactly ONCE, materialising each one's
     /// <see cref="IHostResourceContributor{TModel}"/> contribution alongside the model, and
     /// returns the retained list as <see cref="BoundStep"/> records.
@@ -1692,8 +1692,8 @@ internal static class ProviderPipeline
     /// rather than <c>private</c>.
     /// </para>
     /// <para>
-    /// R-1 residual (peer-review-critic, PR #349 fix round 4) — a cross-step trade the G-A
-    /// fix (fix round 3) introduced and this remark documents rather than reverts. Deferring
+    /// PR #349 — a cross-step trade the deferred-host-resource
+    /// fix introduced and this remark documents rather than reverts. Deferring
     /// a throwing <c>HostResources()</c> onto ITS OWN step's
     /// <see cref="BoundStep.HostResourcesFailure"/> protects THAT step's own
     /// <see cref="ProviderPipeline.Compile"/> Pass-2 <c>Validate</c> call — see this method's
@@ -1710,8 +1710,8 @@ internal static class ProviderPipeline
     /// <c>HostResources()</c> actually threw — because Pass 2 returns on the FIRST failing
     /// step's <see cref="ValidationResult"/>, in step order, before the later, declaring
     /// step's own <see cref="BoundStep.HostResourcesFailure"/> is ever reported. This is
-    /// accepted, not fixed: the alternative (propagate immediately, the pre-G-A behaviour)
-    /// reintroduces the ORIGINAL bug G-A exists to prevent — a community provider's own
+    /// accepted, not fixed: the alternative (propagate immediately, the previous behaviour)
+    /// reintroduces the ORIGINAL bug the deferral prevents — a community provider's own
     /// model-shaped bug that its OWN <c>Validate</c> could have explained cleanly instead
     /// aborting the whole compile with a raw reflection exception, for EVERY step, not just
     /// the one whose <c>HostResources()</c> throws. Pinned by a two-step test in
@@ -1734,7 +1734,7 @@ internal static class ProviderPipeline
     /// <param name="resolvedSuiteDirectory">
     /// The absolute host directory this scenario's relative paths resolve against, threaded in
     /// solely so a throwing <c>Bind</c>'s message can have it substituted out before it reaches
-    /// an archived artefact (SEC-MAJOR-1 — see <see cref="ScrubSuiteDirectory"/>). REQUIRED
+    /// an archived artefact (see <see cref="ScrubSuiteDirectory"/>). REQUIRED
     /// rather than defaulted: an optional parameter here would let a future caller silently opt
     /// out of a disclosure scrub, which is the one kind of default this file should not offer.
     /// </param>
@@ -1818,7 +1818,7 @@ internal static class ProviderPipeline
             }
             catch (Exception ex)
             {
-                // TWO FAULTS ARRIVE HERE AND THEY ARE NOT THE SAME THING (peer-review NIT-1).
+                // TWO FAULTS ARRIVE HERE AND THEY ARE NOT THE SAME THING.
                 // ReflectBind does the closed-generic interface lookup and the MethodInfo resolve
                 // BEFORE it invokes anything, so a failure in either is an ENGINE plumbing fault —
                 // it is not "Bind threw", and reporting it as such would send a reader to read a
@@ -1845,12 +1845,12 @@ internal static class ProviderPipeline
                         resolvedSuiteDirectory)));
             }
 
-            // ── Host resources (tolerant, S07-F-01a) — GUARDED and DEFERRED (G-A,
-            // gatekeeper, fix round 3; this half of the comment used to be missing — the
+            // ── Host resources (tolerant, S07-F-01a) — GUARDED and DEFERRED (
+            // this half of the comment used to be missing — the
             // Bind half above justified only itself). Unlike Bind, a throwing HostResources
             // getter/enumerator is CAUGHT here rather than propagated: this method
             // (BindAllSteps) runs entirely in Pass 1, before ANY step's Validate has run, so
-            // letting it propagate immediately — the pre-G-A behaviour — could abort the
+            // letting it propagate immediately — the previous behaviour — could abort the
             // whole compile before a community provider's OWN Validate ever got a chance to
             // turn whatever invalid model condition triggered the throw into a clean,
             // located diagnostic instead of a raw reflection exception. The exception is
@@ -1860,7 +1860,7 @@ internal static class ProviderPipeline
             // explain never even reaches that point, and only a genuine HostResources bug
             // Validate does NOT already cover surfaces there, as a ValidationFailure naming
             // the provider (issue #466 changed the terminal shape from a rethrow; the
-            // POSITION, after this step's own Validate, is G-A's and is unchanged). ──
+            // POSITION, after this step's own Validate, is unchanged). ──
             List<HostResourceRequirement> hostResources;
             Exception? hostResourcesFailure = null;
             try
@@ -1896,7 +1896,7 @@ internal static class ProviderPipeline
     /// </param>
     /// <param name="boundSteps">
     /// Every step's RETAINED <see cref="BoundStep"/> from <see cref="Compile"/>'s Pass 1
-    /// (M5 fix, fix round 2). This method no longer binds anything itself — it reads each
+    /// — this method no longer binds anything itself — it reads each
     /// step's already-materialised <see cref="BoundStep.HostResources"/> list, discovered
     /// regardless of step order, because host-resource contributions can be declared by a
     /// LATER step than the one that references them (e.g. <c>await-callback</c>, declaring
@@ -1909,7 +1909,7 @@ internal static class ProviderPipeline
     /// redesign removes entirely: one <c>Bind</c> call per step, full stop.
     /// </param>
     /// <param name="collisionFailure">
-    /// Set to a non-null <see cref="ValidationFailure"/> (G5, gatekeeper MAJOR-5) when some
+    /// Set to a non-null <see cref="ValidationFailure"/> when some
     /// step's own host-resource contribution (e.g. a <c>webhook-listen.http</c> listener) is
     /// named identically to a DECLARED SERVICE (<c>environment.services.&lt;name&gt;</c>) —
     /// <see langword="null"/> otherwise. <c>ScenarioRunner</c> stages EVERY host resource and
@@ -1932,7 +1932,7 @@ internal static class ProviderPipeline
     /// <see cref="ServiceEndpointNaming.DeclaredEndpointNames"/> — the SAME naming
     /// convention <c>EnvironmentMapper</c> uses to build the actual Aspire endpoints, so
     /// the two can never silently drift apart), MERGED with every dependency's own extra
-    /// sidecar endpoint (M1 fix, fix round 3 — mailpit's SMTP endpoint, Kafka's optional
+    /// sidecar endpoint (mailpit's SMTP endpoint, Kafka's optional
     /// schema-registry REST API — sourced from the SAME
     /// <see cref="EnvironmentMapper.GetDependencyServiceSidecarNames"/> enumeration the
     /// collision guard below already consults, so the two cannot disagree about which
@@ -1966,7 +1966,7 @@ internal static class ProviderPipeline
                 depMap[kv.Key] = kv.Value.Type;
         }
 
-        // m7 fix (fix round 2): a service and a dependency may not share a name. Before this
+        // A service and a dependency may not share a name. Before this
         // fix, a suite declaring both 'environment.services.orders' and
         // 'environment.dependencies.orders' validated PASS and only failed later, deep
         // inside Aspire's own AddContainer ("a resource with the same name already exists").
@@ -1993,7 +1993,7 @@ internal static class ProviderPipeline
         var serviceMap = new Dictionary<string, Vouchfx.Sdk.DeclaredServiceInfo>(
             services?.Count ?? 0, StringComparer.Ordinal);
 
-        // m1 fix (fix round 2): the guard below rejects a host resource whose VarName
+        // The guard below rejects a host resource whose VarName
         // collides with ANY svc::<name>-shaped key another surface already owns — NOT only
         // a declared service. The previous version guarded only DECLARED SERVICE names, on
         // the stated (but WRONG) reasoning that dependencies stage exclusively into
@@ -2038,7 +2038,7 @@ internal static class ProviderPipeline
             {
                 foreach (var sidecarName in EnvironmentMapper.GetDependencyServiceSidecarNames(depName, depSpec))
                 {
-                    // m7 fix (fix round 3): the collision guard below (the one keyed off
+                    // The collision guard below (the one keyed off
                     // boundSteps' host resources) is one-directional — it checks a HOST
                     // RESOURCE's VarName against reservedSvcNames, but nothing previously
                     // checked a dependency's OWN sidecar name against a name a DECLARED
@@ -2070,9 +2070,9 @@ internal static class ProviderPipeline
                         $"dependency '{depName}' (type '{depSpec.Type}')'s own sidecar endpoint " +
                         $"(environment.dependencies.{depName})";
 
-                    // M1 fix (fix round 3): a regression this branch introduced. Populating
+                    // A regression this branch introduced. Populating
                     // ONLY reservedSvcNames (above) made this sidecar name unreachable through
-                    // ANY of the three narrowed HTTP-family providers (M1, fix round 2):
+                    // ANY of the three narrowed HTTP-family providers:
                     // ctx.DeclaredServices.ContainsKey(target) is exactly how http.rest/http.
                     // soap/metrics-assert.prometheus decide a target is real, and a name present
                     // only in reservedSvcNames (a set this method never returns to a caller) was
@@ -2080,7 +2080,7 @@ internal static class ProviderPipeline
                     // ('<dep>-smtp') or Kafka's schema-registry sidecar ('<dep>-sr'), BOTH of
                     // which EnvironmentMapper actually stages and BOTH of which resolve at run
                     // time, validated as if the name did not exist at all. Fixed at the cause
-                    // the M1 (fix round 2) review note asked for: reservedSvcNames and
+                    // of the discrepancy: reservedSvcNames and
                     // serviceMap (DeclaredServices) are now derived from the SAME
                     // GetDependencyServiceSidecarNames enumeration, in the same loop, so the
                     // collision guard and the validator can no longer disagree about which
@@ -2091,7 +2091,7 @@ internal static class ProviderPipeline
                     // (MailpitSmtpServiceName) — the same convention DeclaredServices already
                     // uses for a declared service's own endpoint names, above.
                     //
-                    // R-3 residual (peer-review-critic, PR #349 fix round 4): the drift guard
+                    // PR #349: the drift guard
                     // above (GetDependencyServiceSidecarNames as the single source of truth)
                     // covers only the sidecar NAME ("bus-sr", "mail-smtp") — the endpoint-name
                     // VALUE ("http"/"smtp") assigned below is a SEPARATE, hand-written
@@ -2123,11 +2123,11 @@ internal static class ProviderPipeline
         // community provider's throwing Bind would already have returned Pass 1's own
         // ValidationFailure before this method is ever called (issue #413 — see BindAllSteps'
         // remarks); a throwing HostResources() enumerator, by contrast, is CAUGHT in Pass 1
-        // (G-A, gatekeeper, fix round 3) and deferred onto that step's own BoundStep.
+        // and deferred onto that step's own BoundStep.
         // HostResourcesFailure rather than propagated — so bound.HostResources here is
         // ALWAYS a safe, fully-materialised (possibly empty) list, never a live throw, either
         // way. There is nothing left here that can throw on a per-step basis, so no per-step
-        // catch/continue is needed (contrast the pre-M5 pre-pass, which called Bind
+        // catch/continue is needed (contrast the previous speculative pre-pass, which called Bind
         // speculatively a second time and had to swallow exactly that class of exception).
         // This method itself never reads HostResourcesFailure — Compile's Pass 2 turns it into
         // a ValidationFailure, after that step's own Validate has had its chance (see

@@ -170,7 +170,7 @@ public sealed class MqPublishAzureServiceBusProvider
             errors.Add("mq-publish.azureservicebus: exactly one of 'queue' or 'topic' must be set.");
 
         if (!string.IsNullOrWhiteSpace(model.Queue) && !string.IsNullOrWhiteSpace(model.Topic))
-            errors.Add("mq-publish.azureservicebus: 'queue' and 'topic' are mutually exclusive — set exactly one.");
+            errors.Add("mq-publish.azureservicebus: 'queue' and 'topic' are mutually exclusive - set exactly one.");
 
         if (!string.IsNullOrWhiteSpace(model.Target))
         {

@@ -49,7 +49,7 @@ public sealed class ReservedPrefixSchemaDriftTests
     /// per reserved prefix, anchored front and back.
     /// </summary>
     /// <remarks>
-    /// MINOR-10 (second-round gatekeeper finding): each prefix is
+    /// Each prefix is
     /// <see cref="Regex.Escape(string)"/>d before interpolation. A no-op for
     /// every CURRENT prefix (none contain a regex metacharacter — <c>:</c>
     /// and <c>_</c> are both literal), so this changes no test outcome

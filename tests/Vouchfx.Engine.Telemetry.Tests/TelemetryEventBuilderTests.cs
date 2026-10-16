@@ -183,7 +183,7 @@ public sealed class TelemetryEventBuilderTests
     [Fact]
     public void Build_MultipleValidTimingLines_OutOfBufferOrder_PicksEarliestByTimestamp_NotByListingPosition()
     {
-        // #568 critic MINOR (measured): swapping Min for last-wins (plain unconditional
+        // #568 (measured): swapping Min for last-wins (plain unconditional
         // assignment) or first-wins (??=, keep-the-first-processed) in either fold left
         // Telemetry.Tests 139/139 green, because every prior timing test has exactly ONE
         // valid line of each type - "earliest wins" was unpinned. It matters in production:
@@ -216,7 +216,7 @@ public sealed class TelemetryEventBuilderTests
     {
         // An absent `ts` on the wire deserialises ScenarioStartedEvent.Timestamp to
         // default(DateTimeOffset) (0001-01-01, not the Unix epoch) — EventEnvelope.Timestamp
-        // is likewise not `required` (N5, EventHistoryReader's own EDGE-004). That default
+        // is likewise not `required` (EventHistoryReader's own EDGE-004). That default
         // must never be folded in as a real timestamp; only the later, genuine
         // scenario-started at +40 may feed startupMs.
         var noTs = System.Text.RegularExpressions.Regex.Replace(
@@ -783,7 +783,7 @@ public sealed class TelemetryEventBuilderTests
     [Fact]
     public void Build_StepCompletedWithDefaultTimestamp_IsNotCountedAsSkipped()
     {
-        // The step-completed twin of the scenario-started case above (gatekeeper MINOR:
+        // The step-completed twin of the scenario-started case above (
         // the "read but unused" rule was pinned only for scenario-started before this).
         // A line whose typed record PARSES but whose `ts` is absent (deserialises to
         // default(DateTimeOffset)) is read, just unused for timeToFirstTestMs — it must
@@ -812,7 +812,7 @@ public sealed class TelemetryEventBuilderTests
     {
         // A step-started line whose typed record PARSES but whose `kind` is blank is
         // read, just not tallied into stepFamilies/stepProviders — it must not be
-        // counted as unreadable (gatekeeper MINOR: this branch of the "read but unused"
+        // counted as unreadable (this branch of the "read but unused"
         // rule was unpinned before this).
         var lines = new List<string>
         {

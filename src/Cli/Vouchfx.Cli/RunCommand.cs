@@ -303,7 +303,8 @@ internal static class RunCommand
         Description =
             "Write a self-contained HTML report to <path>. Rendered from the same event stream as "
             + "the terminal output, so the two never disagree. Parent directories are created as "
-            + "needed; an existing file is overwritten. Omit for no HTML report (the default).",
+            + "needed; an existing file is overwritten. Cannot be combined with --watch. "
+            + "Omit for no HTML report (the default).",
     };
 
     /// <summary>
@@ -323,7 +324,7 @@ internal static class RunCommand
             + "primitives: Fail maps to failure, Environment-error to error, and Inconclusive "
             + "to skipped. Parent "
             + "directories are created as needed; an existing file is overwritten. Omit for no "
-            + "JUnit report (the default).",
+            + "JUnit report (the default). Cannot be combined with --watch.",
     };
 
     /// <summary>
@@ -346,7 +347,7 @@ internal static class RunCommand
             + "stream the terminal / HTML / JUnit reports are rendered from, verbatim - one JSON "
             + "object per line, UTF-8 without a BOM. Parent directories are created as needed; an "
             + "existing file is overwritten. Aliased as --json. Omit for no events file (the "
-            + "default).",
+            + "default). Cannot be combined with --watch.",
     };
 
     /// <summary>
@@ -383,7 +384,7 @@ internal static class RunCommand
             + "and attempt completes (per-step liveness), so a concurrent reader (e.g. `tail -f`) "
             + "sees lines as they land rather than only after the run finishes. Separate "
             + "from --events / --json, which still writes once, at the end, byte-for-byte "
-            + "unchanged; the two may be used together or independently. Not wired into --watch. "
+            + "unchanged; the two may be used together or independently. Cannot be combined with --watch. "
             + "Omit for no incremental events stream (the default).",
     };
 
@@ -1131,6 +1132,62 @@ internal static class RunCommand
         bool shutdownOnStdinEof = false,
         EnvironmentDriverRegistry? environmentDrivers = null)
     {
+        // --watch and --parallel are mutually exclusive: one keeps a SINGLE topology alive for
+        // one file, the other fans MANY scenarios across MANY topologies.  Reject the combo as a
+        // usage error (exit 2) up front — before discovering or running anything (no Docker).
+        if (watch && parallel is not null)
+        {
+            await output.WriteLineAsync(
+                "--watch cannot be combined with --parallel (watch keeps one topology alive for a "
+                + "single file; --parallel fans many scenarios across many topologies).")
+                .ConfigureAwait(false);
+            return ExitCodes.UsageError;
+        }
+
+        // Validate --parallel up front: a value < 1 is a usage error (exit 2), not a crash.
+        // (System.CommandLine binds the value; the >= 1 contract is the engine's, enforced here.)
+        if (parallel is { } degree && degree < 1)
+        {
+            await output.WriteLineAsync("--parallel must be 1 or greater.").ConfigureAwait(false);
+            return ExitCodes.UsageError;
+        }
+
+        // --events-stream must not collide with any END-OF-RUN file output (--events / --html /
+        // --junit): EventStreamAppender holds its path open with FileShare.Read for the WHOLE
+        // run, so FileReportWriter's later FileShare.None open on the SAME path would hit a
+        // sharing violation — that archive would then be silently never written (only a
+        // diagnostic, no verdict change), quietly breaking the documented "--events-stream may
+        // be used together with --events" guarantee. Rejected here, at parse time, before
+        // discovery/Docker/anything else runs — a usage error (exit 2), not a silent no-op.
+        // Collisions AMONG --events / --html / --junit themselves are pre-existing and OUT OF
+        // SCOPE (not this guard's concern). PathsEqual only fires when BOTH sides normalise
+        // successfully to the SAME file — a malformed path (on either side, including two
+        // IDENTICAL malformed paths) is deliberately treated as "not comparable", never as a
+        // collision, and is left to the existing write-time diagnostics instead (see
+        // PathsEqual's remarks).
+        if (eventsStreamPath is not null
+            && (PathsEqual(eventsStreamPath, eventsReportPath)
+                || PathsEqual(eventsStreamPath, htmlReportPath)
+                || PathsEqual(eventsStreamPath, junitReportPath)))
+        {
+            await output.WriteLineAsync(
+                "--events-stream must not point at the same file as --events/--html/--junit.")
+                .ConfigureAwait(false);
+            return ExitCodes.UsageError;
+        }
+
+        // Watch renders only to the terminal. Refuse requested report outputs before any
+        // discovery, shutdown reader, compilation or topology work can start.
+        if (watch && (htmlReportPath is not null || junitReportPath is not null
+            || eventsReportPath is not null || eventsStreamPath is not null))
+        {
+            await output.WriteLineAsync(
+                "--watch cannot be combined with --html, --junit, --events/--json or --events-stream. "
+                + "Remove the output options for terminal-only watch, or remove --watch to write reports.")
+                .ConfigureAwait(false);
+            return ExitCodes.UsageError;
+        }
+
         // First-run notice (S10-G-04): when telemetry consent is Undecided and the notice has not
         // been shown, print a one-time stderr notice (what's collected, that NOTHING is sent until
         // the user opts in, how to opt out).  The notice collects and sends nothing.  Wrapped
@@ -1152,7 +1209,7 @@ internal static class RunCommand
         //     observes this via `runCancellationToken` and unwinds the SAME way a Ctrl-C /
         //     SIGTERM would (HeadlessTopology.DisposeAsync's bounded StopAsync teardown, §4.5).
         //     This is cancellation-PROPAGATION parity only.
-        // Security-review finding (MAJOR-1): the cancel alone is NOT signal-path parity for
+        // The cancel alone is NOT signal-path parity for
         // TERMINATION ENFORCEMENT. CancellationTokenSource.CreateLinkedTokenSource only
         // propagates cancellation DOWNSTREAM — cancelling `linkedShutdownSource` never touches
         // the ORIGINAL `cancellationToken`, so System.CommandLine's own
@@ -1329,50 +1386,6 @@ internal static class RunCommand
         // single capture site; EmitAsync no-ops when telemetry will not emit.
         var runStartedAt = DateTimeOffset.UtcNow;
 
-        // --watch and --parallel are mutually exclusive: one keeps a SINGLE topology alive for
-        // one file, the other fans MANY scenarios across MANY topologies.  Reject the combo as a
-        // usage error (exit 2) up front — before discovering or running anything (no Docker).
-        if (watch && parallel is not null)
-        {
-            await output.WriteLineAsync(
-                "--watch cannot be combined with --parallel (watch keeps one topology alive for a "
-                + "single file; --parallel fans many scenarios across many topologies).")
-                .ConfigureAwait(false);
-            return ExitCodes.UsageError;
-        }
-
-        // Validate --parallel up front: a value < 1 is a usage error (exit 2), not a crash.
-        // (System.CommandLine binds the value; the >= 1 contract is the engine's, enforced here.)
-        if (parallel is { } degree && degree < 1)
-        {
-            await output.WriteLineAsync("--parallel must be 1 or greater.").ConfigureAwait(false);
-            return ExitCodes.UsageError;
-        }
-
-        // --events-stream must not collide with any END-OF-RUN file output (--events / --html /
-        // --junit): EventStreamAppender holds its path open with FileShare.Read for the WHOLE
-        // run, so FileReportWriter's later FileShare.None open on the SAME path would hit a
-        // sharing violation — that archive would then be silently never written (only a
-        // diagnostic, no verdict change), quietly breaking the documented "--events-stream may
-        // be used together with --events" guarantee. Rejected here, at parse time, before
-        // discovery/Docker/anything else runs — a usage error (exit 2), not a silent no-op.
-        // Collisions AMONG --events / --html / --junit themselves are pre-existing and OUT OF
-        // SCOPE (not this guard's concern). PathsEqual only fires when BOTH sides normalise
-        // successfully to the SAME file — a malformed path (on either side, including two
-        // IDENTICAL malformed paths) is deliberately treated as "not comparable", never as a
-        // collision, and is left to the existing write-time diagnostics instead (see
-        // PathsEqual's remarks).
-        if (eventsStreamPath is not null
-            && (PathsEqual(eventsStreamPath, eventsReportPath)
-                || PathsEqual(eventsStreamPath, htmlReportPath)
-                || PathsEqual(eventsStreamPath, junitReportPath)))
-        {
-            await output.WriteLineAsync(
-                "--events-stream must not point at the same file as --events/--html/--junit.")
-                .ConfigureAwait(false);
-            return ExitCodes.UsageError;
-        }
-
         StepKindRegistry registry = ProviderRegistryFactory.BuildCoreRegistry();
 
         IReadOnlyList<DiscoveredScenario> discovered;
@@ -1380,8 +1393,8 @@ internal static class RunCommand
         {
             discovered = ScenarioDiscovery.Discover(path, registry);
         }
-        // Broadened beyond DirectoryNotFoundException/ScenarioDiscoveryException (Copilot
-        // review finding, #260 follow-up): Discover's OWN Path.GetFullPath(root) call can
+        // Broadened beyond DirectoryNotFoundException/ScenarioDiscoveryException (
+        // issue #260 follow-up): Discover's OWN Path.GetFullPath(root) call can
         // throw ArgumentException / NotSupportedException / PathTooLongException on a
         // malformed path string, and its Directory.EnumerateFiles(..., AllDirectories) walk
         // can throw UnauthorizedAccessException / IOException / SecurityException when the

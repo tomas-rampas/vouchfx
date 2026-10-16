@@ -284,6 +284,7 @@ public sealed class MqPublishAzureServiceBusProviderTests
 
         Assert.False(result.IsValid);
         Assert.Contains(result.Errors, e => e.Contains("mutually exclusive"));
+        Assert.Contains("mq-publish.azureservicebus: 'queue' and 'topic' are mutually exclusive - set exactly one.", result.Errors);
     }
 
     // ── 11. Validate: target wrong type → invalid ────────────────────────────────

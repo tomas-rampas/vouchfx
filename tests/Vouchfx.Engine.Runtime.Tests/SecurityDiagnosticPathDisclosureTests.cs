@@ -1,4 +1,4 @@
-// Vouchfx.Engine.Runtime.Tests — BLOCKER B2: no absolute host path may reach the WRITTEN
+// Vouchfx.Engine.Runtime.Tests — No absolute host path may reach the WRITTEN
 // artefacts through a validation-time security diagnostic.
 //
 // WHY THIS LIVES IN Runtime.Tests AND NOT IN Vouchfx.Engine.Reporting.Tests
@@ -154,7 +154,7 @@ public sealed class SecurityDiagnosticPathDisclosureTests
         }
     }
 
-    // ── SEC-MAJOR-1 (issue #466): the same rule, for a PROVIDER-fault diagnostic ──────────
+    // ── Issue #466: the same rule, for a PROVIDER-fault diagnostic ──────────
 
     /// <summary>
     /// A guarded provider fault reaches the same three written artefacts as a security

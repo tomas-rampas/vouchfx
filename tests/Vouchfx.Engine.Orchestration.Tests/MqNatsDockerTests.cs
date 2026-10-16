@@ -3,7 +3,7 @@
 //
 // Exercises the full topology path for the mq-publish.nats and mq-expect.nats
 // providers with a live NATS JetStream container started via SuiteTopology (the
-// AppHost fixture with Aspire.AppHost.Sdk and WithJetStream() — FIX B1).
+// AppHost fixture with Aspire.AppHost.Sdk and WithJetStream()).
 // Tests carry [Trait("requires","docker")] and are excluded from the no-docker
 // CI filter.
 //
@@ -16,7 +16,7 @@
 //   6. Verify EnvironmentError when the conn key is absent (no topology needed).
 //   7. Teardown — SuiteTopology.DisposeAsync tears down the container (§4.5).
 //
-// Ordered-consumer note (FIX M2):
+// Ordered-consumer note:
 //   mq-expect.nats uses CreateOrderedConsumerAsync which creates a truly ephemeral
 //   consumer.  The test does NOT need to clean up durable consumers between runs;
 //   the ordered consumer is automatically discarded when the NatsConnection is disposed.
@@ -176,7 +176,7 @@ public sealed class MqNatsDockerTests
     /// <summary>
     /// Publishing a message via the emitted CSX fragment yields
     /// <see cref="Verdict.Pass"/> when the NATS broker is reachable and JetStream
-    /// is enabled (FIX B1: WithJetStream() on the EnvironmentMapper NATS entry).
+    /// is enabled (WithJetStream() on the EnvironmentMapper NATS entry).
     /// </summary>
     [Fact]
     [Trait("requires", "docker")]
@@ -213,7 +213,7 @@ public sealed class MqNatsDockerTests
     /// <summary>
     /// After publishing a message, an <c>mq-expect.nats</c> step with a matching
     /// <c>payloadContains</c> criterion yields <see cref="Verdict.Pass"/>.
-    /// Proves the ordered-consumer scan (FIX M2) retrieves the retained message.
+    /// Proves the ordered-consumer scan retrieves the retained message.
     /// </summary>
     [Fact]
     [Trait("requires", "docker")]

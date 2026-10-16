@@ -523,7 +523,7 @@ public sealed class WatchPreTopologyGateTests : IDisposable
     /// </para>
     /// <para>
     /// <strong>The fixture is a real certificate bed, and an unsecured document would have made this
-    /// arm vacuous.</strong> Peer review measured that: the starter parameter is non-nullable, and
+    /// arm vacuous.</strong> Measured: the starter parameter is non-nullable, and
     /// <c>SecurityConfigurationAccessor.Build</c> returns
     /// <c>NullSecurityConfigurationAccessor.Instance</c> for a document declaring no <c>security</c>
     /// — so a bare <c>Assert.NotNull</c> over an unsecured suite passes even if the <c>Build</c> call

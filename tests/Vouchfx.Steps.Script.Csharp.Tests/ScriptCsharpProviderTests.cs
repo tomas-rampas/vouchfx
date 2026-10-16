@@ -14,9 +14,9 @@
 //   7. Brace-injection attempt: unbalanced author body → compile error (not silent clobber).
 //   8. Registry: provider discoverable via StepKindRegistry with key "script.csharp".
 //   9. SchemaFragment: contains "code" and "file" fields.
-//  10. M3 fix: return; in author body does NOT abort downstream steps (local-function containment).
-//  11. M3 fix: author body using await compiles and runs correctly.
-//  12. M3 fix: brace-injection into local function still yields compile error.
+//  10. return; in author body does NOT abort downstream steps (local-function containment).
+//  11. author body using await compiles and runs correctly.
+//  12. brace-injection into local function still yields compile error.
 //  13. 'file' field: Bind reads it, Validate enforces exclusivity/existence/size (via
 //      FileInfo.Length — content is never read at Validate time), Emit reads the
 //      referenced .csx file's content and splices it verbatim, exactly like an inline
@@ -494,7 +494,7 @@ public sealed class ScriptCsharpProviderTests : IDisposable
     /// function early and orphaning a <c>catch</c> clause must cause a compile error,
     /// NOT a silent clobber of the outcome write or another step's state.
     ///
-    /// Security reasoning (M3 fix): the author body is spliced verbatim inside
+    /// Security reasoning: the author body is spliced verbatim inside
     /// an <c>async</c> local function <c>__body_&lt;id&gt;()</c>.  If the body
     /// closes that function early and injects an orphaned <c>catch</c> or other
     /// mismatched keyword, the assembled CSX text is syntactically invalid; Roslyn
@@ -526,10 +526,10 @@ public sealed class ScriptCsharpProviderTests : IDisposable
         });
     }
 
-    // ── M3 new tests: return-containment, author-await, brace-injection ──────
+    // ── return-containment, author-await, brace-injection ──────
 
     /// <summary>
-    /// M3 fix: a <c>return;</c> in the first script.csharp step must NOT abort the
+    /// A <c>return;</c> in the first script.csharp step must NOT abort the
     /// Roslyn submission delegate — the second step's Vars write must still execute.
     /// This proves <c>return;</c> now returns from <c>__body_&lt;safeId&gt;()</c>
     /// only, not from the entire submission.
@@ -575,7 +575,7 @@ public sealed class ScriptCsharpProviderTests : IDisposable
     }
 
     /// <summary>
-    /// M3 fix: an author body that uses <c>await</c> must compile and run correctly
+    /// An author body that uses <c>await</c> must compile and run correctly
     /// because the local function is declared <c>async</c>.
     /// </summary>
     [Fact]

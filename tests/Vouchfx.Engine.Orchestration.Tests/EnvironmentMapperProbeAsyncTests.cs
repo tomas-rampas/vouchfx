@@ -1,6 +1,6 @@
-// Vouchfx.Engine.Orchestration.Tests — EnvironmentMapper.ProbeAsync (M4 fix, fix round 3).
+// Vouchfx.Engine.Orchestration.Tests — EnvironmentMapper.ProbeAsync.
 //
-// The B1 discriminator (EnvironmentMapper.ApplyTcpHealthCheck's connect/read logic) had, until
+// The TCP discriminator (EnvironmentMapper.ApplyTcpHealthCheck's connect/read logic) had, until
 // this file, exactly two tests: the two Docker-trait tests in
 // EnvironmentMapperTcpHealthCheckDockerTests.cs, which require a working DCP and live in a CI
 // job that runs `continue-on-error: true` (issue #350) — meaning a regression in the
@@ -30,9 +30,9 @@ using Xunit;
 namespace Vouchfx.Engine.Orchestration.Tests;
 
 /// <summary>
-/// Unit coverage (no Docker/DCP) for <see cref="EnvironmentMapper.ProbeAsync"/> — the B1
-/// discriminator extracted from <c>ApplyTcpHealthCheck</c>'s health-check delegate (M4 fix, fix
-/// round 3) precisely so this logic has a test that runs in the ordinary CI job.
+/// Unit coverage (no Docker/DCP) for <see cref="EnvironmentMapper.ProbeAsync"/> — the TCP
+/// discriminator extracted from <c>ApplyTcpHealthCheck</c>'s health-check delegate
+/// precisely so this logic has a test that runs in the ordinary CI job.
 /// </summary>
 public sealed class EnvironmentMapperProbeAsyncTests
 {

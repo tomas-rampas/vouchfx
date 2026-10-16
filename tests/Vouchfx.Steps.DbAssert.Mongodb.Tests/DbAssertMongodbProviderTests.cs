@@ -432,7 +432,7 @@ public sealed class DbAssertMongodbProviderTests
             e.Contains("mongodb dependency", StringComparison.Ordinal));
     }
 
-    // ── 13. Validate: dot-notation paths rejected (MAJOR M1 guard) ───────────
+    // ── 13. Validate: dot-notation paths rejected (dot-notation guard) ───────────
 
     /// <summary>
     /// A dot in an expect.document field name (e.g. "address.city") is silently treated

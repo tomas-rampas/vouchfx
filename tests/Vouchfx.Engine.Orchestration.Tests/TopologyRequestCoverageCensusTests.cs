@@ -227,7 +227,7 @@ public sealed class TopologyRequestCoverageCensusTests
     /// two arrangements describe materially different topologies.
     /// </para>
     /// <para>
-    /// <strong>This property had no test until the peer review derived it</strong>, and no drill in
+    /// <strong>This property previously had no test</strong>, and no drill in
     /// the earlier round covered it: deleting the count prefix left every fingerprint arm green,
     /// because each of those arms moves an element INTO or OUT OF the union rather than BETWEEN the
     /// two sets.

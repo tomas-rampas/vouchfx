@@ -159,8 +159,8 @@ file sealed class StubFailingProvider
 }
 
 // Throwing Bind — verifies the pre-pass swallow-catch inside
-// ProviderPipeline.BuildProjectContext (S2, security MINOR-1). Also the "throwing-stub
-// pattern" G6(b)'s HostResources-throws stub below reuses, per the review's own note.
+// ProviderPipeline.BuildProjectContext. Also the "throwing-stub
+// pattern" the HostResources-throws stub below reuses.
 [StepProvider]
 file sealed class StubThrowingBindProvider
     : IStepProvider,
@@ -194,7 +194,7 @@ file sealed class StubThrowingBindProvider
             StatementBlock: $"{{ /* throwing-bind step: {CsxFragment.SanitiseId(ctx.StepId)} */ }}");
 }
 
-// Throwing HostResources — G6 (gatekeeper MAJOR-6b): the LAZY-ITERATOR variant of the
+// Throwing HostResources — the LAZY-ITERATOR variant of the
 // same swallow-catch proof. Bind succeeds; HostResources() is a real C# iterator (yield
 // return) whose body — and so HostResourceRequirement's own ctor validation — does not
 // run until the caller's foreach starts enumerating it, exactly the shape that used to
@@ -243,7 +243,7 @@ file sealed class StubThrowingHostResourceProvider
     }
 }
 
-// G-A fix (gatekeeper, fix round 3): the precedence-proving sibling of
+// The precedence-proving sibling of
 // StubThrowingHostResourceProvider — Validate ALSO reports the model invalid, so a test can
 // prove Validate's own clean failure wins over the deferred HostResources exception, rather
 // than the exception masking it.
@@ -284,7 +284,7 @@ file sealed class StubFailingValidateThrowingHostResourceProvider
     }
 }
 
-// Host resource named identically to a DECLARED SERVICE — G5 (gatekeeper MAJOR-5):
+// Host resource named identically to a DECLARED SERVICE:
 // proves the service/listener name-collision guard in BuildProjectContext/Compile.
 [StepProvider]
 file sealed class StubListenerProvider
@@ -325,7 +325,7 @@ file sealed class StubListenerProvider
         new[] { new HostResourceRequirement(Kind: "webhook-listener", VarName: "cb") };
 }
 
-// m1 fix (fix round 2): a host resource named identically to a dependency's own SIDECAR
+// A host resource named identically to a dependency's own SIDECAR
 // svc:: key (a mailpit dependency's "-smtp" suffix) — proves the collision guard's fixed
 // name set now covers dependency sidecars, not only declared services. Fixed VarName
 // "mail-smtp" mirrors StubListenerProvider's own hardcoded-VarName minimalism.
@@ -366,7 +366,7 @@ file sealed class StubMailSmtpListenerProvider
         new[] { new HostResourceRequirement(Kind: "webhook-listener", VarName: "mail-smtp") };
 }
 
-// m1 fix (fix round 2) — the kafka-schema-registry sibling of
+// The kafka-schema-registry sibling of
 // StubMailSmtpListenerProvider: proves a host resource named identically to a kafka
 // dependency's OWN "-sr" schema-registry sidecar is caught too.
 [StepProvider]
@@ -406,7 +406,7 @@ file sealed class StubBusSrListenerProvider
         new[] { new HostResourceRequirement(Kind: "webhook-listener", VarName: "bus-sr") };
 }
 
-// R-1 residual (peer-review-critic, PR #349 fix round 4) — pins the cross-step trade
+// PR #349 — pins the cross-step trade
 // documented in ProviderPipeline.BindAllSteps's own remarks. Two file-scoped stub kinds,
 // used together by Compile_TargetingStepPrecedesThrowingListenerStep_
 // ReturnsWrongTargetDiagnostic below.
@@ -503,8 +503,8 @@ file sealed class StubThrowingListenerProvider
 
 file sealed record CountingBindModel : IStepModel;
 
-// m5 minor (fix round 3): a stub whose ONLY purpose is to count Bind invocations, so the
-// "exactly one Bind call per step" invariant that is the entire point of the M5 redesign
+// A stub whose ONLY purpose is to count Bind invocations, so the
+// "exactly one Bind call per step" invariant that is the entire point of the single-bind redesign
 // (ProviderPipeline.BindAllSteps's own remarks) has a test that actually counts rather than
 // inferring single-call-ness from the absence of a second call's side effects. BindCallCount
 // is static because s_registry (below) freezes ONE provider instance for the lifetime of this
@@ -518,7 +518,7 @@ file sealed class StubCountingBindProvider
 {
     private static readonly string[] s_authors = new[] { "test" };
 
-    // R-4 residual (peer-review-critic, PR #349 fix round 4): `public static` mutable state
+    // PR #349: `public static` mutable state
     // is safe TODAY only because Compile_SingleStep_CallsBindExactlyOnce is the sole
     // consumer and resets this to 0 at its own entry, and this test class's [Fact]s run
     // sequentially (xUnit parallelises across test collections, not within one). It is
@@ -764,7 +764,7 @@ public sealed class ProviderPipelineTests
             StringComparison.Ordinal);
         Assert.Null(result.Assembled);
 
-        // Critic MAJOR-3: an ORDINARY pipeline failure (a step's own model-validation
+        // An ORDINARY pipeline failure (a step's own model-validation
         // failure, as here) must NOT carry IsSecurityPreflight — only a failure raised by
         // EnvironmentSecurityValidator itself does (see
         // Vouchfx.Engine.Runtime.Tests.EnvironmentSecurityValidatorTests.Validate_Failure_CarriesSecurityPreflightMarker
@@ -901,7 +901,7 @@ public sealed class ProviderPipelineTests
         var doc = YamlDocumentParser.Parse(yaml);
         var ast = AstBuilder.Build(doc, s_registry);
 
-        // M5 fix (fix round 2): BuildProjectContext no longer binds — it reads the
+        // BuildProjectContext no longer binds — it reads the
         // already-bound BoundStep list from ProviderPipeline.BindAllSteps (Compile's own
         // Pass 1), never re-binding a step a second time.
         var (boundSteps, registryFailure) = ProviderPipeline.BindAllSteps(ast, s_registry, Directory.GetCurrentDirectory());
@@ -943,10 +943,10 @@ public sealed class ProviderPipelineTests
         Assert.Equal("http", Assert.Single(ctx.DeclaredServices["web"].EndpointNames));
     }
 
-    // ── Test: dependency sidecar names are reachable DeclaredServices (M1, fix round 3) ──
+    // ── Test: dependency sidecar names are reachable DeclaredServices ──
 
     /// <summary>
-    /// M1 fix (fix round 3) — a regression this branch introduced: before this fix,
+    /// A regression this branch introduced: before this fix,
     /// <c>reservedSvcNames</c> (the collision guard's own name set) held a dependency's extra
     /// sidecar name but <see cref="Vouchfx.Sdk.IProjectContext.DeclaredServices"/> did not, so
     /// the three narrowed HTTP-family providers (http.rest/http.soap/metrics-assert.prometheus)
@@ -980,7 +980,7 @@ public sealed class ProviderPipelineTests
         Assert.Null(collisionFailure);
         Assert.True(ctx.DeclaredServices.ContainsKey("bus-sr"));
 
-        // R-3 (peer review, fix round 4): pin the endpoint-name VALUE, not just the key.
+        // Pin the endpoint-name VALUE, not just the key.
         // The source-scanning drift guard checks that every suffixed serviceEndpoints[...]
         // write site is represented in GetDependencyServiceSidecarNames' switch — but it
         // cannot check that the value BuildProjectContext assigns matches the endpoint the
@@ -991,7 +991,7 @@ public sealed class ProviderPipelineTests
     }
 
     /// <summary>
-    /// M1 fix (fix round 3) — the mailpit sibling of
+    /// The mailpit sibling of
     /// <see cref="BuildProjectContext_KafkaWithSchemaRegistry_DeclaredServicesContainsSrSidecar"/>:
     /// mailpit's SMTP sidecar (<c>&lt;dep&gt;-smtp</c>) must be reachable too.
     /// </summary>
@@ -1019,13 +1019,13 @@ public sealed class ProviderPipelineTests
         Assert.Null(collisionFailure);
         Assert.True(ctx.DeclaredServices.ContainsKey("mail-smtp"));
 
-        // R-3, mailpit half: this sidecar is the one whose endpoint is NOT the HTTP default,
+        // Mailpit half: this sidecar is the one whose endpoint is NOT the HTTP default,
         // so it is the case a wrong value would actually show up in. See the sibling test.
         Assert.Contains("smtp", ctx.DeclaredServices["mail-smtp"].EndpointNames);
         Assert.Equal("smtp", Assert.Single(ctx.DeclaredServices["mail-smtp"].EndpointNames));
     }
 
-    // ── Test: single-Bind-per-step, no swallow-catch (M5 fix, fix round 2) ───
+    // ── Test: single-Bind-per-step, no swallow-catch ───
 
     /// <summary>
     /// Issue #413 — supersedes the version of this test that asserted
@@ -1037,8 +1037,8 @@ public sealed class ProviderPipelineTests
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <c>Bind</c> is still called EXACTLY once per step per compile (the M5 property, fix
-    /// round 2, PR #349 follow-up) — nothing about the call count changed, only what happens
+    /// <c>Bind</c> is still called EXACTLY once per step per compile (the single-bind invariant,
+    /// PR #349 follow-up) — nothing about the call count changed, only what happens
     /// when the call throws.
     /// </para>
     /// <para>
@@ -1108,7 +1108,7 @@ public sealed class ProviderPipelineTests
     }
 
     /// <summary>
-    /// G-A fix (gatekeeper, fix round 3) — supersedes the pre-fix-round-3 version of this
+    /// Deferred host-resource failures — supersedes the original version of this
     /// test, which asserted <see cref="ProviderPipeline.BindAllSteps"/> itself threw. It no
     /// longer does: a step whose <c>Bind</c> SUCCEEDS but whose <c>HostResources()</c>
     /// enumerator throws (from <c>HostResourceRequirement</c>'s own ctor validation) is now
@@ -1142,7 +1142,7 @@ public sealed class ProviderPipelineTests
     }
 
     /// <summary>
-    /// G-A fix (gatekeeper, fix round 3): reaching this exact step's own <c>Validate</c> and
+    /// Reaching this exact step's own <c>Validate</c> and
     /// finding it valid means whatever <c>HostResources()</c> threw is a genuine bug Validate
     /// does not already cover, so it is surfaced immediately after that <c>Validate</c> call.
     /// </summary>
@@ -1151,7 +1151,7 @@ public sealed class ProviderPipelineTests
     /// SUPERSEDES ITS OWN PRE-#466 VERSION, which was named
     /// <c>…_RethrowsUnwrappedAfterValidate</c> and asserted
     /// <c>Assert.Throws&lt;ArgumentException&gt;</c>. The POSITION it pinned — after this step's
-    /// own <c>Validate</c> — is G-A's and is unchanged; only the terminal shape moved. That
+    /// own <c>Validate</c> — is unchanged; only the terminal shape moved. That
     /// rethrow escaped <see cref="ProviderPipeline.Compile"/> altogether, and on the
     /// <c>--parallel</c> path the per-slot catch-all classified the escape as
     /// <c>Verdict.EnvironmentError</c>, which exits 0 on a run that executed nothing (#390) —
@@ -1203,7 +1203,7 @@ public sealed class ProviderPipelineTests
     }
 
     /// <summary>
-    /// G-A fix (gatekeeper, fix round 3) — the precedence case the fix exists for: a step
+    /// The precedence case the fix exists for: a step
     /// whose <c>HostResources()</c> throws AND whose own <c>Validate</c> ALSO reports the
     /// model invalid must surface Validate's clean <see cref="ValidationFailure"/> — never the
     /// raw <c>HostResources</c> exception, which the pre-fix (unguarded, immediate-propagation)
@@ -1237,10 +1237,10 @@ public sealed class ProviderPipelineTests
     }
 
     /// <summary>
-    /// R-1 residual (peer-review-critic, PR #349 fix round 4) — pins the cross-step trade
+    /// PR #349 — pins the cross-step trade
     /// documented in <see cref="ProviderPipeline.BindAllSteps"/>'s own remarks: deferring a
     /// throwing <c>HostResources()</c> onto its OWN step's <c>BoundStep.HostResourcesFailure</c>
-    /// (G-A) protects that step's own <c>Validate</c> call, but
+    /// protects that step's own <c>Validate</c> call, but
     /// <see cref="ProviderPipeline.BuildProjectContext"/> runs on every bound step BEFORE
     /// Pass 2 validates ANY of them, so it never sees the declaring step's "cb" contribution
     /// — the catch in <c>BindAllSteps</c> replaces the whole per-step list with empty, not a
@@ -1293,7 +1293,7 @@ public sealed class ProviderPipelineTests
     }
 
     /// <summary>
-    /// m5 minor (fix round 3): asserts the "exactly one <c>Bind</c> call per step" invariant
+    /// Asserts the "exactly one <c>Bind</c> call per step" invariant
     /// directly, via <see cref="StubCountingBindProvider.BindCallCount"/>, rather than only
     /// inferring it (as the two tests above do) from what a SECOND call would have broken.
     /// </summary>
@@ -1317,10 +1317,10 @@ public sealed class ProviderPipelineTests
         Assert.Equal(1, StubCountingBindProvider.BindCallCount);
     }
 
-    // ── Test: service/listener name-collision guard (G5) ─────────────────────
+    // ── Test: service/listener name-collision guard ─────────────────────
 
     /// <summary>
-    /// G5 (gatekeeper MAJOR-5): a webhook-listen-shaped host resource named identically to
+    /// A webhook-listen-shaped host resource named identically to
     /// a DECLARED SERVICE must be rejected at compile time, not silently allowed to shadow
     /// it. <c>ScenarioRunner</c> stages every host resource under
     /// <c>svc::&lt;VarName&gt;</c> — the SAME Vars key a declared service's endpoint is
@@ -1358,7 +1358,7 @@ public sealed class ProviderPipelineTests
     }
 
     /// <summary>
-    /// m1 fix (fix round 2, PR #349 follow-up): a host resource named identically to a
+    /// PR #349 follow-up: a host resource named identically to a
     /// MAILPIT DEPENDENCY's own SMTP sidecar key must be rejected too — before this fix, the
     /// collision guard checked only declared-service names, on the (wrong) stated reasoning
     /// that dependencies never stage a svc::-shaped key; a listener named <c>mail-smtp</c>
@@ -1391,7 +1391,7 @@ public sealed class ProviderPipelineTests
     }
 
     /// <summary>
-    /// m1 fix (fix round 2) — the kafka-schema-registry sibling of
+    /// The kafka-schema-registry sibling of
     /// <see cref="Compile_HostResourceNameCollidesWithMailpitSmtpSidecar_FailsNamingBothSurfaces"/>:
     /// a listener named <c>bus-sr</c> alongside a <c>kafka</c> dependency <c>bus</c> with
     /// <c>schemaRegistry: true</c> must be rejected — the reviewer's own measured
@@ -1426,7 +1426,7 @@ public sealed class ProviderPipelineTests
     }
 
     /// <summary>
-    /// m7 fix (fix round 3): the collision guard was one-directional — it checked only a HOST
+    /// The collision guard was one-directional — it checked only a HOST
     /// RESOURCE's VarName against <c>reservedSvcNames</c>, never a DECLARED SERVICE's own name
     /// against a dependency's sidecar name. A service named identically to a mailpit
     /// dependency's own SMTP sidecar (<c>mail-smtp</c>, staged by dependency <c>mail</c>)
@@ -1463,7 +1463,7 @@ public sealed class ProviderPipelineTests
     }
 
     /// <summary>
-    /// m7 fix (fix round 2, PR #349 follow-up): a service and a dependency may not share a
+    /// PR #349 follow-up: a service and a dependency may not share a
     /// name. Before this fix, a suite declaring both <c>environment.services.orders</c> and
     /// <c>environment.dependencies.orders</c> validated PASS and only failed later, deep
     /// inside Aspire's own <c>AddContainer</c> ("a resource with the same name already

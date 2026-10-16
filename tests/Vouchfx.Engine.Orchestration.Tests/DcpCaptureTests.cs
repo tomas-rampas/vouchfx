@@ -133,7 +133,7 @@ public sealed class DcpCaptureTests : IDisposable
         Assert.Contains(DcpCapture.DirectoryOverrideVariable, unix, StringComparison.Ordinal);
         Assert.DoesNotContain("LOCALAPPDATA", windows, StringComparison.Ordinal);
 
-        // Still a token, never a resolved path - MINOR-1's guarantee is unchanged.
+        // Still a token, never a resolved path - the tokenisation guarantee is unchanged.
         Assert.False(Path.IsPathFullyQualified(windows));
         Assert.False(Path.IsPathFullyQualified(unix));
     }

@@ -1,5 +1,5 @@
 // Vouchfx.Sdk — DeclaredServiceInfo (authenticated-infrastructure-mtls, slice C — carried
-// forward from PR #349's review, nit n1).
+// forward from PR #349's review).
 //
 // IProjectContext.DeclaredServices used to map a declared service's name directly to
 // IReadOnlyList<string> (its Aspire endpoint names). Two problems compounded under that bare
@@ -13,7 +13,7 @@
 namespace Vouchfx.Sdk;
 
 // Internal correction history (not XML documentation):
-// m5 (peer review, fix round 2): the parameter documentation above used to forward to
+// The parameter documentation above used to forward to
 // IProjectContext.DeclaredServices's own remarks "for what populates this per
 // source", and those remarks do not answer it for one of the three sources they enumerate. For
 // a HOST-RESOURCE entry — a webhook-listen.http listener, a trace-expect.otlp
@@ -22,7 +22,7 @@ namespace Vouchfx.Sdk;
 // resource-kind discriminator, NOT an Aspire endpoint name. The forward is therefore replaced
 // by the concrete examples above, and the exception stated here rather than left to a reader to
 // discover by inspecting ProviderPipeline's own service-map construction.
-// MINOR-1 (peer review, fix round 3): the paragraph below used to be a SECOND, consecutive
+// The paragraph below used to be a SECOND, consecutive
 // <remarks> element on this same member. Vouchfx.Sdk is packable with
 // GenerateDocumentationFile=true, and documentation renderers show only the FIRST
 // <remarks> — so the block that silently disappeared from the emitted

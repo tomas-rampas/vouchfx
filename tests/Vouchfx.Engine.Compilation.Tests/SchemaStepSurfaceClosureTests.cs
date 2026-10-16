@@ -503,8 +503,8 @@ public sealed class SchemaStepSurfaceClosureTests
     /// has done its job.
     /// </summary>
     /// <remarks>
-    /// Generalised (feat/close-remaining-surfaces, combined #337 peer review
-    /// + gatekeeper findings) from a single <c>http.rest</c> <c>[Fact]</c>
+    /// Generalised (#337)
+    /// from a single <c>http.rest</c> <c>[Fact]</c>
     /// into a <c>[Theory]</c> over all 25 registered providers, reusing
     /// <see cref="MinimalValidStepDocuments"/> — this is the test that WOULD
     /// have caught the original composite-branch-noise bug: on

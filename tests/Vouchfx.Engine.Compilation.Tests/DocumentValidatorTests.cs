@@ -536,8 +536,8 @@ public sealed class DocumentValidatorTests
     /// positive against either built-in profile.
     /// </summary>
     /// <remarks>
-    /// The <c>tls</c> half moved from a redis dependency to a declared service in M1 (second
-    /// peer-review round): no security profile is wired for a non-kafka dependency at 1.0, so
+    /// The <c>tls</c> half moved from a redis dependency to a declared service because
+    /// no security profile is wired for a non-kafka dependency at 1.0, so
     /// the old fixture asserted the validity of a shape the language no longer accepts. A
     /// service is the target kind an author uses for that technology now, so the assertion
     /// still covers <c>tls</c> without asserting anything untrue.
@@ -656,7 +656,7 @@ public sealed class DocumentValidatorTests
     }
 
     /// <summary>
-    /// H-A (peer review, held item — the coverage that had none). The single-error assertion
+    /// The single-error assertion
     /// above is exercised only on a SERVICE, and that is exactly why three review rounds passed
     /// over the DEPENDENCY shape: a service carries no per-kind narrowing, so nothing else could
     /// ever fire there, while a dependency did — measured, pre-fix, at TWO errors for the same
@@ -701,7 +701,7 @@ public sealed class DocumentValidatorTests
     }
 
     /// <summary>
-    /// The same shape with an EMPTY profile (<c>profile: ""</c>), which H-A named alongside the
+    /// The same shape with an EMPTY profile (<c>profile: ""</c>), alongside the
     /// wrong-cased case: also one error, also the narrowing's.
     /// </summary>
     [Fact]
@@ -731,10 +731,10 @@ public sealed class DocumentValidatorTests
         Assert.Equal("/environment/dependencies/cache/security", onlyError.InstanceLocation);
     }
 
-    // ── M3: the injected security-profile registry, exercised end-to-end ─────────────
+    // ── The injected security-profile registry, exercised end-to-end ─────────────
 
     /// <summary>
-    /// M3 (peer review, fix round 2): <c>DocumentValidator.Validate</c>'s security-profile
+    /// <c>DocumentValidator.Validate</c>'s security-profile
     /// registry parameter documented itself as existing "so a caller can prove the registry
     /// cross-check's own behaviour end-to-end through this front door with a reduced/explicit
     /// registry" — and no such test was ever written; every call site passed two arguments (81 of
@@ -832,14 +832,14 @@ public sealed class DocumentValidatorTests
     // ── Copilot 2 (PR #351): map keys are RFC 6901-escaped before pointer comparison ──
 
     /// <summary>
-    /// Copilot 2 (PR #351 review, fix round 2): <c>CollectUnknownSecurityProfileErrors</c> built
+    /// PR #351: <c>CollectUnknownSecurityProfileErrors</c> built
     /// its pointer by RAW interpolation of the service/dependency map key, while JsonSchema.Net
     /// escapes such a key per RFC 6901 in the <c>InstanceLocation</c> it reports. Neither
     /// <c>environment.services</c> nor <c>environment.dependencies</c> carries a
     /// <c>propertyNames</c> pattern (only <c>variables</c> and <c>capture</c> do), so a service
     /// named <c>c~d</c> is schema-legal — and for it the two pointer spellings could never
     /// compare equal, so the defer-to-schema check silently failed and the wrong-cased profile
-    /// was DOUBLE-REPORTED: the exact defect held item H-A exists to eliminate, reached by a
+    /// was DOUBLE-REPORTED: the exact duplicate-diagnostic defect, reached by a
     /// different route. Measured pre-fix on this document: three errors, one of them the
     /// duplicate.
     /// </summary>

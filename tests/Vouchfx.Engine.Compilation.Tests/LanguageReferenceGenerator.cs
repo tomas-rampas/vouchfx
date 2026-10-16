@@ -197,7 +197,7 @@ internal static class LanguageReferenceGenerator
 
         sb.Append("Set `type: ").Append(st.TypeId).Append("` to use this step.\n\n");
 
-        // M2 (gatekeeper, feat/fragment-completeness): a root-level oneOf/anyOf whose
+        // A root-level oneOf/anyOf whose
         // every branch names exactly one required field is rendered as its OWN
         // "exactly one of" / "at least one of" table, and those field names are
         // excluded from the plain Required/Optional tables below — otherwise (the
@@ -309,7 +309,7 @@ internal static class LanguageReferenceGenerator
 
     /// <summary>
     /// Renders one "exactly one of" / "at least one of" field GROUP as its own
-    /// heading plus a Type/Description table (M2, gatekeeper) — never a bare
+    /// heading plus a Type/Description table — never a bare
     /// name list: that would silently drop the type/description information
     /// the plain Required/Optional tables carry for every other field, and
     /// this generator's whole purpose is that a reader never has to open the
@@ -318,7 +318,7 @@ internal static class LanguageReferenceGenerator
     private static void WriteFieldGroupTable(
         StringBuilder sb, string heading, List<string> group, Dictionary<string, Field> fieldsByName)
     {
-        // n3 (gatekeeper, third round): no trailing colon inside the bold — matches this
+        // No trailing colon inside the bold — matches this
         // file's existing "**Required fields**" / "**Optional fields**" convention exactly.
         sb.Append("**").Append(heading).Append("**\n\n");
         sb.Append("| Field | Type | Description |\n");
@@ -522,8 +522,8 @@ internal static class LanguageReferenceGenerator
             // A lone scalar type renders as its ORIGINAL single-code-span form
             // (`string`); a genuine multi-type union (httpPort's post-A1
             // "type": ["integer","string"], say) renders exactly like the
-            // oneOf branch above and for the SAME measured reason (m1,
-            // feat/close-remaining-surfaces second round) — see
+            // oneOf branch above and for the SAME measured reason —
+            // see
             // JoinAsBacktickedAlternatives.
             return types.Count == 1 ? $"`{types[0]}`" : JoinAsBacktickedAlternatives(types);
         }
@@ -539,10 +539,10 @@ internal static class LanguageReferenceGenerator
     /// single shared span.
     /// </summary>
     /// <remarks>
-    /// Measured against the site's actual configured renderer (m1,
-    /// feat/close-remaining-surfaces second round — the m1 in THIS round
-    /// corrects the m1 in the PRECEDING round, whose own "description column
-    /// dropped on the live site" claim was itself an unverified inference;
+    /// Measured against the site's actual configured renderer (
+    /// the corrected measurement
+    /// replaces the earlier "description column
+    /// dropped on the live site" claim, which was itself an unverified inference;
     /// see the commit message): fed all three forms through
     /// <c>markdown.markdown(...)</c> with this repo's exact pinned
     /// <c>mkdocs-material==9.7.7</c> and its <c>markdown_extensions</c> list

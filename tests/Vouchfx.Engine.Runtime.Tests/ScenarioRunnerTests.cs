@@ -246,7 +246,7 @@ public sealed class ScenarioRunnerTests
     /// before <c>HeadlessTopology.StartAsync</c> (and therefore DCP) is ever reached.
     /// </summary>
     /// <remarks>
-    /// Regression guard (M2, MAJOR, code-review-gatekeeper): before this fix,
+    /// Regression guard: before this fix,
     /// <c>SuiteTopology.StartAsync</c> called <c>EnvironmentMapper.Map</c> outside any
     /// try/catch, and <see cref="ScenarioRunner.RunAsync"/> caught only
     /// <c>OrchestrationException</c> around the topology-start call — so a Map()-time

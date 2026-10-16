@@ -161,7 +161,7 @@ public sealed class SecuredEndpointProbeTests : IDisposable
 
     /// <summary>
     /// A material whose declared <c>caCert</c> PATH is present and contained, but whose CONTENT is
-    /// not a certificate — the B1 shape (peer-review critic, fix round eight).
+    /// not a certificate — the malformed-anchor shape.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -372,7 +372,7 @@ public sealed class SecuredEndpointProbeTests : IDisposable
     /// </summary>
     /// <remarks>
     /// The deliberate opposite of <see cref="Listen"/>, and the only place in this file that wants
-    /// it (MAJOR-1, fix round three): it reproduces the shape the file header warns about — a
+    /// it: it reproduces the shape the file header warns about — a
     /// first connection that succeeds completely, followed by a second that fails before any TLS
     /// — so the probe can be pinned to read that as UNCONFIRMED rather than as a certificate
     /// refusal. <c>Stop()</c> is called before the accepted connection is served, which does not
@@ -984,7 +984,7 @@ public sealed class SecuredEndpointProbeTests : IDisposable
     }
 
     /// <summary>
-    /// m1: a correctly-framed reply carrying a non-zero <c>error_code</c> is a REFUSAL, not a round
+    /// A correctly-framed reply carrying a non-zero <c>error_code</c> is a REFUSAL, not a round
     /// trip. Reading only the correlation id scored <c>error_code = 58</c>
     /// (<c>SASL_AUTHENTICATION_FAILED</c>) as a successful authenticated exchange.
     /// </summary>
@@ -1071,7 +1071,7 @@ public sealed class SecuredEndpointProbeTests : IDisposable
         }
     }
 
-    // ── MAJOR-2: a 0-byte read is EOF, not silence ────────────────────────────────────────
+    // ── a 0-byte read is EOF, not silence ────────────────────────────────────────
 
     /// <summary>
     /// The commonest rejection shape of all: the peer completes the handshake and then CLOSES.
@@ -1142,7 +1142,7 @@ public sealed class SecuredEndpointProbeTests : IDisposable
         }
     }
 
-    // ── m6: every exit from the probe carries SecurityConfirmation ────────────────────────
+    // ── Every exit from the probe carries SecurityConfirmation ────────────────────────
 
     /// <summary>
     /// The outer token cancelling DURING the post-handshake read must fail closed as a
@@ -1318,7 +1318,7 @@ public sealed class SecuredEndpointProbeTests : IDisposable
             Assert.Contains($"observed Tls", line, StringComparison.Ordinal);
             Assert.Contains($"localhost:{port}", line, StringComparison.Ordinal);
 
-            // m2: the rendered line reports what was measured — an identity was RESOLVED from the
+            // The rendered line reports what was measured — an identity was RESOLVED from the
             // declaration — and never asserts presentation, which this side cannot observe.
             Assert.Contains("client identity none declared", line, StringComparison.Ordinal);
             Assert.DoesNotContain("presented", line, StringComparison.Ordinal);
@@ -1341,7 +1341,7 @@ public sealed class SecuredEndpointProbeTests : IDisposable
 
     /// <summary>
     /// <strong>The level is IN the rendered line, and the two levels render apart.</strong> The
-    /// regression pin for the peer-review finding that <c>SecurityConfirmation.ToString()</c>
+    /// regression pin for the omission where <c>SecurityConfirmation.ToString()</c>
     /// rendered eight of its nine members and omitted the one REQ-005 introduced instead of a
     /// boolean.
     /// </summary>
@@ -1438,7 +1438,7 @@ public sealed class SecuredEndpointProbeTests : IDisposable
         Assert.DoesNotContain("not-rendered", noIdentity, StringComparison.Ordinal);
     }
 
-    // ── MAJOR-1 (fix round three): the differential's asymmetry stops at the connect ───────
+    // ── the differential's asymmetry stops at the connect ───────
 
     /// <summary>
     /// <strong>A connect-phase failure is not a certificate refusal.</strong> A listener that
@@ -1499,7 +1499,7 @@ public sealed class SecuredEndpointProbeTests : IDisposable
         }
     }
 
-    // ── m4: the two cancellation branches, previously correct and untested ────────────────
+    // ── The two cancellation branches, previously correct and untested ────────────────
 
     /// <summary>
     /// The outer token cancelling DURING the Kafka round trip on the FIRST connection fails closed
@@ -1606,7 +1606,7 @@ public sealed class SecuredEndpointProbeTests : IDisposable
     }
 
     /// <summary>
-    /// n4 (peer-review critic, fix round eight): the outer token cancelling during the anonymous
+    /// The outer token cancelling during the anonymous
     /// arm's TLS HANDSHAKE — not its post-handshake read — is likewise reported as an UNFINISHED
     /// check, never as the refusal the differential is looking for.
     /// </summary>
@@ -1698,7 +1698,7 @@ public sealed class SecuredEndpointProbeTests : IDisposable
         }
     }
 
-    // ── m3 (security review, fix round four): the unknown-profile branch is ARMED ─────────
+    // ── The unknown-profile branch is ARMED ─────────
     //
     // SecuredEndpointProbe.ProfilesPresentingAClientIdentity is an exhaustive map — profile → does
     // it present a client identity — precisely so "absent" and "present but false" stay distinct.
@@ -1718,7 +1718,7 @@ public sealed class SecuredEndpointProbeTests : IDisposable
     /// registered set, REQ-021, and the wiring validator rejects an unresolved pair pre-topology,
     /// REQ-022 — both inside <c>ProviderPipeline.Compile</c>), so it is driven through the probe's
     /// own internal entry point. It IS author-reachable under <c>--watch</c>, whose compile seam runs
-    /// neither of those (MAJOR-2, fix round five), which is why the message asserted below is
+    /// neither of those, which is why the message asserted below is
     /// written for an author rather than for an engine maintainer.
     /// </para>
     /// <para>
@@ -1751,7 +1751,7 @@ public sealed class SecuredEndpointProbeTests : IDisposable
 
     /// <summary>
     /// The same refusal, on a target the topology staged NO address for: the profile is still what
-    /// gets named (m7, security review, fix round five).
+    /// gets named.
     /// </summary>
     /// <remarks>
     /// Both orderings fail closed, so this pins legibility rather than safety. With the guard sited
@@ -1771,7 +1771,7 @@ public sealed class SecuredEndpointProbeTests : IDisposable
         Assert.DoesNotContain("staged no reachable address", ex.Info.Detail, StringComparison.Ordinal);
     }
 
-    // ── nit (security review, fix round four): IPv6 authority parsing ────────────────────
+    // ── IPv6 authority parsing ────────────────────
     //
     // TryResolveAddress used to split a bare authority on LastIndexOf(':'), which produced two
     // different old rows — and this note used to describe the first one wrongly, asserting AS
@@ -1800,7 +1800,7 @@ public sealed class SecuredEndpointProbeTests : IDisposable
     /// message.
     /// </para>
     /// <para>
-    /// <strong>The assertion flipped in fix round five (m1).</strong> It used to assert
+    /// <strong>The assertion was corrected.</strong> It used to assert
     /// <c>DoesNotContain("[::1]")</c> — which pinned the CONNECT form, but in doing so pinned the
     /// diagnostic to <c>::1:9093</c>: not a parseable authority, and ambiguous about where the
     /// address ends. The resolver still yields the bracket-free host;
@@ -1808,10 +1808,10 @@ public sealed class SecuredEndpointProbeTests : IDisposable
     /// </para>
     /// <para>
     /// <strong>The double-bracket assertion below no longer discriminates a bracket-retaining
-    /// parse</strong> (m5, fix round seven — recorded here rather than left for a reader to
+    /// parse</strong> (recorded here rather than left for a reader to
     /// discover). It used to: a parser that retained the brackets would have handed
     /// <c>AuthorityText.Format</c> the host <c>[::1]</c>, which contains a colon and was therefore
-    /// bracketed AGAIN, rendering <c>[[::1]]</c>. That round made <c>Format</c> idempotent on an
+    /// bracketed AGAIN, rendering <c>[[::1]]</c>. <c>Format</c> is now idempotent on an
     /// already-bracketed host, so such a parse would now render <c>[::1]:9093</c> here and satisfy
     /// both assertions. <c>AuthorityTextTests</c> pins the formatter's own rule directly, but the
     /// probe's private resolver has no seam other than this message (see the note above this test),
@@ -1819,8 +1819,8 @@ public sealed class SecuredEndpointProbeTests : IDisposable
     /// rendering guard.
     /// </para>
     /// <para>
-    /// <strong>What restoring the parse coverage would actually cost</strong> (m5 reconciliation,
-    /// fix round eight — the earlier wording priced it as though a seam had to be invented). It is
+    /// <strong>What restoring the parse coverage would actually cost</strong> (
+    /// the earlier wording priced it as though a seam had to be invented). It is
     /// ONE access modifier: <c>TryResolveAddress</c> is <c>private static</c> on
     /// <c>SecuredEndpointProbe</c>, and this test project already sees that assembly's internals —
     /// <c>AuthorityTextTests</c> reaches <c>internal static AuthorityText</c> in exactly this way.
@@ -1849,13 +1849,13 @@ public sealed class SecuredEndpointProbeTests : IDisposable
         Assert.Equal(OrchestrationErrorKind.SecurityConfirmation, ex.Info.Kind);
         Assert.Contains($"[::1]:{freePort}", ex.Info.Detail, StringComparison.Ordinal);
 
-        // A rendering guard, no longer a parse discriminator — see the remarks above (m5).
+        // A rendering guard, no longer a parse discriminator — see the remarks above.
         Assert.DoesNotContain("[[::1]]", ex.Info.Detail, StringComparison.Ordinal);
     }
 
     /// <summary>
-    /// A staged value carrying an <c>@</c> is REFUSED rather than reinterpreted (m2 / NIT-1,
-    /// security review, fix round five).
+    /// A staged value carrying an <c>@</c> is REFUSED rather than reinterpreted.
+    ///
     /// </summary>
     /// <remarks>
     /// <para>
@@ -1948,7 +1948,7 @@ public sealed class SecuredEndpointProbeTests : IDisposable
         Assert.DoesNotContain("staged no reachable address", ex.Info.Detail, StringComparison.Ordinal);
     }
 
-    // ── B1 (peer-review critic, fix round eight): a malformed trust anchor FAILS, not CRASHES ──
+    // ── A malformed trust anchor FAILS, not CRASHES ──
     //
     // The client identity has always been loaded EAGERLY here, inside a guarded region that turns a
     // SecurityMaterialException into a classified SecurityConfirmation failure. The trust anchor was
@@ -2028,17 +2028,17 @@ public sealed class SecuredEndpointProbeTests : IDisposable
         }
     }
 
-    // ── B1's SIBLING (peer-review critic, fix round nine): a CRYPTOGRAPHIC fault in the ────────
+    // ── A related failure: a CRYPTOGRAPHIC fault in the ────────
     //    validation callback itself, as distinct from a peer that fails validation.
     //
-    // Same escape route as B1, different traveller. MEASURED end to end through ConfirmAsync
+    // Same escape route as the anchor-load defect, different traveller. MEASURED end to end through ConfirmAsync
     // BEFORE the fix, against a real loopback TLS listener: the probe threw a bare
     // CryptographicException, `is OrchestrationException: False` — a stack trace instead of a
-    // verdict, exactly the shape B1 closed for the anchor LOAD.
+    // verdict, exactly the shape closed for the anchor LOAD.
     //
     // Two reachable sources on this host, both measured:
     //   • X509Chain.Build in TrustsRemoteCertificate — "An unknown chain building error occurred."
-    //     (observed in fix round eight against the two-tier bed; a polluted CurrentUser\CA store is
+    //     (observed against the two-tier bed; a polluted CurrentUser\CA store is
     //     the known trigger) and "A null or disposed certificate was present in CustomTrustStore."
     //   • the X509Certificate2 copy fallback in BuildValidationCallback — "m_safeCertContext is an
     //     invalid handle."

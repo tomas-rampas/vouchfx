@@ -9,9 +9,9 @@
 // text names, exercised both at the validator level and end-to-end through
 // ProviderPipeline.Compile.
 //
-// m1 (peer review, fix round 2): this header used to end "…unlike ProviderPipeline.Compile,
+// This header used to end "…unlike ProviderPipeline.Compile,
 // which always uses the production SecurityProfileRegistry.BuiltIn". That stopped being true in
-// the same commit that wrote it — G-MINOR-8 gave Compile an injectable registry, and line ~350
+// the same commit that wrote it — Compile gained an injectable registry, and line ~350
 // of this very file passes a reduced one to it. The injection change landed without updating the
 // sentence it invalidated.
 using System.Collections.Generic;
@@ -220,7 +220,7 @@ public sealed class SecurityProfileWiringValidatorTests : System.IDisposable
 
         Assert.NotNull(result);
         Assert.Contains("mtls", result!.Message, System.StringComparison.Ordinal);
-        // G-MINOR-4 (gatekeeper): a bare "service" substring is ALREADY satisfied by
+        // A bare "service" substring is ALREADY satisfied by
         // "environment.services.app" earlier in the same message — it does not prove the
         // TARGET KIND itself was rendered. Assert the exact "target kind 'service'" tail
         // instead, naming the specific field the message's own format string produces.
@@ -232,7 +232,7 @@ public sealed class SecurityProfileWiringValidatorTests : System.IDisposable
     /// — the invariant degrades to "nothing is wired", never to "everything passes".
     /// </summary>
     /// <remarks>
-    /// Declared on a KAFKA dependency (M1, second peer-review round): 'tls' used to be wired for
+    /// Declared on a KAFKA dependency: 'tls' used to be wired for
     /// every target kind unconditionally, so this test previously used redis and its assertion
     /// was strong there. Now that no profile is wired for a non-kafka dependency, redis would
     /// fail against the FULL registry too — leaving the test green while proving nothing about
@@ -270,7 +270,7 @@ public sealed class SecurityProfileWiringValidatorTests : System.IDisposable
     }
 
     /// <summary>
-    /// M1 (peer review, fix round 2): 'tls' on a non-kafka dependency no longer resolves against
+    /// 'tls' on a non-kafka dependency no longer resolves against
     /// the PRODUCTION registry either. This is the registry-side half of the schema tightening —
     /// both gates must agree, or a suite could pass one and fail the other. The pipeline-level
     /// sibling for 'mtls' is
@@ -304,7 +304,7 @@ public sealed class SecurityProfileWiringValidatorTests : System.IDisposable
     }
 
     /// <summary>
-    /// SEC-1 (peer review, fix round 3): the failure message bounds the author-controlled
+    /// The failure message bounds the author-controlled
     /// <c>profile</c> value at the same 200-character limit
     /// <see cref="SecurityProfileRegistry.DescribeUnknownProfile"/> applies, through the same
     /// helper.
@@ -398,7 +398,7 @@ public sealed class SecurityProfileWiringValidatorTests : System.IDisposable
     }
 
     /// <summary>
-    /// G-MINOR-8 (gatekeeper): before this fix, <see cref="ProviderPipeline.Compile"/> always
+    /// Before this fix, <see cref="ProviderPipeline.Compile"/> always
     /// hardcoded <see cref="SecurityProfileRegistry.BuiltIn"/> — unlike <c>registry</c>
     /// (<see cref="StepKindRegistry"/>), which is always a parameter — so REQ-022's own
     /// red-first proof ("removing a wiring must make a suite declaring that pair fail") could

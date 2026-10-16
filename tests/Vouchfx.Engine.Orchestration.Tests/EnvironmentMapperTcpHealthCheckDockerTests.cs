@@ -1,4 +1,4 @@
-// Docker-gated regression coverage for B1 (fix round 2, PR #349 follow-up) — the raw
+// Docker-gated regression coverage (PR #349 follow-up) — the raw
 // `tcp` health check that could never fail.
 //
 // WHY A SEPARATE DOCKER FILE, NOT A NON-DOCKER UNIT TEST
@@ -6,14 +6,14 @@
 // EnvironmentMapperTests.cs's own header explains why the mapper's builder phase is testable
 // without Docker: adding resources to an IDistributedApplicationBuilder is pure in-memory graph
 // construction, and only DistributedApplication.StartAsync triggers DCP, image pulls, and real
-// containers. B1 is exactly the exception that proves that rule: the defect lives entirely in
+// containers. This TCP health check is exactly the exception that proves that rule: the defect lives entirely in
 // what happens AFTER StartAsync — DCP's host-published TCP proxy accepts a connection
 // unconditionally before it has even tried the real backend, so `Map_ServiceHealthCheckTcp_
 // RegistersResolvableHealthCheck_NeverPerformsHttpRequest` (EnvironmentMapperTests.cs), which
 // never starts a container, structurally cannot observe it — the pre-fix bug and the post-fix
 // behaviour are IDENTICAL from that test's vantage point (both report Unhealthy pre-StartAsync,
 // "endpoint not yet allocated"). A live probe asserting only "reaches healthy" would ALSO pass
-// either way (the whole point of B1 is that it used to reach healthy for a dead backend too).
+// either way (the original defect is that it used to reach healthy for a dead backend too).
 // The only test that actually catches this is the one below: a tcp health check on a port with
 // no listener must NOT reach healthy — exercised against a REAL DCP-proxied endpoint (see fact 3
 // below for exactly what that has, and has not, established: a passing observation, not a
@@ -22,15 +22,15 @@
 // Run with: dotnet test --filter "requires=docker". Excluded from the unit-CI job via
 // `dotnet test --filter "requires!=docker"`.
 //
-// MEASURED (fix round 3 — this section rewritten; the previous wording claimed a red/green
+// MEASURED (the previous wording claimed a red/green
 // revert-and-rerun of this file that never happened — see fact 3 below). Three separate
 // measurements feed this file's justification, none of them that revert-and-rerun:
 //
-//   1. THE ORIGINAL BUG, pre-fix (peer review of this branch's first commit, 4414931 — not
+//   1. THE ORIGINAL BUG, pre-fix (this branch's first commit, 4414931 — not
 //      reproduced by this file itself). A `traefik/whoami` service declaring `ports: [9093]`
 //      (nothing listens on 9093 inside the container) with `healthCheck: { type: tcp, port:
 //      9093 }` reached Healthy in ~18 s under the pre-fix bare-ConnectAsync check — the exact
-//      false positive B1 describes. As a control, the SAME dead port under a `type: http`
+//      connect-only false positive. As a control, the SAME dead port under a `type: http`
 //      health check correctly reported unhealthy, but only after ~126 s.
 //   2. THE FIXED DISCRIMINATOR'S CONNECT/READ SIGNATURE (`good=CONNECT_OK READ_TIMEOUT`,
 //      `bad=CONNECT_OK READ_BYTES=0` — see `ApplyTcpHealthCheck`'s own remarks). Reproduced
@@ -60,7 +60,7 @@ using Xunit;
 namespace Vouchfx.Engine.Orchestration.Tests;
 
 /// <summary>
-/// B1 (fix round 2) — negative-control regression test: a <c>tcp</c> health check on a
+/// Negative-control regression test: a <c>tcp</c> health check on a
 /// declared port with no listener behind it must NOT reach <c>Healthy</c>, proven against a
 /// real, DCP-proxied endpoint (see the file-header remarks for why this cannot be a non-Docker
 /// unit test).
@@ -78,7 +78,7 @@ public sealed class EnvironmentMapperTcpHealthCheckDockerTests
     private static readonly TimeSpan s_boundedWait = TimeSpan.FromSeconds(45);
 
     /// <summary>
-    /// B1 negative control. <c>whoami</c> declares <c>ports: [9093]</c> and
+    /// TCP negative control. <c>whoami</c> declares <c>ports: [9093]</c> and
     /// <c>healthCheck: { type: tcp, port: 9093 }</c> — but the <c>traefik/whoami</c> image only
     /// ever listens on port 80; nothing is listening on 9093 inside the container at all. Before
     /// the fix, DCP's proxy accepting the connection unconditionally made this reach Healthy
@@ -116,9 +116,9 @@ public sealed class EnvironmentMapperTcpHealthCheckDockerTests
 
         using var boundedCts = new CancellationTokenSource(s_boundedWait);
 
-        // n-2 fix (fix round 3): asserting ONLY "the bounded wait throws" is non-discriminating
+        // Asserting ONLY "the bounded wait throws" is non-discriminating
         // — a cold image pull, a DCP hiccup, or a slow runner satisfies that identically to "the
-        // probe correctly reported Unhealthy" (none of those are B1 regressing, but all three
+        // probe correctly reported Unhealthy" (none of those are the connect/read discriminator regressing, but all three
         // would make this assertion pass just the same). Swallow whatever the wait does — throw
         // or return — and assert on the RESOURCE'S OWN OBSERVED STATE instead: the named tcp
         // health check this exact topology registers must itself have recorded an explicit

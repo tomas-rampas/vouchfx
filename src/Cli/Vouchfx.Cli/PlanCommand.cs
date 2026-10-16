@@ -15,7 +15,7 @@
 //                               breaks CI"). Also the code when `--fail-on-gap` is set but
 //                               no PlanFindingKinds.IsGap finding is present.
 //   2 (ExitCodes.UsageError)  — PlanInputException (bad/missing suite path, EDGE-009 empty
-//                               folder, or an out-of-range threshold — MINOR fix-round, e.g.
+//                               folder, or an out-of-range threshold — e.g.
 //                               --stale-days -1) or an --output path whose parent directory
 //                               does not exist (EDGE-008).
 //   3 (ExitCodes.EnvironmentError) — CatalogueExportException: incomplete catalogue metadata
@@ -346,7 +346,7 @@ internal static class PlanCommand
 
         if (json)
         {
-            // MINOR fix-round: WriteLine (not Write) so the shell prompt does not land
+            // WriteLine (not Write) so the shell prompt does not land
             // attached to the closing brace — mirrors SchemaCommand's own stdout convention.
             // --output's file content (above) stays exactly PlanExport.SerializePlan's
             // output with no appended newline; only stdout gets one.

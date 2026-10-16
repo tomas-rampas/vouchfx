@@ -59,7 +59,7 @@ public sealed class PlanDiscoveryParityTests : IDisposable
         File.WriteAllText(Path.Combine(_root, "a.e2e.yaml"), MinimalStep);
         File.WriteAllText(Path.Combine(_root, "sub", "b.e2e.yaml"), MinimalStep);
         File.WriteAllText(Path.Combine(_root, "c.e2e.yaml"), MinimalStep);
-        // A malformed suite (N3 fix-round): ScenarioDiscovery.Discover still reports it as a
+        // A malformed suite: ScenarioDiscovery.Discover still reports it as a
         // DiscoveredScenario (Ast == null, per its own EDGE-003 handling), so the parity
         // check must compare against the UNION of the Planner's Suites and
         // UnanalysableSuites — comparing against Suites alone previously passed only because

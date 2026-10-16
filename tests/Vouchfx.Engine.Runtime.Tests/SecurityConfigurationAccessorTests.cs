@@ -1493,7 +1493,7 @@ public sealed class SecurityConfigurationAccessorTests
         }
     }
 
-    // ── The declared value must be a whole REFERENCE, and is never echoed (security MAJOR-1) ──
+    // ── The declared value must be a whole REFERENCE, and is never echoed ──
 
     /// <summary>
     /// A declared <c>clientKeyPassword</c> that is not a single, whole <c>${secret:}</c> reference
@@ -1786,7 +1786,7 @@ public sealed class SecurityConfigurationAccessorTests
         }
     }
 
-    // ── An unreadable key is not an unencrypted one (code-review MAJOR M1) ────────────────────
+    // ── An unreadable key is not an unencrypted one ────────────────────
 
     /// <summary>
     /// A declared <c>clientKey</c> that cannot be READ is reported as unreadable, never as "not an
@@ -1839,7 +1839,7 @@ public sealed class SecurityConfigurationAccessorTests
         }
     }
 
-    // ── The escaping is TOTAL (security MINOR-1/2/3) ──────────────────────────────────────────
+    // ── The escaping is TOTAL ──────────────────────────────────────────
     //
     // Three properties the C0/DEL/C1 predicate did not have, each pinned separately. All three use
     // the null-accessor refusal as their vehicle: it quotes the reference without needing it to
@@ -1980,7 +1980,7 @@ public sealed class SecurityConfigurationAccessorTests
         }
     }
 
-    // ── Every resolver fault is classified, not just SecretResolutionException (MINOR-4) ───────
+    // ── Every resolver fault is classified, not just SecretResolutionException ───────
 
     /// <summary>
     /// A resolver fault that is NOT a <c>SecretResolutionException</c> is still classified as a

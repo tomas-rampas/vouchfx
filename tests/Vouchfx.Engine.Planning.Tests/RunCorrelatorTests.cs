@@ -1,9 +1,9 @@
-// Vouchfx.Engine.Planning.Tests — RunCorrelatorTests (M3 Planner, fix-round-2 NEW-4).
+// Vouchfx.Engine.Planning.Tests — RunCorrelatorTests (M3 Planner).
 //
 // Exercises Ingest/RunCorrelator.cs directly (InternalsVisibleTo) because the NEW-4 fix has
 // no observable effect through the public PlanReportDocument: UnmatchedObservations
 // deliberately does NOT distinguish "correctly attributed" from "silently dropped as an
-// ambiguity" (see RunCorrelator's own M2 comment) — both read as 0 either way, regardless of
+// ambiguity" (see RunCorrelator's own renamed-file comment) — both read as 0 either way, regardless of
 // HistoryHealthAnalyser (now real, not a stub) since neither of those two readings would
 // change any of ITS tallies either. The only way to prove a reused runId's step-completed
 // event is no longer silently dropped is to inspect PlanEventHistory.StepObservations

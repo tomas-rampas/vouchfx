@@ -29,7 +29,7 @@
 // Target/TargetKind-scoped — it reports a step's own observed history, not a service or
 // dependency seam — so both stay null.
 //
-// MINOR fix-round: the Ambiguous / AmbiguityReason markers ARE stamped here (this analyser
+// The Ambiguous / AmbiguityReason markers ARE stamped here (this analyser
 // does not itself classify suite identity — PlanInputs.History.Collisions, RunCorrelator's
 // output, already does that): when a suite's ScenarioId participates in a REQ-008 rule-1
 // scenario-id collision, the StepObservations keyed under that ScenarioId are the MERGED
@@ -59,7 +59,7 @@ internal static class HistoryHealthAnalyser
         var now = inputs.History.LastTimestamp;
         var thresholds = inputs.Thresholds;
 
-        // MINOR fix-round: a scenario-id collision (REQ-008 rule 1) means the observations
+        // A scenario-id collision (REQ-008 rule 1) means the observations
         // keyed under this ScenarioId are the MERGED history of every colliding suite, not
         // any one suite's own — presenting that as unambiguously "this suite's history"
         // would be misleading. Mirrors CoverageGapAnalyser's identical collidingScenarioIds
@@ -123,7 +123,7 @@ internal static class HistoryHealthAnalyser
                 // defensively (never crash) even though, in practice, at least one
                 // step-completed observation existing above guarantees LastTimestamp is set.
                 //
-                // MINOR fix-round: the STALE-THRESHOLD COMPARISON below is evaluated on the
+                // The STALE-THRESHOLD COMPARISON below is evaluated on the
                 // exact, un-truncated day span (ageDaysExact), never on the truncated int —
                 // truncating first and then testing "> StaleDays" would make "more than 30
                 // days" actually mean "at least 31 WHOLE days" (a step observed 30.9 days ago

@@ -415,7 +415,7 @@ public sealed class EventStreamAppenderTests
         Assert.Null(ex);
     }
 
-    // ── Mid-run failure: symmetric self-disable (peer-review follow-up, #258) ──────────────
+    // ── Mid-run failure: symmetric self-disable (#258 follow-up) ──────────────
     //
     // Before this fix, a write/flush failure AFTER a successful construction was diagnosed but
     // did NOT null out the writer, so a sink that died mid-suite (destination deleted, disk

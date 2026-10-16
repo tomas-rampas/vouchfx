@@ -685,7 +685,7 @@ public sealed class EventStreamJsonRequiredReferenceNullTests
     }
 
     // =========================================================================
-    // PR #575 review (code-review-gatekeeper, MAJOR): STJ maps a NON-public member carrying [JsonInclude]
+    // PR #575: STJ maps a NON-public member carrying [JsonInclude]
     // (property or field, any visibility, declared or inherited) and presence-checks it when
     // `required`; the hand-rolled GetProperties(Public)/GetFields(Public) scan this file used
     // to exercise could never see one. The production fix replaces that scan with STJ's own
@@ -842,7 +842,7 @@ public sealed class EventStreamJsonRequiredReferenceNullTests
     }
 
     // =========================================================================
-    // A [JsonIgnore] member (code-review-gatekeeper, measured) still appears in
+    // A [JsonIgnore] member (measured) still appears in
     // JsonTypeInfo.Properties with both Get and Set null, so it is never bound to or from the
     // wire at all. Before the fix, the guard's RequiredMemberAttribute fallback still admitted
     // it (the C# `required` modifier is on the member, not on the JSON mapping) despite
@@ -1054,7 +1054,7 @@ public sealed class EventStreamJsonRequiredReferenceNullTests
     }
 
     // =========================================================================
-    // A type-level JsonConverter (code-review-gatekeeper, measured) on T whose Read
+    // A type-level JsonConverter (measured) on T whose Read
     // legitimately constructs and returns an instance of a DIFFERENT type than T. Keyed on
     // payload.GetType() unconditionally, the guard would read the RETURNED type's OWN default
     // reflection contract (ConvDerived has no converter of its own, so it gets a plain

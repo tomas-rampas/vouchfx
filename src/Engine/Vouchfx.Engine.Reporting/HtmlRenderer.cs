@@ -316,11 +316,11 @@ public sealed class HtmlRenderer
                                 : DeriveScenarioDurationMs(scenario.StartedAt, envelope.Timestamp);
                             scenario.Counts = ReadCounts(envelope);
 
-                            // #372 (issue #588, gatekeeper MINOR probe P4): read LAST, deliberately
+                            // #372 (issue #588): read LAST, deliberately
                             // AFTER DurationMs/Counts above. Read tolerantly (§14): absent on an
                             // ordinary pass and on any stream an older engine wrote, in which case
                             // nothing is rendered. Since GetStr no longer catches its own read
-                            // failure (MAJOR-1), an unreadable `message` (e.g. a lone surrogate)
+                            // failure, an unreadable `message` (e.g. a lone surrogate)
                             // throws and aborts this case — reading it LAST means only the optional
                             // message itself is lost; the verdict, duration and counts already
                             // committed above survive, and the line is still counted as skipped by
@@ -1201,7 +1201,7 @@ public sealed class HtmlRenderer
     /// absent or not a JSON string.
     /// </summary>
     /// <remarks>
-    /// Deliberately does NOT catch a read failure itself (issue #588, MAJOR-1
+    /// Deliberately does NOT catch a read failure itself (issue #588
     /// correction): a string VALUE carrying a lone / unpaired UTF-16 surrogate parses
     /// fine but throws <see cref="InvalidOperationException"/> at <c>GetString()</c>.
     /// Every call site of this method sits inside <c>BuildModel</c>'s per-line

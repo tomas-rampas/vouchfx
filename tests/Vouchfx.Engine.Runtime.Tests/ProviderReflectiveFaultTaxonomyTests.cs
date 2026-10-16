@@ -314,7 +314,7 @@ file sealed class StubSuitePathLeakingEmitProvider
 /// <summary>
 /// <c>Emit</c> throws with the suite path embedded in SERIALISED JSON, so the message carries
 /// the JSON-ESCAPED spelling (<c>C:\\Users\\…</c>) and not the raw one — the second half of the
-/// substitution SEC-MAJOR-1 requires, and the spelling a raw-only scrub misses.
+/// substitution the scrubber requires, and the spelling a raw-only scrub misses.
 /// </summary>
 /// <remarks>
 /// Not a contrived shape: a provider that fails while parsing or serialising a payload built
@@ -398,7 +398,7 @@ file sealed class StubPathLeakingValidateProvider
 
 /// <summary>
 /// <c>Emit</c> throws an exception that WRAPS the real failure, two levels deep — the shape
-/// MINOR-3 exists for: a provider's own wrapper over a client library's wrapper over the
+/// the inner-chain rendering covers: a provider's own wrapper over a client library's wrapper over the
 /// transport fault. Reporting only the outermost message names the symptom and hides the cause.
 /// </summary>
 /// <remarks>
@@ -652,7 +652,7 @@ public sealed class ProviderReflectiveFaultTaxonomyTests
         }
     }
 
-    // ── SEC-MAJOR-1: the suite directory is substituted out, in BOTH spellings ───
+    // ── the suite directory is substituted out, in BOTH spellings ───
 
     /// <summary>
     /// The guard's diagnostic names <c>the suite directory</c>, never the resolved absolute
@@ -776,7 +776,7 @@ public sealed class ProviderReflectiveFaultTaxonomyTests
         Assert.DoesNotContain("the suite directory", message, StringComparison.Ordinal);
     }
 
-    // ── MINOR-1: the attribution sentence is conditioned on the exception type ───
+    // ── the attribution sentence is conditioned on the exception type ───
 
     /// <summary>The categorical claim, spelled once so both rows key on the same string.</summary>
     private const string CategoricalBlame = "This is a defect in the provider";
@@ -853,7 +853,7 @@ public sealed class ProviderReflectiveFaultTaxonomyTests
     }
 
     /// <summary>
-    /// MINOR-3: a provider that wraps its real failure has the inner chain rendered, not
+    /// A provider that wraps its real failure has the inner chain rendered, not
     /// discarded — the symptom alone ("save failed") names nothing an author can act on.
     /// </summary>
     /// <remarks>
@@ -884,7 +884,7 @@ public sealed class ProviderReflectiveFaultTaxonomyTests
             "the chain must read outermost-first, the order a reader scans.");
     }
 
-    // ── The sixth escape route: CsxAssembler.Assemble (GATE-MAJOR-1) ──────────
+    // ── The sixth escape route: CsxAssembler.Assemble ──────────
 
     /// <summary>
     /// A provider that EMITS a fragment breaking §13.3.1 is refused with a diagnosable failure,

@@ -63,7 +63,7 @@ public sealed class AsciiRuntimeOutputCensusTests
 {
     /// <summary>
     /// CLI and engine C# literals are the original #379 output boundary. The #472 tests
-    /// below additionally cover provider diff-format methods and their local call graph,
+    /// below additionally cover provider diff-format and validation methods and their local call graph,
     /// SDK literals outside frozen generated CSX Source fields, and public schema descriptions.
     /// Provider Emit/helpers remain outside the literal census because their raw strings contain
     /// generated C# comments; changing them would also move frozen SDK helper-body contracts.
@@ -251,6 +251,52 @@ public sealed class AsciiRuntimeOutputCensusTests
                 }
             }
         }
+    }
+
+    [Fact]
+    public void CoreProviderValidationLiterals_AreAscii()
+    {
+        var providerRoot = Path.Combine(RepositoryRoot(), "src", "Providers", "Core");
+        var validators = SourceFiles(providerRoot)
+            .SelectMany(file => ParseSource(file).GetRoot().DescendantNodes().OfType<ClassDeclarationSyntax>())
+            .Where(type => type.Members.OfType<MethodDeclarationSyntax>()
+                .Any(method => method.Identifier.ValueText == "Validate"))
+            .ToArray();
+        Assert.Equal(ProviderRegistryFactory.BuildCoreRegistry().All.Count, validators.Length);
+        Assert.NotEmpty(validators);
+
+        // Follow only actual validator methods and their local helpers. Emit and frozen
+        // generated Source bodies are deliberately outside this diagnostic boundary.
+        var tokens = new List<SyntaxToken>();
+        foreach (var type in validators)
+        {
+            var methods = type.Members.OfType<MethodDeclarationSyntax>()
+                .ToLookup(method => method.Identifier.ValueText, StringComparer.Ordinal);
+            var pending = new Queue<string>(new[] { "Validate" });
+            var visited = new HashSet<string>(StringComparer.Ordinal);
+            while (pending.TryDequeue(out var name))
+            {
+                if (!visited.Add(name))
+                    continue;
+                foreach (var method in methods[name])
+                {
+                    tokens.AddRange(method.DescendantTokens());
+                    foreach (var call in method.DescendantNodes().OfType<InvocationExpressionSyntax>())
+                    {
+                        var localName = call.Expression switch
+                        {
+                            IdentifierNameSyntax identifier => identifier.Identifier.ValueText,
+                            MemberAccessExpressionSyntax { Expression: ThisExpressionSyntax } member => member.Name.Identifier.ValueText,
+                            _ => null,
+                        };
+                        if (localName is not null && methods.Contains(localName))
+                            pending.Enqueue(localName);
+                    }
+                }
+            }
+        }
+
+        AssertAsciiLiterals(tokens, "Core provider validators");
     }
 
     [Fact]

@@ -428,7 +428,7 @@ public sealed class RunSuiteAsyncTests
             "Expected non-empty output containing the validation error.");
     }
 
-    // ── RunSuiteAsync regression — env: authoring error classification (M2) ──────
+    // ── RunSuiteAsync regression — env: authoring error classification ──────
 
     /// <summary>
     /// A service's <c>env:</c> reference to an unknown dependency (<c>${conn:typo}</c>) must be
@@ -439,7 +439,7 @@ public sealed class RunSuiteAsyncTests
     /// therefore DCP) is ever reached.
     /// </summary>
     /// <remarks>
-    /// Regression guard (M2, MAJOR, code-review-gatekeeper): before this fix,
+    /// Regression guard: before this fix,
     /// <see cref="ScenarioRunner.RunSuiteAsync"/> caught only <c>OrchestrationException</c>
     /// around its shared-topology-build <c>SuiteTopology.StartAsync</c> call, so a Map()-time
     /// <see cref="System.ArgumentException"/> propagated as a raw, unhandled exception instead
@@ -572,7 +572,7 @@ public sealed class RunSuiteAsyncTests
             var rendered = sw.ToString();
 
             // The preflight fired and named the field and the DECLARED path (REQ-004, as
-            // superseded by BLOCKER B2). This assertion used to be
+            // superseded by the diagnostic path-disclosure rule). This assertion used to be
             // `Assert.Contains(suiteDirectory, rendered)` — the resolved path standing in as
             // evidence that the preflight had run. That evidence was itself the disclosure once
             // #372/#407 carried the same text into the written artefacts, so the same fact is now
@@ -694,7 +694,7 @@ public sealed class RunSuiteAsyncTests
     }
 
     /// <summary>
-    /// MAJOR-5, which shares MAJOR-4's root cause: a <c>profile</c> the language forbids on a
+    /// A <c>profile</c> the language forbids on a
     /// target kind (REQ-021/REQ-022 — <c>mtls</c> on <c>redis</c>) must reach the author as THAT
     /// message under <c>vouchfx run</c>, not as REQ-005's probe complaining that the topology
     /// staged no reachable address — which pointed at endpoint publication for a declaration the
@@ -760,7 +760,7 @@ public sealed class RunSuiteAsyncTests
     }
 
     /// <summary>
-    /// m5: a secured suite whose scenarios resolve their declared security paths against DIFFERENT
+    /// A secured suite whose scenarios resolve their declared security paths against DIFFERENT
     /// directories is refused before the topology build, rather than silently probing with one
     /// scenario's material on behalf of another's steps.
     /// </summary>
@@ -812,8 +812,8 @@ public sealed class RunSuiteAsyncTests
     // Hoisted to fields: CA1861 fires on an array of literal constants in an argument position,
     // regardless of how often the method is actually called — RunSuiteAsync is called ONCE below.
     // The rule's own message names a "repeatedly called" method and an earlier form of this comment
-    // repeated that as if it described this test, which it does not (m6, gatekeeper, fix round
-    // seven). MEASURED, same round: inlining these two back produced CA1861 at both argument
+    // repeated that as if it described this test, which it does not (
+    // see the call below). MEASURED: inlining these two back produced CA1861 at both argument
     // positions and, under TreatWarningsAsErrors, failed the build. The sibling
     // `new[] { ast, ast }` and `new[] { yaml, yaml }` arguments stay inline because neither trips
     // the rule in that same build — `ast` is a runtime-built local, and `yaml`, though a
@@ -822,8 +822,8 @@ public sealed class RunSuiteAsyncTests
     private static readonly string?[] s_divergingScenarioDirectories = { "dir-a", "dir-b" };
 
     /// <summary>
-    /// The ARTEFACT half of the divergence refusal (gatekeeper MAJOR-1 + security MINOR-1, fix
-    /// round six): a CI job that asked for reports must get them from this seam too.
+    /// The ARTEFACT half of the divergence refusal —
+    /// a CI job that asked for reports must get them from this seam too.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -934,7 +934,7 @@ public sealed class RunSuiteAsyncTests
 
     /// <summary>
     /// The THIRD instance of the same artefact gap, at the shared-<c>environment</c> divergence
-    /// guard (peer-review MAJOR-1, fix round ten) — the seam the two fixes above left behind.
+    /// guard — the seam the two fixes above left behind.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -1396,7 +1396,7 @@ public sealed class RunSuiteAsyncTests
         // The diagnostic names BOTH scenarios, and the BASELINE half is what the old "than the
         // first scenario" wording got wrong here: the baseline is 'clean' at index 1, not the
         // rejected document at index 0. Asserting only the divergent name would pass under either
-        // wording (peer-review MINOR-4).
+        // wording.
         Assert.Contains("'clean'", rendered, StringComparison.Ordinal);
     }
 
@@ -1405,7 +1405,7 @@ public sealed class RunSuiteAsyncTests
 
     /// <summary>
     /// <strong>A suite whose seed root and whose environment come from DIFFERENT scenarios in
-    /// DIFFERENT directories is refused before the topology is built (peer-review MINOR-1).</strong>
+    /// DIFFERENT directories is refused before the topology is built.</strong>
     /// </summary>
     /// <remarks>
     /// <para>

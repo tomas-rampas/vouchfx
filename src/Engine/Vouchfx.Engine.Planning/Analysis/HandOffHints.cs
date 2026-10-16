@@ -15,7 +15,7 @@
 //     resolved via the finding's Suite when set, else any suite that declares it.
 //   - a step-scoped finding (StepId set — step-never-exercised): the step already has a
 //     known, registered CanonicalType, so that becomes the sole suggested type and the
-//     step's OWN id becomes the suggested id. BLOCKER fix-round: this finding kind may ALSO
+//     step's OWN id becomes the suggested id. This finding kind may ALSO
 //     now carry a resolved/classified Target/TargetKind (the service/dependency its own
 //     declared `target` addresses — CoverageGapAnalyser.AnalyseStepsNeverExercised), but the
 //     HINT stays "re-run this already-declared step", never a candidate drawn from

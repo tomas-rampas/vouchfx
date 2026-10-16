@@ -286,7 +286,7 @@ public sealed class StorageAssertS3Provider
         {
             errors.Add(
                 "storage-assert.s3: 'expect.exists: false' cannot be combined with any content " +
-                "expectation (size/minSize/sha256/contentContains/contentType/metadata) — an " +
+                "expectation (size/minSize/sha256/contentContains/contentType/metadata) - an " +
                 "absent object has no content to assert on.");
         }
 
@@ -296,7 +296,7 @@ public sealed class StorageAssertS3Provider
         {
             errors.Add(
                 "storage-assert.s3: 'expect.size' and 'expect.minSize' are mutually exclusive " +
-                "— declare an exact size or a lower bound, not both.");
+                "- declare an exact size or a lower bound, not both.");
         }
 
         // Dependency reconciliation: target must name a declared dependency of one of the two

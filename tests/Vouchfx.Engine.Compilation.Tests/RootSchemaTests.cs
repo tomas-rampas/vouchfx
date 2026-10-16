@@ -113,7 +113,7 @@ public sealed class RootSchemaTests
     /// real rejection hook for a future v2 language schema, not decoration.
     /// </summary>
     /// <remarks>
-    /// m4 (third-round gatekeeper finding): before SchemaErrorCollector grew
+    /// Before SchemaErrorCollector grew
     /// an <c>IsConstShape</c>/<c>FormatConstError</c> branch, this surfaced
     /// raw JsonSchema.Net library text with literal escape sequences —
     /// <c>[const] Expected ""v1""</c> — the only new user-facing keyword this
@@ -230,7 +230,7 @@ public sealed class RootSchemaTests
     /// <see cref="Validate_VerifyModeUnrecognisedValue_IsRejectedWithNoFabricatedSuggestion"/>
     /// for the CONTRASTIVE case (a value matching nothing at all, not merely
     /// by case) this summary's original, broader "undeclared value" wording
-    /// implied but did not itself exercise (MINOR-11).
+    /// implied but did not itself exercise.
     /// </remarks>
     [Fact]
     public void Validate_VerifyModeInvalidEnum_IsRejected()
@@ -254,7 +254,7 @@ public sealed class RootSchemaTests
     }
 
     /// <summary>
-    /// The contrastive case (MINOR-11): a <c>verifyMode</c> value matching
+    /// The contrastive case: a <c>verifyMode</c> value matching
     /// NEITHER accepted spelling, not even by case, must still be rejected
     /// with a located, actionable <c>[enum]</c> message — but must NEVER
     /// fabricate a "write '...'" suggestion, since nothing case-insensitively
@@ -619,8 +619,8 @@ public sealed class RootSchemaTests
     // ── Publication boundary: no internal identifiers in any 'description' ─────
 
     /// <summary>
-    /// MAJOR-3 (feat/close-remaining-surfaces, second-round gatekeeper
-    /// finding): a schema node's <c>description</c> ships verbatim to the
+    /// Publication boundary:
+    /// a schema node's <c>description</c> ships verbatim to the
     /// VSCode extension's hover text AND, via <c>LanguageReferenceGenerator</c>,
     /// to the published Pages site — an internal branch or task identifier
     /// there is both meaningless to a YAML author and a publication-boundary
@@ -635,7 +635,7 @@ public sealed class RootSchemaTests
     /// same leak elsewhere undetected.
     /// </summary>
     /// <remarks>
-    /// m2 (third-round gatekeeper finding): the original version of this
+    /// The original version of this
     /// guard read ONLY <c>SchemaResources.ReadRootLanguageSchemaJson()</c> —
     /// the static root schema — which covers 45 of the 217 descriptions the
     /// composed schema actually ships. A provider fragment (a PUBLIC
@@ -647,7 +647,7 @@ public sealed class RootSchemaTests
     /// <c>SchemaFreezeTests</c> already anchor their own golden files to —
     /// brings every provider fragment inside the gate. Widens coverage only:
     /// re-run against the full 25-Core-provider composed schema found zero
-    /// offenders beyond the root-schema sites already fixed for MAJOR-3.
+    /// offenders beyond the root-schema sites already corrected.
     /// </remarks>
     [Fact]
     public void NoDescriptionAnywhereInTheSchema_ContainsAnInternalIdentifier()

@@ -72,7 +72,7 @@ public sealed class HandOffHintTests
             Assert.False(string.IsNullOrEmpty(finding.SuggestedStepId));
             Assert.Matches("^[A-Za-z_][A-Za-z0-9_-]*$", finding.SuggestedStepId);
 
-            // BLOCKER fix-round: step-never-exercised now carries Target/TargetKind
+            // step-never-exercised now carries Target/TargetKind
             // whenever the step's OWN declared `target` resolves and classifies against its
             // suite's environment (CoverageGapAnalyser.AnalyseStepsNeverExercised) — a host
             // going gap -> scaffold must be able to bind the step back to the seam it
@@ -94,7 +94,7 @@ public sealed class HandOffHintTests
         }
     }
 
-    // ── MAJOR fix-round: REQ-007's SECOND documented hint exemption — a
+    // ── REQ-007's SECOND documented hint exemption — a
     // dependency-not-asserted finding whose dependency kind has no REQ-005 candidate type at
     // all (an unmappable kind) must stay un-enriched rather than fabricate a suggestion, yet
     // remains a genuine gap for --fail-on-gap purposes. Previously covered only for the

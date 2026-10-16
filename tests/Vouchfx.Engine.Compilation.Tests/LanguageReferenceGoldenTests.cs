@@ -201,10 +201,10 @@ public sealed class LanguageReferenceGoldenTests
     }
 
     /// <summary>
-    /// M2 (gatekeeper, feat/fragment-completeness): before this fix, the
+    /// Before this fix, the
     /// reference listed script.csharp's code/file under "Optional fields"
     /// with NO Required section at all — actively disagreeing with the
-    /// catalogue's own ExactlyOneOfGroups (EngineExport.cs, fixed under B1).
+    /// catalogue's own ExactlyOneOfGroups (EngineExport.cs).
     /// script.csharp's `oneOf` (code XOR file) must now render its own
     /// "Required — exactly one of" table naming both fields, and neither may
     /// ALSO appear in the (now absent, since nothing else is required)
@@ -275,8 +275,8 @@ public sealed class LanguageReferenceGoldenTests
     }
 
     /// <summary>
-    /// MAJOR-2 / m1 (feat/close-remaining-surfaces, TWO rounds of the same
-    /// finding): <c>timeout</c>'s A1 de-branching moved its <c>"type"</c>
+    /// Table-escaping regression:
+    /// <c>timeout</c>'s A1 de-branching moved its <c>"type"</c>
     /// from a <c>oneOf</c> of typed alternatives (rendered as separate,
     /// backtick-wrapped tokens joined OUTSIDE every span, e.g.
     /// <c>`string` \| `number`</c>) onto a bare <c>"type": [...]</c> array,

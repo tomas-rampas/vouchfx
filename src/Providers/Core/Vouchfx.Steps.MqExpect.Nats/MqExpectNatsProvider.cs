@@ -19,9 +19,9 @@
 // Previous code used CreateOrUpdateConsumerAsync with a Name field, which created a DURABLE
 // consumer that accumulated on the server across RETRY attempts.  Ordered consumers are
 // created transiently per-connection and cleaned up automatically when the NatsConnection
-// is disposed — FIX M2.
+// is disposed.
 //
-// Shared-stream caution (FIX M3 — documented constraint):
+// Shared-stream caution (documented constraint):
 //   mq-expect.nats scans from the START of the retained log on every attempt
 //   (DeliverPolicy.All ordered consumer, matching kafka retained-log behaviour).
 //   Do NOT share a single nats dependency across scenarios that assert on the same
@@ -641,7 +641,7 @@ public sealed class MqExpectNatsProvider
 
     // ── Private helpers ───────────────────────────────────────────────────────
 
-    // N5 — stream-name collision limitation (documented constraint):
+    // Stream-name collision limitation (documented constraint):
     // DeriveStreamName maps both 'orders.created' and 'orders_created' to 'ORDERS_CREATED'
     // because it replaces every non-alphanumeric character (other than '-') with '_' and then
     // collapses runs.  If an author uses two subjects that collapse to the same name they MUST

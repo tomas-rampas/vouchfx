@@ -1,4 +1,4 @@
-// Vouchfx.Cli.Tests — --events-stream same-path collision guard (peer-review follow-up, #258).
+// Vouchfx.Cli.Tests — --events-stream same-path collision guard (#258 follow-up).
 // No Docker.
 //
 // EventStreamAppender holds --events-stream's path open with FileShare.Read for the WHOLE run.

@@ -1,5 +1,5 @@
 // REQ-023 (as amended 2026-08-04) — one target, one staged form
-// (authenticated-infrastructure-mtls, slice E; peer review fix round three, MAJOR-2).
+// (authenticated-infrastructure-mtls, slice E).
 //
 // The amended requirement stages a service's endpoint in the form its own consumer uses: an
 // `https://host:port` URL for a target the HTTP family addresses, a bare `host:port` bootstrap
@@ -117,7 +117,7 @@ public sealed class ProtocolTargetConflictValidationTests
     }
 
     /// <summary>
-    /// A Kafka step targeting a declared SERVICE — REQ-011's shape, and the one MAJOR-2 fixes —
+    /// A Kafka step targeting a declared SERVICE — REQ-011's shape, the service-target correction —
     /// compiles, and the emitted CSX reads the <c>svc::</c> key the engine actually stages for a
     /// service rather than the <c>conn::</c> key it stages only for dependencies.
     /// </summary>
@@ -384,8 +384,8 @@ public sealed class ProtocolTargetConflictValidationTests
 
     // ── The MIXED shape: a conflicting scenario alongside a valid one ─────────────────────────
     //
-    // The third shape, and the one that double-printed (gatekeeper MINOR-1 + spec-compliance
-    // minor-3, promoted to MAJOR-3 in fix round six). Scenario A addresses `broker` with BOTH
+    // The third shape, and the one that double-printed (
+    // before message deduplication). Scenario A addresses `broker` with BOTH
     // families, so A ALONE conflicts and the per-scenario seam stores the conflict text verbatim as
     // A's EarlyMessage. Scenario B addresses it with one family and compiles cleanly, so the
     // all-early-verdict guard does not fire and the SUITE guard runs — printing the same text a
@@ -399,10 +399,10 @@ public sealed class ProtocolTargetConflictValidationTests
     // stamped as the cause of every scenario that has none of its own, and the completion path is
     // told which text the caller already wrote so it prints no duplicate.
 
-    // THREE scenarios since fix round eight (m7). The suite-level union is taken over the RUNNABLE
+    // THREE scenarios. The suite-level union is taken over the RUNNABLE
     // scenarios only, so the self-conflicting one no longer contributes its own targets to it — the
     // two valid halves supply the split conflict, and the self-conflicting one supplies the
-    // byte-identical early message whose duplicate printing is the property under test. Before m7 a
+    // byte-identical early message whose duplicate printing is the property under test. Before the runnability filter a
     // two-scenario fixture sufficed because the self-conflicting scenario fed the union itself; the
     // property being guarded is unchanged, only the shape that reaches it.
     private static readonly string[] s_mixedScenarioYamls =
@@ -465,7 +465,7 @@ public sealed class ProtocolTargetConflictValidationTests
     /// survive: the suite's fact once, and the schema-invalid scenario's own fact once.
     /// </remarks>
     /// <remarks>
-    /// Three scenarios since fix round eight (m7): the schema-invalid one no longer feeds the
+    /// Three scenarios: the schema-invalid one no longer feeds the
     /// suite-level union, so the conflict it used to supply now comes from the two runnable halves.
     /// The property under test — a distinct early message is not suppressed by the suite-level
     /// print — is exactly the same one, reached the same way.
@@ -490,7 +490,7 @@ public sealed class ProtocolTargetConflictValidationTests
         Assert.Equal(names.Length, run.Result.ScenarioVerdicts.Count);
     }
 
-    // ── m7 (peer-review critic, fix round eight): an unrunnable scenario cannot veto a runnable one ──
+    // ── An unrunnable scenario cannot veto a runnable one ──
 
     /// <summary>
     /// A scenario that cannot run must not contribute its targets to the suite-level protocol union:
@@ -526,7 +526,7 @@ public sealed class ProtocolTargetConflictValidationTests
         Assert.Empty(run.Diagnostic);
 
         // …and the suite went ON to build the topology, which is what "the valid scenario is not
-        // vetoed" means at this seam. Before m7 this marker was absent: the suite was refused before
+        // vetoed" means at this seam. Before the runnability filter this marker was absent: the suite was refused before
         // it, and the valid HTTP scenario never had the chance to run.
         Assert.Contains(PreTopologyMarker, run.Rendered, StringComparison.Ordinal);
 
@@ -534,7 +534,7 @@ public sealed class ProtocolTargetConflictValidationTests
         // 'bogusField' message does not reach the terminal on this path. That is a property of the
         // ArgumentException catch around StartAsync — it returns a bare SuiteResult and so skips the
         // render and the file reports entirely, the same shape rounds five and six fixed at the two
-        // pre-topology guards — and it is unchanged by m7, which is why this row does not pin it.
+        // pre-topology guards — and it is unchanged by the runnability filter, which is why this row does not pin it.
         // The sibling test above pins that message on the path that does render.
         Assert.Equal(Verdict.Inconclusive, run.Result.Verdict);
         Assert.Equal(names.Length, run.Result.ScenarioVerdicts.Count);
@@ -542,8 +542,8 @@ public sealed class ProtocolTargetConflictValidationTests
 
     /// <summary>
     /// A Kafka-family scenario carrying an unknown step field: schema-invalid, so it never reaches
-    /// the per-scenario protocol check and carries a schema diagnostic as its early message. Since
-    /// fix round eight (m7) it contributes NOTHING to the suite-level union either — a scenario that
+    /// the per-scenario protocol check and carries a schema diagnostic as its early message. Now
+    /// it contributes NOTHING to the suite-level union either — a scenario that
     /// cannot run stages nothing.
     /// </summary>
     private const string SchemaInvalidKafkaHalf = ConflictSuiteEnvironment + """

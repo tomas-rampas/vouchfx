@@ -89,8 +89,8 @@ public static class SuiteProtocolTargets
     /// speak Kafka to is a target the one shared probe must confirm as a broker; but a scenario
     /// carrying an early verdict stages nothing, because it executes nothing. At the suite seam the
     /// right input is therefore the RUNNABLE scenarios (<c>EarlyVerdict is null</c>), and passing
-    /// every scenario instead lets one that cannot run veto one that can — the defect m7 (fix round
-    /// eight) closed. The rule that survives both spellings: pass exactly the set whose staging you
+    /// every scenario instead lets one that cannot run veto one that can — the previously observed defect
+    /// is now closed. The rule that survives both spellings: pass exactly the set whose staging you
     /// are protecting.
     /// </param>
     /// <returns>
@@ -129,7 +129,7 @@ public static class SuiteProtocolTargets
     /// <returns>An ordinal set of target names; never <see langword="null"/>.</returns>
     /// <remarks>
     /// <strong>Internal where its <see cref="KafkaSpeaking(IEnumerable{ScenarioAst})"/> sibling is
-    /// public, and the asymmetry is measured rather than stylistic</strong> (the critic's residual,
+    /// public, and the asymmetry is measured rather than stylistic</strong> (scope narrowed
     /// closed in the slice F hygiene pass). <c>KafkaSpeaking</c> has a production caller outside
     /// this assembly's <c>InternalsVisibleTo</c> grants — <c>Vouchfx.Cli</c>'s
     /// <c>WatchRunner</c> — so it cannot narrow. This one has no consumer outside the class at all
@@ -224,7 +224,7 @@ public static class SuiteProtocolTargets
     /// The scenarios whose staging this rejection is about — the same scoping rule as
     /// <see cref="KafkaSpeaking(IEnumerable{ScenarioAst})"/>, and NOT "every scenario the suite
     /// declares": at the suite seam that means the RUNNABLE ones. This parameter used to read "the
-    /// suite's scenarios", which was the whole-list rule the m7 fix retired.
+    /// suite's scenarios", which was the whole-list rule the runnability filter retired.
     /// </param>
     /// <returns>
     /// The conflicting names, ordinally sorted so a diagnostic reads the same on every run; empty
@@ -300,7 +300,7 @@ public static class SuiteProtocolTargets
     /// cannot disagree. Two failure directions, and this branch has been on both: a per-scenario
     /// call at the suite seam is blind to a suite that splits the two families across two scenarios,
     /// which is the hole this overload's existence closed; and widening it back to EVERY scenario
-    /// lets a scenario that cannot run veto one that can, which is the defect m7 closed. Neither is
+    /// lets a scenario that cannot run veto one that can, which is the defect the runnability filter closed. Neither is
     /// fixed by counting scenarios — only by handing this helper the set whose staging it guards.
     /// </para>
     /// </remarks>

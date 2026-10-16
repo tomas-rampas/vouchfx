@@ -117,7 +117,7 @@ internal static class SecurityProfileWiringValidator
             return null;
         }
 
-        // SEC-1 (peer review, fix round 3): 'profile' is an open string pattern with no length
+        // 'profile' is an open string pattern with no length
         // limit of its own, so it is bounded through the SAME helper DescribeUnknownProfile uses
         // — never a third copy of the rule. Measured unreachable with a long value TODAY: all
         // four production call sites hard-return on schema failure before ProviderPipeline.Compile,

@@ -37,8 +37,8 @@ namespace Vouchfx.Engine.Planning.Tests;
 internal static class PlannerTestFixtures
 {
     /// <summary>
-    /// Lazily builds the full 25-provider Core registry exactly once per test run (fix-round-2
-    /// NEW-5): registry discovery scans 25 assemblies via reflection, and
+    /// Lazily builds the full 25-provider Core registry exactly once per test run because
+    /// registry discovery scans 25 assemblies via reflection, and
     /// <see cref="PlanExport.BuildPlan"/> additionally runs <c>EngineExport.BuildCatalogue</c>
     /// (parsing every provider's schema fragment) on every call — with T2/T3/T4 about to add
     /// roughly 60 more tests calling <see cref="Plan"/>, rebuilding the registry per call would

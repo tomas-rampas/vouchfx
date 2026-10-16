@@ -1,4 +1,4 @@
-// Vouchfx.Engine.Planning.Report — PlanTargetKinds (M3 Planner, REQ-004, fix-round B2).
+// Vouchfx.Engine.Planning.Report — PlanTargetKinds (M3 Planner, REQ-004).
 // Frozen v1 discriminator tokens for PlanFinding.TargetKind — see PlanReportContractFreezeTests.
 //
 // Both CoverageGapAnalyser (T2) and VocabularyGapAnalyser (T3) independently classify a

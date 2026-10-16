@@ -11,7 +11,9 @@ import subprocess
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github/workflows/build.yml"
+PREWARM_WORKFLOW = ROOT / ".github/workflows/vouchfx-run.yml"
 PULL_NAME = "Pre-pull dependency images (warm Docker cache; fail fast on an unpullable pin)"
+PREWARM_NAME = "Pre-warm container images (best-effort, non-fatal)"
 TEST_NAME = "Integration tests (requires=docker)"
 YQ = os.environ.get("VOUCHFX_CI_YQ") or shutil.which("yq")
 BASH = (os.environ.get("VOUCHFX_CI_BASH") or
@@ -34,29 +36,29 @@ def workflow(path=WORKFLOW):
     return json.loads(result.stdout)
 
 
-def step(name, data=None):
-    matches = [s for s in (data or workflow())["jobs"]["integration"]["steps"] if s.get("name") == name]
+def step(name, data=None, job_name="integration"):
+    matches = [s for s in (data or workflow())["jobs"][job_name]["steps"] if s.get("name") == name]
     if len(matches) != 1:
-        raise AssertionError(f"Require one integration step named {name!r}")
+        raise AssertionError(f"Require one step named {name!r} in job {job_name!r}")
     return matches[0]
 
 
-def extract_pull(path=WORKFLOW):
-    parsed = step(PULL_NAME, workflow(path))["run"].encode("utf-8")
+def extract_literal_run(path, job_name, step_name):
+    parsed = step(step_name, workflow(path), job_name=job_name)["run"].encode("utf-8")
     source = Path(path).read_bytes()
     if b"\r" in source:
         raise AssertionError("Workflow source must use LF")
     lines = source.splitlines(keepends=True)
-    anchor = f"      - name: {PULL_NAME}\n".encode()
+    anchor = f"      - name: {step_name}\n".encode()
     if lines.count(anchor) != 1:
-        raise AssertionError("Cannot identify the literal pre-pull step uniquely")
+        raise AssertionError(f"Cannot identify the literal run step {step_name!r} uniquely")
     start = lines.index(anchor) + 1
     while start < len(lines) and lines[start].startswith(b"        "):
         if lines[start] == b"        run: |\n":
             break
         start += 1
     if start == len(lines) or lines[start] != b"        run: |\n":
-        raise AssertionError("Pre-pull must remain a literal run: | block")
+        raise AssertionError(f"Step {step_name!r} must remain a literal run: | block")
     body = []
     for line in lines[start + 1:]:
         if line.strip() and not line.startswith(b"          "):
@@ -66,8 +68,16 @@ def extract_pull(path=WORKFLOW):
     # Blank separator lines after the block are YAML chomping, not script bytes.
     raw = raw.rstrip(b"\n") + b"\n"
     if raw != parsed:
-        raise AssertionError("Literal source extraction disagrees with the YAML parser")
+        raise AssertionError(f"Literal source extraction disagrees with YAML parser for {step_name!r}")
     return raw
+
+
+def extract_pull(path=WORKFLOW):
+    return extract_literal_run(path, "integration", PULL_NAME)
+
+
+def extract_prewarm(path=PREWARM_WORKFLOW):
+    return extract_literal_run(path, "run-suite", PREWARM_NAME)
 
 
 def image_boundary(script):

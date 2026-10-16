@@ -16,10 +16,10 @@ public sealed class CatalogueExportTests
     private static readonly string[] CodeFileGroup = { "code", "file" };
     private static readonly string[] AlphaBetaGroup = { "alpha", "beta" };
 
-    // ── T1 (feat/fragment-completeness), B1-corrected: oneOf/anyOf-nested ──────
+    // ── T1 (feat/fragment-completeness): oneOf/anyOf-nested ──────
     // requirements are surfaced as TYPED GROUPS (ExactlyOneOfGroups/
     // AtLeastOneOfGroups), never as prose folded into RequiredFields — the
-    // gatekeeper's proven-on-the-built-CLI finding: RequiredFields is consumed
+    // defect proven against the built CLI: RequiredFields is consumed
     // by SuiteScaffolder as bare field NAMES emitted verbatim as YAML keys, so
     // a prose string ("exactly one of: code, file") rendered as
     // "exactly one of: code, file: scaffold" — a hard YAML parse error.
@@ -45,7 +45,7 @@ public sealed class CatalogueExportTests
         var scriptCsharp = Assert.Single(catalogue.StepTypes, e => e.Type == "script.csharp");
 
         // RequiredFields carries ONLY real field names — never a synthesised
-        // sentence (B1: that vehicle broke SuiteScaffolder's YAML emission).
+        // sentence (that vehicle broke SuiteScaffolder's YAML emission).
         Assert.Empty(scriptCsharp.RequiredFields);
         Assert.All(scriptCsharp.RequiredFields, name => Assert.DoesNotContain(':', name));
 
@@ -86,7 +86,7 @@ public sealed class CatalogueExportTests
     /// <summary>
     /// The anyOf counterpart (mq-expect.azureservicebus's real shape):
     /// expectPayloadContains/expectProperties, "at least one", surfaced as
-    /// AtLeastOneOfGroups. This is also the fix for the corollary M4 finding:
+    /// AtLeastOneOfGroups. This is also the fix for the corollary defect:
     /// before it, a consumer trusting RequiredFields alone (target only) for
     /// this provider could scaffold a minimal document the composed schema
     /// rejects (neither anyOf branch satisfied).
@@ -111,7 +111,7 @@ public sealed class CatalogueExportTests
 
     /// <summary>
     /// Degrade-don't-fabricate (mirrors SchemaErrorCollector's
-    /// HasUnattributableBranch guard, M1-r): when a oneOf branch's own
+    /// HasUnattributableBranch guard): when a oneOf branch's own
     /// 'required' does NOT contribute exactly one name (here, a two-name
     /// branch — mq-expect.azureservicebus's real shape), the synthesis is
     /// skipped rather than emitting a wrong "exactly one of: a, b, c" group
@@ -139,7 +139,7 @@ public sealed class CatalogueExportTests
     }
 
     /// <summary>
-    /// Gatekeeper finding #4: a qualifying branch must be EXACTLY
+    /// A qualifying branch must be EXACTLY
     /// <c>{"required": ["name"]}</c> — nothing else. A branch carrying an
     /// extra keyword alongside a single-name 'required' (here, a bare
     /// "type": "object" sibling — the shape a careless provider author might
@@ -468,8 +468,8 @@ public sealed class CatalogueExportTests
     /// <summary>
     /// A root-level 'oneOf' where one branch carries an extra keyword
     /// alongside its single-name 'required' (here, a sibling "type": "object")
-    /// — must NOT qualify for ExactlyOneOfGroups synthesis (gatekeeper finding
-    /// #4: the code, not merely the doc comment, enforces "nothing else").
+    /// — must NOT qualify for ExactlyOneOfGroups synthesis (
+    /// the code, not merely the doc comment, enforces "nothing else").
     /// </summary>
     [StepProvider]
     private sealed class ExtraContentInBranchProvider : IStepProvider, IStepBinder<ExtraContentInBranchModel>

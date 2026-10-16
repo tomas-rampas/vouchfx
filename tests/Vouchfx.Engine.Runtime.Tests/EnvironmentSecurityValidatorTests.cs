@@ -164,7 +164,7 @@ public sealed class EnvironmentSecurityValidatorTests : IDisposable
     // ── 3. REQ-004(a): a declared-but-missing file fails, naming the field + DECLARED path ──
 
     /// <summary>
-    /// REQ-004(a), as superseded by BLOCKER B2 (maintainer decision, 2026-08-26).
+    /// REQ-004(a), as superseded by the diagnostic path-disclosure rule (maintainer decision, 2026-08-26).
     /// </summary>
     /// <remarks>
     /// This test used to be <c>…_FailsNamingFieldAndResolvedPath</c> and asserted the resolved
@@ -271,7 +271,7 @@ public sealed class EnvironmentSecurityValidatorTests : IDisposable
         Assert.Contains("resolves outside the suite directory", result!.Message, StringComparison.Ordinal);
     }
 
-    // ── 4b. REQ-003: a ROOTED declared path is rejected outright (critic MAJOR-2) ──
+    // ── 4b. REQ-003: a ROOTED declared path is rejected outright ──
     //
     // REQ-003's own wording requires every path-valued security field to be "resolved
     // relative to the directory containing the .e2e.yaml file". Before this fix, a
@@ -292,7 +292,7 @@ public sealed class EnvironmentSecurityValidatorTests : IDisposable
     //       the one message.
 
     /// <summary>
-    /// The "untested absolute-inside acceptance" the critic flagged: a rooted path that
+    /// The previously untested absolute-inside acceptance: a rooted path that
     /// happens to resolve inside the suite directory must still be rejected — REQ-003
     /// requires a RELATIVE path, not merely a contained one.
     /// </summary>
@@ -798,7 +798,7 @@ public sealed class EnvironmentSecurityValidatorTests : IDisposable
         Assert.DoesNotContain("environment.dependencies", result.Message, StringComparison.Ordinal);
     }
 
-    // ── 14. IsSecurityPreflight marker (critic MAJOR-3) ───────────────────────
+    // ── 14. IsSecurityPreflight marker ───────────────────────
     //
     // Gives the security preflight's failures a narrow, distinguishable signal that a
     // LATER slice (PR D, REQ-018) keys the unconditional non-zero exit on. Every failure
@@ -810,8 +810,8 @@ public sealed class EnvironmentSecurityValidatorTests : IDisposable
     /// <summary>
     /// Every failure <see cref="EnvironmentSecurityValidator.Validate"/> itself raises —
     /// here, a declared-but-blank <c>caCert</c> — carries
-    /// <see cref="ValidationFailure.IsSecurityPreflight"/> set. G-MINOR-1 (gatekeeper,
-    /// authenticated-infrastructure-mtls slice C): this is one of TWO producers of that
+    /// <see cref="ValidationFailure.IsSecurityPreflight"/> set. In
+    /// authenticated-infrastructure-mtls slice C, this is one of TWO producers of that
     /// marker in the pipeline now — <c>SecurityProfileWiringValidator</c> (REQ-022) also sets
     /// it — see <see cref="ValidationFailure.IsSecurityPreflight"/>'s own remarks for both and
     /// why; this file's own tests only ever drive the first.

@@ -428,12 +428,12 @@ public sealed class EnvironmentMapperTests : IDisposable
     }
 
     /// <summary>
-    /// M4 fix (fix round 2): a <c>ports</c>-declared service with NO <c>healthCheck</c> and NO
+    /// A <c>ports</c>-declared service with NO <c>healthCheck</c> and NO
     /// sibling <c>httpPort</c> now DEFAULTS to a <c>tcp</c> probe on the FIRST declared port
     /// (<c>Ports[0]</c>) rather than getting no health check at all — REQ-008 (does not attempt
     /// an HTTP request against a service that may not speak HTTP) is preserved, but "no health
     /// check at all" left the service gated only on Aspire's own "reaches Running" default,
-    /// which — combined with B1 (the tcp health check that could never fail) — meant BOTH
+    /// which — combined with the tcp health check that could never fail — meant BOTH
     /// shapes available to a non-HTTP system under test were ungated. The registered key
     /// matches the SAME <c>"{service}-tcp-{port}-health"</c> format the explicit
     /// <c>type: tcp</c> form uses (<see cref="Map_ServiceHealthCheckTcp_RegistersResolvableHealthCheck_NeverPerformsHttpRequest"/>),
@@ -471,7 +471,7 @@ public sealed class EnvironmentMapperTests : IDisposable
     }
 
     /// <summary>
-    /// M4 fix (fix round 2): the hybrid shape (<c>ports</c> + a sibling <c>httpPort</c>) with
+    /// The hybrid shape (<c>ports</c> + a sibling <c>httpPort</c>) with
     /// NO explicit <c>healthCheck</c> now defaults to the SAME HTTP probe an <c>image:</c>-form
     /// HTTP service gets — a hybrid service IS an image-form HTTP service, and leaving it
     /// entirely ungated (the pre-fix behaviour, purely because <c>hasExplicitPorts</c> was
@@ -545,7 +545,7 @@ public sealed class EnvironmentMapperTests : IDisposable
         var resource = builder.Resources.OfType<ContainerResource>().Single(r => r.Name == "kafka-broker");
         var healthCheckAnnotation = Assert.Single(resource.Annotations.OfType<HealthCheckAnnotation>());
 
-        // G-FLAKE (gatekeeper): resolve the registration through a FRESH ServiceCollection
+        // Resolve the registration through a FRESH ServiceCollection
         // seeded from the live builder's own descriptors, rather than calling
         // BuildServiceProvider() directly on builder.Services (the live Aspire builder's OWN
         // collection) and disposing the result — Aspire's own pipeline expects to build ITS
@@ -613,7 +613,7 @@ public sealed class EnvironmentMapperTests : IDisposable
     }
 
     /// <summary>
-    /// m3 fix (fix round 3): the hybrid shape's own sibling of
+    /// The hybrid shape's own sibling of
     /// <see cref="Map_ServiceHealthCheckTcp_PortNotAmongDeclaredPorts_ThrowsArgumentException"/>
     /// — a <c>tcp</c> health check naming a hybrid service's OWN <c>httpPort</c> (rather than
     /// one of its <c>ports:</c> entries) must now validate and map successfully. Before this
@@ -659,7 +659,7 @@ public sealed class EnvironmentMapperTests : IDisposable
     }
 
     /// <summary>
-    /// G-M3 (gatekeeper): <c>Map()</c>'s eager validation for an UNRECOGNISED
+    /// <c>Map()</c>'s eager validation for an UNRECOGNISED
     /// <c>healthCheck.type</c> — untested at the mapper level until now (only reachable
     /// indirectly via YAML+schema in <c>EnvironmentSchemaTests</c>'s wrong-case corpus
     /// fixture, which the schema's own closed enum catches before this throw is ever
@@ -696,10 +696,10 @@ public sealed class EnvironmentMapperTests : IDisposable
     }
 
     /// <summary>
-    /// G-M3 (gatekeeper): <c>Map()</c>'s eager validation for <c>healthCheck: { type: http }</c>
+    /// <c>Map()</c>'s eager validation for <c>healthCheck: { type: http }</c>
     /// on a <c>ports:</c>-only service with no sibling <c>httpPort</c> — untested at the
     /// mapper level until now (only reachable indirectly via YAML+schema in
-    /// <c>EnvironmentSchemaTests</c>). STILL independently reachable here even after G4's new
+    /// <c>EnvironmentSchemaTests</c>). STILL independently reachable here even after the new
     /// schema-level rule: the schema only protects the YAML + <c>vouchfx validate</c> path — a
     /// direct <see cref="EnvironmentSpec"/> embedding bypasses the schema entirely, and this
     /// mapper-level throw is what still catches it.
@@ -731,7 +731,7 @@ public sealed class EnvironmentMapperTests : IDisposable
         Assert.Contains("httpPort", ex.Message, StringComparison.Ordinal);
     }
 
-    // G-M3 (gatekeeper), third untested eager-validation branch — DELIBERATELY NOT TESTED,
+    // Third untested eager-validation branch — DELIBERATELY NOT TESTED,
     // documented here rather than silently skipped: ApplyHealthCheck's own terminal
     // "healthCheck.type not recognised" throw (the defensive fallback once the schema's
     // closed tcp/http enum is in place) is UNREACHABLE through the public API. ApplyHealthCheck
@@ -1670,7 +1670,7 @@ public sealed class EnvironmentMapperTests : IDisposable
     /// A nats dependency produces a server resource only (no database resource),
     /// the server itself is in the health-gate list, and JetStream is enabled via
     /// <c>WithJetStream()</c> (which appends <c>-js</c> to the container command-line
-    /// arguments — FIX B1: without this, every mq-publish.nats / mq-expect.nats step
+    /// arguments — without this, every mq-publish.nats / mq-expect.nats step
     /// returns EnvironmentError).
     /// </summary>
     [Fact]
@@ -1706,7 +1706,7 @@ public sealed class EnvironmentMapperTests : IDisposable
 
         // Assert — JetStream is enabled: WithJetStream() registers a CommandLineArgsCallbackAnnotation
         // that appends '-js' to the container args.  We invoke the callbacks in-memory (no DCP/Docker)
-        // and verify the flag is present.  This is the FIX B1 regression gate.
+        // and verify the flag is present.  This is the JetStream regression gate.
         var args = new List<object>();
         var argsContext = new CommandLineArgsCallbackContext(args, eventsResource!, CancellationToken.None);
         foreach (var argsCallback in eventsResource!.Annotations.OfType<CommandLineArgsCallbackAnnotation>())
@@ -2827,7 +2827,7 @@ public sealed class EnvironmentMapperTests : IDisposable
     }
 
     // -----------------------------------------------------------------------
-    // BLOCKER regression (peer-review-critic): literal-brace escaping in env: values.
+    // Regression: literal-brace escaping in env: values.
     //
     // ReferenceExpressionBuilder.AppendLiteral appends literal text VERBATIM into the internal
     // composite-format string that ReferenceExpression.ValueExpression later materialises via
@@ -2838,7 +2838,7 @@ public sealed class EnvironmentMapperTests : IDisposable
     //     corruption, no exception.
     //   • A pure literal containing braces (a JSON value, or the "${VAR}" self-expansion idiom)
     //     -> FormatException at materialisation time (StartAsync) -> OrchestrationException ->
-    //     EnvironmentError — the exact §12.1 misclassification the M2 fix targeted, one layer
+    //     EnvironmentError — the exact §12.1 misclassification the authoring-error classification fix targeted, one layer
     //     further downstream, since it happens AFTER Map() returns successfully.
     // These tests assert the MATERIALISED value (ValueExpressionOf calls .ValueExpression,
     // which invokes string.Format) so they actually exercise the bug, not just the Format string.
@@ -3208,7 +3208,7 @@ public sealed class EnvironmentMapperTests : IDisposable
     }
 
     /// <summary>
-    /// m5 fix (fix round 2, PR #349 follow-up): a malformed or wrong-case <c>${env:...}</c>-
+    /// PR #349 follow-up: a malformed or wrong-case <c>${env:...}</c>-
     /// shaped token must be REJECTED, not silently pass through as opaque literal text. The
     /// reviewer confirmed all four of these validated PASS before this fix — mirrors the
     /// existing <c>${secret:...}</c> sigil-presence check's own rationale.
@@ -3241,7 +3241,7 @@ public sealed class EnvironmentMapperTests : IDisposable
     }
 
     /// <summary>
-    /// m5 fix — the SAME malformed-sigil rejection must not fire for the DOCUMENTED
+    /// The SAME malformed-sigil rejection must not fire for the DOCUMENTED
     /// <c>${OTHER_VAR}</c>-style self-expansion passthrough idiom, which shares the
     /// <c>${</c>/<c>}</c> shape but never contains the literal <c>env:</c> sigil at all.
     /// Regression-guards <see cref="Map_ServiceEnv_NonConnDollarBraceSigil_DeliveredVerbatim"/>'s
@@ -3308,7 +3308,7 @@ public sealed class EnvironmentMapperTests : IDisposable
     }
 
     // -----------------------------------------------------------------------
-    // TokeniseEnvValue: ${conn:...} AND ${env:...} in the SAME value (m10 fix, fix round 2)
+    // TokeniseEnvValue: ${conn:...} AND ${env:...} in the SAME value
     // -----------------------------------------------------------------------
     // TokeniseEnvValue's rewrite from a single-pattern Matches() call to a leftmost-wins
     // merge of TWO independent regexes (s_connRefPattern, s_envRefPattern) is the only
@@ -3319,7 +3319,7 @@ public sealed class EnvironmentMapperTests : IDisposable
     // each position rather than, say, always preferring one pattern.
 
     /// <summary>
-    /// m10 fix: <c>${conn:...}</c> followed by <c>${env:...}</c>, separated by literal text —
+    /// <c>${conn:...}</c> followed by <c>${env:...}</c>, separated by literal text —
     /// both resolve, in the written order.
     /// </summary>
     [Fact]
@@ -3367,7 +3367,7 @@ public sealed class EnvironmentMapperTests : IDisposable
     }
 
     /// <summary>
-    /// m10 fix — the reverse ordering of
+    /// The reverse ordering of
     /// <see cref="Map_ServiceEnv_ConnRefThenEnvRef_BothResolveInOrder"/>: <c>${env:...}</c>
     /// followed by <c>${conn:...}</c>, separated by literal text.
     /// </summary>
@@ -3416,7 +3416,7 @@ public sealed class EnvironmentMapperTests : IDisposable
     }
 
     /// <summary>
-    /// m10 fix — the boundary case: the two reference kinds sit ADJACENT with NO separating
+    /// The boundary case: the two reference kinds sit ADJACENT with NO separating
     /// literal text between them, proving <c>TokeniseEnvValue</c>'s leftmost-wins merge
     /// correctly re-evaluates both patterns from the position immediately after the first
     /// match, rather than skipping ahead by a fixed or mismatched amount.
@@ -3531,7 +3531,7 @@ public sealed class EnvironmentMapperTests : IDisposable
     }
 
     /// <summary>
-    /// Regression guard (B1, BLOCKER, code-review-gatekeeper): an azureservicebus dependency
+    /// Regression guard: an azureservicebus dependency
     /// has no <c>env:</c> resolution path in <c>ResolveDependencyEnvAccess</c>. Before this
     /// fix, <c>Configure()</c> called that method UNCONDITIONALLY for every declared
     /// dependency, so merely DECLARING an azureservicebus dependency — regardless of whether
@@ -3762,7 +3762,7 @@ public sealed class EnvironmentMapperTests : IDisposable
     /// An 'image:' override on the kafka Aspire-helper kind reaches the broker resource — the
     /// third of the customer's three dependency types (mongodb, sqlserver, kafka) named in the
     /// feature's motivating scenario. The image here has no explicit registry component of its
-    /// own, but the M2 fix clears AddKafka's own internal registry default unconditionally
+    /// own, but the explicit-image fix clears AddKafka's own internal registry default unconditionally
     /// whenever 'image:' is set at all (Registry is not asserted here — see
     /// <see cref="Map_DependencyImage_UnqualifiedSqlServerImage_ClearsProviderRegistryDefault"/>
     /// and <see cref="Map_DependencyImage_UnqualifiedPostgresImage_ClearsProviderRegistryDefault"/>
@@ -4638,7 +4638,7 @@ public sealed class EnvironmentMapperTests : IDisposable
     }
 
     // -----------------------------------------------------------------------
-    // M1 regression — imageRegistry double-prefixes the azureservicebus containers.
+    // Regression — imageRegistry double-prefixes the azureservicebus containers.
     //
     // Reproduced against real Aspire 13.4.2 before the fix: both azureservicebus containers are
     // registered via AddContainer with the registry EMBEDDED directly in the image string
@@ -4724,7 +4724,7 @@ public sealed class EnvironmentMapperTests : IDisposable
     }
 
     // -----------------------------------------------------------------------
-    // M2 regression — an unqualified 'image:' on sqlserver inherits 'mcr.microsoft.com'.
+    // Regression — an unqualified 'image:' on sqlserver inherits 'mcr.microsoft.com'.
     //
     // Reproduced against real Aspire 13.4.2 before the fix: the registry-clearing branch only
     // fired when the AUTHOR's own image string carried an explicit registry component — an
@@ -4764,7 +4764,7 @@ public sealed class EnvironmentMapperTests : IDisposable
     /// <summary>
     /// Companion to <see cref="Map_DependencyImage_UnqualifiedSqlServerImage_ClearsProviderRegistryDefault"/>:
     /// the same unqualified-image shape on postgres (whose provider default happens to be the
-    /// harmless "docker.io") gets the identical treatment under the M2 fix's unconditional-clear
+    /// harmless "docker.io") gets the identical treatment under the unconditional-clear
     /// rule — 'image:' always means exactly what it says for every kind, uniformly, not just the
     /// one kind where the old leftover default happened to be visibly wrong.
     /// </summary>
@@ -4796,7 +4796,7 @@ public sealed class EnvironmentMapperTests : IDisposable
     }
 
     // -----------------------------------------------------------------------
-    // M3 regression — a tagless 'image:' silently floats on ':latest'.
+    // Regression — a tagless 'image:' silently floats on ':latest'.
     //
     // Reproduced against real Aspire 13.4.2 before the fix: WithImage(repository) with no tag
     // argument makes Aspire write ContainerImageAnnotation.Tag = "latest", discarding the
@@ -4831,7 +4831,7 @@ public sealed class EnvironmentMapperTests : IDisposable
     /// <summary>
     /// Companion positive case: a tagless, digestless 'image:' with a sibling 'version:' is the
     /// LEGITIMATE way to pin a tag on a private-mirror image without embedding it in 'image:'
-    /// itself, and must still work exactly as before — the M3 fix only rejects the combination
+    /// itself, and must still work exactly as before — the version-pinning guard only rejects the combination
     /// with NEITHER a tag/digest NOR a version anywhere.
     /// </summary>
     [Fact]
@@ -4868,7 +4868,7 @@ public sealed class EnvironmentMapperTests : IDisposable
     // ContainerImageAnnotation.Tag = "" (an empty-but-non-null tag) — while the SAME image with
     // 'version' entirely ABSENT set Tag = null (→ Aspire's WithImage(repository) then defaults it
     // to "latest"). Both are now normalised identically: an empty 'version:' is indistinguishable
-    // from an absent one, so this tagless-image case now hits the SAME M3 rejection either way.
+    // from an absent one, so this tagless-image case now hits the SAME version-pinning rejection either way.
     // -----------------------------------------------------------------------
 
     [Fact]
@@ -4925,7 +4925,7 @@ public sealed class EnvironmentMapperTests : IDisposable
     }
 
     // -----------------------------------------------------------------------
-    // MINOR-2 regression (independent re-review) — a digest with a non-'sha256:' algorithm
+    // Regression — a digest with a non-'sha256:' algorithm
     // prefix, or with no algorithm prefix at all, must be rejected eagerly, before any builder
     // mutation — not from inside the 'configure' closure after earlier dependencies have already
     // been registered.
@@ -4989,8 +4989,8 @@ public sealed class EnvironmentMapperTests : IDisposable
     }
 
     // -----------------------------------------------------------------------
-    // MINOR-3 regression (independent re-review) — the one interaction the unconditional
-    // registry clear (M2 fix, WithImageRegistry(null)) could have broken had no test: an
+    // Regression — the one interaction the unconditional
+    // registry clear (WithImageRegistry(null)) could have broken had no test: an
     // UNQUALIFIED 'image:' together with an env-level 'imageRegistry'. The existing coverage
     // pins no 'image:' at all (Map_DependencyImageRegistry_AppliesWhenNoOwnImageSet) and a
     // QUALIFIED 'image:' (Map_DependencyImage_WinsOverImageRegistry_WhenImageHasExplicitRegistry),
@@ -5029,7 +5029,7 @@ public sealed class EnvironmentMapperTests : IDisposable
     }
 
     // -----------------------------------------------------------------------
-    // C4 regression (gatekeeper CRITICAL, verified by execution) — a dangling 'image:' key on a
+    // Regression (verified by execution) — a dangling 'image:' key on a
     // dependency THREW at EnvironmentMapper.Map() time:
     //   ArgumentException: Image reference must not be null, empty, or whitespace. Was: ''.
     // Corpus/Accepted/regression-66aef95-dependency-image-null-key.e2e.yaml states the contract —
@@ -5128,7 +5128,7 @@ public sealed class EnvironmentMapperTests : IDisposable
         Assert.Equal(baselineImage.Registry, image.Registry);
         Assert.Equal(baselineImage.SHA256, image.SHA256);
 
-        // Anti-degenerate-value anchor (peer-review-critic nit #8): both sides of the equality
+        // Anti-degenerate-value anchor: both sides of the equality
         // checks above are computed via the SAME EnvironmentMapper.Map() code path, so a
         // common-mode failure (e.g. a future change that silently loses the default tag on BOTH
         // sides) would still pass every Assert.Equal above. Confirms the baseline itself carries
@@ -5174,7 +5174,7 @@ public sealed class EnvironmentMapperTests : IDisposable
         Assert.Equal(baselineImage.Registry, image.Registry);
         Assert.Equal(baselineImage.SHA256, image.SHA256);
 
-        // Anti-degenerate-value anchor (peer-review-critic nit #8) — see the Dangling test above.
+        // Anti-degenerate-value anchor — see the Dangling test above.
         Assert.False(string.IsNullOrEmpty(image.Tag));
     }
 
@@ -5311,7 +5311,7 @@ public sealed class EnvironmentMapperTests : IDisposable
     // to the absent-key baseline: YamlDocumentParser.GetScalar handed the mapper the literal
     // one-character string "~" (confirmed empirically), which is neither empty nor whitespace, so
     // it parsed as a syntactically legal repository named "~" and was rejected only by the
-    // pre-existing M3 rule (no tag/digest/version), not because "~" was recognised as degenerate
+    // pre-existing version-pinning rule (no tag/digest/version), not because "~" was recognised as degenerate
     // input. The Theory below proves all four tokens now match the absent-key baseline; the two
     // 'QuotedTildeString' facts that follow pin the DELIBERATE boundary that a quoted value stays
     // literal rather than resolving to null. A sibling defect — 'version: ~' silently produced a
@@ -5365,7 +5365,7 @@ public sealed class EnvironmentMapperTests : IDisposable
         Assert.Equal(baselineImage.Registry, image.Registry);
         Assert.Equal(baselineImage.SHA256, image.SHA256);
 
-        // Anti-degenerate-value anchor (peer-review-critic nit #8) — see the Dangling test above.
+        // Anti-degenerate-value anchor — see the Dangling test above.
         Assert.False(string.IsNullOrEmpty(image.Tag));
     }
 
@@ -5374,7 +5374,7 @@ public sealed class EnvironmentMapperTests : IDisposable
     /// one-character string "~", not YAML's null — the author explicitly quoted it, so it stays
     /// literal (<c>YamlScalarNode.Style</c> is never <c>Plain</c> for a quoted scalar). "~" still
     /// parses as a syntactically legal repository name, so this dependency is still rejected by
-    /// the pre-existing M3 rule (no tag/digest, no sibling version) — proving the fix closes the
+    /// the pre-existing version-pinning rule (no tag/digest, no sibling version) — proving the fix closes the
     /// PLAIN gap (the Theory above) without touching the QUOTED boundary at all.
     /// </summary>
     [Fact]
@@ -5450,7 +5450,7 @@ public sealed class EnvironmentMapperTests : IDisposable
         Assert.Equal(baselineImage.Registry, image.Registry);
         Assert.Equal(baselineImage.SHA256, image.SHA256);
 
-        // Anti-degenerate-value anchor (peer-review-critic nit #8) — see the Dangling test above.
+        // Anti-degenerate-value anchor — see the Dangling test above.
         Assert.False(string.IsNullOrEmpty(image.Tag));
 
         // Specifically not the garbage literal tag the pre-fix parser produced.
@@ -5494,7 +5494,7 @@ public sealed class EnvironmentMapperTests : IDisposable
     }
 
     // -----------------------------------------------------------------------
-    // M-1 (gatekeeper BLOCKING — whitespace widening reverted): a whitespace-only 'image:'/
+    // Whitespace widening reverted: a whitespace-only 'image:'/
     // 'version:' is NEITHER the dangling-key nor the YAML-null-token shape the 66aef95 contract
     // covers, and must NOT be silently treated as absent. An earlier revision of this fix
     // widened both guards to IsNullOrWhiteSpace on the reasoning "match what Parse itself
@@ -5573,8 +5573,8 @@ public sealed class EnvironmentMapperTests : IDisposable
     }
 
     // -----------------------------------------------------------------------
-    // peer-review-critic minor #5 — the plain-null Version fix changes which PRE-EXISTING
-    // ambiguity/M3 rule fires when 'image:' ALSO carries content, because 'version: ~' now makes
+    // The plain-null Version fix changes which PRE-EXISTING
+    // ambiguity/version-pinning rule fires when 'image:' ALSO carries content, because 'version: ~' now makes
     // hasVersion false rather than true (previously "~" was a real, non-empty string). Both
     // shapes are user-visible behaviour changes that were previously untested.
     // -----------------------------------------------------------------------
@@ -5621,11 +5621,11 @@ public sealed class EnvironmentMapperTests : IDisposable
     /// <summary>
     /// The other flip (silent garbage pull → correct rejection), also verified red-first: on
     /// origin/main, 'image: myorg/mongo' (no embedded tag/digest) + 'version: ~' SUCCEEDED —
-    /// spec.Version was the literal "~", so hasVersion was true, which satisfied the M3 "has a
+    /// spec.Version was the literal "~", so hasVersion was true, which satisfied the "has a
     /// version" branch and let ApplyImageOverrides use the literal "~" itself as the tag,
     /// producing a garbage 'myorg/mongo:~' pull reference with no error at suite-build time.
     /// After this fix, 'version: ~' resolves to null, hasVersion is false, and the pre-existing
-    /// M3 rule (a tagless image with nothing pinning its version would float on ':latest') now
+    /// version-pinning rule (a tagless image with nothing pinning its version would float on ':latest') now
     /// correctly fires instead — a success-to-failure change in outcome, but the CORRECT failure.
     /// </summary>
     [Fact]
@@ -5655,12 +5655,12 @@ public sealed class EnvironmentMapperTests : IDisposable
     }
 
     // -----------------------------------------------------------------------
-    // GetDependencyServiceSidecarNames (m1 fix, fix round 2) — the declarative source
+    // GetDependencyServiceSidecarNames — the declarative source
     // ProviderPipeline's host-resource-vs-declared-name collision guard consults.
     // -----------------------------------------------------------------------
 
     /// <summary>
-    /// m1 fix: a <c>mailpit</c> dependency unconditionally stages an SMTP sidecar into
+    /// A <c>mailpit</c> dependency unconditionally stages an SMTP sidecar into
     /// <c>svc::&lt;name&gt;-smtp</c> — <see cref="EnvironmentMapper.GetDependencyServiceSidecarNames"/>
     /// must report that name so the collision guard can reserve it.
     /// </summary>
@@ -5675,7 +5675,7 @@ public sealed class EnvironmentMapperTests : IDisposable
     }
 
     /// <summary>
-    /// m1 fix: a <c>kafka</c> dependency WITHOUT <c>schemaRegistry: true</c> stages no
+    /// A <c>kafka</c> dependency WITHOUT <c>schemaRegistry: true</c> stages no
     /// sidecar at all — the collision guard must reserve nothing extra for it.
     /// </summary>
     [Fact]
@@ -5689,7 +5689,7 @@ public sealed class EnvironmentMapperTests : IDisposable
     }
 
     /// <summary>
-    /// m1 fix: a <c>kafka</c> dependency WITH <c>schemaRegistry: true</c> stages a schema-
+    /// A <c>kafka</c> dependency WITH <c>schemaRegistry: true</c> stages a schema-
     /// registry sidecar into <c>svc::&lt;name&gt;-sr</c> — the exact key the reviewer
     /// confirmed a listener named <c>bus-sr</c> could previously shadow undetected.
     /// </summary>

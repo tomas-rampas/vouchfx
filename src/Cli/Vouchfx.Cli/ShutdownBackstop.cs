@@ -1,4 +1,4 @@
-// Vouchfx.Cli — ShutdownBackstop (vouchfx-mcp#17; security-review MAJOR-1 fix).
+// Vouchfx.Cli — ShutdownBackstop (vouchfx-mcp#17).
 //
 // The wall-clock force-exit backstop for the opt-in `--shutdown-on-stdin-eof` graceful-shutdown
 // seam. CancellationTokenSource.CreateLinkedTokenSource only propagates cancellation DOWNSTREAM:

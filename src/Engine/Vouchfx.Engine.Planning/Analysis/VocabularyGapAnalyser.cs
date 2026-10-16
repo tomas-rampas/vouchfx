@@ -10,7 +10,7 @@
 // This is purely a declared-vs-catalogue analysis: unlike CoverageGapAnalyser (T2), it never
 // reads PlanInputs.History.
 //
-// MAJOR fix-round (REQ-005 amended): evaluation scope is PER DECLARING SUITE, never
+// REQ-005 amended: evaluation scope is PER DECLARING SUITE, never
 // aggregated by dependency/service NAME across the analysed set. A dependency (or service) is
 // declared inside exactly one suite's `environment`, so its coverage MUST be judged within
 // that suite — a step in suite B can never mask an unexercised seam in suite A, even when both

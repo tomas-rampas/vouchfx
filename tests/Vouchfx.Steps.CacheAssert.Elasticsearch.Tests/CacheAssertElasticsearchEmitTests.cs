@@ -549,7 +549,7 @@ public sealed class CacheAssertElasticsearchEmitTests
         var rendered = _provider.RenderDiff(doc.RootElement);
 
         Assert.NotNull(rendered);
-        // Field name must appear in the rendered output (reviewer FIX 4 n2).
+        // Field name must appear in the rendered output.
         Assert.Contains("status", rendered!, StringComparison.Ordinal);
         Assert.Contains("active", rendered!, StringComparison.Ordinal);
         Assert.Contains("inactive", rendered!, StringComparison.Ordinal);

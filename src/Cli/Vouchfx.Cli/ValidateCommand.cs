@@ -123,8 +123,8 @@ internal static class ValidateCommand
         {
             discovered = ScenarioDiscovery.Discover(path, registry);
         }
-        // Broadened beyond DirectoryNotFoundException/ScenarioDiscoveryException (Copilot
-        // review finding, #260 follow-up): Discover's OWN Path.GetFullPath(root) call can
+        // Broadened beyond DirectoryNotFoundException/ScenarioDiscoveryException (
+        // issue #260 follow-up): Discover's OWN Path.GetFullPath(root) call can
         // throw ArgumentException / NotSupportedException / PathTooLongException on a
         // malformed path string, and its Directory.EnumerateFiles(..., AllDirectories) walk
         // can throw UnauthorizedAccessException / IOException / SecurityException when the

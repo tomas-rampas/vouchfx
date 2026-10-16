@@ -41,7 +41,7 @@ public sealed class SuiteIdentityAmbiguityTests
         Assert.Contains("suite-one.e2e.yaml", ambiguity.Detail, StringComparison.Ordinal);
         Assert.Contains("suite-two.e2e.yaml", ambiguity.Detail, StringComparison.Ordinal);
 
-        // MAJOR fix-round: the colliding suite paths are now ALSO machine-readable via
+        // The colliding suite paths are now ALSO machine-readable via
         // RelatedSuites (additive), not only inside Detail's prose — ordinal-sorted, mirroring
         // PlanScenarioIdCollision.SuitePaths.
         Assert.Equal(CollidingSuitePaths, ambiguity.RelatedSuites);
@@ -82,7 +82,7 @@ public sealed class SuiteIdentityAmbiguityTests
         Assert.Contains("old-scenario", ambiguity.Detail, StringComparison.Ordinal);
         Assert.Contains("old-suite.e2e.yaml", ambiguity.Detail, StringComparison.Ordinal);
 
-        // MAJOR fix-round: a rule-2 renamed-file ambiguity relates no suite at all (zero
+        // A rule-2 renamed-file ambiguity relates no suite at all (zero
         // declared suites matched, by definition) — unlike a rule-1 collision, RelatedSuites
         // stays empty here.
         Assert.Empty(ambiguity.RelatedSuites);

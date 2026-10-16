@@ -1,4 +1,4 @@
-// m3 (authenticated-infrastructure-mtls, slice E — peer review fix round three).
+// authenticated-infrastructure-mtls, slice E.
 //
 // The security-profile REGISTRY is the open, extensible list of `security.profile` values the
 // engine wires (REQ-019..022). Two of the three components that dispatch on a profile were

@@ -12,7 +12,7 @@
 //   • Scenario 2: asserts count == 0, then inserts again, resets again, and asserts count == 0
 //     a second time — proving the collection enumeration is re-derived on every
 //     EndScenarioAsync (mirrors why RespawnRelationalIsolation re-creates its checkpoint).
-//   • A view over 'orders' is also created before any scenario runs (review finding #2): the
+//   • A view over 'orders' is also created before any scenario runs: the
 //     reset must complete without throwing despite the view's presence, AND the view must still
 //     exist afterwards — pinning that MongoScenarioIsolation SKIPS views (a view holds no data
 //     of its own; DeleteMany against a view fails outright with CommandNotSupportedOnView).
@@ -145,7 +145,7 @@ public sealed class MongodbResetProofTests
 
     /// <summary>
     /// Creates a view over 'orders' via the raw <c>create</c> command — the simplest possible
-    /// view, avoiding the driver's generic pipeline-definition API. Pins review finding #2:
+    /// view, avoiding the driver's generic pipeline-definition API. Pins the view-handling rule:
     /// <see cref="MongoScenarioIsolation"/> must SKIP views during reset (a view holds no data
     /// of its own; <c>DeleteMany</c> against a view fails outright).
     /// </summary>

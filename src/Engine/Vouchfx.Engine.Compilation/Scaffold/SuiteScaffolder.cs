@@ -417,7 +417,7 @@ public static partial class SuiteScaffolder
                 emitted.Add(field);
             }
 
-            // B1 (gatekeeper): catalogue-driven oneOf ("exactly one of") / anyOf ("at least
+            // Catalogue-driven oneOf ("exactly one of") / anyOf ("at least
             // one of") groups — script.csharp's code/file, mq-publish.azureservicebus's
             // queue/topic, mq-expect.azureservicebus's expectPayloadContains/expectProperties
             // — emit the FIRST group member with its own scaffold value, unless some member

@@ -2,9 +2,9 @@
 //
 // AuthorityText is the ONE spelling of the host:port rendering rule shared by
 // SecuredEndpointProbe's declared-versus-observed messages and EnvironmentMapper's TCP
-// health-check diagnostics. Until fix round seven it had no direct test at all: its behaviour was
+// health-check diagnostics. Before the idempotency tests it had no direct test at all: its behaviour was
 // observed only through SecuredEndpointProbeTests' end-to-end message assertions, which exercise
-// the probe caller alone. These rows pin the rule itself, including the m5 idempotency case that
+// the probe caller alone. These rows pin the rule itself, including the idempotency case that
 // no caller is currently proven to reach.
 //
 // Pure string formatting — no Docker, no Aspire — so it runs in the standard unit-CI gate
@@ -47,7 +47,7 @@ public sealed class AuthorityTextTests
         Assert.Equal(expected, AuthorityText.Format(host, port));
 
     /// <summary>
-    /// m5 (gatekeeper, fix round seven): an ALREADY-bracketed IPv6 literal is passed through
+    /// An ALREADY-bracketed IPv6 literal is passed through
     /// unchanged rather than bracketed a second time.
     /// </summary>
     /// <remarks>
@@ -79,7 +79,7 @@ public sealed class AuthorityTextTests
     /// accumulate brackets.
     /// </summary>
     /// <remarks>
-    /// The property the m5 guard actually buys, stated once rather than per-row. It holds for the
+    /// The property the idempotency guard actually buys, stated once rather than per-row. It holds for the
     /// bracket-free and already-bracketed spellings alike.
     /// </remarks>
     [Theory]

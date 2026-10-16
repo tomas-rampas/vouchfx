@@ -279,7 +279,7 @@ public sealed class ImageReferenceTests
     }
 
     // -----------------------------------------------------------------------
-    // M4 regression — "mongo@sha256:" (empty digest BODY) silently resolved tagless.
+    // Regression — "mongo@sha256:" (empty digest BODY) silently resolved tagless.
     //
     // Reproduced before the fix: ImageReferenceParser.Parse("mongo@sha256:") did NOT throw —
     // digest.Length is 7 ("sha256:"), so the pre-existing `digest.Length == 0` check never

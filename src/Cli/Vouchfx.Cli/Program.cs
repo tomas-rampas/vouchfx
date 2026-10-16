@@ -65,7 +65,7 @@ rootCommand.Add(PlanCommand.Build());
 rootCommand.Add(EnvironmentCommand.Build());
 
 // Ctrl-C / SIGTERM teardown budget (S08-T10, S1; widened for vouchfx-mcp#17; 20s→30s AND scoped
-// to `run` only per peer review): System.CommandLine's DEFAULT ProcessTerminationTimeout is ~2s
+// to `run` only): System.CommandLine's DEFAULT ProcessTerminationTimeout is ~2s
 // — after that it force-kills the process even mid-DisposeAsync.  HeadlessTopology.DisposeAsync
 // (reached via SuiteTopology — the engine's single teardown chokepoint, §4.5) calls
 // _app.StopAsync with a fresh, bounded 15s CTS (WaitForResourceCleanup=true) to synchronously
@@ -77,7 +77,7 @@ rootCommand.Add(EnvironmentCommand.Build());
 //   - ONLY `run` stands up a container topology (via ScenarioRunner/ParallelSuiteRunner/WatchRunner)
 //     — `validate` / `list` / `schema` / `scaffold` / `telemetry` (and a bare `--help` / `--version`) never
 //     touch Docker or HeadlessTopology, so NONE of them needs (or should get) a widened budget.
-//     Peer-review finding: an earlier version of this gate widened the budget for EVERY non-watch
+//     An earlier version of this gate widened the budget for EVERY non-watch
 //     invocation (gating only on IsWatchInvocation), so a Ctrl-C on a slow `validate` would ALSO
 //     wait up to the widened budget instead of the ~2s default — an accidental, unjustified
 //     widening this scoping removes.  Only a `run` invocation touches ProcessTerminationTimeout

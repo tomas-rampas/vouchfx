@@ -1,4 +1,4 @@
-// Vouchfx.Cli — InvocationScope (vouchfx-mcp#17; peer-review MINOR-1 fix; parse-error exit
+// Vouchfx.Cli — InvocationScope (vouchfx-mcp#17; parse-error exit
 // code remap #269).
 //
 // Program.cs's ProcessTerminationTimeout gate needs to know which SUBCOMMAND is being invoked
@@ -47,7 +47,7 @@ internal static class InvocationScope
     /// EVERY non-watch invocation (checking only <see cref="IsWatchInvocation"/>), so a Ctrl-C on
     /// a slow <c>validate</c> would ALSO wait up to the widened budget instead of
     /// System.CommandLine's ~2s default — an accidental widening this predicate exists to
-    /// prevent (peer-review MINOR-1).
+    /// prevent.
     /// </para>
     /// <para>
     /// A false positive here — e.g. a <c>validate</c> / <c>list</c> path argument that happens to

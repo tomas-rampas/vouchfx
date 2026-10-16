@@ -1,14 +1,14 @@
-// Vouchfx.Engine.Orchestration.Tests — sidecar-write-site drift guard (G-E, gatekeeper, fix
-// round 3).
+// Vouchfx.Engine.Orchestration.Tests — sidecar-write-site drift guard.
+//
 //
 // EnvironmentMapper.GetDependencyServiceSidecarNames is the declarative "which dependency
 // types stage an EXTRA suffixed svc::<name>-<suffix> sidecar key, beyond the dependency's own
 // bare name" table that ProviderPipeline's collision guard AND its DeclaredServices derivation
-// (M1/m7, fix round 3) both consult. Its default arm (`_ => Array.Empty<string>()`) is
+// both consult. Its default arm (`_ => Array.Empty<string>()`) is
 // exhaustive today but UNENFORCED: nothing stops a future dependency registration from writing
 // a THIRD suffixed `serviceEndpoints[...]` key inside its own Build lambda without adding a
 // matching arm to that switch — the guard and DeclaredServices would then silently never learn
-// the new name exists, exactly the class of gap this branch's own M1/m7 fixes just closed for
+// the new name exists, exactly the class of gap the sidecar-discovery fixes just closed for
 // the two shapes that exist today (mailpit's SMTP sidecar, Kafka's schema-registry sidecar).
 //
 // This test reads EnvironmentMapper.cs's OWN source text — rather than a hand-maintained list

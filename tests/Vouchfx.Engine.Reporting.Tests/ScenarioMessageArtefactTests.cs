@@ -328,7 +328,7 @@ public sealed class ScenarioMessageArtefactTests
         // through XDocument would therefore report a CR the renderer really did emit as missing,
         // and the test would be pinning someone else's contract instead of this renderer's.
         //
-        // ONE CONTIGUOUS PROBE, not three per-character ones (m1), and the measurement that
+        // ONE CONTIGUOUS PROBE, not three per-character ones, and the measurement that
         // retired the old form is worth stating exactly rather than rounding off.
         //
         // MEASURED, by rendering this same document with a payload of just { 'a', 'z' } — no

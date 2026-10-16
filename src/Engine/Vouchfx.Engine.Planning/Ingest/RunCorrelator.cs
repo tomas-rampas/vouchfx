@@ -49,7 +49,7 @@ internal static class RunCorrelator
         var runIdToScenarioId = new Dictionary<string, string>(StringComparer.Ordinal);
         var runIdsByScenarioId = new Dictionary<string, List<string>>(StringComparer.Ordinal);
         var renamedFileByScenarioId = new Dictionary<string, (string File, List<string> RunIds)>(StringComparer.Ordinal);
-        // M2 fix: runIds already classified as a rule-2 renamed-file ambiguity. A
+        // RunIds already classified as a rule-2 renamed-file ambiguity. A
         // step-completed event sharing one of these runIds must NOT also inflate
         // UnmatchedObservationCount — both PlanInputs.cs's and the frozen
         // PlanReportDocument.cs's XML docs say that count excludes observations already
@@ -67,7 +67,7 @@ internal static class RunCorrelator
             {
                 AddDistinct(runIdsByScenarioId, evt.ScenarioId, evt.RunId);
 
-                // Fix-round-2 NEW-4: a real runId is minted once per scenario execution
+                // A real runId is minted once per scenario execution
                 // (blueprint §16.2), so a single runId appearing under BOTH a declared match
                 // and a rule-2 renamed-file ambiguity cannot happen in production history —
                 // this Remove only matters for a hand-authored fixture that (illegally)
@@ -111,7 +111,7 @@ internal static class RunCorrelator
             if (ambiguousRunIds.Contains(evt.RunId))
             {
                 // Already classified as a rule-2 suite-identity ambiguity above — excluded
-                // from UnmatchedObservationCount (M2), and not attributable to any known
+                // from UnmatchedObservationCount, and not attributable to any known
                 // suite/step either, so it is neither counted nor recorded as an observation.
                 continue;
             }

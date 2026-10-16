@@ -1,14 +1,14 @@
-// Vouchfx.Engine.Planning.Ingest — EventHistoryReader (M3 Planner, REQ-009, EDGE-004,
-// fix-round M4/M5/N5, fix-round-2 NEW-1).
+// Vouchfx.Engine.Planning.Ingest — EventHistoryReader (M3 Planner, REQ-009, EDGE-004).
+//
 //
 // Reads the JSON Lines event history: a single .jsonl file, or a directory whose *.jsonl
 // files (directly within it, name-sorted) are read as one combined history. An absent or
 // empty history is a successful, empty result — never an error (REQ-009).
 //
-// Hardening (fix-round): mirrors SuiteSetLoader.ParseFile's capture-never-throw discipline
+// Hardening: mirrors SuiteSetLoader.ParseFile's capture-never-throw discipline
 // for I/O faults (a permission denial, a delete race, or a .jsonl still held open by an
-// in-flight `vouchfx run` must never escape BuildPlan as a raw exception — M4). Two genuinely
-// distinct failure classes, kept deliberately separate (fix-round-2 NEW-1):
+// in-flight `vouchfx run` must never escape BuildPlan as a raw exception). Two genuinely
+// distinct failure classes, kept deliberately separate:
 //   - a TRANSIENT I/O RACE (directory not enumerable, or a file that became unreadable
 //     between enumeration and read) is data loss the caller cannot prevent — captured as
 //     ONE skipped entry (SkippedEventLines), same discipline as EDGE-004's corrupt lines;
@@ -18,7 +18,7 @@
 //     "loud, exit 2" philosophy) rather than being silently folded into a line-count field,
 //     which would otherwise let a 64 MiB history vanish while reporting "skippedEventLines: 1".
 // A per-line length cap remains as defence in depth against a single pathological line within
-// an otherwise acceptably-sized file (M5).
+// an otherwise acceptably-sized file.
 
 using System.Text.Json;
 using Vouchfx.Engine.Abstractions.Events;
@@ -114,9 +114,9 @@ internal static class EventHistoryReader
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            // TRANSIENT I/O RACE (fix-round-2 NEW-1's first class, not the oversized-file
+            // TRANSIENT I/O RACE (not the oversized-file
             // class below): the path exists but cannot even be enumerated (permission
-            // denial, a delete race). Never escape BuildPlan as a raw I/O exception (M4) —
+            // denial, a delete race). Never escape BuildPlan as a raw I/O exception —
             // mirrors SuiteSetLoader.ParseFile's capture-never-throw discipline. Counted as
             // one skipped entry so the report signals data was lost rather than reading as a
             // clean, fully-analysed empty history.
@@ -137,7 +137,7 @@ internal static class EventHistoryReader
                 var fileInfo = new FileInfo(file);
                 if (fileInfo.Length > MaxEventFileSizeBytes)
                 {
-                    // Fix-round-2 NEW-1: a configuration problem, not corrupt data — throws
+                    // A configuration problem, not corrupt data — throws
                     // rather than silently folding an entire dropped file into a field frozen
                     // as a LINE count (SkippedEventLines). Never caught by the
                     // IOException/UnauthorizedAccessException filter below, so it propagates
@@ -162,7 +162,7 @@ internal static class EventHistoryReader
 
                     if (line.Length > MaxEventLineLengthChars)
                     {
-                        // Defence in depth (M5): the line is already materialised, but it is
+                        // Defence in depth: the line is already materialised, but it is
                         // discarded here rather than handed to the JSON parser.
                         skipped++;
                         continue;
@@ -182,7 +182,7 @@ internal static class EventHistoryReader
                     if (envelope.Timestamp == default)
                     {
                         // EventEnvelope.Timestamp is not `required`; a line missing `ts`
-                        // deserialises to default(DateTimeOffset) (N5), which must never
+                        // deserialises to default(DateTimeOffset), which must never
                         // silently become firstEventTs/lastEventTs or corrupt REQ-006's "now"
                         // — treat it as unrecognisable and count it (EDGE-004).
                         skipped++;
@@ -245,9 +245,9 @@ internal static class EventHistoryReader
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
-                // TRANSIENT I/O RACE (fix-round-2 NEW-1's first class): the file existed at
+                // TRANSIENT I/O RACE: the file existed at
                 // enumeration time but became unreadable before/while being read — held open
-                // by an in-flight `vouchfx run`, a permission change, or a delete race (M4).
+                // by an in-flight `vouchfx run`, a permission change, or a delete race.
                 // Never escape BuildPlan as a raw I/O exception: skip this one source and
                 // keep going, counted as one skipped entry. Distinct from the oversized-file
                 // case above, which throws PlanInputException instead — this catch can never

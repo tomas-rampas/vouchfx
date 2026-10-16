@@ -460,7 +460,7 @@ public sealed class DbAssertMongodbEmitTests
     /// <summary>
     /// Verifies that <c>RedactCredentials</c> redacts Atlas SRV URIs
     /// (<c>mongodb+srv://user:pwd@cluster</c>) as well as standard URIs.
-    /// This tests the Minor-1 fix: the regex must match both <c>mongodb://</c>
+    /// The regex must match both <c>mongodb://</c>
     /// and <c>mongodb+srv://</c> userinfo segments.
     /// </summary>
     [Fact]

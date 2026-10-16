@@ -1,4 +1,4 @@
-// Vouchfx.Cli.Tests — InvocationScope tests (vouchfx-mcp#17; peer-review MINOR-1 fix). No
+// Vouchfx.Cli.Tests — InvocationScope tests (vouchfx-mcp#17). No
 // Docker, cross-platform (pure string-array predicates, no Console/process interaction).
 //
 // Program.cs's ProcessTerminationTimeout gate widens the teardown budget ONLY for the `run`
@@ -6,7 +6,7 @@
 // `telemetry` (and a bare --help / --version) must be left at System.CommandLine's own ~2s
 // default. These tests pin IsRunInvocation / IsWatchInvocation directly — Program.cs's own
 // wiring (a top-level-statement script, not a class) is not itself unit-testable, so this is the
-// seam the peer review asked to cover.
+// seam needed to cover this branch.
 //
 // Theory cases pass a single space-separated string rather than a string[] InlineData argument:
 // xUnit's InlineData(params object[]) flattens a string[]-typed argument (CS0182) rather than
@@ -101,7 +101,7 @@ public sealed class InvocationScopeTests
     {
         // `vouchfx validate .`: NOT a run invocation, so Program.cs's gate never touches
         // ProcessTerminationTimeout at all — System.CommandLine's own ~2s default applies. This
-        // is the exact regression the peer review caught: an earlier gate (checking only
+        // is the exact regression: an earlier gate (checking only
         // IsWatchInvocation) widened this command's budget by accident.
         var args = new[] { "validate", "." };
 

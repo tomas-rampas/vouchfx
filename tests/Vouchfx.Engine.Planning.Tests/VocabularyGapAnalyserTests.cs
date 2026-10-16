@@ -62,7 +62,7 @@ public sealed class VocabularyGapAnalyserTests
                 || f.Kind == PlanFindingKinds.ServiceMissingHttpStep);
     }
 
-    // ── MAJOR fix-round regression pin (REQ-005 amended): evaluation scope is per DECLARING
+    // ── Regression pin (REQ-005 amended): evaluation scope is per DECLARING
     // suite, never aggregated by dependency/service name across the analysed set. The
     // existing PlanPrecedenceTests fixture (and every other fixture in this file) is
     // single-suite and structurally cannot detect this class of bug — a step in one suite
@@ -94,7 +94,7 @@ public sealed class VocabularyGapAnalyserTests
             report.Findings,
             f => f.Kind == PlanFindingKinds.DependencyMissingStepType && f.Suite == "suite-b-covered.e2e.yaml");
 
-        // MINOR fix-round: the SERVICE half of the same per-declaring-suite regression, pinned
+        // The SERVICE half of the same per-declaring-suite regression, pinned
         // the same way — both suites declare a "web" service of the same name, but only
         // suite-a-uncovered.e2e.yaml has zero http.* steps targeting it. Without this
         // assertion, AnalyseServices could silently regress to name-aggregation (the exact

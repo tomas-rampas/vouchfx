@@ -35,15 +35,15 @@ namespace Vouchfx.Engine.Compilation.Tests;
 /// Issue #259: direct and end-to-end coverage of
 /// <see cref="SchemaErrorCollector.IsIfDiscriminatorNoise"/>. Also covers the
 /// combined composite-branch-noise (<c>oneOf</c>/<c>anyOf</c>) and
-/// <c>[enum]</c>-enrichment findings from the #337 peer review + gatekeeper
-/// pass (feat/close-remaining-surfaces) — see SchemaErrorCollector's own
+/// <c>[enum]</c>-enrichment corrections from #337
+/// — see SchemaErrorCollector's own
 /// class remarks.
 /// </summary>
 public sealed class SchemaErrorCollectorTests
 {
     // ── Composite-branch noise: COUNTING (not flagging) branch satisfaction ────
     //
-    // A second-round gatekeeper finding (CRITICAL-1): the original fix marked
+    // The original fix marked
     // a oneOf/anyOf group "satisfied" the moment ANY branch was individually
     // valid. Correct for anyOf (>= 1 match IS satisfaction), but wrong for
     // oneOf, whose OWN semantics require EXACTLY one match — two or more
@@ -349,7 +349,7 @@ public sealed class SchemaErrorCollectorTests
     }
 
     /// <summary>
-    /// Nit n1: when the synthesised <c>[oneOf]</c> "too many matches" error
+    /// When the synthesised <c>[oneOf]</c> "too many matches" error
     /// coexists with an unrelated GENUINE error (here, branch 'c's own
     /// missing-required failure — same fixture as
     /// <see cref="ThreeBranchOneOf_TwoBranchesMatch_ThirdBranchErrorSurvives"/>,
@@ -442,7 +442,7 @@ public sealed class SchemaErrorCollectorTests
         Assert.Contains(errors, e => e.Message.Contains("\"c\"", StringComparison.Ordinal));
     }
 
-    // ── Composite-branch noise: DEPTH-INDEPENDENCE (MAJOR-4) ────────────────────
+    // ── Composite-branch noise: DEPTH-INDEPENDENCE ────────────────────
     //
     // The original fix only recognised a branch's error as suppressible when
     // the FAILING node's own EvaluationPath terminated EXACTLY at
@@ -545,9 +545,9 @@ public sealed class SchemaErrorCollectorTests
     /// EvaluationPath through the SAME provider discriminator clause (both
     /// steps are the same type), so only InstanceLocation (<c>/steps/0</c> vs
     /// <c>/steps/1</c>) tells them apart. Step 0 is fully valid; step 1 is
-    /// genuinely broken (neither 'code' nor 'file'). Verified by the
-    /// reviewer to already behave correctly; pinned here so the CRITICAL-1 /
-    /// MAJOR-4 rewrite cannot silently regress it.
+    /// genuinely broken (neither 'code' nor 'file'). Verified to
+    /// already behave correctly; pinned here so the match-count /
+    /// depth-independent suppression rewrite cannot silently regress it.
     /// </summary>
     [Fact]
     public void TwoStepsSameType_OneValidOneGenuinelyBroken_EachJudgedIndependently()
@@ -647,13 +647,13 @@ public sealed class SchemaErrorCollectorTests
     }
 
     /// <summary>
-    /// MINOR-8 (second-round gatekeeper finding): BOTH 'code' and 'file' set
+    /// BOTH 'code' and 'file' set
     /// means the oneOf's "exactly one" invariant is violated by TWO matches,
     /// not zero — a THIRD, genuinely distinct failure mode from the
     /// "neither" case above. Before this fix: since JsonSchema.Net attaches
     /// no message to a 'oneOf' failing via "too many matches" (verified
     /// empirically — neither branch carries an error, both are individually
-    /// valid), and the CRITICAL-1 count fix correctly leaves the group
+    /// valid), and the match-count fix correctly leaves the group
     /// UNSATISFIED (count == 2, not 1), the fragment's own 'properties'
     /// annotation never propagates to unevaluatedProperties either — so the
     /// ONLY symptom was two actively-wrong "Unknown property 'code'"/"'file'"
@@ -667,14 +667,14 @@ public sealed class SchemaErrorCollectorTests
     /// coexist alongside the real one.
     /// </summary>
     /// <remarks>
-    /// script.csharp's oneOf happens to be the shape M1's guard was written
+    /// script.csharp's oneOf happens to be the shape the match-count guard was written
     /// to keep working: two branches, each a single-field <c>required</c>,
     /// so <c>ValidBranchFieldNames.Count == ValidBranchCount</c> holds and
     /// the named message fires. It does NOT generalise to every provider's
     /// oneOf unconditionally — see TypeShapedOneOf_*,
     /// MixedRequiredAndTypeOnlyOneOf_*, and MultiRequiredPairOneOf_* below
     /// for the shapes where naming individual fields would be wrong, and
-    /// SchemaErrorCollector's own "Third-round gatekeeper findings" remarks
+    /// SchemaErrorCollector's own "Required-field synthesis correction" remarks
     /// for why.
     /// </remarks>
     [Fact]
@@ -706,9 +706,9 @@ public sealed class SchemaErrorCollectorTests
         Assert.DoesNotContain(result.Errors, e => e.Message.Contains("Unknown property", StringComparison.Ordinal));
     }
 
-    // ── Composite-branch noise: the too-many-matches NAMING guard (M1) ──────────
+    // ── Composite-branch noise: the too-many-matches NAMING guard ──────────
     //
-    // Third-round gatekeeper finding: the MINOR-8 synthesis above assumed
+    // The too-many-matches synthesis above assumed
     // every matching oneOf branch contributes exactly one name to
     // ValidBranchFieldNames — true for script.csharp's code/file (each a
     // single-field 'required') but not in general. These three Facts
@@ -736,9 +736,9 @@ public sealed class SchemaErrorCollectorTests
     /// names for two matches. Pre-fix, the unconditional
     /// <c>fieldNames is { Count: &gt; 0 }</c> check was simply never true, so
     /// the synthesis silently produced NOTHING — reproducing the exact
-    /// CRITICAL-1 symptom (a genuine "too many matches" failure with no
+    /// missing-diagnostic symptom (a genuine "too many matches" failure with no
     /// message at all, falling through to the synthetic "no detailed error
-    /// messages" root fallback) for a shape CRITICAL-1's own fix never
+    /// messages" root fallback) for a shape the match-count fix never
     /// covered.
     /// </summary>
     [Fact]
@@ -842,14 +842,14 @@ public sealed class SchemaErrorCollectorTests
         """;
 
     /// <summary>
-    /// M1-r (fourth-round gatekeeper re-review): count-equality ALONE
-    /// (M1's guard) is necessary but not sufficient. Here branch 0
+    /// Count-equality ALONE
+    /// (the match-count guard) is necessary but not sufficient. Here branch 0
     /// contributes ONE name ('a'), branch 1 contributes TWO ('b','c' — a
     /// pair, one match), and branch 2 (a bare 'type: object') contributes
     /// ZERO — but 1 + 2 + 0 = 3 happens to equal the branch count (3
     /// matches), so the flat <c>ValidBranchFieldNames.Count ==
     /// ValidBranchCount</c> check alone was satisfied by coincidence of
-    /// arithmetic. Pre-M1-r this fired "Exactly one of 'a', 'b', 'c' may be
+    /// arithmetic. Before the per-branch attribution guard this fired "Exactly one of 'a', 'b', 'c' may be
     /// set" — advice that can NEVER be satisfied, because branch 2 matches
     /// every object unconditionally regardless of a/b/c: even with only
     /// 'a' set (removing 'b'/'c'), branch 2 still matches alongside branch
@@ -954,7 +954,7 @@ public sealed class SchemaErrorCollectorTests
     }
 
     /// <summary>
-    /// SEC-2 (security review, fix round 3): the bound above is a CHAR index, so an offending
+    /// The bound above is a CHAR index, so an offending
     /// value whose astral-plane character straddles it must back off rather than cut between a
     /// high surrogate and its low-surrogate partner. Measured before the fix:
     /// <c>ESC + 198×'a' + U+1F600</c> (length 201) landed the cut exactly between the two halves
@@ -1018,8 +1018,8 @@ public sealed class SchemaErrorCollectorTests
 
         // `vouchfx validate --json` is the serialised surface this text reaches (its
         // ValidateJsonDiagnostic(Stage, Message) record is golden-pinned) — NOT the §14 JSON
-        // Lines event stream, which no schema-validation message ever enters (MINOR-1, fix
-        // round 4). Either way the property under test is System.Text.Json's: a lone surrogate is
+        // Lines event stream, which no schema-validation message ever enters (
+        // as traced in the collector remarks). Either way the property under test is System.Text.Json's: a lone surrogate is
         // where it substitutes U+FFFD instead of round-tripping.
         Assert.Equal(onlyError.Message,
             JsonSerializer.Deserialize<string>(JsonSerializer.Serialize(onlyError.Message)));
@@ -1027,7 +1027,7 @@ public sealed class SchemaErrorCollectorTests
 
     // ── Suppression-pass ORDERING: forbidden-container subsumption vs the cascade ──
     //
-    // QUESTION-1 (peer review, fix round 4). SuppressErrorsInsideForbiddenContainer
+    // SuppressErrorsInsideForbiddenContainer
     // runs BEFORE SuppressUnevaluatedPropertiesCascade, and the cascade's decision
     // depends on whether a step still carries some OTHER error — so a pass that
     // removes errors ahead of it could in principle flip it. The review's own
@@ -1097,7 +1097,7 @@ public sealed class SchemaErrorCollectorTests
         Assert.Contains("Unknown property", only.Message, StringComparison.Ordinal);
     }
 
-    // ── [enum] enrichment: case-hint requires a UNIQUE match (MINOR-6) ──────────
+    // ── [enum] enrichment: case-hint requires a UNIQUE match ──────────
     //
     // FormatEnumError's own XML doc promises a suggestion only "when the
     // offending value is a case-insensitive match for EXACTLY ONE accepted
@@ -1168,7 +1168,7 @@ public sealed class SchemaErrorCollectorTests
     [InlineData("/allOf/3/if/properties/type", true)]
     // A clause's genuine 'then'-branch failure is never noise.
     [InlineData("/allOf/3/then/required", false)]
-    // Depth-independence (security MINOR-b): the SAME shape, nested one level
+    // Depth-independence: the SAME shape, nested one level
     // deeper inside another clause's 'then' branch, is still noise — an 'if'
     // keyword's own failure is never diagnostic at any nesting depth (see the
     // extended remarks on IsIfDiscriminatorNoise).
@@ -1331,9 +1331,9 @@ public sealed class SchemaErrorCollectorTests
         public NestedConditionalTestModel Bind(YamlNode node, IBindingContext ctx) => new();
     }
 
-    // ── captureEntry pair-message parity with the service standard (m6) ────────
+    // ── captureEntry pair-message parity with the service standard ────────
     //
-    // Third-round gatekeeper finding: capture's 'both set' and 'empty
+    // Capture's 'both set' and 'empty
     // mapping' rejections read as generic, un-actionable "[properties]
     // Property 'xpath' is not valid here" / raw library minProperties text
     // — unlike $defs/service's own image/project mutual exclusion, which
@@ -1401,7 +1401,7 @@ public sealed class SchemaErrorCollectorTests
     }
 
     /// <summary>
-    /// n-b (fourth-round gatekeeper re-review): the third captureEntry
+    /// The third captureEntry
     /// failure shape — an unrecognised key, e.g. 'badkey' typo'd for
     /// 'jsonpath' — is an <c>additionalProperties: false</c> rejection, not
     /// a forbidden-property or minProperties one, so it went through
@@ -1409,7 +1409,7 @@ public sealed class SchemaErrorCollectorTests
     /// (<c>FormatAdditionalPropertiesError</c>) — previously bare ("Unknown
     /// property 'badkey'" with no container at all), even though
     /// <c>TryResolveCaptureEntryContainer</c> already existed for the sibling
-    /// m6 formatters. Now named exactly like a service/dependency container
+    /// capture formatters. Now named exactly like a service/dependency container
     /// already is.
     /// </summary>
     [Fact]
@@ -1434,7 +1434,7 @@ public sealed class SchemaErrorCollectorTests
 
     // ── TryReadSingleConstCondition: the 'required' half is load-bearing ─────
     //
-    // Review finding: the method's doc contract is the EXACT shape
+    // The method's doc contract is the EXACT shape
     // {"required":["field"],"properties":{"field":{"const":...}}} but the
     // implementation never checked 'required'. Without it, the if-clause ALSO
     // matches when the field is ABSENT ('properties' is a no-op on a missing
@@ -1522,7 +1522,7 @@ public sealed class SchemaErrorCollectorTests
     /// An if-clause carrying ANY member beyond the exact
     /// <c>required</c>+<c>properties</c> pair degrades to the generic message
     /// — the strict-shape doctrine the guard's remarks invoke is enforced,
-    /// not aspirational (review n10: the first version tolerated extra
+    /// not aspirational (the first version tolerated extra
     /// keywords while claiming the doctrine, surviving only because the
     /// named-container branches intercept the shipped extra-keyword clauses
     /// first — an ordering accident, not a guarantee).
@@ -1558,10 +1558,10 @@ public sealed class SchemaErrorCollectorTests
         Assert.Contains("is not valid when 'mode' is 'strict'", forbidden.Message, StringComparison.Ordinal);
     }
 
-    // ── m8 (fix round 2, PR #349 follow-up): const/enum dedup + context-aware const ──
+    // ── PR #349 follow-up: const/enum dedup + context-aware const ──
 
     /// <summary>
-    /// m8 fix: a wrong-case <c>healthCheck.type</c> (e.g. <c>type: TCP</c>) on a ports-only
+    /// A wrong-case <c>healthCheck.type</c> (e.g. <c>type: TCP</c>) on a ports-only
     /// service previously produced TWO errors at the identical instance location — the good
     /// <c>[enum] … — write 'tcp'</c> message, plus a redundant
     /// <c>[const] 'TCP' does not match the value required here: 'tcp'.</c> that named
@@ -1590,7 +1590,7 @@ public sealed class SchemaErrorCollectorTests
     }
 
     /// <summary>
-    /// m8 fix — the surviving <c>const</c> case (a VALID enum member, <c>type: http</c>,
+    /// The surviving <c>const</c> case (a VALID enum member, <c>type: http</c>,
     /// still failing the narrower ports-only-service conditional, so it has no enum sibling
     /// to be suppressed against): the message now names the service, the field, and the
     /// reason, matching the standard <c>SchemaErrorCollector.FormatForbiddenPropertyError</c>
@@ -1619,7 +1619,7 @@ public sealed class SchemaErrorCollectorTests
     }
 
     /// <summary>
-    /// H-B (peer review, held item — fix round 2). <c>SchemaErrorCollector.FormatConstError</c>'s
+    /// <c>SchemaErrorCollector.FormatConstError</c>'s
     /// remarks assert that every <c>const</c> reaching it is one of TWO named shapes
     /// (<c>metadata.schemaVersion</c>, and <c>$defs/service</c>'s ports-only
     /// <c>healthCheck.type</c> pin), because every OTHER <c>const</c> in the composed schema sits
@@ -1627,7 +1627,7 @@ public sealed class SchemaErrorCollectorTests
     /// drops before the formatter runs. That claim was FALSE while REQ-021's own narrowing pinned
     /// <c>security.profile</c> to <c>const: "tls"</c> inside a <c>then</c> — an <c>if</c> filter
     /// never sees a <c>then</c> — which is exactly why the formatter carried a third,
-    /// <c>security.profile</c>-specific branch to compensate. M1 deleted that clause; this test
+    /// <c>security.profile</c>-specific branch to compensate. The schema tightening deleted that clause; this test
     /// stops the claim from silently rotting again by WALKING the live composed schema for any
     /// <c>const</c> reachable inside a <c>then</c>, and naming what it found.
     /// </summary>
@@ -1716,7 +1716,7 @@ public sealed class SchemaErrorCollectorTests
         constPath.EndsWith("/then/properties/schemaVersion/const", StringComparison.Ordinal);
 
     /// <summary>
-    /// SEC-3 (security review, fix round 3): the depth FLOOR
+    /// The depth FLOOR
     /// <c>SchemaErrorCollector.SuppressErrorsInsideForbiddenContainer</c> silently relies
     /// on. That rule drops every error at or below any location a boolean-<c>false</c> property
     /// subschema rejected, and it has no floor on how shallow such a location may be. Today none
@@ -1724,7 +1724,7 @@ public sealed class SchemaErrorCollectorTests
     /// document — but nothing in the rule enforces that. A future conditional
     /// <c>properties: { steps: false }</c> or <c>{ environment: false }</c> would sit at instance
     /// depth 1 and reduce every error in the document to that single one, which is the same
-    /// "correct today, nothing catches it breaking" shape MAJOR-1 named for the containment check
+    /// "correct today, nothing catches it breaking" shape identified for the containment check
     /// itself.
     /// </summary>
     /// <remarks>

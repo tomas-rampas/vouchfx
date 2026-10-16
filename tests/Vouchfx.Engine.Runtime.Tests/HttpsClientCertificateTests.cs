@@ -470,7 +470,7 @@ public sealed class HttpsClientCertificateTests
         }
     }
 
-    // ── The profile gate (fix round three, MINOR-2) ───────────────────────────────────────
+    // ── The profile gate ───────────────────────────────────────
 
     /// <summary>
     /// A profile this engine has no HTTPS behaviour for is REFUSED, even when the target's

@@ -4,7 +4,7 @@
 // WHY THIS EXISTS AS ITS OWN FILE. The logic was inline in `RunSuiteAsync` and only its FOLDED
 // VALUE was reachable from an end-to-end test, and only on the paths where the topology never came
 // up — where everything raises anyway. So the gate that decides WHICH scenarios are folded was
-// untested: inverting the equality condition left the whole suite green (peer-review MAJOR-1).
+// untested: inverting the equality condition left the whole suite green.
 // Extracting the decision makes all four cells addressable without a container.
 //
 // THE FOUR CELLS, and what each is load-bearing for:

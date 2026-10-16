@@ -36,7 +36,7 @@ public sealed class HttpRestExecutionTests
 
     /// <summary>
     /// A <see cref="StubProjectContext"/> declaring service <c>"svc"</c> — the target every
-    /// path-validation test in this file uses (REQ-012 as narrowed by M1: target reconciliation
+    /// path-validation test in this file uses (REQ-012 as narrowed: target reconciliation
     /// needs it declared under <c>environment.services</c> to pass, and a target naming a
     /// declared dependency is rejected outright — a dependency stages a connection string, not
     /// a service endpoint; these tests are about path shape, not target reconciliation, so
@@ -470,7 +470,7 @@ public sealed class HttpRestExecutionTests
         Assert.Equal(Verdict.EnvironmentError, outcome.Verdict);
     }
 
-    // ── M1: SSRF — Validate rejects unsafe paths ──────────────────────────────
+    // ── SSRF — Validate rejects unsafe paths ──────────────────────────────
 
     /// <summary>
     /// <see cref="HttpRestProvider.Validate"/> must reject an absolute URL in
@@ -645,7 +645,7 @@ public sealed class HttpRestExecutionTests
     }
 
     /// <summary>
-    /// M1 fix (fix round 2, PR #349 follow-up): a <c>target</c> naming a declared
+    /// PR #349 follow-up: a <c>target</c> naming a declared
     /// DEPENDENCY (never a service) must be rejected too — http.rest resolves 'target'
     /// exclusively against declared services (<c>VarKeys.Service</c>); a dependency stages
     /// its connection into <c>conn::&lt;name&gt;</c> instead, which http.rest never reads.
@@ -683,7 +683,7 @@ public sealed class HttpRestExecutionTests
             e.Contains("orders-api", StringComparison.Ordinal));
     }
 
-    // ── M1: Runtime same-authority — normal request still passes ──────────────
+    // ── Runtime same-authority — normal request still passes ──────────────
 
     /// <summary>
     /// A normal GET to the in-process responder using a rooted <c>/</c> path
@@ -737,7 +737,7 @@ public sealed class HttpRestExecutionTests
         Assert.Equal(Verdict.EnvironmentError, outcome.Verdict);
     }
 
-    // ── M2: Timeout verdict is Inconclusive (§12.1) ───────────────────────────
+    // ── Timeout verdict is Inconclusive (§12.1) ───────────────────────────
 
     /// <summary>
     /// The helper source text must set <c>client.Timeout</c> to 30 seconds —
@@ -807,8 +807,8 @@ public sealed class HttpRestExecutionTests
     /// <summary>
     /// Minimal <see cref="IProjectContext"/> stub for validation tests. Both maps default
     /// empty; a test that needs its <c>target</c> to reconcile against a declared service
-    /// (REQ-012) passes <c>services</c>, and a test proving M1's dependency-
-    /// target rejection (fix round 2) passes <c>dependencies</c> — see
+    /// (REQ-012) passes <c>services</c>, and a test proving the dependency-
+    /// target rejection passes <c>dependencies</c> — see
     /// <see cref="StubProjectContext(IReadOnlyDictionary{string, DeclaredServiceInfo}, IReadOnlyDictionary{string, string})"/>.
     /// </summary>
     private sealed class StubProjectContext : IProjectContext

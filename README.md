@@ -313,6 +313,17 @@ dotnet test vouchfx.sln --filter "requires=docker" \
   --blame-crash --blame-crash-dump-type full
 ```
 
+On Windows, `pwsh -NoProfile -File scripts/report-expired-fixture-certificates.ps1`
+prints expired certificate candidates from the read-only `CurrentUser\CA` store. The
+report includes only store, subject, thumbprint and UTC expiry; it never removes a
+certificate or reads private keys. Candidate subjects use bounded fixture names and
+the exact token shapes minted by the test fixtures, including `Imposter Root` and
+`Unrelated Root`; expiry must be strictly earlier than the current UTC time. A matching
+subject identifies a candidate for review, not proven ownership, so inspect each row
+before taking any separate action. The script is Windows-only because this is the Windows chain cache;
+it does not run or inspect stores on Linux. Its classifier checks are store-free and
+can be run with `pwsh -NoProfile -File tests/ExpiredFixtureCertificateReport.Tests.ps1`.
+
 **Always attach `--blame-crash`.** The integration lane launches the `vouchfx` CLI as a child
 process, and a test-host crash there — rare, but observed — leaves nothing to diagnose without a
 dump. The dump lands under the results directory. CI passes `--blame-crash-dump-type mini` instead,

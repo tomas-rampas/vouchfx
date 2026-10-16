@@ -151,7 +151,7 @@ public sealed class SecurityProfileRegistryTests
     }
 
     /// <summary>
-    /// M1 (peer review, fix round 2): BOTH built-in profiles are wired for exactly the same two
+    /// BOTH built-in profiles are wired for exactly the same two
     /// target kinds — a kafka dependency and any declared service. <c>tls</c> used to return
     /// <see langword="true"/> for every kind unconditionally; that made
     /// <c>TryResolve("tls", "totally-bogus-kind")</c> true and, worse, let a suite validate
@@ -181,7 +181,7 @@ public sealed class SecurityProfileRegistryTests
 
     /// <summary>
     /// The registry answers "no" for a target kind that does not exist at all, for either
-    /// profile — the critic's own measurement of the old shape was that
+    /// profile — the measurement of the old shape was that
     /// <c>TryResolve("tls", "totally-bogus-kind")</c> returned <see langword="true"/>.
     /// </summary>
     [Theory]
@@ -263,7 +263,7 @@ public sealed class SecurityProfileRegistryTests
     /// <summary>
     /// Builds a minimal document declaring one dependency of <paramref name="dependencyKind"/>
     /// with a <c>security.profile</c> of <paramref name="profile"/> — shared by every theory
-    /// AND the coverage-floor fact below (G-MAJOR-2) so the fixture shape lives in exactly one
+    /// AND the coverage-floor fact below so the fixture shape lives in exactly one
     /// place.
     /// </summary>
     private static string BuildDependencyYaml(string dependencyKind, string profile)
@@ -363,7 +363,7 @@ public sealed class SecurityProfileRegistryTests
     };
 
     /// <summary>
-    /// G-MAJOR-2 (gatekeeper): the missing coverage FLOOR. Both theories above silently
+    /// The missing coverage FLOOR. Both theories above silently
     /// <c>return</c> (asserting nothing) whenever the schema rejects a given combination — so a
     /// template typo that made EVERY document invalid would leave every theory case green
     /// without ever exercising a single registry resolution, the exact "vacuously passes"
@@ -376,7 +376,7 @@ public sealed class SecurityProfileRegistryTests
     /// </summary>
     /// <remarks>
     /// <para>
-    /// n3 + M1 (peer review, fix round 2). The PERMITTED count was 16 (<c>tls</c> on all 13
+    /// The PERMITTED count was 16 (<c>tls</c> on all 13
     /// dependency kinds, <c>mtls</c> on kafka only, both profiles on a service) and is now 4 —
     /// measured, by running this method against the tightened schema, not derived on paper. The
     /// enumerated SPACE this method walks is unaffected by that tightening. The permitted count is no longer baked into the method NAME: the old name
@@ -387,7 +387,7 @@ public sealed class SecurityProfileRegistryTests
     /// REQ-022's acceptance criterion actually names.
     /// </para>
     /// <para>
-    /// MINOR-2 (peer review, fix round 3): this block documents the METHOD below and had been
+    /// This block documents the METHOD below and had been
     /// orphaned onto <see cref="s_expectedPermittedCombinations"/> by round two's edit, which
     /// inserted that field between the documentation and the method it describes — leaving the
     /// field with two <c>&lt;summary&gt;</c> elements and the coverage-floor rationale attached
@@ -425,7 +425,7 @@ public sealed class SecurityProfileRegistryTests
     }
 
     /// <summary>
-    /// n2 (peer review, fix round 2): <see cref="SecurityProfileRegistry.ServiceTargetKind"/> is a
+    /// <see cref="SecurityProfileRegistry.ServiceTargetKind"/> is a
     /// stringly-typed sentinel sharing one value space with the dependency <c>type</c> enum. A
     /// future dependency kind literally named <c>service</c> would alias it silently — every
     /// service-scoped wiring would begin claiming that dependency kind — and
@@ -463,7 +463,7 @@ public sealed class SecurityProfileRegistryTests
     /// for step types.
     /// </summary>
     /// <remarks>
-    /// G-MAJOR-2 (gatekeeper): previously compared <c>s_dependencyKinds.Length</c> against the
+    /// Previously compared <c>s_dependencyKinds.Length</c> against the
     /// hardcoded literal <c>13</c> — a fourteenth kind added to BOTH the schema and this array
     /// would leave <c>Length == 13</c> false and fail loudly, but a fourteenth kind added to the
     /// SCHEMA alone (the actual regression this guard exists to catch) left <c>Length</c>
@@ -499,10 +499,10 @@ public sealed class SecurityProfileRegistryTests
         Assert.Equal(s_dependencyKinds.Length, s_dependencyKinds.Distinct().Count());
     }
 
-    // ── M2: none of this seam is published ───────────────────────────────────────────
+    // ── None of this seam is published ───────────────────────────────────────────
 
     /// <summary>
-    /// M2 (peer review, fix round 2): <c>Vouchfx.Engine.Compilation</c> is a PACKABLE project with
+    /// <c>Vouchfx.Engine.Compilation</c> is a PACKABLE project with
     /// <c>GenerateDocumentationFile=true</c>, so any <c>public</c> type in it ships on NuGet with
     /// its XML docs attached. A previous round shipped this entire security-profile seam that way
     /// while its own XML summary told the reader the interface "is not published for out-of-tree
@@ -562,14 +562,14 @@ public sealed class SecurityProfileRegistryTests
         return dir!.FullName;
     }
 
-    // ── m3: the multi-assembly BuildAndFreeze overload actually discovers ─────────────
+    // ── The multi-assembly BuildAndFreeze overload actually discovers ─────────────
 
     /// <summary>
-    /// m3 (peer review, fix round 2): <see cref="SecurityProfileRegistry.BuildAndFreeze(IEnumerable{Assembly})"/>
-    /// scans for <c>[SecurityProfileWiring]</c>-decorated types, and the critic's finding was
+    /// <see cref="SecurityProfileRegistry.BuildAndFreeze(IEnumerable{Assembly})"/>
+    /// scans for <c>[SecurityProfileWiring]</c>-decorated types, and the observed defect was
     /// that the attribute's own visibility made that parameter unsatisfiable from anywhere but
     /// the engine assembly — a surface that could not do what its summary described. Making the
-    /// whole registry seam <c>internal</c> (M2) fixed it from the other direction: this test
+    /// whole registry seam <c>internal</c> fixed it from the other direction: this test
     /// ASSEMBLY is granted <c>InternalsVisibleTo</c>, so it can declare a decorated wiring of its
     /// own, and the scan finds it across the assembly boundary. Nothing out-of-tree can, by
     /// design — that is the publication decision, not a defect.
@@ -592,19 +592,19 @@ public sealed class SecurityProfileRegistryTests
         Assert.False(registry.TryGet("tls", out _));
     }
 
-    // ── n1: the unknown-profile message is bounded ───────────────────────────────────
+    // ── The unknown-profile message is bounded ───────────────────────────────────
 
     /// <summary>
-    /// n1 (peer review, fix round 2): the "unknown security profile" message truncates an
+    /// The "unknown security profile" message truncates an
     /// author-controlled profile value at the SAME 200-character bound
     /// <c>SchemaErrorCollector.TruncateForDisplay</c> applies, with the same
     /// "… (N chars total)" tail. Previously the bound existed only on the
     /// <c>FormatConstError</c> path, so the two renderings of the identical value differed above
-    /// 200 characters — and M1 deleted that path, which would have removed the bound entirely
+    /// 200 characters — and the schema tightening deleted that path, which would have removed the bound entirely
     /// rather than unified it. <c>profile</c> is an open string pattern with no length limit of
     /// its own and this text is serialised verbatim into <c>vouchfx validate --json</c>'s
     /// golden-pinned <c>ValidateJsonDiagnostic(Stage, Message)</c> document, so the bound is a
-    /// security property, not cosmetics. (MINOR-1, fix round 4: the surface named here used to be
+    /// security property, not cosmetics. (the surface named here used to be
     /// the §14 JSON Lines event stream, which this text never reaches — no event record carries a
     /// schema-validation message; the bound's justification is unaffected, since
     /// <c>validate --json</c> is <c>System.Text.Json</c>-serialised just the same.)
@@ -628,7 +628,7 @@ public sealed class SecurityProfileRegistryTests
     }
 
     /// <summary>
-    /// SEC-2 (peer review, fix round 3): the bound is a CHAR index, so a value whose astral-plane
+    /// The bound is a CHAR index, so a value whose astral-plane
     /// character straddles it must back off rather than cut between the high surrogate and its
     /// low-surrogate partner. Measured before the fix: <c>ESC + 198×'a' + U+1F600</c> (length 201)
     /// landed the cut exactly between the two halves and <c>System.Text.Json</c> wrote U+FFFD.
