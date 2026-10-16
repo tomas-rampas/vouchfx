@@ -372,7 +372,9 @@ public static class YamlDocumentParser
                     value.Start.Column);
             }
 
-            var image = GetScalar(serviceMapping, "image");
+            // Match dependency image absence for direct parser consumers. The composed
+            // schema still rejects service YAML nulls before this parser is called.
+            var image = GetScalarOrPlainNull(serviceMapping, "image");
             var project = GetScalar(serviceMapping, "project");
             var pullPolicy = GetScalar(serviceMapping, "imagePullPolicy");
             var httpPortRaw = GetScalar(serviceMapping, "httpPort");
@@ -1494,8 +1496,8 @@ public static class YamlDocumentParser
     }
 
     /// <summary>
-    /// Like <see cref="GetScalar"/>, but additionally resolves a dependency <c>version</c>/
-    /// <c>image</c> scalar's PLAIN "no real content" spellings to <see langword="null"/>: a
+    /// Like <see cref="GetScalar"/>, but additionally resolves dependency <c>version</c> and
+    /// service/dependency <c>image</c> scalar's PLAIN "no real content" spellings to <see langword="null"/>: a
     /// dangling key (no value after the colon), an explicit empty PLAIN scalar, and the four
     /// YAML 1.2 core-schema PLAIN null tokens (<c>~</c>, <c>null</c>, <c>Null</c>, <c>NULL</c>).
     /// </summary>
@@ -1517,9 +1519,9 @@ public static class YamlDocumentParser
     /// even though it does not reach the QUOTED one. Deliberately a dedicated helper rather than
     /// a change to <see cref="GetScalar"/> itself: <see cref="GetScalar"/> feeds many callers
     /// (metadata, seed fixtures, step fields, env values, …) whose behaviour for a dangling key
-    /// or a plain null-shaped value must NOT change here — this fix is scoped exactly to the two
-    /// dependency fields whose shipped schema descriptions promise the treated-as-absent contract
-    /// for YAML's explicit null.
+    /// or a plain null-shaped value must NOT change here — this helper is scoped to dependency image/version and service image. Service nulls
+    /// are rejected by the composed schema; direct parser consumers still receive the same
+    /// normalised absence as dependency consumers.
     /// </para>
     /// <para>
     /// PLAIN style only — <see cref="YamlScalarNode.Style"/> distinguishes a plain scalar from a

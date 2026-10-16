@@ -20,7 +20,16 @@ internal static class EnvironmentImageValidator
     internal static void ValidateService(string name, ServiceSpec spec, string parameterName)
     {
         if (spec.Image is not { } image)
+        {
+            if (spec.Project is null)
+            {
+                throw new ArgumentException(
+                    $"Service '{name}' has neither 'image' nor 'project' set. " +
+                    "Exactly one must be supplied.",
+                    parameterName);
+            }
             return;
+        }
 
         var parsed = ImageReferenceParser.Parse(image);
         ValidateDigest("Service", name, parsed, parameterName);

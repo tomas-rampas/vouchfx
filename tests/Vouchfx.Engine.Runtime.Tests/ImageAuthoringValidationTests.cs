@@ -95,6 +95,51 @@ public sealed class ImageAuthoringValidationTests
         Assert.Empty(result.Diagnostics);
     }
 
+    [Theory]
+    [InlineData("")]
+    [InlineData("~")]
+    [InlineData("null")]
+    public void Bind_ParsedAbsentServiceImage_RefusesBeforeTopology(string value)
+    {
+        var document = YamlDocumentParser.Parse($"environment:\n  services:\n    api:\n      image: {value}\n");
+        Assert.Null(document.Environment!.Services!["api"].Image);
+        var bind = Assert.Throws<ArgumentException>(() => EnvironmentDriverRegistry.BuiltIn.Bind(document.Environment, null));
+        var map = Assert.Throws<ArgumentException>(() => EnvironmentMapper.Map(document.Environment));
+        Assert.Equal(map.Message, bind.Message);
+        Assert.Contains("neither 'image' nor 'project'", bind.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("~")]
+    [InlineData("null")]
+    public void Validate_ServiceNullImage_StillRefusesAtSchema(string value)
+    {
+        var yaml = $"environment:\n  services:\n    api:\n      image: {value}\nsteps:\n  - id: noop\n    type: script.csharp\n    code: var x = 1;\n";
+        var result = ScenarioValidator.ValidateScenario(yaml, "null-image.e2e.yaml", s_registry);
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Stage == ValidationStage.Schema);
+    }
+
+    [Fact]
+    public void Bind_ParsedProjectWithDanglingImage_UsesProject()
+    {
+        var document = YamlDocumentParser.Parse("environment:\n  services:\n    api:\n      image:\n      project: api.csproj\n");
+        Assert.Null(document.Environment!.Services!["api"].Image);
+        Assert.NotNull(EnvironmentDriverRegistry.BuiltIn.Bind(document.Environment, null));
+        Assert.NotNull(EnvironmentMapper.Map(document.Environment));
+    }
+
+    [Fact]
+    public void Bind_DirectApiServiceWithoutImageOrProject_RefusesBeforeTopology()
+    {
+        var environment = new EnvironmentSpec(new Dictionary<string, ServiceSpec>
+        {
+            ["api"] = new(null, null, null, null, null),
+        }, null, null, null, null);
+        Assert.Throws<ArgumentException>(() => EnvironmentDriverRegistry.BuiltIn.Bind(environment, null));
+    }
+
     [Fact]
     public void Bind_ProjectService_DoesNotRequireAnImage()
     {

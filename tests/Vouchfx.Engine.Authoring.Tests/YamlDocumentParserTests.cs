@@ -14,6 +14,29 @@ namespace Vouchfx.Engine.Authoring.Tests;
 /// </summary>
 public sealed class YamlDocumentParserTests
 {
+    [Theory]
+    [InlineData("")]
+    [InlineData("~")]
+    [InlineData("null")]
+    [InlineData("Null")]
+    [InlineData("NULL")]
+    public void Parse_ServicePlainNullImage_NormalisesToAbsent(string value)
+    {
+        var document = YamlDocumentParser.Parse($"environment:\n  services:\n    api:\n      image: {value}\n");
+        Assert.Null(document.Environment!.Services!["api"].Image);
+    }
+
+    [Theory]
+    [InlineData("\"\"", "")]
+    [InlineData("'null'", "null")]
+    [InlineData("!!str null", "null")]
+    [InlineData("nginx:1.27", "nginx:1.27")]
+    public void Parse_ServiceLiteralImage_PreservesText(string yamlValue, string expected)
+    {
+        var document = YamlDocumentParser.Parse($"environment:\n  services:\n    api:\n      image: {yamlValue}\n");
+        Assert.Equal(expected, document.Environment!.Services!["api"].Image);
+    }
+
     // -------------------------------------------------------------------------
     // Full document — all four sections present
     // -------------------------------------------------------------------------
