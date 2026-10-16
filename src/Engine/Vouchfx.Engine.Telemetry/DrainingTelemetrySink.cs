@@ -24,7 +24,7 @@
 //     regardless of how long the back-off window lasts (criterion 7 — symmetric);
 //   • under OutboxStore's exclusive lock, snapshot the outbox, batch (<=500 lines / a body
 //     cap), POST each batch with an Idempotency-Key = SHA-256 hex of the batch bytes;
-//   • on HTTP 400, discard the whole refused batch (none accepted) and continue;
+//   • on permanent HTTP refusal, discard the whole refused batch (none accepted) and continue;
 //   • on retryable non-delivery, STOP and keep that batch + all later batches;
 //   • on success, continue; afterwards the store rewrites the outbox to the undelivered
 //     lines and enforces the size/age/line cap (oldest-first);

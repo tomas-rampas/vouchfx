@@ -168,10 +168,10 @@ public sealed class HttpOutboxClient : IOutboxHttpClient
     }
 
     // Sends a request under a bounded per-attempt timeout and classifies the result:
-    // Any 2xx => delivered; batch HTTP 400 => permanently refused, wholly unaccepted.
-    // All other HTTP statuses and transport/timeout faults remain retryable non-delivery.
+    // Any 2xx => delivered. Only 408, 429 and 500 through 599 are retryable HTTP statuses;
+    // other batch HTTP failures are permanent. Transport/timeout faults remain retryable.
     // NEVER throws for an ordinary fault and NEVER includes the token or the response
-    // body in any surfaced detail (there is no surfaced detail — the result is a bool).
+    // body in any surfaced detail. The refusal diagnostic is fixed, payload-free text.
     private async Task<DrainAck> SendClassifyingAsync(
         HttpRequestMessage request,
         int expectedCount,
@@ -190,11 +190,16 @@ public sealed class HttpOutboxClient : IOutboxHttpClient
                 .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, attemptCts.Token)
                 .ConfigureAwait(false);
 
-            return response.IsSuccessStatusCode
-                ? new DrainAck(Delivered: true, AcceptedCount: expectedCount)
-                : classifyBatchRefusal && response.StatusCode == System.Net.HttpStatusCode.BadRequest
-                    ? DrainAck.PermanentRefusal
-                    : DrainAck.NotDelivered;
+            if (response.IsSuccessStatusCode)
+                return new DrainAck(Delivered: true, AcceptedCount: expectedCount);
+
+            var status = (int)response.StatusCode;
+            if (classifyBatchRefusal && status != 408 && status != 429 && status is not (>= 500 and <= 599))
+            {
+                ReportPermanentRefusal();
+                return DrainAck.PermanentRefusal;
+            }
+            return DrainAck.NotDelivered;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -212,6 +217,20 @@ public sealed class HttpOutboxClient : IOutboxHttpClient
             // a transport problem is NOT a defect — classify it as "not delivered" and
             // let the cross-run back-off take over.  No token/body is ever surfaced.
             return DrainAck.NotDelivered;
+        }
+    }
+
+    // Use the CLI's stderr diagnostic channel, never its machine-readable stdout.
+    // This reports the refusal, not a successful outbox rewrite (which may still fail).
+    private static void ReportPermanentRefusal()
+    {
+        try
+        {
+            Console.Error.WriteLine("Telemetry: backend permanently refused a batch; it will be discarded.");
+        }
+        catch (Exception ex) when (ex is IOException or ObjectDisposedException or InvalidOperationException or UnauthorizedAccessException)
+        {
+            // A broken diagnostic writer must not change batch disposition or stop draining.
         }
     }
 

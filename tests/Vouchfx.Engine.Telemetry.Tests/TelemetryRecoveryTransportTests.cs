@@ -11,14 +11,18 @@ public sealed class TelemetryRecoveryTransportTests
     private static readonly Uri Endpoint = new("https://telemetry.vouchfx.test");
     private static readonly string[] OneLine = { "{\"n\":1}" };
 
-    [Fact]
-    public async Task BadRequest_DiscardsWholePoisonBatch_AndProcessesLaterBatch()
+    [Theory]
+    [InlineData(400)]
+    [InlineData(401)]
+    [InlineData(413)]
+    [InlineData(415)]
+    public async Task PermanentRefusal_DiscardsWholePoisonBatch_AndProcessesLaterBatch(int status)
     {
         using var paths = new TempPaths();
         var seed = await SeedAsync(paths, 550);
         Assert.True(new OutboxDrainState { ConsecutiveFailures = 3, NextAttemptUtc = Now }.Write(paths.DrainStatePath));
         var handler = new FakeHttpHandler()
-            .RespondWith(HttpStatusCode.BadRequest)
+            .RespondWith((HttpStatusCode)status)
             .RespondWith(HttpStatusCode.OK);
         using var http = new HttpClient(handler);
         var sink = Sink(paths, new HttpOutboxClient(http, Endpoint, "test-token"));
@@ -33,15 +37,26 @@ public sealed class TelemetryRecoveryTransportTests
 
     [Theory]
     [InlineData(200, true, false, 1)]
+    [InlineData(204, true, false, 1)]
+    [InlineData(299, true, false, 1)]
+    [InlineData(300, false, true, 0)]
+    [InlineData(399, false, true, 0)]
+    [InlineData(407, false, true, 0)]
+    [InlineData(409, false, true, 0)]
+    [InlineData(428, false, true, 0)]
+    [InlineData(430, false, true, 0)]
+    [InlineData(499, false, true, 0)]
+    [InlineData(599, false, false, 0)]
+    [InlineData(600, false, true, 0)]
     [InlineData(400, false, true, 0)]
-    [InlineData(401, false, false, 0)]
-    [InlineData(413, false, false, 0)]
-    [InlineData(415, false, false, 0)]
+    [InlineData(401, false, true, 0)]
+    [InlineData(413, false, true, 0)]
+    [InlineData(415, false, true, 0)]
     [InlineData(408, false, false, 0)]
     [InlineData(429, false, false, 0)]
     [InlineData(500, false, false, 0)]
     [InlineData(503, false, false, 0)]
-    public async Task BatchDisposition_Only400IsPermanentlyRefused(
+    public async Task BatchDisposition_OnlyTransientStatusesAreRetryable(
         int status, bool delivered, bool refused, int accepted)
     {
         var handler = new FakeHttpHandler().RespondWith((HttpStatusCode)status);
@@ -146,10 +161,14 @@ public sealed class TelemetryRecoveryTransportTests
     }
 
 
-    [Fact]
-    public async Task RefusalAndForget_NeverReadResponseBody_AndForgetRemainsFailSilent()
+    [Theory]
+    [InlineData(400)]
+    [InlineData(401)]
+    [InlineData(413)]
+    [InlineData(415)]
+    public async Task RefusalAndForget_NeverReadResponseBody_AndForgetRemainsFailSilent(int status)
     {
-        using var handler = new RefusalHandler();
+        using var handler = new RefusalHandler((HttpStatusCode)status);
         using var http = new HttpClient(handler);
         var transport = new HttpOutboxClient(http, Endpoint, "test-token");
 
@@ -184,14 +203,54 @@ public sealed class TelemetryRecoveryTransportTests
         Assert.Empty(await File.ReadAllLinesAsync(paths.OutboxPath));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task HttpCancellation_PreservesCallerVersusAttemptTimeoutSemantics(bool callerCancels)
+    {
+        using var handler = new BlockingHandler();
+        using var http = new HttpClient(handler);
+        using var caller = new CancellationTokenSource();
+        var client = new HttpOutboxClient(http, Endpoint, "token",
+            callerCancels ? TimeSpan.FromSeconds(5) : TimeSpan.FromMilliseconds(20));
+        var send = client.PostBatchAsync(OneLine, "key", caller.Token);
+        await handler.Started.Task;
+        if (callerCancels)
+        {
+            caller.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => send);
+        }
+        else
+        {
+            var ack = await send;
+            Assert.Equal(DrainAck.NotDelivered, ack);
+        }
+        Assert.Equal(1, handler.Attempts);
+    }
+
+    private sealed class BlockingHandler : HttpMessageHandler
+    {
+        public TaskCompletionSource<bool> Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public int Attempts { get; private set; }
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Attempts++;
+            Started.TrySetResult(true);
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            return new HttpResponseMessage(HttpStatusCode.OK);
+        }
+    }
+
     private sealed class RefusalHandler : HttpMessageHandler
     {
+        private readonly HttpStatusCode _status;
+        public RefusalHandler(HttpStatusCode status) => _status = status;
         public List<UnreadResponseBody> Bodies { get; } = new();
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var body = new UnreadResponseBody();
             Bodies.Add(body);
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.BadRequest) { Content = body });
+            return Task.FromResult(new HttpResponseMessage(_status) { Content = body });
         }
     }
 

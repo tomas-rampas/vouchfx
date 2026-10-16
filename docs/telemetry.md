@@ -134,7 +134,7 @@ When you run `vouchfx telemetry disable`, both files are cleaned up — the inst
 
 ### Local file format
 
-The outbox is a **JSON Lines file** (one JSON object per line, UTF-8 without a byte-order mark). Each opted-in run appends one compact, allowlisted event first. Without a configured transport the CLI keeps this file locally until you disable telemetry. With a transport, the drain rewrites it to retain only pending events and applies the retention cap described below. Successfully delivered batches and permanently refused HTTP 400 batches are removed.
+The outbox is a **JSON Lines file** (one JSON object per line, UTF-8 without a byte-order mark). Each opted-in run appends one compact, allowlisted event first. Without a configured transport the CLI keeps this file locally until you disable telemetry. With a transport, the drain rewrites it to retain only pending events and applies the retention cap described below. Successfully delivered batches and permanently refused batches are removed.
 
 The file can be read by local analysis tools. Remote transmission requires the explicit endpoint and token configuration described below; enabling telemetry alone does not select a server.
 
@@ -266,8 +266,8 @@ After each test run, if telemetry is enabled and the HTTP transport is configure
 
 1. Events in the local outbox are appended first (unchanged — this guarantees the local outbox always receives every event).
 2. The client then attempts to drain the outbox by POSTing batches to `{endpoint}/v1/telemetry` with `Authorization: Bearer <token>` and `Content-Type: application/x-ndjson`. Batches are limited to 500 lines and ~1 MB per POST to keep requests bounded.
-3. A **2xx** response removes delivered lines. **HTTP 400** permanently refuses the entire batch: no lines were accepted, and the client discards the whole batch, including valid neighbours of an invalid line, then proceeds to later batches. This intentional data loss avoids a poison batch blocking future telemetry; it is not reported as delivery. Every other HTTP status (including 401, 413, 415, 408, 429 and 5xx), network fault or timeout retains the retryable batch and all later lines verbatim.
-4. **All faults are silent** — a network outage, timeout, or endpoint misconfiguration never affects the test run or its verdict.
+3. A **2xx** response removes delivered lines. **Non-2xx responses other than 408, 429 and 500 through 599** permanently refuse the entire batch: no lines were accepted, and the client discards the whole batch, including valid neighbours of an invalid line, then proceeds to later batches. This intentional data loss avoids a poison batch blocking future telemetry; it is not reported as delivery. Only HTTP 408, 429 and 500 through 599, network faults and timeouts retain the retryable batch and all later lines verbatim. A permanent refusal emits a fixed local diagnostic on stderr, with no status, endpoint, credentials, request data or response body. It never writes to machine-readable stdout. Diagnostic writes are best-effort; an unavailable stderr does not prevent draining. The diagnostic reports refusal, not confirmation that the subsequent outbox rewrite succeeded.
+4. A network outage, timeout, or endpoint misconfiguration never affects the test run or its verdict. Permanent refusals produce only the fixed stderr diagnostic described above.
 
 ### Outbox retention and draining
 
