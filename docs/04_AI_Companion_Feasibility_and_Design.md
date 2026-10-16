@@ -3,8 +3,8 @@
 **Status:** Historical design record for the local companion's feasibility and phasing rationale,
 not a live tool reference. The Generator, Healer and Planner capability groups are implemented
 in the local [MCP companion](https://vouchfx-mcp.vouchfx.io/). Its current surface has eighteen
-tools, four prompts, four concrete resources and seven URI templates; release validation remains
-outstanding and the MCP tool is not yet published on NuGet. The hosted service described as
+tools, four prompts, four concrete resources and seven URI templates. The server is published on
+NuGet as the `Vouchfx.Mcp` .NET tool. The hosted service described as
 Phase Two in §8 remains future design. See [Ecosystem → the MCP companion](ecosystem.md#the-mcp-companion)
 and the server's [tool reference](https://vouchfx-mcp.vouchfx.io/docs/tools-and-resources.html) for
 current behaviour. §§4–5 retain the original design sketch, with delivery differences annotated

@@ -84,8 +84,8 @@ and CycloneDX SBOMs. Install the latest stable CLI:
 dotnet tool install --global vouchfx
 ```
 
-Core availability is one release milestone. The ecosystem still needs its remaining publication
-and acceptance work, including stable MCP tool publication and follow-up diagnostics and publishing fixes.
+Core availability is one release milestone. The ecosystem still needs its remaining acceptance work
+and follow-up diagnostics and publishing fixes. The MCP server is available as the `Vouchfx.Mcp` .NET tool.
 The ongoing work includes:
 
 - **User-supplied environments** — Core `1.0.0` introduced owned, fresh-per-scenario

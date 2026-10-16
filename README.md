@@ -295,7 +295,7 @@ storage locations.
 
 - **[vouchfx-providers](https://providers.vouchfx.io/)** — the community provider hub: PR-gated conformance testing and the Vouched rubric. ([source](https://github.com/tomas-rampas/vouchfx-providers))
 - **[vouchfx-samples](https://samples.vouchfx.io/)** — application samples and a Kafka mutual-TLS suite. ([source](https://github.com/tomas-rampas/vouchfx-samples))
-- **[vouchfx-mcp](https://vouchfx-mcp.vouchfx.io/)** — an MCP server for AI-assisted test authoring (not yet published as a tool). ([source](https://github.com/tomas-rampas/vouchfx-mcp))
+- **[vouchfx-mcp](https://vouchfx-mcp.vouchfx.io/)** — a published .NET tool that provides an MCP server for AI-assisted test authoring. ([source](https://github.com/tomas-rampas/vouchfx-mcp))
 - **[vouchfx-telemetry-backend](https://telemetry.vouchfx.io/)** — the optional, self-hostable telemetry backend. ([source](https://github.com/tomas-rampas/vouchfx-telemetry-backend))
 
 ## Building from source

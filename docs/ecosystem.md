@@ -72,7 +72,7 @@ For configuration details and backend availability, see [Telemetry & privacy](te
 
 ## The MCP companion
 
-**AI-assisted test authoring — implemented local server; release validation outstanding; not yet on NuGet.**
+**AI-assisted test authoring — published local server, available as the `Vouchfx.Mcp` .NET tool.**
 
 A local, stdio-first Model Context Protocol (MCP) server that integrates vouchfx into AI coding agents and other MCP clients (such as Claude Code), with an optional HTTP transport. It exposes eighteen tools, four prompts, four concrete resources and seven URI templates covering six families, so agents can work with `.e2e.yaml` suites and run evidence through structured interfaces.
 
@@ -80,7 +80,7 @@ A local, stdio-first Model Context Protocol (MCP) server that integrates vouchfx
 
 CLI-backed tools refuse an installed version that does not match the pinned engine release (`ENGINE_PIN`); authoring tools and evidence readers retain their documented CLI-free behaviour. The server runs suites out-of-process and bounds subprocess execution. It relays the engine's already-redacted event evidence with documented sanitisation and size bounds, without resolving `${secret:...}` references itself or echoing its process environment into tool results, progress notifications or resources.
 
-The server is packaged as a C# NuGet dotnet tool (`Vouchfx.Mcp`, command `vouchfx-mcp`) wrapping the published vouchfx CLI at a pinned engine release. It is **not yet published to NuGet**.
+The server is published on NuGet as the .NET tool `Vouchfx.Mcp`, which provides the `vouchfx-mcp` command and wraps the published vouchfx CLI at a pinned engine release. Install the latest stable tool with `dotnet tool install --global Vouchfx.Mcp`; see [Install & register](https://vouchfx-mcp.vouchfx.io/docs/install.html) for the full setup.
 
 **Start here:**
 - **[MCP Server documentation](https://vouchfx-mcp.vouchfx.io/)** — Installation, tools and resources, troubleshooting
