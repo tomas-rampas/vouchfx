@@ -818,14 +818,47 @@ public sealed class DbAssertPostgresProvider
         return RenderTable(headers, values);
     }
 
+    private static string Cell(string text)
+    {
+        var sb = new System.Text.StringBuilder(text.Length);
+        foreach (var ch in text)
+        {
+            switch (ch)
+            {
+                case '\r':
+                    sb.Append("\\r");
+                    break;
+                case '\n':
+                    sb.Append("\\n");
+                    break;
+                case '\t':
+                    sb.Append("\\t");
+                    break;
+                case '|':
+                case '\v':
+                case '\f':
+                case '\u0085':
+                case '\u2028':
+                case '\u2029':
+                    sb.Append("\\u").Append(((int)ch).ToString("x4", System.Globalization.CultureInfo.InvariantCulture));
+                    break;
+                default:
+                    sb.Append(ch);
+                    break;
+            }
+        }
+
+        return sb.ToString();
+    }
+
     /// <summary>
     /// Renders a single-row, fixed-column ASCII table: a header row, a separator
     /// rule, then one value row.  Column widths size to the widest of header/value.
     /// </summary>
     private static string RenderTable(string[] headers, string[] values)
     {
-        // Escape the delimiter before measuring cells; user Unicode is preserved.
-        values = Array.ConvertAll(values, static value => value.Replace("|", "\\u007c", StringComparison.Ordinal));
+        // Escape line and column separators before measuring cells; user Unicode is preserved.
+        values = Array.ConvertAll(values, Cell);
 
         var widths = new int[headers.Length];
         for (int i = 0; i < headers.Length; i++)

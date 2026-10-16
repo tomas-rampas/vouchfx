@@ -829,7 +829,7 @@ public sealed class DocumentValidatorTests
         Assert.True(result.IsValid, $"Expected valid but got: {FormatErrors(result)}");
     }
 
-    // ── Copilot 2 (PR #351): map keys are RFC 6901-escaped before pointer comparison ──
+    // ── Map keys are RFC 6901-escaped before pointer comparison (PR #351) ──
 
     /// <summary>
     /// PR #351: <c>CollectUnknownSecurityProfileErrors</c> built

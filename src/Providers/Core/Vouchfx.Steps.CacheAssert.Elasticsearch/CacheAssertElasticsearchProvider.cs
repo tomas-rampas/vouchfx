@@ -894,9 +894,42 @@ public sealed class CacheAssertElasticsearchProvider
         return false;
     }
 
+    private static string Cell(string text)
+    {
+        var sb = new System.Text.StringBuilder(text.Length);
+        foreach (var ch in text)
+        {
+            switch (ch)
+            {
+                case '\r':
+                    sb.Append("\\r");
+                    break;
+                case '\n':
+                    sb.Append("\\n");
+                    break;
+                case '\t':
+                    sb.Append("\\t");
+                    break;
+                case '|':
+                case '\v':
+                case '\f':
+                case '\u0085':
+                case '\u2028':
+                case '\u2029':
+                    sb.Append("\\u").Append(((int)ch).ToString("x4", System.Globalization.CultureInfo.InvariantCulture));
+                    break;
+                default:
+                    sb.Append(ch);
+                    break;
+            }
+        }
+
+        return sb.ToString();
+    }
+
     private static string RenderTable(string expected, string actual) =>
-        $"| | Value |\n|---|---|\n| expected | `{expected}` |\n| actual | `{actual}` |";
+        $"| | Value |\n|---|---|\n| expected | `{Cell(expected)}` |\n| actual | `{Cell(actual)}` |";
 
     private static string RenderFieldTable(string field, string expected, string actual) =>
-        $"| field | {field} |\n|---|---|\n| expected | `{expected}` |\n| actual | `{actual}` |";
+        $"| field | {Cell(field)} |\n|---|---|\n| expected | `{Cell(expected)}` |\n| actual | `{Cell(actual)}` |";
 }
