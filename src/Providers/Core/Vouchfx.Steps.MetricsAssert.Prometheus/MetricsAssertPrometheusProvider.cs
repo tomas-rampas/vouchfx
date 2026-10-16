@@ -1016,13 +1016,46 @@ public sealed class MetricsAssertPrometheusProvider
         _ => element.GetRawText(),
     };
 
+    private static string Cell(string text)
+    {
+        var sb = new System.Text.StringBuilder(text.Length);
+        foreach (var ch in text)
+        {
+            switch (ch)
+            {
+                case '\r':
+                    sb.Append("\\r");
+                    break;
+                case '\n':
+                    sb.Append("\\n");
+                    break;
+                case '\t':
+                    sb.Append("\\t");
+                    break;
+                case '|':
+                case '\v':
+                case '\f':
+                case '\u0085':
+                case '\u2028':
+                case '\u2029':
+                    sb.Append("\\u").Append(((int)ch).ToString("x4", System.Globalization.CultureInfo.InvariantCulture));
+                    break;
+                default:
+                    sb.Append(ch);
+                    break;
+            }
+        }
+
+        return sb.ToString();
+    }
+
     private static string RenderTable(string label, string expected, string actual)
     {
         var headers = new[] { label, "expected", "actual" };
         var values = new[] { "(metric)", expected, actual };
 
-        // Escape the delimiter before measuring cells; user Unicode is preserved.
-        values = Array.ConvertAll(values, static value => value.Replace("|", "\\u007c", StringComparison.Ordinal));
+        // Escape line and column separators before measuring cells; user Unicode is preserved.
+        values = Array.ConvertAll(values, Cell);
 
         var widths = new int[headers.Length];
         for (int i = 0; i < headers.Length; i++)

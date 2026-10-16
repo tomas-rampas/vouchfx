@@ -160,7 +160,7 @@ public sealed class SecretReferencePatternParityTests
         {
             "\n" + "${secret:env/CLIENT_KEY_PASS}",
             "A reference preceded by a newline — the START anchor's counterpart to the " +
-            "trailing-newline case above (critic NIT-7). No live divergence exists today: " +
+            "trailing-newline case above (start-anchor coverage). No live divergence exists today: " +
             "'^' is not multiline by default in .NET or in ECMA-262, so both layers refuse " +
             "this. It is carried so the start anchor is pinned by BEHAVIOUR as well as by the " +
             "structural check's StartsWith('^') spelling — asserting the end anchor by " +

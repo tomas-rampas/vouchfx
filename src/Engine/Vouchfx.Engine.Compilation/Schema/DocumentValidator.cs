@@ -381,7 +381,7 @@ public static class DocumentValidator
     // registry — its <param> was already correct, so the two
     // disagreed.
     // Internal correction history (not XML documentation):
-    // Copilot 2: the pointer is built by ESCAPING each map key per
+    // The pointer is built by ESCAPING each map key per
     // RFC 6901 (see EncodePointerSegment), never by raw interpolation. Both
     // environment.services and environment.dependencies are open objects with no
     // propertyNames pattern (only variables and capture carry one), so a

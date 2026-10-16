@@ -1324,7 +1324,7 @@ public sealed class SystemProcessRunnerTests
             else
             {
                 // THE FLAG IS SET AFTER THE AWAIT, NOT BEFORE IT, and the order is a fix rather
-                // than a style choice (Copilot, round 2). This is the LOUD reader —
+                // than a style choice. This is the LOUD reader —
                 // ReclaimPidForTeardownAsync, not the quiet wrapper — so an ACL fault on the
                 // scratch file escapes as an UnauthorizedAccessException and this look never
                 // completes. Setting the flag first would leave the `finally` looking at
@@ -3372,7 +3372,7 @@ public sealed class SystemProcessRunnerTests
         Assert.True(
             block!.Statements.IndexOf(armingAnchor!) > block.Statements.IndexOf(lookAnchor!),
             FormattableString.Invariant(
-                $"`{FlagName} = true` at {Describe(arming)} does not sit after the `{LoudReclaimMethod}` call it is supposed to record. That call is the LOUD reader: an ACL fault on the pid file escapes it, and a flag armed beforehand then tells row 5's `finally` that a look has already happened when none has — so teardown skips its own look on the one path where nothing has looked at the child at all, and the row's teardown rests on the loud and quiet readers happening to fail alike rather than on a look of its own (#539, Copilot round 2). Move the assignment below the await."));
+                $"`{FlagName} = true` at {Describe(arming)} does not sit after the `{LoudReclaimMethod}` call it is supposed to record. That call is the LOUD reader: an ACL fault on the pid file escapes it, and a flag armed beforehand then tells row 5's `finally` that a look has already happened when none has — so teardown skips its own look on the one path where nothing has looked at the child at all, and the row's teardown rests on the loud and quiet readers happening to fail alike rather than on a look of its own (#539). Move the assignment below the await."));
     }
 
     /// <summary>

@@ -34,6 +34,7 @@ to published pre-releases on 2026-07-14.
 - Plain unquoted null service images normalize as missing values; direct binds refuse unless a service supplies an image or project. This changes no schema.
 - For HTTP responses, telemetry retries only status 408, 429 and 500–599. Other non-2xx statuses cause permanent refusal with a fixed payload-free stderr message; later batches continue, and a broken stderr writer does not change the disposition.
 - Ten active Core provider validation and local size-limit diagnostic messages now use ASCII hyphens in place of em dashes. Authored and observed Unicode data is unchanged; generated runtime strings and frozen SDK helper sources are unchanged.
+- Provider diff tables escape authored line breaks, tabs and other row-breaking control characters before measuring or displaying cells, preserving ordinary Unicode text and existing table layouts.
 - Watch mode refuses `--html`, `--junit`, `--events`/`--json`, and `--events-stream` before discovery, and leaves report files untouched.
 
 ## [1.0.3] — 2026-10-15

@@ -5,6 +5,7 @@ import hashlib
 import io
 import json
 from pathlib import Path
+import re
 import tempfile
 import time
 import unittest
@@ -40,11 +41,17 @@ class PinSourceContractTests(unittest.TestCase):
         for row in pins.values():
             registry = "mcr.microsoft.com/" if row["registry"] == "mcr.microsoft.com" else ""
             self.assertIn(registry + row["repository"] + "@" + row["digest"], pull_list)
-        self.assertNotIn("mssql/server:2022-latest", pull_list)
+        # The managed SQL Server default is intentionally tag-pulled; the hidden
+        # Azure Service Bus sidecar remains a separate digest-pinned reference.
+        self.assertIn("mcr.microsoft.com/mssql/server:2022-latest", pull_list)
         self.assertNotIn("hashicorp/vault:latest", pull_list)
         mapper = (ROOT / "src/Engine/Vouchfx.Engine.Orchestration/EnvironmentMapper.cs").read_text(encoding="utf-8")
         self.assertIn(pins["asb-sql"]["digest"].split(":")[1], mapper)
-        self.assertIn(".WithImageSHA256(AzureServiceBusSqlImageDigest)", mapper)
+        self.assertRegex(
+            mapper,
+            r'AddContainer\(sidecarName,\s*"mcr\.microsoft\.com/mssql/server"\)\s*'
+            r'\.WithImageSHA256\(AzureServiceBusSqlImageDigest\)',
+        )
         self.assertIn(pins["rustfs"]["digest"].split(":")[1], mapper)
         fixtures = ROOT / "tests/Vouchfx.Engine.Orchestration.Tests"
         for name in WHOAMI_FIXTURES:
