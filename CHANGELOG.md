@@ -21,6 +21,8 @@ to published pre-releases on 2026-07-14.
 
 ## [Unreleased]
 
+## [1.0.7] — 2026-10-17
+
 ### Added
 
 - Archive successful security probes as additive v1 `security-confirmation` events, with declared/observed facts and explicit replay status. HTML and JUnit consume the same records. Existing confirmation levels, verdicts and authentication/authorisation limits are unchanged.
@@ -29,6 +31,7 @@ to published pre-releases on 2026-07-14.
 
 - Enforce provider `MinEngineVersion` using strict SemVer against explicit Runtime capability metadata in CLI and public runtime hosts, before provider schema admission. Frozen public SDK signatures and helper bodies remain unchanged; reflective discovery is still trusted code.
 - Include referenced field and property initialisers in the ASCII provider-output census, including helper chains, while excluding unrelated generated source.
+- Validate documentation snippet inputs before rendering and during the final site check, matching MkDocs path semantics without reading unadmitted include bodies.
 
 - Consolidate the unconditional exit checks in the exit-code reference and correct environment-variable guidance: an unset service or dependency `${env:NAME}` is an authoring refusal that prevents exit 0 regardless of either gating flag, while an explicitly set empty value is preserved. The v1.0.0-rc.6 entry below records historical behavior; use the current exit-code reference for the active policy.
 

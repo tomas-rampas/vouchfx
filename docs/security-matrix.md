@@ -334,7 +334,7 @@ endpoint with the same material a step will use, and reports one of two named co
 A declaration it cannot confirm forces a nonzero exit as an environment error without additional
 gating flags. See [CI integration](ci-integration.md) for the complete exit policy.
 
-The current source records successful probes as typed `security-confirmation` events in JSONL, an HTML evidence table and JUnit suite properties. This addition is unreleased after 1.0.6. Inspect the declared profile, observed endpoint, client-identity flag and named level together. A replayed record is old build-time evidence, not a fresh probe; its timestamp records emission. Certificate paths, passwords and free-form probe detail are excluded. [The event contract](01_Technical_Architecture_and_Engineering_Blueprint.md#1444-security-confirmation-events) defines the exact fields and reporting scope.
+The current source records successful probes as typed `security-confirmation` events in JSONL, an HTML evidence table and JUnit suite properties. These records are available in Core 1.0.7. Inspect the declared profile, observed endpoint, client-identity flag and named level together. A replayed record is old build-time evidence, not a fresh probe; its timestamp records emission. Certificate paths, passwords and free-form probe detail are excluded. [The event contract](01_Technical_Architecture_and_Engineering_Blueprint.md#1444-security-confirmation-events) defines the exact fields and reporting scope.
 
 **Confirmation requires successful topology startup.** A typed failure of the declared secured
 resource's own readiness, endpoint discovery or server-material access that prevents confirmation

@@ -205,7 +205,7 @@ Every raising path except a failed probe prints, after the fault it did report:
 
 A failed probe is the exception because it already reports a measured security failure in its own
 words. Note the reach: this line goes to **stdout only** — it is in neither `--junit` nor `--events`,
-so the explanatory summary itself is absent from machine-readable artefacts. Separately, the current source adds typed successful `security-confirmation` records to JSONL, HTML and JUnit; that change is unreleased after 1.0.6. A successful record cannot stand in for a failed or unperformed probe. See [the event contract](01_Technical_Architecture_and_Engineering_Blueprint.md#1444-security-confirmation-events) for its fields and replay limits.
+so the explanatory summary itself is absent from machine-readable artefacts. Separately, the current source adds typed successful `security-confirmation` records to JSONL, HTML and JUnit; those records are available in Core 1.0.7. A successful record cannot stand in for a failed or unperformed probe. See [the event contract](01_Technical_Architecture_and_Engineering_Blueprint.md#1444-security-confirmation-events) for its fields and replay limits.
 
 **The provider- or engine-surface guard rule carries the same kind of line.** It needs one more than
 the parse-failure and nothing-executed rules beside it do: those two fire on a run that is *visibly*
