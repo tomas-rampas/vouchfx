@@ -1,9 +1,9 @@
 # vouchfx public roadmap
 
 This is the public, capability-level roadmap for vouchfx. Progress is measured by implemented
-capabilities and passing release checks, rather than a calendar target. Core `1.0.0` CLI and SDK
-packages are published, including Compose support and bundled DCP tools. Ecosystem publication,
-fleet validation and follow-up defect fixes remain in progress.
+capabilities and passing release checks, rather than a calendar target. Stable Core CLI and SDK
+packages include Compose support and bundled DCP tools. Companion repositories have independent
+release versions; validate the selected versions together using the release checks below.
 
 For what changed when, see the [changelog](changelog.md). For how project decisions are made, see
 [governance](governance.md).
@@ -72,7 +72,7 @@ implementation, not a claim that every release requirement or open defect is res
 - **A signed release pipeline** — keyless cosign signatures, SLSA provenance attestations, CycloneDX SBOMs,
   and NuGet.org publication via Trusted Publishing (no long-lived keys).
 
-## Stable Core and remaining ecosystem release work
+## Stable Core and ecosystem release checks
 
 The first public releases shipped on 2026-07-08. The alpha and release-candidate series are
 historical; Core `1.0.0` was the first stable CLI and SDK milestone. Current stable distributions
@@ -84,9 +84,8 @@ and CycloneDX SBOMs. Install the latest stable CLI:
 dotnet tool install --global vouchfx
 ```
 
-Core availability is one release milestone. The ecosystem still needs its remaining publication
-and acceptance work, including stable MCP tool publication and follow-up diagnostics and publishing fixes.
-The ongoing work includes:
+Core and its companion repositories are released independently. The MCP server is available as the
+`Vouchfx.Mcp` .NET tool. Use the following checks when selecting release versions across repositories:
 
 - **User-supplied environments** — Core `1.0.0` introduced owned, fresh-per-scenario
   HTTP/TCP/PostgreSQL Docker Compose environments through a format-neutral registered-driver boundary.
@@ -111,7 +110,7 @@ The ongoing work includes:
   [migration guide](https://samples.vouchfx.io/docs/migrating.html) (worked Postman,
   xUnit and SpecFlow ports), and the [community provider hub](https://providers.vouchfx.io/),
   rather than a formal pilot cohort.
-- The Provider SDK (`Vouchfx.Sdk`, its `Vouchfx.Sdk.Testing` harness and their engine dependency closure) is published at `1.0.0` on NuGet.org. Its frozen provider contract remains the compatibility boundary for the v1.x series.
+- The current Provider SDK (`Vouchfx.Sdk`, its `Vouchfx.Sdk.Testing` harness and their engine dependency closure) is published at `1.0.5` on NuGet.org. Its frozen provider contract remains the compatibility boundary for the v1.x series; rebuilt providers must declare their supported engine floor.
 - Some release artefacts gain further signatures (Windows Authenticode, macOS notarisation, GPG) only once
   the respective certificates are provisioned — cosign signatures and SLSA provenance are present on every
   artefact from day one, so verification is never blocked on those extras.
