@@ -687,11 +687,10 @@ internal static class RunCommand
     /// <c>ShutdownBackstop</c> force-exits with. <strong>Only the sentence moved</strong>; a test
     /// asserting the integer alone cannot see the difference, and one that did would have passed
     /// against the defect.
-    /// <strong>The agreement claimed is for a cancellation that ESCAPES the run</strong>, and only
-    /// that. Where the EOF cancellation is instead ABSORBED lower down — a runner that observes the
-    /// token, unwinds, and hands back an ordinary <see cref="SuiteResult"/> — no exception reaches
-    /// this frame and the exit code is whatever <see cref="ComputeExitCode"/> derives, which for a
-    /// suite that executed something can be 0. That is pre-existing and out of scope here.
+    /// A runner can also absorb cancellation into an Inconclusive <see cref="SuiteResult"/>.
+    /// The pipeline snapshots the EOF request when that result returns and promotes an otherwise
+    /// successful exit to Inconclusive. Ordinary execution-time Inconclusive results retain their
+    /// opt-in policy, and a completed Pass or an already nonzero exit is preserved.
     /// </para>
     /// <para>
     /// <strong>No report artefacts are synthesised here, and that is a stated residual rather than
@@ -718,7 +717,8 @@ internal static class RunCommand
         TelemetryRunHook? telemetryHook,
         CancellationToken cancellationToken,
         bool shutdownOnStdinEof = false,
-        EnvironmentDriverRegistry? environmentDrivers = null)
+        EnvironmentDriverRegistry? environmentDrivers = null,
+        Stream? shutdownInput = null)
     {
         ArgumentNullException.ThrowIfNull(output);
 
@@ -740,7 +740,8 @@ internal static class RunCommand
                 telemetryHook,
                 cancellationToken,
                 shutdownOnStdinEof,
-                environmentDrivers).ConfigureAwait(false);
+                environmentDrivers,
+                shutdownInput).ConfigureAwait(false);
         }
         // A GENUINE USER CANCELLATION, AND NOTHING ELSE, KEEPS THE PATH IT HAS. The filter is
         // load-bearing: TaskCanceledException IS an OperationCanceledException and is what a
@@ -929,7 +930,7 @@ internal static class RunCommand
         + "nothing to report.  Reported as Inconclusive (section 12.1).";
 
     /// <summary>
-    /// Whether an escaped cancellation is the <c>--shutdown-on-stdin-eof</c> graceful stop rather
+    /// Whether cancellation is the <c>--shutdown-on-stdin-eof</c> graceful stop rather
     /// than a timeout, a transport hiccup, or the user's own Ctrl-C.
     /// </summary>
     /// <param name="shutdownSource">
@@ -1130,7 +1131,8 @@ internal static class RunCommand
         TelemetryRunHook? telemetryHook,
         CancellationToken cancellationToken,
         bool shutdownOnStdinEof = false,
-        EnvironmentDriverRegistry? environmentDrivers = null)
+        EnvironmentDriverRegistry? environmentDrivers = null,
+        Stream? shutdownInput = null)
     {
         // --watch and --parallel are mutually exclusive: one keeps a SINGLE topology alive for
         // one file, the other fans MANY scenarios across MANY topologies.  Reject the combo as a
@@ -1249,8 +1251,9 @@ internal static class RunCommand
                 () => Environment.Exit(ExitCodes.Inconclusive))
             : null;
 
+        // The optional internal stream override remains caller-owned, like the real stdin stream.
         await using var stdinShutdownWatcher = shutdownOnStdinEof
-            ? StdinShutdownWatcher.Start(Console.OpenStandardInput(), () =>
+            ? StdinShutdownWatcher.Start(shutdownInput ?? Console.OpenStandardInput(), () =>
               {
                   // THE ARM PRECEDES THE CANCEL, AND THAT ORDER IS THE GUARANTEE, NOT A STYLE.
                   // `Cancel()` runs its registrations SYNCHRONOUSLY on this thread and can resume
@@ -1321,7 +1324,8 @@ internal static class RunCommand
                 output,
                 telemetryHook,
                 runCancellationToken,
-                environmentDrivers).ConfigureAwait(false);
+                environmentDrivers,
+                () => IsStdinEofShutdown(linkedShutdownSource, cancellationToken)).ConfigureAwait(false);
             // Parallel slots retain their Inconclusive cancellation records and join cleanup
             // before returning. Normal runs preserve the original caller's stop signal at this
             // boundary. A completed watch loop keeps its graceful stop result; the distinct
@@ -1377,7 +1381,8 @@ internal static class RunCommand
         TextWriter output,
         TelemetryRunHook? telemetryHook,
         CancellationToken runCancellationToken,
-        EnvironmentDriverRegistry? environmentDrivers = null)
+        EnvironmentDriverRegistry? environmentDrivers = null,
+        Func<bool>? isStdinEofShutdown = null)
     {
         // #568: the run-start anchor for telemetry's startupMs/timeToFirstTestMs — captured
         // as the very first statement, before discovery/Docker/anything else, so the anchor
@@ -1553,6 +1558,7 @@ internal static class RunCommand
             : (eventsReportPath, false);
 
         Verdict suiteVerdict = Verdict.Pass;
+        var stdinEofShutdownObserved = false;
         SecurityAssurance? securityAssurance = null;
 
         // #369. Captured beside the assurance and for the same reason: the SuiteResult is
@@ -1682,6 +1688,10 @@ internal static class RunCommand
                     environmentDrivers: environmentDrivers).ConfigureAwait(false);
 
             suiteVerdict = result.Verdict;
+            // Capture before telemetry: a later EOF must not reclassify a completed result.
+            // Runners may absorb cooperative cancellation into a normal Inconclusive result.
+            stdinEofShutdownObserved = result.Verdict == Verdict.Inconclusive
+                && isStdinEofShutdown?.Invoke() == true;
             eventsArchiveWritten = result.EventsArchiveWritten;
 
             // REQ-018: the one cause of a non-Fail verdict that breaks CI without an opt-in flag.
@@ -1767,6 +1777,14 @@ internal static class RunCommand
             securityAssurance, executedAnyScenario, providerOrEngineFaultObserved))
         {
             await output.WriteLineAsync(ProviderOrEngineFaultNotice).ConfigureAwait(false);
+        }
+
+        if (stdinEofShutdownObserved && code == ExitCodes.Success)
+        {
+            await WriteDiagnosticBestEffortAsync(
+                output, static () => StdinEofShutdownNotice, CancellationToken.None)
+                .ConfigureAwait(false);
+            return ExitCodes.Inconclusive;
         }
 
         return code;
