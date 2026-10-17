@@ -32,6 +32,18 @@ to published pre-releases on 2026-07-14.
 
 - Consolidate the unconditional exit checks in the exit-code reference and correct environment-variable guidance: an unset service or dependency `${env:NAME}` is an authoring refusal that prevents exit 0 regardless of either gating flag, while an explicitly set empty value is preserved. The v1.0.0-rc.6 entry below records historical behavior; use the current exit-code reference for the active policy.
 
+## [1.0.6] — 2026-10-17
+
+### Fixed
+
+- Return exit code 4 when `--shutdown-on-stdin-eof` cancels an active run that would otherwise finish with an `INCONCLUSIVE` result and exit 0. Preserve the result, ordinary Inconclusive policy and public SDK API. The official NuGet-installed CLI was subsequently checked during startup and after readiness: both cases returned 4 and settled with no case-owned Docker containers or networks.
+
+## [1.0.5] — 2026-10-16
+
+### Fixed
+
+- Update centrally managed MessagePack to 2.5.303 and System.Security.Cryptography.Pkcs to 10.0.13. Consolidate the exit-code reference and clarify that an unset service `${env:NAME}` is an authoring refusal that cannot be suppressed by either gating flag.
+
 ## [1.0.4] — 2026-10-16
 
 ### Added
