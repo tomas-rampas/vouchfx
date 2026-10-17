@@ -9,7 +9,7 @@ from mkdocs.plugins import event_priority
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _publication_inputs import (  # noqa: E402
-    PublicationInputError, validate_mkdocs_files, validate_source_inputs,
+    PublicationInputError, validate_mkdocs_files, validate_source_inputs, validate_snippet_inputs,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -19,7 +19,9 @@ def _validate(config):
     if Path(config["docs_dir"]) != REPO_ROOT / "docs":
         raise PluginError("publication inputs: docs_dir must be the repository docs/ directory")
     try:
-        return validate_source_inputs(REPO_ROOT)
+        inputs = validate_source_inputs(REPO_ROOT)
+        validate_snippet_inputs(REPO_ROOT, inputs)
+        return inputs
     except PublicationInputError as exc:
         raise PluginError(f"publication inputs: {exc}") from None
 

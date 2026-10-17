@@ -499,7 +499,7 @@ public static class EnvironmentMapper
             // depConnBuilders — the custom connection-string builder mechanism.
             //
             // Container topology:
-            //   <name>-sqledge  — mcr.microsoft.com/mssql/server:2022-latest (SQL persistence)
+            //   <name>-sqledge  — mcr.microsoft.com/mssql/server@sha256:cf8f0ab2ebe61feec2eed2629061a07d247f791c2a8ddda74a4ac9f06a291718 (SQL persistence; 2022-CU27-GDR1-ubuntu-22.04)
             //   <name>           — mcr.microsoft.com/azure-messaging/servicebus-emulator:1.1.2
             //     • AMQP port 5672   → resolved as conn::<name>
             //     • HTTP port 5300   → health check at /health

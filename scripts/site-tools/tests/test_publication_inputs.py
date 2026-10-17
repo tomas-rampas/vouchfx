@@ -8,7 +8,7 @@ import subprocess
 import sys
 import uuid
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -241,3 +241,160 @@ def test_current_reviewed_manifest_matches_public_source_names(guard):
     assert "docs/01_Technical_Architecture_and_Engineering_Blueprint.md" in inputs
     assert "docs/roadmap.md" in inputs
     assert "site/og-image.png" in inputs
+
+
+@pytest.fixture
+def early_hook(monkeypatch):
+    # The site-tools-only CI lane does not install MkDocs. Stub only its two
+    # import-time symbols there; docs-environment tests use real MkDocs below.
+    try:
+        import mkdocs.exceptions
+    except ImportError:
+        exceptions = ModuleType("mkdocs.exceptions")
+        exceptions.PluginError = type("PluginError", (RuntimeError,), {})
+        plugins = ModuleType("mkdocs.plugins")
+        plugins.event_priority = lambda priority: lambda event: event
+        monkeypatch.setitem(sys.modules, "mkdocs.exceptions", exceptions)
+        monkeypatch.setitem(sys.modules, "mkdocs.plugins", plugins)
+    return _load("scripts/site_hooks/publication_inputs.py")
+
+
+@pytest.mark.parametrize("directive", [
+    '--8<-- "plan/neutral.md"',
+    "-8<- 'docs/reviews/neutral.md'",
+    '--8<-- "docs/03_MVP_Project_Plan.md:1:3"',
+    '--8<-- "HUMAN_TODO.md:section"',
+    '--8<-- "docs/assets/example.bin"',
+    '--8<-- "docs/unregistered.md"',
+    '--8<-- "../neutral.md"',
+    '--8<-- "https://example.invalid/neutral.md"',
+    '--8<--\nplan/neutral.md\n--8<--',
+    '--8<--\n"plan/neutral.md"\n--8<--',
+])
+@pytest.mark.parametrize("source", ["docs/guide.md", "README.md"])
+def test_early_hook_rejects_direct_and_nested_targets_without_reading_them(
+    early_hook, source_repo, monkeypatch, directive, source,
+):
+    root, _ = source_repo
+    # The root snippet is reachable from a reviewed public page.
+    (root / "docs/guide.md").write_text('--8<-- "README.md"', encoding="utf-8")
+    (root / source).write_text(directive, encoding="utf-8")
+    private = root / "docs/reviews/neutral.md"
+    private.parent.mkdir(parents=True)
+    private.write_text("PRIVATE BODY MUST NOT BE READ", encoding="utf-8")
+    monkeypatch.setattr(early_hook, "REPO_ROOT", root)
+    original = Path.read_text
+    reads = []
+
+    def admitted_read(path, *args, **kwargs):
+        reads.append(path.relative_to(root).as_posix())
+        assert path != private, "private directive target was opened"
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", admitted_read)
+    with pytest.raises(early_hook.PluginError, match="not in the allowlist"):
+        early_hook.on_config({"docs_dir": str(root / "docs")})
+    assert set(reads).issubset({"docs/guide.md", "README.md", "CHANGELOG.md", "GOVERNANCE.md"})
+
+
+@pytest.mark.parametrize("event", ["on_config", "on_files"])
+def test_early_hook_admits_all_names_before_scanning_any_body(
+    early_hook, source_repo, monkeypatch, event,
+):
+    root, _ = source_repo
+    (root / "docs/unregistered.md").write_text("UNREVIEWED BODY", encoding="utf-8")
+    monkeypatch.setattr(early_hook, "REPO_ROOT", root)
+
+    def no_body_reads(*args, **kwargs):
+        pytest.fail("body read before source names were admitted")
+
+    monkeypatch.setattr(Path, "read_text", no_body_reads)
+    config = {"docs_dir": str(root / "docs")}
+    with pytest.raises(early_hook.PluginError, match="unregistered Markdown"):
+        if event == "on_config":
+            early_hook.on_config(config)
+        else:
+            early_hook.on_files([], config=config)
+
+
+def test_early_hook_accepts_recursive_approved_and_escaped_directives(
+    early_hook, source_repo, monkeypatch,
+):
+    root, _ = source_repo
+    (root / "docs/guide.md").write_text('--8<-- "README.md:1:8"', encoding="utf-8")
+    (root / "README.md").write_text(
+        "--8<--\n;plan/ignored.md\nCHANGELOG.md\n--8<--\n"
+        ';--8<-- "plan/escaped.md"', encoding="utf-8",
+    )
+    (root / "CHANGELOG.md").write_text("-8<- 'GOVERNANCE.md'", encoding="utf-8")
+    monkeypatch.setattr(early_hook, "REPO_ROOT", root)
+    config = {"docs_dir": str(root / "docs"), "theme": SimpleNamespace(dirs=[])}
+    assert early_hook.on_config(config) is config
+    files = [_file("guide.md", root / "docs")]
+    assert early_hook.on_files(files, config=config) is files
+
+
+def test_postbuild_snippet_gate_rechecks_nested_snippets(source_repo, monkeypatch):
+    gate = _load("scripts/check_site.py")
+    root, _ = source_repo
+    monkeypatch.setattr(gate, "REPO_ROOT", root)
+    gate.check_snippet_allowlist(root)
+    (root / "README.md").write_text('--8<-- "plan/neutral.md"', encoding="utf-8")
+    with pytest.raises(gate.CheckFailed, match="README.md:1:.*not in the allowlist"):
+        gate.check_snippet_allowlist(root)
+
+
+@pytest.mark.parametrize("target", [None, "docs/reviews/neutral.md", "plan/neutral.md"])
+def test_real_mkdocs_build_admits_snippets_before_markdown_render(
+    source_repo, monkeypatch, target,
+):
+    # Run this integration guard with requirements-docs.txt installed. The
+    # site-tools-only lane still exercises both real hook entry points above.
+    pytest.importorskip("mkdocs")
+    pytest.importorskip("pymdownx.snippets")
+    import shutil
+    import markdown
+    from mkdocs.commands.build import build
+    from mkdocs.config import load_config
+    from mkdocs.exceptions import Abort, PluginError
+
+    root, _ = source_repo
+    hooks = root / "scripts/site_hooks"
+    hooks.mkdir(parents=True)
+    for name in ["publication_inputs.py", "_publication_inputs.py"]:
+        shutil.copyfile(REPO_ROOT / "scripts/site_hooks" / name, hooks / name)
+    (root / "docs/guide.md").write_text('--8<-- "README.md"', encoding="utf-8")
+    (root / "README.md").write_text('--8<-- "CHANGELOG.md"', encoding="utf-8")
+    if target:
+        path = root / target
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("PRIVATE BODY MUST NOT BE READ", encoding="utf-8")
+        (root / "CHANGELOG.md").write_text(f'--8<-- "{target}"', encoding="utf-8")
+    else:
+        (root / "CHANGELOG.md").write_text("APPROVED NESTED CONTENT", encoding="utf-8")
+    (root / "mkdocs.yml").write_text(
+        "site_name: Neutral fixture\nsite_dir: _build\nplugins: []\n"
+        "hooks: [scripts/site_hooks/publication_inputs.py]\n"
+        "markdown_extensions:\n  - pymdownx.snippets:\n      base_path: ['" + root.as_posix() + "']\n",
+        encoding="utf-8",
+    )
+    config = load_config(config_file=str(root / "mkdocs.yml"), strict=True)
+    if target:
+        def no_render(*args, **kwargs):
+            pytest.fail("Markdown rendered before snippet admission")
+
+        original = Path.read_text
+        def no_private_read(path, *args, **kwargs):
+            assert path != root / target, "private snippet target was read"
+            return original(path, *args, **kwargs)
+
+        monkeypatch.setattr(markdown.Markdown, "convert", no_render)
+        monkeypatch.setattr(Path, "read_text", no_private_read)
+        with pytest.raises(Abort, match="BuildError") as failure:
+            build(config)
+        assert isinstance(failure.value.__context__, PluginError)
+        assert "not in the allowlist" in str(failure.value.__context__)
+        assert not (root / "_build/guide/index.html").exists()
+    else:
+        build(config)
+        assert "APPROVED NESTED CONTENT" in (root / "_build/guide/index.html").read_text(encoding="utf-8")
