@@ -351,6 +351,8 @@ def test_postbuild_snippet_gate_rechecks_nested_snippets(source_repo, monkeypatc
     '--8<-- "README.md:neutral.txt"',
     '--8<-- "README.md:1:3"',
     '--8<-- "README.md:approved"',
+    'title: Neutral\n    --8<--\n\n--8<-- "README.md"\n',
+    '---\ntitle: >\n    --8<--\n---\n\n--8<-- "README.md"\n',
     *[f'--8<--{separator}\n--8<-- "unregistered.md"'
       for separator in ["\v", "\f", "\x85", "\u2028", "\u2029", "\x1c", "\x1d", "\x1e"]],
 ])
@@ -374,7 +376,9 @@ def test_real_mkdocs_build_admits_snippets_before_markdown_render(
         shutil.copyfile(REPO_ROOT / "scripts/site_hooks" / name, hooks / name)
     (root / "docs/guide.md").write_text('--8<-- "README.md"', encoding="utf-8")
     (root / "README.md").write_text('--8<-- "CHANGELOG.md"', encoding="utf-8")
-    if directive:
+    if directive and directive.startswith(("title:", "---")):
+        (root / "docs/guide.md").write_text(directive, encoding="utf-8")
+    elif directive:
         (root / "CHANGELOG.md").write_text(directive, encoding="utf-8")
     else:
         (root / "CHANGELOG.md").write_text("APPROVED NESTED CONTENT", encoding="utf-8")
@@ -405,6 +409,8 @@ def test_real_mkdocs_build_admits_snippets_before_markdown_render(
         expected = "partial snippet include" if directive in {
             '--8<-- "README.md:1:3"', '--8<-- "README.md:approved"',
         } else "not in the allowlist"
+        if directive.startswith(("title:", "---")):
+            expected = "snippet marker in document metadata"
         assert expected in str(failure.value.__context__)
         assert not (root / "_build/guide/index.html").exists()
     else:
@@ -536,3 +542,75 @@ def test_copied_suffix_grammar_matches_installed_snippet_extension(guard):
     actual = snippets.SnippetPreprocessor.RE_SNIPPET_FILE
     assert guard._RE_SNIPPET_FILE.pattern == actual.pattern
     assert guard._RE_SNIPPET_FILE.flags == actual.flags
+
+
+@pytest.mark.parametrize("metadata", [
+    "title: Neutral\n    --8<--\n\n", "title: --8<--\n\n",
+    "title: Neutral\n\t--8<--\n\n", "---\ntitle: --8<--\n---\n",
+])
+def test_docs_metadata_marker_is_refused_with_only_approved_targets(guard, metadata):
+    with pytest.raises(guard.PublicationInputError, match="snippet marker in document metadata"):
+        guard._validate_metadata_snippet_markers("docs/guide.md", metadata + '--8<-- "README.md"')
+
+
+@pytest.mark.parametrize("metadata", ["title: Neutral\n\n", "---\ntitle: Neutral\n---\n"])
+def test_ordinary_metadata_and_body_include_remain_supported(early_hook, source_repo, monkeypatch, metadata):
+    root, _ = source_repo
+    (root / "docs/guide.md").write_text(metadata + '--8<-- "README.md"', encoding="utf-8")
+    monkeypatch.setattr(early_hook, "REPO_ROOT", root)
+    early_hook.on_config({"docs_dir": str(root / "docs")})
+
+
+def test_root_snippet_metadata_keeps_raw_inclusion_semantics(early_hook, source_repo, monkeypatch):
+    root, _ = source_repo
+    (root / "README.md").write_text('title: --8<--\n\n--8<-- "GOVERNANCE.md"', encoding="utf-8")
+    monkeypatch.setattr(early_hook, "REPO_ROOT", root)
+    early_hook.on_config({"docs_dir": str(root / "docs")})
+
+
+def test_metadata_boundary_patterns_match_installed_mkdocs(guard):
+    meta = pytest.importorskip("mkdocs.utils.meta")
+    assert guard._RE_YAML_METADATA.pattern == meta.YAML_RE.pattern
+    assert guard._RE_METADATA_KEY.pattern == meta.META_RE.pattern
+    assert guard._RE_METADATA_MORE.pattern == meta.META_MORE_RE.pattern
+
+
+@pytest.mark.parametrize("prefix", ["", "\ufeff"])
+def test_docs_metadata_refusal_accounts_for_mkdocs_bom_decoding(
+    early_hook, source_repo, monkeypatch, prefix,
+):
+    root, _ = source_repo
+    (root / "docs/guide.md").write_text(
+        prefix + 'title: Neutral\n    --8<--\n\n--8<-- "README.md"', encoding="utf-8",
+    )
+    monkeypatch.setattr(early_hook, "REPO_ROOT", root)
+    with pytest.raises(early_hook.PluginError, match="snippet marker in document metadata"):
+        early_hook.on_config({"docs_dir": str(root / "docs")})
+
+
+@pytest.mark.parametrize("extension", [".markdown", ".mdown", ".mkdn", ".mkd", ".md"])
+@pytest.mark.parametrize("kind", ["approved", "unregistered", "metadata"])
+def test_every_registered_markdown_suffix_receives_early_snippet_admission(
+    early_hook, source_repo, monkeypatch, extension, kind,
+):
+    root, inputs = source_repo
+    relative = "docs/alternate" + extension
+    text = {
+        "approved": 'title: Neutral\n\n--8<-- "README.md"',
+        "unregistered": '--8<-- "unregistered.md"',
+        "metadata": 'title: Neutral\n    --8<--\n\n--8<-- "README.md"',
+    }[kind]
+    (root / relative).write_text(text, encoding="utf-8")
+    _manifest(root, inputs + [relative])
+    monkeypatch.setattr(early_hook, "REPO_ROOT", root)
+    if kind == "approved":
+        early_hook.on_config({"docs_dir": str(root / "docs")})
+    else:
+        expected = "metadata" if kind == "metadata" else "not in the allowlist"
+        with pytest.raises(early_hook.PluginError, match=expected):
+            early_hook.on_config({"docs_dir": str(root / "docs")})
+
+
+def test_markdown_suffixes_match_installed_mkdocs(guard):
+    utils = pytest.importorskip("mkdocs.utils")
+    assert guard.MARKDOWN_SUFFIXES == frozenset(utils.markdown_extensions)

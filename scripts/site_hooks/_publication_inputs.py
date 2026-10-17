@@ -11,6 +11,7 @@ from typing import Any, Iterable, Iterator
 
 MANIFEST_NAME = "site-publication-inputs.json"
 SOURCE_DIRS = ("docs", "site", "overrides")
+MARKDOWN_SUFFIXES = frozenset({".markdown", ".mdown", ".mkdn", ".mkd", ".md"})
 SNIPPET_INPUTS = frozenset({"README.md", "CHANGELOG.md", "GOVERNANCE.md"})
 PRIVATE_DOC = "docs/03_MVP_Project_Plan.md"
 PRIVATE_DIR = "docs/reviews"
@@ -220,6 +221,39 @@ def _has_nested_snippet_syntax(text: str) -> bool:
     )
 
 
+# MkDocs removes leading page metadata before running Markdown/snippets. Marker
+# tokens there are unsupported: removing them could change a later block state.
+# Match its header/key/continuation syntax without parsing YAML or reading files.
+_RE_YAML_METADATA = re.compile(r"^-{3}[ \t]*\n(.*?\n)(?:\.{3}|-{3})[ \t]*\n", re.UNICODE | re.DOTALL)
+_RE_METADATA_KEY = re.compile(r"^[ ]{0,3}(?P<key>[A-Za-z0-9_-]+):\s*(?P<value>.*)")
+_RE_METADATA_MORE = re.compile(r"^([ ]{4}|\t)(\s*)(?P<value>.*)")
+
+
+def _validate_metadata_snippet_markers(relative: str, text: str) -> None:
+    yaml_header = _RE_YAML_METADATA.match(text)
+    if yaml_header:
+        # Even invalid YAML is conservatively refused if this candidate header
+        # contains a marker. No YAML dependency is needed for early admission.
+        has_marker = _RE_SNIPPET_TOKEN.search(yaml_header.group()) is not None
+    else:
+        has_key = False
+        has_marker = False
+        for line in text.split("\n"):
+            if not line.strip():
+                break
+            if _RE_METADATA_KEY.match(line):
+                has_key = True
+            elif not (has_key and _RE_METADATA_MORE.match(line)):
+                break
+            if _RE_SNIPPET_TOKEN.search(line):
+                has_marker = True
+                break
+    if has_marker:
+        raise PublicationInputError(
+            f"{relative}: snippet marker in document metadata; move snippet syntax into the page body"
+        )
+
+
 def _iter_snippet_references(text: str) -> Iterator[tuple[int, str, bool]]:
     """Yield line/target/partial triples using the extension's exact grammar."""
     in_block = False
@@ -266,15 +300,21 @@ def validate_snippet_inputs(repo_root: Path, inputs: frozenset[str]) -> None:
     bodies: dict[str, str] = {}
     for relative in sorted(inputs):
         if relative not in SNIPPET_INPUTS and not (
-            relative.startswith("docs/") and Path(relative).suffix.lower() in {".md", ".markdown"}
+            relative.startswith("docs/") and Path(relative).suffix.lower() in MARKDOWN_SUFFIXES
         ):
             continue
         try:
-            bodies[relative] = (repo_root / relative).read_text(encoding="utf-8")
+            # MkDocs File.content_string strips a page BOM; pymdownx's root
+            # snippet reader uses plain UTF-8 and keeps it.
+            encoding = "utf-8-sig" if relative.startswith("docs/") else "utf-8"
+            bodies[relative] = (repo_root / relative).read_text(encoding=encoding)
         except (OSError, UnicodeError) as exc:
             raise PublicationInputError(
                 f"snippet source unreadable: {relative} ({type(exc).__name__})"
             ) from None
+    for relative, text in sorted(bodies.items()):
+        if relative.startswith("docs/"):
+            _validate_metadata_snippet_markers(relative, text)
     nested_targets = {
         relative for relative in SNIPPET_INPUTS
         if _has_nested_snippet_syntax(bodies[relative])
