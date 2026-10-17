@@ -176,50 +176,15 @@ def validate_mkdocs_files(
         raise PublicationInputError("collection: no registered public Markdown pages")
 
 
-# --- pymdownx.snippets source-tree allowlist (deliverable 1d) -------------
-#
-# This mirrors the REAL pymdownx.snippets extension's directive-detection and
-# path-extraction logic (verified against the installed package's source,
-# site-packages/pymdownx/snippets.py — SnippetPreprocessor.RE_ALL_SNIPPETS /
-# RE_SNIPPET / parse_snippets — and against its actual runtime behaviour: see
-# the empirical probe referenced in this project's review history). Getting
-# this wrong in the permissive direction is how a MAJOR finding happened
-# here before: an earlier version of this parser only recognised *quoted*
-# lines inside a `--8<--` block as targets, but pymdownx's block form does
-# the OPPOSITE — a bare, unquoted line is the real target; a quoted line's
-# quotes become part of a (bogus, non-existent) filename, which
-# pymdownx silently ignores when check_paths is off, or — as in this
-# project's actual mkdocs.yml (check_paths: true) — fails the whole build
-# outright with SnippetMissingError. Concretely, confirmed by feeding both
-# forms through `markdown.Markdown(extensions=['pymdownx.snippets'])`:
-#
-#   --8<--          <- embeds the real file: BLOCK BARE is the live form.
-#   plan/leak.md
-#   --8<--
-#
-#   --8<--          <- embeds nothing (quotes become part of the literal,
-#   "plan/leak.md"     nonexistent path "plan/leak.md" including the quote
-#   --8<--             characters) — BLOCK QUOTED is not a live target form.
-#
-# So: every non-marker, non-blank, non-";"-comment line inside a block IS a
-# target, taken essentially as-is. We additionally strip OPTIONAL surrounding
-# quotes before comparing against the allowlist — a deliberate, one-directional
-# safety bias: pymdownx itself wouldn't honour a quoted block line as
-# "file.md", but flagging it as a candidate target anyway can only make this
-# check STRICTER (catch something pymdownx would ignore), never looser (miss
-# something pymdownx would actually embed).
-#
-# Also confirmed empirically: pymdownx.snippets has NO comma-separated
-# multi-file syntax. `--8<-- "a.md, b.md"` is parsed as a single literal path
-# "a.md, b.md" (which then fails to resolve), not as two targets. An earlier
-# version of this parser split on commas as if that were a real feature; it
-# has been removed — only an optional trailing `:start:end` / `:section`
-# suffix is stripped now, matching pymdownx's actual RE_SNIPPET_FILE.
-
-# Marker detection, mirroring pymdownx's RE_ALL_SNIPPETS: 1+ dashes around
-# "8<-" (not just exactly "--8<--"), an optional leading ";" escape (which
-# defuses the whole directive), and an inline form that requires its quoted
-# argument to be the entire rest of the line.
+# Shared pymdownx.snippets grammar. SnippetExtension registers priority 32,
+# before Markdown's NormalizeWhitespace (30), so source lines are split on LF,
+# not Python's broader splitlines() separators. Locally opened snippets also
+# use universal-newline text iteration, not splitlines(). Path.read_text below
+# performs universal-newline decoding before this scanner sees the source.
+# Block paths retain quotes; only inline paths lose their surrounding quotes.
+# A suffix is removed only if RE_SNIPPET_FILE recognises the entire spelling;
+# an arbitrary colon can be part of a literal filename and must stay visible
+# to the exact root-file allowlist.
 _RE_ALL_SNIPPETS = re.compile(
     r"""(?x)
     ^[ \t]*
@@ -233,73 +198,96 @@ _RE_ALL_SNIPPETS = re.compile(
 )
 
 
-def _strip_range_or_section_suffix(path: str) -> str:
-    """Strip pymdownx's optional trailing :line:line[,line:line...] or
-    :section suffix (RE_SNIPPET_FILE). Only the portion before the first ':'
-    ever matters here, since none of the three allowed targets contain one.
-    """
-    return path.split(":", 1)[0]
+_RE_SNIPPET = re.compile(r"^[ \t]*(?P<snippet>.*?)\r?$")
+_RE_SNIPPET_FILE = re.compile(
+    r"(?i)(.*?)(?:((?::-?[0-9]*){1,2}(?:(?:,(?=[-0-9:])-?[0-9]*)(?::-?[0-9]*)?)*)|(:[a-z][-_0-9a-z]*))?$"
+)
 
 
-def _strip_optional_quotes(candidate: str) -> str:
-    if len(candidate) >= 2 and candidate[0] == candidate[-1] and candidate[0] in "\"'":
-        return candidate[1:-1].strip()
-    return candidate
+# Partial targets may contain standalone section metadata, but no other marker
+# token anywhere: selection can change block context or expose literal syntax.
+_RE_SNIPPET_TOKEN = re.compile(r"-{1,}8<-{1,}")
+_RE_SECTION_BOUNDARY = re.compile(
+    r"(?i)[ \t]*-{1,}8<-{1,}[ \t]+\[[ \t]*(?:start|end)[ \t]*:"
+    r"[ \t]*[a-z][-_0-9a-z]*[ \t]*\][ \t]*\r?"
+)
 
 
-def _iter_snippet_directives(text: str) -> Iterator[tuple[int, str]]:
-    """Yield (1-based line number, target path) for every effective
-    --8<-- directive target in `text` — see the block comment above this
-    function for exactly what "effective" means and how it was verified."""
+def _has_nested_snippet_syntax(text: str) -> bool:
+    return any(
+        _RE_SNIPPET_TOKEN.search(line) and not _RE_SECTION_BOUNDARY.fullmatch(line)
+        for line in text.split("\n")
+    )
+
+
+def _iter_snippet_references(text: str) -> Iterator[tuple[int, str, bool]]:
+    """Yield line/target/partial triples using the extension's exact grammar."""
     in_block = False
-    for lineno, raw_line in enumerate(text.splitlines(), start=1):
+    for lineno, raw_line in enumerate(text.split("\n"), start=1):
         match = _RE_ALL_SNIPPETS.match(raw_line)
         if match:
             if match.group("escape"):
-                continue  # ";--8<--..." — escaped, not a real directive
+                continue
             if match.group("block_marker"):
                 in_block = not in_block
                 continue
             if in_block:
-                # pymdownx ignores an inline marker found inside a block.
+                continue  # Inline notation inside a block is ignored.
+            candidate = match.group("inline_snippet")[1:-1].strip()
+        elif in_block:
+            block_path = _RE_SNIPPET.match(raw_line)
+            if block_path is None:
                 continue
-            target = _strip_range_or_section_suffix(match.group("inline_snippet")[1:-1].strip())
-            if target:
-                yield lineno, target
+            candidate = block_path.group("snippet").strip()
+        else:
             continue
-
-        if not in_block:
-            continue  # ordinary prose line
-
-        candidate = raw_line.strip()
         if not candidate or candidate.startswith(";"):
-            continue  # blank or commented-out block line — not a target
-        candidate = _strip_optional_quotes(candidate)  # defensive superset, see above
-        target = _strip_range_or_section_suffix(candidate)
-        if target:
-            yield lineno, target
+            continue
+        path_match = _RE_SNIPPET_FILE.match(candidate)
+        if path_match is not None:
+            target = path_match.group(1).strip()
+            if target:
+                yield lineno, target, bool(path_match.group(2) or path_match.group(3))
+
+
+def _iter_snippet_directives(text: str) -> Iterator[tuple[int, str]]:
+    """Expose target names for callers that do not need selection metadata."""
+    for lineno, target, _partial in _iter_snippet_references(text):
+        yield lineno, target
 
 
 def validate_snippet_inputs(repo_root: Path, inputs: frozenset[str]) -> None:
     """Scan admitted Markdown and root snippets; never open a directive target.
 
     Call only after validate_source_inputs has admitted every name and metadata.
-    Scanning all three root snippets also covers recursive snippet expansion.
+    Whole root snippets may recurse. Partial includes may only select ordinary
+    content: selecting nested directives could change their original block state.
     """
+    bodies: dict[str, str] = {}
     for relative in sorted(inputs):
         if relative not in SNIPPET_INPUTS and not (
             relative.startswith("docs/") and Path(relative).suffix.lower() in {".md", ".markdown"}
         ):
             continue
         try:
-            text = (repo_root / relative).read_text(encoding="utf-8")
+            bodies[relative] = (repo_root / relative).read_text(encoding="utf-8")
         except (OSError, UnicodeError) as exc:
             raise PublicationInputError(
                 f"snippet source unreadable: {relative} ({type(exc).__name__})"
             ) from None
-        for lineno, target in _iter_snippet_directives(text):
+    nested_targets = {
+        relative for relative in SNIPPET_INPUTS
+        if _has_nested_snippet_syntax(bodies[relative])
+    }
+    for relative, text in sorted(bodies.items()):
+        for lineno, target, partial in _iter_snippet_references(text):
             if target not in SNIPPET_INPUTS:
                 raise PublicationInputError(
                     f"{relative}:{lineno}: --8<-- references {target!r}, which is not in the "
                     f"allowlist {sorted(SNIPPET_INPUTS)}"
+                )
+            if partial and target in nested_targets:
+                raise PublicationInputError(
+                    f"{relative}:{lineno}: partial snippet include of {target!r} contains "
+                    "nested snippet syntax; use a whole-file include"
                 )
