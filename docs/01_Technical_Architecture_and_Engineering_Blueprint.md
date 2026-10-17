@@ -1068,7 +1068,7 @@ Two further properties follow from what an advisory is about. It is **run-level,
 
 ### 14.4.4 Security-confirmation events
 
-The current source adds a v1 `security-confirmation` record for each successful build-time security probe. This is an unreleased change after 1.0.6. `--events` and `--events-stream` carry the same records used by the HTML security-evidence table and JUnit suite properties named `vouchfx.securityConfirmation.<index>`. A record is evidence, not a testcase or a verdict. A startup that fails before confirmation produces no invented success record.
+The current source adds a v1 `security-confirmation` record for each successful security confirmation returned by a topology build. This is an unreleased change after 1.0.6. `--events` and `--events-stream` carry the same records used by the HTML security-evidence table and JUnit suite properties named `vouchfx.securityConfirmation.<index>`. A record is evidence, not a testcase or a verdict. A startup that fails before confirmation produces no invented success record.
 
 Besides the common envelope, the payload contains `targetName`, `targetKind`, `declaredProfile`, `declaredEndpoint`, `observedAddress`, `observedProtocol`, `clientIdentityResolved`, `level` and `replayed`. These are the existing probe's structured facts; free-form probe detail, certificate paths, passwords and the private declaration digest are omitted. The observed address is the actual host-side endpoint. Treat archived endpoint and target names as infrastructure metadata.
 
