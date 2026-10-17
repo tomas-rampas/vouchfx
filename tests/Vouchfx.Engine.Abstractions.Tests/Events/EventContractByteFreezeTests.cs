@@ -117,6 +117,18 @@ public sealed partial class EventContractFreezeTests
                 RunId = "run-default", ScenarioId = "scenario-default", EnvSchemaVersion = "v1",
                 SecretReferences = Array.Empty<SecretReferenceDigest>(), Fixtures = Array.Empty<FixtureDigest>(),
             }),
+            Canonical(new SecurityConfirmationEvent
+            {
+                RunId = "security-run", Timestamp = timestamp, TargetName = escaped, TargetKind = "service",
+                DeclaredProfile = "mtls", DeclaredEndpoint = "https", ObservedAddress = "localhost:443",
+                ObservedProtocol = "Tls13", ClientIdentityResolved = true, Level = "AuthenticatedRoundTrip", Replayed = false,
+            }),
+            Canonical(new SecurityConfirmationEvent
+            {
+                RunId = "security-replay", TargetName = "target", TargetKind = "kafka",
+                DeclaredProfile = "tls", DeclaredEndpoint = "tls", ObservedAddress = "localhost:9093",
+                ObservedProtocol = "Tls12", ClientIdentityResolved = false, Level = "TransportConfirmed", Replayed = true,
+            }),
             Canonical(new TransportNoticeEvent
             {
                 Timestamp = timestamp, RunId = "run-1", CorrelationIds = correlations,

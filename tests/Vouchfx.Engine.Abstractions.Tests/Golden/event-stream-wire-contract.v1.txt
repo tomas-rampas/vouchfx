@@ -97,6 +97,22 @@ record TransportNoticeEvent
   property System.String Type [wire=type] [init]
   property System.Int32 Version [wire=v] [init]
 
+record SecurityConfirmationEvent
+  property System.Boolean ClientIdentityResolved [wire=clientIdentityResolved] [required] [init]
+  property System.String DeclaredEndpoint [wire=declaredEndpoint] [required] [init]
+  property System.String DeclaredProfile [wire=declaredProfile] [required] [init]
+  property System.String Level [wire=level] [required] [init]
+  property System.String ObservedAddress [wire=observedAddress] [required] [init]
+  property System.String ObservedProtocol [wire=observedProtocol] [required] [init]
+  property System.Boolean Replayed [wire=replayed] [required] [init]
+  property System.String RunId [wire=runId] [required] [init]
+  property System.String SchemaVersion [wire=schemaVersion] [init]
+  property System.String TargetKind [wire=targetKind] [required] [init]
+  property System.String TargetName [wire=targetName] [required] [init]
+  property System.DateTimeOffset Timestamp [wire=ts] [init]
+  property System.String Type [wire=type] [init]
+  property System.Int32 Version [wire=v] [init]
+
 record VerdictCounts
   property System.Int32 EnvError [wire=envError] [init]
   property System.Int32 Fail [wire=fail] [init]

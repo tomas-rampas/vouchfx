@@ -219,7 +219,7 @@ Some managed resources carry built-in container images. The scope of `imageRegis
 
 **`kafka` with `schemaRegistry: true`** — vouchfx provisions a Confluent Schema Registry sidecar (pinned to `confluentinc/cp-schema-registry:7.6.1`). The sidecar image carries no embedded registry hostname, so `imageRegistry` **does** apply to it: setting `imageRegistry: artifactory.mycompany.com/docker-mirror` will redirect the sidecar to `artifactory.mycompany.com/docker-mirror/confluentinc/cp-schema-registry:7.6.1`. There is no per-dependency `image:` override for this sidecar; authors must rely on `imageRegistry` redirection.
 
-**`azureservicebus`** — vouchfx provisions two containers. The main emulator container (`mcr.microsoft.com/azure-messaging/servicebus-emulator:1.1.2`) and the SQL Server 2022 sidecar (`mcr.microsoft.com/mssql/server:2022-latest`) both embed `mcr.microsoft.com`. Because their images are fully qualified, `imageRegistry` does **not** apply to either — the rule "already-qualified references are never rewritten" protects them both. The main emulator **can** be redirected per-dependency using `image: artifactory.mycompany.com/azure-messaging/servicebus-emulator:1.1.2`; the SQL sidecar cannot be overridden by any author-controlled means.
+**`azureservicebus`** — vouchfx provisions two containers. The main emulator container (`mcr.microsoft.com/azure-messaging/servicebus-emulator:1.1.2`) and the SQL Server 2022 sidecar (`mcr.microsoft.com/mssql/server@sha256:cf8f0ab2ebe61feec2eed2629061a07d247f791c2a8ddda74a4ac9f06a291718`, release tag `2022-CU27-GDR1-ubuntu-22.04`) both embed `mcr.microsoft.com`. Because their images are fully qualified, `imageRegistry` does **not** apply to either — the rule "already-qualified references are never rewritten" protects them both. The main emulator **can** be redirected per-dependency using `image: artifactory.mycompany.com/azure-messaging/servicebus-emulator:1.1.2`; the SQL sidecar cannot be overridden by any author-controlled means.
 
 **`minio`** — vouchfx provisions a single container pinned to `bitnamilegacy/minio:2025.7.23-debian-12-r5`, a Bitnami build of MinIO 2025-07-23 on Docker Hub. That reference carries no registry hostname, so `imageRegistry` **does** apply to it: `imageRegistry: artifactory.mycompany.com/docker-mirror` redirects the pull to `artifactory.mycompany.com/docker-mirror/bitnamilegacy/minio:2025.7.23-debian-12-r5`, and the mirror must be able to serve that repository. The built-in pin moved away from upstream MinIO's own image because upstream withdrew its images from Docker Hub and quay.io entirely; the Bitnami repository is a frozen archive ("Legacy Bitnami images (no longer updated)", last push 2025-08-19) and a stopgap. `minio` keeps meaning the MinIO contract on that pin (`server /tmp/minio-data`, credentials in `MINIO_ROOT_USER`/`MINIO_ROOT_PASSWORD`, readiness at `/minio/health/cluster`); the maintained S3-compatible kind is `s3` (#581), described next. To pull the same build from another registry or repository, override it per-dependency with `image: artifactory.mycompany.com/bitnamilegacy/minio:2025.7.23-debian-12-r5`; `version:` will not help, because it only replaces the tag and cannot change the registry or repository. An `image:` swaps only the image, not the contract, so an override for `minio` must be a MinIO build that honours the contract above.
 
@@ -448,15 +448,16 @@ environment:
         MSSQL_COLLATION: Latin1_General_CS_AS
 ```
 
-That example is measured, not merely documented: started against the SQL Server image the engine
-brings up (`mcr.microsoft.com/mssql/server:2022-latest`), `MSSQL_COLLATION` moves the collation
+That example was measured against the managed `sqlserver` dependency image
+(`mcr.microsoft.com/mssql/server:2022-latest`). In that run, `MSSQL_COLLATION` moved the collation
 reported by `SERVERPROPERTY('Collation')` off its `SQL_Latin1_General_CP1_CI_AS` default to the
-declared value, and neither Aspire nor the engine sets it — Aspire sets only `ACCEPT_EULA` and
+declared value. Neither Aspire nor the engine sets it — Aspire sets only `ACCEPT_EULA` and
 `MSSQL_SA_PASSWORD` on this resource. Do not treat any other variable as verified on that strength
 without repeating the exercise: a container accepts every environment variable and ignores the ones
 it does not know, so a suite is green whether the setting did anything or nothing, and the engine
 cannot tell you which. The tag above is Aspire's own default rather than an engine pin, so it can
-move underneath a measurement taken against it.
+move underneath a measurement taken against it. This is separate from the Azure Service Bus
+SQL sidecar: that sidecar uses the digest pinned in `scripts/ci/image-pins.json`, described above.
 
 Four rules apply to the values; the second and the fourth differ from a service's:
 

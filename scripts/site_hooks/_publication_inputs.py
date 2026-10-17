@@ -1,15 +1,17 @@
-"""Fail closed on unreviewed documentation inputs, without reading their bodies."""
+"""Admit documentation names before scanning approved Markdown snippet sources."""
 from __future__ import annotations
 
 import json
 import os
+import re
 import stat
 import unicodedata
 from pathlib import Path, PurePosixPath
-from typing import Any, Iterable
+from typing import Any, Iterable, Iterator
 
 MANIFEST_NAME = "site-publication-inputs.json"
 SOURCE_DIRS = ("docs", "site", "overrides")
+MARKDOWN_SUFFIXES = frozenset({".markdown", ".mdown", ".mkdn", ".mkd", ".md"})
 SNIPPET_INPUTS = frozenset({"README.md", "CHANGELOG.md", "GOVERNANCE.md"})
 PRIVATE_DOC = "docs/03_MVP_Project_Plan.md"
 PRIVATE_DIR = "docs/reviews"
@@ -173,3 +175,159 @@ def validate_mkdocs_files(
         raise PublicationInputError(f"unsupported collection input: {relative}")
     if not public_pages:
         raise PublicationInputError("collection: no registered public Markdown pages")
+
+
+# Shared pymdownx.snippets grammar. SnippetExtension registers priority 32,
+# before Markdown's NormalizeWhitespace (30), so source lines are split on LF,
+# not Python's broader splitlines() separators. Locally opened snippets also
+# use universal-newline text iteration, not splitlines(). Path.read_text below
+# performs universal-newline decoding before this scanner sees the source.
+# Block paths retain quotes; only inline paths lose their surrounding quotes.
+# A suffix is removed only if RE_SNIPPET_FILE recognises the entire spelling;
+# an arbitrary colon can be part of a literal filename and must stay visible
+# to the exact root-file allowlist.
+_RE_ALL_SNIPPETS = re.compile(
+    r"""(?x)
+    ^[ \t]*
+    (?P<escape>;*)
+    (?:
+        -{1,}8<-{1,}[ \t]+
+        (?P<inline_snippet>"(?:\\"|[^"\n\r])+?"|'(?:\\'|[^'\n\r])+?')(?![ \t]) |
+        (?P<block_marker>-{1,}8<-{1,})(?![ \t])
+    )\r?$
+    """
+)
+
+
+_RE_SNIPPET = re.compile(r"^[ \t]*(?P<snippet>.*?)\r?$")
+_RE_SNIPPET_FILE = re.compile(
+    r"(?i)(.*?)(?:((?::-?[0-9]*){1,2}(?:(?:,(?=[-0-9:])-?[0-9]*)(?::-?[0-9]*)?)*)|(:[a-z][-_0-9a-z]*))?$"
+)
+
+
+# Partial targets may contain standalone section metadata, but no other marker
+# token anywhere: selection can change block context or expose literal syntax.
+_RE_SNIPPET_TOKEN = re.compile(r"-{1,}8<-{1,}")
+_RE_SECTION_BOUNDARY = re.compile(
+    r"(?i)[ \t]*-{1,}8<-{1,}[ \t]+\[[ \t]*(?:start|end)[ \t]*:"
+    r"[ \t]*[a-z][-_0-9a-z]*[ \t]*\][ \t]*\r?"
+)
+
+
+def _has_nested_snippet_syntax(text: str) -> bool:
+    return any(
+        _RE_SNIPPET_TOKEN.search(line) and not _RE_SECTION_BOUNDARY.fullmatch(line)
+        for line in text.split("\n")
+    )
+
+
+# MkDocs removes leading page metadata before running Markdown/snippets. Marker
+# tokens there are unsupported: removing them could change a later block state.
+# Match its header/key/continuation syntax without parsing YAML or reading files.
+_RE_YAML_METADATA = re.compile(r"^-{3}[ \t]*\n(.*?\n)(?:\.{3}|-{3})[ \t]*\n", re.UNICODE | re.DOTALL)
+_RE_METADATA_KEY = re.compile(r"^[ ]{0,3}(?P<key>[A-Za-z0-9_-]+):\s*(?P<value>.*)")
+_RE_METADATA_MORE = re.compile(r"^([ ]{4}|\t)(\s*)(?P<value>.*)")
+
+
+def _validate_metadata_snippet_markers(relative: str, text: str) -> None:
+    yaml_header = _RE_YAML_METADATA.match(text)
+    if yaml_header:
+        # Even invalid YAML is conservatively refused if this candidate header
+        # contains a marker. No YAML dependency is needed for early admission.
+        has_marker = _RE_SNIPPET_TOKEN.search(yaml_header.group()) is not None
+    else:
+        has_key = False
+        has_marker = False
+        for line in text.split("\n"):
+            if not line.strip():
+                break
+            if _RE_METADATA_KEY.match(line):
+                has_key = True
+            elif not (has_key and _RE_METADATA_MORE.match(line)):
+                break
+            if _RE_SNIPPET_TOKEN.search(line):
+                has_marker = True
+                break
+    if has_marker:
+        raise PublicationInputError(
+            f"{relative}: snippet marker in document metadata; move snippet syntax into the page body"
+        )
+
+
+def _iter_snippet_references(text: str) -> Iterator[tuple[int, str, bool]]:
+    """Yield line/target/partial triples using the extension's exact grammar."""
+    in_block = False
+    for lineno, raw_line in enumerate(text.split("\n"), start=1):
+        match = _RE_ALL_SNIPPETS.match(raw_line)
+        if match:
+            if match.group("escape"):
+                continue
+            if match.group("block_marker"):
+                in_block = not in_block
+                continue
+            if in_block:
+                continue  # Inline notation inside a block is ignored.
+            candidate = match.group("inline_snippet")[1:-1].strip()
+        elif in_block:
+            block_path = _RE_SNIPPET.match(raw_line)
+            if block_path is None:
+                continue
+            candidate = block_path.group("snippet").strip()
+        else:
+            continue
+        if not candidate or candidate.startswith(";"):
+            continue
+        path_match = _RE_SNIPPET_FILE.match(candidate)
+        if path_match is not None:
+            target = path_match.group(1).strip()
+            if target:
+                yield lineno, target, bool(path_match.group(2) or path_match.group(3))
+
+
+def _iter_snippet_directives(text: str) -> Iterator[tuple[int, str]]:
+    """Expose target names for callers that do not need selection metadata."""
+    for lineno, target, _partial in _iter_snippet_references(text):
+        yield lineno, target
+
+
+def validate_snippet_inputs(repo_root: Path, inputs: frozenset[str]) -> None:
+    """Scan admitted Markdown and root snippets; never open a directive target.
+
+    Call only after validate_source_inputs has admitted every name and metadata.
+    Whole root snippets may recurse. Partial includes may only select ordinary
+    content: selecting nested directives could change their original block state.
+    """
+    bodies: dict[str, str] = {}
+    for relative in sorted(inputs):
+        if relative not in SNIPPET_INPUTS and not (
+            relative.startswith("docs/") and Path(relative).suffix.lower() in MARKDOWN_SUFFIXES
+        ):
+            continue
+        try:
+            # MkDocs File.content_string strips a page BOM; pymdownx's root
+            # snippet reader uses plain UTF-8 and keeps it.
+            encoding = "utf-8-sig" if relative.startswith("docs/") else "utf-8"
+            bodies[relative] = (repo_root / relative).read_text(encoding=encoding)
+        except (OSError, UnicodeError) as exc:
+            raise PublicationInputError(
+                f"snippet source unreadable: {relative} ({type(exc).__name__})"
+            ) from None
+    for relative, text in sorted(bodies.items()):
+        if relative.startswith("docs/"):
+            _validate_metadata_snippet_markers(relative, text)
+    nested_targets = {
+        relative for relative in SNIPPET_INPUTS
+        if _has_nested_snippet_syntax(bodies[relative])
+    }
+    for relative, text in sorted(bodies.items()):
+        for lineno, target, partial in _iter_snippet_references(text):
+            if target not in SNIPPET_INPUTS:
+                raise PublicationInputError(
+                    f"{relative}:{lineno}: --8<-- references {target!r}, which is not in the "
+                    f"allowlist {sorted(SNIPPET_INPUTS)}"
+                )
+            if partial and target in nested_targets:
+                raise PublicationInputError(
+                    f"{relative}:{lineno}: partial snippet include of {target!r} contains "
+                    "nested snippet syntax; use a whole-file include"
+                )

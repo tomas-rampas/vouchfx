@@ -185,6 +185,12 @@ public sealed class StepKindRegistry
     /// <c>&lt;family&gt;.&lt;provider&gt;</c> key.
     /// </exception>
     public static StepKindRegistry BuildAndFreeze(IEnumerable<Assembly> assemblies)
+        => BuildAndFreeze(assemblies, admit: null);
+
+    // The host supplies its actual engine version; the standalone SDK has no host version.
+    // Admission happens before any binder/schema code is called.
+    internal static StepKindRegistry BuildAndFreeze(
+        IEnumerable<Assembly> assemblies, Action<StepKindId, ProviderMetadata>? admit)
     {
         var collected = new List<IStepProvider>();
 
@@ -242,7 +248,7 @@ public sealed class StepKindRegistry
             }
         }
 
-        return BuildAndFreeze((IReadOnlyCollection<IStepProvider>)collected);
+        return BuildAndFreeze(collected, admit);
     }
 
     /// <summary>
@@ -264,13 +270,20 @@ public sealed class StepKindRegistry
     /// </exception>
     public static StepKindRegistry BuildAndFreeze(
         IReadOnlyCollection<IStepProvider> providers)
+        => BuildAndFreeze(providers, admit: null);
+
+    private static StepKindRegistry BuildAndFreeze(
+        IReadOnlyCollection<IStepProvider> providers, Action<StepKindId, ProviderMetadata>? admit)
     {
         var map = new Dictionary<string, RegisteredProvider>(
             StringComparer.Ordinal);
 
         foreach (var provider in providers)
         {
-            var key = $"{provider.Kind.Family}.{provider.Kind.Provider}";
+            var kind = provider.Kind;
+            var metadata = provider.Metadata;
+            admit?.Invoke(kind, metadata);
+            var key = $"{kind.Family}.{kind.Provider}";
 
             if (map.TryGetValue(key, out var existing))
             {
@@ -282,8 +295,8 @@ public sealed class StepKindRegistry
 
             var schema = ReflectSchemaFragment(provider);
             map[key] = new RegisteredProvider(
-                Kind: provider.Kind,
-                Metadata: provider.Metadata,
+                Kind: kind,
+                Metadata: metadata,
                 Instance: provider,
                 SchemaFragment: schema);
         }

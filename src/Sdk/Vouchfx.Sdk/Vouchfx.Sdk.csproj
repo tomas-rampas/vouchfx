@@ -42,6 +42,9 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>Vouchfx.Engine.Runtime</_Parameter1>
+    </AssemblyAttribute>
     <PackageReference Include="YamlDotNet" />
   </ItemGroup>
 

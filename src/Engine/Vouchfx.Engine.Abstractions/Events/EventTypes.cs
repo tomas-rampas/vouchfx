@@ -68,6 +68,9 @@ public static class EventTypes
     /// </remarks>
     public const string TransportNotice = "transport-notice";
 
+    /// <summary>One successful build-time security probe, or explicitly marked replay.</summary>
+    public const string SecurityConfirmation = "security-confirmation";
+
     /// <summary>
     /// Emitted once per scenario carrying the reproducibility envelope (§17,
     /// docs/02 §3.2.2): a hash of every distinct secret <em>reference</em> and the

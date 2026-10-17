@@ -1222,9 +1222,15 @@ SQL Server is a large image (multiple gigabytes) and has a lengthy initialisatio
 
 1. **Pre-warm the SQL Server image locally before running the suite** (most effective):
    ```bash
+   # Managed sqlserver dependency: Aspire default (unless version is overridden).
    docker pull mcr.microsoft.com/mssql/server:2022-latest
+   # Azure Service Bus SQL sidecar: engine digest pin (2022-CU27-GDR1-ubuntu-22.04).
+   docker pull mcr.microsoft.com/mssql/server@sha256:cf8f0ab2ebe61feec2eed2629061a07d247f791c2a8ddda74a4ac9f06a291718
    ```
-   Once the image is in the local cache, subsequent container startups are much faster.
+   Pull the reference your topology uses: the managed `sqlserver` dependency uses Aspire's default
+   tag above unless you set `version:`; the hidden Azure Service Bus SQL sidecar uses the exact
+   digest from `scripts/ci/image-pins.json`. Pulling only the default tag does not warm the
+   pinned sidecar. Once the matching image is cached, subsequent startups avoid the cold pull.
 
 2. **In CI, use the `prewarm-images` workflow input** (GitHub Actions):
    ```yaml
@@ -1234,6 +1240,7 @@ SQL Server is a large image (multiple gigabytes) and has a lengthy initialisatio
        scenario-path: ./tests/e2e
        prewarm-images: |
          mcr.microsoft.com/mssql/server:2022-latest
+         mcr.microsoft.com/mssql/server@sha256:cf8f0ab2ebe61feec2eed2629061a07d247f791c2a8ddda74a4ac9f06a291718
    ```
 
 3. **Ensure sufficient disk space and memory.** SQL Server requires at least 2 GB RAM and adequate disk space. If your Docker daemon is resource-constrained, increase limits.

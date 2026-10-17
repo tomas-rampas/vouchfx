@@ -1,5 +1,9 @@
 <Project>
   <PropertyGroup>
+    <!-- Source capability version; local NuGet package identities remain 1.0.0-0.local.
+         An explicit release -p:Version is captured before SDK package defaults are applied. -->
+    <VouchfxEngineVersion Condition="'$(Version)' != ''">$(Version)</VouchfxEngineVersion>
+    <VouchfxEngineVersion Condition="'$(VouchfxEngineVersion)' == ''">1.0.7</VouchfxEngineVersion>
     <TargetFramework>net8.0</TargetFramework>
     <LangVersion>11</LangVersion>
     <Nullable>enable</Nullable>
