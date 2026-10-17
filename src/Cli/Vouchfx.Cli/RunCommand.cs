@@ -636,9 +636,10 @@ internal static class RunCommand
     /// <para>
     /// <strong>Inconclusive (4), not TestFailure (1), and not EnvironmentError (3).</strong> An
     /// unexpected throw is not a product defect the suite observed, which is exactly what the
-    /// framework's 1 asserted. Nor is it infrastructure: <see cref="Verdict.EnvironmentError"/>
-    /// exits 0 by default for a run that executed nothing (#390), which would report a green build
-    /// over an engine crash. What actually happened is that the engine could not reach a verdict,
+    /// framework's 1 asserted. Nor is it infrastructure: unattributed
+    /// <see cref="Verdict.EnvironmentError"/> remains opt-in through <c>--fail-on-env-error</c>.
+    /// Using that verdict would report a green build over an engine crash. What actually happened
+    /// is that the engine could not reach a verdict,
     /// which is §12.1's Inconclusive, and it is the same code <c>ShutdownBackstop</c> chooses for
     /// the same event.
     /// </para>
@@ -2226,11 +2227,12 @@ internal static class RunCommand
         //
         // SCOPED TO Inconclusive, AND THAT SCOPE IS THE WHOLE CARE OF THIS CHANGE. A topology
         // that fails to START also executes nothing and reaches the same completion path since
-        // #407 — but it carries EnvironmentError, which keeps its own `--fail-on-env-error` gate
-        // and is untouched here. Widening this to every verdict would silently close #390, which
-        // is deliberately open precisely because it would redden every suite whose UNRELATED
-        // container was slow to come up. An authoring fault the engine refused is not the same
-        // event as an environment that did not come up, and this line is where that stays true.
+        // #407 — but an unattributed EnvironmentError keeps its own `--fail-on-env-error` gate
+        // and is untouched here. Applying this rule to every verdict would also fail runs when
+        // an unrelated container was slow to start. Readiness failures attributed to declared
+        // secured resources use the separate security-confirmation exception (closed #390).
+        // An authoring fault the engine refused is not the same event as ordinary infrastructure
+        // that did not come up; this condition preserves that distinction.
         //
         // A scenario that DID run and could not conclude — timeout, partition outlasted grace,
         // upstream capture unmet — still exits 0 by default, because it executed.
