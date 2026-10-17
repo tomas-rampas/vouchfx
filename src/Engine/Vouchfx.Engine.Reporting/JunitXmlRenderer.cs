@@ -151,6 +151,9 @@ public sealed class JunitXmlRenderer
 
                 switch (envelope.Type)
                 {
+                    case EventTypes.SecurityConfirmation:
+                        model.SecurityConfirmations.Add(EventStreamJson.FromLine<SecurityConfirmationEvent>(line));
+                        break;
                     case EventTypes.ScenarioStarted:
                         {
                             var scenarioId = GetStr(envelope, "scenarioId") ?? "(unknown)";
@@ -306,18 +309,21 @@ public sealed class JunitXmlRenderer
             skipped,
             FormatSeconds(totalMs)));
 
-        // Issue #588: surfaced ONLY when at least one event-stream line could not be
-        // read, as a suite-level <properties> block — the FIRST child of <testsuite>
-        // (the JUnit schema orders properties before testcase) — so a clean stream's
-        // document is byte-identical to before.  Mirrors the per-testcase
-        // vouchfx.verdict property's exact markup style.
-        if (model.SkippedEventLines > 0)
+        // Suite metadata precedes testcase (JUnit ordering). Successful security evidence
+        // retains the versioned JSON event as a property value, without adding a test/verdict.
+        // Ordinary streams without confirmations or unreadable lines retain their old bytes.
+        if (model.SkippedEventLines > 0 || model.SecurityConfirmations.Count > 0)
         {
             output.WriteLine("    <properties>");
-            output.WriteLine(string.Format(
-                CultureInfo.InvariantCulture,
-                "      <property name=\"vouchfx.skippedEventLines\" value=\"{0}\"/>",
-                model.SkippedEventLines));
+            foreach (var (confirmation, index) in model.SecurityConfirmations.Select((value, index) => (value, index)))
+                output.WriteLine($"      <property name=\"vouchfx.securityConfirmation.{index}\" value=\"{XmlEscape(EventStreamJson.ToLine(confirmation))}\"/>");
+            if (model.SkippedEventLines > 0)
+            {
+                output.WriteLine(string.Format(
+                    CultureInfo.InvariantCulture,
+                    "      <property name=\"vouchfx.skippedEventLines\" value=\"{0}\"/>",
+                    model.SkippedEventLines));
+            }
             output.WriteLine("    </properties>");
         }
 
@@ -664,6 +670,8 @@ public sealed class JunitXmlRenderer
         private readonly Dictionary<(string RunId, string ScenarioId), ScenarioModel> _scenarioIndex = new();
 
         public List<ScenarioModel> Scenarios { get; } = new();
+
+        public List<SecurityConfirmationEvent> SecurityConfirmations { get; } = new();
 
         /// <summary>
         /// The number of event-stream lines <see cref="BuildModel"/>'s per-line

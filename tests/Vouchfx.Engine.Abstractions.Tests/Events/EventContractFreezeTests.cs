@@ -269,6 +269,7 @@ public sealed partial class EventContractFreezeTests
         typeof(ScenarioCompletedEvent),
         typeof(ReproducibilityEnvelopeEvent),
         typeof(TransportNoticeEvent), // #450/#453; added here AND to the golden, one reviewed act.
+        typeof(SecurityConfirmationEvent),
         typeof(VerdictCounts),
 
         // Nested value records reachable on the wire from the events above. Their

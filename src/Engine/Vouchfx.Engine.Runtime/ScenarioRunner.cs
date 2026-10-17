@@ -544,7 +544,7 @@ public static class ScenarioRunner
         // provider's IStepDiffRenderer (when implemented) so the terminal renderer can
         // draw an expected-vs-observed diff under a failed step.  Built once over the
         // frozen registry and threaded into the single TerminalRenderer.Render call.
-        var registry = StepKindRegistry.BuildAndFreeze(providerAssemblies);
+        var registry = HostProviderRegistry.Build(providerAssemblies);
         var diffLookup = BuildDiffLookup(registry, output);
 
         // Delegate to the no-render core, which builds its own topology, runs the
@@ -1313,6 +1313,10 @@ public static class ScenarioRunner
                 runId,
                 DateTimeOffset.UtcNow,
                 replayed: false);
+            var securityConfirmationLines = SecurityConfirmationEvents.ToLines(
+                suite.SecurityConfirmations, runId, DateTimeOffset.UtcNow, replayed: false);
+            buffer.AddRange(securityConfirmationLines);
+            livePump?.PostRange(securityConfirmationLines);
             buffer.AddRange(transportNoticeLines);
             livePump?.PostRange(transportNoticeLines);
 
@@ -1553,6 +1557,7 @@ public static class ScenarioRunner
             throw new ArgumentException("scenarioBaseDirectories must have the same length as scenarios.", nameof(scenarioBaseDirectories));
         if (scenarios.Count != 0 && (scenarioNames.Count != scenarios.Count || yamlTexts.Count != scenarios.Count))
             throw new ArgumentException("scenarios, scenarioNames and yamlTexts must have the same length.", nameof(scenarios));
+        var registry = HostProviderRegistry.Build(providerAssemblies);
         bool requiresRecreation;
         try
         {
@@ -1577,11 +1582,10 @@ public static class ScenarioRunner
             var refusedAssurance = SecurityAssurance.None
                 .Declaring(scenarios.SelectMany(ast => SecuredTargets.Enumerate(ast.Environment)).ToList())
                 .Refusing(SecurityAbortKind.AuthoringFault);
-            var refusalRegistry = StepKindRegistry.BuildAndFreeze(providerAssemblies);
             return await CompleteWithoutTopologyAsync(refused,
                 SecurityAssurance.Worse(refusedAssurance,
                     AssureUnbuiltDocumentsAlone(unbuiltDocuments, providerAssemblies)),
-                output, decorate, BuildDiffLookup(refusalRegistry, output),
+                output, decorate, BuildDiffLookup(registry, output),
                 htmlReportPath, junitReportPath, eventsReportPath, eventsStreamPath,
                 runSecretLedger: null, runPathLedger: null,
                 providerOrEngineFaultObserved: true, authoringRefusalObserved: true).ConfigureAwait(false);
@@ -1640,9 +1644,6 @@ public static class ScenarioRunner
                 + "must all have the same length.",
                 nameof(scenarios));
         }
-
-        // Build the provider registry once (shared across all scenarios).
-        var registry = StepKindRegistry.BuildAndFreeze(providerAssemblies);
 
         // Render-time diff-lookup closure (S07-G-01), built once over the frozen
         // registry and threaded into the suite-level TerminalRenderer.Render call.
@@ -2738,12 +2739,17 @@ public static class ScenarioRunner
             // the other eleven, so it gets an id of its own; a consumer joining on runId finds
             // nothing to join to, which is the correct answer. The correlation key a consumer
             // actually wants is `service`, which is why the record carries it.
+            var topologyRunId = Guid.NewGuid().ToString("n");
             var transportNoticeLines = TransportNoticeEvents.ToLines(
                 suite.EndpointSelectionNotices,
                 suite.EndpointTrustNotices,
-                Guid.NewGuid().ToString("n"),
+                topologyRunId,
                 DateTimeOffset.UtcNow,
                 replayed: false);
+            var securityConfirmationLines = SecurityConfirmationEvents.ToLines(
+                suite.SecurityConfirmations, topologyRunId, DateTimeOffset.UtcNow, replayed: false);
+            allBuffers.AddRange(securityConfirmationLines);
+            livePump?.PostRange(securityConfirmationLines);
             allBuffers.AddRange(transportNoticeLines);
             livePump?.PostRange(transportNoticeLines);
 
@@ -3065,7 +3071,7 @@ public static class ScenarioRunner
         unbuiltDocuments is not { Count: > 0 }
             ? SecurityAssurance.None
             : UnbuiltDocument.AssureAll(
-                unbuiltDocuments, StepKindRegistry.BuildAndFreeze(providerAssemblies));
+                unbuiltDocuments, HostProviderRegistry.Build(providerAssemblies));
 
     /// <summary>
     /// True when any schema-validation error is located inside a declared <c>security</c> block —
@@ -4107,6 +4113,9 @@ public static class ScenarioRunner
                     .ConfigureAwait(false);
             }
         }
+
+        buffer.AddRange(SecurityConfirmationEvents.ToLines(
+            topology.SecurityConfirmations, runId, DateTimeOffset.UtcNow, replayed: true));
 
         // #348 (security review): replayed with the confirmations above and for the same reason —
         // this topology may be held across many edits, and the transport it selected does not

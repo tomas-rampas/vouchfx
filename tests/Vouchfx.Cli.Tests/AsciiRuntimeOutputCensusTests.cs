@@ -220,34 +220,69 @@ public sealed class AsciiRuntimeOutputCensusTests
         Assert.Equal(registered, classes.Length);
 
         foreach (var type in classes)
-        {
-            var methods = type.Members.OfType<MethodDeclarationSyntax>()
-                .ToLookup(method => method.Identifier.ValueText, StringComparer.Ordinal);
-            var pending = new Queue<string>(new[] { "CanRender", "RenderDiff" });
-            var visited = new HashSet<string>(StringComparer.Ordinal);
-            while (pending.TryDequeue(out var name))
-            {
-                if (!visited.Add(name))
-                    continue;
+            AssertAsciiLiterals(ReachableDiffTokens(type), type.Identifier.ValueText);
+    }
 
-                var declarations = methods[name].ToArray();
-                Assert.NotEmpty(declarations);
-                foreach (var method in declarations)
+    [Theory]
+    [InlineData("field", false)]
+    [InlineData("property", false)]
+    [InlineData("field", true)]
+    [InlineData("property", true)]
+    public void DiffCensus_FollowsReferencedMemberInitializers(string shape, bool throughHelper)
+    {
+        var initializer = throughHelper ? "Make()" : "new[] { \"" + (char)0x00e9 + "\" }";
+        var declaration = shape == "field" ? "private static readonly string[] Headers = " + initializer + ";"
+            : "private static string[] Headers { get; } = " + initializer + ";";
+        var source = "class Fixture { " + declaration
+            + " string RenderDiff() => string.Join(\",\", Headers); bool CanRender() => true;"
+            + " static string[] Make() => new[] { \"" + (char)0x00e9 + "\" }; }";
+        var type = CSharpSyntaxTree.ParseText(source).GetRoot().DescendantNodes().OfType<ClassDeclarationSyntax>().Single();
+        Assert.Throws<Xunit.Sdk.TrueException>(() => AssertAsciiLiterals(ReachableDiffTokens(type), "fixture"));
+    }
+
+    [Fact]
+    public void DiffCensus_AcceptsAsciiClosure_AndExcludesUnreferencedGeneratedHelpers()
+    {
+        var source = "class Fixture { static readonly string[] Headers = Make();"
+            + " string RenderDiff() => string.Join(\",\", Headers); bool CanRender() => true;"
+            + " static string[] Make() => new[] { \"header\" };"
+            + " const string Source = \"" + (char)0x00e9 + "\"; string Emit() => Source; }";
+        var type = CSharpSyntaxTree.ParseText(source).GetRoot().DescendantNodes().OfType<ClassDeclarationSyntax>().Single();
+        var tokens = ReachableDiffTokens(type).ToArray();
+        Assert.Contains(tokens, token => token.ValueText == "header");
+        AssertAsciiLiterals(tokens, "fixture");
+    }
+
+    private static IEnumerable<SyntaxToken> ReachableDiffTokens(ClassDeclarationSyntax type)
+    {
+        // Direct members only: unrelated generated helper classes stay outside the closure.
+        var declarations = type.Members.OfType<MethodDeclarationSyntax>()
+            .Select(method => (Name: method.Identifier.ValueText, Node: (SyntaxNode)method))
+            .Concat(type.Members.OfType<FieldDeclarationSyntax>()
+                .SelectMany(field => field.Declaration.Variables.Select(variable =>
+                    (Name: variable.Identifier.ValueText, Node: (SyntaxNode)variable))))
+            .Concat(type.Members.OfType<PropertyDeclarationSyntax>()
+                .Select(property => (Name: property.Identifier.ValueText, Node: (SyntaxNode)property)))
+            .ToLookup(member => member.Name, member => member.Node, StringComparer.Ordinal);
+        var pending = new Queue<string>(new[] { "CanRender", "RenderDiff" });
+        var visited = new HashSet<string>(StringComparer.Ordinal);
+        while (pending.TryDequeue(out var name))
+        {
+            if (!visited.Add(name))
+                continue;
+            Assert.True(declarations.Contains(name), "Missing diff boundary member " + name);
+            foreach (var declaration in declarations[name])
+            {
+                foreach (var token in declaration.DescendantTokens())
+                    yield return token;
+                foreach (var reference in declaration.DescendantNodes().OfType<IdentifierNameSyntax>())
                 {
-                    AssertAsciiLiterals(method.DescendantTokens(), type.Identifier.ValueText + "." + name);
-                    foreach (var call in method.DescendantNodes().OfType<InvocationExpressionSyntax>())
-                    {
-                        // Local helper calls belong to the formatting boundary. External client,
-                        // JSON and StringBuilder methods do not splice generated provider CSX.
-                        var localName = call.Expression switch
-                        {
-                            IdentifierNameSyntax identifier => identifier.Identifier.ValueText,
-                            MemberAccessExpressionSyntax { Expression: ThisExpressionSyntax } member => member.Name.Identifier.ValueText,
-                            _ => null,
-                        };
-                        if (localName is not null && methods.Contains(localName))
-                            pending.Enqueue(localName);
-                    }
+                    if (reference.Parent is MemberAccessExpressionSyntax access && access.Name == reference
+                        && access.Expression is not ThisExpressionSyntax
+                        && access.Expression.ToString() != type.Identifier.ValueText)
+                        continue;
+                    if (declarations.Contains(reference.Identifier.ValueText))
+                        pending.Enqueue(reference.Identifier.ValueText);
                 }
             }
         }

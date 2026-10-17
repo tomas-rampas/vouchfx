@@ -192,6 +192,9 @@ public sealed class HtmlRenderer
 
                 switch (envelope.Type)
                 {
+                    case EventTypes.SecurityConfirmation:
+                        model.SecurityConfirmations.Add(EventStreamJson.FromLine<SecurityConfirmationEvent>(line));
+                        break;
                     case EventTypes.ScenarioStarted:
                         {
                             var scenarioId = GetStr(envelope, "scenarioId") ?? "(unknown)";
@@ -571,6 +574,7 @@ public sealed class HtmlRenderer
             WriteScenario(output, scenario);
         }
 
+        WriteSecurityConfirmations(output, model.SecurityConfirmations);
         WriteEnvironmentErrors(output, model);
         WriteReproducibilityEnvelopes(output, model);
 
@@ -578,6 +582,25 @@ public sealed class HtmlRenderer
 
         output.WriteLine("</body>");
         output.WriteLine("</html>");
+    }
+
+    private static void WriteSecurityConfirmations(TextWriter output, IReadOnlyList<SecurityConfirmationEvent> confirmations)
+    {
+        if (confirmations.Count == 0)
+            return;
+        output.WriteLine("<section><h2>Security confirmations</h2>");
+        output.WriteLine("<p>Build-time probe evidence. A replay is not a fresh probe. Client identity resolved alone does not establish peer acceptance; TLS profiles do not assert client authentication.</p>");
+        output.WriteLine("<table><thead><tr><th>Target</th><th>Kind</th><th>Declared profile</th><th>Declared endpoint</th><th>Observed address</th><th>Observed protocol</th><th>Client identity resolved</th><th>Level</th><th>Evidence</th><th>Run</th></tr></thead><tbody>");
+        foreach (var confirmation in confirmations)
+        {
+            var values = new[] { confirmation.TargetName, confirmation.TargetKind,
+                confirmation.DeclaredProfile, confirmation.DeclaredEndpoint, confirmation.ObservedAddress,
+                confirmation.ObservedProtocol, confirmation.ClientIdentityResolved ? "yes" : "no", confirmation.Level,
+                confirmation.Replayed ? "Replayed build-time probe" : "Build-time probe", confirmation.RunId };
+            output.WriteLine("<tr>" + string.Concat(values.Select(value => "<td>" + HtmlEscape(value) + "</td>")) + "</tr>");
+        }
+        output.WriteLine("</tbody></table>");
+        output.WriteLine("</section>");
     }
 
     /// <summary>
@@ -1372,6 +1395,8 @@ public sealed class HtmlRenderer
         private readonly Dictionary<string, ScenarioModel> _lastScenarioByRun = new();
 
         public List<ScenarioModel> Scenarios { get; } = new();
+
+        public List<SecurityConfirmationEvent> SecurityConfirmations { get; } = new();
 
         public List<EnvironmentErrorRow> EnvironmentErrors { get; } = new();
 

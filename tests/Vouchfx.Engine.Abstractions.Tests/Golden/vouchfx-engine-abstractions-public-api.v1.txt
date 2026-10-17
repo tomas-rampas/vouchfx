@@ -36,6 +36,7 @@ class Vouchfx.Engine.Abstractions.Events.EventTypes
   field const System.String ReproducibilityEnvelope
   field const System.String ScenarioCompleted
   field const System.String ScenarioStarted
+  field const System.String SecurityConfirmation
   field const System.String StepAttempt
   field const System.String StepCompleted
   field const System.String StepStarted
@@ -79,6 +80,23 @@ record Vouchfx.Engine.Abstractions.Events.ScenarioStartedEvent : System.IEquatab
   property System.String RunId { get; init }
   property System.String ScenarioId { get; init }
   property System.String SchemaVersion { get; init }
+  property System.String Type { get; init }
+
+record Vouchfx.Engine.Abstractions.Events.SecurityConfirmationEvent : System.IEquatable<Vouchfx.Engine.Abstractions.Events.SecurityConfirmationEvent>
+  .ctor()
+  property System.Boolean ClientIdentityResolved { get; init }
+  property System.Boolean Replayed { get; init }
+  property System.DateTimeOffset Timestamp { get; init }
+  property System.Int32 Version { get; init }
+  property System.String DeclaredEndpoint { get; init }
+  property System.String DeclaredProfile { get; init }
+  property System.String Level { get; init }
+  property System.String ObservedAddress { get; init }
+  property System.String ObservedProtocol { get; init }
+  property System.String RunId { get; init }
+  property System.String SchemaVersion { get; init }
+  property System.String TargetKind { get; init }
+  property System.String TargetName { get; init }
   property System.String Type { get; init }
 
 record Vouchfx.Engine.Abstractions.Events.StepAttemptEvent : System.IEquatable<Vouchfx.Engine.Abstractions.Events.StepAttemptEvent>

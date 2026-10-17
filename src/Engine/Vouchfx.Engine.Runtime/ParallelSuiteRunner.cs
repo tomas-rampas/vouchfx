@@ -266,7 +266,7 @@ public static class ParallelSuiteRunner
 
         // Build the provider registry once (shared, read-only, across all scenarios) and the
         // render-time diff-lookup closure once — exactly as RunSuiteAsync does.
-        var registry = StepKindRegistry.BuildAndFreeze(providerAssemblies);
+        var registry = HostProviderRegistry.Build(providerAssemblies);
         var diffLookup = ScenarioRunner.BuildParallelDiffLookup(registry, output);
 
         return await RunParallelCoreAsync(

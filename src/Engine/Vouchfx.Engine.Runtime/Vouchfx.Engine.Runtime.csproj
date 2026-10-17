@@ -4,6 +4,12 @@
     <RootNamespace>Vouchfx.Engine.Runtime</RootNamespace>
   </PropertyGroup>
 
+  <!-- The actual engine's capability stamp: release -p:Version, or the checked-in source
+       capability version. Never infer host capability from a frozen AssemblyVersion or SDK package identity. -->
+  <ItemGroup>
+    <AssemblyMetadata Include="VouchfxEngineVersion" Value="$(VouchfxEngineVersion)" />
+  </ItemGroup>
+
   <!-- Expose internal types (ProviderPipeline, PipelineResult, …) to the Runtime test project. -->
   <ItemGroup>
     <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
