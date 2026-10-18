@@ -1,0 +1,5 @@
+steps:
+  - id: callback
+    type: webhook-listen.http
+    listener: callbacks
+    match: { path: /event }

@@ -1,0 +1,13 @@
+listeners:
+  callbacks:
+    kind: webhook-listener
+    security:
+      profile: mtls
+      serverCert: certs/server.pem
+      serverKey: certs/key.pem
+      clientCaCert: certs/ca.pem
+steps:
+  - id: callback
+    type: webhook-listen.http
+    listener: callbacks
+    match: { peerCertificateSha256: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' }

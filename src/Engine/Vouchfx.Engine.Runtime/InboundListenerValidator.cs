@@ -8,7 +8,7 @@ using YamlDotNet.RepresentationModel;
 
 namespace Vouchfx.Engine.Runtime;
 
-/// <summary>Preflights declared server material without opening private keys.</summary>
+/// <summary>Preflights declared server material without parsing private keys.</summary>
 internal static class InboundListenerValidator
 {
     internal static ValidationFailure? ValidateMaterial(ScenarioAst ast, string suiteDirectory)
@@ -46,7 +46,14 @@ internal static class InboundListenerValidator
                     return Failure($"{prefix}.{field}: {error}");
                 }
 
-                if (!File.Exists(resolved))
+                try
+                {
+                    // Existence does not imply readability, for example for a locked key.
+                    // Parse private keys only at startup, after resolving their password.
+                    using var stream = File.OpenRead(resolved!);
+                    _ = stream.ReadByte();
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                 {
                     return Failure($"{prefix}.{field}: declared file '{value}' is missing or unreadable.");
                 }

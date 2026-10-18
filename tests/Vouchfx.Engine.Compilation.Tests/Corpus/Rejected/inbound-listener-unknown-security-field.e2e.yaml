@@ -1,0 +1,16 @@
+# expected-instance-location: /listeners/callbacks/security/unsupported
+# expected-keyword: additionalProperties
+listeners:
+  callbacks:
+    kind: webhook-listener
+    security:
+      unsupported: true
+      profile: mtls
+      serverCert: certs/server.pem
+      serverKey: certs/key.pem
+      clientCaCert: certs/ca.pem
+steps:
+  - id: callback
+    type: webhook-listen.http
+    listener: callbacks
+    match: { path: /event }

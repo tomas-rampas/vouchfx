@@ -1,0 +1,13 @@
+listeners:
+  telemetry:
+    kind: otlp-receiver
+    security:
+      profile: mtls
+      serverCert: certs/server.pem
+      serverKey: certs/key.pem
+      clientCaCert: certs/ca.pem
+steps:
+  - id: traces
+    type: trace-expect.otlp
+    receiver: telemetry
+    match: { traceId: abc }
