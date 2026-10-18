@@ -31,6 +31,10 @@
 #  workflow-contract Blocking workflow lint and actual Docker pre-pull regressions.
 #               Uses fixture commands only; it never pulls or starts containers.
 #
+#  analyser-forward Advisory, non-blocking rebuild with .NET 10's recommended
+#               analysers.  Runs outside the checkout so global.json's .NET 8
+#               SDK pin cannot hide rules added in later SDKs.
+#
 #  vuln-scan    ADVISORY, NON-BLOCKING dependency-vulnerability scan
 #               (continue-on-error: true).  Surfaces known-vulnerable
 #               transitive packages via `dotnet list package --vulnerable
@@ -260,6 +264,31 @@ jobs:
           name: coverage
           path: TestResults/
           retention-days: 7
+
+  # Rebuild every project with the newer SDK's recommended analyser set. An
+  # incremental build can skip already-built projects and miss violations.
+  # This is advisory while the repository's supported SDK remains .NET 8.
+  analyser-forward:
+    name: Analyser forward (.NET 10, non-blocking)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up .NET 10 SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Rebuild solution with forward analysers
+        working-directory: ${{ runner.temp }}
+        run: |
+          sdk_version="$(dotnet --version)"
+          echo "Forward analyser SDK: $sdk_version"
+          [[ "$sdk_version" == 10.* ]]
+          dotnet build "$GITHUB_WORKSPACE/vouchfx.sln" -c Release -t:Rebuild -warnaserror
 
   windows-unit:
     name: Windows build & unit tests
