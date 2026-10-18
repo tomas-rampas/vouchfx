@@ -4487,13 +4487,13 @@ public static class ScenarioRunner
             seedBaseDirectory, cancellationToken, scriptBaseDirectory, livePump, sharedLedger,
             sharedPathLedger).ConfigureAwait(false)).Verdict;
 
-    private sealed record ScenarioExecutionOutcome(Verdict Verdict, bool AuthoringRefusalObserved = false)
+    internal sealed record ScenarioExecutionOutcome(Verdict Verdict, bool AuthoringRefusalObserved = false)
     {
         public IReadOnlyList<SecurityConfirmationEvidence> InboundConfirmations { get; init; }
             = Array.Empty<SecurityConfirmationEvidence>();
     }
 
-    private static async Task<ScenarioExecutionOutcome> RunScenarioExecutionAgainstTopologyAsync(
+    internal static async Task<ScenarioExecutionOutcome> RunScenarioExecutionAgainstTopologyAsync(
         ScenarioAst ast,
         string scenarioName,
         string runId,
@@ -4710,7 +4710,10 @@ public static class ScenarioRunner
                         runId, now, scenarioName, Verdict.EnvironmentError,
                         new VerdictCounts { EnvError = 1 }, sharedLedger, sharedPathLedger, detail));
                     livePump?.PostRange(buffer);
-                    return new ScenarioExecutionOutcome(Verdict.EnvironmentError);
+                    return new ScenarioExecutionOutcome(Verdict.EnvironmentError)
+                    {
+                        InboundConfirmations = inboundConfirmations.ToArray(),
+                    };
                 }
                 finally
                 {
