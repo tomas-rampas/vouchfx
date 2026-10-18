@@ -584,7 +584,7 @@ public sealed class HtmlRenderer
         output.WriteLine("</html>");
     }
 
-    private static void WriteSecurityConfirmations(TextWriter output, IReadOnlyList<SecurityConfirmationEvent> confirmations)
+    private static void WriteSecurityConfirmations(TextWriter output, List<SecurityConfirmationEvent> confirmations)
     {
         if (confirmations.Count == 0)
             return;
