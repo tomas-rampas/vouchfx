@@ -4,6 +4,7 @@
 record Vouchfx.Engine.Authoring.Ast.ScenarioAst : System.IEquatable<Vouchfx.Engine.Authoring.Ast.ScenarioAst>
   .ctor(Vouchfx.Engine.Authoring.Model.MetadataSpec Metadata, Vouchfx.Engine.Authoring.Model.EnvironmentSpec Environment, System.Collections.Generic.IReadOnlyDictionary<System.String,System.String> Variables, System.Collections.Generic.IReadOnlyList<Vouchfx.Engine.Authoring.Ast.StepNode> Steps)
   property System.Collections.Generic.IReadOnlyDictionary<System.String,System.String> Variables { get; init }
+  property System.Collections.Generic.IReadOnlyDictionary<System.String,Vouchfx.Engine.Authoring.Model.InboundListenerSpec> Listeners { get; init }
   property System.Collections.Generic.IReadOnlyList<Vouchfx.Engine.Authoring.Ast.StepNode> Steps { get; init }
   property Vouchfx.Engine.Authoring.Model.EnvironmentSpec Environment { get; init }
   property Vouchfx.Engine.Authoring.Model.MetadataSpec Metadata { get; init }
@@ -44,6 +45,7 @@ record Vouchfx.Engine.Authoring.Model.DependencySpec : System.IEquatable<Vouchfx
 record Vouchfx.Engine.Authoring.Model.E2eDocument : System.IEquatable<Vouchfx.Engine.Authoring.Model.E2eDocument>
   .ctor(Vouchfx.Engine.Authoring.Model.MetadataSpec Metadata, Vouchfx.Engine.Authoring.Model.EnvironmentSpec Environment, System.Collections.Generic.IReadOnlyDictionary<System.String,System.String> Variables, System.Collections.Generic.IReadOnlyList<Vouchfx.Engine.Authoring.Model.StepSpec> Steps)
   property System.Collections.Generic.IReadOnlyDictionary<System.String,System.String> Variables { get; init }
+  property System.Collections.Generic.IReadOnlyDictionary<System.String,Vouchfx.Engine.Authoring.Model.InboundListenerSpec> Listeners { get; init }
   property System.Collections.Generic.IReadOnlyList<Vouchfx.Engine.Authoring.Model.StepSpec> Steps { get; init }
   property Vouchfx.Engine.Authoring.Model.EnvironmentSpec Environment { get; init }
   property Vouchfx.Engine.Authoring.Model.MetadataSpec Metadata { get; init }
@@ -72,6 +74,19 @@ record Vouchfx.Engine.Authoring.Model.HealthCheckSpec : System.IEquatable<Vouchf
   property System.Nullable<System.Int32> Port { get; init }
   property System.String Path { get; init }
   property System.String Type { get; init }
+
+record Vouchfx.Engine.Authoring.Model.InboundListenerSecuritySpec : System.IEquatable<Vouchfx.Engine.Authoring.Model.InboundListenerSecuritySpec>
+  .ctor(System.String Profile, System.String ServerCert, System.String ServerKey, System.String ServerKeyPassword, System.String ClientCaCert)
+  property System.String ClientCaCert { get; init }
+  property System.String Profile { get; init }
+  property System.String ServerCert { get; init }
+  property System.String ServerKey { get; init }
+  property System.String ServerKeyPassword { get; init }
+
+record Vouchfx.Engine.Authoring.Model.InboundListenerSpec : System.IEquatable<Vouchfx.Engine.Authoring.Model.InboundListenerSpec>
+  .ctor(System.String Kind, Vouchfx.Engine.Authoring.Model.InboundListenerSecuritySpec Security)
+  property System.String Kind { get; init }
+  property Vouchfx.Engine.Authoring.Model.InboundListenerSecuritySpec Security { get; init }
 
 record Vouchfx.Engine.Authoring.Model.MetadataSpec : System.IEquatable<Vouchfx.Engine.Authoring.Model.MetadataSpec>
   .ctor(System.String Name, System.String Owner, System.Collections.Generic.IReadOnlyList<System.String> Tags, System.String Description, System.String SchemaVersion)

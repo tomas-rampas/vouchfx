@@ -2,7 +2,9 @@ using System.Net;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
+using System.Text.Json;
 using Vouchfx.Engine.Abstractions;
+using Vouchfx.Engine.Abstractions.Secrets;
 using Vouchfx.Engine.Authoring;
 using Vouchfx.Engine.Authoring.Ast;
 using Vouchfx.Engine.Authoring.Model;
@@ -138,6 +140,48 @@ public sealed class InboundListenerAssuranceTests : IDisposable
             Assert.DoesNotContain(Password, events, StringComparison.Ordinal);
             Assert.DoesNotContain("wrong-password-canary", events, StringComparison.Ordinal);
             Assert.Contains("listeners.callbacks.security", events, StringComparison.Ordinal);
+        }
+        finally { Environment.SetEnvironmentVariable(variable, null); }
+    }
+
+    [Fact]
+    public async Task StartupPasswordResolution_RecordsIntoRunLedgerAndScrubsBothFailureEvents()
+    {
+        // Make the resolved password also occur in the otherwise safe declared location.
+        // This forces the real startup catch's two emission sites to use the shared ledger.
+        const string canary = "inboundledgercanary";
+        var variable = "VOUCHFX_INBOUND_LEDGER_" + Guid.NewGuid().ToString("N");
+        Environment.SetEnvironmentVariable(variable, canary);
+        try
+        {
+            var yaml = (Listener + "\n" + Steps)
+                .Replace("callbacks", canary, StringComparison.Ordinal)
+                .Replace("serverKey: key.pem", "serverKey: key.pem\n      serverKeyPassword: ${secret:env/" + variable + "}", StringComparison.Ordinal);
+            var ast = Parse(yaml);
+            var pipeline = ProviderPipeline.Compile(ast, Registry, "listener-ledger", _directory);
+            Assert.Null(pipeline.Failure);
+            File.WriteAllText(Path.Combine(_directory, "key.pem"), _encryptedKey);
+            var ledger = new ResolvedSecretLedger();
+            var buffer = new List<string>();
+            var outcome = await ScenarioRunner.RunScenarioExecutionAgainstTopologyAsync(ast, "listener-ledger", "run-ledger",
+                new EmptyTopology(), pipeline.Assembled!, pipeline.CompileReferencePaths, pipeline.HostResourcePlan, buffer,
+                new NullScenarioIsolation(), new StringWriter(), _directory, default, sharedLedger: ledger);
+
+            Assert.Equal(Verdict.EnvironmentError, outcome.Verdict);
+            Assert.Empty(outcome.InboundConfirmations);
+            // The listener scope has been disposed, but its resolved value belongs to the run.
+            Assert.Equal(SecretString.RedactedMarker, ledger.Scrub(canary));
+            var events = string.Join("\n", buffer);
+            Assert.DoesNotContain("step-started", events, StringComparison.Ordinal);
+            foreach (var kind in new[] { "environment-error", "scenario-completed" })
+            {
+                var line = Assert.Single(buffer, line => line.Contains("\"" + kind + "\"", StringComparison.Ordinal));
+                using var parsed = JsonDocument.Parse(line);
+                // Public resource identifiers retain their spelling; the diagnostic text is scrubbed.
+                var diagnostic = parsed.RootElement.GetProperty(kind == "environment-error" ? "detail" : "message").GetString();
+                Assert.DoesNotContain(canary, diagnostic, StringComparison.Ordinal);
+                Assert.Contains(SecretString.RedactedMarker, diagnostic, StringComparison.Ordinal);
+            }
         }
         finally { Environment.SetEnvironmentVariable(variable, null); }
     }
