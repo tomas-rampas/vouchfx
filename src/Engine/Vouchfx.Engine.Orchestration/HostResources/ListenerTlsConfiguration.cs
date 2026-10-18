@@ -47,6 +47,32 @@ public sealed class ListenerTlsConfiguration : IDisposable
             throw new InvalidOperationException("The listener certificate and key could not be loaded as a matching PEM identity.");
         }
 
+        // PEM import leaves an ephemeral key that Windows SChannel cannot use for the
+        // Kestrel handshake. Transfer it through encrypted PKCS#12 into the default
+        // key store, as the existing outbound certificate loader does. The temporary
+        // private-key blob is cleared even if import fails.
+        try
+        {
+            var transferPassword = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
+            var pkcs12 = server.Export(X509ContentType.Pkcs12, transferPassword);
+            try
+            {
+                var loadable = new X509Certificate2(
+                    pkcs12, transferPassword, X509KeyStorageFlags.DefaultKeySet);
+                server.Dispose();
+                server = loadable;
+            }
+            finally
+            {
+                CryptographicOperations.ZeroMemory(pkcs12);
+            }
+        }
+        catch
+        {
+            server.Dispose();
+            throw;
+        }
+
         var config = new ListenerTlsConfiguration(server, requireClientCertificate);
         try
         {
