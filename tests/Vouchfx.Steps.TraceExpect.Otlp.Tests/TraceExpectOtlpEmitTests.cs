@@ -224,6 +224,31 @@ public sealed class TraceExpectOtlpEmitTests
         Assert.Contains("\"scanned\":2", outcome.Observation!, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Emit_PeerFingerprint_MatchesExactValidatedIdentity(bool matches)
+    {
+        const string actual = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        const string different = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
+        var model = MakeModel("traces", new TraceMatch("trace-id", null, null, null)
+        {
+            PeerCertificateSha256 = matches ? actual.ToUpperInvariant() : different,
+        });
+        var captured = new[]
+        {
+            MakeSpan("trace-id", "span-id", "accepted", "service") with { PeerCertificateSha256 = actual },
+        };
+
+        var outcome = await RunAsync(model, "assert-peer", "traces", captured);
+
+        Assert.Equal(matches ? Verdict.Pass : Verdict.Fail, outcome.Verdict);
+        if (!matches)
+        {
+            Assert.DoesNotContain(actual, outcome.Observation!, StringComparison.Ordinal);
+        }
+    }
+
     // ── 8. No captured span → Fail, matchedCriteria:0 ────────────────────────────
 
     [Fact]

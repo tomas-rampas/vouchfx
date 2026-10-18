@@ -106,6 +106,39 @@ public sealed class SecurityConfirmationExitCodeTests
         ExitCodes.FromVerdict(
             verdict, failOnEnvironmentError: false, failOnInconclusive: false, assurance);
 
+    [Fact]
+    public void InboundDeclaration_WithoutItsOwnConfirmation_RaisesWithoutARefusal()
+    {
+        var inbound = new SecurityDeclarationIdentity(SecurityDirection.InboundListener, "api", "listener-a");
+        var outbound = new SecurityDeclarationIdentity(SecurityDirection.OutboundTarget, "api", "listener-a");
+        var assurance = SecurityAssurance.None.Declaring(new[] { inbound, outbound })
+            .Confirming(new[] { new SecurityConfirmationEvidence(outbound) });
+
+        Assert.True(assurance.Unconfirmed);
+        Assert.NotEqual(ExitCodes.Success, ExitFor(Verdict.Pass, assurance));
+        Assert.False(SecurityAssurance.None.Declaring(new[] { outbound }).Unconfirmed);
+    }
+
+    [Fact]
+    public void InboundConfirmation_MustMatchTheFullIdentityAndScenario()
+    {
+        var declared = new SecurityDeclarationIdentity(SecurityDirection.InboundListener, "callbacks", "policy-a");
+        var wrongPolicy = declared with { Digest = "policy-b" };
+        var wrongDirection = declared with { Direction = SecurityDirection.OutboundTarget };
+
+        foreach (var evidence in new[] { wrongPolicy, wrongDirection })
+        {
+            var unconfirmed = SecurityAssurance.None.Declaring(new[] { declared })
+                .Confirming(new[] { new SecurityConfirmationEvidence(evidence) });
+            Assert.True(unconfirmed.Unconfirmed);
+            Assert.True(SecurityAssurance.Worse(SecurityAssurance.None, unconfirmed).Unconfirmed);
+        }
+
+        var confirmed = SecurityAssurance.None.Declaring(new[] { declared })
+            .Confirming(new[] { new SecurityConfirmationEvidence(declared) });
+        Assert.False(confirmed.Unconfirmed);
+    }
+
     // ── The carve-out works ───────────────────────────────────────────────────────────────
 
     /// <summary>

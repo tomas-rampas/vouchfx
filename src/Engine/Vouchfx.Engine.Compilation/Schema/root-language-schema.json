@@ -15,7 +15,6 @@
     },
     "listeners": {
       "type": "object",
-      "minProperties": 1,
       "additionalProperties": { "$ref": "#/$defs/inboundListener" }
     },
     "variables": {

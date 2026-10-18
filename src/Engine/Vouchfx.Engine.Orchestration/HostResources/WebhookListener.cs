@@ -207,6 +207,8 @@ public sealed class WebhookListener : IAsyncDisposable
         try
         {
             await app.StartAsync(cancellationToken).ConfigureAwait(false);
+            var url = ResolveBoundUrl(app, token, tls is not null);
+            return new WebhookListener(app, url, tls);
         }
         catch
         {
@@ -214,9 +216,6 @@ public sealed class WebhookListener : IAsyncDisposable
             tls?.Dispose();
             throw;
         }
-
-        var url = ResolveBoundUrl(app, token, tls is not null);
-        return new WebhookListener(app, url, tls);
     }
 
     /// <summary>

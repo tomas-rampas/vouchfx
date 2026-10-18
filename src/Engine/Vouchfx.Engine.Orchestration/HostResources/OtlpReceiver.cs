@@ -218,6 +218,8 @@ public sealed class OtlpReceiver : IAsyncDisposable
         try
         {
             await app.StartAsync(cancellationToken).ConfigureAwait(false);
+            var url = ResolveBoundUrl(app, tls is not null);
+            return new OtlpReceiver(app, url, tls);
         }
         catch
         {
@@ -225,9 +227,6 @@ public sealed class OtlpReceiver : IAsyncDisposable
             tls?.Dispose();
             throw;
         }
-
-        var url = ResolveBoundUrl(app, tls is not null);
-        return new OtlpReceiver(app, url, tls);
     }
 
     /// <summary>

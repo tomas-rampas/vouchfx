@@ -1942,7 +1942,8 @@ public static class ScenarioRunner
         // same run. That differential is what makes the fold row a measurement of the wiring rather
         // than one more suite that happens to redden.
         var rejectedDivergentAssurance =
-            FoldRejectedDivergent(scenarios, schemaValid, schemaRefusalKinds, baselineIndex);
+            FoldRejectedDivergent(scenarios, schemaValid, schemaRefusalKinds, baselineIndex,
+                compilations.Select(item => item.ScenarioBaseDirectory).ToArray());
 
         // The suite's answer: the scenarios' own assurance folded against the unbuilt documents' and
         // against any schema-rejected scenario whose environment was never held against the
@@ -2305,7 +2306,8 @@ public static class ScenarioRunner
         // which decides whether the suite declares security AT ALL — needs to be the one that will
         // actually start, and that is why only it moved.
         if (TryFindSecurityBaseDirectoryDivergence(
-                scenarios[topologyIndex].Environment, compilations, seedBaseDirectory, out var divergence))
+                scenarios[topologyIndex].Environment, scenarios[topologyIndex].Listeners,
+                compilations, seedBaseDirectory, out var divergence))
         {
             // Issue #266, Item 4: the message splices scenario names straight from untrusted YAML.
             // Printed HERE, once, for the suite; the completion path is told what was printed so it
@@ -3527,7 +3529,8 @@ public static class ScenarioRunner
         IReadOnlyList<ScenarioAst> scenarios,
         IReadOnlyList<bool> schemaValid,
         IReadOnlyList<SecurityAbortKind?> schemaRefusalKinds,
-        int baselineIndex)
+        int baselineIndex,
+        IReadOnlyList<string?>? scenarioBaseDirectories = null)
     {
         ArgumentNullException.ThrowIfNull(scenarios);
         ArgumentNullException.ThrowIfNull(schemaValid);
@@ -3553,12 +3556,14 @@ public static class ScenarioRunner
                     baselineEnvJson,
                     StringComparison.Ordinal)
                 && string.Equals(SerialiseListeners(scenarios[i].Listeners), baselineListenersJson,
-                    StringComparison.Ordinal))
+                    StringComparison.Ordinal)
+                && (scenarioBaseDirectories is null || DirectoriesEqual(
+                    scenarioBaseDirectories[i], scenarioBaseDirectories[baselineIndex])))
             {
                 continue;
             }
 
-            var declaredHere = SecurityDeclarations.Enumerate(scenarios[i], null);
+            var declaredHere = SecurityDeclarations.Enumerate(scenarios[i], scenarioBaseDirectories?[i]);
             if (declaredHere.Length == 0)
             {
                 continue;
@@ -3719,6 +3724,7 @@ public static class ScenarioRunner
     /// </remarks>
     private static bool TryFindSecurityBaseDirectoryDivergence(
         EnvironmentSpec? environment,
+        IReadOnlyDictionary<string, InboundListenerSpec>? listeners,
         // Concrete List, not IReadOnlyList (CA1859) — see CompleteWithoutTopologyAsync.
         List<(
             string ScenarioName,
@@ -3732,10 +3738,13 @@ public static class ScenarioRunner
     {
         message = string.Empty;
 
-        if (!EnvironmentSecurityValidator.DeclaresSecurity(environment) || compilations.Count == 0)
+        if ((!EnvironmentSecurityValidator.DeclaresSecurity(environment) && listeners is not { Count: > 0 })
+            || compilations.Count == 0)
         {
             return false;
         }
+
+        var inboundOnly = !EnvironmentSecurityValidator.DeclaresSecurity(environment);
 
         var first = compilations[0];
 
@@ -3751,6 +3760,15 @@ public static class ScenarioRunner
                 if (DirectoriesEqual(candidate.ScenarioBaseDirectory, first.ScenarioBaseDirectory))
                 {
                     continue;
+                }
+
+                if (inboundOnly)
+                {
+                    message = $"RunSuiteAsync: this suite declares listener security, but scenario "
+                        + $"'{candidate.ScenarioName}' resolves its listener certificate paths against a "
+                        + $"different directory than '{first.ScenarioName}' does. Put the scenarios "
+                        + "of a secured suite in one directory.";
+                    return true;
                 }
 
                 message =
@@ -3769,6 +3787,14 @@ public static class ScenarioRunner
         // PARAMETERS, not of how many scenarios there are.
         if (!DirectoriesEqual(first.ScenarioBaseDirectory, seedBaseDirectory))
         {
+            if (inboundOnly)
+            {
+                message = "RunSuiteAsync: this suite declares listener security, but its scenario "
+                    + "directory differs from the shared topology's seed directory. Pass the same "
+                    + "base directory for the suite and its topology.";
+                return true;
+            }
+
             message =
                 "RunSuiteAsync: this suite declares a 'security' block, but the directory its "
                 + "scenarios resolve declared security paths against is not the directory the "
@@ -4525,6 +4551,7 @@ public static class ScenarioRunner
                 // disposed by this scope on failure.
                 using var listenerSecrets = CreateSecretAccessorScope(sharedLedger);
                 var pendingTls = new Dictionary<string, ListenerTlsConfiguration>(StringComparer.Ordinal);
+                string? startingListener = null;
                 try
                 {
                     if (ast.Listeners is not null)
@@ -4533,6 +4560,7 @@ public static class ScenarioRunner
                             ?? Directory.GetCurrentDirectory());
                         foreach (var (name, declaration) in ast.Listeners)
                         {
+                            startingListener = name;
                             var security = declaration.Security;
                             SecurityArtifactPath.TryResolveContained(security.ServerCert, listenerBase, out var certPath);
                             SecurityArtifactPath.TryResolveContained(security.ServerKey, listenerBase, out var keyPath);
@@ -4556,6 +4584,7 @@ public static class ScenarioRunner
                     foreach (var entry in hostResourcePlan)
                     {
                         var req = entry.Requirement;
+                        startingListener = req.VarName;
 
                         if (string.Equals(req.Kind, OtlpReceiverKind, StringComparison.Ordinal))
                         {
@@ -4658,6 +4687,30 @@ public static class ScenarioRunner
                     {
                         traceAccessor = new TraceCaptureAccessor(traceBuffers);
                     }
+                }
+                catch (Exception ex) when (ast.Listeners is { Count: > 0 }
+                    && ex is not OperationCanceledException)
+                {
+                    // Certificate and key errors can contain resolved paths or secret values.
+                    // Report only the declared location; no URL has been published to a step.
+                    var location = $"listeners.{startingListener ?? ast.Listeners.Keys.First()}.security";
+                    var detail = $"{location}: listener TLS material could not be loaded or the HTTPS listener could not start.";
+                    var now = DateTimeOffset.UtcNow;
+                    var info = new OrchestrationErrorInfo(
+                        OrchestrationErrorKind.SecurityConfirmation,
+                        startingListener ?? ast.Listeners.Keys.First(), null, null, detail);
+                    buffer.Add(EventStreamJson.ToLine(new ScenarioStartedEvent
+                    {
+                        RunId = runId,
+                        Timestamp = now,
+                        ScenarioId = scenarioName,
+                    }));
+                    buffer.Add(EnvironmentErrorLine(sharedLedger, sharedPathLedger, info, runId, now));
+                    buffer.Add(StepEventBuilder.ScenarioCompletedLine(
+                        runId, now, scenarioName, Verdict.EnvironmentError,
+                        new VerdictCounts { EnvError = 1 }, sharedLedger, sharedPathLedger, detail));
+                    livePump?.PostRange(buffer);
+                    return new ScenarioExecutionOutcome(Verdict.EnvironmentError);
                 }
                 finally
                 {
