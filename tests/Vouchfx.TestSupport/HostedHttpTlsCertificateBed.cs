@@ -41,6 +41,10 @@ public sealed class HostedHttpTlsCertificateBed : IDisposable
             using var serverPublic = Sign(serverRequest, clientChain ? rootSigner : issuerSigner);
             using var serverWithKey = serverPublic.CopyWithPrivateKey(serverKey);
             bed.Server = bed.Own(LoadForTls(serverWithKey));
+            File.WriteAllText(Path.Combine(bed.SuiteDirectory, "server.pem"), bed.Server.ExportCertificatePem());
+            var serverKeyPath = Path.Combine(bed.SuiteDirectory, "server-key.pem");
+            File.WriteAllText(serverKeyPath, serverKey.ExportPkcs8PrivateKeyPem());
+            if (!OperatingSystem.IsWindows()) { File.SetUnixFileMode(serverKeyPath, UnixFileMode.UserRead | UnixFileMode.UserWrite); }
             File.WriteAllText(Path.Combine(bed.SuiteDirectory, "ca.pem"), bed.Root.ExportCertificatePem());
             if (clientChain)
             {
@@ -89,6 +93,7 @@ public sealed class HostedHttpTlsCertificateBed : IDisposable
             {
                 var sans = new SubjectAlternativeNameBuilder();
                 sans.AddDnsName("localhost");
+                sans.AddDnsName("host.docker.internal");
                 sans.AddIpAddress(System.Net.IPAddress.Loopback);
                 request.CertificateExtensions.Add(sans.Build());
             }
