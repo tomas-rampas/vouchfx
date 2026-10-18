@@ -3,7 +3,8 @@
 //
 // Why this is pinned rather than left to review: `consumer.Close()` reads like the
 // courteous thing to do, so it is exactly the call a future edit re-adds "to leave the
-// group cleanly".  It must not come back, and the reason is not a preference:
+// group cleanly" on the historical subscription path.  It must not come back, and the
+// reason is not a preference:
 //
 //   * IConsumer<K,V>.Close() in the pinned Confluent.Kafka 2.14.2 has NO CancellationToken
 //     and NO TimeSpan overload, and the package binds rd_kafka_consumer_close (blocking),
@@ -33,13 +34,16 @@
 //     broker was uncooperative — the case #468 is about — the throw skipped Close()'s own
 //     Dispose(true), the old bare `catch {}` swallowed it, and the handle was released by
 //     the outer Dispose(), i.e. by exactly the mechanism that is now the only one.
-//   * Unsubscribe() is the one real alternative and it was considered, not overlooked: the
-//     pinned package's own Consumer`2.Dispose remarks name it alongside Close().  It is
-//     rejected because rd_kafka_unsubscribe returns once the request is enqueued, so an
-//     Unsubscribe() immediately followed by destroy_flags most likely tears the handle down
-//     before the LeaveGroup is transmitted — inferred, not probed.  It carries none of
-//     Close()'s disqualifiers, so it is the candidate to revisit if the joined-consumer
-//     fault-injection harness ever lands.  Full adjudication in the provider's remarks.
+//   * The joined-group and Unsubscribe() adjudication above describes the historical
+//     Subscribe-based implementation from #468.  Since 08f75bb (2026-10-11), both emitted
+//     consume paths discover retained partitions and call Assign(); neither subscribes nor
+//     joins a group.  The assigned-consumer Dispose() cost remains unmeasured, but no
+//     joined-consumer harness is needed to exercise the current provider.  On the historical
+//     path, Unsubscribe() was considered, not overlooked: the pinned package's own
+//     Consumer`2.Dispose remarks name it alongside Close().  rd_kafka_unsubscribe returns
+//     once the request is enqueued, so an immediate destroy_flags most likely tears down the
+//     handle before LeaveGroup is transmitted — inferred, not probed.  Full historical
+//     adjudication is in the provider's remarks.
 //
 // Re-adding Close() therefore re-adds an uncancellable native call to the step's critical
 // path, and the only "bound" for it is one the memory model forbids.
@@ -102,12 +106,12 @@ public sealed partial class MqExpectKafkaTeardownPinTests
         "figures are the producer handle against a never-connected broker and do not " +
         "transfer). Removing Close() is not a new path: on the failure case #468 is about, " +
         "ConsumerClose() threw, the old bare catch swallowed it, and the handle was " +
-        "already released by that same Dispose(). The trade is that the group keeps a " +
-        "silent member until the broker evicts it, then empties as Close() would have made " +
-        "it empty — a delay, no persistent state — and it is a throwaway single-member " +
-        "group per attempt with auto-commit off, so Close() bought nothing. Unsubscribe() " +
-        "was adjudicated and rejected (see the provider remarks), not overlooked. If you " +
-        "need the group left promptly, that is a redesign, not a re-added call.";
+        "already released by that same Dispose(). The group-eviction tradeoff and " +
+        "Unsubscribe() adjudication belong to the historical Subscribe-based path; since " +
+        "08f75bb (2026-10-11), both current paths use RetainedPartitions() and Assign() and " +
+        "do not join a group. The current assigned-consumer Dispose() cost remains " +
+        "unmeasured, and a joined-consumer harness is not needed to exercise this provider. " +
+        "See the provider remarks for the historical analysis.";
 
     private readonly MqExpectKafkaProvider _provider = new();
 
