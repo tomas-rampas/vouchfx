@@ -10,6 +10,7 @@ public sealed class HostedHttpTlsCertificateBed : IDisposable
 {
     private readonly List<X509Certificate2> _owned = new();
     private readonly HashSet<string> _thumbprints = new(StringComparer.OrdinalIgnoreCase);
+    private X509Certificate2? _clientIssuer;
     private HostedHttpTlsCertificateBed() => SuiteDirectory = Path.Combine(Path.GetTempPath(), "vouchfx-hosted-tls-" + Guid.NewGuid().ToString("N"));
     public string SuiteDirectory { get; }
     public X509Certificate2 Root { get; private set; } = null!;
@@ -48,6 +49,7 @@ public sealed class HostedHttpTlsCertificateBed : IDisposable
             File.WriteAllText(Path.Combine(bed.SuiteDirectory, "ca.pem"), bed.Root.ExportCertificatePem());
             if (clientChain)
             {
+                bed._clientIssuer = bed.Own(LoadForTls(issuerSigner));
                 using var clientKey = RSA.Create(2048);
                 using var clientPublic = Sign(Request("CN=hosted-client-" + bed.Nonce, clientKey, ca: false, server: false), issuerSigner);
                 bed.Client = bed.Own(new X509Certificate2(clientPublic.Export(X509ContentType.Cert)));
@@ -73,6 +75,20 @@ public sealed class HostedHttpTlsCertificateBed : IDisposable
     }
 
     private string AuthorityName(string role) => "CN=Vouchfx Hosted TLS " + role + " " + Nonce + TestCertificateAuthority.ProcessTokenMarker;
+
+    /// <summary>Issues another leaf under this bed's client CA, including deliberately invalid client profiles.</summary>
+    public X509Certificate2 IssueClientCertificate(bool expired = false, bool wrongEku = false)
+    {
+        var issuer = _clientIssuer ?? throw new InvalidOperationException("This bed has no client issuer.");
+        using var key = RSA.Create(2048);
+        var request = Request("CN=hosted-client-" + Guid.NewGuid().ToString("N"), key, ca: false, server: wrongEku);
+        var now = DateTimeOffset.UtcNow;
+        using var certificate = request.Create(issuer, now.AddHours(-12),
+            expired ? now.AddHours(-1) : now.AddDays(1), RandomNumberGenerator.GetBytes(16));
+        using var withKey = certificate.CopyWithPrivateKey(key);
+        return Own(LoadForTls(withKey));
+    }
+
     private X509Certificate2 Own(X509Certificate2 certificate)
     {
         _owned.Add(certificate);
