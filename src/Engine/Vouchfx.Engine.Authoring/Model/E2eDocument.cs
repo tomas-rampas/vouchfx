@@ -33,4 +33,8 @@ public sealed record E2eDocument(
     MetadataSpec? Metadata,
     EnvironmentSpec? Environment,
     IReadOnlyDictionary<string, string>? Variables,
-    IReadOnlyList<StepSpec> Steps);
+    IReadOnlyList<StepSpec> Steps)
+{
+    /// <summary>Optional security policies for engine-owned host listeners.</summary>
+    public IReadOnlyDictionary<string, InboundListenerSpec>? Listeners { get; init; }
+}

@@ -121,7 +121,10 @@ public static class AstBuilder
             doc.Metadata,
             doc.Environment,
             variables,
-            nodes);
+            nodes)
+        {
+            Listeners = doc.Listeners,
+        };
     }
 
     // -------------------------------------------------------------------------

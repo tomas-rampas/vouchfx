@@ -99,4 +99,8 @@ public sealed record WebhookMatch(
     string? Method,
     string? Path,
     IReadOnlyDictionary<string, string>? Headers,
-    string? BodyContains);
+    string? BodyContains)
+{
+    /// <summary>Expected SHA-256 of the verified mTLS peer certificate.</summary>
+    public string? PeerCertificateSha256 { get; init; }
+}

@@ -148,7 +148,7 @@ public sealed record UnbuiltDocument(string YamlText, E2eDocument Document)
     {
         ArgumentNullException.ThrowIfNull(registry);
 
-        var declared = SecuredTargets.Enumerate(Environment).ToArray();
+        var declared = SecurityDeclarations.Enumerate(Document, null);
 
         // The schema door's own two calls, applied to a document that door never iterates.
         //

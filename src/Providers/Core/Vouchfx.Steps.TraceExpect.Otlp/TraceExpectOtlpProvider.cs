@@ -151,6 +151,11 @@ public sealed class TraceExpectOtlpProvider
                   "description": "Optional expected span name (operation name). May contain {placeholder} and ${secret:source/path} tokens.",
                   "type": "string"
                 },
+                "peerCertificateSha256": {
+                  "description": "SHA-256 fingerprint of the verified mTLS client certificate, exactly 64 hexadecimal characters.",
+                  "type": "string",
+                  "pattern": "^[0-9a-fA-F]{64}$"
+                },
                 "attributes": {
                   "description": "Optional map of expected span-attribute key to expected value, compared as text (subset match - the real span may carry additional attributes not mentioned here) - a bare numeric or boolean scalar is read as its literal text. Each value may contain {placeholder} and ${secret:source/path} tokens.",
                   "type": "object",
@@ -197,7 +202,10 @@ public sealed class TraceExpectOtlpProvider
         var spanName = GetOptionalScalar(matchMap, "spanName");
         var attributes = BindStringMap(matchMap, "attributes");
 
-        return new TraceMatch(TraceId: traceId, Service: service, SpanName: spanName, Attributes: attributes);
+        return new TraceMatch(TraceId: traceId, Service: service, SpanName: spanName, Attributes: attributes)
+        {
+            PeerCertificateSha256 = GetOptionalScalar(matchMap, "peerCertificateSha256"),
+        };
     }
 
     /// <summary>
@@ -272,6 +280,12 @@ public sealed class TraceExpectOtlpProvider
                 "automatically. 'service', 'spanName', and 'attributes' are optional " +
                 "refinements layered on top of the trace id; none of them may substitute " +
                 "for it.");
+        }
+
+        if (model.Match.PeerCertificateSha256 is { } fingerprint
+            && !System.Text.RegularExpressions.Regex.IsMatch(fingerprint, "\\A[0-9a-fA-F]{64}\\z"))
+        {
+            errors.Add("trace-expect.otlp: 'match.peerCertificateSha256' must be 64 hexadecimal characters.");
         }
 
         return errors.Count == 0
@@ -361,6 +375,7 @@ public sealed class TraceExpectOtlpProvider
                 string? traceIdExpectedTemplate,
                 string? serviceExpectedTemplate,
                 string? spanNameExpectedTemplate,
+                string? peerCertificateSha256Expected,
                 string[] attributeNames,
                 string[] attributeValueTemplates,
                 string[] captureVarNames,
@@ -414,6 +429,7 @@ public sealed class TraceExpectOtlpProvider
                     if (traceIdExpected != null) totalCriteria++;
                     if (serviceExpected != null) totalCriteria++;
                     if (spanNameExpected != null) totalCriteria++;
+                    if (peerCertificateSha256Expected != null) totalCriteria++;
                     if (attributeNames.Length > 0) totalCriteria++;
 
                     bool matched = false;
@@ -441,6 +457,12 @@ public sealed class TraceExpectOtlpProvider
                         if (spanNameExpected != null)
                         {
                             if (string.Equals(span.Name, spanNameExpected, System.StringComparison.Ordinal)) matchedCriteria++;
+                            else ok = false;
+                        }
+
+                        if (peerCertificateSha256Expected != null)
+                        {
+                            if (string.Equals(span.PeerCertificateSha256, peerCertificateSha256Expected, System.StringComparison.OrdinalIgnoreCase)) matchedCriteria++;
                             else ok = false;
                         }
 
@@ -732,6 +754,7 @@ public sealed class TraceExpectOtlpProvider
         var traceIdLiteral = match.TraceId is null ? "null" : JsonSerializer.Serialize(match.TraceId);
         var serviceLiteral = match.Service is null ? "null" : JsonSerializer.Serialize(match.Service);
         var spanNameLiteral = match.SpanName is null ? "null" : JsonSerializer.Serialize(match.SpanName);
+        var peerLiteral = match.PeerCertificateSha256 is null ? "null" : JsonSerializer.Serialize(match.PeerCertificateSha256);
 
         // The receiver name is a plain field — no {placeholder}/${secret} resolution applies to
         // the receiver name itself; it keys both the staged URL and the capture buffer.
@@ -786,6 +809,7 @@ public sealed class TraceExpectOtlpProvider
                     {{traceIdLiteral}},
                     {{serviceLiteral}},
                     {{spanNameLiteral}},
+                    {{peerLiteral}},
                     {{attributeNamesLiteral}},
                     {{attributeValueTemplatesLiteral}},
                     {{captureVarNamesLiteral}},

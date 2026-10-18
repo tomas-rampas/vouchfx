@@ -424,6 +424,12 @@ internal static class ProviderPipeline
             return Refuse(environmentSecurityFailure);
         }
 
+        var inboundMaterialFailure = InboundListenerValidator.ValidateMaterial(ast, resolvedSuiteDirectory);
+        if (inboundMaterialFailure is not null)
+        {
+            return Refuse(inboundMaterialFailure);
+        }
+
         // Security-profile wiring invariant (authenticated-infrastructure-mtls, slice C —
         // REQ-022): for every declared 'security' block, the (profile, target-kind) pair must
         // resolve to a registered wiring — closing the false-assurance gap REQ-021's
@@ -840,6 +846,12 @@ internal static class ProviderPipeline
                     "host resources (webhook listeners / OTLP receivers) so the alias is unambiguous.",
                     resolvedSuiteDirectory)));
             }
+        }
+
+        var inboundBindingFailure = InboundListenerValidator.ValidateBindings(ast, hostResourcePlan);
+        if (inboundBindingFailure is not null)
+        {
+            return Refuse(inboundBindingFailure);
         }
 
         // ── CSX assembly (GUARDED — issue #466) ─────────────────────
