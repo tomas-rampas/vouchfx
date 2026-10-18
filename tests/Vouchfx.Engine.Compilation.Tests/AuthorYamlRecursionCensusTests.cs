@@ -58,6 +58,8 @@ public sealed class AuthorYamlRecursionCensusTests
 
     [Theory]
     [InlineData("class P { void Walk(YamlNode node) { Walk(node); } }", 1)]
+    [InlineData("class P { void Walk(YamlNode? node) { Walk(node); } }", 1)]
+    [InlineData("class P { void Walk(global::YamlDotNet.RepresentationModel.YamlMappingNode? node) { Walk(node); } }", 1)]
     [InlineData("class P { void A(YamlNode node) { B(node); } void B(YamlMappingNode node) { A(node); } }", 2)]
     [InlineData("class P { void A(YamlNode node) { B(node); } void B(YamlNode node) { } }", 0)]
     [InlineData("class P { void Walk(JsonNode node) { Walk(node); } }", 0)]
@@ -102,8 +104,14 @@ public sealed class AuthorYamlRecursionCensusTests
         }
     }
 
-    private static bool IsYamlNode(Microsoft.CodeAnalysis.CSharp.Syntax.TypeSyntax? type) =>
-        type?.ToString().Split('.').Last() is "YamlNode" or "YamlMappingNode" or "YamlSequenceNode";
+    private static bool IsYamlNode(TypeSyntax? type) => type switch
+    {
+        NullableTypeSyntax nullable => IsYamlNode(nullable.ElementType),
+        QualifiedNameSyntax qualified => IsYamlNode(qualified.Right),
+        AliasQualifiedNameSyntax aliased => IsYamlNode(aliased.Name),
+        IdentifierNameSyntax name => name.Identifier.ValueText is "YamlNode" or "YamlMappingNode" or "YamlSequenceNode",
+        _ => false,
+    };
 
     private static IEnumerable<string> CalledSiblingNames(MethodDeclarationSyntax method, string typeName) =>
         method.DescendantNodes().OfType<InvocationExpressionSyntax>()
