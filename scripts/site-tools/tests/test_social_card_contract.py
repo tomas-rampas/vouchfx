@@ -1,14 +1,14 @@
 """Independent metadata, asset and actual packaged-CLI contract controls."""
 from __future__ import annotations
 
+import io
 import os
-import struct
 import subprocess
 import sys
-import zlib
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
 from vouchfx_site_tools.check_social_card import SocialCardError, check_social_card
 
@@ -17,11 +17,13 @@ PNG_LIMIT = 307200
 
 
 def png(width=1200, height=630):
-    # Construct a PNG independently; do not import the checker's constants.
-    payload = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
-    chunk = b"IHDR" + payload
-    return (b"\x89PNG\r\n\x1a\n" + struct.pack(">I", len(payload)) + chunk
-            + struct.pack(">I", zlib.crc32(chunk)) + b"\x00\x00\x00\x00IEND\xaeB\x60\x82")
+    # Create a complete image independently of the checker's decoder.
+    image = Image.new("RGB", (width, height), (11, 15, 26))
+    image.putpixel((0, 0), (129, 140, 248))
+    image.putpixel((1, 0), (34, 211, 238))
+    output = io.BytesIO()
+    image.save(output, format="PNG")
+    return output.getvalue()
 
 
 def metadata(**overrides):
@@ -51,6 +53,10 @@ def site(tmp_path):
     result = tmp_path / "site"
     result.mkdir()
     (result / "card.png").write_bytes(png())
+    (result / "styles.css").write_text(
+        ":root { --bg: #0b0f1a; --violet: #818cf8; --cyan: #22d3ee; }",
+        encoding="utf-8",
+    )
     write_index(result)
     return result
 
@@ -65,6 +71,68 @@ def test_two_distinct_assets_are_both_checked(site):
     assert check_social_card(site, ORIGIN) == 2
     (site / "second.png").write_bytes(png(600, 315))
     with pytest.raises(SocialCardError, match="1200x630"):
+        check_social_card(site, ORIGIN)
+
+
+def test_second_asset_must_have_literal_pixels(site):
+    image = Image.new("RGB", (1200, 630), (11, 15, 26))
+    image.putpixel((0, 0), (129, 140, 248))
+    image.save(site / "second.png", format="PNG")
+    write_index(site, metadata(**{"twitter:image": ORIGIN + "second.png"}))
+    with pytest.raises(SocialCardError, match="--cyan"):
+        check_social_card(site, ORIGIN)
+
+
+@pytest.mark.parametrize("mode", ["RGB", "RGBA", "P"])
+def test_literal_opaque_pixels_across_png_modes(site, mode):
+    rgb = Image.new("RGB", (1200, 630), (11, 15, 26))
+    rgb.putpixel((0, 0), (129, 140, 248))
+    rgb.putpixel((1, 0), (34, 211, 238))
+    if mode == "P":
+        image = Image.new("P", rgb.size, 0)
+        image.putpalette([11, 15, 26, 129, 140, 248, 34, 211, 238] + [0] * 759)
+        image.putpixel((0, 0), 1)
+        image.putpixel((1, 0), 2)
+    else:
+        image = rgb.convert(mode)
+    image.save(site / "card.png", format="PNG")
+    assert check_social_card(site, ORIGIN) == 1
+
+
+def test_changed_stylesheet_token_requires_changed_pixel(site):
+    (site / "styles.css").write_text(
+        ":root { --bg: #0b0f1a; --violet: #818cf8; --cyan: #00ffff; }",
+        encoding="utf-8",
+    )
+    with pytest.raises(SocialCardError, match="--cyan"):
+        check_social_card(site, ORIGIN)
+
+
+@pytest.mark.parametrize("css", [
+    "/* --cyan: #22d3ee; */ :root { --bg: #0b0f1a; --violet: #818cf8; }",
+    ":root { --bg: #0b0f1a; --violet: #818cf8; --cyan: #22d3ee; --cyan: #22d3ee; }",
+])
+def test_missing_or_duplicate_token_is_refused(site, css):
+    (site / "styles.css").write_text(css, encoding="utf-8")
+    with pytest.raises(SocialCardError, match="--cyan"):
+        check_social_card(site, ORIGIN)
+
+
+def test_missing_stylesheet_is_refused(site):
+    (site / "styles.css").unlink()
+    with pytest.raises(SocialCardError, match="stylesheet could not be read"):
+        check_social_card(site, ORIGIN)
+
+
+def test_transparent_accent_and_header_only_png_are_refused(site):
+    image = Image.new("RGBA", (1200, 630), (11, 15, 26, 255))
+    image.putpixel((0, 0), (129, 140, 248, 255))
+    image.putpixel((1, 0), (34, 211, 238, 0))
+    image.save(site / "card.png", format="PNG")
+    with pytest.raises(SocialCardError, match="--cyan"):
+        check_social_card(site, ORIGIN)
+    (site / "card.png").write_bytes(png()[:33])
+    with pytest.raises(SocialCardError, match="cannot be decoded"):
         check_social_card(site, ORIGIN)
 
 
