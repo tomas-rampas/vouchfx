@@ -15,14 +15,9 @@ conformant 1200x630, 49,818-byte PNG. Its real defect was that it had no
 literal accent-hex pixel anywhere in the rendered image (an anti-aliased
 gradient only) — the specific thing REQ-004's acceptance line requires.
 #298 fixed it with a re-render that added the literal swatch (49,818 ->
-40,744 bytes), not a pixel-by-pixel image-editor hand-edit. The
-dimension/size/IHDR assertions added by this branch close the class of
-defect that was completely ungated before (ANY pixel-level property); the
-specific literal-accent-pixel criterion that actually failed in #297 is
-still not gated here — it remains tracked separately as issue #306 (see
-`check_site.check_og_image_asset`'s own docstring for the same
-correction, and scripts/og-card/render.py's `self_check` for where that
-pixel-scan criterion actually lives today).
+40,744 bytes), not a pixel-by-pixel image-editor hand-edit. This suite
+now exercises the preventive issue #306 pixel gate using complete PNGs
+in RGB, RGBA and palette modes.
 
 It is also how the sitemap-exclusion check's slug-collision
 exemption (see `check_sitemap_excludes_404_and_stubs`'s own docstring, and
@@ -151,12 +146,14 @@ or (cwd scripts/site-tools, where [tool.pytest.ini_options] pins testpaths):
 from __future__ import annotations
 
 import importlib.util
+import io
 import struct
 import sys
 import uuid
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
 # scripts/site-tools/tests/test_check_site.py -> tests -> site-tools -> scripts
 CHECK_SITE_PATH = Path(__file__).resolve().parents[2] / "check_site.py"
@@ -251,24 +248,13 @@ def site_dir(tmp_path: Path) -> Path:
 
 
 def _make_png_bytes(width: int, height: int, *, min_size: int = 0) -> bytes:
-    """Minimal PNG byte string: a real signature plus a real IHDR chunk
-    (length, type, width, height, then IHDR's fixed remaining fields) —
-    exactly what `check_site._read_png_ihdr_dimensions` reads (bytes
-    [16:20] and [20:24]). No IDAT/IEND/CRC is included: check_site.py's own
-    PNG handling never parses past IHDR (a real image decode is out of
-    scope for a signature+dimensions+size gate), so including them would
-    only obscure what is actually being exercised here.
-
-    Optionally right-padded with zero bytes to reach `min_size` — used by
-    the oversized-file test. Padding is appended AFTER the IHDR chunk, so
-    it can never perturb the width/height this function encodes.
-    """
-    ihdr_payload = struct.pack(
-        ">IIBBBBB", width, height, 8, 6, 0, 0, 0
-    )  # bit depth 8, colour type 6 (RGBA), compression/filter/interlace 0 — a
-    # real IHDR shape; check_site.py never reads or validates these fields.
-    ihdr_chunk = struct.pack(">I", len(ihdr_payload)) + b"IHDR" + ihdr_payload + b"\x00\x00\x00\x00"
-    data = _PNG_SIGNATURE + ihdr_chunk
+    """Complete RGB PNG with each required literal token colour present."""
+    image = Image.new("RGB", (width, height), "#0b0f1a")
+    image.putpixel((0, 0), (129, 140, 248))
+    image.putpixel((1, 0), (34, 211, 238))
+    stream = io.BytesIO()
+    image.save(stream, format="PNG")
+    data = stream.getvalue()
     if len(data) < min_size:
         data += b"\x00" * (min_size - len(data))
     return data
@@ -338,6 +324,103 @@ def test_conformant_1200x630_png_passes(check_site, site_url_prefix: str, site_d
     )
 
     check_site.check_og_image_asset(site_dir)  # must not raise
+
+
+@pytest.mark.parametrize("mode", ["RGB", "RGBA", "P"])
+def test_token_pixels_are_decoded_across_png_colour_modes(
+    check_site, site_url_prefix: str, site_dir: Path, mode: str
+) -> None:
+    rgb = Image.new("RGB", (_EXPECTED_WIDTH, _EXPECTED_HEIGHT), "#0b0f1a")
+    rgb.putpixel((0, 0), (129, 140, 248))
+    rgb.putpixel((1, 0), (34, 211, 238))
+    if mode == "P":
+        image = Image.new("P", rgb.size, 0)
+        image.putpalette([11, 15, 26, 129, 140, 248, 34, 211, 238] + [0] * (256 * 3 - 9))
+        image.putpixel((0, 0), 1)
+        image.putpixel((1, 0), 2)
+    else:
+        image = rgb.convert(mode)
+    image.save(site_dir / "og-image.png", format="PNG")
+    _write_index_html(
+        site_dir, og_image_url=site_url_prefix + "og-image.png",
+        twitter_image_url=site_url_prefix + "og-image.png",
+        og_width="1200", og_height="630",
+    )
+    check_site.check_og_image_asset(site_dir)
+
+
+def test_missing_literal_accent_pixel_fails(check_site, site_url_prefix: str, site_dir: Path) -> None:
+    image = Image.new("RGB", (_EXPECTED_WIDTH, _EXPECTED_HEIGHT), "#0b0f1a")
+    image.putpixel((0, 0), (129, 140, 248))
+    image.putpixel((1, 0), (34, 211, 237))  # cyan is visually close but not literal
+    image.save(site_dir / "og-image.png", format="PNG")
+    _write_index_html(
+        site_dir, og_image_url=site_url_prefix + "og-image.png",
+        twitter_image_url=site_url_prefix + "og-image.png",
+        og_width="1200", og_height="630",
+    )
+    with pytest.raises(check_site.CheckFailed, match=r"--cyan.*#22d3ee"):
+        check_site.check_og_image_asset(site_dir)
+
+
+def test_transparent_token_pixel_does_not_count(check_site, site_url_prefix: str, site_dir: Path) -> None:
+    image = Image.new("RGBA", (_EXPECTED_WIDTH, _EXPECTED_HEIGHT), (11, 15, 26, 255))
+    image.putpixel((0, 0), (129, 140, 248, 255))
+    image.putpixel((1, 0), (34, 211, 238, 0))
+    image.save(site_dir / "og-image.png", format="PNG")
+    _write_index_html(
+        site_dir, og_image_url=site_url_prefix + "og-image.png",
+        twitter_image_url=site_url_prefix + "og-image.png",
+        og_width="1200", og_height="630",
+    )
+    with pytest.raises(check_site.CheckFailed, match=r"--cyan"):
+        check_site.check_og_image_asset(site_dir)
+
+
+def test_css_tokens_are_read_from_stylesheet(check_site, site_url_prefix: str, site_dir: Path,
+                                             monkeypatch: pytest.MonkeyPatch) -> None:
+    image = Image.new("RGB", (_EXPECTED_WIDTH, _EXPECTED_HEIGHT), "#0b0f1a")
+    image.putpixel((0, 0), (129, 140, 248))
+    image.putpixel((1, 0), (34, 211, 238))
+    image.save(site_dir / "og-image.png", format="PNG")
+    styles = site_dir / "styles.css"
+    styles.write_text(":root { --bg: #0b0f1a; --violet: #818cf8; --cyan: #00ffff; }", encoding="utf-8")
+    monkeypatch.setattr(check_site, "OG_IMAGE_STYLES_PATH", styles)
+    _write_index_html(
+        site_dir, og_image_url=site_url_prefix + "og-image.png",
+        twitter_image_url=site_url_prefix + "og-image.png",
+        og_width="1200", og_height="630",
+    )
+    with pytest.raises(check_site.CheckFailed, match=r"--cyan.*#00ffff"):
+        check_site.check_og_image_asset(site_dir)
+
+
+def test_missing_css_token_fails_closed(check_site, site_url_prefix: str, site_dir: Path,
+                                        monkeypatch: pytest.MonkeyPatch) -> None:
+    (site_dir / "og-image.png").write_bytes(_make_png_bytes(_EXPECTED_WIDTH, _EXPECTED_HEIGHT))
+    styles = site_dir / "styles.css"
+    styles.write_text("/* --cyan: #22d3ee; */ :root { --bg: #0b0f1a; --violet: #818cf8; }",
+                      encoding="utf-8")
+    monkeypatch.setattr(check_site, "OG_IMAGE_STYLES_PATH", styles)
+    _write_index_html(
+        site_dir, og_image_url=site_url_prefix + "og-image.png",
+        twitter_image_url=site_url_prefix + "og-image.png",
+        og_width="1200", og_height="630",
+    )
+    with pytest.raises(check_site.CheckFailed, match=r"--cyan"):
+        check_site.check_og_image_asset(site_dir)
+
+
+def test_header_only_png_fails_pixel_decode(check_site, site_url_prefix: str, site_dir: Path) -> None:
+    complete = _make_png_bytes(_EXPECTED_WIDTH, _EXPECTED_HEIGHT)
+    (site_dir / "og-image.png").write_bytes(complete[:33])  # valid IHDR, no IDAT
+    _write_index_html(
+        site_dir, og_image_url=site_url_prefix + "og-image.png",
+        twitter_image_url=site_url_prefix + "og-image.png",
+        og_width="1200", og_height="630",
+    )
+    with pytest.raises(check_site.CheckFailed, match=r"cannot be decoded"):
+        check_site.check_og_image_asset(site_dir)
 
 
 def test_wrong_dimensions_fails_mentioning_dimensions(

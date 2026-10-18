@@ -222,10 +222,13 @@ and first IHDR chunk, a valid header checksum, and size at most 307,200 bytes.
 Lossy numeric character references in required metadata are refused. Standard
 HTML escaping remains supported.
 
-The checker reads the PNG header; it does not decode pixels, validate the
-entire image stream or check the literal accent colour. It makes no network
-requests and leaves renderer output unchanged. Include it before uploading a
-Pages artefact and in the pull request's site-validation job.
+The checker also decodes each complete PNG with Pillow and requires fully
+opaque pixels for the literal `--bg`, `--violet` and `--cyan` hex colours in
+the built site's `styles.css`. Missing, duplicate or commented-out token
+declarations fail the gate. It makes no network requests and leaves renderer
+output unchanged. Include it before uploading a Pages artefact and in the
+pull request's site-validation job. Satellites must pin a Core commit that
+includes this gate before their builds enforce the pixel check.
 
 ## Private-identifier validation
 

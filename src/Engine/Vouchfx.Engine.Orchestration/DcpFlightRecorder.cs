@@ -738,7 +738,7 @@ internal sealed class DcpFlightRecorder : ILoggerProvider
     /// <param name="utcNow">The moment of the flush, recorded in the header.</param>
     internal string FormatCapture(DateTimeOffset utcNow)
     {
-        IReadOnlyList<DcpFlightEntry> snapshot;
+        DcpFlightEntry[] snapshot;
         int evicted;
         string? modelContext;
         lock (_gate)
@@ -757,7 +757,7 @@ internal sealed class DcpFlightRecorder : ILoggerProvider
         builder.Append(
             "issue: 420 (DCP state-store ownership refusal on Windows hosts; the controller exits "
             + "and nothing allocates ports)\n");
-        builder.Append("entries: ").Append(snapshot.Count)
+        builder.Append("entries: ").Append(snapshot.Length)
             .Append(", evicted: ").Append(evicted)
             .Append(", bounds: ").Append(_entryLimit).Append(" entries / ")
             .Append(_charLimit).Append(" chars\n");

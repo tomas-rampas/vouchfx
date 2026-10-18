@@ -272,7 +272,7 @@ public sealed class TelemetryRecoveryTransportTests
     private static DrainingTelemetrySink Sink(ITelemetryPaths paths, IOutboxHttpClient http) =>
         new(new LocalFileTelemetrySink(paths), http, paths, OutboxCap.Default, () => Now, () => 0.0);
 
-    private static async Task<string[]> SeedAsync(ITelemetryPaths paths, int count)
+    private static async Task<string[]> SeedAsync(TempPaths paths, int count)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(paths.OutboxPath)!);
         var seed = Enumerable.Range(0, count)

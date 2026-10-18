@@ -166,9 +166,8 @@ the card — but does not guarantee a specific wrap point.
 
 - a static PNG, exactly **1200×630** pixels;
 - **≤ 300 KB**;
-- built from the accent colour defined as a hex value in that repo's
-  `site/styles.css` token definitions (background is template-fixed and
-  not configurable);
+- contains opaque pixels matching the literal `--bg`, `--violet` and
+  `--cyan` hex tokens in that repo's `site/styles.css`;
 - referenced by `og:image` (absolute, same-domain URL), `og:image:width`,
   `og:image:height`, `og:image:alt`, and `twitter:image` with
   `twitter:card` set to `summary_large_image`.
@@ -220,10 +219,10 @@ rendering, not what its `scrollHeight`/`scrollWidth` report, so reading
 those instead correctly reflects the actual extent of its
 absolutely-positioned children.
 
-Note: the pixel scan proves the accent colour was successfully rendered
-(catching the #298 regression where it was missing entirely); it does not
-verify the hex value came from `site/styles.css`. That is the author's
-responsibility when filling the `{{ACCENT}}` placeholder.
+The renderer scans for the chosen accent; the Core publication gate also
+checks the output against the hex tokens parsed from `site/styles.css`.
+When rendering for a satellite, use that site's stylesheet tokens as the
+colour source until its publication gate gains the same check.
 
 ## After regenerating a card
 
@@ -238,7 +237,8 @@ responsibility when filling the `{{ACCENT}}` placeholder.
      `.github/workflows/pages.yml` builds with MkDocs directly, and
      `build_site.py` no longer runs in CI. `check_og_image_asset` confirms
      the built landing page still references the asset correctly (REQ-004
-     presence, dimensions, size — see "Conformance constraints" above).
+     presence, dimensions, size and CSS-token pixels — see "Conformance
+     constraints" above).
    - **A satellite repo** (vouchfx-samples/providers/telemetry-backend/mcp):
      rebuild that repo's own site as it does today. None of the four
      satellites has a `check_site.py`-equivalent og-image gate yet — that
