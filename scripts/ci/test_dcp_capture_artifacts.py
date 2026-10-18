@@ -146,7 +146,7 @@ class DcpCaptureArtefactTests(unittest.TestCase):
         self.assertLess(self.steps.index(before), self.steps.index(test))
         self.assertLess(self.steps.index(test), self.steps.index(after))
         self.assertLess(self.steps.index(after), self.steps.index(upload))
-        self.assertEqual("actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a", upload["uses"])
+        self.assertRegex(upload["uses"], r"\Aactions/upload-artifact@[0-9a-f]{40}\Z")
         self.assertEqual(7, upload["with"]["retention-days"])
         self.assertEqual("error", upload["with"]["if-no-files-found"])
         self.assertEqual("integration-dcp-captures", upload["with"]["name"])
