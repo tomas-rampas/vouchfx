@@ -1,7 +1,7 @@
-"""Validate a built site's social-card metadata and PNG header.
+"""Validate a built site's social-card metadata and decoded PNG pixels.
 
 Run: python -m vouchfx_site_tools.check_social_card SITE_DIR SITE_URL
-This checks the header and file size, not decoded pixels or the complete PNG stream.
+The card must contain opaque pixels for the built stylesheet's colour tokens.
 """
 from __future__ import annotations
 
@@ -22,6 +22,7 @@ _REQUIRED_META = frozenset({
 _MAX_INDEX_BYTES = 1024 * 1024
 _MAX_IMAGE_BYTES = 300 * 1024
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+_COLOUR_TOKENS = ("bg", "violet", "cyan")
 
 
 class SocialCardError(ValueError):
@@ -178,6 +179,50 @@ def _check_png(path: Path) -> tuple[int, int]:
     return dimensions
 
 
+def _token_colours(site_dir: Path) -> dict[str, tuple[int, int, int]]:
+    styles = site_dir / "styles.css"
+    if not styles.resolve().is_relative_to(site_dir.resolve()):
+        raise SocialCardError("Social-card stylesheet is outside the built directory.")
+    try:
+        css = styles.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        raise SocialCardError("Social-card stylesheet could not be read.") from None
+    css = re.sub(r"/\*.*?\*/", "", css, flags=re.DOTALL)
+    colours = {}
+    for name in _COLOUR_TOKENS:
+        matches = re.findall(rf"--{name}\s*:\s*(#[0-9a-fA-F]{{6}})\s*(?=;|}})", css)
+        if len(matches) != 1:
+            raise SocialCardError(
+                f"Social-card stylesheet must define exactly one literal six-digit --{name} hex token."
+            )
+        colours[name] = tuple(bytes.fromhex(matches[0][1:]))
+    return colours
+
+
+def _check_token_pixels(asset: Path, colours: dict[str, tuple[int, int, int]]) -> None:
+    from PIL import Image, UnidentifiedImageError
+
+    try:
+        with Image.open(asset) as source:
+            if source.format != "PNG":
+                raise SocialCardError("Social-card asset is not a decoded PNG image.")
+            image = source.convert("RGBA")
+            image.load()
+    except (OSError, ValueError, UnidentifiedImageError):
+        raise SocialCardError("Social-card asset cannot be decoded as a complete PNG image.") from None
+    required = set(colours.values())
+    found = {
+        pixel[:3] for pixel in image.get_flattened_data()
+        if pixel[3] == 255 and pixel[:3] in required
+    }
+    missing = [name for name, rgb in colours.items() if rgb not in found]
+    if missing:
+        names = ", ".join("--" + name for name in missing)
+        raise SocialCardError(
+            f"Social-card asset has no opaque literal pixel for CSS token(s) {names}."
+        )
+
+
 def check_social_card(site_dir: Path, site_url: str) -> int:
     """Raise SocialCardError on refusal; return the number of distinct checked assets."""
     try:
@@ -202,8 +247,10 @@ def check_social_card(site_dir: Path, site_url: str) -> int:
         if metas["twitter:card"] != "summary_large_image":
             raise SocialCardError("Twitter card must be summary_large_image.")
         assets = {_asset_path(site_dir, metas[key], site_url) for key in ("og:image", "twitter:image")}
+        colours = _token_colours(site_dir)
         for asset in assets:
             _check_png(asset)
+            _check_token_pixels(asset, colours)
         if metas["og:image:width"].strip() != "1200" or metas["og:image:height"].strip() != "630":
             raise SocialCardError("Social-card metadata dimensions must match the PNG.")
         return len(assets)
