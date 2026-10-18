@@ -54,10 +54,9 @@ specs/seo-fleet-audit.md (the fleet-wide SEO audit):
       1200x630 per its own IHDR chunk and no larger than 300 KB, and the
       page also emits og:image:width/height (REQUIRED, and must match the
       asset's real IHDR dimensions), a non-empty og:image:alt, and
-      twitter:card = "summary_large_image" — see `check_og_image_asset`.
-      This is NOT full REQ-004 closure: the literal-accent-pixel
-      criterion (what actually failed in #297) is tracked separately as
-      issue #306 and is not gated by this CI check;
+      twitter:card = "summary_large_image", and the decoded PNG contains
+      opaque pixels matching the background, violet and cyan hex tokens
+      parsed from site/styles.css — see `check_og_image_asset`;
   (m) sitemap.xml lists neither 404.html nor any legacy-redirect stub page,
       in either its literal `.html` or directory-slug form — see
       `check_sitemap_excludes_404_and_stubs`.
@@ -1209,6 +1208,54 @@ OG_IMAGE_EXPECTED_HEIGHT = 630
 
 # The 8-byte magic sequence every PNG file starts with (PNG spec §5.2).
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+OG_IMAGE_STYLES_PATH = REPO_ROOT / "site" / "styles.css"
+OG_IMAGE_COLOUR_TOKENS = ("bg", "violet", "cyan")
+
+
+def _og_image_token_colours(styles_path: Path) -> dict[str, tuple[int, int, int]]:
+    """Read the literal card colours from the site's CSS custom properties."""
+    try:
+        css = styles_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as error:
+        raise CheckFailed(f"Cannot read social-card colour tokens from {styles_path}: {error}") from error
+    # Ignore comments so a stale declaration there cannot satisfy the gate.
+    css = re.sub(r"/\*.*?\*/", "", css, flags=re.DOTALL)
+    colours = {}
+    for name in OG_IMAGE_COLOUR_TOKENS:
+        matches = re.findall(rf"--{name}\s*:\s*(#[0-9a-fA-F]{{6}})\s*(?=;|}})", css)
+        if len(matches) != 1:
+            raise CheckFailed(
+                f"{styles_path} must define exactly one literal six-digit --{name} hex token "
+                "for the social card (REQ-004)."
+            )
+        colours[name] = tuple(bytes.fromhex(matches[0][1:]))
+    return colours
+
+
+def _check_og_image_token_pixels(asset: Path, colours: dict[str, tuple[int, int, int]]) -> None:
+    """Require visible, fully opaque pixels for every required CSS token."""
+    from PIL import Image, UnidentifiedImageError
+
+    try:
+        with Image.open(asset) as source:
+            if source.format != "PNG":
+                raise CheckFailed(f"{asset} is not a decoded PNG image (REQ-004).")
+            image = source.convert("RGBA")
+            image.load()
+    except (OSError, ValueError, UnidentifiedImageError) as error:
+        raise CheckFailed(f"{asset} cannot be decoded as a complete PNG image: {error}") from error
+    required = set(colours.values())
+    found = {
+        pixel[:3]
+        for pixel in image.get_flattened_data()
+        if pixel[3] == 255 and pixel[:3] in required
+    }
+    missing = [f"--{name} (#{bytes(rgb).hex()})" for name, rgb in colours.items() if rgb not in found]
+    if missing:
+        raise CheckFailed(
+            f"{asset} has no opaque literal pixel for CSS token(s) {', '.join(missing)} "
+            "from site/styles.css (REQ-004). Re-render the card with solid token-coloured pixels."
+        )
 
 
 def _check_one_image_meta(
@@ -1424,9 +1471,7 @@ def check_og_image_asset(site_dir: Path) -> None:
     asserts both URLs are domain-absolute (EDGE-004): a relative image URL
     is not reliably resolved by scrapers.
 
-    Beyond mere existence, each referenced asset is further asserted —
-    closing the ungated CLASS of defect that let #297 ship, not that
-    specific defect itself (see below): it must be a genuine PNG (real
+    Beyond mere existence, each referenced asset must be a genuine PNG (real
     signature bytes and a well-formed IHDR as its first chunk, not just a
     `.png` extension), exactly 1200x630 per its own IHDR chunk, and no
     larger than 300 KB (`OG_IMAGE_MAX_BYTES`). og:image:width and
@@ -1434,25 +1479,11 @@ def check_og_image_asset(site_dir: Path) -> None:
     with og:image's real IHDR dimensions; og:image:alt must be non-empty;
     twitter:card must be exactly "summary_large_image".
 
-    What #297/#298 actually were, corrected here because an earlier
-    version of this docstring got it wrong: before issue #300, this check
-    asserted ONLY tag presence, a domain-absolute URL, and the referenced
-    file's mere existence — no pixel-level property whatsoever. #297's
-    engine card was already a conformant 1200x630, 49,818-byte PNG; its
-    real defect was that it had no literal accent-hex pixel anywhere in
-    it (an anti-aliased gradient only), which REQ-004's acceptance line
-    requires. #298 fixed this with a re-render that added the literal
-    swatch (49,818 -> 40,744 bytes) — not a pixel-by-pixel image-editor
-    hand-edit. The dimension/size/IHDR assertions this function performs
-    close the previously-completely-ungated class (some pixel-level
-    property, now checked); they do NOT gate the specific literal-accent-
-    pixel criterion that actually failed in #297 — that check does not
-    exist here. It is intentionally out of scope for this function and is
-    tracked separately as issue #306; scripts/og-card/render.py's own
-    `self_check` (a full pixel scan for the literal accent colour) is
-    where that criterion lives today, run by hand at card-authoring time,
-    not by this CI gate. Do not read this function as full REQ-004
-    closure.
+    The decoded image must also contain fully opaque pixels matching the
+    site's literal --bg, --violet and --cyan hex tokens. This catches the
+    #297 defect: a card whose gradient looked branded but contained no
+    literal accent-colour pixels. Pillow decodes all conformant PNG colour
+    modes, including palette and RGBA, before the pixel comparison.
 
     If og:image and twitter:image name the SAME on-disk file (true today),
     that file's PNG conformance is validated exactly once rather than
@@ -1485,6 +1516,10 @@ def check_og_image_asset(site_dir: Path) -> None:
         if asset in conformance:
             continue  # same on-disk file already validated under the other key
         conformance[asset] = _check_png_image_conformance(asset, index, key)
+
+    colours = _og_image_token_colours(OG_IMAGE_STYLES_PATH)
+    for asset in conformance:
+        _check_og_image_token_pixels(asset, colours)
 
     _check_og_image_meta_dimensions_match(index, collector.metas, conformance[og_asset])
     _check_og_image_alt_and_twitter_card(index, collector.metas)

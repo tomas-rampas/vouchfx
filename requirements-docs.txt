@@ -11,3 +11,5 @@ mkdocs-git-revision-date-localized-plugin==1.5.3
 # LanguageReferenceLink ports that slugify as measured against this exact version (#556).
 # Advance it only together with LanguageReferenceLinkTests' slugify vectors.
 Markdown==3.10.3
+# The publication gate decodes social-card PNG pixels in every PNG colour mode.
+Pillow==12.3.0
