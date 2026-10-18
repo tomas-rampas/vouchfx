@@ -15,9 +15,9 @@ dependencies = [
 # — since issue #300, this same tests/ directory also carries
 # scripts/check_site.py's and scripts/og-card/render.py's unit tests
 # (loaded via importlib, not part of this package), which ride this same
-# extra with zero additional dependencies.
+# extra with Pillow for the decoded social-card pixel assertions.
 # Install with: pip install -e "scripts/site-tools[test]"
-test = ["pytest>=8"]
+test = ["pytest>=8", "Pillow==12.3.0"]
 
 [build-system]
 requires = ["setuptools>=61"]
