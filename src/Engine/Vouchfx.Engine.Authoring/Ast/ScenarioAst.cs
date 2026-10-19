@@ -48,4 +48,8 @@ public sealed record ScenarioAst(
     MetadataSpec? Metadata,
     EnvironmentSpec? Environment,
     IReadOnlyDictionary<string, string> Variables,
-    IReadOnlyList<StepNode> Steps);
+    IReadOnlyList<StepNode> Steps)
+{
+    /// <summary>Optional policies for step-contributed host listeners.</summary>
+    public IReadOnlyDictionary<string, InboundListenerSpec>? Listeners { get; init; }
+}

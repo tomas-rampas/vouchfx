@@ -106,6 +106,39 @@ public sealed class SecurityConfirmationExitCodeTests
         ExitCodes.FromVerdict(
             verdict, failOnEnvironmentError: false, failOnInconclusive: false, assurance);
 
+    [Fact]
+    public void InboundDeclaration_WithoutItsOwnConfirmation_RaisesWithoutARefusal()
+    {
+        var inbound = new SecurityDeclarationIdentity(SecurityDirection.InboundListener, "api", "listener-a");
+        var outbound = new SecurityDeclarationIdentity(SecurityDirection.OutboundTarget, "api", "listener-a");
+        var assurance = SecurityAssurance.None.Declaring(new[] { inbound, outbound })
+            .Confirming(new[] { new SecurityConfirmationEvidence(outbound) });
+
+        Assert.True(assurance.Unconfirmed);
+        Assert.NotEqual(ExitCodes.Success, ExitFor(Verdict.Pass, assurance));
+        Assert.False(SecurityAssurance.None.Declaring(new[] { outbound }).Unconfirmed);
+    }
+
+    [Fact]
+    public void InboundConfirmation_MustMatchTheFullIdentityAndScenario()
+    {
+        var declared = new SecurityDeclarationIdentity(SecurityDirection.InboundListener, "callbacks", "policy-a");
+        var wrongPolicy = declared with { Digest = "policy-b" };
+        var wrongDirection = declared with { Direction = SecurityDirection.OutboundTarget };
+
+        foreach (var evidence in new[] { wrongPolicy, wrongDirection })
+        {
+            var unconfirmed = SecurityAssurance.None.Declaring(new[] { declared })
+                .Confirming(new[] { new SecurityConfirmationEvidence(evidence) });
+            Assert.True(unconfirmed.Unconfirmed);
+            Assert.True(SecurityAssurance.Worse(SecurityAssurance.None, unconfirmed).Unconfirmed);
+        }
+
+        var confirmed = SecurityAssurance.None.Declaring(new[] { declared })
+            .Confirming(new[] { new SecurityConfirmationEvidence(declared) });
+        Assert.False(confirmed.Unconfirmed);
+    }
+
     // ── The carve-out works ───────────────────────────────────────────────────────────────
 
     /// <summary>
@@ -289,7 +322,7 @@ public sealed class SecurityConfirmationExitCodeTests
     }
 
     /// <summary>
-    /// <see cref="SecurityAssurance.Declaring"/> and <see cref="SecurityAssurance.Confirming"/>
+    /// <c>SecurityAssurance.Declaring</c> and <c>SecurityAssurance.Confirming</c>
     /// REPLACE what an earlier call attached; they do not accumulate.
     /// </summary>
     /// <remarks>
@@ -1259,7 +1292,7 @@ public sealed class SecurityConfirmationExitCodeTests
     /// <summary>
     /// <strong>EDGE-005: two scenarios declaring the same target name.</strong> The
     /// shared-`environment` divergence guard forces every scenario's environment byte-identical, so
-    /// the two declarations produce ONE identity and <see cref="SecurityAssurance.Declaring"/>'s
+    /// the two declarations produce ONE identity and <c>SecurityAssurance.Declaring</c>'s
     /// deduplication collapses them to a single entry — the suite behaves exactly as it does with
     /// one scenario, which is why this edge changes nothing.
     /// <para>
@@ -1281,7 +1314,8 @@ public sealed class SecurityConfirmationExitCodeTests
             .Declaring(new[] { declaration, declaration });
 
         Assert.Single(bothScenarios.Declared);
-        Assert.Equal(SecuredTargets.IdentityOf(declaration), bothScenarios.Declared[0]);
+        var expected = SecuredTargets.IdentityOf(declaration);
+        Assert.Equal(new SecurityDeclarationIdentity(SecurityDirection.OutboundTarget, expected.Name, expected.Digest), bothScenarios.Declared[0]);
 
         // The same NAME asserting something else is a second declaration, not a duplicate.
         var differentAssertion = new SecuredTarget(

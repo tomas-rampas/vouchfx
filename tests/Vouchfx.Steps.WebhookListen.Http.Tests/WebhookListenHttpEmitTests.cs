@@ -207,6 +207,32 @@ public sealed class WebhookListenHttpEmitTests
         Assert.Contains("\"scanned\":2", outcome.Observation!, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Emit_PeerFingerprint_MatchesExactValidatedIdentity(bool matches)
+    {
+        const string actual = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        const string different = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
+        var model = MakeModel("callbacks", new WebhookMatch(null, "/callback", null, null)
+        {
+            PeerCertificateSha256 = matches ? actual.ToUpperInvariant() : different,
+        });
+        var captured = new[]
+        {
+            MakeRequest("POST", "/callback") with { PeerCertificateSha256 = actual },
+        };
+
+        var outcome = await RunAsync(model, "assert-peer", "callbacks", captured);
+
+        Assert.Equal(matches ? Verdict.Pass : Verdict.Fail, outcome.Verdict);
+        if (!matches)
+        {
+            Assert.Contains("peerCertificateSha256", outcome.Observation!, StringComparison.Ordinal);
+            Assert.DoesNotContain(actual, outcome.Observation!, StringComparison.Ordinal);
+        }
+    }
+
     // ── 8. Compile round-trip: no match → Fail (NOT Inconclusive) ────────────────
 
     [Fact]

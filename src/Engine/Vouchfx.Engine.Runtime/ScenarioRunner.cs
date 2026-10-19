@@ -576,7 +576,7 @@ public static class ScenarioRunner
             // core's own result, because a value reconstructed at this frame would say "no
             // provider defect" for a run that had one and would carry no sign that it was
             // guessing.
-            DeclaredTargetsOf(yamlText, registry),
+            DeclaredTargetsOf(yamlText, registry, seedBaseDirectory),
             appHostAssemblyName,
             output,
             seedBaseDirectory,
@@ -649,8 +649,8 @@ public static class ScenarioRunner
     /// throwing would replace a diagnosed verdict with a stack trace.
     /// </para>
     /// </remarks>
-    internal static IReadOnlyList<SecuredTarget> DeclaredTargetsOf(
-        string yamlText, StepKindRegistry registry)
+    internal static IReadOnlyList<SecurityDeclarationIdentity> DeclaredTargetsOf(
+        string yamlText, StepKindRegistry registry, string? suiteDirectory = null)
     {
         ArgumentNullException.ThrowIfNull(yamlText);
         ArgumentNullException.ThrowIfNull(registry);
@@ -658,13 +658,13 @@ public static class ScenarioRunner
         try
         {
             var ast = AstBuilder.Build(YamlDocumentParser.Parse(yamlText), registry);
-            return SecuredTargets.Enumerate(ast.Environment).ToArray();
+            return SecurityDeclarations.Enumerate(ast, suiteDirectory);
         }
 #pragma warning disable CA1031 // Deliberate: see the remarks — this is an adapter, not a door.
         catch (Exception)
 #pragma warning restore CA1031
         {
-            return Array.Empty<SecuredTarget>();
+            return Array.Empty<SecurityDeclarationIdentity>();
         }
     }
 
@@ -749,7 +749,7 @@ public static class ScenarioRunner
         StepKindRegistry registry,
         string yamlText,
         string scenarioName,
-        IReadOnlyList<SecuredTarget> declaredTargets,
+        IReadOnlyList<SecurityDeclarationIdentity> declaredTargets,
         string? appHostAssemblyName,
         TextWriter output,
         string? seedBaseDirectory,
@@ -1348,7 +1348,10 @@ public static class ScenarioRunner
                 AuthoringRefusalObserved = execution.AuthoringRefusalObserved,
                 Assurance = SecurityAssurance.None
                     .Declaring(declaredTargets)
-                    .Confirming(suite.SecurityConfirmations),
+                    .Confirming(suite.SecurityConfirmations
+                        .Select(confirmation => new SecurityConfirmationEvidence(
+                            SecurityDeclarations.Outbound(confirmation.Identity)))
+                        .Concat(execution.InboundConfirmations).ToArray()),
             };
         }
     }
@@ -1580,7 +1583,7 @@ public static class ScenarioRunner
                 EarlyVerdict: (Verdict?)Verdict.Inconclusive, EarlyMessage: (string?)failure.Failure!.Message,
                 ScenarioBaseDirectory: scenarioBaseDirectories?[index] ?? seedBaseDirectory)).ToList();
             var refusedAssurance = SecurityAssurance.None
-                .Declaring(scenarios.SelectMany(ast => SecuredTargets.Enumerate(ast.Environment)).ToList())
+                .Declaring(scenarios.SelectMany(ast => SecurityDeclarations.Enumerate(ast, seedBaseDirectory)).ToList())
                 .Refusing(SecurityAbortKind.AuthoringFault);
             return await CompleteWithoutTopologyAsync(refused,
                 SecurityAssurance.Worse(refusedAssurance,
@@ -1677,7 +1680,8 @@ public static class ScenarioRunner
         // (issue #411) declare exactly as loudly, but they do NOT belong in this union — they are
         // folded in WHOLE, below, as their own assurances.
         var assurance = SecurityAssurance.None.Declaring(
-            scenarios.SelectMany(s => SecuredTargets.Enumerate(s.Environment)).ToArray());
+            scenarios.SelectMany((s, index) => SecurityDeclarations.Enumerate(s,
+                scenarioBaseDirectories?[index] ?? seedBaseDirectory)).ToArray());
 
         // ── What documents that never became scenarios contribute (issue #415) ────────────────
         //
@@ -1938,7 +1942,8 @@ public static class ScenarioRunner
         // same run. That differential is what makes the fold row a measurement of the wiring rather
         // than one more suite that happens to redden.
         var rejectedDivergentAssurance =
-            FoldRejectedDivergent(scenarios, schemaValid, schemaRefusalKinds, baselineIndex);
+            FoldRejectedDivergent(scenarios, schemaValid, schemaRefusalKinds, baselineIndex,
+                compilations.Select(item => item.ScenarioBaseDirectory).ToArray());
 
         // The suite's answer: the scenarios' own assurance folded against the unbuilt documents' and
         // against any schema-rejected scenario whose environment was never held against the
@@ -1956,6 +1961,7 @@ public static class ScenarioRunner
         if (baselineIndex >= 0)
         {
             var baselineEnvJson = SerialiseEnvironment(scenarios[baselineIndex].Environment);
+            var baselineListenersJson = SerialiseListeners(scenarios[baselineIndex].Listeners);
             for (int i = baselineIndex + 1; i < scenarios.Count; i++)
             {
                 if (!schemaValid[i])
@@ -1964,7 +1970,10 @@ public static class ScenarioRunner
                 }
 
                 var envJson = SerialiseEnvironment(scenarios[i].Environment);
-                if (string.Equals(envJson, baselineEnvJson, StringComparison.Ordinal))
+                var environmentMatches = string.Equals(envJson, baselineEnvJson, StringComparison.Ordinal);
+                var listenersMatch = string.Equals(SerialiseListeners(scenarios[i].Listeners),
+                    baselineListenersJson, StringComparison.Ordinal);
+                if (environmentMatches && listenersMatch)
                 {
                     continue;
                 }
@@ -1974,7 +1983,7 @@ public static class ScenarioRunner
                 // first scenario" would compare against the wrong file.
                 var divergentEnvironment =
                     $"RunSuiteAsync: scenario '{scenarioNames[i]}' declares a different " +
-                    $"environment block than scenario '{scenarioNames[baselineIndex]}'.  All " +
+                    $"{(environmentMatches ? "listeners" : "environment")} block than scenario '{scenarioNames[baselineIndex]}'.  All " +
                     "scenarios in a suite must share one topology.  Suite aborted with " +
                     "Inconclusive (authoring refusal).";
 
@@ -2297,7 +2306,8 @@ public static class ScenarioRunner
         // which decides whether the suite declares security AT ALL — needs to be the one that will
         // actually start, and that is why only it moved.
         if (TryFindSecurityBaseDirectoryDivergence(
-                scenarios[topologyIndex].Environment, compilations, seedBaseDirectory, out var divergence))
+                scenarios[topologyIndex].Environment, scenarios[topologyIndex].Listeners,
+                compilations, seedBaseDirectory, out var divergence))
         {
             // Issue #266, Item 4: the message splices scenario names straight from untrusted YAML.
             // Printed HERE, once, for the suite; the completion path is told what was printed so it
@@ -2753,6 +2763,14 @@ public static class ScenarioRunner
             allBuffers.AddRange(transportNoticeLines);
             livePump?.PostRange(transportNoticeLines);
 
+            var sharedOutboundEvidence = suite.SecurityConfirmations
+                .Select(confirmation => new SecurityConfirmationEvidence(
+                    SecurityDeclarations.Outbound(confirmation.Identity))).ToArray();
+            var scenarioAssurances = scenarios.Select((scenario, index) => SecurityAssurance.None
+                .Declaring(SecurityDeclarations.Enumerate(scenario,
+                    scenarioBaseDirectories?[index] ?? seedBaseDirectory))
+                .Confirming(sharedOutboundEvidence)).ToArray();
+
             try
             {
                 for (int i = 0; i < compilations.Count; i++)
@@ -2764,6 +2782,8 @@ public static class ScenarioRunner
                     // Handle early-exit scenarios (validation / RETRY / pipeline failure).
                     if (earlyVerdict is not null)
                     {
+                        scenarioAssurances[i] = scenarioAssurances[i].Refusing(
+                            schemaRefusalKinds[i] ?? assurance.Refusal ?? SecurityAbortKind.AuthoringFault);
                         var now = DateTimeOffset.UtcNow;
                         buffer.Add(EventStreamJson.ToLine(new ScenarioStartedEvent
                         {
@@ -2885,6 +2905,8 @@ public static class ScenarioRunner
                         sharedPathLedger: runPathLedger).ConfigureAwait(false);
 
                     authoringRefusalObserved |= execution.AuthoringRefusalObserved;
+                    scenarioAssurances[i] = scenarioAssurances[i].Confirming(
+                        sharedOutboundEvidence.Concat(execution.InboundConfirmations).ToArray());
                     results.Add((name, execution.Verdict));
                     suiteAggregate = Elevate(suiteAggregate, execution.Verdict);
                     allBuffers.AddRange(buffer);
@@ -3008,8 +3030,8 @@ public static class ScenarioRunner
                 // `Confirming` records what the probe established for the suite that DID run, so a
                 // TransportConfirmed run is distinguishable from an AuthenticatedRoundTrip one by
                 // something other than the terminal text.
-                Assurance = WithUnbuiltDocuments(
-                    assurance.Confirming(suite.SecurityConfirmations)),
+                Assurance = WithUnbuiltDocuments(scenarioAssurances.Aggregate(
+                    SecurityAssurance.None, SecurityAssurance.Worse)),
 
                 // Issue #480 — and THIS is the return the issue is about. A suite reaching here
                 // built a topology and ran at least one scenario, so `ExecutedAnyScenario` keeps
@@ -3170,6 +3192,14 @@ public static class ScenarioRunner
     internal static bool LocatesADeclaredSecurityBlock(string instanceLocation)
     {
         var segments = instanceLocation.Split('/');
+
+        if (segments.Length >= 4
+            && segments[0].Length == 0
+            && string.Equals(segments[1], "listeners", StringComparison.Ordinal)
+            && string.Equals(segments[3], "security", StringComparison.Ordinal))
+        {
+            return true;
+        }
 
         return segments.Length >= 5
             && segments[0].Length == 0
@@ -3499,7 +3529,8 @@ public static class ScenarioRunner
         IReadOnlyList<ScenarioAst> scenarios,
         IReadOnlyList<bool> schemaValid,
         IReadOnlyList<SecurityAbortKind?> schemaRefusalKinds,
-        int baselineIndex)
+        int baselineIndex,
+        IReadOnlyList<string?>? scenarioBaseDirectories = null)
     {
         ArgumentNullException.ThrowIfNull(scenarios);
         ArgumentNullException.ThrowIfNull(schemaValid);
@@ -3514,6 +3545,7 @@ public static class ScenarioRunner
         }
 
         var baselineEnvJson = SerialiseEnvironment(scenarios[baselineIndex].Environment);
+        var baselineListenersJson = SerialiseListeners(scenarios[baselineIndex].Listeners);
         var folded = SecurityAssurance.None;
 
         for (int i = 0; i < scenarios.Count; i++)
@@ -3522,12 +3554,16 @@ public static class ScenarioRunner
                 || string.Equals(
                     SerialiseEnvironment(scenarios[i].Environment),
                     baselineEnvJson,
-                    StringComparison.Ordinal))
+                    StringComparison.Ordinal)
+                && string.Equals(SerialiseListeners(scenarios[i].Listeners), baselineListenersJson,
+                    StringComparison.Ordinal)
+                && (scenarioBaseDirectories is null || DirectoriesEqual(
+                    scenarioBaseDirectories[i], scenarioBaseDirectories[baselineIndex])))
             {
                 continue;
             }
 
-            var declaredHere = SecuredTargets.Enumerate(scenarios[i].Environment).ToArray();
+            var declaredHere = SecurityDeclarations.Enumerate(scenarios[i], scenarioBaseDirectories?[i]);
             if (declaredHere.Length == 0)
             {
                 continue;
@@ -3688,6 +3724,7 @@ public static class ScenarioRunner
     /// </remarks>
     private static bool TryFindSecurityBaseDirectoryDivergence(
         EnvironmentSpec? environment,
+        IReadOnlyDictionary<string, InboundListenerSpec>? listeners,
         // Concrete List, not IReadOnlyList (CA1859) — see CompleteWithoutTopologyAsync.
         List<(
             string ScenarioName,
@@ -3701,10 +3738,13 @@ public static class ScenarioRunner
     {
         message = string.Empty;
 
-        if (!EnvironmentSecurityValidator.DeclaresSecurity(environment) || compilations.Count == 0)
+        if ((!EnvironmentSecurityValidator.DeclaresSecurity(environment) && listeners is not { Count: > 0 })
+            || compilations.Count == 0)
         {
             return false;
         }
+
+        var inboundOnly = !EnvironmentSecurityValidator.DeclaresSecurity(environment);
 
         var first = compilations[0];
 
@@ -3720,6 +3760,15 @@ public static class ScenarioRunner
                 if (DirectoriesEqual(candidate.ScenarioBaseDirectory, first.ScenarioBaseDirectory))
                 {
                     continue;
+                }
+
+                if (inboundOnly)
+                {
+                    message = $"RunSuiteAsync: this suite declares listener security, but scenario "
+                        + $"'{candidate.ScenarioName}' resolves its listener certificate paths against a "
+                        + $"different directory than '{first.ScenarioName}' does. Put the scenarios "
+                        + "of a secured suite in one directory.";
+                    return true;
                 }
 
                 message =
@@ -3738,6 +3787,14 @@ public static class ScenarioRunner
         // PARAMETERS, not of how many scenarios there are.
         if (!DirectoriesEqual(first.ScenarioBaseDirectory, seedBaseDirectory))
         {
+            if (inboundOnly)
+            {
+                message = "RunSuiteAsync: this suite declares listener security, but its scenario "
+                    + "directory differs from the shared topology's seed directory. Pass the same "
+                    + "base directory for the suite and its topology.";
+                return true;
+            }
+
             message =
                 "RunSuiteAsync: this suite declares a 'security' block, but the directory its "
                 + "scenarios resolve declared security paths against is not the directory the "
@@ -4430,9 +4487,13 @@ public static class ScenarioRunner
             seedBaseDirectory, cancellationToken, scriptBaseDirectory, livePump, sharedLedger,
             sharedPathLedger).ConfigureAwait(false)).Verdict;
 
-    private sealed record ScenarioExecutionOutcome(Verdict Verdict, bool AuthoringRefusalObserved = false);
+    internal sealed record ScenarioExecutionOutcome(Verdict Verdict, bool AuthoringRefusalObserved = false)
+    {
+        public IReadOnlyList<SecurityConfirmationEvidence> InboundConfirmations { get; init; }
+            = Array.Empty<SecurityConfirmationEvidence>();
+    }
 
-    private static async Task<ScenarioExecutionOutcome> RunScenarioExecutionAgainstTopologyAsync(
+    internal static async Task<ScenarioExecutionOutcome> RunScenarioExecutionAgainstTopologyAsync(
         ScenarioAst ast,
         string scenarioName,
         string runId,
@@ -4478,109 +4539,189 @@ public static class ScenarioRunner
         // in scenario B within a shared topology (strictly stronger than a buffer clear).
         var listeners = new List<WebhookListener>();
         var otlpReceivers = new List<OtlpReceiver>();
+        var inboundConfirmations = new List<SecurityConfirmationEvidence>();
         IWebhookCaptureAccessor webhookAccessor = NullWebhookCaptureAccessor.Instance;
         ITraceCaptureAccessor traceAccessor = NullTraceCaptureAccessor.Instance;
         try
         {
             if (hostResourcePlan.Count > 0)
             {
-                var buffers = new Dictionary<string, WebhookCaptureBuffer>(StringComparer.Ordinal);
-                var traceBuffers = new Dictionary<string, TraceCaptureBuffer>(StringComparer.Ordinal);
-                // De-duplicate by VarName: many steps may reference the same logical listener.
-                foreach (var entry in hostResourcePlan)
+                // Open every declared identity before publishing any listener URL. The per-scenario
+                // listener owns each configuration after StartAsync; unopened configurations are
+                // disposed by this scope on failure.
+                using var listenerSecrets = CreateSecretAccessorScope(sharedLedger);
+                var pendingTls = new Dictionary<string, ListenerTlsConfiguration>(StringComparer.Ordinal);
+                string? startingListener = null;
+                try
                 {
-                    var req = entry.Requirement;
-
-                    if (string.Equals(req.Kind, OtlpReceiverKind, StringComparison.Ordinal))
+                    if (ast.Listeners is not null)
                     {
-                        if (traceBuffers.ContainsKey(req.VarName))
+                        var listenerBase = Path.GetFullPath(scriptBaseDirectory ?? seedBaseDirectory
+                            ?? Directory.GetCurrentDirectory());
+                        foreach (var (name, declaration) in ast.Listeners)
+                        {
+                            startingListener = name;
+                            var security = declaration.Security;
+                            SecurityArtifactPath.TryResolveContained(security.ServerCert, listenerBase, out var certPath);
+                            SecurityArtifactPath.TryResolveContained(security.ServerKey, listenerBase, out var keyPath);
+                            string? caPath = null;
+                            if (security.ClientCaCert is not null)
+                            {
+                                SecurityArtifactPath.TryResolveContained(security.ClientCaCert, listenerBase, out caPath);
+                            }
+
+                            var password = security.ServerKeyPassword is null
+                                ? null
+                                : listenerSecrets.Accessor.Resolve(security.ServerKeyPassword).Reveal();
+                            pendingTls.Add(name, ListenerTlsConfiguration.Load(certPath!, keyPath!, caPath,
+                                password, string.Equals(security.Profile, "mtls", StringComparison.Ordinal)));
+                        }
+                    }
+
+                    var buffers = new Dictionary<string, WebhookCaptureBuffer>(StringComparer.Ordinal);
+                    var traceBuffers = new Dictionary<string, TraceCaptureBuffer>(StringComparer.Ordinal);
+                    // De-duplicate by VarName: many steps may reference the same logical listener.
+                    foreach (var entry in hostResourcePlan)
+                    {
+                        var req = entry.Requirement;
+                        startingListener = req.VarName;
+
+                        if (string.Equals(req.Kind, OtlpReceiverKind, StringComparison.Ordinal))
+                        {
+                            if (traceBuffers.ContainsKey(req.VarName))
+                            {
+                                continue;
+                            }
+
+                            var traceBuffer = new TraceCaptureBuffer();
+                            pendingTls.Remove(req.VarName, out var traceTls);
+                            var receiver = await OtlpReceiver
+                                .StartAsync(traceBuffer, traceTls, cancellationToken)
+                                .ConfigureAwait(false);
+                            otlpReceivers.Add(receiver);
+                            if (ast.Listeners?.TryGetValue(req.VarName, out var traceDeclaration) == true)
+                            {
+                                inboundConfirmations.Add(new SecurityConfirmationEvidence(
+                                    SecurityDeclarations.Inbound(req.VarName, traceDeclaration,
+                                        scriptBaseDirectory ?? seedBaseDirectory)));
+                            }
+                            traceBuffers[req.VarName] = traceBuffer;
+
+                            // Stage the receiver's base URL under the SAME two keys the webhook
+                            // listener uses below (svc::<VarName> for target:-style resolution and
+                            // the plain <VarName> for {placeholder} substitution), so a suite
+                            // author can hand it straight to environment.services[].env, e.g.
+                            // OTEL_EXPORTER_OTLP_ENDPOINT: "{svc::traces}" (the OTel SDK appends
+                            // "/v1/traces" to this base URL itself — see OtlpReceiver.Url remarks).
+                            vars[VarKeys.Service(req.VarName)] = receiver.Url;
+                            vars[req.VarName] = receiver.Url;
+
+                            // Container-reachable alias, mirroring the webhook listener exactly —
+                            // the receiver binds 0.0.0.0 for the same host.docker.internal reason.
+                            vars[req.VarName + ContainerVarSuffix] = RewriteHostForContainer(receiver.Url);
+                            continue;
+                        }
+
+                        if (!string.Equals(req.Kind, WebhookListenerKind, StringComparison.Ordinal))
+                        {
+                            // Unknown host-resource kind: ignore tolerantly (a future kind may be
+                            // handled by a later sprint's runner without breaking this one).
+                            continue;
+                        }
+
+                        if (buffers.ContainsKey(req.VarName))
                         {
                             continue;
                         }
 
-                        var traceBuffer = new TraceCaptureBuffer();
-                        var receiver = await OtlpReceiver
-                            .StartAsync(traceBuffer, cancellationToken)
+                        var capBuffer = new WebhookCaptureBuffer();
+                        pendingTls.Remove(req.VarName, out var webhookTls);
+                        var listener = await WebhookListener
+                            .StartAsync(capBuffer, webhookTls, cancellationToken)
                             .ConfigureAwait(false);
-                        otlpReceivers.Add(receiver);
-                        traceBuffers[req.VarName] = traceBuffer;
+                        listeners.Add(listener);
+                        if (ast.Listeners?.TryGetValue(req.VarName, out var webhookDeclaration) == true)
+                        {
+                            inboundConfirmations.Add(new SecurityConfirmationEvidence(
+                                SecurityDeclarations.Inbound(req.VarName, webhookDeclaration,
+                                    scriptBaseDirectory ?? seedBaseDirectory)));
+                        }
+                        buffers[req.VarName] = capBuffer;
 
-                        // Stage the receiver's base URL under the SAME two keys the webhook
-                        // listener uses below (svc::<VarName> for target:-style resolution and
-                        // the plain <VarName> for {placeholder} substitution), so a suite
-                        // author can hand it straight to environment.services[].env, e.g.
-                        // OTEL_EXPORTER_OTLP_ENDPOINT: "{svc::traces}" (the OTel SDK appends
-                        // "/v1/traces" to this base URL itself — see OtlpReceiver.Url remarks).
-                        vars[VarKeys.Service(req.VarName)] = receiver.Url;
-                        vars[req.VarName] = receiver.Url;
+                        // Stage the listener URL under TWO keys BEFORE step 1, so an EARLIER
+                        // step can hand the callback URL to the SUT via either access path:
+                        //   • svc::<VarName>  — the discovered-service slot an http.rest step
+                        //     reaches via target:, identical to any orchestrated endpoint.
+                        //   • <VarName>       — a PLAIN Vars entry so {placeholder} substitution
+                        //     can reach it: an author writes {<listener>} in a request body/field
+                        //     to interpolate the callback URL.  {placeholder} substitution scans
+                        //     bare identifiers ([A-Za-z_]…) only and CANNOT reach a svc:: key, so
+                        //     this second staging is what makes the URL author-interpolable.
+                        // Both point at the same listener.Url.  The plain key is staged here,
+                        // before the `variables` block, so an author-declared variable of the
+                        // same name (rare) deliberately overrides it (forward-only Vars threading).
+                        vars[VarKeys.Service(req.VarName)] = listener.Url;
+                        vars[req.VarName] = listener.Url;
 
-                        // Container-reachable alias, mirroring the webhook listener exactly —
-                        // the receiver binds 0.0.0.0 for the same host.docker.internal reason.
-                        vars[req.VarName + ContainerVarSuffix] = RewriteHostForContainer(receiver.Url);
-                        continue;
+                        // SUT configuration surface (point 3): ALSO stage a container-reachable
+                        // form of the SAME callback URL, with the loopback host rewritten to
+                        // host.docker.internal, so a suite author can hand {<listener>_container} to
+                        // a containerised SUT in a request body. The listener binds 0.0.0.0 (see the
+                        // WebhookListener remarks), so host.docker.internal:<port> reaches it from
+                        // inside the Aspire-managed Docker network on both Docker Desktop and (via
+                        // the '--add-host' runtime arg EnvironmentMapper adds to every image-form
+                        // service) plain Linux Docker Engine CI runners. A VarName that would
+                        // collide with this synthesised suffix (an author names one listener "x"
+                        // and another "x_container") is rejected earlier, in
+                        // ProviderPipeline.Compile, before the topology is even built — so this
+                        // assignment can never silently overwrite an unrelated listener's URL.
+                        vars[req.VarName + ContainerVarSuffix] = RewriteHostForContainer(listener.Url);
                     }
 
-                    if (!string.Equals(req.Kind, WebhookListenerKind, StringComparison.Ordinal))
+                    if (buffers.Count > 0)
                     {
-                        // Unknown host-resource kind: ignore tolerantly (a future kind may be
-                        // handled by a later sprint's runner without breaking this one).
-                        continue;
+                        webhookAccessor = new WebhookCaptureAccessor(buffers);
                     }
 
-                    if (buffers.ContainsKey(req.VarName))
+                    if (traceBuffers.Count > 0)
                     {
-                        continue;
+                        traceAccessor = new TraceCaptureAccessor(traceBuffers);
                     }
-
-                    var capBuffer = new WebhookCaptureBuffer();
-                    var listener = await WebhookListener
-                        .StartAsync(capBuffer, cancellationToken)
-                        .ConfigureAwait(false);
-                    listeners.Add(listener);
-                    buffers[req.VarName] = capBuffer;
-
-                    // Stage the listener URL under TWO keys BEFORE step 1, so an EARLIER
-                    // step can hand the callback URL to the SUT via either access path:
-                    //   • svc::<VarName>  — the discovered-service slot an http.rest step
-                    //     reaches via target:, identical to any orchestrated endpoint.
-                    //   • <VarName>       — a PLAIN Vars entry so {placeholder} substitution
-                    //     can reach it: an author writes {<listener>} in a request body/field
-                    //     to interpolate the callback URL.  {placeholder} substitution scans
-                    //     bare identifiers ([A-Za-z_]…) only and CANNOT reach a svc:: key, so
-                    //     this second staging is what makes the URL author-interpolable.
-                    // Both point at the same listener.Url.  The plain key is staged here,
-                    // before the `variables` block, so an author-declared variable of the
-                    // same name (rare) deliberately overrides it (forward-only Vars threading).
-                    vars[VarKeys.Service(req.VarName)] = listener.Url;
-                    vars[req.VarName] = listener.Url;
-
-                    // SUT configuration surface (point 3): ALSO stage a container-reachable
-                    // form of the SAME callback URL, with the loopback host rewritten to
-                    // host.docker.internal, so a suite author can hand {<listener>_container} to
-                    // a containerised SUT in a request body. The listener binds 0.0.0.0 (see the
-                    // WebhookListener remarks), so host.docker.internal:<port> reaches it from
-                    // inside the Aspire-managed Docker network on both Docker Desktop and (via
-                    // the '--add-host' runtime arg EnvironmentMapper adds to every image-form
-                    // service) plain Linux Docker Engine CI runners. A VarName that would
-                    // collide with this synthesised suffix (an author names one listener "x"
-                    // and another "x_container") is rejected earlier, in
-                    // ProviderPipeline.Compile, before the topology is even built — so this
-                    // assignment can never silently overwrite an unrelated listener's URL.
-                    vars[req.VarName + ContainerVarSuffix] = RewriteHostForContainer(listener.Url);
                 }
-
-                if (buffers.Count > 0)
+                catch (Exception ex) when (ast.Listeners is { Count: > 0 }
+                    && ex is not OperationCanceledException)
                 {
-                    webhookAccessor = new WebhookCaptureAccessor(buffers);
+                    // Certificate and key errors can contain resolved paths or secret values.
+                    // Report only the declared location; no URL has been published to a step.
+                    var location = $"listeners.{startingListener ?? ast.Listeners.Keys.First()}.security";
+                    var detail = $"{location}: listener TLS material could not be loaded or the HTTPS listener could not start.";
+                    var now = DateTimeOffset.UtcNow;
+                    var info = new OrchestrationErrorInfo(
+                        OrchestrationErrorKind.SecurityConfirmation,
+                        startingListener ?? ast.Listeners.Keys.First(), null, null, detail);
+                    buffer.Add(EventStreamJson.ToLine(new ScenarioStartedEvent
+                    {
+                        RunId = runId,
+                        Timestamp = now,
+                        ScenarioId = scenarioName,
+                    }));
+                    buffer.Add(EnvironmentErrorLine(sharedLedger, sharedPathLedger, info, runId, now));
+                    buffer.Add(StepEventBuilder.ScenarioCompletedLine(
+                        runId, now, scenarioName, Verdict.EnvironmentError,
+                        new VerdictCounts { EnvError = 1 }, sharedLedger, sharedPathLedger, detail));
+                    livePump?.PostRange(buffer);
+                    return new ScenarioExecutionOutcome(Verdict.EnvironmentError)
+                    {
+                        InboundConfirmations = inboundConfirmations.ToArray(),
+                    };
                 }
-
-                if (traceBuffers.Count > 0)
+                finally
                 {
-                    traceAccessor = new TraceCaptureAccessor(traceBuffers);
+                    foreach (var configuration in pendingTls.Values) configuration.Dispose();
                 }
             }
 
-            return await RunScenarioCoreAsync(
+            var completed = await RunScenarioCoreAsync(
                 ast,
                 scenarioName,
                 runId,
@@ -4598,6 +4739,7 @@ public static class ScenarioRunner
                 livePump: livePump,
                 sharedLedger: sharedLedger,
                 sharedPathLedger: sharedPathLedger).ConfigureAwait(false);
+            return completed with { InboundConfirmations = inboundConfirmations };
         }
         finally
         {
@@ -5228,6 +5370,9 @@ public static class ScenarioRunner
         env is null
             ? string.Empty
             : JsonSerializer.Serialize(env, s_envSerialiserOptions);
+
+    private static string SerialiseListeners(IReadOnlyDictionary<string, InboundListenerSpec>? listeners) =>
+        listeners is null ? string.Empty : JsonSerializer.Serialize(listeners);
 
     /// <summary>
     /// The canonical JSON for an environment's <c>seed</c> section alone — the seed-root guard's
@@ -5988,6 +6133,22 @@ public static class ScenarioRunner
                 faults.Add(new SecretReferenceFault($"{fieldPath}: {fieldError}", fieldPath, true));
             }
         }
+
+        if (ast.Listeners is not null)
+        {
+            foreach (var (name, listener) in ast.Listeners)
+            {
+                if (listener.Security.ServerKeyPassword is { } password)
+                {
+                    if (!SecretReference.ValidateSecretBearingField(
+                            password, s_knownSecretSources, out var fieldError))
+                    {
+                        var fieldPath = $"listeners.{name}.security.serverKeyPassword";
+                        faults.Add(new SecretReferenceFault($"{fieldPath}: {fieldError}", fieldPath, true));
+                    }
+                }
+            }
+        }
         return faults.AsReadOnly();
     }
 
@@ -6210,6 +6371,16 @@ public static class ScenarioRunner
                 references.AddRange(SecretReference.FindAll(clientKeyPassword));
             }
         }
+        if (ast.Listeners is not null)
+        {
+            foreach (var listener in ast.Listeners.Values)
+            {
+                if (listener.Security.ServerKeyPassword is { } password)
+                {
+                    references.AddRange(SecretReference.FindAll(password));
+                }
+            }
+        }
 
         // ── 2. Fixture content hashes from the seed block + script.csharp file: refs ────
         // Seed fixtures stay rooted at seedBaseDirectory (the suite's single seed root);
@@ -6218,6 +6389,19 @@ public static class ScenarioRunner
         var fixtures = CollectFixtureDigests(ast.Environment?.Seed, seedBaseDirectory)
             .Concat(CollectScriptFileDigests(ast.Steps, scriptBaseDirectory ?? seedBaseDirectory))
             .ToList();
+        if (ast.Listeners is not null)
+        {
+            var baseDirectory = scriptBaseDirectory ?? seedBaseDirectory ?? Directory.GetCurrentDirectory();
+            foreach (var listener in ast.Listeners.Values)
+            {
+                fixtures.Add(HashFixtureOrNull(baseDirectory, listener.Security.ServerCert));
+                fixtures.Add(HashFixtureOrNull(baseDirectory, listener.Security.ServerKey));
+                if (listener.Security.ClientCaCert is { } ca)
+                {
+                    fixtures.Add(HashFixtureOrNull(baseDirectory, ca));
+                }
+            }
+        }
 
         // Compute() is pure: reference text + fixture digests only, no resolver.
         return ReproducibilityEnvelope.Compute(references, fixtures);

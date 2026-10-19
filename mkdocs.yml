@@ -166,6 +166,7 @@ nav:
       - SQL seed fixtures: seed-fixtures.md
       - Security compatibility matrix: security-matrix.md
       - Managed Kafka TLS and mutual TLS: managed-kafka-security.md
+      - TLS for host-owned listeners (unreleased): inbound-listener-tls.md
       - "Planner: coverage and gap analysis": planner.md
       - Troubleshooting: troubleshooting.md
       - CI integration reference: ci-integration.md

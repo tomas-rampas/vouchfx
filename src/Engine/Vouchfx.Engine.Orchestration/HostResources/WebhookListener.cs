@@ -72,7 +72,7 @@ namespace Vouchfx.Engine.Orchestration.HostResources;
 /// reachable from a containerised system under test via <c>host.docker.internal</c> without a
 /// Windows admin URL-ACL reservation.  The actual bound URL (with the OS-assigned port and the
 /// unguessable token segment, reported as <c>http://127.0.0.1:&lt;port&gt;/&lt;token&gt;/</c>
-/// for in-process callers) is exposed via <see cref="Url"/> after <see cref="StartAsync"/>
+/// for in-process callers) is exposed via <see cref="Url"/> after <c>StartAsync</c>
 /// completes.
 /// </para>
 /// <para>
@@ -113,18 +113,20 @@ public sealed class WebhookListener : IAsyncDisposable
     private const long MaxConcurrentConnections = 100;
 
     private readonly WebApplication _app;
+    private readonly ListenerTlsConfiguration? _tls;
     private bool _disposed;
 
-    private WebhookListener(WebApplication app, string url)
+    private WebhookListener(WebApplication app, string url, ListenerTlsConfiguration? tls)
     {
         _app = app;
         Url = url;
+        _tls = tls;
     }
 
     /// <summary>
     /// Gets the bound base URL of the listener (with the OS-assigned ephemeral port and the
     /// unguessable per-listener token path segment), e.g.
-    /// <c>http://127.0.0.1:54321/3f2a…d1/</c>.  Available only after <see cref="StartAsync"/>
+    /// <c>http://127.0.0.1:54321/3f2a…d1/</c>.  Available only after <c>StartAsync</c>
     /// returns.  This full tokenised URL is what is staged for the SUT to call back to.
     /// </summary>
     /// <remarks>
@@ -159,6 +161,13 @@ public sealed class WebhookListener : IAsyncDisposable
     /// </exception>
     public static async Task<WebhookListener> StartAsync(
         WebhookCaptureBuffer buffer,
+        CancellationToken cancellationToken = default) =>
+        await StartAsync(buffer, null, cancellationToken).ConfigureAwait(false);
+
+    /// <summary>Starts a listener using optional preloaded TLS material.</summary>
+    public static async Task<WebhookListener> StartAsync(
+        WebhookCaptureBuffer buffer,
+        ListenerTlsConfiguration? tls,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(buffer);
@@ -181,7 +190,10 @@ public sealed class WebhookListener : IAsyncDisposable
         // oversize body BEFORE the body is read.
         builder.WebHost.ConfigureKestrel(options =>
         {
-            options.Listen(IPAddress.Any, 0);
+            options.Listen(IPAddress.Any, 0, endpoint =>
+            {
+                if (tls is not null) endpoint.UseHttps(tls.Configure);
+            });
             options.Limits.MaxRequestBodySize = MaxRequestBodyBytes;
             options.Limits.MaxConcurrentConnections = MaxConcurrentConnections;
         });
@@ -190,20 +202,20 @@ public sealed class WebhookListener : IAsyncDisposable
 
         // Terminal middleware: token-gate, then capture ANY method / ANY (post-token) path,
         // respond 204.  Non-token requests get 404 and are NOT buffered.
-        app.Run(async context => await CaptureAsync(context, buffer, token).ConfigureAwait(false));
+        app.Run(async context => await CaptureAsync(context, buffer, token, tls?.RequireClientCertificate == true).ConfigureAwait(false));
 
         try
         {
             await app.StartAsync(cancellationToken).ConfigureAwait(false);
+            var url = ResolveBoundUrl(app, token, tls is not null);
+            return new WebhookListener(app, url, tls);
         }
         catch
         {
             await app.DisposeAsync().ConfigureAwait(false);
+            tls?.Dispose();
             throw;
         }
-
-        var url = ResolveBoundUrl(app, token);
-        return new WebhookListener(app, url);
     }
 
     /// <summary>
@@ -215,7 +227,8 @@ public sealed class WebhookListener : IAsyncDisposable
     private static async Task CaptureAsync(
         HttpContext context,
         WebhookCaptureBuffer buffer,
-        string token)
+        string token,
+        bool mtls)
     {
         var request = context.Request;
 
@@ -280,7 +293,10 @@ public sealed class WebhookListener : IAsyncDisposable
             Path: sutPath,
             Headers: headers,
             Body: body,
-            At: DateTimeOffset.UtcNow));
+            At: DateTimeOffset.UtcNow)
+        {
+            PeerCertificateSha256 = ListenerTlsConfiguration.VerifiedPeerFingerprint(context, mtls),
+        });
 
         // 204 No Content: the SUT only needs an ack that the callback was received.
         context.Response.StatusCode = StatusCodes.Status204NoContent;
@@ -337,7 +353,7 @@ public sealed class WebhookListener : IAsyncDisposable
     /// wildcard host to loopback so in-process callers can dial it directly, and appends the
     /// unguessable <paramref name="token"/> as the first path segment.
     /// </summary>
-    private static string ResolveBoundUrl(WebApplication app, string token)
+    private static string ResolveBoundUrl(WebApplication app, string token, bool https)
     {
         var addressesFeature = app.Services
             .GetRequiredService<IServer>()
@@ -356,12 +372,13 @@ public sealed class WebhookListener : IAsyncDisposable
         string authority;
         if (Uri.TryCreate(bound, UriKind.Absolute, out var uri))
         {
-            var builder = new UriBuilder(uri) { Host = "127.0.0.1" };
+            var builder = new UriBuilder(uri) { Host = "127.0.0.1", Scheme = https ? "https" : "http" };
             // Normalise: drop the default-port marker and any trailing slash inconsistency.
             authority = builder.Uri.GetLeftPart(UriPartial.Authority);
         }
         else
         {
+            if (https) throw new InvalidOperationException("The secured webhook listener reported an invalid bound URL.");
             authority = bound.TrimEnd('/');
         }
 
@@ -394,5 +411,6 @@ public sealed class WebhookListener : IAsyncDisposable
         }
 
         await _app.DisposeAsync().ConfigureAwait(false);
+        _tls?.Dispose();
     }
 }

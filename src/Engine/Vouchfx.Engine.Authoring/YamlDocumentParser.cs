@@ -119,12 +119,44 @@ public static class YamlDocumentParser
         var variables = ParseVariables(rootMapping);
         var steps = ParseSteps(rootMapping);
 
-        return new E2eDocument(metadata, environment, variables, steps);
+        return new E2eDocument(metadata, environment, variables, steps)
+        {
+            Listeners = ParseListeners(rootMapping),
+        };
     }
 
     // -------------------------------------------------------------------------
     // Section parsers
     // -------------------------------------------------------------------------
+
+    private static Dictionary<string, InboundListenerSpec>? ParseListeners(YamlMappingNode root)
+    {
+        if (!TryGetMapping(root, "listeners", out var node))
+        {
+            return null;
+        }
+
+        var listeners = new Dictionary<string, InboundListenerSpec>(StringComparer.Ordinal);
+        foreach (var (key, value) in node.Children)
+        {
+            if (key is not YamlScalarNode { Value: { } name } || value is not YamlMappingNode listener)
+            {
+                continue; // The root schema reports the malformed node at its location.
+            }
+
+            TryGetMapping(listener, "security", out var security);
+            listeners[name] = new InboundListenerSpec(
+                GetScalar(listener, "kind") ?? string.Empty,
+                new InboundListenerSecuritySpec(
+                    security is null ? string.Empty : GetScalar(security, "profile") ?? string.Empty,
+                    security is null ? string.Empty : GetScalar(security, "serverCert") ?? string.Empty,
+                    security is null ? string.Empty : GetScalar(security, "serverKey") ?? string.Empty,
+                    security is null ? null : GetScalar(security, "serverKeyPassword"),
+                    security is null ? null : GetScalar(security, "clientCaCert")));
+        }
+
+        return listeners;
+    }
 
     private static MetadataSpec? ParseMetadata(YamlMappingNode root)
     {

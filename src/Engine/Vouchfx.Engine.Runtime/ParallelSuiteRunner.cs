@@ -118,7 +118,7 @@ public static class ParallelSuiteRunner
         StepKindRegistry registry,
         string yamlText,
         string scenarioName,
-        IReadOnlyList<SecuredTarget> declaredTargets,
+        IReadOnlyList<SecurityDeclarationIdentity> declaredTargets,
         string? appHostAssemblyName,
         TextWriter output,
         string? seedBaseDirectory,
@@ -508,7 +508,7 @@ public static class ParallelSuiteRunner
                     slotAssurances,
                     slotProviderOrEngineFaults,
                     slotAuthoringRefusals,
-                    SecuredTargets.Enumerate(scenarios[index].Environment).ToArray(),
+                    SecurityDeclarations.Enumerate(scenarios[index], scenarioBaseDirectory),
                     livePump,
                     ct);
                 if (degree == 1)
@@ -570,7 +570,7 @@ public static class ParallelSuiteRunner
         SecurityAssurance[] slotAssurances,
         bool[] slotProviderOrEngineFaults,
         bool[] slotAuthoringRefusals,
-        IReadOnlyList<SecuredTarget> declared,
+        IReadOnlyList<SecurityDeclarationIdentity> declared,
         LiveEventPump? livePump,
         CancellationToken ct)
     {

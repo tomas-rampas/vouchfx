@@ -1,0 +1,14 @@
+# expected-instance-location: /listeners/callbacks/security
+# expected-keyword: required
+listeners:
+  callbacks:
+    kind: webhook-listener
+    security:
+      profile: mtls
+      serverCert: certs/server.pem
+      serverKey: certs/key.pem
+steps:
+  - id: callback
+    type: webhook-listen.http
+    listener: callbacks
+    match: { path: /event }

@@ -14,6 +14,12 @@
     "environment": {
       "$ref": "#/$defs/environment"
     },
+    "listeners": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/inboundListener"
+      }
+    },
     "variables": {
       "description": "Constant values pre-loaded into the shared variable context before the first step runs. A variable name may not begin with an engine-reserved bookkeeping prefix: svc::, conn::, __outcome::, __capture_status::, __attempts:: (the same rule 'capture' entries carry).",
       "$comment": "Mirrors AstBuilder.CheckReservedPrefix's 'variables' guard (see VarKeys, the authoritative prefix list) so the rejection is caught here, at authoring time, instead of only at AST-build time.",
@@ -33,6 +39,94 @@
     }
   },
   "$defs": {
+    "inboundListener": {
+      "type": "object",
+      "required": [
+        "kind",
+        "security"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "webhook-listener",
+            "otlp-receiver"
+          ]
+        },
+        "security": {
+          "$ref": "#/$defs/inboundListenerSecurity"
+        }
+      }
+    },
+    "inboundListenerSecurity": {
+      "type": "object",
+      "required": [
+        "profile",
+        "serverCert",
+        "serverKey"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "profile": {
+          "enum": [
+            "tls",
+            "mtls"
+          ]
+        },
+        "serverCert": {
+          "type": "string",
+          "minLength": 1
+        },
+        "serverKey": {
+          "type": "string",
+          "minLength": 1
+        },
+        "serverKeyPassword": {
+          "type": "string",
+          "pattern": "^\\$\\{secret:[^}]+\\}$"
+        },
+        "clientCaCert": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "profile": {
+                "const": "mtls"
+              }
+            },
+            "required": [
+              "profile"
+            ]
+          },
+          "then": {
+            "required": [
+              "clientCaCert"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "profile": {
+                "const": "tls"
+              }
+            },
+            "required": [
+              "profile"
+            ]
+          },
+          "then": {
+            "properties": {
+              "clientCaCert": false
+            }
+          }
+        }
+      ]
+    },
     "metadata": {
       "description": "Human-facing description of the test used in reporting and for suite filtering.",
       "type": "object",
@@ -3078,6 +3172,11 @@
                     "description": "Optional expected span name (operation name). May contain {placeholder} and ${secret:source/path} tokens.",
                     "type": "string"
                   },
+                  "peerCertificateSha256": {
+                    "description": "SHA-256 fingerprint of the verified mTLS client certificate, exactly 64 hexadecimal characters.",
+                    "type": "string",
+                    "pattern": "^[0-9a-fA-F]{64}$"
+                  },
                   "attributes": {
                     "description": "Optional map of expected span-attribute key to expected value, compared as text (subset match - the real span may carry additional attributes not mentioned here) - a bare numeric or boolean scalar is read as its literal text. Each value may contain {placeholder} and ${secret:source/path} tokens.",
                     "type": "object",
@@ -3153,6 +3252,11 @@
                       "number",
                       "boolean"
                     ]
+                  },
+                  "peerCertificateSha256": {
+                    "description": "SHA-256 fingerprint of the verified mTLS client certificate, exactly 64 hexadecimal characters.",
+                    "type": "string",
+                    "pattern": "^[0-9a-fA-F]{64}$"
                   }
                 },
                 "additionalProperties": false

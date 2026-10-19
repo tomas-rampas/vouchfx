@@ -57,4 +57,8 @@ public sealed record CapturedWebhookRequest(
     string Path,
     IReadOnlyDictionary<string, string> Headers,
     string Body,
-    DateTimeOffset At);
+    DateTimeOffset At)
+{
+    /// <summary>SHA-256 of the verified mTLS peer leaf DER, or null for other profiles.</summary>
+    public string? PeerCertificateSha256 { get; init; }
+}

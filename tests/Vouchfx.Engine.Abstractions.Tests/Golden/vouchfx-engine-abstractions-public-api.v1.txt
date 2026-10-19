@@ -356,6 +356,7 @@ record Vouchfx.Engine.Abstractions.Traces.CapturedSpan : System.IEquatable<Vouch
   property System.DateTimeOffset At { get; init }
   property System.String Name { get; init }
   property System.String ParentSpanId { get; init }
+  property System.String PeerCertificateSha256 { get; init }
   property System.String ServiceName { get; init }
   property System.String SpanId { get; init }
   property System.String StatusCode { get; init }
@@ -404,6 +405,7 @@ record Vouchfx.Engine.Abstractions.Webhooks.CapturedWebhookRequest : System.IEqu
   property System.String Body { get; init }
   property System.String Method { get; init }
   property System.String Path { get; init }
+  property System.String PeerCertificateSha256 { get; init }
 
 interface Vouchfx.Engine.Abstractions.Webhooks.IWebhookCaptureAccessor
   method System.Collections.Generic.IReadOnlyList<Vouchfx.Engine.Abstractions.Webhooks.CapturedWebhookRequest> GetCaptured(System.String listenerVarName)

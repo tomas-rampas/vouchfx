@@ -74,4 +74,8 @@ public sealed record CapturedSpan(
     string ServiceName,
     IReadOnlyDictionary<string, string> Attributes,
     string StatusCode,
-    System.DateTimeOffset At);
+    System.DateTimeOffset At)
+{
+    /// <summary>SHA-256 of the verified mTLS peer leaf DER, or null for other profiles.</summary>
+    public string? PeerCertificateSha256 { get; init; }
+}

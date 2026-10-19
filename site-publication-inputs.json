@@ -29,6 +29,7 @@
     "docs/ecosystem.md",
     "docs/getting-started.md",
     "docs/governance.md",
+    "docs/inbound-listener-tls.md",
     "docs/kb/dcp-orchestrator-portability.md",
     "docs/language-reference.md",
     "docs/managed-kafka-security.md",

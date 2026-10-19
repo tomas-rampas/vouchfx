@@ -1136,19 +1136,19 @@ public sealed class SecretObservationLeakPenetrationTests
             + "vice versa.");
 
         // And the gate is not vacuous: the call sites really are there.
-        Assert.Equal(3, Regex.Count(source, @"CreateSecretAccessorScope\([A-Za-z]"));
+        Assert.Equal(4, Regex.Count(source, @"CreateSecretAccessorScope\([A-Za-z]"));
 
         // Pin the ARGUMENT, not merely its shape. Measured: with the assertion above alone,
         // rewriting a call site as `CreateSecretAccessorScope(new ResolvedSecretLedger())`
         // restores the exact pre-REQ-010 defect — a scope with a ledger of its own — and the
         // gate stays green, because `new` also starts with [A-Za-z]. Every site must name the
         // run's ledger: `runSecretLedger` on the two entry points that create it, `sharedLedger`
-        // on the per-scenario site that receives it as a parameter.
+        // on the per-scenario listener and step sites that receive it as a parameter.
         var pinned = Regex.Count(
             source, @"CreateSecretAccessorScope\((?:runSecretLedger|sharedLedger)\)");
         Assert.True(
-            pinned == 3,
-            $"{pinned} of the 3 CreateSecretAccessorScope call sites in ScenarioRunner pass the "
+            pinned == 4,
+            $"{pinned} of the 4 CreateSecretAccessorScope call sites in ScenarioRunner pass the "
             + "run's own ledger (runSecretLedger / sharedLedger). A site passing any OTHER "
             + "expression — a freshly constructed ResolvedSecretLedger above all — compiles and "
             + "silently reinstates the per-scope ledger REQ-010 exists to abolish.");
@@ -1181,12 +1181,12 @@ public sealed class SecretObservationLeakPenetrationTests
         var source = File.ReadAllText(Path.Combine(
             RepositoryRoot(), "src", "Engine", "Vouchfx.Engine.Runtime", "ScenarioRunner.cs"));
 
-        // Five mentions in total: the declaration, whose first parameter is the TYPE, plus four
-        // call sites (the two probe paths, the suite loop's isolation failure, and the --watch
-        // kept-topology reset). One call puts its argument on the FOLLOWING line, so the pattern
-        // has to skip whitespace rather than assume one-line calls.
+        // Six mentions in total: the declaration, whose first parameter is the TYPE, plus five
+        // call sites (the two probe paths, the suite loop's isolation failure, the --watch
+        // kept-topology reset, and inbound listener startup failure). One call puts its argument
+        // on the FOLLOWING line, so the pattern skips whitespace rather than assuming one-line calls.
         var mentions = Regex.Count(source, @"EnvironmentErrorLine\(");
-        Assert.Equal(5, mentions);
+        Assert.Equal(6, mentions);
 
         var declaration = Regex.Count(source, @"EnvironmentErrorLine\(\s*ResolvedSecretLedger\b");
         Assert.Equal(1, declaration);
@@ -1194,10 +1194,11 @@ public sealed class SecretObservationLeakPenetrationTests
         var pinned = Regex.Count(
             source, @"EnvironmentErrorLine\(\s*(?:runSecretLedger|sharedLedger)\b");
         Assert.True(
-            pinned == 4,
-            $"{pinned} of the 4 EnvironmentErrorLine call sites in ScenarioRunner name a real "
+            pinned == 5,
+            $"{pinned} of the 5 EnvironmentErrorLine call sites in ScenarioRunner name a real "
             + "ledger (runSecretLedger on the three run-path sites, sharedLedger on the --watch "
-            + "kept-topology path). Every emission must scrub against one — a null there is the "
+            + "kept-topology and inbound listener paths). Every emission must scrub against one — "
+            + "a null there is the "
             + "REQ-010/EDGE-007 scrub silently absent at the one sink that carries topology-probe "
             + "text onto the §14 event stream.");
 
@@ -1240,7 +1241,7 @@ public sealed class SecretObservationLeakPenetrationTests
             RepositoryRoot(), "src", "Engine", "Vouchfx.Engine.Runtime", "ScenarioRunner.cs")));
 
         // ── Family 1: EnvironmentErrorLine ────────────────────────────────────────────────
-        // Five mentions: the declaration plus four call sites, exactly as the sibling gate counts
+        // Six mentions: the declaration plus five call sites, exactly as the sibling gate counts
         // them. Asserted non-zero FIRST — a rename that made every pattern match nothing would
         // otherwise satisfy the equalities below for free.
         var envMentions = Regex.Count(source, @"EnvironmentErrorLine\(");

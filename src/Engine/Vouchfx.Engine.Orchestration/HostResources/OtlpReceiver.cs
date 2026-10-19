@@ -90,7 +90,7 @@ namespace Vouchfx.Engine.Orchestration.HostResources;
 /// reachable from a containerised system under test via <c>host.docker.internal</c> without a
 /// Windows admin URL-ACL reservation (identical rationale to <see cref="WebhookListener"/>).
 /// The bound base URL (no trailing slash — see <see cref="Url"/>) is exposed after
-/// <see cref="StartAsync"/> completes.
+/// <c>StartAsync</c> completes.
 /// </para>
 /// <para>
 /// <strong>Endpoint:</strong> only <c>POST /v1/traces</c> with <c>Content-Type: application/json</c>
@@ -135,17 +135,19 @@ public sealed class OtlpReceiver : IAsyncDisposable
     private const string TracesPath = "/v1/traces";
 
     private readonly WebApplication _app;
+    private readonly ListenerTlsConfiguration? _tls;
     private bool _disposed;
 
-    private OtlpReceiver(WebApplication app, string url)
+    private OtlpReceiver(WebApplication app, string url, ListenerTlsConfiguration? tls)
     {
         _app = app;
         Url = url;
+        _tls = tls;
     }
 
     /// <summary>
     /// Gets the bound base URL of the receiver (with the OS-assigned ephemeral port), e.g.
-    /// <c>http://127.0.0.1:54321</c>. Available only after <see cref="StartAsync"/> returns.
+    /// <c>http://127.0.0.1:54321</c>. Available only after <c>StartAsync</c> returns.
     /// Deliberately carries NO trailing slash and NO path segment (unlike
     /// <see cref="WebhookListener.Url"/>'s token path) — an OTel SDK's
     /// <c>OTEL_EXPORTER_OTLP_ENDPOINT</c> convention appends <c>/v1/traces</c> to this value
@@ -175,6 +177,13 @@ public sealed class OtlpReceiver : IAsyncDisposable
     /// </exception>
     public static async Task<OtlpReceiver> StartAsync(
         TraceCaptureBuffer buffer,
+        CancellationToken cancellationToken = default) =>
+        await StartAsync(buffer, null, cancellationToken).ConfigureAwait(false);
+
+    /// <summary>Starts a receiver using optional preloaded TLS material.</summary>
+    public static async Task<OtlpReceiver> StartAsync(
+        TraceCaptureBuffer buffer,
+        ListenerTlsConfiguration? tls,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(buffer);
@@ -192,7 +201,10 @@ public sealed class OtlpReceiver : IAsyncDisposable
         // body BEFORE the body is read.
         builder.WebHost.ConfigureKestrel(options =>
         {
-            options.Listen(IPAddress.Any, 0);
+            options.Listen(IPAddress.Any, 0, endpoint =>
+            {
+                if (tls is not null) endpoint.UseHttps(tls.Configure);
+            });
             options.Limits.MaxRequestBodySize = MaxRequestBodyBytes;
             options.Limits.MaxConcurrentConnections = MaxConcurrentConnections;
         });
@@ -201,20 +213,20 @@ public sealed class OtlpReceiver : IAsyncDisposable
 
         // Terminal middleware: route on path/method/content-type, parse OTLP JSON, buffer
         // spans, respond per the OTLP/HTTP spec.
-        app.Run(async context => await HandleAsync(context, buffer).ConfigureAwait(false));
+        app.Run(async context => await HandleAsync(context, buffer, tls?.RequireClientCertificate == true).ConfigureAwait(false));
 
         try
         {
             await app.StartAsync(cancellationToken).ConfigureAwait(false);
+            var url = ResolveBoundUrl(app, tls is not null);
+            return new OtlpReceiver(app, url, tls);
         }
         catch
         {
             await app.DisposeAsync().ConfigureAwait(false);
+            tls?.Dispose();
             throw;
         }
-
-        var url = ResolveBoundUrl(app);
-        return new OtlpReceiver(app, url);
     }
 
     /// <summary>
@@ -223,7 +235,7 @@ public sealed class OtlpReceiver : IAsyncDisposable
     /// buffered. A syntactically valid JSON export request has its spans parsed and appended to
     /// <paramref name="buffer"/>, then the OTLP/HTTP success response is written.
     /// </summary>
-    private static async Task HandleAsync(HttpContext context, TraceCaptureBuffer buffer)
+    private static async Task HandleAsync(HttpContext context, TraceCaptureBuffer buffer, bool mtls)
     {
         var request = context.Request;
 
@@ -294,9 +306,10 @@ public sealed class OtlpReceiver : IAsyncDisposable
         var capturedAt = DateTimeOffset.UtcNow;
         try
         {
+            var peer = ListenerTlsConfiguration.VerifiedPeerFingerprint(context, mtls);
             foreach (var span in ParseSpans(body, capturedAt))
             {
-                buffer.Append(span);
+                buffer.Append(span with { PeerCertificateSha256 = peer });
             }
         }
         catch (JsonException)
@@ -555,7 +568,7 @@ public sealed class OtlpReceiver : IAsyncDisposable
     /// Reads the host's bound address (from <see cref="IServerAddressesFeature"/>) and rewrites
     /// the wildcard host to loopback so in-process callers can dial it directly.
     /// </summary>
-    private static string ResolveBoundUrl(WebApplication app)
+    private static string ResolveBoundUrl(WebApplication app, bool https)
     {
         var addressesFeature = app.Services
             .GetRequiredService<IServer>()
@@ -574,13 +587,14 @@ public sealed class OtlpReceiver : IAsyncDisposable
         // in ScenarioRunner).
         if (Uri.TryCreate(bound, UriKind.Absolute, out var uri))
         {
-            var builder = new UriBuilder(uri) { Host = "127.0.0.1" };
+            var builder = new UriBuilder(uri) { Host = "127.0.0.1", Scheme = https ? "https" : "http" };
             // No trailing slash: the base URL an OTel SDK is handed via
             // OTEL_EXPORTER_OTLP_ENDPOINT must join cleanly with the SDK's own "/v1/traces"
             // suffix (see the Url property remarks).
             return builder.Uri.GetLeftPart(UriPartial.Authority);
         }
 
+        if (https) throw new InvalidOperationException("The secured OTLP receiver reported an invalid bound URL.");
         return bound.TrimEnd('/');
     }
 
@@ -607,5 +621,6 @@ public sealed class OtlpReceiver : IAsyncDisposable
         }
 
         await _app.DisposeAsync().ConfigureAwait(false);
+        _tls?.Dispose();
     }
 }

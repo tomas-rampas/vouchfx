@@ -141,6 +141,11 @@ public sealed class WebhookListenHttpProvider
                 "bodyContains": {
                   "description": "Optional substring the captured request body must contain (ordinal).  May contain {placeholder} and ${secret:source/path} tokens. May be written as a bare number/boolean scalar; it is matched as text either way.",
                   "type": ["string", "integer", "number", "boolean"]
+                },
+                "peerCertificateSha256": {
+                  "description": "SHA-256 fingerprint of the verified mTLS client certificate, exactly 64 hexadecimal characters.",
+                  "type": "string",
+                  "pattern": "^[0-9a-fA-F]{64}$"
                 }
               },
               "additionalProperties": false
@@ -187,7 +192,10 @@ public sealed class WebhookListenHttpProvider
             Method: method,
             Path: path,
             Headers: headers,
-            BodyContains: bodyContains);
+            BodyContains: bodyContains)
+        {
+            PeerCertificateSha256 = GetOptionalScalar(matchMap, "peerCertificateSha256"),
+        };
     }
 
     /// <summary>
@@ -250,6 +258,12 @@ public sealed class WebhookListenHttpProvider
                 "(method, path, headers, or bodyContains).");
         }
 
+        if (model.Match.PeerCertificateSha256 is { } fingerprint
+            && !System.Text.RegularExpressions.Regex.IsMatch(fingerprint, "\\A[0-9a-fA-F]{64}\\z"))
+        {
+            errors.Add("webhook-listen.http: 'match.peerCertificateSha256' must be 64 hexadecimal characters.");
+        }
+
         return errors.Count == 0
             ? ValidationResult.Success
             : ValidationResult.Failure(errors.ToArray());
@@ -264,6 +278,7 @@ public sealed class WebhookListenHttpProvider
         => match.Method is not null
            || match.Path is not null
            || match.BodyContains is not null
+           || match.PeerCertificateSha256 is not null
            || (match.Headers is { Count: > 0 });
 
     // ── IHostResourceContributor<WebhookListenHttpModel> ──────────────────────
@@ -359,6 +374,7 @@ public sealed class WebhookListenHttpProvider
         "        string? methodExpected,\n" +
         "        string? pathExpected,\n" +
         "        string? bodyContainsTemplate,\n" +
+        "        string? peerCertificateSha256Expected,\n" +
         "        string[] headerNames,\n" +
         "        string[] headerValueTemplates,\n" +
         "        System.Threading.CancellationToken ct)\n" +
@@ -403,7 +419,7 @@ public sealed class WebhookListenHttpProvider
         "            for (int i = 0; i < captured.Count; i++)\n" +
         "            {\n" +
         "                var failed = new System.Collections.Generic.List<string>(4);\n" +
-        "                if (MatchesRequest(captured[i], method, path, bodyContains, headerNames, headerValues, failed))\n" +
+        "                if (MatchesRequest(captured[i], method, path, bodyContains, peerCertificateSha256Expected, headerNames, headerValues, failed))\n" +
         "                {\n" +
         "                    matched = true;\n" +
         "                    break;\n" +
@@ -486,11 +502,17 @@ public sealed class WebhookListenHttpProvider
         "        string? method,\n" +
         "        string? path,\n" +
         "        string? bodyContains,\n" +
+        "        string? peerCertificateSha256Expected,\n" +
         "        string[] headerNames,\n" +
         "        string[] headerValues,\n" +
         "        System.Collections.Generic.List<string> failed)\n" +
         "    {\n" +
         "        bool ok = true;\n" +
+        "        if (peerCertificateSha256Expected is not null && !string.Equals(request.PeerCertificateSha256, peerCertificateSha256Expected, System.StringComparison.OrdinalIgnoreCase))\n" +
+        "        {\n" +
+        "            failed.Add(\"peerCertificateSha256\");\n" +
+        "            ok = false;\n" +
+        "        }\n" +
         "        // (1) method equality (case-insensitive) when an expected method is set.\n" +
         "        if (method is not null && !string.Equals(request.Method ?? string.Empty, method, System.StringComparison.OrdinalIgnoreCase))\n" +
         "        {\n" +
@@ -635,6 +657,9 @@ public sealed class WebhookListenHttpProvider
         var bodyContainsLiteral = match.BodyContains is null
             ? "null"
             : JsonSerializer.Serialize(match.BodyContains);
+        var peerLiteral = match.PeerCertificateSha256 is null
+            ? "null"
+            : JsonSerializer.Serialize(match.PeerCertificateSha256);
 
         // The listener name is a plain field — no {placeholder}/${secret} resolution applies
         // to the listener name itself; it keys both the staged URL and the capture buffer.
@@ -656,6 +681,7 @@ public sealed class WebhookListenHttpProvider
                     {{methodLiteral}},
                     {{pathLiteral}},
                     {{bodyContainsLiteral}},
+                    {{peerLiteral}},
                     {{headerNamesLiteral}},
                     {{headerValueTemplatesLiteral}},
                     __stepCt_{{safeId}});

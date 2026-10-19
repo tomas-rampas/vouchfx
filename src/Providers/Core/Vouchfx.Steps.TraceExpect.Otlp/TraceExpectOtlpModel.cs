@@ -64,7 +64,11 @@ public sealed record TraceMatch(
     string? TraceId,
     string? Service,
     string? SpanName,
-    IReadOnlyDictionary<string, string>? Attributes);
+    IReadOnlyDictionary<string, string>? Attributes)
+{
+    /// <summary>Expected SHA-256 of the verified mTLS peer certificate.</summary>
+    public string? PeerCertificateSha256 { get; init; }
+}
 
 /// <summary>
 /// Strongly-typed model for the <c>trace-expect.otlp</c> step kind (DSL §5.10, Phase C).

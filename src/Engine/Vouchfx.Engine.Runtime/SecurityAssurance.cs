@@ -318,16 +318,23 @@ public enum SecurityAbortKind
 /// </para>
 /// </remarks>
 public sealed record SecurityAssurance(
-    IReadOnlyList<SecuredTargetIdentity> Declared,
-    IReadOnlyList<SecuredTargetIdentity> Confirmed,
+    IReadOnlyList<SecurityDeclarationIdentity> Declared,
+    IReadOnlyList<SecurityDeclarationIdentity> Confirmed,
     SecurityAbortKind? Refusal)
 {
+    /// <summary>Compatibility constructor for existing outbound-only callers.</summary>
+    public SecurityAssurance(IReadOnlyList<SecuredTargetIdentity> Declared,
+        IReadOnlyList<SecuredTargetIdentity> Confirmed, SecurityAbortKind? Refusal)
+        : this(Declared.Select(SecurityDeclarations.Outbound).ToArray(),
+            Confirmed.Select(SecurityDeclarations.Outbound).ToArray(), Refusal)
+    { }
+
     /// <summary>
     /// Nothing declared, nothing confirmed, nothing refused — the value every path that has not yet
     /// learned anything starts from, and the value a caller that never asked about security gets.
     /// </summary>
     public static SecurityAssurance None { get; } = new(
-        Array.Empty<SecuredTargetIdentity>(), Array.Empty<SecuredTargetIdentity>(), null);
+        Array.Empty<SecurityDeclarationIdentity>(), Array.Empty<SecurityDeclarationIdentity>(), null);
 
     /// <summary>
     /// <strong>REQ-003's predicate, written once.</strong> The document declared a <c>security</c>
@@ -396,7 +403,9 @@ public sealed record SecurityAssurance(
     /// </para>
     /// </remarks>
     public bool Unconfirmed =>
-        (Refusal == SecurityAbortKind.AuthoringFault && SomeDeclaredTargetWentUnconfirmed)
+        (Declared.Any(declared => declared.Direction == SecurityDirection.InboundListener
+            && !Confirmed.Contains(declared)))
+        || (Refusal == SecurityAbortKind.AuthoringFault && SomeDeclaredTargetWentUnconfirmed)
         || (Refusal == SecurityAbortKind.SecuredTargetUnavailable && SomeDeclaredTargetWentUnconfirmed)
         || Refusal == SecurityAbortKind.ProbeUnconfirmed
         || Refusal == SecurityAbortKind.SecurityDeclarationRejected;
@@ -449,7 +458,8 @@ public sealed record SecurityAssurance(
         if (failure.Info.Kind == OrchestrationErrorKind.SecurityConfirmation)
             return Refusing(SecurityAbortKind.ProbeUnconfirmed);
         var targetFailure = failure.AcquisitionStage is ResourceAcquisitionStage.Readiness or ResourceAcquisitionStage.Discovery or ResourceAcquisitionStage.ServerMaterial
-            && Declared.Any(target => string.Equals(target.Name, failure.Info.ResourceName, StringComparison.Ordinal)
+            && Declared.Any(target => target.Direction == SecurityDirection.OutboundTarget
+                && string.Equals(target.Name, failure.Info.ResourceName, StringComparison.Ordinal)
                 && !Confirmed.Contains(target));
         return Refusing(targetFailure ? SecurityAbortKind.SecuredTargetUnavailable : SecurityAbortKind.TopologyUnavailable);
     }
@@ -510,7 +520,18 @@ public sealed record SecurityAssurance(
     {
         ArgumentNullException.ThrowIfNull(declared);
 
-        return this with { Declared = Distinct(declared.Select(SecuredTargets.IdentityOf)) };
+        return this with
+        {
+            Declared = Distinct(declared.Select(target =>
+            SecurityDeclarations.Outbound(SecuredTargets.IdentityOf(target))))
+        };
+    }
+
+    /// <summary>Attaches combined inbound and outbound declarations.</summary>
+    public SecurityAssurance Declaring(IReadOnlyList<SecurityDeclarationIdentity> declared)
+    {
+        ArgumentNullException.ThrowIfNull(declared);
+        return this with { Declared = Distinct(declared) };
     }
 
     /// <summary>
@@ -518,7 +539,7 @@ public sealed record SecurityAssurance(
     /// </summary>
     /// <param name="confirmed">The topology's own <c>SecurityConfirmations</c>.</param>
     /// <remarks>
-    /// Replaces rather than accumulates, exactly as <see cref="Declaring"/> does. It reads the
+    /// Replaces rather than accumulates, exactly as <c>Declaring</c> does. It reads the
     /// identity the probe ALREADY derived rather than re-deriving one from the confirmation's
     /// scalar members: the probe holds the <c>SecuredTarget</c> and this does not, and a second
     /// derivation from a partial view is exactly how the two sides would come to disagree.
@@ -527,6 +548,13 @@ public sealed record SecurityAssurance(
     {
         ArgumentNullException.ThrowIfNull(confirmed);
 
+        return this with { Confirmed = Distinct(confirmed.Select(c => SecurityDeclarations.Outbound(c.Identity))) };
+    }
+
+    /// <summary>Attaches combined inbound and outbound confirmation evidence.</summary>
+    public SecurityAssurance Confirming(IReadOnlyList<SecurityConfirmationEvidence> confirmed)
+    {
+        ArgumentNullException.ThrowIfNull(confirmed);
         return this with { Confirmed = Distinct(confirmed.Select(c => c.Identity)) };
     }
 
@@ -621,7 +649,7 @@ public sealed record SecurityAssurance(
     /// which is ordinal, so a site that omitted it behaved identically. The record struct's default
     /// equality is ordinal per member and needs no argument.
     /// </remarks>
-    private static SecuredTargetIdentity[] Distinct(IEnumerable<SecuredTargetIdentity> identities) =>
+    private static SecurityDeclarationIdentity[] Distinct(IEnumerable<SecurityDeclarationIdentity> identities) =>
         identities.Distinct().ToArray();
 
     private static int Precedence(SecurityAbortKind kind) => kind switch

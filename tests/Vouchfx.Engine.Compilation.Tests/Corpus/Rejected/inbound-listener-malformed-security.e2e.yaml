@@ -1,0 +1,11 @@
+# expected-instance-location: /listeners/callbacks/security
+# expected-keyword: type
+listeners:
+  callbacks:
+    kind: webhook-listener
+    security: false
+steps:
+  - id: callback
+    type: webhook-listen.http
+    listener: callbacks
+    match: { path: /event }

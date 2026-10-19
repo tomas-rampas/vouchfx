@@ -1,0 +1,15 @@
+# expected-instance-location: /listeners/callbacks/security/profile
+# expected-keyword: enum
+listeners:
+  callbacks:
+    kind: webhook-listener
+    security:
+      profile: custom
+      serverCert: certs/server.pem
+      serverKey: certs/key.pem
+      clientCaCert: certs/ca.pem
+steps:
+  - id: callback
+    type: webhook-listen.http
+    listener: callbacks
+    match: { path: /event }

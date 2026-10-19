@@ -1,0 +1,7 @@
+# expected-instance-location: /steps/0/match/peerCertificateSha256
+# expected-keyword: pattern
+steps:
+  - id: incoming
+    type: webhook-listen.http
+    listener: callbacks
+    match: { peerCertificateSha256: zzzz }
