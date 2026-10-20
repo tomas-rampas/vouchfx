@@ -167,17 +167,24 @@ supply digests — mirroring the GitHub header guidance.)
 - **GitLab CI JSON schema:** validates clean against the official GitLab CI schema
   (`app/assets/javascripts/editor/schema/ci.json`, JSON Schema draft-07) using `ajv`; the
   realistic consumer `include` form validates too.
-- **Live GitLab verification, 20 October 2026:** the `/ci/lint` API accepted the
-  candidate with zero errors and warnings. On GitLab SaaS privileged Linux runners,
-  [pipeline 2969150941](https://gitlab.com/mcquant/vouchfx-ci-acceptance/-/pipelines/2969150941)
-  exercised source candidate `077b4d415a752c7fe338f4bfdd80f2d3297f3da9` with this
-  unpublished daemon-network template. The private acceptance project requires authenticated access.
-  Smoke job `17328464669` produced a genuine PASS and exit 0. Product control
-  `17328464670` expected HTTP 418 from the HTTP 200 service, produced a genuine FAIL
-  and exit 1, and failed the pipeline as intended. Environment control `17328464671`
-  used an invalid image, produced ENV_ERROR and exit 0 under default gating.
-  All three jobs retained JUnit and HTML reports. Downloaded JUnit counts were
-  respectively `(tests=1, failures=0, errors=0)`, `(1, 1, 0)`, and `(1, 0, 1)`.
-  This proves the candidate on SaaS Docker-in-Docker; rerun against the final official
-  source SHA before treating it as release acceptance. Self-managed Kubernetes and
-  socket-bind runners remain unmeasured.
+- **Live GitLab verification, 20 October 2026 (UTC):** the `/ci/lint` API accepted
+  the reference consumer with zero errors and warnings on GitLab SaaS `19.6.0-pre`
+  (revision `27a841f4bf2`). The consumer imported the published template at
+  `69cc2a2e4747415a3cea7ac6d1a92b266a67358b` and built source candidate
+  `574863fa6242aa6dff2b87ac7d6a5a87b1c84521` on privileged SaaS Linux
+  `saas-linux-small-amd64` Docker-in-Docker runners.
+  [Positive reference pipeline 2969645952](https://gitlab.com/mcquant/vouchfx-ci-acceptance/-/pipelines/2969645952)
+  succeeded: its sole smoke job `17331882403` produced PASS and exit 0, with downloaded
+  JUnit counts `(tests=1, failures=0, errors=0)` and a nonempty HTML report. The consumer
+  explicitly excluded the negative controls for this positive-only run.
+  [Negative-control pipeline 2969340980](https://gitlab.com/mcquant/vouchfx-ci-acceptance/-/pipelines/2969340980)
+  failed as intended: smoke produced PASS/0, the product control produced FAIL/1,
+  and the invalid-image environment control produced ENV_ERROR/0 under default gating.
+  All three retained downloadable JUnit and HTML reports; downloaded JUnit counts were
+  respectively `(1, 0, 0)`, `(1, 1, 0)`, and `(1, 0, 1)`.
+  The private acceptance project requires authenticated access. These runs validate a
+  reviewed candidate, not an official release. The Docker-client bootstrap and daemon
+  loopback differences are tracked in [#639](https://github.com/tomas-rampas/vouchfx/issues/639).
+  Final official-source-SHA acceptance will be recorded in
+  [PR #638](https://github.com/tomas-rampas/vouchfx/pull/638) before merge. Self-managed
+  Kubernetes and socket-bind runners remain unmeasured.
