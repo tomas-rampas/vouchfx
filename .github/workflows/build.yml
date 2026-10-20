@@ -23,7 +23,7 @@
 #
 #  integration  Blocking gate for Docker-dependent Aspire integration tests
 #               (requires=docker trait).
-#               ubuntu-latest runners include Docker out of the box.
+#               ubuntu-22.04 keeps MongoDB 7 on a compatible hosted kernel.
 #
 #  docs-build   Blocking documentation build and publication gate on every PR.
 #               Uses the Pages build inputs without publishing or dispatching.
@@ -383,7 +383,7 @@ jobs:
           -- --mode closure --iterations 5000 --threshold-bytes 2000000
 
   # ── Docker / Aspire integration — topology and provider tests ───────────────────
-  # ubuntu-latest runners include Docker Engine, which is required for the
+  # ubuntu-22.04 runners include Docker Engine, which is required for the
   # Aspire topology (Testcontainers, §4).  Tests decorated with
   # [Trait("requires","docker")] run here after the `build` job. Failures in
   # either lane fail CI.
@@ -392,7 +392,9 @@ jobs:
   # aids diagnosis of #378-class intermittencies without demoting failures.
   integration:
     name: Integration tests — Docker / Aspire
-    runs-on: ubuntu-latest
+    # MongoDB 7.0.45 exits on kernels >=6.19; ubuntu-latest supplied kernel 7.0.
+    # Native evidence: actions/runs/39501778120. Keep images and test gates intact.
+    runs-on: ubuntu-22.04
     needs: build
     env:
       VOUCHFX_TOPOLOGY_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
