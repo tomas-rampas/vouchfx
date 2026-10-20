@@ -110,7 +110,9 @@ Core and its companion repositories are released independently. The MCP server i
   [migration guide](https://samples.vouchfx.io/docs/migrating.html) (worked Postman,
   xUnit and SpecFlow ports), and the [community provider hub](https://providers.vouchfx.io/),
   rather than a formal pilot cohort.
-- Core `1.0.6` is the current stable CLI release. The current Provider SDK (`Vouchfx.Sdk`, its `Vouchfx.Sdk.Testing` harness and their engine dependency closure) is published at `1.0.6` on NuGet.org. Its frozen provider contract remains the compatibility boundary for the v1.x series; rebuilt providers must declare their supported engine floor.
+- The frozen Provider SDK contract remains the compatibility boundary for the v1.x series;
+  rebuilt providers must declare their supported engine floor. Select published CLI and SDK
+  versions from the release and package listings above, and verify their compatibility together.
 - Some release artefacts gain further signatures (Windows Authenticode, macOS notarisation, GPG) only once
   the respective certificates are provisioned — cosign signatures and SLSA provenance are present on every
   artefact from day one, so verification is never blocked on those extras.
