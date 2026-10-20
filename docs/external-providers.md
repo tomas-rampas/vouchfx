@@ -1,6 +1,6 @@
 # External step providers
 
-The CLI can load trusted provider assemblies at startup without rebuilding the engine. This capability is unreleased. Providers use the frozen `Vouchfx.Sdk` v1 contract and contribute schema, binding, validation and generated C# exactly as bundled providers do.
+The CLI can load trusted provider assemblies at startup without rebuilding the engine. This capability is prepared for Core 1.2.0 and remains unreleased until its GitHub Release is published. Providers use the frozen `Vouchfx.Sdk` v1 contract and contribute schema, binding, validation and generated C# exactly as bundled providers do.
 
 ## Install from a package
 

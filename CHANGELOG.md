@@ -21,6 +21,8 @@ to published pre-releases on 2026-07-14.
 
 ## [Unreleased]
 
+## [1.2.0] — 2026-10-20
+
 ### Added
 
 - `providers install/list/uninstall` acquires compatible managed provider packages from one HTTPS or explicit local NuGet feed, with registry aliases, transactional replacement/recovery, bounded archives and host dependency pruning.
