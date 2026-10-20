@@ -138,4 +138,3 @@ public sealed class PublishedProviderTests
         return Path.GetDirectoryName(directory)!;
     }
 }
-
