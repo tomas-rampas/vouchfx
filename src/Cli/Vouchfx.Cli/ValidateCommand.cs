@@ -1,4 +1,3 @@
-using Vouchfx.Engine.Compilation;
 // Vouchfx.Cli — ValidateCommand (#260).
 //
 // The `vouchfx validate [<path>] [--json]` subcommand: discovers *.e2e.yaml scenarios
@@ -33,6 +32,7 @@ using Vouchfx.Engine.Compilation;
 using System.CommandLine;
 using System.Text.Json.Serialization;
 using Vouchfx.Engine.Abstractions;
+using Vouchfx.Engine.Compilation;
 using Vouchfx.Engine.Runtime;
 using Vouchfx.Sdk;
 

@@ -1,4 +1,3 @@
-using Vouchfx.Engine.Compilation;
 // Vouchfx.Cli — RunCommand (S07-C-01).
 //
 // The `vouchfx run [<path>]` subcommand, including selection, parallel execution,
@@ -24,6 +23,7 @@ using Vouchfx.Cli.Selection;
 using Vouchfx.Engine.Abstractions;
 using Vouchfx.Engine.Authoring.Ast;
 using Vouchfx.Engine.Authoring.Model;
+using Vouchfx.Engine.Compilation;
 using Vouchfx.Engine.Orchestration.Environments;
 using Vouchfx.Engine.Runtime;
 using Vouchfx.Sdk;
