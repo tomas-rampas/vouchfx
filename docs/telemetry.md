@@ -219,7 +219,10 @@ In v1, the local outbox is the only default transport. This is intentional — t
 
 ### "What happens if I disable telemetry mid-run?"
 
-If you disable telemetry while a `vouchfx run` is in progress, the current run may still emit an event to the outbox (because the decision to emit is made at run start). Future runs will not emit until you re-enable.
+With local consent, the run checks the stored choice again before writing its telemetry event.
+Disabling consent before that check suppresses the event; it cannot retract an event already
+written. Environment-configured CI consent is independent of the local store and retains the
+global `--no-telemetry` and `VOUCHFX_NO_TELEMETRY` controls.
 
 ### "Does `--no-telemetry` appear in my shell history?"
 
