@@ -5037,10 +5037,9 @@ public static class ScenarioRunner
                     compileBudget.CancelAfter(RoslynScriptCompiler.DefaultCompileBudget);
                     try
                     {
-                        compiled = RoslynScriptCompiler.CompileOnce(
+                        compiled = ScriptCompilerScope.Compile(
                             assembled.CsxSource,
-                            additionalOptions: null,
-                            additionalReferencePaths: tpaPaths,
+                            referencePaths: tpaPaths,
                             cancellationToken: compileBudget.Token);
                     }
                     catch (ScriptCompilationException)

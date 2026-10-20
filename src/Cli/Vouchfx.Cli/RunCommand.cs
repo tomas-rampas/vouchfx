@@ -1,3 +1,4 @@
+using Vouchfx.Engine.Compilation;
 // Vouchfx.Cli — RunCommand (S07-C-01).
 //
 // The `vouchfx run [<path>]` subcommand, including selection, parallel execution,
@@ -49,6 +50,12 @@ internal static class RunCommand
             "Discover *.e2e.yaml scenarios under <path> (a directory, or a single "
             + "*.e2e.yaml file) and run them end-to-end against an orchestrated topology.");
 
+        var isolateCompileOption = new Option<bool>("--isolate-compile")
+        {
+            Description = "Compile in a bounded subprocess; execution remains in this process.",
+        };
+        command.Add(isolateCompileOption);
+
         var pathArgument = BuildPathArgument();
         command.Add(pathArgument);
 
@@ -88,8 +95,11 @@ internal static class RunCommand
 
         // SetAction(Func<ParseResult, CancellationToken, Task<int>>): the async, exit-code,
         // cancellation-aware overload (System.CommandLine 2.0.x GA).
-        command.SetAction((parseResult, cancellationToken) =>
+        command.SetAction(async (parseResult, cancellationToken) =>
         {
+            using var compilerScope = parseResult.GetValue(isolateCompileOption)
+                ? new ScriptCompilerScope(CompileWorkerMode.Compile)
+                : null;
             var path = parseResult.GetValue(pathArgument) ?? ".";
             var criteria = BuildCriteria(parseResult, tagOption, ownerOption, pathOption, changedSinceOption);
             var parallel = parseResult.GetValue(parallelOption);
@@ -122,7 +132,7 @@ internal static class RunCommand
             // the hook does is wrapped so it can NEVER affect the suite verdict or exit code.
             var telemetryHook = TelemetryRunHook.CreateDefault(noTelemetry, Console.Error);
 
-            return ExecuteAsync(
+            return await ExecuteAsync(
                 path,
                 criteria,
                 parallel,

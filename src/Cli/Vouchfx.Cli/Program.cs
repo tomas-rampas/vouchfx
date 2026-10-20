@@ -30,6 +30,9 @@ using Vouchfx.Cli;
 // Redirected stdin/stdout/stderr are UTF-8; terminal code pages remain untouched.
 RedirectedStandardStreams.Initialize();
 
+if (args is ["--compile-worker"])
+    return await CompileWorkerMode.ExecuteAsync();
+
 var rootCommand = new RootCommand(
     "vouchfx - compile and run declarative .e2e.yaml integration tests end-to-end.");
 

@@ -23,6 +23,8 @@ to published pre-releases on 2026-07-14.
 
 ### Added
 
+- Opt-in `--isolate-compile` on `run` and `validate` compiles Roslyn scripts in bounded one-shot workers. Compiler crashes and timeouts become Inconclusive; script execution stays in the parent.
+
 - Optional top-level `listeners:` policies enable TLS and mutual TLS on engine-owned webhook and OTLP/HTTP listeners. HTTPS URLs are staged for configured listeners; a declared but unconfirmed inbound identity makes the default run exit nonzero. Accepted mutual-TLS captures can assert the validated client certificate's SHA-256 fingerprint. Plaintext listeners and outbound security behavior remain unchanged.
 
 ### Changed

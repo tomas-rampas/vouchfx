@@ -25,6 +25,9 @@ class Vouchfx.Engine.Compilation.AssemblyVersionConflictException : System.Excep
   .ctor(System.Collections.Generic.IReadOnlyList<Vouchfx.Engine.Compilation.AssemblyConflict> conflicts)
   property System.Collections.Generic.IReadOnlyList<Vouchfx.Engine.Compilation.AssemblyConflict> Conflicts { get }
 
+class Vouchfx.Engine.Compilation.CompileWorkerException : System.Exception
+  .ctor(System.String message)
+
 record Vouchfx.Engine.Compilation.CompiledScenario : System.IEquatable<Vouchfx.Engine.Compilation.CompiledScenario>
   .ctor(Vouchfx.Engine.Compilation.CompiledScript Compiled, System.Collections.Generic.IReadOnlyList<System.String> StepIds)
   property System.Collections.Generic.IReadOnlyList<System.String> StepIds { get; init }
@@ -169,6 +172,11 @@ class Vouchfx.Engine.Compilation.Schema.YamlSchemaValidator
 class Vouchfx.Engine.Compilation.ScriptCompilationException : System.Exception
   .ctor(System.Collections.Generic.IReadOnlyList<Microsoft.CodeAnalysis.Diagnostic> diagnostics)
   property System.Collections.Generic.IReadOnlyList<Microsoft.CodeAnalysis.Diagnostic> Diagnostics { get }
+
+class Vouchfx.Engine.Compilation.ScriptCompilerScope : System.IDisposable
+  .ctor(System.Func<System.String,System.Collections.Generic.IReadOnlyList<System.String>,System.Threading.CancellationToken,Vouchfx.Engine.Compilation.CompiledScript> compiler)
+  method System.Void Dispose()
+  method static Vouchfx.Engine.Compilation.CompiledScript Compile(System.String source, System.Collections.Generic.IReadOnlyList<System.String> referencePaths, System.Threading.CancellationToken cancellationToken)
 
 record Vouchfx.Engine.Compilation.StepCompilePlan : System.IEquatable<Vouchfx.Engine.Compilation.StepCompilePlan>
   .ctor(System.String StepId, Vouchfx.Sdk.CsxFragment Fragment, System.Boolean Retry, System.Nullable<System.Int64> TimeoutMs, System.Nullable<System.Int64> PollIntervalMs)
