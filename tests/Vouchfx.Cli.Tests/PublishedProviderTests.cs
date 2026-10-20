@@ -9,6 +9,7 @@ using Vouchfx.Engine.Abstractions.Secrets;
 using Vouchfx.Engine.Compilation;
 using Vouchfx.Engine.Orchestration;
 using Vouchfx.Engine.Orchestration.Environments;
+using Vouchfx.TestSupport;
 using Xunit;
 
 namespace Vouchfx.Cli.Tests;
@@ -124,11 +125,30 @@ public sealed class PublishedProviderTests
         foreach (var argument in new[] { typeof(ProviderRegistryFactory).Assembly.Location, "validate", path, "--providers", providers, "--no-default-providers", "--isolate-compile", "--json" }) start.ArgumentList.Add(argument);
         start.Environment.Remove("VOUCHFX_PROVIDERS");
         using var process = System.Diagnostics.Process.Start(start)!;
-        var stdout = process.StandardOutput.ReadToEndAsync(); var stderr = process.StandardError.ReadToEndAsync();
-        await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(45));
-        Assert.True(process.ExitCode == 0, await stdout + await stderr);
-        using var report = JsonDocument.Parse(await stdout);
-        Assert.True(report.RootElement.GetProperty("valid").GetBoolean());
+        using var capture = new CancellationTokenSource(TimeSpan.FromSeconds(45));
+        Task completion = Task.CompletedTask;
+        try
+        {
+            var stdout = process.StandardOutput.ReadToEndAsync(capture.Token);
+            var stderr = process.StandardError.ReadToEndAsync(capture.Token);
+            completion = Task.WhenAll(process.WaitForExitAsync(), stdout, stderr);
+            await completion.WaitAsync(capture.Token);
+            Assert.True(process.ExitCode == 0, await stdout + await stderr);
+            using var report = JsonDocument.Parse(await stdout);
+            Assert.True(report.RootElement.GetProperty("valid").GetBoolean());
+        }
+        finally
+        {
+            ChildProcess.KillTreeQuietly(process);
+            capture.Cancel();
+            try { await completion.WaitAsync(TimeSpan.FromSeconds(5)); }
+            catch (Exception exception) when (exception is OperationCanceledException or IOException or ObjectDisposedException or TimeoutException) { }
+            finally
+            {
+                process.StandardOutput.Dispose();
+                process.StandardError.Dispose();
+            }
+        }
     }
 
     internal static string CopyPublishedProvider(string root)

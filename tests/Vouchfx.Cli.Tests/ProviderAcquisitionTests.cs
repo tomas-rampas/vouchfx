@@ -11,6 +11,7 @@ using NuGet.Versioning;
 using Vouchfx.Cli;
 using Vouchfx.Cli.Providers;
 using Vouchfx.Sdk;
+using Vouchfx.TestSupport;
 using Xunit;
 
 namespace Vouchfx.Cli.Tests;
@@ -256,8 +257,28 @@ public sealed class ProviderAcquisitionTests
         var start = new System.Diagnostics.ProcessStartInfo("cmd") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
         foreach (var argument in new[] { "/c", "mklink", "/J", link, target }) start.ArgumentList.Add(argument);
         using var process = System.Diagnostics.Process.Start(start)!;
-        process.WaitForExit();
-        Assert.Equal(0, process.ExitCode);
+        using var capture = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        Task completion = Task.CompletedTask;
+        try
+        {
+            var output = process.StandardOutput.ReadToEndAsync(capture.Token);
+            var error = process.StandardError.ReadToEndAsync(capture.Token);
+            completion = Task.WhenAll(process.WaitForExitAsync(), output, error);
+            completion.WaitAsync(capture.Token).GetAwaiter().GetResult();
+            Assert.Equal(0, process.ExitCode);
+        }
+        finally
+        {
+            ChildProcess.KillTreeQuietly(process);
+            capture.Cancel();
+            try { completion.WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult(); }
+            catch (Exception exception) when (exception is OperationCanceledException or IOException or ObjectDisposedException or TimeoutException) { }
+            finally
+            {
+                process.StandardOutput.Dispose();
+                process.StandardError.Dispose();
+            }
+        }
     }
 
     [Theory]
@@ -413,11 +434,28 @@ public sealed class ProviderAcquisitionTests
         foreach (var argument in arguments) start.ArgumentList.Add(argument);
         start.Environment.Remove("VOUCHFX_PROVIDERS");
         using var process = System.Diagnostics.Process.Start(start)!;
-        var output = process.StandardOutput.ReadToEndAsync(); var error = process.StandardError.ReadToEndAsync();
-        try { await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(60)); }
-        catch (TimeoutException)
-        { process.Kill(entireProcessTree: true); await process.WaitForExitAsync(); throw; }
-        return (process.ExitCode, await output + await error);
+        using var capture = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        Task completion = Task.CompletedTask;
+        try
+        {
+            var output = process.StandardOutput.ReadToEndAsync(capture.Token);
+            var error = process.StandardError.ReadToEndAsync(capture.Token);
+            completion = Task.WhenAll(process.WaitForExitAsync(), output, error);
+            await completion.WaitAsync(capture.Token);
+            return (process.ExitCode, await output + await error);
+        }
+        finally
+        {
+            ChildProcess.KillTreeQuietly(process);
+            capture.Cancel();
+            try { await completion.WaitAsync(TimeSpan.FromSeconds(5)); }
+            catch (Exception exception) when (exception is OperationCanceledException or IOException or ObjectDisposedException or TimeoutException) { }
+            finally
+            {
+                process.StandardOutput.Dispose();
+                process.StandardError.Dispose();
+            }
+        }
     }
 
     private sealed class BodyHandler : DelegatingHandler
