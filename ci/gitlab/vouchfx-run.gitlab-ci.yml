@@ -57,7 +57,10 @@
 # vouchfx stands up an Aspire/Testcontainers container topology, so the job needs a
 # Docker daemon. This template uses the standard GitLab Docker-in-Docker (dind) pattern:
 # a `docker:dind` `services:` entry provides the daemon, and DOCKER_HOST / the TLS vars
-# below point the build's Docker client (and Testcontainers/Aspire/DCP) at it.
+# below point the job's Docker client at it. The engine builds and runs inside a second
+# SDK container on the daemon's host network, using its local Unix socket. This makes
+# Aspire/DCP's loopback proxy endpoints reachable without disabling outer Docker TLS.
+# The prepared checkout is copied in and reports copied back; the runner is removed on exit.
 #
 #   CAVEAT — dind needs a PRIVILEGED runner. The `docker:dind` service only starts on a
 #   GitLab Runner configured with `privileged = true` (the Docker executor) or an
@@ -204,6 +207,40 @@
   # main `script` performs the RUN + exit-code gate. Splitting them keeps the run command — the
   # behaviourally load-bearing line — easy to read.
   before_script:
+    # The default SDK image has no Docker client. Install only the verified client
+    # binary; the daemon stays in the dind service. Custom images with a client
+    # retain it. Keep these hashes aligned with Docker's official static archives.
+    - |
+      if ! command -v docker >/dev/null 2>&1; then
+        (
+          set -eu
+          case "$(uname -m)" in
+            x86_64)
+              vouchfx_docker_arch=x86_64
+              vouchfx_docker_sha=4f798b3ee1e0140eab5bf30b0edc4e84f4cdb53255a429dc3bbae9524845d640
+              ;;
+            aarch64|arm64)
+              vouchfx_docker_arch=aarch64
+              vouchfx_docker_sha=e6b53725a73763ab3f988c73f8772eaed429754c1a579db5ff11f21990fd1817
+              ;;
+            *)
+              echo "ERROR: supply an image with a Docker client for this runner architecture." >&2
+              exit 1
+              ;;
+          esac
+          vouchfx_docker_tmp=$(mktemp -d)
+          trap 'rm -rf -- "$vouchfx_docker_tmp"' EXIT
+          curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
+            --connect-timeout 15 --max-time 120 --retry 3 \
+            "https://download.docker.com/linux/static/stable/$vouchfx_docker_arch/docker-27.5.1.tgz" \
+            --output "$vouchfx_docker_tmp/docker.tgz"
+          printf '%s  %s\n' "$vouchfx_docker_sha" "$vouchfx_docker_tmp/docker.tgz" | sha256sum --check --status
+          tar -xzf "$vouchfx_docker_tmp/docker.tgz" --directory "$vouchfx_docker_tmp" docker/docker
+          install -m 0755 "$vouchfx_docker_tmp/docker/docker" /usr/local/bin/docker
+        )
+      fi
+      docker --version
+
     # 1. Wait for the dind daemon to accept connections, then prove the client can reach it.
     #    `docker info` is the canonical readiness probe; the dind service usually comes up in
     #    a second or two, so a short bounded retry avoids a flaky "daemon not ready" race.
@@ -267,10 +304,8 @@
         bash "$setup_script"
       fi
 
-    # 4. Build vouchfx (Release) from source. Building the CLI project pulls in the six Core
-    #    providers it references; the resulting `vouchfx` executable is the Aspire host that
-    #    carries the embedded DCP metadata (Aspire.AppHost.Sdk + IsAspireHost).
-    - dotnet build "$VOUCHFX_SRC_DIR/src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj" -c Release
+    # 4. The source build runs in the daemon-network container below, together with
+    #    the suite, so Aspire's generated paths resolve in the execution environment.
 
     # 5. OPTIONAL image pre-warm. Pull each requested image BEFORE the run so DCP's internal
     #    ~20s per-resource startup watchdog is never spent on a cold pull (the documented
@@ -339,15 +374,46 @@
       # directory, NOT $CI_PROJECT_DIR — so a RELATIVE scenario path would misresolve under
       # the vouchfx source tree. Pass it (and the report paths) as ABSOLUTE $CI_PROJECT_DIR/…
       exit_code=0
-      dotnet run \
-        --project "$VOUCHFX_SRC_DIR/src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj" \
-        -c Release \
-        --no-build \
-        -- \
-        run "$CI_PROJECT_DIR/$VOUCHFX_SCENARIO_PATH" \
-        --junit "$CI_PROJECT_DIR/results.xml" \
-        --html "$CI_PROJECT_DIR/report.html" \
-        $FAIL_FLAGS || exit_code=$?
+      # Aspire/DCP publishes loopback proxy endpoints. The engine must share the
+      # daemon's network namespace. Outer Docker access still uses verified TLS.
+      vouchfx_runner=""
+      vouchfx_private=$(mktemp -d)
+      # shellcheck disable=SC2329 # Called by the EXIT trap.
+      cleanup_runner() {
+        [ -z "$vouchfx_runner" ] || docker rm --force "$vouchfx_runner" >/dev/null 2>&1 || true
+        rm -rf -- "$vouchfx_private"
+      }
+      trap cleanup_runner EXIT
+      trap 'exit 130' INT
+      trap 'exit 143' TERM
+      # Bash exports preserve multiline variables. Never print this private file.
+      (umask 077; bash -c 'export -p' > "$vouchfx_private/environment.sh")
+      vouchfx_runner=$(docker create --network host \
+        --volume /var/run/docker.sock:/var/run/docker.sock \
+        --entrypoint sleep "$VOUCHFX_DOTNET_IMAGE" infinity)
+      docker start "$vouchfx_runner" >/dev/null
+      docker exec "$vouchfx_runner" mkdir -p "$CI_PROJECT_DIR"
+      docker cp "$CI_PROJECT_DIR/." "$vouchfx_runner:$CI_PROJECT_DIR"
+      docker cp "$(command -v docker)" "$vouchfx_runner:/usr/local/bin/docker"
+      docker cp "$vouchfx_private/environment.sh" "$vouchfx_runner:/tmp/vouchfx-environment.sh"
+      # shellcheck disable=SC2086 # Fixed literal flags, deliberately word-split.
+      docker exec "$vouchfx_runner" bash -c '
+        set -eu
+        source /tmp/vouchfx-environment.sh
+        rm /tmp/vouchfx-environment.sh
+        unset DOCKER_TLS_CERTDIR DOCKER_TLS_VERIFY DOCKER_CERT_PATH TESTCONTAINERS_HOST_OVERRIDE
+        export DOCKER_HOST=unix:///var/run/docker.sock
+        cd "$CI_PROJECT_DIR"
+        dotnet build "$VOUCHFX_SRC_DIR/src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj" -c Release
+        dotnet run --project "$VOUCHFX_SRC_DIR/src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj" \
+          -c Release --no-build -- run "$CI_PROJECT_DIR/$VOUCHFX_SCENARIO_PATH" \
+          --junit "$CI_PROJECT_DIR/results.xml" --html "$CI_PROJECT_DIR/report.html" "$@"
+      ' vouchfx $FAIL_FLAGS || exit_code=$?
+      # Retain reports even when a product assertion fails.
+      docker cp "$vouchfx_runner:$CI_PROJECT_DIR/results.xml" "$CI_PROJECT_DIR/results.xml" \
+        || { [ "$exit_code" -ne 0 ] || exit_code=2; }
+      docker cp "$vouchfx_runner:$CI_PROJECT_DIR/report.html" "$CI_PROJECT_DIR/report.html" \
+        || { [ "$exit_code" -ne 0 ] || exit_code=2; }
       # Legend assembled across short lines (not one long literal) to stay within this
       # template's yamllint line-length gate (ci/gitlab/.yamllint.yml, max 120 chars);
       # the PRINTED text is byte-identical to the GH workflow's single-line echo.

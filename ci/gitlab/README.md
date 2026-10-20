@@ -66,9 +66,19 @@ default) contributes no flag.
 vouchfx stands up an Aspire/Testcontainers container topology, so the job needs a Docker
 daemon. The template uses the standard GitLab **Docker-in-Docker (dind)** pattern: a
 `docker:dind` `services:` entry provides the daemon, and `DOCKER_HOST` + the TLS variables
-point the build's Docker client and Testcontainers/Aspire/DCP at it.
-`TESTCONTAINERS_HOST_OVERRIDE=docker` tells Testcontainers the reachable hostname for the
-ports the topology publishes on the sibling dind service.
+point the job's Docker client at it. The default SDK image lacks a Docker client, so
+the template installs Docker CLI 27.5.1 after verifying its official archive SHA-256.
+Custom images that already provide a client retain it.
+
+The template copies the prepared checkout into a second SDK container and builds and
+runs vouchfx there with host networking and the daemon's Unix socket. Aspire/DCP's
+loopback proxy endpoints then share the daemon's network namespace; merely setting
+`TESTCONTAINERS_HOST_OVERRIDE` in the sibling job does not provide this. The outer
+connection keeps TLS verification enabled. The inner runner receives the job's exported
+environment through a private temporary file, resets Docker access to the local socket,
+and is removed when the script exits. JUnit and HTML reports are copied back before the
+original engine exit code gates the job. Setup scripts run before this copy, so generated
+fixture paths remain available at the same absolute paths inside the runner.
 
 > **dind needs a PRIVILEGED runner.** The `docker:dind` service only starts on a GitLab
 > Runner configured with `privileged = true` (Docker executor) or an equivalently
@@ -157,8 +167,17 @@ supply digests — mirroring the GitHub header guidance.)
 - **GitLab CI JSON schema:** validates clean against the official GitLab CI schema
   (`app/assets/javascripts/editor/schema/ci.json`, JSON Schema draft-07) using `ajv`; the
   realistic consumer `include` form validates too.
-- **Live verification (a real GitLab pipeline run, or the GitLab `/ci/lint` API):**
-  **NOT performed — it requires a GitLab instance + token, which is not available in this
-  environment.** The template is therefore **static-validated only** (yamllint + JSON
-  schema + point-by-point behavioural cross-check against the GitHub workflow). A live
-  pipeline / `ci/lint` run is an **infrastructure-gated follow-up**.
+- **Live GitLab verification, 20 October 2026:** the `/ci/lint` API accepted the
+  candidate with zero errors and warnings. On GitLab SaaS privileged Linux runners,
+  [pipeline 2969150941](https://gitlab.com/mcquant/vouchfx-ci-acceptance/-/pipelines/2969150941)
+  exercised source candidate `077b4d415a752c7fe338f4bfdd80f2d3297f3da9` with this
+  unpublished daemon-network template. The private acceptance project requires authenticated access.
+  Smoke job `17328464669` produced a genuine PASS and exit 0. Product control
+  `17328464670` expected HTTP 418 from the HTTP 200 service, produced a genuine FAIL
+  and exit 1, and failed the pipeline as intended. Environment control `17328464671`
+  used an invalid image, produced ENV_ERROR and exit 0 under default gating.
+  All three jobs retained JUnit and HTML reports. Downloaded JUnit counts were
+  respectively `(tests=1, failures=0, errors=0)`, `(1, 1, 0)`, and `(1, 0, 1)`.
+  This proves the candidate on SaaS Docker-in-Docker; rerun against the final official
+  source SHA before treating it as release acceptance. Self-managed Kubernetes and
+  socket-bind runners remain unmeasured.

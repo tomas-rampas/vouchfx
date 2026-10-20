@@ -159,8 +159,10 @@ Within that constraint, the near-term direction is:
   which are out of scope, is the [security compatibility matrix](security-matrix.md).
 - **Additional secret sources** — the `${secret:…}` syntax is forward-compatible with cloud secret managers
   (Azure Key Vault, AWS Secrets Manager); adding them is configuration, not redesign.
-- **Live GitLab validation** — the GitLab CI template is static-validated and behaviourally cross-checked
-  against the GitHub workflow; a live-instance run is the outstanding confirmation.
+- **Live GitLab validation** — candidate source passed real SaaS Docker-in-Docker smoke,
+  product-failure and environment-error controls with JUnit and HTML artifacts on 20 October 2026
+  ([evidence](../ci/gitlab/README.md#validation-status)). Final official-source SHA acceptance
+  and self-managed runner coverage remain separate.
 - **Editor depth** — full in-block C# IntelliSense for `script.csharp` is a documented fast-follow.
 
 ## Language evolution

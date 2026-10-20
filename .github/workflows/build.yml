@@ -128,6 +128,9 @@ jobs:
       - name: Exercise the actual Docker pre-pull script
         run: python -B -m unittest discover -s scripts/ci -p test_docker_ci_contract.py -v
 
+      - name: Exercise the GitLab Docker client bootstrap
+        run: python -B -m unittest discover -s scripts/ci -p test_gitlab_bootstrap.py -v
+
       - name: Check image pin source contracts and inert registry regressions
         run: python -B -m unittest discover -s scripts/ci -p test_image_pins.py -v
 
