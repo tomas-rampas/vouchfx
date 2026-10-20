@@ -9,7 +9,7 @@ namespace Vouchfx.Cli;
 // Provider code is trusted and lives for the process lifetime, just like bundled providers.
 internal static class ProviderDirectoryScanner
 {
-    private sealed record Image(string Path, AssemblyName Identity, Guid ModuleId, string[] Namespaces, AssemblyName[] References);
+    private sealed record Image(string Path, AssemblyName Identity, Guid ModuleId, string[] Namespaces, AssemblyName[] References, bool HasProviderDeclaration);
     private static readonly object s_gate = new();
     private static readonly Dictionary<string, Image> s_admitted = new(StringComparer.OrdinalIgnoreCase);
     private static bool s_resolverRegistered;
@@ -18,61 +18,10 @@ internal static class ProviderDirectoryScanner
     {
         if (directories.Count == 0)
             return Array.Empty<Assembly>();
+        using var readLocks = Providers.ProviderStore.AcquireExistingReadLocks(directories);
         lock (s_gate)
         {
-            var canonical = CanonicalImages();
-            var images = new Dictionary<string, Image>(StringComparer.OrdinalIgnoreCase);
-            foreach (var directory in directories)
-            {
-                if (!Directory.Exists(directory))
-                    throw new ProviderLoadException($"Provider directory does not exist: '{directory}'.");
-                foreach (var folder in new[] { directory }.Concat(Directory.GetDirectories(directory).Order(StringComparer.Ordinal)))
-                    foreach (var path in Directory.GetFiles(folder).Order(StringComparer.Ordinal))
-                    {
-                        var image = ReadImage(path);
-                        if (image is null)
-                            continue;
-                        var name = image.Identity.Name!;
-                        if (canonical.TryGetValue(name, out var host))
-                        {
-                            if (!CompatibleHost(image.Identity, host))
-                                throw Conflict(image, host);
-                            continue; // Never load provider-local copies of host-owned assemblies.
-                        }
-                        if (name.Equals("vouchfx", StringComparison.OrdinalIgnoreCase)
-                            || name.StartsWith("Vouchfx.Engine.", StringComparison.OrdinalIgnoreCase)
-                            || name.StartsWith("Vouchfx.Steps.", StringComparison.OrdinalIgnoreCase)
-                            || name.Equals("Vouchfx.Sdk", StringComparison.OrdinalIgnoreCase))
-                            throw new ProviderLoadException($"External assembly '{path}' impersonates a reserved host assembly '{name}'.");
-                        var reserved = image.Namespaces.FirstOrDefault(IsReservedNamespace);
-                        if (reserved is not null)
-                            throw new ProviderLoadException($"External assembly '{path}' declares reserved namespace '{reserved}' (Vouchfx.Engine.* / Vouchfx.Steps.*).");
-                        if (images.TryGetValue(name, out var other) && !SameImage(image, other))
-                            throw Conflict(image, other);
-                        if (s_admitted.TryGetValue(name, out var resident) && !SameImage(image, resident))
-                            throw Conflict(image, resident);
-                        images.TryAdd(name, image);
-                    }
-            }
-            foreach (var image in images.Values)
-                foreach (var reference in image.References)
-                {
-                    var name = reference.Name!;
-                    if (name == "Vouchfx.Sdk" && reference.Version?.Major != 1)
-                        throw new ProviderLoadException($"External assembly '{image.Path}' references unsupported SDK {reference.Version}; use the Vouchfx.Sdk v1 contract.");
-                    if (canonical.TryGetValue(name, out var host))
-                    {
-                        if (!CompatibleHost(reference, host))
-                            throw new ProviderLoadException($"External assembly '{image.Path}' requires '{reference}', conflicting with host '{host.Identity}' at '{host.Path}'.");
-                    }
-                    else if (images.TryGetValue(name, out var dependency) || s_admitted.TryGetValue(name, out dependency))
-                    {
-                        if (!SameIdentity(reference, dependency.Identity))
-                            throw new ProviderLoadException($"External assembly '{image.Path}' requires '{reference}', conflicting with '{dependency.Identity}' at '{dependency.Path}'.");
-                    }
-                    else
-                        throw new ProviderLoadException($"External assembly '{image.Path}' has missing dependency '{reference}'. Supply it beside the provider DLL.");
-                }
+            var images = InspectDirectories(directories, considerAdmitted: true);
             foreach (var image in images.Values)
                 s_admitted.TryAdd(image.Identity.Name!, image);
             if (!s_resolverRegistered)
@@ -101,6 +50,85 @@ internal static class ProviderDirectoryScanner
             }
             return assemblies.ToArray();
         }
+    }
+
+    // Install-time validation deliberately inspects metadata without executing or loading provider code.
+    internal static void PrepareInstallation(string directory, IReadOnlyList<string> otherDirectories)
+    {
+        lock (s_gate)
+        {
+            var canonical = CanonicalImages();
+            foreach (var path in Directory.GetFiles(directory))
+            {
+                var image = ReadImage(path);
+                if (image is null || !canonical.TryGetValue(image.Identity.Name!, out var host))
+                    continue;
+                if (!CompatibleHost(image.Identity, host))
+                    throw Conflict(image, host);
+                File.Delete(path);
+            }
+            var images = InspectDirectories(otherDirectories.Append(directory).ToArray(), considerAdmitted: false);
+            if (!images.Values.Any(image => Path.GetDirectoryName(image.Path) == directory && image.HasProviderDeclaration))
+                throw new ProviderLoadException("Package has no discoverable SDK v1 step provider or provider module.");
+        }
+    }
+
+    private static Dictionary<string, Image> InspectDirectories(IReadOnlyList<string> directories, bool considerAdmitted)
+    {
+        var canonical = CanonicalImages();
+        var images = new Dictionary<string, Image>(StringComparer.OrdinalIgnoreCase);
+        foreach (var directory in directories)
+        {
+            if (!Directory.Exists(directory))
+                throw new ProviderLoadException($"Provider directory does not exist: '{directory}'.");
+            foreach (var folder in new[] { directory }.Concat(Directory.GetDirectories(directory).Order(StringComparer.Ordinal)))
+                foreach (var path in Directory.GetFiles(folder).Order(StringComparer.Ordinal))
+                {
+                    var image = ReadImage(path);
+                    if (image is null)
+                        continue;
+                    var name = image.Identity.Name!;
+                    if (canonical.TryGetValue(name, out var host))
+                    {
+                        if (!CompatibleHost(image.Identity, host))
+                            throw Conflict(image, host);
+                        continue; // Never load provider-local copies of host-owned assemblies.
+                    }
+                    if (name.Equals("vouchfx", StringComparison.OrdinalIgnoreCase)
+                        || name.StartsWith("Vouchfx.Engine.", StringComparison.OrdinalIgnoreCase)
+                        || name.StartsWith("Vouchfx.Steps.", StringComparison.OrdinalIgnoreCase)
+                        || name.Equals("Vouchfx.Sdk", StringComparison.OrdinalIgnoreCase))
+                        throw new ProviderLoadException($"External assembly '{path}' impersonates a reserved host assembly '{name}'.");
+                    var reserved = image.Namespaces.FirstOrDefault(IsReservedNamespace);
+                    if (reserved is not null)
+                        throw new ProviderLoadException($"External assembly '{path}' declares reserved namespace '{reserved}' (Vouchfx.Engine.* / Vouchfx.Steps.*).");
+                    if (images.TryGetValue(name, out var other) && !SameImage(image, other))
+                        throw Conflict(image, other);
+                    if (considerAdmitted && s_admitted.TryGetValue(name, out var resident) && !SameImage(image, resident))
+                        throw Conflict(image, resident);
+                    images.TryAdd(name, image);
+                }
+        }
+        foreach (var image in images.Values)
+            foreach (var reference in image.References)
+            {
+                var name = reference.Name!;
+                if (name == "Vouchfx.Sdk" && reference.Version?.Major != 1)
+                    throw new ProviderLoadException($"External assembly '{image.Path}' references unsupported SDK {reference.Version}; use the Vouchfx.Sdk v1 contract.");
+                if (canonical.TryGetValue(name, out var host))
+                {
+                    if (!CompatibleHost(reference, host))
+                        throw new ProviderLoadException($"External assembly '{image.Path}' requires '{reference}', conflicting with host '{host.Identity}' at '{host.Path}'.");
+                }
+                else if (images.TryGetValue(name, out var dependency) || (considerAdmitted && s_admitted.TryGetValue(name, out dependency)))
+                {
+                    if (!SameIdentity(reference, dependency.Identity))
+                        throw new ProviderLoadException($"External assembly '{image.Path}' requires '{reference}', conflicting with '{dependency.Identity}' at '{dependency.Path}'.");
+                }
+                else
+                    throw new ProviderLoadException($"External assembly '{image.Path}' has missing dependency '{reference}'. Supply it beside the provider DLL.");
+            }
+        return images;
     }
 
     private static Assembly? Resolve(AssemblyLoadContext context, AssemblyName name)
@@ -160,12 +188,33 @@ internal static class ProviderDirectoryScanner
                 return name;
             }).ToArray();
             return new Image(Path.GetFullPath(path), identity,
-                metadata.GetGuid(metadata.GetModuleDefinition().Mvid), namespaces, references);
+                metadata.GetGuid(metadata.GetModuleDefinition().Mvid), namespaces, references,
+                metadata.TypeDefinitions.Any(handle => IsProviderDeclaration(metadata, metadata.GetTypeDefinition(handle))));
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or BadImageFormatException)
         {
             throw new ProviderLoadException($"Cannot inspect external assembly '{path}': {exception.Message}", exception);
         }
+    }
+
+    private static bool IsProviderDeclaration(MetadataReader metadata, TypeDefinition type)
+    {
+        bool IsSdkType(EntityHandle handle, string expected)
+        {
+            if (handle.Kind != HandleKind.TypeReference)
+                return false;
+            var reference = metadata.GetTypeReference((TypeReferenceHandle)handle);
+            return metadata.GetString(reference.Namespace) == "Vouchfx.Sdk" && metadata.GetString(reference.Name) == expected
+                && reference.ResolutionScope.Kind == HandleKind.AssemblyReference
+                && metadata.GetString(metadata.GetAssemblyReference((AssemblyReferenceHandle)reference.ResolutionScope).Name) == "Vouchfx.Sdk";
+        }
+        return type.GetInterfaceImplementations().Any(handle => IsSdkType(metadata.GetInterfaceImplementation(handle).Interface, "IProviderModule"))
+            || type.GetCustomAttributes().Any(handle =>
+            {
+                var constructor = metadata.GetCustomAttribute(handle).Constructor;
+                return constructor.Kind == HandleKind.MemberReference &&
+                    IsSdkType(metadata.GetMemberReference((MemberReferenceHandle)constructor).Parent, "StepProviderAttribute");
+            });
     }
 
     private static bool IsReservedNamespace(string ns) => ns is "Vouchfx.Engine" or "Vouchfx.Steps"

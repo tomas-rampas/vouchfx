@@ -23,6 +23,7 @@ to published pre-releases on 2026-07-14.
 
 ### Added
 
+- `providers install/list/uninstall` acquires compatible managed provider packages from one HTTPS or explicit local NuGet feed, with registry aliases, transactional replacement/recovery, bounded archives and host dependency pruning.
 - Trusted external provider directory loading across run/watch, validation, catalogue, schema, scaffold and planning, with repeatable `--providers`, `VOUCHFX_PROVIDERS`, optional home probing and startup compatibility checks.
 
 ## [1.1.0] — 2026-10-20

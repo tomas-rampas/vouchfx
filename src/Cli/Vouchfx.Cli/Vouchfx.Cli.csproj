@@ -89,6 +89,7 @@
 
   <ItemGroup>
     <PackageReference Include="System.CommandLine" />
+    <PackageReference Include="NuGet.Protocol" />
     <!-- AppHost must be a direct reference so its build targets run and embed the DCP
          metadata. Aspire.AppHost.Sdk auto-adds this package; the explicit reference
          pins the CPM version. -->

@@ -162,8 +162,8 @@ tiers without IP friction. Community providers live in the
 that have passed the published rubric. Writing your own is documented in the hub's
 [implementation guide](https://providers.vouchfx.io/docs/implementing-a-provider.html).
 
-Load trusted external provider DLLs without rebuilding the CLI using `--providers <directory>`
-(unreleased). The [external provider guide](https://vouchfx.io/external-providers/) covers directory layout,
+Install published Community providers with `vouchfx providers install <id>`, or load trusted external
+provider DLLs with `--providers <directory>` without rebuilding the CLI (both unreleased). The [external provider guide](https://vouchfx.io/external-providers/) covers directory layout,
 shared dependencies and the trust boundary.
 
 ## Running suites

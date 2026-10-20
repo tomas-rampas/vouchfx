@@ -144,10 +144,10 @@ Within that constraint, the near-term direction is:
   hosting is not endorsement) so authors need no NuGet account to participate; see the hub's contributing
   guide. The **provider directory loader** is implemented under Unreleased: the CLI loads trusted
   provider assemblies from configured directories with namespace, dependency and engine-compatibility
-  admission. See the [external provider guide](external-providers.md). Still ahead is **one-command
-  acquisition**: `vouchfx providers install <id>` resolves a step kind through the community registry,
-  downloads the package, and places it in the providers directory, with a dependency-only *Vouched
-  metapackage* installing the whole badge-holding set once Vouched providers exist. The frozen v1 SDK contract
+  admission. See the [external provider guide](external-providers.md). **One-command acquisition** is also
+  implemented under Unreleased: `vouchfx providers install <id>` resolves a step kind through the community registry,
+  downloads compatible managed assets and places them transactionally in the providers directory. A
+  dependency-only *Vouched metapackage* remains deferred until Vouched providers exist. The frozen v1 SDK contract
   is what makes externally-built provider binaries loadable across the whole v1.x series.
 - **Transport security for the remaining dependency kinds** — 1.0 wires a client connection for exactly two
   target kinds: any declared service, and a `kafka` dependency. On every other dependency kind a `security:`

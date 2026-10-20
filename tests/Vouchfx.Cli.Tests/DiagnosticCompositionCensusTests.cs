@@ -25,6 +25,8 @@ public sealed class DiagnosticCompositionCensusTests
     // earlyMessage) stay sanitise-only. Existing provider-fault fallbacks with no ledger in
     // scope are also inventoried; this gate does not claim all terminal writes are scrubbed.
     private const string ReviewedSanitiseOnly = """
+        src/Cli/Vouchfx.Cli/ProvidersCommand.cs:ProvidersCommand.GuardAsync | DisplaySanitiser.SanitiseForDisplay(exception.Message)
+        src/Cli/Vouchfx.Cli/ProvidersCommand.cs:ProvidersCommand.WriteLine | DisplaySanitiser.SanitiseForDisplay(value)
         src/Cli/Vouchfx.Cli/ProviderOptions.cs:ProviderOptions.InvokeAsync | DisplaySanitiser.SanitiseForDisplay(exception.Message)
         src/Cli/Vouchfx.Cli/RunCommand.cs:RunCommand.ExecuteAsync | DisplaySanitiser.SanitiseForDisplay($"vouchfx run: the engine failed unexpectedly and could not reach a verdict "+$"({ex.GetType().FullName}: {ex.Message}).  This is an engine or provider "+"defect, not a suite failure - please report it with the suite that "+"triggered it.  Reported as Inconclusive (section 12.1).")
         src/Cli/Vouchfx.Cli/RunCommand.cs:RunCommand.ExecuteRunPipelineAsync | DisplaySanitiser.SanitiseForDisplay($"{failure.AbsolutePath}: {failure.ParseError} (Inconclusive)")

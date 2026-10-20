@@ -60,6 +60,7 @@
          betas exposed different ctor overloads (e.g. Argument&lt;T&gt;(name, () =&gt; default, desc)),
          so the version is pinned to keep the API surface this CLI compiles against stable. -->
     <PackageVersion Include="System.CommandLine" Version="2.0.0" />
+    <PackageVersion Include="NuGet.Protocol" Version="7.9.0" />
   </ItemGroup>
   <ItemGroup Label="JSON / Schema / YAML (§5.7)">
     <PackageVersion Include="JsonPath.Net" Version="3.0.2" />
