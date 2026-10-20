@@ -1,6 +1,6 @@
 # TLS for host-owned listeners
 
-**Unreleased.** A `webhook-listen.http` listener or `trace-expect.otlp` receiver can use TLS or mutual TLS. Existing suites without a top-level `listeners:` entry continue to expose plaintext HTTP endpoints.
+**Core 1.1.0 and later.** A `webhook-listen.http` listener or `trace-expect.otlp` receiver can use TLS or mutual TLS. Existing suites without a top-level `listeners:` entry continue to expose plaintext HTTP endpoints.
 
 ```yaml
 listeners:

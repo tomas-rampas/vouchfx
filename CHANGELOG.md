@@ -21,6 +21,8 @@ to published pre-releases on 2026-07-14.
 
 ## [Unreleased]
 
+## [1.1.0] — 2026-10-20
+
 ### Added
 
 - Opt-in `--isolate-compile` on `run` and `validate` compiles Roslyn scripts in bounded one-shot workers. Compiler crashes and timeouts become Inconclusive; script execution stays in the parent.

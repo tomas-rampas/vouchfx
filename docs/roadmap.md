@@ -152,9 +152,10 @@ Within that constraint, the near-term direction is:
 - **Transport security for the remaining dependency kinds** — 1.0 wires a client connection for exactly two
   target kinds: any declared service, and a `kafka` dependency. On every other dependency kind a `security:`
   block is rejected outright, and no profile or substitute declaration restores it. That narrowing is a
-  release position, not a permanent boundary — the schema and the CHANGELOG both name it as a **1.1**
-  capability, and widening it is additive, because both gates run at validation time and so decide only
-  which suites validate at all. The per-integration breakdown, including which deferrals are 1.1 and
+  release position, not a permanent boundary. The original 1.1 forecast in the frozen v1 schema
+  has not been delivered for these dependency kinds. Widening remains future work and is additive,
+  because both gates run at validation time and so decide only which suites validate at all.
+  The per-integration breakdown, including which integrations are deferred and
   which are out of scope, is the [security compatibility matrix](security-matrix.md).
 - **Additional secret sources** — the `${secret:…}` syntax is forward-compatible with cloud secret managers
   (Azure Key Vault, AWS Secrets Manager); adding them is configuration, not redesign.
