@@ -226,7 +226,7 @@ diagnostic the guard itself printed above already names the offending step and i
 one exists, and the suite-level CSX-assembly-failure arm has none to give (the exception it catches
 does not identify the fragment), so one wording serves both arms truthfully.
 
-#### What does *not* break CI
+#### What does not raise the security-confirmation exception
 
 - **Unrelated or unattributed infrastructure failures, when they are the run's only fault.**
   An unrelated unhealthy dependency, an ambiguous global startup failure or an ordinary seed

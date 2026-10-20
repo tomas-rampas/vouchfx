@@ -2032,7 +2032,7 @@ internal static class RunCommand
         //
         // NOT KEYED ON SecurityAssurance.Refusal, WHICH WAS THE OTHER CANDIDATE. Its
         // AuthoringFault kind is recorded for ANY document refused at a pre-topology door — a
-        // schema error, an unresolvable secret, a malformed dependency `env:`, an unresolvable
+        // schema error, an unresolvable secret, an unresolvable
         // `script.csharp file:` — so keying on it would redden every mixed suite containing any
         // refused document. #514 now carries that independent fact through
         // AuthoringRefusalObserved, including the late CompileOnce boundary, without changing
