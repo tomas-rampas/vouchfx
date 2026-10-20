@@ -163,13 +163,15 @@ Within that constraint, the near-term direction is:
   against the GitHub workflow; a live-instance run is the outstanding confirmation.
 - **Editor depth** — full in-block C# IntelliSense for `script.csharp` is a documented fast-follow.
 
-## v2 candidates
+## Language evolution
 
-Two items are explicitly parked for v2, and the reasons are part of the trust story:
+Core 1.1.0 adds an explicit language schema v2 with per-file `metadata.telemetry: false`.
+The frozen v1 schema remains unchanged and is still the default. Selecting an opted-out v2
+file suppresses the invocation's telemetry aggregate; true never grants consent. See
+[telemetry controls](telemetry.md). Engine versions and language schema versions are independent.
 
-- **Per-file telemetry opt-out** (`metadata.telemetry: false`) — deliberately *not* added in v1.x because it
-  would mutate the frozen v1 schema. The v1 suppression surface (global consent, `--no-telemetry`,
-  `VOUCHFX_NO_TELEMETRY`) already covers the privacy requirement; telemetry remains opt-in and off by default.
+Further language changes remain deferred:
+
 - **Richer control flow** — the DSL models a single linear sequence by design; conditional and parallel steps
   are a deliberate post-v1 language decision, taken slowly because language mistakes are forever.
 
