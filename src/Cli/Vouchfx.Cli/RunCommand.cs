@@ -95,7 +95,8 @@ internal static class RunCommand
 
         // SetAction(Func<ParseResult, CancellationToken, Task<int>>): the async, exit-code,
         // cancellation-aware overload (System.CommandLine 2.0.x GA).
-        command.SetAction(async (parseResult, cancellationToken) =>
+        var providerOptions = ProviderOptions.Add(command);
+        command.SetAction((parseResult, cancellationToken) => providerOptions.InvokeAsync(parseResult, async () =>
         {
             using var compilerScope = parseResult.GetValue(isolateCompileOption)
                 ? new ScriptCompilerScope(CompileWorkerMode.Compile)
@@ -148,7 +149,7 @@ internal static class RunCommand
                 telemetryHook,
                 cancellationToken,
                 shutdownOnStdinEof);
-        });
+        }));
 
         return command;
     }
@@ -1406,7 +1407,7 @@ internal static class RunCommand
         // single capture site; EmitAsync no-ops when telemetry will not emit.
         var runStartedAt = DateTimeOffset.UtcNow;
 
-        StepKindRegistry registry = ProviderRegistryFactory.BuildCoreRegistry();
+        StepKindRegistry registry = ProviderRegistryFactory.BuildRegistry();
 
         IReadOnlyList<DiscoveredScenario> discovered;
         try
@@ -1675,7 +1676,7 @@ internal static class RunCommand
                     asts,
                     names,
                     yamlTexts,
-                    ProviderRegistryFactory.CoreProviderAssemblies(),
+                    ProviderRegistryFactory.ProviderAssemblies(),
                     appHostAssemblyName,
                     output,
                     maxConcurrency: parallelDegree,
@@ -1693,7 +1694,7 @@ internal static class RunCommand
                     asts,
                     names,
                     yamlTexts,
-                    ProviderRegistryFactory.CoreProviderAssemblies(),
+                    ProviderRegistryFactory.ProviderAssemblies(),
                     appHostAssemblyName,
                     output,
                     seedBaseDirectory: suiteBaseDirectory,

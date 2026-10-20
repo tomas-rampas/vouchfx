@@ -161,6 +161,7 @@ nav:
       - Getting started (60-minute path): getting-started.md
       - Recipes: recipes.md
       - Common patterns: common-patterns.md
+      - External step providers (unreleased): external-providers.md
       - Owned Docker Compose environments: compose-environments.md
       - S3 and MinIO application access: object-storage-sut.md
       - SQL seed fixtures: seed-fixtures.md
@@ -182,6 +183,7 @@ nav:
       - Roadmap: roadmap.md
       - Changelog: changelog.md
       - Governance: governance.md
+      - "Decision: external provider loading": decisions/external-provider-loading.md
       - "Decision: dotnet tool packaging": decisions/dotnet-tool-packaging.md
       - "Proposal: topology extraction (U1)": decisions/topology-extraction.md
       - "Proposal: detached runs and artefacts (U4)": decisions/detached-runs-and-artefacts.md

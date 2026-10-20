@@ -87,7 +87,8 @@ internal static class PlanCommand
         var inconclusiveMinOption = BuildInconclusiveMinOption();
         command.Add(inconclusiveMinOption);
 
-        command.SetAction((parseResult, _) =>
+        var providerOptions = ProviderOptions.Add(command);
+        command.SetAction((parseResult, _) => providerOptions.InvokeAsync(parseResult, () =>
         {
             var suitePath = parseResult.GetValue(suitePathArgument) ?? ".";
             var eventsPath = parseResult.GetValue(eventsOption);
@@ -109,7 +110,7 @@ internal static class PlanCommand
                 thresholds,
                 Console.Out,
                 Console.Error));
-        });
+        }));
 
         return command;
     }
@@ -286,7 +287,7 @@ internal static class PlanCommand
         TextWriter errorOutput,
         StepKindRegistry? registry = null)
     {
-        registry ??= ProviderRegistryFactory.BuildCoreRegistry();
+        registry ??= ProviderRegistryFactory.BuildRegistry();
 
         PlanReportDocument document;
         try

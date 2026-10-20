@@ -105,4 +105,11 @@ internal static class ProviderRegistryFactory
     /// <returns>A frozen registry containing every Core provider this CLI ships with.</returns>
     public static StepKindRegistry BuildCoreRegistry() =>
         Vouchfx.Engine.Runtime.HostProviderRegistry.Build(CoreProviderAssemblies());
+
+    internal static Assembly[] ProviderAssemblies() =>
+        ProviderRegistryScope.Current?.Assemblies ?? CoreProviderAssemblies();
+
+    internal static StepKindRegistry BuildRegistry() =>
+        ProviderRegistryScope.Current?.Registry ?? BuildCoreRegistry();
+
 }

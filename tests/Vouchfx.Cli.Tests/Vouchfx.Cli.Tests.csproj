@@ -10,6 +10,15 @@
          TargetFramework / IsPackable come from the root + tests Directory.Build.props. -->
   </PropertyGroup>
 
+  <!-- Restore the published provider as test data only: never reference it from the CLI or test host. -->
+  <ItemGroup>
+    <PackageReference Include="Vouchfx.Community.JsonRpc" VersionOverride="1.0.0" GeneratePathProperty="true" ExcludeAssets="all" />
+  </ItemGroup>
+  <Target Name="CopyExternalProviderFixture" AfterTargets="Build">
+    <Copy SourceFiles="$(PkgVouchfx_Community_JsonRpc)/lib/net8.0/Vouchfx.Community.JsonRpc.dll"
+          DestinationFolder="$(OutDir)fixtures/jsonrpc" />
+  </Target>
+
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="xunit" />

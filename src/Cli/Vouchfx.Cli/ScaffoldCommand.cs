@@ -63,12 +63,13 @@ internal static class ScaffoldCommand
         var outputOption = BuildOutputOption();
         command.Add(outputOption);
 
-        command.SetAction((parseResult, _) =>
+        var providerOptions = ProviderOptions.Add(command);
+        command.SetAction((parseResult, _) => providerOptions.InvokeAsync(parseResult, () =>
         {
             var intentPath = parseResult.GetValue(intentOption);
             var outputPath = parseResult.GetValue(outputOption);
             return Task.FromResult(Execute(intentPath, outputPath, Console.Out, Console.Error));
-        });
+        }));
 
         return command;
     }
@@ -176,7 +177,7 @@ internal static class ScaffoldCommand
         string yaml;
         try
         {
-            var registry = ProviderRegistryFactory.BuildCoreRegistry();
+            var registry = ProviderRegistryFactory.BuildRegistry();
             yaml = SuiteScaffolder.Generate(registry, intent, CliJsonContract.EngineVersion);
         }
         catch (ScaffoldException ex)

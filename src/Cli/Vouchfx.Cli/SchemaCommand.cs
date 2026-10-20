@@ -50,11 +50,12 @@ internal static class SchemaCommand
         };
         command.Add(environmentDriverOption);
 
-        command.SetAction((parseResult, _) =>
+        var providerOptions = ProviderOptions.Add(command);
+        command.SetAction((parseResult, _) => providerOptions.InvokeAsync(parseResult, () =>
         {
             var outputPath = parseResult.GetValue(outputOption);
             return Task.FromResult(Execute(outputPath, Console.Out, Console.Error, parseResult.GetValue(environmentDriverOption), parseResult.GetValue(versionOption) ?? "v1"));
-        });
+        }, discoverProviders: parseResult.GetValue(environmentDriverOption) is null));
 
         return command;
     }
@@ -97,7 +98,7 @@ internal static class SchemaCommand
         try
         {
             schemaJson = environmentDriver == "compose" ? ComposeEnvironmentDriver.ExportConfigurationSchema()
-                : EngineExport.ComposeVersionedSchemaJson(ProviderRegistryFactory.BuildCoreRegistry(), schemaVersion);
+                : EngineExport.ComposeVersionedSchemaJson(ProviderRegistryFactory.BuildRegistry(), schemaVersion);
         }
         catch (CatalogueExportException ex)
         {

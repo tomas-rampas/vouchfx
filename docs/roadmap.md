@@ -142,9 +142,9 @@ Within that constraint, the near-term direction is:
   contributed as source into the [hub repository](https://github.com/tomas-rampas/vouchfx-providers)'s
   `community/` directory (each building and testing in isolation, author-owned, explicitly unendorsed —
   hosting is not endorsement) so authors need no NuGet account to participate; see the hub's contributing
-  guide. Still ahead: a **provider directory loader** — the CLI learns to load provider assemblies from a
-  directory (a `--providers` flag, an environment variable, and a default probe location), guarded by the
-  same reserved-namespace and version-conflict checks the engine already enforces — and then **one-command
+  guide. The **provider directory loader** is implemented under Unreleased: the CLI loads trusted
+  provider assemblies from configured directories with namespace, dependency and engine-compatibility
+  admission. See the [external provider guide](external-providers.md). Still ahead is **one-command
   acquisition**: `vouchfx providers install <id>` resolves a step kind through the community registry,
   downloads the package, and places it in the providers directory, with a dependency-only *Vouched
   metapackage* installing the whole badge-holding set once Vouched providers exist. The frozen v1 SDK contract

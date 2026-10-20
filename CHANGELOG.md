@@ -21,6 +21,10 @@ to published pre-releases on 2026-07-14.
 
 ## [Unreleased]
 
+### Added
+
+- Trusted external provider directory loading across run/watch, validation, catalogue, schema, scaffold and planning, with repeatable `--providers`, `VOUCHFX_PROVIDERS`, optional home probing and startup compatibility checks.
+
 ## [1.1.0] — 2026-10-20
 
 ### Added
