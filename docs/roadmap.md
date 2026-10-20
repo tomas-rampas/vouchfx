@@ -161,7 +161,7 @@ Within that constraint, the near-term direction is:
   (Azure Key Vault, AWS Secrets Manager); adding them is configuration, not redesign.
 - **Live GitLab validation** — candidate source passed real SaaS Docker-in-Docker smoke,
   product-failure and environment-error controls with JUnit and HTML artifacts on 20 October 2026
-  ([evidence](../ci/gitlab/README.md#validation-status)). Final official-source SHA acceptance
+  ([evidence](https://github.com/tomas-rampas/vouchfx/blob/main/ci/gitlab/README.md#validation-status)). Final official-source SHA acceptance
   and self-managed runner coverage remain separate.
 - **Editor depth** — full in-block C# IntelliSense for `script.csharp` is a documented fast-follow.
 
