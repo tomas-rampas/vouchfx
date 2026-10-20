@@ -88,6 +88,30 @@ public sealed class SchemaErrorCollectorTests
         return doc.RootElement.Clone();
     }
 
+    [Theory]
+    [InlineData("""{"properties":{"a":{"type":"integer"}}}""", """{"a":"bad"}""", "/a")]
+    [InlineData("""{"items":{"type":"integer"}}""", """["bad"]""", "/0")]
+    [InlineData("""{"allOf":[{"properties":{"a":{"type":"integer"}}}]}""", """{"a":"bad"}""", "/a")]
+    [InlineData("""{"if":{"required":["a"]},"then":{"properties":{"a":{"type":"integer"}}}}""", """{"a":"bad"}""", "/a")]
+    public void ApplicatorRollups_KeepOnlyTheConcreteTypeError(string schema, string instance, string location)
+    {
+        var evaluation = Evaluate(schema, instance);
+        Assert.False(evaluation.IsValid);
+        var error = Assert.Single(SchemaErrorCollector.CollectErrors(evaluation));
+        Assert.Equal(location, error.InstanceLocation);
+        Assert.Contains("[type]", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ApplicatorRollups_PreserveIndependentSiblingDefects()
+    {
+        const string schema = """{"properties":{"a":{"required":["x"]},"ab":{"properties":{"x":{"type":"integer"}}}}}""";
+        const string instance = """{"a":{},"ab":{"x":"bad"}}""";
+        var errors = SchemaErrorCollector.CollectErrors(Evaluate(schema, instance));
+        Assert.Equal(2, errors.Count);
+        Assert.Contains(errors, error => error.InstanceLocation == "/a" && error.Message.Contains("[required]", StringComparison.Ordinal));
+        Assert.Contains(errors, error => error.InstanceLocation == "/ab/x" && error.Message.Contains("[type]", StringComparison.Ordinal));
+    }
     // Issue #457: each author-controlled name keeps the same display bound as an
     // offending scalar. Locations still carry the full, pointer-escaped name.
     public static IEnumerable<object[]> NameDisplayCases()
