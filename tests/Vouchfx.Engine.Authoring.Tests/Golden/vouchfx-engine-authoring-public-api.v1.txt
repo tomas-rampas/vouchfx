@@ -91,6 +91,7 @@ record Vouchfx.Engine.Authoring.Model.InboundListenerSpec : System.IEquatable<Vo
 record Vouchfx.Engine.Authoring.Model.MetadataSpec : System.IEquatable<Vouchfx.Engine.Authoring.Model.MetadataSpec>
   .ctor(System.String Name, System.String Owner, System.Collections.Generic.IReadOnlyList<System.String> Tags, System.String Description, System.String SchemaVersion)
   property System.Collections.Generic.IReadOnlyList<System.String> Tags { get; init }
+  property System.Nullable<System.Boolean> Telemetry { get; init }
   property System.String Description { get; init }
   property System.String Name { get; init }
   property System.String Owner { get; init }

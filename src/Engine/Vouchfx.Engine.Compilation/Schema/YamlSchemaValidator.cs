@@ -34,6 +34,8 @@ namespace Vouchfx.Engine.Compilation.Schema;
 public static class YamlSchemaValidator
 {
     private static readonly JsonSchema _schema = LoadSchema();
+    private static readonly JsonDocument _v2SchemaDocument = JsonDocument.Parse(SchemaResources.ReadLanguageSchemaJson("v2"));
+    private static readonly JsonSchema _v2Schema = JsonSchema.FromText(_v2SchemaDocument.RootElement.GetRawText());
 
     // A parsed copy of the SAME root-language-schema.json text _schema was
     // built from, kept alive for the process lifetime alongside it (never
@@ -86,7 +88,10 @@ public static class YamlSchemaValidator
 
         using (doc)
         {
-            var results = _schema.Evaluate(doc.RootElement, _options);
+            var isV2 = SchemaResources.SelectVersion(doc.RootElement) == "v2";
+            var schemaDocument = isV2 ? _v2SchemaDocument : _schemaDocument;
+            var schema = isV2 ? _v2Schema : _schema;
+            var results = schema.Evaluate(doc.RootElement, _options);
 
             if (results.IsValid)
             {
@@ -99,7 +104,7 @@ public static class YamlSchemaValidator
             // see SchemaErrorCollector. Also pass the schema itself so an
             // enum violation (e.g. dependency 'type', 'imagePullPolicy') can
             // be enriched with its live accepted-values list.
-            var errors = SchemaErrorCollector.CollectErrors(results, doc.RootElement, _schemaDocument.RootElement);
+            var errors = SchemaErrorCollector.CollectErrors(results, doc.RootElement, schemaDocument.RootElement);
             return SchemaDiagnosticPresentation.ForAuthor(new SchemaValidationResult(false, errors));
         }
     }

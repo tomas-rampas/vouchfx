@@ -1,6 +1,6 @@
 // Vouchfx.Cli — SchemaCommand (Spec A / engine-schema-and-catalogue-export).
 //
-// The `vouchfx schema [--output <path>]` subcommand: emits the composed v1 JSON Schema
+// The `vouchfx schema [--schema-version v1|v2] [--output <path>]` subcommand: emits a composed JSON Schema
 // (root language grammar + every registered Core provider fragment) for the current
 // process registration. Default output is stdout (pipe-friendly); optional --output
 // writes the same document to a file.
@@ -32,10 +32,16 @@ internal static class SchemaCommand
     {
         var command = new Command(
             "schema",
-            "Emit the composed v1 JSON Schema (root language grammar merged with every "
+            "Emit the composed JSON Schema (v1 by default; --schema-version v2 opts in) with every "
             + "registered provider fragment) for this CLI build. Default output is stdout; "
             + "use --output <path> to write a file instead.");
 
+        var versionOption = new Option<string>("--schema-version")
+        {
+            Description = "Language schema to export: v1 (default) or v2.",
+            DefaultValueFactory = _ => "v1",
+        };
+        command.Add(versionOption);
         var outputOption = BuildOutputOption();
         command.Add(outputOption);
         var environmentDriverOption = new Option<string?>("--environment-driver")
@@ -47,7 +53,7 @@ internal static class SchemaCommand
         command.SetAction((parseResult, _) =>
         {
             var outputPath = parseResult.GetValue(outputOption);
-            return Task.FromResult(Execute(outputPath, Console.Out, Console.Error, parseResult.GetValue(environmentDriverOption)));
+            return Task.FromResult(Execute(outputPath, Console.Out, Console.Error, parseResult.GetValue(environmentDriverOption), parseResult.GetValue(versionOption) ?? "v1"));
         });
 
         return command;
@@ -75,8 +81,13 @@ internal static class SchemaCommand
     /// <param name="output">Stdout writer (schema text when not using <c>--output</c>).</param>
     /// <param name="errorOutput">Stderr writer for diagnostics on failure.</param>
     /// <returns>The process exit code (see class header).</returns>
-    internal static int Execute(string? outputPath, TextWriter output, TextWriter errorOutput, string? environmentDriver = null)
+    internal static int Execute(string? outputPath, TextWriter output, TextWriter errorOutput, string? environmentDriver = null, string schemaVersion = "v1")
     {
+        if (schemaVersion is not ("v1" or "v2") || (environmentDriver is not null && schemaVersion != "v1"))
+        {
+            errorOutput.WriteLine("Supported language schemas: v1, v2. Driver schemas cannot select a language version.");
+            return ExitCodes.UsageError;
+        }
         if (environmentDriver is not null && environmentDriver != "compose")
         {
             errorOutput.WriteLine("Unknown environment schema driver. Supported: compose.");
@@ -86,7 +97,7 @@ internal static class SchemaCommand
         try
         {
             schemaJson = environmentDriver == "compose" ? ComposeEnvironmentDriver.ExportConfigurationSchema()
-                : EngineExport.ComposeSchemaJson(ProviderRegistryFactory.BuildCoreRegistry());
+                : EngineExport.ComposeVersionedSchemaJson(ProviderRegistryFactory.BuildCoreRegistry(), schemaVersion);
         }
         catch (CatalogueExportException ex)
         {

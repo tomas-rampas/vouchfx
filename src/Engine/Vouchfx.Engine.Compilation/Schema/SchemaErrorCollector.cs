@@ -2197,7 +2197,7 @@ internal static class SchemaErrorCollector
     /// e.g. <c>metadata.schemaVersion: v2</c>, previously surfacing raw
     /// JsonSchema.Net library text with literal Unicode escape sequences
     /// around the expected value rather than an actual quote mark: measured
-    /// verbatim (see <c>RootSchemaTests.Validate_MetadataSchemaVersionV2_IsRejected</c>)
+    /// verbatim (see <c>RootSchemaTests.Validate_MetadataSchemaVersionV3_IsRejected</c>)
     /// as the six characters backslash-u-0-0-2-2 on each side of 'v1'.
     /// </summary>
     /// <remarks>

@@ -121,6 +121,7 @@ class Vouchfx.Engine.Compilation.Schema.EngineExport
   field const System.String CommunityTier
   field const System.String CoreTier
   method static System.String ComposeSchemaJson(Vouchfx.Sdk.StepKindRegistry registry)
+  method static System.String ComposeVersionedSchemaJson(Vouchfx.Sdk.StepKindRegistry registry, System.String version)
   method static System.String SerializeCatalogue(Vouchfx.Engine.Compilation.Schema.StepCatalogueDocument document)
   method static Vouchfx.Engine.Compilation.Schema.StepCatalogueDocument BuildCatalogue(Vouchfx.Sdk.StepKindRegistry registry, System.String engineVersion)
   method static Vouchfx.Engine.Compilation.Schema.StepCatalogueDocument BuildCatalogue(Vouchfx.Sdk.StepKindRegistry registry, System.String engineVersion, System.Collections.Generic.IEnumerable<System.Reflection.Assembly> coreProviderAssemblies)
@@ -130,6 +131,7 @@ class Vouchfx.Engine.Compilation.Schema.SchemaComposer
   field const System.String SchemaVersion
   method static Json.Schema.JsonSchema ComposeSchema(Vouchfx.Sdk.StepKindRegistry registry)
   method static System.String ComposeSchemaJson(Vouchfx.Sdk.StepKindRegistry registry)
+  method static System.String ComposeVersionedSchemaJson(Vouchfx.Sdk.StepKindRegistry registry, System.String version)
   method static Vouchfx.Engine.Compilation.Schema.SchemaValidationResult Validate(Vouchfx.Sdk.StepKindRegistry registry, System.String yamlText)
 
 record Vouchfx.Engine.Compilation.Schema.SchemaValidationError : System.IEquatable<Vouchfx.Engine.Compilation.Schema.SchemaValidationError>

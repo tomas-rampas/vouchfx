@@ -67,7 +67,7 @@ public sealed class RootSchemaTests
     }
 
     // -------------------------------------------------------------------------
-    // metadata.schemaVersion: const "v1" — a rejection hook for a future v2
+    // metadata.schemaVersion: version selection; unknown versions still fail
     // -------------------------------------------------------------------------
 
     /// <summary>
@@ -109,8 +109,7 @@ public sealed class RootSchemaTests
     }
 
     /// <summary>
-    /// Any value other than the literal 'v1' is rejected — the field is now a
-    /// real rejection hook for a future v2 language schema, not decoration.
+    /// An unsupported language version is rejected before execution.
     /// </summary>
     /// <remarks>
     /// Before SchemaErrorCollector grew
@@ -124,11 +123,11 @@ public sealed class RootSchemaTests
     /// <c>verifyMode</c>.
     /// </remarks>
     [Fact]
-    public void Validate_MetadataSchemaVersionV2_IsRejected()
+    public void Validate_MetadataSchemaVersionV3_IsRejected()
     {
         const string yaml = """
             metadata:
-              schemaVersion: v2
+              schemaVersion: v3
             steps:
               - id: s1
                 type: noop.echo
@@ -137,11 +136,11 @@ public sealed class RootSchemaTests
         var result = YamlSchemaValidator.Validate(yaml);
 
         Assert.False(result.IsValid,
-            "A schemaVersion other than 'v1' must be rejected by the const constraint.");
+            "An unsupported schemaVersion must be rejected by the const constraint.");
         var onlyError = Assert.Single(result.Errors);
         Assert.Equal("/metadata/schemaVersion", onlyError.InstanceLocation);
         Assert.Contains("language schema version", onlyError.Message, System.StringComparison.Ordinal);
-        Assert.Contains("'v2'", onlyError.Message, System.StringComparison.Ordinal);
+        Assert.Contains("'v3'", onlyError.Message, System.StringComparison.Ordinal);
         Assert.Contains("'v1'", onlyError.Message, System.StringComparison.Ordinal);
         Assert.Contains("omit", onlyError.Message, System.StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("Expected", onlyError.Message, System.StringComparison.Ordinal);

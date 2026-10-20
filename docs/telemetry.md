@@ -189,7 +189,7 @@ Telemetry emits only when the current runner confirms that its raw events archiv
 
 ## Future work: per-file opt-out (v2)
 
-In v1, telemetry suppression is global — you control it via the `telemetry` command, the `--no-telemetry` flag, or the environment variable. A per-file opt-out (a `metadata.telemetry: off` field in the `.e2e.yaml` file) was intentionally deferred because it would require a new field on the frozen YAML metadata schema, which is prohibited by the v1 schema-freeze gates (`SchemaFreezeTests`). This constraint is enforced by the CI pipeline and cannot be bypassed.
+In v1, telemetry suppression is global: use the `telemetry` command, `--no-telemetry`, or `VOUCHFX_NO_TELEMETRY`. A file explicitly declaring `metadata.schemaVersion: v2` can additionally set `metadata.telemetry: false`. The CLI evaluates selected metadata at execution time. Because telemetry uses one aggregate per invocation, any selected opted-out file suppresses the entire invocation, including shared counts and timings. Unselected files have no effect. True or omission never enables collection or overrides global opt-outs. Watch mode continues to emit no telemetry. The v1 schema remains unchanged and rejects the new field. Export the separate editor schema with `vouchfx schema --schema-version v2 --output composed-schema.v2.json`; the [extension README](https://github.com/tomas-rampas/vouchfx/blob/main/tools/vscode-vouchfx/README.md#explicit-v2-files) documents its explicit association.
 
 In v2, after the schema-freeze gates are relaxed, a per-file opt-out will become possible. For now, use global consent or the per-run flags.
 

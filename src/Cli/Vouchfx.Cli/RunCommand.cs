@@ -1355,6 +1355,10 @@ internal static class RunCommand
         }
     }
 
+    internal static bool SuppressesScenarioTelemetry(IEnumerable<DiscoveredScenario> selected) =>
+        selected.Any(p => (p.Ast?.Metadata ?? p.RecoveredDocument?.Metadata)
+            is { SchemaVersion: "v2", Telemetry: false });
+
     /// <summary>
     /// The run pipeline itself: everything <see cref="ExecuteCoreAsync"/> does once the
     /// graceful-shutdown seam is wired — discovery, selection, the watch branch, the runners,
@@ -1557,6 +1561,11 @@ internal static class RunCommand
                 .ConfigureAwait(false);
         }
 
+        // #154: evaluate selected files at execution time, after selection. Telemetry
+        // is invocation-wide: suppress the aggregate when any selected v2 file opts
+        // out, including shared counts/timings. Both runners use this same decision.
+        var scenarioTelemetryOptOut = SuppressesScenarioTelemetry(discovered);
+
         // Telemetry capture path (S10-G-04): when telemetry will emit, ask the runner to write its
         // buffered event stream (the SAME verbatim v1 stream the renderers consume) so the hook can
         // read it back and derive the allowlisted telemetry event.  When the user passed --events,
@@ -1564,7 +1573,7 @@ internal static class RunCommand
         // telemetry will NOT emit, the runner's events path is the user's own (or null) — no
         // telemetry-driven write.  Resolving this here keeps every report path identical to before
         // for a non-telemetry run.
-        var (runnerEventsPath, isTempEventsFile) = telemetryHook is not null
+        var (runnerEventsPath, isTempEventsFile) = telemetryHook is not null && !scenarioTelemetryOptOut
             ? telemetryHook.ResolveEventsCapturePath(eventsReportPath)
             : (eventsReportPath, false);
 
@@ -1729,7 +1738,8 @@ internal static class RunCommand
         {
             await telemetryHook.EmitAsync(
                 runnerEventsPath, isTempEventsFile, runStartedAt, runCancellationToken,
-                currentArchiveWritten: eventsArchiveWritten)
+                currentArchiveWritten: eventsArchiveWritten,
+                scenarioOptOut: scenarioTelemetryOptOut)
                 .ConfigureAwait(false);
         }
 

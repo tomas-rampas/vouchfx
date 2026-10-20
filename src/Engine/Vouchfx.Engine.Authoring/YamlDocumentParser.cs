@@ -171,7 +171,10 @@ public static class YamlDocumentParser
         var schemaVersion = GetScalar(node, "schemaVersion");
         var tags = GetStringSequence(node, "tags");
 
-        return new MetadataSpec(name, owner, tags, description, schemaVersion);
+        return new MetadataSpec(name, owner, tags, description, schemaVersion)
+        {
+            Telemetry = bool.TryParse(GetScalar(node, "telemetry"), out var telemetry) ? telemetry : null,
+        };
     }
 
     private static EnvironmentSpec? ParseEnvironment(YamlMappingNode root)
