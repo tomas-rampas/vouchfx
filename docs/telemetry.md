@@ -187,11 +187,11 @@ If any one of these is false, telemetry is suppressed for that run. This conjunc
 
 Telemetry emits only when the current runner confirms that its raw events archive was written and its writer flushed and disposed successfully. A readable file left by an earlier run, its timestamp or size, successful HTML/JUnit output, and the presence of scenarios or steps do not establish that receipt. Discovery failures and failed current archive writes emit nothing from an older archive. A newly written refusal archive can still produce aggregate telemetry. Hook-owned temporary captures are deleted even when emission is suppressed; user-requested archives remain in place.
 
-## Future work: per-file opt-out (v2)
+## Per-file opt-out (language v2, Core 1.1.0 and later)
 
 In v1, telemetry suppression is global: use the `telemetry` command, `--no-telemetry`, or `VOUCHFX_NO_TELEMETRY`. A file explicitly declaring `metadata.schemaVersion: v2` can additionally set `metadata.telemetry: false`. The CLI evaluates selected metadata at execution time. Because telemetry uses one aggregate per invocation, any selected opted-out file suppresses the entire invocation, including shared counts and timings. Unselected files have no effect. True or omission never enables collection or overrides global opt-outs. Watch mode continues to emit no telemetry. The v1 schema remains unchanged and rejects the new field. Export the separate editor schema with `vouchfx schema --schema-version v2 --output composed-schema.v2.json`; the [extension README](https://github.com/tomas-rampas/vouchfx/blob/main/tools/vscode-vouchfx/README.md#explicit-v2-files) documents its explicit association.
 
-In v2, after the schema-freeze gates are relaxed, a per-file opt-out will become possible. For now, use global consent or the per-run flags.
+Language v2 has a separate schema identifier; enabling it does not relax the frozen v1 contract.
 
 ## Troubleshooting
 
