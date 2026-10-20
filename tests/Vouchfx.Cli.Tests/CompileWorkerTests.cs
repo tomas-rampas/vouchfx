@@ -91,6 +91,11 @@ public sealed class CompileWorkerTests
         {
             Assert.Same(image, await Task.Run(() => ScriptCompilerScope.Compile("", null, CancellationToken.None)));
             var other = new CompiledScript(new byte[] { 2 });
+            using (new ScriptCompilerScope((_, _, _) => other))
+            {
+                Assert.Same(other, ScriptCompilerScope.Compile("", null, CancellationToken.None));
+            }
+            Assert.Same(image, ScriptCompilerScope.Compile("", null, CancellationToken.None));
             await Task.Run(() =>
             {
                 using var nested = new ScriptCompilerScope((_, _, _) => other);
