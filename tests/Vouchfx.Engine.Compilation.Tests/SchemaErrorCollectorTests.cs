@@ -112,6 +112,22 @@ public sealed class SchemaErrorCollectorTests
         Assert.Contains(errors, error => error.InstanceLocation == "/a" && error.Message.Contains("[required]", StringComparison.Ordinal));
         Assert.Contains(errors, error => error.InstanceLocation == "/ab/x" && error.Message.Contains("[type]", StringComparison.Ordinal));
     }
+
+    [Theory]
+    [InlineData("maxContains", 1, """[1,2,"x"]""")]
+    [InlineData("minContains", 2, """[1,"x"]""")]
+    public void ApplicatorRollups_PreserveContainsCardinalityFailure(string keyword, int count, string instance)
+    {
+        var schema = $$"""{"contains":{"type":"integer"},"{{keyword}}":{{count}}}""";
+        var evaluation = Evaluate(schema, instance);
+        Assert.False(evaluation.IsValid);
+
+        var errors = SchemaErrorCollector.CollectErrors(evaluation);
+
+        Assert.Contains(errors, error => error.InstanceLocation.Length == 0 &&
+            error.Message.Contains("[contains]", StringComparison.Ordinal));
+    }
+
     // Issue #457: each author-controlled name keeps the same display bound as an
     // offending scalar. Locations still carry the full, pointer-escaped name.
     public static IEnumerable<object[]> NameDisplayCases()

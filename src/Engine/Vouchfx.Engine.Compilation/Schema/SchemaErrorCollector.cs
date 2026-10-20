@@ -402,11 +402,13 @@ internal static class SchemaErrorCollector
     // concrete descendant defect, but never use a different instance or a
     // textual pointer prefix (e.g. /a versus /ab) as evidence of specificity.
     // Run before synthetic oneOf diagnostics, which express a separate defect.
+    // contains is a cardinality constraint: nonmatching children are permitted,
+    // so their errors cannot replace a minContains/maxContains count failure.
     private static List<CollectedError> SuppressApplicatorRollups(List<CollectedError> errors)
     {
         return errors.Where(error =>
             error.Keyword is not ("properties" or "items" or "allOf" or "anyOf" or "oneOf" or "if" or "then" or "else" or
-                "additionalProperties" or "unevaluatedProperties" or "propertyNames" or "contains" or "prefixItems" or "$ref") ||
+                "additionalProperties" or "unevaluatedProperties" or "propertyNames" or "prefixItems" or "$ref") ||
             !errors.Any(other =>
                 other.EvaluationPath.Length > error.EvaluationPath.Length &&
                 IsPathOrDescendant(error.EvaluationPath, other.EvaluationPath) &&
