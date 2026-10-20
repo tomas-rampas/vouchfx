@@ -44,10 +44,11 @@ internal static class CompileWorkerMode
     internal static CompiledScript Compile(string source, IReadOnlyList<string>? references, CancellationToken token) =>
         CompileAsync(source, references, token).GetAwaiter().GetResult();
 
-    internal static async Task<CompiledScript> CompileAsync(string source, IReadOnlyList<string>? references, CancellationToken token, Action<int>? startedCallback = null)
+    internal static async Task<CompiledScript> CompileAsync(string source, IReadOnlyList<string>? references, CancellationToken token,
+        Action<int>? startedCallback = null, TimeSpan? compileBudget = null)
     {
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(token);
-        budget.CancelAfter(RoslynScriptCompiler.DefaultCompileBudget);
+        budget.CancelAfter(compileBudget ?? RoslynScriptCompiler.DefaultCompileBudget);
         var useAppHost = Assembly.GetEntryAssembly() == typeof(CompileWorkerMode).Assembly
             && !string.Equals(Path.GetFileNameWithoutExtension(Environment.ProcessPath), "dotnet", StringComparison.OrdinalIgnoreCase);
         using var process = new Process
@@ -116,11 +117,13 @@ internal static class CompileWorkerMode
         }
         finally
         {
+            // Use the shared, parity-tested kill guard on every path, before disposing the handle.
+            Selection.SystemProcessRunner.KillTreeQuietly(process);
             if (started)
             {
                 try
                 {
-                    await TerminateAndConfirmAsync(process);
+                    await ConfirmExitAsync(process);
                 }
                 finally
                 {
@@ -132,15 +135,10 @@ internal static class CompileWorkerMode
         }
     }
 
-    private static async Task TerminateAndConfirmAsync(Process process)
+    private static async Task ConfirmExitAsync(Process process)
     {
         try
         {
-            if (!process.HasExited)
-            {
-                try { process.Kill(entireProcessTree: true); }
-                catch (InvalidOperationException) when (process.HasExited) { }
-            }
             using var exitBudget = new CancellationTokenSource(TimeSpan.FromSeconds(5));
             await process.WaitForExitAsync(exitBudget.Token);
         }

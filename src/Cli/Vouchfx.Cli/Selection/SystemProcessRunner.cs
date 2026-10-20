@@ -725,7 +725,7 @@ internal sealed class SystemProcessRunner : IProcessRunner
     ///   </description></item>
     /// </list>
     /// </remarks>
-    private static void KillTreeQuietly(Process process)
+    internal static void KillTreeQuietly(Process process)
     {
         try
         {
