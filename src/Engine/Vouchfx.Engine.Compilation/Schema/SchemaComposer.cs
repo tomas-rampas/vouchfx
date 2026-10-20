@@ -130,8 +130,14 @@ public static class SchemaComposer
     /// <param name="registry">The frozen provider registry.</param>
     /// <param name="version">The language version: v1 or v2.</param>
     /// <returns>The canonical composed schema JSON.</returns>
-    public static string ComposeVersionedSchemaJson(StepKindRegistry registry, string version) =>
-        BuildComposedRootObject(registry, version).ToJsonString(s_indentedJsonOptions);
+    public static string ComposeVersionedSchemaJson(StepKindRegistry registry, string version)
+    {
+        var json = BuildComposedRootObject(registry, version).ToJsonString(s_indentedJsonOptions);
+        // Downstream consumers vendor the exact v2 Git blob. Canonical LF bytes must
+        // agree across Windows exports, Git checkout and Linux validation; retain
+        // the existing v1 export bytes unchanged.
+        return version == "v2" ? json.Replace("\r\n", "\n", StringComparison.Ordinal) : json;
+    }
 
     /// <summary>
     /// Parses the embedded root-language schema, injects the sorted provider
