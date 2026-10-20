@@ -82,7 +82,7 @@
 // counterpart in the BODY: row 5's `lateLookTaken = true` must sit after the loud look it records,
 // because a flag armed first suppresses the `finally`'s only look on the path where that look
 // throws. The third row pins the quiet wrapper the placement census names — a pid
-// line left TORN and completed a second later is picked up inside LateReadWindow, so the reader
+// line left TORN and completed after its first refused read is picked up inside LateReadWindow, so the reader
 // has to look again after refusing one, and a file that never appears costs the whole window and
 // yields null. What NONE of them establishes is that the kill a line below reaches
 // a LIVE survivor: that half needs a child which defeats the production tree-kill (WMI re-parenting
@@ -2553,55 +2553,23 @@ public sealed class SystemProcessRunnerTests
     /// carries no result and no exception, and is collected with the row.
     /// </para>
     /// <para>
-    /// <strong>Case (a) starts from a TORN line, not from an absent file, and that is what makes
-    /// it a test of POLLING.</strong> The pid file exists before the wrapper is called, holding
-    /// the digits with NO terminator — the shape <see cref="ReadPid"/>'s #528 contract answers
-    /// "not yet" to. It is completed (<c>digits</c> then <c>\n</c>) one second later. So every
-    /// read the wrapper can possibly make before that moment is a read it MUST refuse, and the
-    /// only way to return the pid is to look again afterwards: a one-shot reader reddens on the
-    /// equality no matter when the thread pool got round to it. Against a file that was merely
-    /// ABSENT at t=0 — the arrangement this case first carried — a one-shot that happened to be
-    /// scheduled after the write would have passed, which is the objection this answers.
-    /// MEASURED: with <see cref="WaitForPid"/> cut down to a single <see cref="ReadPid"/>, this
-    /// case fails <c>Assert.Equal() Failure: Values differ / Expected: 51234 / Actual: null</c>.
+    /// <strong>Case (a) starts from a TORN line and completes it after the FIRST REFUSED
+    /// READ.</strong> The private helpers' optional callback runs synchronously after
+    /// <see cref="ReadPid"/> answers null. It completes the existing digits with an LF, so only
+    /// a subsequent poll can return the pid. The row asserts that the refused read happened as
+    /// well as the final pid. A one-shot reader cannot pass by being scheduled after the write.
     /// </para>
     /// <para>
-    /// <strong>It moves one boundary, and that is what <see cref="WriteCompletingTheLine"/> pays
-    /// for.</strong> A file present from t=0 is a file the poll OPENS, every
-    /// <see cref="PollIntervalMs"/> milliseconds, under <see cref="FileShare.Read"/>; the absent
-    /// file it replaced was never opened at all. So the completing write can now collide with a
-    /// read and throw on the test thread — Windows only, and rare — which is a flake rather than a
-    /// finding. That helper retries it briefly; its remarks carry the argument.
+    /// This replaces an independently scheduled <c>Task.Delay</c> continuation. That writer could
+    /// resume after the reader's five-second ceiling on a loaded agent; the first read could also
+    /// run after the write, hiding a one-shot regression. Coordinating on the actual refused read
+    /// removes both scheduling races. The seam exists only in this test class; all teardown
+    /// callers omit it and keep their existing clocks, polling and exception handling.
     /// </para>
     /// <para>
-    /// <strong>The completion is a WHOLE line, and the terminator is an LF literal.</strong>
-    /// <see cref="ReadPid"/> refuses anything else (#528), which is exactly why the torn form
-    /// above works as a "not yet" and why the completed form must be spelled precisely. LF rather
-    /// than <see cref="Environment.NewLine"/>, for the reason
-    /// <see cref="ReadPid_AcceptsOnlyACompleteNewlineTerminatedDigitLine"/> gives at length: the
-    /// constant is per-platform and would pin only the lane it ran in.
-    /// </para>
-    /// <para>
-    /// <strong>The delay is longer than a poll interval and far shorter than the window.</strong>
-    /// One second against <see cref="PollIntervalMs"/>'s hundred milliseconds leaves room for
-    /// several refused reads before the completion, and against a five-second window it leaves
-    /// four seconds of slack, so a loaded agent does not turn this into a flake. Total cost is
-    /// about six seconds: one for the arriving case, five for the missing one, which is
-    /// irreducible because the missing case IS the window.
-    /// </para>
-    /// <para>
-    /// <strong>THE RESIDUAL IN CASE (a), STATED BECAUSE THE TORN LINE NARROWS IT RATHER THAN
-    /// CLOSING IT.</strong> <see cref="ReclaimPidForTeardownAsync"/> dispatches through
-    /// <c>Task.Run</c>, so a thread pool under enough load can leave the work item queued until
-    /// after the completion lands. The wrapper's FIRST read then sees a whole line, the case
-    /// reduces to a single read, and a one-shot implementation passes it. Nothing about the
-    /// wrapper is observable from outside that would let this row tell the two apart — it has no
-    /// seam reporting how many reads happened, and adding one would be production surface existing
-    /// only for a test. What the torn line buys is that the pass is no longer AVAILABLE to a
-    /// one-shot on an unloaded host, which is where the drill above was taken and where this lane
-    /// runs; what it cannot buy is a guarantee under arbitrary load. Case (b)'s lower bound is
-    /// untouched by any of this: it asserts that the whole window was spent, which no scheduling
-    /// delay can shorten.
+    /// The completed line uses a literal LF, for the same cross-platform delimiter contract as
+    /// <see cref="ReadPid_AcceptsOnlyACompleteNewlineTerminatedDigitLine"/>. The missing-file case
+    /// still uses the real full <see cref="LateReadWindow"/>, with no callback or shortened budget.
     /// </para>
     /// <para>
     /// <strong>Neither case asserts an elapsed UPPER bound, and BOTH race rather than await
@@ -2621,7 +2589,6 @@ public sealed class SystemProcessRunnerTests
     public async Task ReclaimPidForTeardownQuietly_TakesALateWholeLinePid_AndNullWhenNoneArrives()
     {
         const int ProbePid = 51234;
-        var lateWriteDelay = TimeSpan.FromSeconds(1);
 
         // DateTime.UtcNow, which WaitForPid's ceiling is computed from, ticks at roughly 15ms on
         // Windows, while the Stopwatch below is high-resolution. The lower-bound assertion in case
@@ -2634,40 +2601,26 @@ public sealed class SystemProcessRunnerTests
         var never = new TaskCompletionSource();
         try
         {
-            // (a) A line COMPLETED inside the window is reclaimed.
-            //
-            // THE FILE EXISTS FROM t=0, HOLDING A TORN LINE, and that is what makes this case
-            // about POLLING rather than about a delay. The digits are there with no terminator,
-            // which ReadPid's #528 contract answers "not yet" to — so a reader that runs at any
-            // moment before the rewrite below sees a file it must refuse, and only a reader that
-            // LOOKS AGAIN afterwards can return the pid. A one-shot implementation reddens on the
-            // equality whatever the thread pool did with its first read; against a file that
-            // merely did not exist yet, a one-shot scheduled late would have passed.
+            // (a) Only a second read can reclaim this initially torn line. Complete it on the
+            // polling thread after the first refusal, without scheduling another writer task.
             File.WriteAllText(pidFile, ProbePid.ToString(CultureInfo.InvariantCulture));
-
-            // NO WALL-CLOCK UPPER BOUND ASSERTED, but the await IS bounded, and the two are not
-            // the same thing. Returning the pid at all IS the in-window evidence — the wrapper's
-            // ceiling is LateReadWindow, so a look that had outrun it would answer null and the
-            // equality would redden — and an elapsed check would add nothing while charging the
-            // wrapper for thread-pool scheduling that happened before its own clock started. What
-            // the race guards is the other failure: a wrapper that kept polling PAST the ceiling
-            // would never complete, and an unbounded await on it would wedge this blocking
-            // assembly instead of failing it. Same trade, same three-window slack, as case (b).
-            var arriving = ReclaimPidForTeardownQuietlyAsync(pidFile, never.Task);
+            var incompleteReads = 0;
             var arrivingClock = Stopwatch.StartNew();
-
-            await Task.Delay(lateWriteDelay);
-            WriteCompletingTheLine(
-                pidFile, ProbePid.ToString(CultureInfo.InvariantCulture) + "\n");
+            var arriving = ReclaimPidForTeardownQuietlyAsync(pidFile, never.Task, () =>
+            {
+                if (++incompleteReads == 1)
+                    WriteCompletingTheLine(pidFile, ProbePid.ToString(CultureInfo.InvariantCulture) + "\n");
+            });
 
             var arrivingSettled =
                 await Task.WhenAny(arriving, Task.Delay(LateReadWindow * 3)) == arriving;
             Assert.True(
                 arrivingSettled,
                 FormattableString.Invariant(
-                    $"ReclaimPidForTeardownQuietlyAsync had not returned {arrivingClock.Elapsed.TotalSeconds:F0}s after a whole pid line was completed {lateWriteDelay.TotalSeconds:F0}s into its own {LateReadWindow.TotalSeconds:F0}s window. A look that keeps polling past its ceiling does not delay a red row — it hangs the finally it is called from, and this assembly is a blocking gate with no per-test timeout."));
+                    $"ReclaimPidForTeardownQuietlyAsync had not returned {arrivingClock.Elapsed.TotalSeconds:F0}s after a whole pid line was completed after its first refused read inside its own {LateReadWindow.TotalSeconds:F0}s window. A look that keeps polling past its ceiling does not delay a red row — it hangs the finally it is called from, and this assembly is a blocking gate with no per-test timeout."));
 
             Assert.Equal(ProbePid, await arriving);
+            Assert.Equal(1, incompleteReads);
 
             // (b) No write at all: null, and only after the whole window has been spent.
             //
@@ -3999,6 +3952,7 @@ public sealed class SystemProcessRunnerTests
     /// </param>
     /// <param name="settle">How long to keep looking after <paramref name="work"/> has settled.</param>
     /// <param name="ceiling">The backstop for a <paramref name="work"/> that will not settle.</param>
+    /// <param name="afterIncompleteRead">Optional test coordination after an actual refused read.</param>
     /// <remarks>
     /// <para>
     /// <strong>THE RUN'S OWN COMPLETION IS THE REAL BOUND; <paramref name="ceiling"/> is the
@@ -4025,7 +3979,7 @@ public sealed class SystemProcessRunnerTests
     /// <paramref name="work"/>, which stays the caller's to observe.
     /// </para>
     /// </remarks>
-    private static int? WaitForPid(string pidFile, Task work, TimeSpan settle, TimeSpan ceiling)
+    private static int? WaitForPid(string pidFile, Task work, TimeSpan settle, TimeSpan ceiling, Action? afterIncompleteRead = null)
     {
         var ceilingAt = DateTime.UtcNow + ceiling;
         DateTime? settledAt = null;
@@ -4037,6 +3991,7 @@ public sealed class SystemProcessRunnerTests
                 return pid;
             }
 
+            afterIncompleteRead?.Invoke();
             var now = DateTime.UtcNow;
 
             // Sampled AFTER the read above, never before it: the opposite order can see the run
@@ -4172,8 +4127,9 @@ public sealed class SystemProcessRunnerTests
     /// a divergence between callers and nothing else.
     /// </para>
     /// </remarks>
-    private static Task<int?> ReclaimPidForTeardownAsync(string pidFile, Task work) =>
-        Task.Run(() => WaitForPid(pidFile, work, LateReadWindow, LateReadWindow));
+    /// <param name="afterIncompleteRead">Optional test coordination forwarded to the poller.</param>
+    private static Task<int?> ReclaimPidForTeardownAsync(string pidFile, Task work, Action? afterIncompleteRead = null) =>
+        Task.Run(() => WaitForPid(pidFile, work, LateReadWindow, LateReadWindow, afterIncompleteRead));
 
     /// <summary>
     /// <see cref="ReclaimPidForTeardownAsync"/> for a caller that must not throw the one ACL fault
@@ -4243,11 +4199,12 @@ public sealed class SystemProcessRunnerTests
     /// that reach the guard and not the guard, and #529 moved the guard.
     /// </para>
     /// </remarks>
-    private static async Task<int?> ReclaimPidForTeardownQuietlyAsync(string pidFile, Task work)
+    /// <param name="afterIncompleteRead">Optional test coordination forwarded to the poller.</param>
+    private static async Task<int?> ReclaimPidForTeardownQuietlyAsync(string pidFile, Task work, Action? afterIncompleteRead = null)
     {
         try
         {
-            return await ReclaimPidForTeardownAsync(pidFile, work);
+            return await ReclaimPidForTeardownAsync(pidFile, work, afterIncompleteRead);
         }
         catch (UnauthorizedAccessException)
         {
