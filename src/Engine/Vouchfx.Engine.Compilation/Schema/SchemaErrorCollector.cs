@@ -263,9 +263,11 @@ internal static class SchemaErrorCollector
         var groupStates = new Dictionary<string, CompositeGroupState>(StringComparer.Ordinal);
         CollectErrorsRecursive(results, collected, groupStates, instance, schema);
 
+        collected = SuppressApplicatorRollups(collected);
+
         // Synthesise the genuine defect a oneOf's "too many matches" failure
-        // represents: JsonSchema.Net attaches NO message of its
-        // own to this case (verified empirically — every matching branch is
+        // represents: JsonSchema.Net 9.2.1 attached no message of its
+        // own to this case; 9.3 supplies a generic aggregate. Every matching branch is
         // individually valid, so none carries an error), and the match-count
         // count fix correctly leaves the group unsatisfied, so without this
         // the ONLY symptom would be every matched branch's own fields wrongly
@@ -315,6 +317,12 @@ internal static class SchemaErrorCollector
 
         if (synthesisedOneOfErrors is not null)
         {
+            // Replace the upstream aggregate with our field-specific diagnostic.
+            collected.RemoveAll(error => error.Keyword == "oneOf" &&
+                synthesisedOneOfErrors.Any(synthetic =>
+                    (synthetic.EvaluationPath == error.EvaluationPath ||
+                     synthetic.EvaluationPath == error.EvaluationPath + "/oneOf") &&
+                    synthetic.InstanceLocation == error.InstanceLocation));
             collected.InsertRange(0, synthesisedOneOfErrors);
         }
 
@@ -388,6 +396,24 @@ internal static class SchemaErrorCollector
         }
 
         return errors;
+    }
+
+    // JsonSchema.Net 9.3+ adds aggregate errors to applicators. Keep the
+    // concrete descendant defect, but never use a different instance or a
+    // textual pointer prefix (e.g. /a versus /ab) as evidence of specificity.
+    // Run before synthetic oneOf diagnostics, which express a separate defect.
+    // contains is a cardinality constraint: nonmatching children are permitted,
+    // so their errors cannot replace a minContains/maxContains count failure.
+    private static List<CollectedError> SuppressApplicatorRollups(List<CollectedError> errors)
+    {
+        return errors.Where(error =>
+            error.Keyword is not ("properties" or "items" or "allOf" or "anyOf" or "oneOf" or "if" or "then" or "else" or
+                "additionalProperties" or "unevaluatedProperties" or "propertyNames" or "prefixItems" or "$ref") ||
+            !errors.Any(other =>
+                other.EvaluationPath.Length > error.EvaluationPath.Length &&
+                IsPathOrDescendant(error.EvaluationPath, other.EvaluationPath) &&
+                IsPathOrDescendant(error.InstanceLocation, other.InstanceLocation)))
+            .ToList();
     }
 
     private static HashSet<string> FindInvalidEnvMaps(JsonElement? instance)
@@ -2171,7 +2197,7 @@ internal static class SchemaErrorCollector
     /// e.g. <c>metadata.schemaVersion: v2</c>, previously surfacing raw
     /// JsonSchema.Net library text with literal Unicode escape sequences
     /// around the expected value rather than an actual quote mark: measured
-    /// verbatim (see <c>RootSchemaTests.Validate_MetadataSchemaVersionV2_IsRejected</c>)
+    /// verbatim (see <c>RootSchemaTests.Validate_MetadataSchemaVersionV3_IsRejected</c>)
     /// as the six characters backslash-u-0-0-2-2 on each side of 'v1'.
     /// </summary>
     /// <remarks>

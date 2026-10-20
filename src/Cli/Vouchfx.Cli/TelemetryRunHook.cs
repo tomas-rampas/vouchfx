@@ -26,9 +26,9 @@
 //
 // ALL public methods swallow every exception: telemetry must be invisible to the run.
 //
-// DEFERRED (v2): a per-file `metadata.telemetry: off` opt-out would need a new field on
-// the frozen YAML metadata schema (blocked by the v1 schema freeze, SchemaFreezeTests).
-// In v1, suppression is global consent + the --no-telemetry flag + VOUCHFX_NO_TELEMETRY.
+// Explicit v2 files may additionally suppress telemetry. The caller evaluates
+// selected metadata at execution time and suppresses the entire invocation's
+// aggregate when any selected scenario opts out.
 
 using System.Net.Http;
 using System.Reflection;
@@ -280,12 +280,14 @@ internal sealed class TelemetryRunHook
     /// Successful raw-writer receipt from this run, default false. Existence of an older
     /// archive is insufficient. Suppression still cleans up a hook-owned temp file.
     /// </param>
+    /// <param name="scenarioOptOut">Runtime suppression from selected v2 documents.</param>
     public async Task EmitAsync(
         string? eventsPath,
         bool isTempFile,
         DateTimeOffset runStartedAt,
         CancellationToken cancellationToken,
-        bool currentArchiveWritten = false)
+        bool currentArchiveWritten = false,
+        bool scenarioOptOut = false)
     {
         if (string.IsNullOrEmpty(eventsPath))
         {
@@ -296,7 +298,7 @@ internal sealed class TelemetryRunHook
         {
             // Re-check emission at write time too (defence in depth: consent could be
             // anything, and ShouldEmit is the single gate).
-            if (!currentArchiveWritten || !ShouldEmit())
+            if (scenarioOptOut || !currentArchiveWritten || !ShouldEmit())
             {
                 return;
             }

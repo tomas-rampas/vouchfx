@@ -1,0 +1,3316 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.vouchfx.io/e2e/v2/root-language-schema.json",
+  "title": "E2E Integration Test",
+  "description": "Root schema for a vouchfx .e2e.yaml test file (language schema v2).",
+  "type": "object",
+  "required": [
+    "steps",
+    "metadata"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "metadata": {
+      "$ref": "#/$defs/metadata"
+    },
+    "environment": {
+      "$ref": "#/$defs/environment"
+    },
+    "listeners": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/inboundListener"
+      }
+    },
+    "variables": {
+      "description": "Constant values pre-loaded into the shared variable context before the first step runs. A variable name may not begin with an engine-reserved bookkeeping prefix: svc::, conn::, __outcome::, __capture_status::, __attempts:: (the same rule 'capture' entries carry).",
+      "$comment": "Mirrors AstBuilder.CheckReservedPrefix's 'variables' guard (see VarKeys, the authoritative prefix list) so the rejection is caught here, at authoring time, instead of only at AST-build time.",
+      "type": "object",
+      "propertyNames": {
+        "description": "Variable names must not begin with an engine-reserved bookkeeping prefix: svc::, conn::, __outcome::, __capture_status::, __attempts::.",
+        "pattern": "^(?!svc::)(?!conn::)(?!__outcome::)(?!__capture_status::)(?!__attempts::).*$"
+      }
+    },
+    "steps": {
+      "description": "The ordered list of actions and assertions that constitute the test.",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/step"
+      }
+    }
+  },
+  "$defs": {
+    "inboundListener": {
+      "type": "object",
+      "required": [
+        "kind",
+        "security"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "webhook-listener",
+            "otlp-receiver"
+          ]
+        },
+        "security": {
+          "$ref": "#/$defs/inboundListenerSecurity"
+        }
+      }
+    },
+    "inboundListenerSecurity": {
+      "type": "object",
+      "required": [
+        "profile",
+        "serverCert",
+        "serverKey"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "profile": {
+          "enum": [
+            "tls",
+            "mtls"
+          ]
+        },
+        "serverCert": {
+          "type": "string",
+          "minLength": 1
+        },
+        "serverKey": {
+          "type": "string",
+          "minLength": 1
+        },
+        "serverKeyPassword": {
+          "type": "string",
+          "pattern": "^\\$\\{secret:[^}]+\\}$"
+        },
+        "clientCaCert": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "profile": {
+                "const": "mtls"
+              }
+            },
+            "required": [
+              "profile"
+            ]
+          },
+          "then": {
+            "required": [
+              "clientCaCert"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "profile": {
+                "const": "tls"
+              }
+            },
+            "required": [
+              "profile"
+            ]
+          },
+          "then": {
+            "properties": {
+              "clientCaCert": false
+            }
+          }
+        }
+      ]
+    },
+    "metadata": {
+      "description": "Human-facing description of the test used in reporting and for suite filtering.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "description": "A short human-readable name for the test.",
+          "type": "string"
+        },
+        "owner": {
+          "description": "The team or individual responsible for this test; used by the runner's selection language.",
+          "type": "string"
+        },
+        "tags": {
+          "description": "Labels used to select subsets of tests during a CI run.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "description": {
+          "description": "A longer explanation of what the test verifies.",
+          "type": "string"
+        },
+        "schemaVersion": {
+          "const": "v2"
+        },
+        "telemetry": {
+          "type": "boolean",
+          "description": "False suppresses telemetry for the selected invocation; true never grants consent."
+        }
+      },
+      "required": [
+        "schemaVersion"
+      ]
+    },
+    "environment": {
+      "description": "Declares the infrastructure the test depends on - services under test and managed dependencies.",
+      "type": "object",
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "source"
+            ]
+          },
+          "then": {
+            "maxProperties": 1
+          }
+        }
+      ],
+      "properties": {
+        "source": {
+          "description": "Select a registered environment driver. Absence selects inline Aspire provisioning. Compose is the additional production driver; its own configuration resolves relative to the suite and owns native manifests, logical HTTP/TCP/PostgreSQL bindings and readiness.",
+          "type": "object",
+          "required": [
+            "driver",
+            "config"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "driver": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]*$",
+              "description": "Registered driver identifier; unknown identifiers are refused by normal compile validation."
+            },
+            "config": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Driver-owned configuration file relative to this suite."
+            }
+          }
+        },
+        "services": {
+          "description": "The system-under-test services, each identified by a logical name and brought up via an image or csproj path.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/service"
+          }
+        },
+        "dependencies": {
+          "description": "Managed Aspire resources (databases, brokers, caches) that the engine provisions.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/dependency"
+          }
+        },
+        "seed": {
+          "description": "Initial state applied after the topology is healthy and before the first step executes (DSL section 3.2.5). Each key is a logical dependency name (declared under environment.dependencies); 'sql' is the only recognised seed kind in v1 - an array of SQL file paths (relative to the suite) applied in order against a relational dependency (postgres, sqlserver, or mysql).",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/seedDependency"
+          }
+        },
+        "imageRegistry": {
+          "description": "An optional default OCI registry hostname that prefixes every un-prefixed image reference.",
+          "type": "string"
+        },
+        "imagePullPolicy": {
+          "description": "Controls when the container runtime pulls images: Always, Missing, or Never.",
+          "type": "string",
+          "enum": [
+            "Always",
+            "Missing",
+            "Never"
+          ]
+        }
+      }
+    },
+    "seedDependency": {
+      "description": "The seed specification for a single managed dependency (DSL section 3.2.5), keyed by its logical name under environment.seed. 'sql' is the only recognised seed kind in v1 (relational dependencies - postgres, sqlserver, and mysql); an empty mapping is a deliberate no-op, not an error. The 'publish' and 'documents' seed kinds documented in earlier drafts never performed the broker publish or document-store write they described (they read and content-hashed the referenced fixture and recorded the intent through a sink, nothing more) and were removed from the v1 language before general availability - a suite still writing either now fails schema validation instead of silently doing nothing.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sql": {
+          "description": "Ordered list of SQL file paths (relative to the suite) executed as one batch each, in declared order, against a relational dependency (postgres, sqlserver, or mysql) before the first step runs. Each path may be written as a plain (unquoted) YAML scalar just as often as a quoted string - the engine reads every item back by its own raw text regardless of how it was written, so this schema accepts every scalar shape the engine does rather than rejecting on type alone (a numeric-looking bare path, e.g. '123.sql', still resolves as a YAML string; a purely-numeric stem written bare, e.g. '20240101', would not).",
+          "$comment": "ParseSeedSqlSequence (YamlDocumentParser) is the reader this description generalises: it retrieves every item's raw scalar text regardless of how it was written, so this field's type union mirrors the same env/httpPort scalar-shape divergence already closed elsewhere in this schema.",
+          "type": "array",
+          "items": {
+            "type": [
+              "string",
+              "integer",
+              "number",
+              "boolean"
+            ]
+          }
+        }
+      }
+    },
+    "service": {
+      "description": "A single system-under-test service declared under environment.services (DSL section 3.2), identified by its map key. Brought into the topology as either a container image or a csproj path. Unlike $defs/dependency (see that definition's own remarks), this definition DOES carry its own \"type\": \"object\" constraint: a bare-scalar service value (e.g. 'app: traefik/whoami:latest' with no mapping) is therefore rejected here, at schema time, rather than deferred to the parser's own line/column diagnostic - services have no equivalent 'division of responsibility' concern to preserve. Exactly one of 'image'/'project' is enforced by TWO separate keywords rather than a single 'oneOf': 'anyOf' below requires AT LEAST one (produces a plain, correctly-located '[required]' error naming each missing field when neither is set), and the 'allOf'/'if'/'then' clause forbids 'project' once 'image' is present via a boolean 'false' subschema (produces a correctly-located error naming 'project' when both are set). A plain 'oneOf: [{required:[image]},{required:[project]}]' was tried first and discarded: when BOTH fields are set, JsonSchema.Net 9.2.1's List-format output marks the failing 'oneOf' node itself invalid but attaches no error message to it at all - the document is correctly rejected overall, but with no diagnosable reason pointing at the service (verified empirically; see EnvironmentSchemaTests.cs).",
+      "$comment": "Further allOf/if/then clauses beyond the image/project exclusion below, numbered here in the order 'allOf' declares them — (1) and (2) from the services-generalisation follow-up (gatekeeper G4/G-M2), (3) accompanying the 'endpoint' field below: (1) 'ports' declared with no sibling 'httpPort' exposes no HTTP endpoint at all (REQ-008's opt-in hybrid — see 'ports's own description below), so 'healthCheck.type' is constrained to the 'tcp' const in that shape — a 'type: http' healthCheck would have nothing to probe. This is the first 'not' in this schema; it is safe here specifically because it sits inside an 'if' CONDITION, never a 'then' enforcement clause — contrast $defs/dependency's own $comment, which explains why 'not' is avoided as an ENFORCEMENT mechanism (a failing 'not' node attaches no message of its own, verified against JsonSchema.Net 9.2.1's List-format output). An 'if' clause's own failure is UNCONDITIONALLY dropped as discriminator noise by SchemaErrorCollector.IsIfDiscriminatorNoise regardless of which keyword inside it failed (that method scans the full EvaluationPath for an 'allOf/<N>/if' segment pair at ANY depth, deliberately depth-independent), so the 'if' itself never needs a diagnosable message; only the 'const' mismatch the 'then' branch produces needs one, and FormatConstError already supplies it. (2) 'ports'/'healthCheck'/'httpPort' have NO EFFECT on a 'project:'-form service — EnvironmentMapper's Configure() only ever reads any of the three for an 'image:'-form service; Aspire's own AddProject auto-discovers the project's launch-profile endpoints instead — so all three are forbidden outright once 'project' is set, via the same per-field 'false' subschema idiom as the image/project exclusion below. 'httpPort' is forbidden on this form rather than merely ignored on it: being accepted and silently ignored here is the failure mode this clause exists to close, and refusing it is a deliberate narrowing of a field that never did anything on this form. It pins a PORT rather than a LISTENER, so it was never the endpoint selector it looks like — 'endpoint' below is. (3) 'endpoint' is meaningless on an 'image:'-form service, which selects what it exposes through 'httpPort'/'ports'/'security.endpoint', so it is forbidden once 'image' is set. That is a SEPARATE clause carrying the same 'if: required:[image]' condition rather than a second entry in the image/project exclusion's own 'then'. The two spellings validate identically and produce identical messages — SchemaErrorCollector.FormatForbiddenPropertyError keys each of its bespoke, rule-naming texts on the offending PROPERTY name, not on which clause rejected it, and it carries none for 'endpoint', so 'endpoint' reads the generic \"not valid on service '<name>'\" text either way. They are kept apart so the image/project exclusion stays the exact two-keyword shape this definition's description above documents keyword by keyword, and so a later edit to either exclusion cannot silently move the other.",
+      "type": "object",
+      "additionalProperties": false,
+      "anyOf": [
+        {
+          "required": [
+            "image"
+          ]
+        },
+        {
+          "required": [
+            "project"
+          ]
+        }
+      ],
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "image"
+            ]
+          },
+          "then": {
+            "properties": {
+              "project": false
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "ports"
+            ],
+            "not": {
+              "required": [
+                "httpPort"
+              ]
+            }
+          },
+          "then": {
+            "properties": {
+              "healthCheck": {
+                "properties": {
+                  "type": {
+                    "const": "tcp"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "project"
+            ]
+          },
+          "then": {
+            "properties": {
+              "ports": false,
+              "healthCheck": false,
+              "httpPort": false
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "image"
+            ]
+          },
+          "then": {
+            "properties": {
+              "endpoint": false
+            }
+          }
+        }
+      ],
+      "properties": {
+        "image": {
+          "description": "An OCI image reference for the service's container (e.g. 'myorg/orders-api:1.2.3'), pulled from any registry the container runtime can already reach - the recommended default for speed and isolation. Mutually exclusive with 'project'; exactly one of the two must be supplied (DSL section 3.2).",
+          "type": "string"
+        },
+        "project": {
+          "description": "A relative path to a .csproj file; the engine builds and runs this project as part of suite startup - the convenience form for a team iterating on a service locally. Mutually exclusive with 'image'; exactly one of the two must be supplied (DSL section 3.2).",
+          "type": "string"
+        },
+        "endpoint": {
+          "description": "Selects WHICH of a 'project:'-form service's launch-profile endpoints the engine stages as that service's address - the one a step reaches through 'svc::<name>'. The value is an endpoint NAME, never a scheme and never a port: the name the orchestrator gives each listener it discovers in the project's launch profile, which for the first listener of a given scheme is that scheme ('http', 'https') and for a second listener of the same scheme is that scheme with an index ('http2'). Matched by Ordinal (case-sensitive) comparison, like every other DSL vocabulary term (dependency type, imagePullPolicy, verifyMode) - 'https' and 'HTTPS' are NOT the same name, and only the exact spelling the project declares matches. Omit this field and the engine's own rule applies unchanged: the plaintext endpoint where the project offers one, otherwise the secure one, otherwise the first the project declares. A project's launch profile is not modelled at authoring time - nothing here can know which endpoint names a given csproj declares - so this schema checks the SHAPE of the value only: a name matching no discovered endpoint is refused when the topology is built, naming every endpoint the project did declare, rather than by this schema. An empty value is rejected here; a whitespace-only value is a legal string that names no endpoint, so it is refused at topology-build time like any other unmatched name. Naming an 'https' endpoint changes WHICH listener is addressed and nothing else: it configures NO client trust material and secures nothing by itself. 'security:' remains refused on a 'project:'-form service, so a listener presenting a certificate this host does not already trust fails the request at run time. Follow that to its end, because the request failing is NOT the whole description: a connection failure is classified an ENVIRONMENT ERROR, and an environment error does not fail the run unless the caller passes '--fail-on-env-error' (section 12.1). On a host that has never trusted the listener's certificate - a fresh CI runner that never ran 'dotnet dev-certs https --trust', say - naming an 'https' endpoint therefore buys a green run over a suite that verified nothing, rather than a red one telling you so. 'project:'-form only - declaring it alongside 'image' is rejected, because an image-form service already selects what it exposes through 'httpPort'/'ports'/'security.endpoint'.",
+          "type": "string",
+          "minLength": 1
+        },
+        "imagePullPolicy": {
+          "description": "Overrides the environment-level imagePullPolicy for this service only: Always, Missing, or Never (DSL section 3.2.1). Matched case-sensitively here, exactly like the environment-level field of the same name (see its own description) - the engine's own runtime parsing ALSO matches case-sensitively, so a lower-cased 'always' is rejected consistently by both the schema and the runtime.",
+          "$comment": "Case-sensitivity mirrors EnvironmentMapper.ParseImagePullPolicy's own Enum.TryParse(ignoreCase: false) — a pre-GA decision to standardise on exactly one canonical spelling per DSL vocabulary term (dependency type, imagePullPolicy, verifyMode, cache-assert.redis's operation).",
+          "type": "string",
+          "enum": [
+            "Always",
+            "Missing",
+            "Never"
+          ]
+        },
+        "httpPort": {
+          "description": "The container port the service listens on, when it differs from the image's default (DSL section 3.2). Must be a real TCP port number (1-65535), written as either a bare decimal integer (e.g. '8080') or an equivalent quoted string (e.g. '\"8080\"'). Leading zeros are decimal digits in both forms: '0123' means 123 and '08080' means 8080, whether quoted or bare. Schema validation checks the same decimal value the engine uses; zero and values above 65535 are rejected at this field. The quoted form is constrained by the digit pattern as well as the port range. Malformed values are refused at authoring time rather than falling back silently to a different runtime port.",
+          "$comment": "A SINGLE merged schema, not a two-branch 'oneOf', on purpose: 'minimum'/'maximum' are no-ops against a non-number instance and 'pattern' is a no-op against a non-string instance (JSON Schema draft 2020-12 §6.2/§6.3 — verified empirically against JsonSchema.Net 9.2.1), so one schema carrying all three keywords accepts exactly the same integer/string shapes a two-branch oneOf did, with zero branch-exploration noise on an otherwise-valid value and exactly one located error on an invalid one, instead of a spurious second '[type]' entry from whichever branch the value was never going to match. SchemaResources.ConvertYamlToJsonDocument consumes implicitly inferred, plain untagged integers as invariant decimal values instead of delegating their value conversion to YamlDotNet's octal-aware scalar handler. This keeps a bare leading-zero httpPort aligned with YamlDocumentParser's decimal int.TryParse reader; quoted digits continue through the existing bounded pattern. Explicit YAML tags retain their previous conversion rules.",
+          "type": [
+            "integer",
+            "string"
+          ],
+          "minimum": 1,
+          "maximum": 65535,
+          "pattern": "^0*([1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])$"
+        },
+        "env": {
+          "description": "Environment variables passed to the service's container/project - the SUT configuration surface (DSL section 3.2.6). Each value may be written as a quoted string, or as a bare (unquoted) numeric or boolean YAML scalar - the engine retains every value in its raw scalar form regardless of how it was written (a bare 8080 or true arrives as the literal text \"8080\"/\"true\", exactly what a container's environment variable needs), so this schema accepts every scalar shape the engine does. A string value may embed zero or more ${conn:<dependency>} / ${conn:<dependency>.<part>} references to a dependency declared under environment.dependencies, resolved by the engine at topology-build time in the consumer's own network context, or a ${env:NAME} reference passing through a value from the ENGINE PROCESS's own environment at topology-build time (distinct from ${secret:source/path}, which is barred here because a container's environment is the wrong PLACE to put a secret, whenever it would be resolved: whatever the engine wrote there would be readable by anyone who can run 'docker inspect'. Configure the SUT to resolve the secret itself instead). A ${env:NAME} reference to a variable the engine process does not have set fails the suite before the container starts, naming the missing variable; an explicitly-set empty value is honoured as-is. A container's environment configured this way is visible via 'docker inspect', the same as any other container environment variable - this is inherent to configuring a container's environment, not a defect. This schema does not itself validate reference syntax or confirm the named dependency/variable exists - that cross-check happens later, in EnvironmentMapper. An explicit null ('FOO: ~') is rejected: with the pinned YamlDotNet 16.3.0 representation model, a YAML '~' scalar is read back as the LITERAL, ONE-CHARACTER TEXT '~', not as a null value, so without this rejection the variable would silently be set to the literal string '~' - never what an author means by writing '~' - rather than a container environment variable that is actually absent. This rejection catches that mismatch at authoring time instead of leaving it to surface as a silently-wrong container environment variable. Names must start with an ASCII letter or underscore and contain only ASCII letters, digits, underscores or dots; case and spelling are preserved. Invalid names are refused as whole names, never trimmed or split.",
+          "$comment": "YamlDocumentParser.ParseEnvMap is the reader this description generalises: it retains every value in its raw scalar form regardless of how it was written, and would otherwise set an explicitly-null value to the literal string '~'. The dependency/variable cross-check the description defers to 'later' is EnvironmentMapper's, which alone knows the declared dependency set and the engine process's own environment. The ${secret:} bar's stated reason is EnvironmentMapper.ValidateEnvValue's own, and it is about SCOPE rather than about timing. An earlier form of this description said the reference 'resolves at step-execution time instead'; the client-key-password series made that false, because environment-level security.clientKeyPassword resolves through the same subsystem at first use of the certificate material — after the topology is up and BEFORE any step runs — so the moment is a property of the consuming field and not of secret resolution at all. SecretReference's own remarks carry the invariant that survived: at run time, never at compile time. The refusal itself never depended on the timing claim and is unchanged. Same failure mode $defs/dependency's own $comment records: a run-time claim surviving in a frozen surface because every gate over this file proves only that it still composes byte-identically.",
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_.]*(?![\\s\\S])"
+          },
+          "additionalProperties": {
+            "type": [
+              "string",
+              "integer",
+              "number",
+              "boolean"
+            ]
+          }
+        },
+        "security": {
+          "$ref": "#/$defs/security"
+        },
+        "ports": {
+          "description": "One or more TCP ports this service exposes, beyond (or instead of) the implicit default HTTP endpoint - for a system under test that does not speak HTTP at all, such as a customer-supplied Kafka broker. Each port is brought up via Aspire's generic TCP endpoint rather than being assumed to speak HTTP - except the one a sibling 'security.endpoint' selects, which is declared with an 'https' scheme and replaces the plaintext endpoint that port would otherwise have carried. Declaring 'ports' suppresses the implicit default HTTP endpoint that 'httpPort' alone would otherwise imply; declare 'httpPort' alongside 'ports' for a hybrid service that exposes both an HTTP endpoint and one or more raw TCP ports. Each entry is either a bare decimal integer naming the CONTAINER port, whose host port the orchestrator then allocates, or a '<host>:<container>' string (docker-compose's ordering) pinning the host port too - which a service must use when its own configuration has to name the address clients will reach it on, as a broker's advertised listeners do. Every port is written as a plain decimal integer with no leading zero. In the pinned form the host half must be 1024..65535 (privileged and well-known ports are refused) and the container half 1..65535; those ranges are enforced when the document is parsed rather than by this schema, so an in-range-looking entry may still be rejected with a message naming the value.",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "$comment": "A SINGLE MERGED schema rather than a two-branch oneOf, matching this file's existing treatment of the identical integer-or-string case at 'httpPort' and at 'security.endpoint'. Measured: a oneOf yields TWO errors for one mistake, the second contradicting the first (['a:b'] tells the author their string should be an integer; [70000] tells them their integer should be a string), because JsonSchema.Net attaches no message to a failing oneOf node and the collector reports each branch's complaint. Merged, 'minimum'/'maximum' are no-ops against a string and 'pattern' is a no-op against a number (draft 2020-12), so the accepted set is identical and a mistake produces one located error. The pattern forbids a leading zero for the same reason 'security.endpoint' does: the schema bridge re-reads the document under YAML 1.1, where '0123' is octal 83 while the parser reads 123 — refusing the spelling makes that divergence unreachable. Range on the two halves of the pinned form is parser-owned; a regex expressing 1..65535 twice would be unreadable, so this pattern promises shape only and the description says so.",
+          "items": {
+            "type": [
+              "integer",
+              "string"
+            ],
+            "minimum": 1,
+            "maximum": 65535,
+            "pattern": "^[1-9][0-9]{0,4}(:[1-9][0-9]{0,4})?$"
+          }
+        },
+        "healthCheck": {
+          "$ref": "#/$defs/serviceHealthCheck"
+        }
+      }
+    },
+    "serviceHealthCheck": {
+      "description": "An author-declared health check for a service, replacing the implicit default (an HTTP GET against '/') applied when this block is omitted on an HTTP-shaped service (no 'ports' declared). The field set required or forbidden is fixed per 'type': 'tcp' requires 'port' and forbids 'path'; 'http' accepts an optional 'path' (defaulting to '/') and forbids 'port'. A service declaring 'ports' with no 'healthCheck' at all does not go unchecked: it defaults to a 'tcp' probe against the first declared port rather than either an HTTP request the service may not be able to answer, or no check at all.",
+      "$comment": "Mirrors $defs/security's own profile-conditional allOf/if/then idiom (see that def's remarks for why a per-field boolean 'false' subschema is used instead of a 'not'/'required' negation) — a discriminator field ('type' here, 'profile' there) selects which sibling fields are required/forbidden. healthCheck.port cross-referencing the service's own declared ports/httpPort is EnvironmentMapper's job, not this schema's — shape only, not cross-field semantic consistency (see HealthCheckSpec's own remarks).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "description": "The health-check kind: 'tcp' opens a raw TCP connection to 'port' and, after a bounded zero-byte read that discriminates a live backend from a proxy that merely accepted the connection, considers the service healthy only once that discriminator passes - issuing no HTTP request at all; 'http' issues an HTTP GET against 'path' on the service's HTTP endpoint (the explicit spelling of the engine's own pre-existing default behaviour). Matched case-sensitively, like every other DSL vocabulary term (dependency type, imagePullPolicy, verifyMode).",
+          "type": "string",
+          "enum": [
+            "tcp",
+            "http"
+          ]
+        },
+        "path": {
+          "description": "The HTTP path probed for a 'type: http' health check, e.g. '/healthz'. Defaults to '/' when omitted. Not applicable to 'type: tcp', where declaring it is rejected outright.",
+          "type": "string",
+          "minLength": 1
+        },
+        "port": {
+          "description": "The TCP port probed for a 'type: tcp' health check. Must be one of this service's own declared ports (an entry under 'ports', or 'httpPort' when the service declares no 'ports' at all) - checked by the engine, not by this schema. Not applicable to 'type: http', where declaring it is rejected outright.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "const": "tcp"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "port"
+            ],
+            "properties": {
+              "path": false
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "const": "http"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "port": false
+            }
+          }
+        }
+      ]
+    },
+    "dependency": {
+      "description": "A single managed Aspire dependency declared under environment.dependencies (e.g. postgres, kafka, mongodb, redis). Deliberately carries no top-level 'type' (object) constraint of its own: a bare-scalar dependency (e.g. 'db: postgres') is already rejected - with a line/column error - by the parser at load time (DSL section 3.2), not by this schema; keeping this definition open for non-object shapes preserves that division of responsibility instead of duplicating (and pre-empting) the parser's own, more specific diagnostic. 'required' and 'additionalProperties' below apply to object instances only (JSON Schema draft 2020-12 section 6.5.3/section 6.3.3), so neither one disturbs that exempted bare-scalar shape: for a genuinely mapping-shaped dependency, exactly the fields below are recognised, and a misspelled or unsupported key is rejected here with a useful message. 'schemaRegistry', 'queues', 'topics' and 'security' stay declared unconditionally in 'properties' below (so 'additionalProperties: false' still recognises them on every kind) but are restricted to their owning kind - 'schemaRegistry' to kafka, 'queues'/'topics' to azureservicebus, and 'security' to kafka, the only dependency kind this release wires a transport-security profile for - and a field set on a kind that does not own it is rejected with a correctly-located error naming both the field and the offending kind. No other dependency kind carries a 'security' block in this release, and no substitute declaration restores one: every step family targeting those kinds resolves its 'target' against 'environment.dependencies' alone, so re-declaring the technology under 'environment.services' does not secure it - it trades this rejection for a step-validation rejection instead. Transport security for the remaining dependency kinds is a 1.1 capability. A service entry is the right home only for infrastructure that is already reached as a service - an HTTP system under test, whose steps resolve 'target' exclusively against 'environment.services'.",
+      "$comment": "Mirrors the discriminator pattern SchemaComposer.BuildIfThenClauses uses for step 'type' (§13.6). Authored statically here, not contributed by a runtime SDK extension, because the dependency-kind list is EnvironmentMapper's own registration table, not a provider concern. A misspelled/unsupported key was previously swept silently into the parser's Extra bucket and never reached any provider; it is now rejected here. Each 'then' forbids its kind's disallowed fields with a boolean 'false' subschema per field (e.g. \"schemaRegistry\": false), deliberately NOT a 'not'/'required' negation: JsonSchema.Net 9.2.1's List-format output does not attach an error message to a failing 'not' (nor 'oneOf') node itself — only to its child branches — so a 'not: { anyOf: [...] }' shape here would either surface no diagnosable error at all, or leak the OTHER, unset forbidden fields' 'required' failures as misleading noise (verified empirically; see EnvironmentSchemaTests.cs). A per-field 'false' subschema reliably attaches one correctly-located error exactly at the offending field. The FINAL allOf entry below (REQ-021) is a different shape: an ALLOW-LIST, not a per-kind exclusion — the dependency's own 'security' block is forbidden outright ('security': false) for every kind EXCEPT kafka, via ONE clause using 'not: { const: \"kafka\" }' inside its 'if' CONDITION, not its 'then' enforcement — safe for the same reason $defs/service's own ports-only-healthCheck clause uses 'not' inside an 'if' (see that $def's own remarks): an 'if' clause's own failure is unconditionally dropped as discriminator noise (SchemaErrorCollector.IsIfDiscriminatorNoise is depth-independent), so it never needs a diagnosable message of its own; the 'then' branch's boolean-false subschema is what SchemaErrorCollector.FormatForbiddenPropertyError names, together with the dependency's own kind, using the same per-field 'false' idiom as the per-kind clauses above it. M1 (peer review, fix round 2) TIGHTENED this clause: it previously pinned 'security.profile' to the CONST 'tls' on these kinds, which legalised 'profile: tls' on a kind for which nothing stages a TLS client connection in this release — the engine-side REQ-005 probe would confirm the endpoint speaks TLS while the step's own provider-emitted client connected in plaintext, the exact false assurance REQ-022 exists to close. Since AppliesTo gates which suites VALIDATE, widening later is safe and tightening later is not, so 1.0 rejects the whole block and 1.1 widens as REQ-013 lands server-side TLS for the remaining kinds. Written as one allow-list clause rather than one per-kind exclusion clause per non-kafka type deliberately: a dependency kind added later carries no 'security' block by default the instant it is added, with no separate exclusion clause to remember. Kafka itself needs no clause of its own here: its 'type' fails the 'not: { const: \"kafka\" }' condition, so this clause's 'if' never matches for it and 'then' never applies, leaving 'security' governed only by $defs/security's own base definition (both 'tls' and 'mtls' legal). A SERVICE is never narrowed at all — $defs/service carries no such clause — but that is NOT a general remedy for the excluded kinds and must never be documented as one (peer review, fix round 4, MAJOR-1). Measured against the 25 Core providers: 17 resolve 'target' only through IProjectContext.DeclaredDependencies and reject a target that is not a declared dependency of their own kind (DbAssertPostgresProvider.Validate, CacheAssertRedisProvider.Validate, MqPublishRabbitmqProvider.Validate, and so on), and those 17 cover every excluded kind — so an author who moves a TLS-secured postgres/redis/rabbitmq declaration into environment.services trades this schema rejection for a step-validation rejection and still has no working suite. Only http.rest, http.soap and metrics-assert.prometheus resolve 'target' through DeclaredServices (they read DeclaredDependencies solely to phrase a better rejection), so the service form is a working path solely for an HTTP system under test. The remaining three — script.csharp, trace-expect.otlp, webhook-listen.http — reconcile no infrastructure target at all. A Kafka broker has TWO working forms today: the 'kafka' dependency this clause already permits, and a declared service — REQ-023 has both Kafka providers accept a service target and emit a lookup of the svc::<name> bootstrap authority the engine stages for it. Neither is a remedy this message points an author at, but for different reasons: kafka is never refused by this clause at all (its 'type' fails the 'if'), whereas the excluded kinds above have no working service form to be sent to. REQ-013 widens the set in 1.1; until then the honest statement is that the block has no home on these kinds at all. HISTORY, kept deliberately: the sentence above used to assert the opposite — that Kafka's service-target path staged nothing and aborted at run time as an environment error. True when written, false from the moment REQ-023 landed the svc:: staging, and it survived in this FROZEN surface anyway. SchemaErrorCollector.FormatForbiddenPropertyError's own remarks already carried the guard that would have caught it ('verify any future edit against what a provider does at step-execution time, not what the schema accepts'); the guard was right and went unapplied, because every gate over this file proves only that the schema still composes byte-identically and none of them can tell whether a sentence about RUN-TIME behaviour is still true. Re-read this $comment against the providers, not against the goldens. The retracted sentence is deliberately NOT quoted verbatim, so that a grep for its distinctive phrasing stays a detector for the real thing rather than a search that trips over its own obituary.",
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "description": "The dependency's technology kind (one of: postgres, sqlserver, mysql, mongodb, redis, elasticsearch, rabbitmq, nats, kafka, mailpit, azureservicebus, dynamodb, minio, s3); an unrecognised value is caught here, at authoring time, instead of surfacing later as a runtime error. Matched case-sensitively; a differently-cased value (e.g. 'Postgres') is rejected consistently by both the schema and the engine - the schema-level rejection names the correct lower-case spelling directly.",
+          "$comment": "Enumerated against EnvironmentMapper's own dependency-registration table, so an unrecognised value is caught here instead of surfacing later as an ArgumentException at suite-build time. Case-sensitivity mirrors EnvironmentMapper's own s_dependencyRegistry lookup (StringComparer.Ordinal) — a pre-GA decision to standardise on exactly one canonical spelling per DSL vocabulary term (dependency type, imagePullPolicy, verifyMode, cache-assert.redis's operation).",
+          "type": "string",
+          "enum": [
+            "postgres",
+            "sqlserver",
+            "mysql",
+            "mongodb",
+            "redis",
+            "elasticsearch",
+            "rabbitmq",
+            "nats",
+            "kafka",
+            "mailpit",
+            "azureservicebus",
+            "dynamodb",
+            "minio",
+            "s3"
+          ]
+        },
+        "version": {
+          "description": "An optional tag fragment (e.g. \"16\", \"8.0\") applied to the dependency's own built-in image repository. This is ONLY a tag on the provider's built-in repository - it cannot name a different repository or registry; use 'image' for that. Setting 'version' together with an 'image' that already carries its own tag or digest is rejected as ambiguous. Written as a plain (unquoted) YAML scalar this is commonly parsed as a number rather than a string, and the engine reads it back as text regardless - so both shapes are accepted. A key written with no value at all (or YAML's explicit null, e.g. '~') parses as null and is treated identically to 'version' being absent.",
+          "type": [
+            "string",
+            "number",
+            "integer",
+            "null"
+          ]
+        },
+        "image": {
+          "description": "An optional full OCI image reference (registry host with optional port, repository path, and an optional :tag or @sha256:digest) that overrides the dependency's built-in image repository - the only way to point a dependency at a private registry. The reference is used exactly as written: an environment-level 'imageRegistry' prefix is never applied on top of an image that already carries its own registry component. Unlike 'version', which is only a tag on the built-in repository, this names the repository (and registry) itself. May itself embed a tag or digest; combining that with a sibling 'version' is rejected as ambiguous. A key written with no value at all (or YAML's explicit null) parses as null and is treated identically to 'image' being absent.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "schemaRegistry": {
+          "description": "Kafka-only: set to true to provision a Confluent Schema Registry sidecar alongside the broker, health-gated after the broker. Ignored for every other dependency type. Accepted as either an unquoted YAML boolean or a quoted string (e.g. \"true\"); the engine compares the value case-insensitively to \"true\" either way. A key written with no value at all (or YAML's explicit null) parses as null and is treated identically to 'schemaRegistry' being absent (i.e. not \"true\").",
+          "type": [
+            "boolean",
+            "string",
+            "null"
+          ]
+        },
+        "queues": {
+          "description": "Azure Service Bus-only: queue names to declare in the emulator's namespace. A queue not declared here is unavailable to the suite; referencing it surfaces as an environment error. A key written with no value at all (or YAML's explicit null) parses as null and is treated identically to 'queues' being absent (no queues declared).",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": [
+              "string",
+              "number",
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "topics": {
+          "description": "Azure Service Bus-only: topic declarations for the emulator's namespace. A topic not declared here is unavailable to the suite; referencing it surfaces as an environment error. A key written with no value at all (or YAML's explicit null) parses as null and is treated identically to 'topics' being absent (no topics declared).",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "object",
+            "required": [
+              "name"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "description": "The topic name to declare. The engine silently drops a topic entry whose 'name' is absent entirely - 'required' catches that case at schema time instead of the entity quietly never reaching the emulator's Config.json and surfacing much later as an unrelated-looking Service Bus environment error. An EXPLICIT null ('name: ~') is a different case, rejected for a different reason: with the pinned YamlDotNet 16.3.0 representation model, '~' is read back as the literal, one-character TEXT '~', not as a null value, so the engine does NOT drop it - it declares a topic literally named '~', which is never what an author means by writing '~'. Excluding 'null' from the type union below closes that gap at authoring time.",
+                "$comment": "ParseAsbTopics (EnvironmentMapper) is the reader this description generalises: it silently drops a topic entry whose 'name' is absent, and — since '~' arrives as the literal one-character text '~', never a null — does NOT drop an explicit 'name: ~' either; it declares a topic literally named '~'.",
+                "type": [
+                  "string",
+                  "number",
+                  "integer"
+                ]
+              },
+              "subscriptions": {
+                "description": "Subscription names to create under this topic.",
+                "type": [
+                  "array",
+                  "null"
+                ],
+                "items": {
+                  "type": [
+                    "string",
+                    "number",
+                    "integer",
+                    "null"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "env": {
+          "description": "Environment variables passed to this managed dependency's container, EXCEPT any name the engine itself sets for that dependency's type (the 'elasticsearch', 'minio', 's3' and 'azureservicebus' types set such names today): such an entry is REFUSED - the suite aborts before any container starts, naming the variable, the dependency and its type, and the fix is either to remove the entry or to declare the backend as a service with 'image:' when you need full control of its environment. Note where that refusal fires and what it exits: the check lives in EnvironmentMapper, on the 'run' path, so 'vouchfx validate' never builds a topology and will not report it, and the abort is reported as Inconclusive: when that refused scenario is the run's only outcome, nothing has executed and the run exits 4 with or without --fail-on-inconclusive, while beside other scenarios the ordinary exit-code rules apply. The entry is refused because the engine relies on those values to bring the dependency up in the shape every scenario shares - and on 'minio' and 's3' they are the credentials in the connection string the engine hands the steps of every scenario that targets it (for those two kinds, a service's ${conn:<dependency>} carries only host and port) - so honouring an override would break other scenarios rather than only this one. That check covers only what the ENGINE sets: Aspire's own resource builders, and the images themselves, set further variables this engine does not know about, and a collision with one of those is NOT detected - the author's value silently wins. Each value may be written as a quoted string, or as a bare (unquoted) numeric or boolean YAML scalar - the engine retains every value in its raw scalar form regardless of how it was written (a bare 8080 or true arrives as the literal text \"8080\"/\"true\", exactly what a container's environment variable needs), so this schema accepts every scalar shape the engine does. An explicit null ('FOO: ~') is rejected: with the pinned YamlDotNet 16.3.0 representation model, a YAML '~' scalar is read back as the LITERAL, ONE-CHARACTER TEXT '~', not as a null value, so without this rejection the variable would silently be set to the literal string '~' - never what an author means by writing '~' - rather than a container environment variable that is actually absent. This rejection catches that mismatch at authoring time instead of leaving it to surface as a silently-wrong container environment variable. A string value may embed one or more ${env:NAME} references, passing through a value from the ENGINE PROCESS's own environment at topology-build time; a reference to a variable the engine process does not have set fails the suite before the container starts, naming it, while an explicitly-set empty value is honoured as-is. Two reference forms are REFUSED here: ${conn:<dependency>}, refused naming the offending reference - because a dependency is a connection SOURCE rather than a consumer, and barring it removes self-reference and inter-dependency cycles outright, with no build-order graph and no cycle detector - and ${secret:source/path}, on the same reasoning that bars it from a service's env: a container's environment is the wrong PLACE for a secret whenever it would resolve, since whatever the engine wrote there is readable by anyone who can run 'docker inspect'. This schema does not itself validate reference syntax or confirm the named variable exists - that cross-check happens later, in EnvironmentMapper, which alone knows the engine process's own environment. Names must start with an ASCII letter or underscore and contain only ASCII letters, digits, underscores or dots; case and spelling are preserved. Invalid names are refused as whole names, never trimmed or split.",
+          "$comment": "YamlDocumentParser.ParseEnvMap is the reader this description generalises: it retains every value in its raw scalar form regardless of how it was written, and would otherwise set an explicitly-null value to the literal string '~'. The value-shape rules here are an INLINE DUPLICATE of $defs/service.properties.env's, deliberately not a shared $defs both sides $ref: their equality is checked by schema parity tests. The name grammar is an intentional pre-GA correction, separately reviewed through the schema freeze.",
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_.]*(?![\\s\\S])"
+          },
+          "additionalProperties": {
+            "type": [
+              "string",
+              "integer",
+              "number",
+              "boolean"
+            ]
+          }
+        },
+        "security": {
+          "$ref": "#/$defs/security"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "const": "postgres"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "schemaRegistry": false,
+              "queues": false,
+              "topics": false
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "const": "sqlserver"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "schemaRegistry": false,
+              "queues": false,
+              "topics": false
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "const": "mysql"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "schemaRegistry": false,
+              "queues": false,
+              "topics": false
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "const": "mongodb"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "schemaRegistry": false,
+              "queues": false,
+              "topics": false
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "const": "redis"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "schemaRegistry": false,
+              "queues": false,
+              "topics": false
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "const": "elasticsearch"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "schemaRegistry": false,
+              "queues": false,
+              "topics": false
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "const": "rabbitmq"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "schemaRegistry": false,
+              "queues": false,
+              "topics": false
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "const": "nats"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "schemaRegistry": false,
+              "queues": false,
+              "topics": false
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "const": "kafka"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "queues": false,
+              "topics": false
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "const": "mailpit"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "schemaRegistry": false,
+              "queues": false,
+              "topics": false
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "const": "azureservicebus"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "schemaRegistry": false
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "const": "dynamodb"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "schemaRegistry": false,
+              "queues": false,
+              "topics": false
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "const": "minio"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "schemaRegistry": false,
+              "queues": false,
+              "topics": false
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "const": "s3"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "schemaRegistry": false,
+              "queues": false,
+              "topics": false
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "not": {
+                  "const": "kafka"
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "security": false
+            }
+          }
+        }
+      ]
+    },
+    "security": {
+      "description": "Declares transport security (TLS or mutual TLS) for this service's or kafka dependency's endpoint. Optional; omitting this block preserves today's unauthenticated-by-default behaviour unchanged. Where it may be declared is narrowed to what this release actually wires a client connection for: any 'environment.services' entry, and a dependency of type 'kafka'. On any other dependency kind the block is rejected outright - not because a different profile would be accepted there, but because none is wired for that kind in this release. There is no substitute declaration that restores one: the step families targeting those kinds resolve their 'target' against 'environment.dependencies' alone, so moving the declaration to 'environment.services' makes those steps fail validation rather than securing them. Transport security for the remaining dependency kinds is a 1.1 capability. The set of fields required or forbidden is fixed per 'profile', so an author can tell, without running anything, which combination validates: 'profile' and 'endpoint' are required whenever this block is present, for both profiles; 'caCert' is always optional, for both profiles; 'clientCert' and 'clientKey' are required together for profile 'mtls' and forbidden for profile 'tls'; 'clientKeyPassword' is optional for profile 'mtls' and forbidden for profile 'tls' - optional rather than required there because whether the declared 'clientKey' is an encrypted PEM is a property of that file, not of this document. Declaring 'security' does not, by itself, cause the engine to secure an engine-provisioned dependency's own listener - it declares the CLIENT-side expectation for infrastructure whose server side is already secured, such as a custom 'image'/'project' the author has configured for TLS themselves. The engine does not provision server-side TLS for any managed dependency kind, so 'security' on such a kind states an expectation the engine will confirm at run time, never one it creates. On a SERVICE, declaring this block additionally fixes that service's own transport: the endpoint named by 'endpoint' is exposed with an 'https' scheme and becomes the one a step's 'target' resolves to, in preference to any sibling plaintext endpoint the service also declares - so 'http.rest', 'http.soap' and 'metrics-assert.prometheus' issue a TLS request against it and present the declared client certificate. The implicit plaintext HTTP endpoint an 'image'-form service would otherwise receive is suppressed, exactly as declaring 'ports' suppresses it, unless 'httpPort' is also declared alongside; a 'project'-form service cannot be secured at all, because its endpoints come from its own launch profile and the engine has none of its own to give an 'https' scheme.",
+      "$comment": "The mtls-requires/tls-forbids clauses below mirror the same per-field boolean 'false' subschema idiom used by db-assert.dynamodb's and storage-assert.s3's own 'expect.exists: false' forbidden-property clauses (see those providers' SchemaFragment) and by $defs/dependency's own per-kind allOf above — a boolean 'false' subschema reliably attaches one correctly-located error exactly at the offending field, where a 'not'/'oneOf' negation would not (see SchemaErrorCollector's own remarks). Declared as its own $def (rather than inlined separately into $defs/service and $defs/dependency) so both containers share exactly one copy of the profile-conditional logic, and so SchemaErrorCollector's TryReadSiblingIfClause (which reads the LAST '/allOf/' segment of the failing node's own schema pointer) resolves unambiguously to THIS def's own allOf, never an outer container's. Closes with 'unevaluatedProperties: false' REPLACING 'additionalProperties: false' (never declared alongside it — a sibling 'additionalProperties' in the SAME schema object silently voids 'unevaluatedProperties', per JSON Schema 2020-12 — see SchemaStepSurfaceClosureTests' own finding 2, which documents the identical trap for $defs/step). For every field this $def declares today the two keywords accept and reject identical instances — this is a zero-behaviour change now, and the enabling one for later: 'additionalProperties' can only ever see this object's OWN 'properties', while 'unevaluatedProperties' also recognises a field introduced by a composed profile fragment's own allOf/if/then, the same way $defs/step already lets a provider fragment extend the step surface.",
+      "type": "object",
+      "unevaluatedProperties": false,
+      "required": [
+        "profile",
+        "endpoint"
+      ],
+      "properties": {
+        "profile": {
+          "description": "The transport security mechanism this endpoint uses: 'tls' for server-side TLS only, or 'mtls' for mutual TLS, which additionally presents a client certificate. Deliberately typed as an open string pattern here, never a closed enum: an unrecognised profile name is rejected at VALIDATION TIME against the engine's security-profile registry, not by this schema - the same division $defs/step already uses for a step's own 'type' (this schema constrains only the shape; DocumentValidator rejects an unregistered value against the frozen registry). 'tls' and 'mtls' are the only profiles the registry recognises today; the optional dotted segment (e.g. 'acme.custom') reserves the '<vendor>.<name>' SHAPE the pattern will accept for a future out-of-tree profile - reserving the syntax costs nothing now, but such a profile does not validate anywhere yet: it would still need to become a REGISTERED profile (an unrecognised name is rejected regardless of shape), and a dependency other than kafka accepts no 'security' block at all, so no third profile can validate there until both gates are widened. Legality is additionally narrowed per target kind elsewhere in this schema: both profiles validate on any declared service and on a kafka dependency, and no profile validates on any other dependency kind - this release wires a client connection for exactly those two target kinds, and there is no substitute declaration that gives one of the remaining kinds transport security in the meantime (see $defs/dependency's own description). That narrowing is a release position rather than a permanent one: transport security for the remaining dependency kinds is a 1.1 capability. Matched case-sensitively, like every other DSL vocabulary term (dependency type, imagePullPolicy, verifyMode).",
+          "$comment": "No 'enum' here, by design (REQ-019): SchemaFreezeTests composes the golden from the Core registry alone, so a closed enum would mean no profile originating outside that registry could ever validate, and widening it later would mutate a frozen keyword — exactly what the 1.0 language freeze forbids. The registry lookup lives in DocumentValidator.CollectUnknownSecurityProfileErrors, mirroring CollectUnknownStepTypeErrors.",
+          "type": "string",
+          "pattern": "^[a-z0-9-]+(\\.[a-z0-9-]+)?$"
+        },
+        "endpoint": {
+          "description": "The secured endpoint to connect to: either a port number, or the name of a declared endpoint. Required whenever this security block is present, for both profiles - there is no implicit default endpoint, since an infrastructure's plaintext listener may remain reachable alongside its secured one, and silently resolving to it would authenticate nothing. That requirement is a shape rule rather than a behaviour rule on every target kind: on a DEPENDENCY this field is accepted for block-shape uniformity with a service and does NOT select an endpoint - the dependency is reached at the address its own resource publishes, whatever this field names - so a secured listener on some other port is unreachable and the run fails closed rather than quietly connecting elsewhere. Write a port as a bare decimal integer with no leading zeros, e.g. '8080'. The schema bridge interprets plain integer scalars as decimal, including leading zeros: '0123' is checked as 123, '08080' as 8080, and '070000' is rejected as 70000. Endpoint selection still uses the raw scalar text with quoting discarded: only decimal digits in 1..65535 with no leading zero select a PORT; every other value, including a leading-zero spelling, selects an endpoint NAME and must match a declared endpoint. Quoting changes the schema branch, not that selection rule. The string branch accepts an endpoint name such as '\"kafka-ssl\"' and applies no numeric range or digit pattern, so '\"70000\"' is accepted at authoring time as a name and must resolve to a declared endpoint later. An ordinary quoted port such as '\"8443\"' still selects that port. This differs from service-level 'httpPort', which accepts leading zeros as decimal digits and bounds both its integer and string forms.",
+          "$comment": "A SINGLE merged schema, not a two-branch 'oneOf', mirroring $defs/service's own 'httpPort' idiom (see that field's remarks): 'minimum'/'maximum' are no-ops against a non-number instance and 'minLength' is a no-op against a non-string instance (JSON Schema draft 2020-12 §6.2/§6.3), so one schema carrying all three keywords accepts exactly the same integer/string shapes a two-branch oneOf did, with no spurious second error. Unlike 'httpPort', deliberately carries NO digit 'pattern' on the string branch: an endpoint NAME (e.g. 'kafka-ssl') is just as legal as a numeric-looking string, so a pattern restricting the string branch to digits would wrongly reject it.",
+          "type": [
+            "integer",
+            "string"
+          ],
+          "minimum": 1,
+          "maximum": 65535,
+          "minLength": 1
+        },
+        "caCert": {
+          "description": "Path to a CA certificate file (trust anchor) presented by the peer, resolved relative to the directory containing this suite's .e2e.yaml file. Optional for both 'tls' and 'mtls': omitting it is a normal, valid configuration, not an incomplete one - the relevant CA may already be inside a declared truststore/keystore, or already trusted by the platform's own default trust store. When omitted, no path is synthesised, defaulted, or checked; the consuming client simply falls back to whatever trust material is already available. When it IS declared it acts as a PIN rather than as additional trust: the peer's certificate must chain to this anchor, and one that chains only to the machine's own trust store is rejected even though the platform would have accepted it. A two-tier CA (an offline root declared here, an issuing intermediate the server sends alongside its own certificate) validates: intermediates supplied by the peer are used to build the path but never become trust anchors themselves. The peer's certificate must also carry the 'serverAuth' extended key usage, or no extended key usage at all - the same constraint the platform applies, restated here because declaring a trust anchor replaces the platform's verdict with the engine's. The hostname is still checked: a declared CA says which issuer to trust, never which host. A '${secret:<source>/<path>}' reference is refused here: this field names a host FILE for the engine to read and copy, while the secrets subsystem yields a VALUE, which is not a file and has no path.",
+          "type": "string",
+          "minLength": 1
+        },
+        "clientCert": {
+          "description": "Path to the client certificate file presented during a mutual-TLS handshake, resolved relative to the directory containing this suite's .e2e.yaml file. Required together with 'clientKey', and only for profile 'mtls' - mutual TLS's whole point is presenting a client identity. Not applicable to profile 'tls', where declaring it is rejected outright: a field that does nothing must not silently validate. A '${secret:<source>/<path>}' reference is refused here: this field names a host FILE for the engine to read and copy, while the secrets subsystem yields a VALUE, which is not a file and has no path.",
+          "type": "string",
+          "minLength": 1
+        },
+        "clientKey": {
+          "description": "Path to the client private key file presented during a mutual-TLS handshake, resolved relative to the directory containing this suite's .e2e.yaml file. Required together with 'clientCert', and only for profile 'mtls'. Not applicable to profile 'tls', where declaring it is rejected outright. The file may be an ENCRYPTED PEM private key: declare its passphrase in the sibling 'clientKeyPassword', which is how a key is kept from sitting in plaintext at rest. This field itself takes only a path - a '${secret:<source>/<path>}' reference is refused here, because the engine reads and copies the FILE this field points at while the secrets subsystem yields a VALUE, which is not a file and has no path. 'clientKeyPassword' is the field that does take one.",
+          "type": "string",
+          "minLength": 1
+        },
+        "clientKeyPassword": {
+          "description": "The passphrase protecting an ENCRYPTED 'clientKey', supplied as a secret reference and never as a literal. Required only when the file named by 'clientKey' is an encrypted PEM private key; for a plaintext key it is not merely unnecessary but refused, because a passphrase that decrypts nothing is how a key rotated back to plaintext goes unnoticed. Optional under profile 'mtls' rather than required by it - whether a key is encrypted is not knowable from this document, only from the file it names - so 'mtls' still requires exactly 'clientCert' and 'clientKey', as it always did. Not applicable to profile 'tls', where declaring it is rejected outright, for the same reason 'clientCert'/'clientKey' are: plain TLS presents no client identity, so there is no client key for a passphrase to unlock, and a field that does nothing must not silently validate. The value must be a single, whole '${secret:<source>/<path>}' reference and NOTHING else: a bare literal, a partially-interpolated string, and a reference surrounded by other text are all rejected here, at authoring time. That is the language-wide references-only rule rather than a local preference - a literal here would be a plaintext passphrase committed beside the encrypted key it unlocks, which reproduces the very at-rest exposure this field exists to remove - and it costs an author nothing to satisfy, since '${secret:env/CLIENT_KEY_PASS}' is one line. The reference is resolved at FIRST USE of the key material, after the topology has started, and never at compile time: no passphrase is baked into the compiled script, and the reproducibility envelope hashes the reference rather than the value. The resolved value reaches no event, no report and no rendered observation.",
+          "$comment": "The 'pattern' is the ANCHORED form of the engine's own SecretReference grammar (Vouchfx.Engine.Abstractions/Secrets/SecretReference.cs), character class for character class — source '[A-Za-z0-9_-]+', path '[^}]+' — and must stay so. It is a SECOND spelling of a rule the engine already owns, which is exactly how two spellings of one security rule drift apart (see SecurityArtifactPath's own header). Divergence in either direction ships a broken value: wider here (e.g. a source class of '[^{}/]' would admit '${secret:a.b/x}') validates a document the engine then refuses; narrower here (e.g. a path class of '[^{}]' would refuse a '{' inside the path) refuses a document the engine would have resolved. Both of those were present in a single early draft. Held in step by SecretReferencePatternParityTests, which reads THIS pattern out of the composed schema at run time and asserts it agrees with SecretReference.TryParse candidate by candidate — never by a hand-copied duplicate. The anchors are load-bearing on their own: TryParse requires its match to span the whole token, so an unanchored pattern would accept a reference embedded in literal text and smuggle a literal into the field. The CLOSING anchor is deliberately '(?![\\s\\S])' and NOT a bare '$', because a bare '$' does not reproduce the whole-token rule: in .NET, '$' matches at end-of-input OR immediately before a single trailing '\\n'. That divergence was MEASURED rather than reasoned about, and it is reachable from ordinary YAML — a '|' block scalar ('clientKeyPassword: |' with the reference on the indented line below) yields the reference plus a trailing 0x0a against the pinned YamlDotNet 15.1.6, which a '$'-anchored pattern ACCEPTS here while TryParse REFUSES it. That is the WIDER direction this comment's own divergence list describes, produced by the anchor rather than by a character class. '(?![\\s\\S])' is a negative lookahead asserting that no character of any kind follows, and it is valid in BOTH .NET and ECMA-262; that portability is the whole reason for this form rather than '\\z', which is .NET-only. This exact pattern string is composed into the VSCode extension's shipped schema copy (tools/vscode-vouchfx/src/schema/composed-schema.v1.json) and evaluated there by a JavaScript RegExp, where '\\z' is not an end-of-input anchor at all but an identity escape — ECMA-262 would read it as a demand for a literal trailing 'z' and reject every valid reference. The trailing-newline candidate is carried in the parity corpus, so a revert to '$' fails that gate rather than shipping. Note also that the 'description' above states only the PROPERTY that the resolved value reaches no event, report or rendered observation, and deliberately names no mechanism carrying it: an earlier draft described a scrubbing-ledger registration that no member of SecuritySpec provides at this commit, and that description ships inside the engine assembly and the VSCode copy, where an editor surfaces it as hover text to a reviewer deciding whether this field is safe for a production passphrase. Forbidden under 'tls' by the per-field boolean 'false' subschema idiom in this $def's own allOf, the same one 'clientCert'/'clientKey' already use there.",
+          "type": "string",
+          "pattern": "^\\$\\{secret:[A-Za-z0-9_-]+/[^}]+\\}(?![\\s\\S])"
+        },
+        "serverArtifacts": {
+          "description": "Host files copied into the container at topology-build time - for example a Java keystore backing a broker's own TLS listener - each identified by a host source path and an in-container target path. A binary artefact (such as a JKS keystore) cannot be declared inline as YAML text; only a host file path is accepted.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/securityServerArtifact"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "profile"
+            ],
+            "properties": {
+              "profile": {
+                "const": "mtls"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "clientCert",
+              "clientKey"
+            ]
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "profile"
+            ],
+            "properties": {
+              "profile": {
+                "const": "tls"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "clientCert": false,
+              "clientKey": false,
+              "clientKeyPassword": false
+            }
+          }
+        }
+      ]
+    },
+    "securityServerArtifact": {
+      "description": "A single host-file-to-container-path copy declared under security.serverArtifacts.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "target"
+      ],
+      "properties": {
+        "source": {
+          "description": "Host path of the file to copy, resolved relative to the directory containing this suite's .e2e.yaml file. Must resolve to a path inside that directory. A '${secret:<source>/<path>}' reference is refused here: this field names a host FILE for the engine to read and copy, while the secrets subsystem yields a VALUE, which is not a file and has no path.",
+          "type": "string",
+          "minLength": 1
+        },
+        "target": {
+          "description": "The absolute path inside the container that the file is copied to.",
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^/"
+        }
+      }
+    },
+    "step": {
+      "description": "A single typed step in the test sequence.",
+      "type": "object",
+      "required": [
+        "id",
+        "type"
+      ],
+      "unevaluatedProperties": false,
+      "properties": {
+        "id": {
+          "description": "A unique identifier for the step within the file; used in reporting and failure messages. Must start with a letter or underscore and contain only letters, digits, underscores, and hyphens.",
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$"
+        },
+        "type": {
+          "description": "The kind of step. Must be in dotted family.provider notation, e.g. http.rest or db-assert.postgres; a bare family name (e.g. http) is not accepted.",
+          "type": "string",
+          "pattern": "^[a-z0-9-]+\\.[a-z0-9-]+$"
+        },
+        "description": {
+          "description": "A short human-readable explanation shown in test output.",
+          "type": "string"
+        },
+        "capture": {
+          "description": "A map of variable names to extractor expressions that write values from this step's result into the shared context (DSL section 6.1). Each value is either a bare scalar JSONPath expression (e.g. '\"$.id\"', back-compat default) or a single-key mapping selecting the format explicitly ('{ jsonpath: \"$.id\" }' or '{ xpath: \"//id\" }'); use the XPath form for XML response bodies. A variable name may not begin with an engine-reserved bookkeeping prefix: svc::, conn::, __outcome::, __capture_status::, __attempts::.",
+          "$comment": "Mirrors AstBuilder.CheckReservedPrefix's 'capture' guard (see VarKeys, the authoritative prefix list) so the rejection is caught here, at authoring time, instead of only at AST-build time. Kept out of 'description' (LanguageReferenceGenerator renders that verbatim into docs/language-reference.md, where an internal class name is noise to a YAML author) — $comment is a JSON Schema 2020-12 core keyword with no effect on validation and is never read by LanguageReferenceGenerator, verified against both.",
+          "type": "object",
+          "propertyNames": {
+            "description": "Capture variable names must not begin with an engine-reserved bookkeeping prefix: svc::, conn::, __outcome::, __capture_status::, __attempts::.",
+            "pattern": "^(?!svc::)(?!conn::)(?!__outcome::)(?!__capture_status::)(?!__attempts::).*$"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/captureEntry"
+          }
+        },
+        "verifyMode": {
+          "description": "Either IMMEDIATE (default) or RETRY. RETRY instructs the engine to poll with bounded exponential backoff.",
+          "type": "string",
+          "enum": [
+            "IMMEDIATE",
+            "RETRY"
+          ]
+        },
+        "timeout": {
+          "description": "An upper bound on how long the step may take, expressed as a duration string (e.g. 30s) or a number of seconds - enforced for every verify mode. An IMMEDIATE step that exceeds it resolves as Inconclusive (step-timeout, never Fail); where the provider's emitted body sets a built-in transport timeout (the HTTP, AWS and SQL command-timeout conventions), the declared value replaces it as the governing bound. For a RETRY step it bounds the polling window. It is an upper bound and never a lower one: it does not extend a provider's per-attempt drain window, so on a single-shot expect step (the mq-expect family) a longer timeout does not make the step wait longer for a message to arrive - waiting is verifyMode: RETRY's job.",
+          "$comment": "A single 'type' union, not a two-branch 'oneOf', on purpose: the two shapes never overlap (a JSON value is never simultaneously a string and a number), so a union accepts exactly the same values a oneOf did, with no second branch left to leak a spurious '[type]' entry when the document is invalid elsewhere.",
+          "type": [
+            "string",
+            "number"
+          ]
+        },
+        "continueOnFailure": {
+          "description": "When true, a failed assertion is recorded but does not abort the remaining steps. Defaults to false.",
+          "type": "boolean"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "cache-assert.elasticsearch"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "description": "Queries an Elasticsearch index and asserts on the resulting hit count and/or selected _source field values.",
+            "type": "object",
+            "required": [
+              "target",
+              "index",
+              "expect"
+            ],
+            "properties": {
+              "target": {
+                "description": "Logical name of the elasticsearch dependency declared under environment.dependencies whose HTTP API this step queries.",
+                "type": "string",
+                "minLength": 1
+              },
+              "index": {
+                "description": "Elasticsearch index to query. Must be one path segment: '/', backslash, whitespace, '?', '#', controls, and the exact names '.'/'..' are refused; ',' (multi-index) and '*' (wildcard) are allowed. Bare numbers are retained as their literal text; quote boolean-looking names.",
+                "type": [
+                  "string",
+                  "integer",
+                  "number"
+                ],
+                "minLength": 1,
+                "pattern": "^(?!\\.{1,2}$)[^ /?#\\\\\\x00-\\x1F\\x7F-\\x9F\\xA0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000]+$(?![\\s\\S])"
+              },
+              "query": {
+                "description": "Full Elasticsearch Query DSL JSON body (the entire request body, e.g. '{\"query\":{\"match\":{\"status\":\"active\"}}}').  When absent a match_all query is used.  May contain {placeholder} tokens resolved at execution time.",
+                "type": "string"
+              },
+              "expect": {
+                "description": "Expected result-set characteristics.",
+                "type": "object",
+                "properties": {
+                  "count": {
+                    "description": "Exact number of hits expected.  When set, overrides min-count. When written as a string it must be all digits (e.g. \"1\"); a non-digit string is always a mistake, since the value is never {placeholder}-substituted.",
+                    "type": [
+                      "integer",
+                      "string"
+                    ],
+                    "minimum": 0,
+                    "pattern": "^[0-9]+$"
+                  },
+                  "min-count": {
+                    "description": "Minimum number of hits expected (default 1).  Ignored when count is set. When written as a string it must be all digits (e.g. \"1\"); a non-digit string is always a mistake, since the value is never {placeholder}-substituted.",
+                    "type": [
+                      "integer",
+                      "string"
+                    ],
+                    "minimum": 0,
+                    "pattern": "^[0-9]+$",
+                    "default": 1
+                  },
+                  "fields": {
+                    "description": "Optional field assertions evaluated against the first hit's _source.  Each entry checks that the named top-level field equals the expected value.",
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "field",
+                        "value"
+                      ],
+                      "properties": {
+                        "field": {
+                          "description": "Top-level _source field name.  Dot-notation is not supported.",
+                          "type": "string",
+                          "minLength": 1,
+                          "pattern": "^[^.]*$"
+                        },
+                        "value": {
+                          "description": "Expected scalar compared as text. Bare numbers and booleans retain their literal YAML spelling; null is refused. May contain {placeholder} and ${secret:source/path} tokens.",
+                          "type": [
+                            "string",
+                            "integer",
+                            "number",
+                            "boolean"
+                          ]
+                        }
+                      },
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "cache-assert.redis"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "description": "Inspects a Redis key (GET/EXISTS/TTL/HGET/HLEN/LLEN/SCARD) and asserts on the result.",
+            "type": "object",
+            "required": [
+              "target",
+              "key",
+              "operation",
+              "expect"
+            ],
+            "properties": {
+              "target": {
+                "description": "Logical name of the redis dependency to inspect, as declared under environment.dependencies.",
+                "type": "string",
+                "minLength": 1
+              },
+              "key": {
+                "description": "The Redis key to inspect.  May contain {placeholder} tokens resolved at step-execution time.",
+                "type": "string",
+                "minLength": 1
+              },
+              "operation": {
+                "description": "The Redis read operation. get/hget assert on 'expect.value'; exists asserts on 'expect.exists'; ttl asserts on 'expect.exists' as a has-a-positive-TTL presence check (exact/lower-bound TTLs are deliberately unsupported to avoid CI flakiness); hlen/llen/scard assert on 'expect.length'. Values are case-SENSITIVE: write them lower-case exactly as listed.",
+                "type": "string",
+                "enum": [
+                  "get",
+                  "exists",
+                  "ttl",
+                  "hget",
+                  "hlen",
+                  "llen",
+                  "scard"
+                ]
+              },
+              "field": {
+                "description": "The hash field name for the hget operation (required for hget only).  May contain {placeholder} tokens.",
+                "type": "string"
+              },
+              "expect": {
+                "description": "Assertion block. Exactly one member applies per operation: value (get/hget), exists (exists/ttl), or length (hlen/llen/scard).",
+                "type": "object",
+                "properties": {
+                  "value": {
+                    "description": "Expected string value for get/hget.  May contain {placeholder} tokens resolved at step-execution time. May be written as a bare number/boolean scalar; it is matched as text either way.",
+                    "type": [
+                      "string",
+                      "integer",
+                      "number",
+                      "boolean"
+                    ]
+                  },
+                  "exists": {
+                    "description": "Expected key presence for exists, or expected has-a-positive-TTL presence for ttl.",
+                    "type": "boolean"
+                  },
+                  "length": {
+                    "description": "Expected length / cardinality for hlen (hash length), llen (list length), or scard (set cardinality). When written as a string it must be all digits (e.g. \"1\"); a non-digit string is always a mistake, since the value is never {placeholder}-substituted.",
+                    "type": [
+                      "integer",
+                      "string"
+                    ],
+                    "pattern": "^[0-9]+$"
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "allOf": [
+              {
+                "if": {
+                  "required": [
+                    "operation"
+                  ],
+                  "properties": {
+                    "operation": {
+                      "const": "hget"
+                    }
+                  }
+                },
+                "then": {
+                  "required": [
+                    "field"
+                  ],
+                  "properties": {
+                    "field": {
+                      "minLength": 1
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "required": [
+                    "operation"
+                  ],
+                  "properties": {
+                    "operation": {
+                      "const": "get"
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "expect": {
+                      "required": [
+                        "value"
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "required": [
+                    "operation"
+                  ],
+                  "properties": {
+                    "operation": {
+                      "const": "hget"
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "expect": {
+                      "required": [
+                        "value"
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "required": [
+                    "operation"
+                  ],
+                  "properties": {
+                    "operation": {
+                      "const": "exists"
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "expect": {
+                      "required": [
+                        "exists"
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "required": [
+                    "operation"
+                  ],
+                  "properties": {
+                    "operation": {
+                      "const": "ttl"
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "expect": {
+                      "required": [
+                        "exists"
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "required": [
+                    "operation"
+                  ],
+                  "properties": {
+                    "operation": {
+                      "const": "hlen"
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "expect": {
+                      "required": [
+                        "length"
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "required": [
+                    "operation"
+                  ],
+                  "properties": {
+                    "operation": {
+                      "const": "llen"
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "expect": {
+                      "required": [
+                        "length"
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "required": [
+                    "operation"
+                  ],
+                  "properties": {
+                    "operation": {
+                      "const": "scard"
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "expect": {
+                      "required": [
+                        "length"
+                      ]
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "db-assert.dynamodb"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "description": "Fetches a single item from a DynamoDB table by primary key (GetItem) and asserts on its existence and/or attribute values.",
+            "type": "object",
+            "required": [
+              "target",
+              "table",
+              "key",
+              "expect"
+            ],
+            "properties": {
+              "target": {
+                "description": "Logical name of the dynamodb dependency to query, as declared under environment.dependencies.",
+                "type": "string",
+                "minLength": 1
+              },
+              "table": {
+                "description": "Name of the DynamoDB table to query. May contain {placeholder} tokens.",
+                "type": "string",
+                "minLength": 1
+              },
+              "key": {
+                "description": "A flat JSON object template naming the primary key (partition key, optionally plus a sort key) for a GetItem call, e.g. {\"orderId\":\"{orderId}\"}. Each top-level value becomes an S/N/BOOL DynamoDB attribute; nested objects/arrays/null are not supported. May contain {placeholder} tokens inside JSON string values.",
+                "type": "string",
+                "minLength": 1
+              },
+              "expect": {
+                "description": "Assertion block declaring the expected GetItem outcome.",
+                "type": "object",
+                "properties": {
+                  "exists": {
+                    "description": "Whether the item is expected to exist. Defaults to true when omitted.",
+                    "type": "boolean",
+                    "default": true
+                  },
+                  "item": {
+                    "description": "Map of flat (top-level) attribute name to expected value, compared as text against the GetItem result (S as-is, N as the raw number string, BOOL as \"true\"/\"false\") - a bare numeric or boolean scalar is read as its literal text. Nested attributes are not supported in v1.",
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": [
+                        "string",
+                        "integer",
+                        "number",
+                        "boolean"
+                      ]
+                    }
+                  }
+                },
+                "additionalProperties": false,
+                "allOf": [
+                  {
+                    "if": {
+                      "required": [
+                        "exists"
+                      ],
+                      "properties": {
+                        "exists": {
+                          "const": false
+                        }
+                      }
+                    },
+                    "then": {
+                      "properties": {
+                        "item": false
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "db-assert.mongodb"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "description": "Runs a filter query against a MongoDB collection and asserts on the matched document count and/or the first matched document's field values.",
+            "type": "object",
+            "required": [
+              "target",
+              "collection",
+              "filter",
+              "expect"
+            ],
+            "properties": {
+              "target": {
+                "description": "Logical name of the mongodb dependency to query, as declared under environment.dependencies.",
+                "type": "string",
+                "minLength": 1
+              },
+              "collection": {
+                "description": "Name of the MongoDB collection to query.",
+                "type": "string",
+                "minLength": 1
+              },
+              "filter": {
+                "description": "JSON filter document.  May contain {placeholder} tokens resolved at runtime.",
+                "type": "string",
+                "minLength": 1
+              },
+              "expect": {
+                "description": "Assertion block declaring the expected query outcome.  At least one of count or document must be specified.",
+                "type": "object",
+                "anyOf": [
+                  {
+                    "required": [
+                      "count"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "document"
+                    ]
+                  }
+                ],
+                "properties": {
+                  "count": {
+                    "description": "Expected number of documents matched by the filter. When written as a string it must be all digits (e.g. \"1\"); a non-digit string is always a mistake, since the value is never {placeholder}-substituted.",
+                    "type": [
+                      "integer",
+                      "string"
+                    ],
+                    "pattern": "^[0-9]+$"
+                  },
+                  "document": {
+                    "description": "Map of flat (top-level) field name to expected value, compared as text against the first matched document - a bare numeric or boolean scalar is read as its literal text. Dot-notation paths are not supported in v1.",
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": [
+                        "string",
+                        "integer",
+                        "number",
+                        "boolean"
+                      ]
+                    }
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "db-assert.mysql"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "description": "Runs a parameterised SQL query against a MySQL dependency and asserts on the returned row count and/or first row's column values.",
+            "type": "object",
+            "required": [
+              "target",
+              "query",
+              "expect"
+            ],
+            "properties": {
+              "target": {
+                "description": "Logical name of the mysql dependency to query, as declared under environment.dependencies.",
+                "type": "string",
+                "minLength": 1
+              },
+              "query": {
+                "description": "The SQL query to execute.  May be a multi-line literal.",
+                "type": "string",
+                "minLength": 1
+              },
+              "parameters": {
+                "description": "Optional map of SQL parameter names (without leading '@') to their values, passed as text - a bare numeric or boolean scalar is read as its literal text.",
+                "type": "object",
+                "additionalProperties": {
+                  "type": [
+                    "string",
+                    "integer",
+                    "number",
+                    "boolean"
+                  ]
+                }
+              },
+              "expect": {
+                "description": "Assertion block declaring the expected query outcome.  At least one of rowCount or row must be specified.",
+                "type": "object",
+                "anyOf": [
+                  {
+                    "required": [
+                      "rowCount"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "row"
+                    ]
+                  }
+                ],
+                "properties": {
+                  "rowCount": {
+                    "description": "Expected number of rows returned by the query. When written as a string it must be all digits (e.g. \"1\"); a non-digit string is always a mistake, since the value is never {placeholder}-substituted.",
+                    "type": [
+                      "integer",
+                      "string"
+                    ],
+                    "pattern": "^[0-9]+$"
+                  },
+                  "row": {
+                    "description": "Map of column name to expected value, compared as text against the first row - a bare numeric or boolean scalar is read as its literal text.",
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": [
+                        "string",
+                        "integer",
+                        "number",
+                        "boolean"
+                      ]
+                    }
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "db-assert.postgres"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "description": "Runs a parameterised SQL query against a Postgres dependency and asserts on the returned row count and/or first row's column values.",
+            "type": "object",
+            "required": [
+              "target",
+              "query",
+              "expect"
+            ],
+            "properties": {
+              "target": {
+                "description": "Logical name of the postgres dependency to query, as declared under environment.dependencies.",
+                "type": "string",
+                "minLength": 1
+              },
+              "query": {
+                "description": "The SQL query to execute.  May be a multi-line literal.",
+                "type": "string",
+                "minLength": 1
+              },
+              "parameters": {
+                "description": "Optional map of SQL parameter names (without leading '@') to their values, passed as text - a bare numeric or boolean scalar is read as its literal text.",
+                "type": "object",
+                "additionalProperties": {
+                  "type": [
+                    "string",
+                    "integer",
+                    "number",
+                    "boolean"
+                  ]
+                }
+              },
+              "expect": {
+                "description": "Assertion block declaring the expected query outcome.  At least one of rowCount or row must be specified.",
+                "type": "object",
+                "anyOf": [
+                  {
+                    "required": [
+                      "rowCount"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "row"
+                    ]
+                  }
+                ],
+                "properties": {
+                  "rowCount": {
+                    "description": "Expected number of rows returned by the query. When written as a string it must be all digits (e.g. \"1\"); a non-digit string is always a mistake, since the value is never {placeholder}-substituted.",
+                    "type": [
+                      "integer",
+                      "string"
+                    ],
+                    "pattern": "^[0-9]+$"
+                  },
+                  "row": {
+                    "description": "Map of column name to expected value, compared as text against the first row - a bare numeric or boolean scalar is read as its literal text.",
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": [
+                        "string",
+                        "integer",
+                        "number",
+                        "boolean"
+                      ]
+                    }
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "db-assert.sqlserver"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "description": "Runs a parameterised SQL query against a SQL Server dependency and asserts on the returned row count and/or first row's column values.",
+            "type": "object",
+            "required": [
+              "target",
+              "query",
+              "expect"
+            ],
+            "properties": {
+              "target": {
+                "description": "Logical name of the sqlserver dependency to query, as declared under environment.dependencies.",
+                "type": "string",
+                "minLength": 1
+              },
+              "query": {
+                "description": "The SQL query to execute.  May be a multi-line literal.",
+                "type": "string",
+                "minLength": 1
+              },
+              "parameters": {
+                "description": "Optional map of SQL parameter names (without leading '@') to their values, passed as text - a bare numeric or boolean scalar is read as its literal text.",
+                "type": "object",
+                "additionalProperties": {
+                  "type": [
+                    "string",
+                    "integer",
+                    "number",
+                    "boolean"
+                  ]
+                }
+              },
+              "expect": {
+                "description": "Assertion block declaring the expected query outcome.  At least one of rowCount or row must be specified.",
+                "type": "object",
+                "anyOf": [
+                  {
+                    "required": [
+                      "rowCount"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "row"
+                    ]
+                  }
+                ],
+                "properties": {
+                  "rowCount": {
+                    "description": "Expected number of rows returned by the query. When written as a string it must be all digits (e.g. \"1\"); a non-digit string is always a mistake, since the value is never {placeholder}-substituted.",
+                    "type": [
+                      "integer",
+                      "string"
+                    ],
+                    "pattern": "^[0-9]+$"
+                  },
+                  "row": {
+                    "description": "Map of column name to expected value, compared as text against the first row - a bare numeric or boolean scalar is read as its literal text.",
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": [
+                        "string",
+                        "integer",
+                        "number",
+                        "boolean"
+                      ]
+                    }
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "http.rest"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "description": "Issues an HTTP request to a logically-named service and optionally asserts on the response status and body.",
+            "type": "object",
+            "required": [
+              "target",
+              "method",
+              "path"
+            ],
+            "properties": {
+              "target": {
+                "description": "Logical name of the service to call, as declared under environment.services.",
+                "type": "string",
+                "minLength": 1
+              },
+              "method": {
+                "description": "The HTTP verb.",
+                "type": "string",
+                "enum": [
+                  "GET",
+                  "POST",
+                  "PUT",
+                  "DELETE",
+                  "PATCH",
+                  "HEAD",
+                  "OPTIONS"
+                ]
+              },
+              "path": {
+                "description": "The request path; may contain variable placeholders. Must be a rooted relative path (start with a single '/'); absolute URLs, protocol-relative paths ('//...'), and backslashes are rejected as an SSRF guard.",
+                "type": "string",
+                "pattern": "^/(?!/)[^\\\\\\x00-\\x1F\\x7F-\\x9F]*(?![\\s\\S])"
+              },
+              "headers": {
+                "description": "Optional map of request header names to values.",
+                "type": "object",
+                "additionalProperties": {
+                  "type": [
+                    "string",
+                    "integer",
+                    "number",
+                    "boolean"
+                  ]
+                }
+              },
+              "body": {
+                "description": "Optional request body, given inline as YAML and serialised to JSON."
+              },
+              "expect": {
+                "description": "Optional assertion block applied to the HTTP response: status, json (JSONPath assertions over a JSON body) and bodyContains (a body substring). Body assertions are evaluated only once the status check has passed.",
+                "type": "object",
+                "properties": {
+                  "status": {
+                    "description": "Expected HTTP status code. When written as a string it must be all digits (e.g. \"200\"); a non-digit string is always a mistake, since the value is never {placeholder}-substituted.",
+                    "type": [
+                      "integer",
+                      "string"
+                    ],
+                    "pattern": "^[0-9]+$"
+                  },
+                  "json": {
+                    "description": "Optional map of JSONPath expressions (RFC 9535, used verbatim) to expectations over the response body parsed as JSON. Each value is a scalar or exactly { exists: true } / { exists: false }; no other mapping, and no sequence, is accepted. A scalar asserts that the path selects exactly one node whose text equals it; a bare numeric or boolean scalar is read as its literal text. The node found is compared by its canonical text: a string by its unescaped value, a number or boolean by its JSON spelling, null as the text null (write it quoted), and an object or array as its compact JSON, which you write as a quoted string. { exists: true } / { exists: false } asserts that the path selects at least one node / none. Values may contain {placeholder} and ${secret:source/path} tokens.",
+                    "type": "object",
+                    "minProperties": 1,
+                    "propertyNames": {
+                      "pattern": "^\\$"
+                    },
+                    "additionalProperties": {
+                      "type": [
+                        "string",
+                        "integer",
+                        "number",
+                        "boolean",
+                        "object"
+                      ],
+                      "properties": {
+                        "exists": {
+                          "description": "true: the path must select at least one node; false: none.",
+                          "type": "boolean"
+                        }
+                      },
+                      "minProperties": 1,
+                      "maxProperties": 1,
+                      "additionalProperties": false
+                    }
+                  },
+                  "bodyContains": {
+                    "description": "Optional substring the response body, decoded as text, must contain (ordinal). May contain {placeholder} and ${secret:source/path} tokens. May be written as a bare number/boolean scalar; it is matched as text either way.",
+                    "type": [
+                      "string",
+                      "integer",
+                      "number",
+                      "boolean"
+                    ],
+                    "minLength": 1
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "http.soap"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "description": "Issues a SOAP request (a raw, author-supplied envelope) to a logically-named service and optionally asserts on the response status, fault presence, and XPath-selected values.",
+            "type": "object",
+            "required": [
+              "target",
+              "path",
+              "envelope"
+            ],
+            "properties": {
+              "target": {
+                "description": "Logical name of the service to call, as declared under environment.services.",
+                "type": "string",
+                "minLength": 1
+              },
+              "path": {
+                "description": "The request path; may contain {placeholder} and ${secret:...} tokens. Must be a rooted relative path (start with a single '/'); absolute URLs, protocol-relative paths ('//...'), and backslashes are rejected as an SSRF guard.",
+                "type": "string",
+                "pattern": "^/(?!/)[^\\\\\\x00-\\x1F\\x7F-\\x9F]*(?![\\s\\S])"
+              },
+              "action": {
+                "description": "Optional SOAPAction header value (SOAP 1.1 convention), sent quoted per spec. May contain {placeholder} and ${secret:source/path} tokens.",
+                "type": "string"
+              },
+              "envelope": {
+                "description": "The FULL SOAP request envelope XML, given as a raw template string (no auto-wrapping). Sent as Content-Type: text/xml; charset=utf-8. May contain {placeholder} and ${secret:...} tokens.",
+                "type": "string",
+                "minLength": 1
+              },
+              "expect": {
+                "description": "Optional assertion block applied to the SOAP response.",
+                "type": "object",
+                "properties": {
+                  "status": {
+                    "description": "Expected HTTP status code. Defaults to 200 when omitted. When written as a string it must be all digits (e.g. \"200\"); a non-digit string is always a mistake, since the value is never {placeholder}-substituted.",
+                    "type": [
+                      "integer",
+                      "string"
+                    ],
+                    "pattern": "^[0-9]+$",
+                    "default": 200
+                  },
+                  "fault": {
+                    "description": "Whether the response is expected to contain a SOAP Fault element. Defaults to false.",
+                    "type": "boolean",
+                    "default": false
+                  },
+                  "xpath": {
+                    "description": "List of {path, value} assertions evaluated against the response envelope, after the status and fault-expectation checks both pass.",
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "path",
+                        "value"
+                      ],
+                      "properties": {
+                        "path": {
+                          "description": "An XPath expression evaluated against the response envelope.",
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "value": {
+                          "description": "The expected value at 'path' (compared as text). May be written as a bare number/boolean scalar; it is matched as text either way.",
+                          "type": [
+                            "string",
+                            "integer",
+                            "number",
+                            "boolean"
+                          ]
+                        }
+                      },
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "mail-expect.smtp"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "description": "Queries a Mailpit inbox and asserts that at least one (or a declared count of) captured message matches the declared criteria.",
+            "type": "object",
+            "required": [
+              "target",
+              "expect"
+            ],
+            "properties": {
+              "target": {
+                "description": "Logical name of the mailpit dependency (declared under environment.dependencies) whose HTTP API this step queries.",
+                "type": "string",
+                "minLength": 1
+              },
+              "expect": {
+                "description": "The expectation block: how many messages must match the criteria.",
+                "type": "object",
+                "required": [
+                  "match"
+                ],
+                "properties": {
+                  "count": {
+                    "description": "Expected number of matching messages.  When absent the step passes when at least one matching message exists. When written as a string it must be the canonical positive-integer spelling - digits only, no leading zero (e.g. \"1\"). \"0\" is rejected on this branch just as the numeric branch's minimum of 1 rejects a bare 0 - a zero count is never a meaningful expectation for this field, and the value is never {placeholder}-substituted. (The no-leading-zero rule is the canonical-spelling choice, not a consequence of the minimum: a bare 01 is read by YAML as the integer 1 and accepted.)",
+                    "type": [
+                      "integer",
+                      "string"
+                    ],
+                    "minimum": 1,
+                    "pattern": "^[1-9][0-9]*$"
+                  },
+                  "match": {
+                    "description": "Criteria a message must satisfy.  At least one criterion must be declared.",
+                    "type": "object",
+                    "minProperties": 1,
+                    "properties": {
+                      "to": {
+                        "description": "Expected recipient address (case-insensitive equality).  May contain {placeholder} and ${secret:source/path} tokens.",
+                        "type": "string"
+                      },
+                      "subject-contains": {
+                        "description": "Substring the message subject must contain (ordinal).  May contain {placeholder} and ${secret:source/path} tokens. May be written as a bare number/boolean scalar; it is matched as text either way.",
+                        "type": [
+                          "string",
+                          "integer",
+                          "number",
+                          "boolean"
+                        ]
+                      },
+                      "body-contains": {
+                        "description": "Substring the plain-text body must contain (ordinal).  May contain {placeholder} and ${secret:source/path} tokens.  Fetching the body requires a second Mailpit API call per candidate message. May be written as a bare number/boolean scalar; it is matched as text either way.",
+                        "type": [
+                          "string",
+                          "integer",
+                          "number",
+                          "boolean"
+                        ]
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "metrics-assert.prometheus"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "description": "Scrapes a Prometheus text-exposition endpoint (normally the SUT's own /metrics) and asserts on one metric's numeric value, optionally scoped by a label subset.  Exactly one sample must match the declared metric name plus every declared label; zero or more than one match is a Fail (an under-specified label set is an authoring error, never silently resolved).",
+            "type": "object",
+            "required": [
+              "target",
+              "metric",
+              "expect"
+            ],
+            "properties": {
+              "target": {
+                "description": "Logical name of the service to scrape, as declared under environment.services - normally the system under test.",
+                "type": "string",
+                "minLength": 1
+              },
+              "path": {
+                "description": "The scrape path.  May contain {placeholder} and ${secret:source/path} tokens.  Defaults to '/metrics' when omitted. Must be a rooted relative path (start with a single '/'); absolute URLs, protocol-relative paths ('//...'), and backslashes are rejected as an SSRF guard.",
+                "type": "string",
+                "pattern": "^/(?!/)[^\\\\\\x00-\\x1F\\x7F-\\x9F]*(?![\\s\\S])",
+                "default": "/metrics"
+              },
+              "metric": {
+                "description": "The Prometheus sample (metric) name to select, e.g. 'orders_processed_total'.  May contain {placeholder} and ${secret:source/path} tokens.",
+                "type": "string",
+                "minLength": 1
+              },
+              "labels": {
+                "description": "Optional map of required label name to expected value.  A sample matches only when it carries every declared label with exactly the expected value (a subset match - the sample may carry additional labels).  Values may contain {placeholder} and ${secret:source/path} tokens.",
+                "type": "object",
+                "additionalProperties": {
+                  "type": [
+                    "string",
+                    "integer",
+                    "number",
+                    "boolean"
+                  ]
+                }
+              },
+              "expect": {
+                "description": "The value assertion block.  At least one of value, min, or max must be declared; all three may combine.  Each is a decimal string (may contain {placeholder} / ${secret:source/path} tokens) parsed as a double at execution time.",
+                "type": "object",
+                "minProperties": 1,
+                "properties": {
+                  "value": {
+                    "description": "Expected exact value.  Compared with a 1e-9 relative tolerance (see the provider's ScrapeAsync helper).",
+                    "type": [
+                      "number",
+                      "string"
+                    ]
+                  },
+                  "min": {
+                    "description": "Inclusive lower bound for the matched sample's value.",
+                    "type": [
+                      "number",
+                      "string"
+                    ]
+                  },
+                  "max": {
+                    "description": "Inclusive upper bound for the matched sample's value.",
+                    "type": [
+                      "number",
+                      "string"
+                    ]
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "mq-expect.azureservicebus"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "description": "Non-destructively peeks an Azure Service Bus queue or topic subscription and verifies at least one message matches the declared expectations.  Designed for verifyMode: RETRY - the engine retries on Fail until a matching message is found or the timeout is reached.  Note: each attempt scans at most 100 messages (PeekMessagesAsync window); a match beyond the first 100 retained messages in the entity will not be found.",
+            "type": "object",
+            "required": [
+              "target"
+            ],
+            "oneOf": [
+              {
+                "required": [
+                  "queue"
+                ]
+              },
+              {
+                "required": [
+                  "topic",
+                  "subscription"
+                ]
+              }
+            ],
+            "dependentRequired": {
+              "topic": [
+                "subscription"
+              ],
+              "subscription": [
+                "topic"
+              ]
+            },
+            "anyOf": [
+              {
+                "required": [
+                  "expectPayloadContains"
+                ]
+              },
+              {
+                "required": [
+                  "expectProperties"
+                ]
+              }
+            ],
+            "properties": {
+              "target": {
+                "description": "Logical name of the azureservicebus dependency to peek, as declared under environment.dependencies.",
+                "type": "string",
+                "minLength": 1
+              },
+              "queue": {
+                "description": "The source queue to peek.  Set 'queue' for queue-based messaging, or 'topic'+'subscription' for topic-based messaging. Bare numbers are retained as their literal text; quote boolean-looking names.",
+                "type": [
+                  "string",
+                  "integer",
+                  "number"
+                ],
+                "minLength": 1
+              },
+              "topic": {
+                "description": "The source topic (requires 'subscription' to also be set).  May contain {placeholder} substitution tokens. Bare numbers are retained as their literal text; quote boolean-looking names.",
+                "type": [
+                  "string",
+                  "integer",
+                  "number"
+                ],
+                "minLength": 1
+              },
+              "subscription": {
+                "description": "The subscription on the topic to peek.  Required when 'topic' is set.  May contain {placeholder} substitution tokens.",
+                "type": "string",
+                "minLength": 1
+              },
+              "expectPayloadContains": {
+                "description": "Optional substring the message body must contain for a match.  May contain {placeholder} and ${secret:source/path} tokens. May be written as a bare number/boolean scalar; it is matched as text either way.",
+                "type": [
+                  "string",
+                  "integer",
+                  "number",
+                  "boolean"
+                ]
+              },
+              "expectProperties": {
+                "description": "Optional application-property key=value pairs all of which must be present on the matched message.  Values may contain {placeholder} and ${secret:source/path} tokens.",
+                "type": "object",
+                "additionalProperties": {
+                  "type": [
+                    "string",
+                    "integer",
+                    "number",
+                    "boolean"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "mq-expect.kafka"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "description": "Consumes a message from a Kafka topic and asserts it matches the declared criteria (key, headers, payload substring, and/or JSONPath-evaluated fields), optionally Avro-decoding the value first.  Each attempt is a SINGLE drain of the retained log as it already stands - manual assignment of every actual topic partition at the earliest offset, stopping when all partitions reach EOF - bounded at about one second.  Under the default verifyMode: IMMEDIATE a declared timeout does NOT widen that window: it is an upper bound, not a wait. Use verifyMode: RETRY to poll until the message arrives.",
+            "type": "object",
+            "required": [
+              "target",
+              "topic",
+              "match"
+            ],
+            "properties": {
+              "target": {
+                "description": "Logical name of a declared kafka dependency to consume from (environment.dependencies), or a declared service (environment.services) - a customer-supplied broker under its own entrypoint/config. A dependency target of any other type is rejected. A service target is reachable, not merely accepted: the engine stages that service's endpoint as the bare host:port bootstrap authority a Kafka client expects, and the provider reads the staged value under the key matching its target's own kind - a compile-time fact taken from the same declared-service map its own validation reconciled the target against, never guessed. A service-form broker must additionally advertise an address the host can reach (DSL section 3.2.6b).",
+                "type": "string",
+                "minLength": 1
+              },
+              "topic": {
+                "description": "The Kafka topic to consume the message from. Bare numbers are retained as their literal text; quote boolean-looking names.",
+                "type": [
+                  "string",
+                  "integer",
+                  "number"
+                ],
+                "minLength": 1
+              },
+              "match": {
+                "description": "The criteria a consumed message must satisfy.  At least one criterion (key, headers, payloadContains, or json) must be declared.",
+                "type": "object",
+                "minProperties": 1,
+                "properties": {
+                  "key": {
+                    "description": "Optional expected message key (ordinal equality).  May contain {placeholder} and ${secret:source/path} tokens. May be written as a bare number/boolean scalar; it is matched as text either way.",
+                    "type": [
+                      "string",
+                      "integer",
+                      "number",
+                      "boolean"
+                    ]
+                  },
+                  "headers": {
+                    "description": "Optional map of expected header names to their expected values, compared as text - a bare numeric or boolean scalar is read as its literal text.",
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": [
+                        "string",
+                        "integer",
+                        "number",
+                        "boolean"
+                      ]
+                    }
+                  },
+                  "payloadContains": {
+                    "description": "Optional substring the UTF-8 message value must contain (ordinal).  May contain {placeholder} and ${secret:source/path} tokens. May be written as a bare number/boolean scalar; it is matched as text either way.",
+                    "type": [
+                      "string",
+                      "integer",
+                      "number",
+                      "boolean"
+                    ]
+                  },
+                  "json": {
+                    "description": "Optional map of JSONPath expressions to their expected values, compared as text and evaluated over the message value parsed as JSON - a bare numeric or boolean scalar is read as its literal text.",
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": [
+                        "string",
+                        "integer",
+                        "number",
+                        "boolean"
+                      ]
+                    }
+                  }
+                },
+                "additionalProperties": false
+              },
+              "avro": {
+                "description": "Optional Avro / schema-registry decoding.  When present, the consumed message is Avro-decoded to a GenericRecord, converted to a JSON string, and the existing match criteria run against that JSON.",
+                "type": "object",
+                "required": [
+                  "schemaRegistry"
+                ],
+                "properties": {
+                  "schemaRegistry": {
+                    "description": "Logical name of the kafka dependency whose schema registry to decode through (its schemaRegistry-enabled registry URL is staged under svc::<name>-sr).",
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "subject": {
+                    "description": "Optional schema-registry subject (informational; the writer schema is fetched by the message's embedded schema id).",
+                    "type": "string"
+                  },
+                  "schema": {
+                    "description": "Optional inline reader schema (avsc JSON); informational for the expect side.",
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "mq-expect.nats"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "description": "Asserts that a message matching the declared criteria is present on a NATS JetStream subject.  The consumer scans from the beginning of the retained log on every attempt (DeliverPolicy.All ordered consumer), mirroring mq-expect.kafka retained-log behaviour.  IMPORTANT: do NOT share a single nats dependency across scenarios that assert on the same subject - retained messages from prior runs produce a false Pass.  Use verifyMode: RETRY to poll until the message arrives.",
+            "type": "object",
+            "required": [
+              "target",
+              "subject",
+              "match"
+            ],
+            "properties": {
+              "target": {
+                "description": "Logical name of the nats dependency to consume from, as declared under environment.dependencies.",
+                "type": "string",
+                "minLength": 1
+              },
+              "subject": {
+                "description": "The NATS JetStream subject to filter messages on.",
+                "type": "string",
+                "minLength": 1
+              },
+              "stream": {
+                "description": "Optional JetStream stream name.  When absent, derived from 'subject' (same rule as mq-publish.nats).",
+                "type": "string"
+              },
+              "match": {
+                "description": "The criteria a fetched message must satisfy.  At least one criterion (payloadContains or json) must be declared.",
+                "type": "object",
+                "minProperties": 1,
+                "properties": {
+                  "payloadContains": {
+                    "description": "Optional substring the UTF-8 message payload must contain (ordinal).  May contain {placeholder} and ${secret:source/path} tokens. May be written as a bare number/boolean scalar; it is matched as text either way.",
+                    "type": [
+                      "string",
+                      "integer",
+                      "number",
+                      "boolean"
+                    ]
+                  },
+                  "json": {
+                    "description": "Optional map of JSONPath expressions to their expected values, compared as text and evaluated over the message payload parsed as JSON - a bare numeric or boolean scalar is read as its literal text.",
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": [
+                        "string",
+                        "integer",
+                        "number",
+                        "boolean"
+                      ]
+                    }
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "mq-expect.rabbitmq"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "description": "Consumes a message from an AMQP queue and asserts it matches the declared criteria (payload substring, headers, and/or JSONPath-evaluated fields).  Each attempt is a SINGLE non-blocking drain of the messages already ready on the queue - at most 200 BasicGet fetches, stopping the moment none is ready - so it never waits for a message to arrive.  Under the default verifyMode: IMMEDIATE a declared timeout does NOT change that: it is an upper bound, not a wait. Use verifyMode: RETRY to poll until the message arrives.",
+            "type": "object",
+            "required": [
+              "target",
+              "queue",
+              "match"
+            ],
+            "properties": {
+              "target": {
+                "description": "Logical name of the rabbitmq dependency to consume from, as declared under environment.dependencies.",
+                "type": "string",
+                "minLength": 1
+              },
+              "queue": {
+                "description": "The AMQP queue to consume messages from. Bare numbers are retained as their literal text; quote boolean-looking names.",
+                "type": [
+                  "string",
+                  "integer",
+                  "number"
+                ],
+                "minLength": 1
+              },
+              "match": {
+                "description": "The criteria a consumed message must satisfy. At least one criterion (payloadContains, headers, or json) must be declared.",
+                "type": "object",
+                "minProperties": 1,
+                "properties": {
+                  "payloadContains": {
+                    "description": "Optional substring the UTF-8 message body must contain (ordinal). May contain {placeholder} and ${secret:source/path} tokens. May be written as a bare number/boolean scalar; it is matched as text either way.",
+                    "type": [
+                      "string",
+                      "integer",
+                      "number",
+                      "boolean"
+                    ]
+                  },
+                  "headers": {
+                    "description": "Optional map of expected AMQP header names to their expected values, compared as text - a bare numeric or boolean scalar is read as its literal text.",
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": [
+                        "string",
+                        "integer",
+                        "number",
+                        "boolean"
+                      ]
+                    }
+                  },
+                  "json": {
+                    "description": "Optional map of JSONPath expressions to their expected values, compared as text and evaluated over the message body parsed as JSON - a bare numeric or boolean scalar is read as its literal text.",
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": [
+                        "string",
+                        "integer",
+                        "number",
+                        "boolean"
+                      ]
+                    }
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "mq-expect.redis"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "description": "Asserts that a message matching the declared criteria is present on a Redis Stream, scanned from the beginning via XRANGE <stream> - + COUNT 10000 on every attempt (only entries carrying a field named 'payload' are matched - the convention mq-publish.redis writes). IMPORTANT: do NOT share a single redis dependency across scenarios that assert on the same stream - entries from prior runs produce a false Pass. A stream retaining more than 10 000 entries only has its first 10 000 (oldest first) inspected. Use verifyMode: RETRY to poll until the message arrives.",
+            "type": "object",
+            "required": [
+              "target",
+              "stream",
+              "match"
+            ],
+            "properties": {
+              "target": {
+                "description": "Logical name of the redis dependency to consume from, as declared under environment.dependencies.",
+                "type": "string",
+                "minLength": 1
+              },
+              "stream": {
+                "description": "The Redis Stream key to scan via XRANGE.",
+                "type": "string",
+                "minLength": 1
+              },
+              "match": {
+                "description": "The criteria a fetched message must satisfy.  At least one criterion (payloadContains or json) must be declared.",
+                "type": "object",
+                "minProperties": 1,
+                "properties": {
+                  "payloadContains": {
+                    "description": "Optional substring the UTF-8 message payload must contain (ordinal).  May contain {placeholder} and ${secret:source/path} tokens. May be written as a bare number/boolean scalar; it is matched as text either way.",
+                    "type": [
+                      "string",
+                      "integer",
+                      "number",
+                      "boolean"
+                    ]
+                  },
+                  "json": {
+                    "description": "Optional map of JSONPath expressions to their expected values, compared as text and evaluated over the message payload parsed as JSON - a bare numeric or boolean scalar is read as its literal text.",
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": [
+                        "string",
+                        "integer",
+                        "number",
+                        "boolean"
+                      ]
+                    }
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "mq-publish.azureservicebus"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "description": "Publishes one UTF-8 message to an Azure Service Bus queue or topic.  A Pass verdict confirms the send was accepted by the broker.  Verify with a following mq-expect.azureservicebus step.",
+            "type": "object",
+            "required": [
+              "target",
+              "payload"
+            ],
+            "oneOf": [
+              {
+                "required": [
+                  "queue"
+                ]
+              },
+              {
+                "required": [
+                  "topic"
+                ]
+              }
+            ],
+            "properties": {
+              "target": {
+                "description": "Logical name of the azureservicebus dependency to publish to, as declared under environment.dependencies.",
+                "type": "string",
+                "minLength": 1
+              },
+              "queue": {
+                "description": "The target queue name.  Exactly one of 'queue' or 'topic' must be set.  May contain {placeholder} substitution tokens. Bare numbers are retained as their literal text; quote boolean-looking names.",
+                "type": [
+                  "string",
+                  "integer",
+                  "number"
+                ],
+                "minLength": 1
+              },
+              "topic": {
+                "description": "The target topic name.  Exactly one of 'queue' or 'topic' must be set.  May contain {placeholder} substitution tokens. Bare numbers are retained as their literal text; quote boolean-looking names.",
+                "type": [
+                  "string",
+                  "integer",
+                  "number"
+                ],
+                "minLength": 1
+              },
+              "payload": {
+                "description": "The message body sent as UTF-8 bytes.  May contain {placeholder} and ${secret:source/path} tokens. May be written as a bare number/boolean scalar; it is sent as text either way.",
+                "$comment": "minLength constrains the string branch of the type union only — a no-op against a number/boolean instance (JSON Schema draft 2020-12 §6.3.1); it still catches an empty-string payload, the meaningful case, regardless of the widening.",
+                "type": [
+                  "string",
+                  "integer",
+                  "number",
+                  "boolean"
+                ],
+                "minLength": 1
+              },
+              "properties": {
+                "description": "Optional application properties to attach to the message (string key=value pairs).  Values may contain {placeholder} and ${secret:source/path} tokens.",
+                "type": "object",
+                "additionalProperties": {
+                  "type": [
+                    "string",
+                    "integer",
+                    "number",
+                    "boolean"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "mq-publish.kafka"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "description": "Publishes one UTF-8 message to a Kafka topic, either as a plain string value or as an Avro-encoded value via a schema registry. A Pass verdict confirms hand-off to the broker; verify delivery with a following mq-expect.kafka step.",
+            "type": "object",
+            "required": [
+              "target",
+              "topic",
+              "payload"
+            ],
+            "properties": {
+              "target": {
+                "description": "Logical name of a declared kafka dependency to publish to (environment.dependencies), or a declared service (environment.services) - a customer-supplied broker under its own entrypoint/config. A dependency target of any other type is rejected. A service target is reachable, not merely accepted: the engine stages that service's endpoint as the bare host:port bootstrap authority a Kafka client expects, and the provider reads the staged value under the key matching its target's own kind - a compile-time fact taken from the same declared-service map its own validation reconciled the target against, never guessed. A service-form broker must additionally advertise an address the host can reach (DSL section 3.2.6b).",
+                "type": "string",
+                "minLength": 1
+              },
+              "topic": {
+                "description": "The Kafka topic to publish the message to.  May contain {placeholder} and ${secret:source/path} tokens. Bare numbers are retained as their literal text; quote boolean-looking names.",
+                "type": [
+                  "string",
+                  "integer",
+                  "number"
+                ],
+                "minLength": 1
+              },
+              "key": {
+                "description": "Optional message key.  May contain {placeholder} and ${secret:source/path} tokens. May be written as a bare number/boolean scalar; it is sent as text either way.",
+                "type": [
+                  "string",
+                  "integer",
+                  "number",
+                  "boolean"
+                ]
+              },
+              "payload": {
+                "description": "The message payload sent as the Kafka message value.  A UTF-8 string (literal or inline JSON).  May contain {placeholder} and ${secret:source/path} tokens. May be written as a bare number/boolean scalar; it is sent as text either way.",
+                "$comment": "minLength constrains the string branch of the type union only — a no-op against a number/boolean instance (JSON Schema draft 2020-12 §6.3.1); it still catches an empty-string payload, the meaningful case, regardless of the widening.",
+                "type": [
+                  "string",
+                  "integer",
+                  "number",
+                  "boolean"
+                ],
+                "minLength": 1
+              },
+              "headers": {
+                "description": "Optional map of message header names to their values, sent as text - a bare numeric or boolean scalar is read as its literal text.",
+                "type": "object",
+                "additionalProperties": {
+                  "type": [
+                    "string",
+                    "integer",
+                    "number",
+                    "boolean"
+                  ]
+                }
+              },
+              "avro": {
+                "description": "Optional Avro / schema-registry encoding.  When present, the message value is built as an Avro GenericRecord from 'schema' + 'record' and produced via the Confluent Schema Registry Avro serializer; the plain 'payload' is ignored.",
+                "type": "object",
+                "required": [
+                  "schemaRegistry",
+                  "subject",
+                  "schema",
+                  "record"
+                ],
+                "properties": {
+                  "schemaRegistry": {
+                    "description": "Logical name of the kafka dependency whose schema registry to publish through (its schemaRegistry-enabled registry URL is staged under svc::<name>-sr).",
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "subject": {
+                    "description": "The schema-registry subject under which the inline schema is registered.",
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "schema": {
+                    "description": "The inline Avro schema (avsc JSON) for the message value.",
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "record": {
+                    "description": "Map of Avro field names to their values.  Each value may contain {placeholder} and ${secret:source/path} tokens; field names are used verbatim.",
+                    "type": "object",
+                    "minProperties": 1,
+                    "additionalProperties": {
+                      "type": [
+                        "string",
+                        "integer",
+                        "number",
+                        "boolean"
+                      ]
+                    }
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "mq-publish.nats"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "description": "Publishes one UTF-8 message to a NATS JetStream subject.  A Pass verdict confirms the publish was accepted by the server (JetStream ack); delivery is NOT further confirmed.  Verify delivery with a following mq-expect.nats step.",
+            "type": "object",
+            "required": [
+              "target",
+              "subject",
+              "payload"
+            ],
+            "properties": {
+              "target": {
+                "description": "Logical name of the nats dependency to publish to, as declared under environment.dependencies.",
+                "type": "string",
+                "minLength": 1
+              },
+              "subject": {
+                "description": "The NATS JetStream subject to publish to.  May contain {placeholder} and ${secret:source/path} tokens.",
+                "type": "string",
+                "minLength": 1
+              },
+              "stream": {
+                "description": "Optional NATS JetStream stream name.  When absent, derived from 'subject' by uppercasing and replacing non-alphanumeric characters with underscores (consecutive underscores collapsed).",
+                "type": "string"
+              },
+              "payload": {
+                "description": "The message payload sent as UTF-8 bytes.  May contain {placeholder} and ${secret:source/path} tokens. May be written as a bare number/boolean scalar; it is sent as text either way.",
+                "$comment": "minLength constrains the string branch of the type union only — a no-op against a number/boolean instance (JSON Schema draft 2020-12 §6.3.1); it still catches an empty-string payload, the meaningful case, regardless of the widening.",
+                "type": [
+                  "string",
+                  "integer",
+                  "number",
+                  "boolean"
+                ],
+                "minLength": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "mq-publish.rabbitmq"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "description": "A Pass verdict confirms hand-off to the broker client; delivery is NOT confirmed (publisher confirms are a post-v1 feature). Verify delivery with a following mq-expect.rabbitmq step.",
+            "type": "object",
+            "required": [
+              "target",
+              "routingKey",
+              "payload"
+            ],
+            "properties": {
+              "target": {
+                "description": "Logical name of the rabbitmq dependency to publish to, as declared under environment.dependencies.",
+                "type": "string",
+                "minLength": 1
+              },
+              "exchange": {
+                "description": "Optional AMQP exchange name. Empty or absent routes to the default exchange. May contain {placeholder} and ${secret:source/path} tokens.",
+                "type": "string"
+              },
+              "routingKey": {
+                "description": "The AMQP routing key. For the default exchange this is the queue name. May contain {placeholder} and ${secret:source/path} tokens.",
+                "type": "string",
+                "minLength": 1
+              },
+              "payload": {
+                "description": "The message payload sent as the AMQP message body (UTF-8). May contain {placeholder} and ${secret:source/path} tokens. May be written as a bare number/boolean scalar; it is sent as text either way.",
+                "$comment": "minLength constrains the string branch of the type union only — a no-op against a number/boolean instance (JSON Schema draft 2020-12 §6.3.1); it still catches an empty-string payload, the meaningful case, regardless of the widening.",
+                "type": [
+                  "string",
+                  "integer",
+                  "number",
+                  "boolean"
+                ],
+                "minLength": 1
+              },
+              "headers": {
+                "description": "Optional map of AMQP message header names to their values, sent as text - a bare numeric or boolean scalar is read as its literal text.",
+                "type": "object",
+                "additionalProperties": {
+                  "type": [
+                    "string",
+                    "integer",
+                    "number",
+                    "boolean"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "mq-publish.redis"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "description": "Publishes one UTF-8 message to a Redis Stream via XADD, carried under the canonical 'payload' stream field.  A Pass verdict confirms the entry was appended to the stream; delivery to a consumer is NOT further confirmed.  Verify delivery with a following mq-expect.redis step.",
+            "type": "object",
+            "required": [
+              "target",
+              "stream",
+              "payload"
+            ],
+            "properties": {
+              "target": {
+                "description": "Logical name of the redis dependency to publish to, as declared under environment.dependencies.",
+                "type": "string",
+                "minLength": 1
+              },
+              "stream": {
+                "description": "The Redis Stream key to XADD to.  May contain {placeholder} and ${secret:source/path} tokens.  XADD creates the stream automatically when it does not yet exist.",
+                "type": "string",
+                "minLength": 1
+              },
+              "payload": {
+                "description": "The message payload, written as the UTF-8 string value of the canonical 'payload' stream field.  May contain {placeholder} and ${secret:source/path} tokens. May be written as a bare number/boolean scalar; it is sent as text either way.",
+                "$comment": "minLength constrains the string branch of the type union only — a no-op against a number/boolean instance (JSON Schema draft 2020-12 §6.3.1); it still catches an empty-string payload, the meaningful case, regardless of the widening.",
+                "type": [
+                  "string",
+                  "integer",
+                  "number",
+                  "boolean"
+                ],
+                "minLength": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "script.csharp"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "description": "Runs an author-supplied C# snippet - given inline or as a path to an external .csx file - against the shared step context. Exactly one of 'code' or 'file' must be set.",
+            "type": "object",
+            "oneOf": [
+              {
+                "required": [
+                  "code"
+                ]
+              },
+              {
+                "required": [
+                  "file"
+                ]
+              }
+            ],
+            "properties": {
+              "code": {
+                "description": "Inline C# code block executed inside the compiled CSX submission.  Has access to the shared Vars dictionary.  Mutually exclusive with 'file'.  Capped at 64 KiB (a plain resource bound, not a security control).",
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 65536
+              },
+              "file": {
+                "description": "Path to an external .csx file, resolved relative to the .e2e.yaml file's directory.  Read once at compile time and spliced verbatim, exactly like 'code'.  Mutually exclusive with 'code'.",
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "storage-assert.s3"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "description": "HEADs (and, if declared, GETs) an S3-compatible object and asserts on its existence, size, content type, metadata, and/or body digest/substring.",
+            "type": "object",
+            "required": [
+              "target",
+              "bucket",
+              "key",
+              "expect"
+            ],
+            "properties": {
+              "target": {
+                "description": "Logical name of the s3 or minio dependency to query, as declared under environment.dependencies.",
+                "type": "string",
+                "minLength": 1
+              },
+              "bucket": {
+                "description": "The S3 bucket name. May contain {placeholder} and ${secret:source/path} tokens.",
+                "type": "string",
+                "minLength": 1
+              },
+              "key": {
+                "description": "The S3 object key. May contain {placeholder} and ${secret:source/path} tokens.",
+                "type": "string",
+                "minLength": 1
+              },
+              "expect": {
+                "description": "The assertion block declaring the expected object state. exists:false excludes every content expectation; size and minSize are mutually exclusive.",
+                "type": "object",
+                "properties": {
+                  "exists": {
+                    "description": "Whether the object is expected to exist. Defaults to true when omitted.",
+                    "type": "boolean",
+                    "default": true
+                  },
+                  "size": {
+                    "description": "Exact expected object size in bytes. Mutually exclusive with minSize. May contain {placeholder} / ${secret:...} tokens.",
+                    "type": [
+                      "string",
+                      "integer"
+                    ]
+                  },
+                  "minSize": {
+                    "description": "Inclusive minimum expected object size in bytes. Mutually exclusive with size. May contain {placeholder} / ${secret:...} tokens.",
+                    "type": [
+                      "string",
+                      "integer"
+                    ]
+                  },
+                  "sha256": {
+                    "description": "Expected lowercase hex SHA-256 digest of the object body. Declaring this (or contentContains) triggers a bounded GET of the body (capped at 16 MiB).",
+                    "type": "string"
+                  },
+                  "contentContains": {
+                    "description": "A substring the object body (decoded as UTF-8) must contain. Never echoed into the observation. May be written as a bare number/boolean scalar; it is matched as text either way.",
+                    "type": [
+                      "string",
+                      "integer",
+                      "number",
+                      "boolean"
+                    ]
+                  },
+                  "contentType": {
+                    "description": "Expected Content-Type, compared against the HEAD response.",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "description": "Map of user-metadata key to expected value, compared against the HEAD response's object metadata.",
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": [
+                        "string",
+                        "integer",
+                        "number",
+                        "boolean"
+                      ]
+                    }
+                  }
+                },
+                "additionalProperties": false,
+                "allOf": [
+                  {
+                    "if": {
+                      "required": [
+                        "size"
+                      ]
+                    },
+                    "then": {
+                      "properties": {
+                        "minSize": false
+                      }
+                    }
+                  },
+                  {
+                    "if": {
+                      "required": [
+                        "exists"
+                      ],
+                      "properties": {
+                        "exists": {
+                          "const": false
+                        }
+                      }
+                    },
+                    "then": {
+                      "properties": {
+                        "size": false,
+                        "minSize": false,
+                        "sha256": false,
+                        "contentContains": false,
+                        "contentType": false,
+                        "metadata": false
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "trace-expect.otlp"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "description": "Asserts that a captured OTLP span from a specific trace matches the declared criteria (service name, span name, and/or attributes).",
+            "type": "object",
+            "required": [
+              "receiver",
+              "match"
+            ],
+            "properties": {
+              "receiver": {
+                "description": "Logical name of the host-owned OTLP/HTTP receiver whose captured spans this step asserts against. The engine stands the receiver up and stages its base URL at svc::<receiver> (and at the plain <receiver> Vars key so an earlier step can hand it to the SUT's OTel SDK configuration, e.g. OTEL_EXPORTER_OTLP_ENDPOINT: \"{svc::<receiver>}\").",
+                "type": "string",
+                "minLength": 1
+              },
+              "match": {
+                "description": "The criteria a captured span must satisfy. 'traceId' is REQUIRED - this family asserts the causal chain of a SPECIFIC transaction, not a general shape any span might match; service/spanName/attributes are optional refinements layered on top of it.",
+                "type": "object",
+                "required": [
+                  "traceId"
+                ],
+                "properties": {
+                  "traceId": {
+                    "description": "Required expected trace id - ties this assertion to the SPECIFIC transaction under test (never omit it: a match with no trace id would accept any span with the right service/spanName/attributes, from any trace, ever exported). May be a full W3C traceparent value (the 32-hex trace-id segment is extracted automatically) or a bare 32-hex trace id. May contain {placeholder} and ${secret:source/path} tokens.",
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "service": {
+                    "description": "Optional expected exporting-resource service name (the span's resource-level service.name attribute). May contain {placeholder} and ${secret:source/path} tokens.",
+                    "type": "string"
+                  },
+                  "spanName": {
+                    "description": "Optional expected span name (operation name). May contain {placeholder} and ${secret:source/path} tokens.",
+                    "type": "string"
+                  },
+                  "peerCertificateSha256": {
+                    "description": "SHA-256 fingerprint of the verified mTLS client certificate, exactly 64 hexadecimal characters.",
+                    "type": "string",
+                    "pattern": "^[0-9a-fA-F]{64}$"
+                  },
+                  "attributes": {
+                    "description": "Optional map of expected span-attribute key to expected value, compared as text (subset match - the real span may carry additional attributes not mentioned here) - a bare numeric or boolean scalar is read as its literal text. Each value may contain {placeholder} and ${secret:source/path} tokens.",
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": [
+                        "string",
+                        "integer",
+                        "number",
+                        "boolean"
+                      ]
+                    }
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "webhook-listen.http"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "description": "Asserts that a captured inbound HTTP request against a host-owned webhook listener matches the declared criteria (method, path, headers, and/or body substring).",
+            "type": "object",
+            "required": [
+              "listener",
+              "match"
+            ],
+            "properties": {
+              "listener": {
+                "description": "Logical name of the host-owned webhook listener whose captured inbound requests this step asserts against.  The engine stands the listener up and stages its URL at svc::<listener> (and at the plain <listener> Vars key so an earlier step can interpolate {<listener>}).",
+                "type": "string",
+                "minLength": 1
+              },
+              "match": {
+                "description": "The criteria a captured inbound request must satisfy.  At least one criterion (method, path, headers, or bodyContains) must be declared.",
+                "type": "object",
+                "minProperties": 1,
+                "properties": {
+                  "method": {
+                    "description": "Optional expected HTTP method (case-insensitive equality).  May contain {placeholder} and ${secret:source/path} tokens.",
+                    "type": "string"
+                  },
+                  "path": {
+                    "description": "Optional expected request path (the token-stripped, SUT-facing path; ordinal equality).  May contain {placeholder} and ${secret:source/path} tokens.",
+                    "type": "string"
+                  },
+                  "headers": {
+                    "description": "Optional map of expected header names to their expected values, compared as text - a bare numeric or boolean scalar is read as its literal text.",
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": [
+                        "string",
+                        "integer",
+                        "number",
+                        "boolean"
+                      ]
+                    }
+                  },
+                  "bodyContains": {
+                    "description": "Optional substring the captured request body must contain (ordinal).  May contain {placeholder} and ${secret:source/path} tokens. May be written as a bare number/boolean scalar; it is matched as text either way.",
+                    "type": [
+                      "string",
+                      "integer",
+                      "number",
+                      "boolean"
+                    ]
+                  },
+                  "peerCertificateSha256": {
+                    "description": "SHA-256 fingerprint of the verified mTLS client certificate, exactly 64 hexadecimal characters.",
+                    "type": "string",
+                    "pattern": "^[0-9a-fA-F]{64}$"
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      ]
+    },
+    "captureEntry": {
+      "description": "The value of a single 'capture' entry (DSL section 6.1): either a bare scalar JSONPath expression (back-compat default - accepts ANY YamlDotNet scalar, not only a string, e.g. 'bad: 42', so this schema accepts every scalar shape the engine does, mirroring 'env'/'httpPort'/seed's 'sql' entries), or a single-key mapping naming the extractor format explicitly - '{ jsonpath: \"$.id\" }' or '{ xpath: \"//id\" }'. Exactly one of 'jsonpath'/'xpath' is required in the mapping form - neither, or both, is rejected.",
+      "$comment": "ParseCaptureEntry's bare-scalar branch is the reader the description above generalises from: it accepts ANY YamlDotNet scalar, not only a string. 'minProperties: 1' below rejects neither (safe: 'additionalProperties: false' already confines keys to 'jsonpath'/'xpath', and 'minProperties' is a no-op against the bare-scalar form — JSON Schema draft 2020-12 §6.5.1), and the 'allOf'/'if'/'then' clause rejects both (mirrors $defs/service's own image/project mutual-exclusion pattern — see that definition's remarks for why a per-field boolean 'false' subschema is used rather than a second discriminating branch). A single 'type' union plus 'minProperties', not a top-level 'anyOf' discriminating string-vs-object, on purpose: the previous 'anyOf: [{required:[jsonpath]},{required:[xpath]}]' produced the SAME composite-branch noise a 'oneOf' does elsewhere in this schema — JsonSchema.Net 9.2.1's List-format output surfaces a non-matching anyOf branch's own failing keyword even when the OTHER branch made the anyOf as a whole valid. 'minProperties'/'properties'/'additionalProperties' are all no-ops against a non-object instance (JSON Schema draft 2020-12 §6.3.3/§6.5.1/§6.5.3), so the object-only rules below apply cleanly to the bare-scalar form with zero spurious evaluation. Accepted trade (mirrors the identical widening for 'env'/'httpPort'/seed's 'sql'): a non-string, non-JSONPath-syntax bare scalar (e.g. 'bad: 42') is schema-valid here yet still fails at RUNTIME once JSONPath evaluation rejects '42' as a malformed expression — the parser-parity principle (this schema accepts exactly what YamlDocumentParser accepts) takes precedence over pre-empting every possible downstream runtime failure; no behaviour change from that principle already being applied elsewhere.",
+      "type": [
+        "string",
+        "integer",
+        "number",
+        "boolean",
+        "object"
+      ],
+      "properties": {
+        "jsonpath": {
+          "description": "A JSONPath expression evaluated against the step's result as JSON.",
+          "type": "string"
+        },
+        "xpath": {
+          "description": "An XPath expression evaluated against the step's result as XML.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "minProperties": 1,
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "jsonpath"
+            ]
+          },
+          "then": {
+            "properties": {
+              "xpath": false
+            }
+          }
+        }
+      ]
+    }
+  },
+  "x-vouchfx-schema-version": "v2"
+}

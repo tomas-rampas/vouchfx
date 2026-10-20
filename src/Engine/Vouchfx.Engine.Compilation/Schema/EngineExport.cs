@@ -152,6 +152,17 @@ public static class EngineExport
         return SchemaComposer.ComposeSchemaJson(registry);
     }
 
+    /// <summary>Exports a complete schema for the explicit language version.</summary>
+    /// <param name="registry">The frozen provider registry.</param>
+    /// <param name="version">The language version: v1 or v2.</param>
+    /// <returns>The composed schema JSON.</returns>
+    public static string ComposeVersionedSchemaJson(StepKindRegistry registry, string version)
+    {
+        ArgumentNullException.ThrowIfNull(registry);
+        EnsureAllProvidersHaveSchemaFragments(registry);
+        return SchemaComposer.ComposeVersionedSchemaJson(registry, version);
+    }
+
     /// <summary>
     /// Builds the shape-level step catalogue for every provider in
     /// <paramref name="registry"/>, sorted by dotted type key (ordinal), without stating

@@ -23,6 +23,7 @@ using Vouchfx.Cli.Selection;
 using Vouchfx.Engine.Abstractions;
 using Vouchfx.Engine.Authoring.Ast;
 using Vouchfx.Engine.Authoring.Model;
+using Vouchfx.Engine.Compilation;
 using Vouchfx.Engine.Orchestration.Environments;
 using Vouchfx.Engine.Runtime;
 using Vouchfx.Sdk;
@@ -48,6 +49,12 @@ internal static class RunCommand
             "run",
             "Discover *.e2e.yaml scenarios under <path> (a directory, or a single "
             + "*.e2e.yaml file) and run them end-to-end against an orchestrated topology.");
+
+        var isolateCompileOption = new Option<bool>("--isolate-compile")
+        {
+            Description = "Compile in a bounded subprocess; execution remains in this process.",
+        };
+        command.Add(isolateCompileOption);
 
         var pathArgument = BuildPathArgument();
         command.Add(pathArgument);
@@ -88,8 +95,11 @@ internal static class RunCommand
 
         // SetAction(Func<ParseResult, CancellationToken, Task<int>>): the async, exit-code,
         // cancellation-aware overload (System.CommandLine 2.0.x GA).
-        command.SetAction((parseResult, cancellationToken) =>
+        command.SetAction(async (parseResult, cancellationToken) =>
         {
+            using var compilerScope = parseResult.GetValue(isolateCompileOption)
+                ? new ScriptCompilerScope(CompileWorkerMode.Compile)
+                : null;
             var path = parseResult.GetValue(pathArgument) ?? ".";
             var criteria = BuildCriteria(parseResult, tagOption, ownerOption, pathOption, changedSinceOption);
             var parallel = parseResult.GetValue(parallelOption);
@@ -122,7 +132,7 @@ internal static class RunCommand
             // the hook does is wrapped so it can NEVER affect the suite verdict or exit code.
             var telemetryHook = TelemetryRunHook.CreateDefault(noTelemetry, Console.Error);
 
-            return ExecuteAsync(
+            return await ExecuteAsync(
                 path,
                 criteria,
                 parallel,
@@ -1345,6 +1355,10 @@ internal static class RunCommand
         }
     }
 
+    internal static bool SuppressesScenarioTelemetry(IEnumerable<DiscoveredScenario> selected) =>
+        selected.Any(p => (p.Ast?.Metadata ?? p.RecoveredDocument?.Metadata)
+            is { SchemaVersion: "v2", Telemetry: false });
+
     /// <summary>
     /// The run pipeline itself: everything <see cref="ExecuteCoreAsync"/> does once the
     /// graceful-shutdown seam is wired — discovery, selection, the watch branch, the runners,
@@ -1547,6 +1561,11 @@ internal static class RunCommand
                 .ConfigureAwait(false);
         }
 
+        // #154: evaluate selected files at execution time, after selection. Telemetry
+        // is invocation-wide: suppress the aggregate when any selected v2 file opts
+        // out, including shared counts/timings. Both runners use this same decision.
+        var scenarioTelemetryOptOut = SuppressesScenarioTelemetry(discovered);
+
         // Telemetry capture path (S10-G-04): when telemetry will emit, ask the runner to write its
         // buffered event stream (the SAME verbatim v1 stream the renderers consume) so the hook can
         // read it back and derive the allowlisted telemetry event.  When the user passed --events,
@@ -1554,7 +1573,7 @@ internal static class RunCommand
         // telemetry will NOT emit, the runner's events path is the user's own (or null) — no
         // telemetry-driven write.  Resolving this here keeps every report path identical to before
         // for a non-telemetry run.
-        var (runnerEventsPath, isTempEventsFile) = telemetryHook is not null
+        var (runnerEventsPath, isTempEventsFile) = telemetryHook is not null && !scenarioTelemetryOptOut
             ? telemetryHook.ResolveEventsCapturePath(eventsReportPath)
             : (eventsReportPath, false);
 
@@ -1719,7 +1738,8 @@ internal static class RunCommand
         {
             await telemetryHook.EmitAsync(
                 runnerEventsPath, isTempEventsFile, runStartedAt, runCancellationToken,
-                currentArchiveWritten: eventsArchiveWritten)
+                currentArchiveWritten: eventsArchiveWritten,
+                scenarioOptOut: scenarioTelemetryOptOut)
                 .ConfigureAwait(false);
         }
 
@@ -2032,7 +2052,7 @@ internal static class RunCommand
         //
         // NOT KEYED ON SecurityAssurance.Refusal, WHICH WAS THE OTHER CANDIDATE. Its
         // AuthoringFault kind is recorded for ANY document refused at a pre-topology door — a
-        // schema error, an unresolvable secret, a malformed dependency `env:`, an unresolvable
+        // schema error, an unresolvable secret, an unresolvable
         // `script.csharp file:` — so keying on it would redden every mixed suite containing any
         // refused document. #514 now carries that independent fact through
         // AuthoringRefusalObserved, including the late CompileOnce boundary, without changing

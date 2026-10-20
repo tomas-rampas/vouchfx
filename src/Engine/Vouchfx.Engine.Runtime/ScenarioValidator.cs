@@ -288,15 +288,18 @@ public static class ScenarioValidator
             using var compileBudget =
                 new CancellationTokenSource(RoslynScriptCompiler.DefaultCompileBudget);
 
-            RoslynScriptCompiler.CompileOnce(
+            ScriptCompilerScope.Compile(
                 pipelineResult.Assembled!.CsxSource,
-                additionalOptions: null,
-                additionalReferencePaths: referencePaths,
+                referencePaths: referencePaths,
                 cancellationToken: compileBudget.Token);
         }
         catch (ScriptCompilationException sce)
         {
             return SingleDiagnostic(path, ValidationStage.Roslyn, sce.Message);
+        }
+        catch (CompileWorkerException ex)
+        {
+            return SingleDiagnostic(path, ValidationStage.Roslyn, ex.Message);
         }
         catch (OperationCanceledException)
         {

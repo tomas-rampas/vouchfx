@@ -5018,7 +5018,7 @@ public static class ScenarioRunner
                 // above), so its timer cannot fire during the later RunIsolatedAsync
                 // execution below.
                 //
-                // Partial mitigation only (see RoslynScriptCompiler.CompileOnce's
+                // The in-process default is a partial mitigation only (see RoslynScriptCompiler.CompileOnce's
                 // cancellationToken remarks for the full picture): this token is consulted
                 // during Emit only. It does NOT help a hostile body that HANGS inside the
                 // earlier GetCompilation call (unbounded — that call simply never returns,
@@ -5026,7 +5026,10 @@ public static class ScenarioRunner
                 // hostile body that overflows the native stack during Emit itself
                 // (uncatchable). ScriptCsharpProvider.Validate applies only a plain 64 KiB
                 // size bound before this method is ever reached — a resource limit, not a
-                // guard against either failure mode. Whatever THIS budget's own expiry does
+                // guard against either failure mode. The CLI's --isolate-compile override
+                // instead bounds the entire parse/emit lifecycle in a child process, killing
+                // and confirming its exit on timeout while execution stays in this process.
+                // Whatever THIS budget's own expiry does
                 // produce (OperationCanceledException, for the in-between case of a
                 // legitimately slow compile) is handled uniformly by the generic
                 // `catch (Exception ex)` below, exactly like any other compile failure — no
@@ -5037,10 +5040,9 @@ public static class ScenarioRunner
                     compileBudget.CancelAfter(RoslynScriptCompiler.DefaultCompileBudget);
                     try
                     {
-                        compiled = RoslynScriptCompiler.CompileOnce(
+                        compiled = ScriptCompilerScope.Compile(
                             assembled.CsxSource,
-                            additionalOptions: null,
-                            additionalReferencePaths: tpaPaths,
+                            referencePaths: tpaPaths,
                             cancellationToken: compileBudget.Token);
                     }
                     catch (ScriptCompilationException)

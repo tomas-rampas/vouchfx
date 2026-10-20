@@ -250,3 +250,25 @@ block-scalar dedent boundary.
 ## Licence
 
 Apache-2.0.
+
+## Explicit v2 files
+
+The bundled default remains the frozen v1 schema. For a v2 telemetry opt-out file,
+export the matching schema with a supporting engine:
+
+```sh
+vouchfx schema --schema-version v2 --output composed-schema.v2.json
+```
+
+Add an explicit YAML language-server modeline at the top of the file, pointing to
+the export relative to the YAML file:
+
+```yaml
+# yaml-language-server: $schema=./composed-schema.v2.json
+metadata:
+  schemaVersion: v2
+  telemetry: false
+```
+
+This selects v2 completion and validation without replacing the default v1
+association. The engine still requires `metadata.schemaVersion: v2`.

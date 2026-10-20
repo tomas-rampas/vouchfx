@@ -25,6 +25,9 @@ class Vouchfx.Engine.Compilation.AssemblyVersionConflictException : System.Excep
   .ctor(System.Collections.Generic.IReadOnlyList<Vouchfx.Engine.Compilation.AssemblyConflict> conflicts)
   property System.Collections.Generic.IReadOnlyList<Vouchfx.Engine.Compilation.AssemblyConflict> Conflicts { get }
 
+class Vouchfx.Engine.Compilation.CompileWorkerException : System.Exception
+  .ctor(System.String message)
+
 record Vouchfx.Engine.Compilation.CompiledScenario : System.IEquatable<Vouchfx.Engine.Compilation.CompiledScenario>
   .ctor(Vouchfx.Engine.Compilation.CompiledScript Compiled, System.Collections.Generic.IReadOnlyList<System.String> StepIds)
   property System.Collections.Generic.IReadOnlyList<System.String> StepIds { get; init }
@@ -118,6 +121,7 @@ class Vouchfx.Engine.Compilation.Schema.EngineExport
   field const System.String CommunityTier
   field const System.String CoreTier
   method static System.String ComposeSchemaJson(Vouchfx.Sdk.StepKindRegistry registry)
+  method static System.String ComposeVersionedSchemaJson(Vouchfx.Sdk.StepKindRegistry registry, System.String version)
   method static System.String SerializeCatalogue(Vouchfx.Engine.Compilation.Schema.StepCatalogueDocument document)
   method static Vouchfx.Engine.Compilation.Schema.StepCatalogueDocument BuildCatalogue(Vouchfx.Sdk.StepKindRegistry registry, System.String engineVersion)
   method static Vouchfx.Engine.Compilation.Schema.StepCatalogueDocument BuildCatalogue(Vouchfx.Sdk.StepKindRegistry registry, System.String engineVersion, System.Collections.Generic.IEnumerable<System.Reflection.Assembly> coreProviderAssemblies)
@@ -127,6 +131,7 @@ class Vouchfx.Engine.Compilation.Schema.SchemaComposer
   field const System.String SchemaVersion
   method static Json.Schema.JsonSchema ComposeSchema(Vouchfx.Sdk.StepKindRegistry registry)
   method static System.String ComposeSchemaJson(Vouchfx.Sdk.StepKindRegistry registry)
+  method static System.String ComposeVersionedSchemaJson(Vouchfx.Sdk.StepKindRegistry registry, System.String version)
   method static Vouchfx.Engine.Compilation.Schema.SchemaValidationResult Validate(Vouchfx.Sdk.StepKindRegistry registry, System.String yamlText)
 
 record Vouchfx.Engine.Compilation.Schema.SchemaValidationError : System.IEquatable<Vouchfx.Engine.Compilation.Schema.SchemaValidationError>
@@ -169,6 +174,11 @@ class Vouchfx.Engine.Compilation.Schema.YamlSchemaValidator
 class Vouchfx.Engine.Compilation.ScriptCompilationException : System.Exception
   .ctor(System.Collections.Generic.IReadOnlyList<Microsoft.CodeAnalysis.Diagnostic> diagnostics)
   property System.Collections.Generic.IReadOnlyList<Microsoft.CodeAnalysis.Diagnostic> Diagnostics { get }
+
+class Vouchfx.Engine.Compilation.ScriptCompilerScope : System.IDisposable
+  .ctor(System.Func<System.String,System.Collections.Generic.IReadOnlyList<System.String>,System.Threading.CancellationToken,Vouchfx.Engine.Compilation.CompiledScript> compiler)
+  method System.Void Dispose()
+  method static Vouchfx.Engine.Compilation.CompiledScript Compile(System.String source, System.Collections.Generic.IReadOnlyList<System.String> referencePaths, System.Threading.CancellationToken cancellationToken)
 
 record Vouchfx.Engine.Compilation.StepCompilePlan : System.IEquatable<Vouchfx.Engine.Compilation.StepCompilePlan>
   .ctor(System.String StepId, Vouchfx.Sdk.CsxFragment Fragment, System.Boolean Retry, System.Nullable<System.Int64> TimeoutMs, System.Nullable<System.Int64> PollIntervalMs)

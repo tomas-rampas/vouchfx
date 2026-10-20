@@ -47,6 +47,28 @@ Five objectives govern every decision in the grammar. They are listed in priorit
 1. **Determinism by default. **Constructs that depend on timing — waiting for an event, polling a row — must be first-class, so authors never hand-roll sleeps.
 1. **Discoverability. **Every capability of the language must be reachable through editor autocomplete; nothing important should live only in documentation.
 
+### 1.3 Opt-in language schema v2
+
+The default language remains v1. A file explicitly declaring `metadata.schemaVersion: v2`
+selects the separate `https://schemas.vouchfx.io/e2e/v2/root-language-schema.json`
+contract. Its only additional field is the optional boolean `metadata.telemetry`.
+
+The CLI evaluates suppression from selected files at execution time. Setting
+`metadata.telemetry: false` prevents telemetry regardless of global consent.
+Telemetry currently consists of one aggregate per invocation, so selecting any
+opted-out file suppresses that whole invocation, including shared counts and
+timings. Unselected files have no effect. True or an omitted field never grants
+consent or overrides `--no-telemetry` or `VOUCHFX_NO_TELEMETRY`. Watch mode
+continues to emit no telemetry.
+
+The frozen v1 schema, its identifier and its default export remain unchanged;
+v1 files reject `metadata.telemetry`. Export v2 explicitly with
+`vouchfx schema --schema-version v2 --output composed-schema.v2.json`.
+Older engines and consumers using only v1 schemas reject v2 files. Use a supporting
+engine and the explicit editor association documented in the extension README.
+MCP scaffolding continues to default to v1 until explicit version selection is
+supported there.
+
 ## 2. DSL Design Principles
 
 Before the grammar itself, it helps to fix a few principles that recur throughout the specification. They explain the shape of the language and prevent the grammar from reading as an arbitrary collection of keywords.
@@ -1492,7 +1514,7 @@ Because the unified schema is composed at startup from installed provider fragme
 
 The platform addresses this with two version axes that compose explicitly. The first is the **language schema version** — the engine's contract for the four top-level sections, the common step fields, and the generic rules every provider's fragment must comply with. This version changes only when the engine changes those contracts and follows a deprecation window. A file may declare the language version it targets through a `schemaVersion: v1` field in its metadata block.
 
-**Current state (v1 engine series):** `schemaVersion` is a rejection hook, not yet a live selection mechanism. The root JSON Schema constrains it to the literal `"v1"` — the only language schema version that exists — so a document declaring anything else fails schema validation outright; the field stays optional, and omitting it remains valid. Nothing in the engine reads the value back to choose between schema fragments, because there is exactly one fragment to choose between today. The paragraphs below describe the versioning model this field is the anchor for once a v2 language schema exists; until then, "declare `v1`, or declare nothing" is the whole of its behaviour.
+**Current state:** absent `metadata.schemaVersion` selects v1; an explicit `v1` or `v2` selects that language contract. Unknown versions fail validation. The separate v2 contract adds the optional telemetry suppression field (§1.3) while leaving the v1 schema unchanged.
 
 The second axis is the set of **provider versions** currently registered, which any given suite's reproducibility envelope records (see Section 14.7 of the architecture blueprint). The engine treats minor and patch provider upgrades as backward-compatible additions to the unified schema; a major provider version may change the fragment in incompatible ways and is gated on the provider declaring a compatible `MinEngineVersion`. The combined effect, once a second language schema version exists: a file declaring `schemaVersion: v1` will validate against any v1-compatible engine, and the reproducibility envelope of every run identifies exactly which provider versions were active so a divergence is always explainable rather than mysterious.
 

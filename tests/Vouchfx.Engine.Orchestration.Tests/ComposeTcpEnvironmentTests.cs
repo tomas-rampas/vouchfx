@@ -437,14 +437,22 @@ public sealed class ComposeTcpEnvironmentTests
                     using var client = await _listener.AcceptTcpClientAsync(_stop.Token);
                 }
             }
-            catch (OperationCanceledException) { }
+            catch (OperationCanceledException) when (_stop.IsCancellationRequested) { }
         }
         public async ValueTask DisposeAsync()
         {
-            await _stop.CancelAsync();
-            _listener.Stop();
-            await _worker;
-            _stop.Dispose();
+            try
+            {
+                await _stop.CancelAsync();
+                // Cancellation stops the pending accept. Join it before Stop disposes the socket;
+                // otherwise Windows may surface ObjectDisposedException instead of cancellation.
+                await _worker;
+            }
+            finally
+            {
+                _listener.Stop();
+                _stop.Dispose();
+            }
         }
     }
 }

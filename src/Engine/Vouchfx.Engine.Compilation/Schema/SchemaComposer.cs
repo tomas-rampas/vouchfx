@@ -126,6 +126,19 @@ public static class SchemaComposer
         return rootObj.ToJsonString(s_indentedJsonOptions);
     }
 
+    /// <summary>Composes the explicitly selected v1 or v2 language schema.</summary>
+    /// <param name="registry">The frozen provider registry.</param>
+    /// <param name="version">The language version: v1 or v2.</param>
+    /// <returns>The canonical composed schema JSON.</returns>
+    public static string ComposeVersionedSchemaJson(StepKindRegistry registry, string version)
+    {
+        var json = BuildComposedRootObject(registry, version).ToJsonString(s_indentedJsonOptions);
+        // Downstream consumers vendor the exact v2 Git blob. Canonical LF bytes must
+        // agree across Windows exports, Git checkout and Linux validation; retain
+        // the existing v1 export bytes unchanged.
+        return version == "v2" ? json.Replace("\r\n", "\n", StringComparison.Ordinal) : json;
+    }
+
     /// <summary>
     /// Parses the embedded root-language schema, injects the sorted provider
     /// discriminator clauses and the version annotation, strips <c>$id</c>, and
@@ -133,9 +146,9 @@ public static class SchemaComposer
     /// <see cref="ComposeSchema"/> and <see cref="ComposeSchemaJson"/> so both see
     /// identical content.
     /// </summary>
-    private static JsonObject BuildComposedRootObject(StepKindRegistry registry)
+    private static JsonObject BuildComposedRootObject(StepKindRegistry registry, string version = SchemaVersion)
     {
-        var rootJson = SchemaResources.ReadRootLanguageSchemaJson();
+        var rootJson = SchemaResources.ReadLanguageSchemaJson(version);
 
         // Parse the root schema JSON into a mutable JsonObject so we can
         // inject the allOf discriminator block into $defs/step.
@@ -148,7 +161,7 @@ public static class SchemaComposer
         // Stamp the frozen version onto the composed schema so the artifact
         // self-identifies (S08-F-01).  The key is x-prefixed, so the validator
         // ignores it — it is purely a documentation/freeze marker.
-        rootObj[SchemaVersionAnnotationKey] = JsonValue.Create(SchemaVersion);
+        rootObj[SchemaVersionAnnotationKey] = JsonValue.Create(version);
 
         // Collect if/then clauses from providers that have a SchemaFragment.
         var ifThenClauses = BuildIfThenClauses(registry);
@@ -179,10 +192,10 @@ public static class SchemaComposer
         // Remove the root schema's $id before parsing the composed schema.
         // YamlSchemaValidator has already registered the original $id URI with
         // the global JsonSchema.Net SchemaRegistry; attempting to register the
-        // same URI a second time throws JsonSchemaException.  The composed
-        // schema is transient — it is built per-call and does not need a stable
-        // public URI, so stripping $id is safe and correct.
-        rootObj.Remove("$id");
+        // same URI a second time throws JsonSchemaException. Preserve the v1
+        // exported bytes; v2 exports its separate identifier, removed only for
+        // transient evaluation below.
+        if (version == SchemaVersion) rootObj.Remove("$id");
 
         return rootObj;
     }
@@ -238,8 +251,18 @@ public static class SchemaComposer
         // second ComposeSchemaJson call (SchemaComposer.ComposeSchema would
         // otherwise recompute this same text) and avoids the extra parse
         // entirely on the common (valid) path.
-        var composedSchemaJson = ComposeSchemaJson(registry);
-        var composedSchema = JsonSchema.FromText(composedSchemaJson);
+        var version = SchemaResources.SelectVersion(doc.RootElement);
+        var composedSchemaJson = ComposeVersionedSchemaJson(registry, version);
+        // The published v2 artefact retains its ID; transient evaluation must not
+        // overwrite the globally registered root schema at that same URI.
+        var evaluationJson = composedSchemaJson;
+        if (version == "v2")
+        {
+            var evaluationNode = JsonNode.Parse(composedSchemaJson)!.AsObject();
+            evaluationNode.Remove("$id");
+            evaluationJson = evaluationNode.ToJsonString();
+        }
+        var composedSchema = JsonSchema.FromText(evaluationJson);
 
         using (doc)
         {

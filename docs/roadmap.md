@@ -110,7 +110,9 @@ Core and its companion repositories are released independently. The MCP server i
   [migration guide](https://samples.vouchfx.io/docs/migrating.html) (worked Postman,
   xUnit and SpecFlow ports), and the [community provider hub](https://providers.vouchfx.io/),
   rather than a formal pilot cohort.
-- Core `1.0.6` is the current stable CLI release. The current Provider SDK (`Vouchfx.Sdk`, its `Vouchfx.Sdk.Testing` harness and their engine dependency closure) is published at `1.0.6` on NuGet.org. Its frozen provider contract remains the compatibility boundary for the v1.x series; rebuilt providers must declare their supported engine floor.
+- The frozen Provider SDK contract remains the compatibility boundary for the v1.x series;
+  rebuilt providers must declare their supported engine floor. Select published CLI and SDK
+  versions from the release and package listings above, and verify their compatibility together.
 - Some release artefacts gain further signatures (Windows Authenticode, macOS notarisation, GPG) only once
   the respective certificates are provisioned — cosign signatures and SLSA provenance are present on every
   artefact from day one, so verification is never blocked on those extras.
@@ -150,9 +152,10 @@ Within that constraint, the near-term direction is:
 - **Transport security for the remaining dependency kinds** — 1.0 wires a client connection for exactly two
   target kinds: any declared service, and a `kafka` dependency. On every other dependency kind a `security:`
   block is rejected outright, and no profile or substitute declaration restores it. That narrowing is a
-  release position, not a permanent boundary — the schema and the CHANGELOG both name it as a **1.1**
-  capability, and widening it is additive, because both gates run at validation time and so decide only
-  which suites validate at all. The per-integration breakdown, including which deferrals are 1.1 and
+  release position, not a permanent boundary. The original 1.1 forecast in the frozen v1 schema
+  has not been delivered for these dependency kinds. Widening remains future work and is additive,
+  because both gates run at validation time and so decide only which suites validate at all.
+  The per-integration breakdown, including which integrations are deferred and
   which are out of scope, is the [security compatibility matrix](security-matrix.md).
 - **Additional secret sources** — the `${secret:…}` syntax is forward-compatible with cloud secret managers
   (Azure Key Vault, AWS Secrets Manager); adding them is configuration, not redesign.
@@ -160,13 +163,15 @@ Within that constraint, the near-term direction is:
   against the GitHub workflow; a live-instance run is the outstanding confirmation.
 - **Editor depth** — full in-block C# IntelliSense for `script.csharp` is a documented fast-follow.
 
-## v2 candidates
+## Language evolution
 
-Two items are explicitly parked for v2, and the reasons are part of the trust story:
+Core 1.1.0 adds an explicit language schema v2 with per-file `metadata.telemetry: false`.
+The frozen v1 schema remains unchanged and is still the default. Selecting an opted-out v2
+file suppresses the invocation's telemetry aggregate; true never grants consent. See
+[telemetry controls](telemetry.md). Engine versions and language schema versions are independent.
 
-- **Per-file telemetry opt-out** (`metadata.telemetry: false`) — deliberately *not* added in v1.x because it
-  would mutate the frozen v1 schema. The v1 suppression surface (global consent, `--no-telemetry`,
-  `VOUCHFX_NO_TELEMETRY`) already covers the privacy requirement; telemetry remains opt-in and off by default.
+Further language changes remain deferred:
+
 - **Richer control flow** — the DSL models a single linear sequence by design; conditional and parallel steps
   are a deliberate post-v1 language decision, taken slowly because language mistakes are forever.
 

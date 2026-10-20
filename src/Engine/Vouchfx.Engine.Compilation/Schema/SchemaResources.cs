@@ -6,6 +6,7 @@ using System.Collections;
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Vouchfx.Engine.Abstractions;
 using YamlDotNet.Core;
 using YamlDotNet.Core.Events;
@@ -26,6 +27,35 @@ namespace Vouchfx.Engine.Compilation.Schema;
 /// </remarks>
 internal static class SchemaResources
 {
+    internal static string SelectVersion(JsonElement document) =>
+        document.ValueKind == JsonValueKind.Object
+        && document.TryGetProperty("metadata", out var metadata)
+        && metadata.ValueKind == JsonValueKind.Object
+        && metadata.TryGetProperty("schemaVersion", out var version)
+        && version.ValueKind == JsonValueKind.String
+        && version.GetString() == "v2" ? "v2" : "v1";
+
+    // Unknown versions use v1 validation to produce its located const refusal.
+    internal static string ReadLanguageSchemaJson(string version)
+    {
+        var json = ReadRootLanguageSchemaJson();
+        if (version == "v1") return json;
+        ArgumentOutOfRangeException.ThrowIfNotEqual(version, "v2");
+        var root = JsonNode.Parse(json)!.AsObject();
+        root["$id"] = "https://schemas.vouchfx.io/e2e/v2/root-language-schema.json";
+        root["description"] = "Root schema for a vouchfx .e2e.yaml test file (language schema v2).";
+        var metadata = root["$defs"]!["metadata"]!;
+        metadata["properties"]!["schemaVersion"] = new JsonObject { ["const"] = "v2" };
+        metadata["properties"]!["telemetry"] = new JsonObject
+        {
+            ["type"] = "boolean",
+            ["description"] = "False suppresses telemetry for the selected invocation; true never grants consent.",
+        };
+        metadata["required"] = new JsonArray("schemaVersion");
+        root["required"]!.AsArray().Add("metadata");
+        return root.ToJsonString();
+    }
+
     // ── YAML→JSON expansion budget (issue #505) ──────────────────────────────
     //
     // ConvertYamlToJsonDocument is a two-step bridge, and only the SECOND step can blow

@@ -32,6 +32,7 @@
 using System.CommandLine;
 using System.Text.Json.Serialization;
 using Vouchfx.Engine.Abstractions;
+using Vouchfx.Engine.Compilation;
 using Vouchfx.Engine.Runtime;
 using Vouchfx.Sdk;
 
@@ -56,6 +57,12 @@ internal static class ValidateCommand
             + "parse/AST build, the provider pipeline's bind/validate/emit, and a Roslyn "
             + "compile-once. No Docker / Aspire activity occurs.");
 
+        var isolateCompileOption = new Option<bool>("--isolate-compile")
+        {
+            Description = "Compile in a bounded subprocess; execution remains in this process.",
+        };
+        command.Add(isolateCompileOption);
+
         var pathArgument = BuildPathArgument();
         command.Add(pathArgument);
 
@@ -64,6 +71,9 @@ internal static class ValidateCommand
 
         command.SetAction((parseResult, _) =>
         {
+            using var compilerScope = parseResult.GetValue(isolateCompileOption)
+                ? new ScriptCompilerScope(CompileWorkerMode.Compile)
+                : null;
             var path = parseResult.GetValue(pathArgument) ?? ".";
             var json = parseResult.GetValue(jsonOption);
             return Task.FromResult(Execute(path, json, Console.Out, Console.Error));

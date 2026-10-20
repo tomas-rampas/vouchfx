@@ -182,25 +182,25 @@ Every Core provider, and what it can reach.
 | `metrics-assert.prometheus` | services | **Yes** — TLS and mutual TLS | `image:`-form service only |
 | `mq-publish.kafka` | `kafka` dependency, or a service | **Yes** — TLS and mutual TLS | Default managed PEM recipe or author-configured image-form service; see the recipe's proof scope |
 | `mq-expect.kafka` | `kafka` dependency, or a service | **Yes** — TLS and mutual TLS | Default managed PEM recipe or author-configured image-form service; see the recipe's proof scope |
-| `mq-publish.rabbitmq` | `rabbitmq` dependency | No | Server-side TLS deferred to 1.1 |
-| `mq-expect.rabbitmq` | `rabbitmq` dependency | No | Server-side TLS deferred to 1.1 |
-| `mq-publish.nats` | `nats` dependency | No | Server-side TLS deferred to 1.1 |
-| `mq-expect.nats` | `nats` dependency | No | Server-side TLS deferred to 1.1 |
-| `mq-publish.redis` | `redis` dependency | No | Server-side TLS deferred to 1.1 |
-| `mq-expect.redis` | `redis` dependency | No | Server-side TLS deferred to 1.1 |
-| `cache-assert.redis` | `redis` dependency | No | Server-side TLS deferred to 1.1 |
+| `mq-publish.rabbitmq` | `rabbitmq` dependency | No | Server-side TLS deferred |
+| `mq-expect.rabbitmq` | `rabbitmq` dependency | No | Server-side TLS deferred |
+| `mq-publish.nats` | `nats` dependency | No | Server-side TLS deferred |
+| `mq-expect.nats` | `nats` dependency | No | Server-side TLS deferred |
+| `mq-publish.redis` | `redis` dependency | No | Server-side TLS deferred |
+| `mq-expect.redis` | `redis` dependency | No | Server-side TLS deferred |
+| `cache-assert.redis` | `redis` dependency | No | Server-side TLS deferred |
 | `mq-publish.azureservicebus` | `azureservicebus` dependency | No | Reaches the engine-provisioned emulator only |
 | `mq-expect.azureservicebus` | `azureservicebus` dependency | No | Reaches the engine-provisioned emulator only |
-| `db-assert.postgres` | `postgres` dependency | No | Deferred to 1.1 |
-| `db-assert.mysql` | `mysql` dependency | No | Deferred to 1.1 |
-| `db-assert.sqlserver` | `sqlserver` dependency | No | Deferred to 1.1 |
-| `db-assert.mongodb` | `mongodb` dependency | No | Server-side TLS deferred to 1.1; mutual TLS further out |
+| `db-assert.postgres` | `postgres` dependency | No | Deferred |
+| `db-assert.mysql` | `mysql` dependency | No | Deferred |
+| `db-assert.sqlserver` | `sqlserver` dependency | No | Deferred |
+| `db-assert.mongodb` | `mongodb` dependency | No | Server-side TLS deferred; mutual TLS further out |
 | `db-assert.dynamodb` | `dynamodb` dependency | No | Reaches the engine-provisioned local double only |
 | `cache-assert.elasticsearch` | `elasticsearch` dependency | No | Out of scope — see below |
 | `storage-assert.s3` | `s3` or `minio` dependency | No | Reaches the engine-provisioned RustFS or MinIO only |
-| `mail-expect.smtp` | `mailpit` dependency | No | Deferred; not in 1.1's named set |
-| `webhook-listen.http` | — (engine-hosted listener) | No — plaintext inbound | See *Inbound listeners*, below |
-| `trace-expect.otlp` | — (engine-hosted receiver) | No — plaintext inbound | See *Inbound listeners*, below |
+| `mail-expect.smtp` | `mailpit` dependency | No | Deferred; not in the planned dependency-security set |
+| `webhook-listen.http` | — (engine-hosted listener) | **Yes** — TLS and mutual TLS from Core 1.1.0 | See *Inbound listeners*, below |
+| `trace-expect.otlp` | — (engine-hosted receiver) | **Yes** — TLS and mutual TLS from Core 1.1.0 | See *Inbound listeners*, below |
 | `script.csharp` | — (no infrastructure target) | Not applicable | Reconciles no target |
 
 ## Matrix by dependency kind
@@ -212,15 +212,15 @@ kind it is rejected outright — the *block*, not merely a particular profile va
 | `environment.dependencies` kind | Accepts `security:` | Status |
 | --- | --- | --- |
 | `kafka` | **Yes** | Default managed PEM TLS/mTLS recipe; selected allocated listener is advertised and confirmed |
-| `postgres` | No | Deferred to 1.1 |
-| `sqlserver` | No | Deferred to 1.1 |
-| `mysql` | No | Deferred to 1.1 |
-| `mongodb` | No | Deferred to 1.1 (server-side TLS) |
-| `redis` | No | Deferred to 1.1 (server-side TLS) |
-| `rabbitmq` | No | Deferred to 1.1 |
-| `nats` | No | Deferred to 1.1 |
+| `postgres` | No | Deferred |
+| `sqlserver` | No | Deferred |
+| `mysql` | No | Deferred |
+| `mongodb` | No | Deferred (server-side TLS) |
+| `redis` | No | Deferred (server-side TLS) |
+| `rabbitmq` | No | Deferred |
+| `nats` | No | Deferred |
 | `elasticsearch` | No | Out of scope |
-| `mailpit` | No | Not in 1.1's named set |
+| `mailpit` | No | Not in the planned dependency-security set |
 | `azureservicebus` | No | Emulator only |
 | `dynamodb` | No | Local double only |
 | `minio` | No | Local double only |
@@ -270,7 +270,7 @@ The .NET client libraries behind most of the excluded kinds carry TLS **through 
 string**: RabbitMQ flips on an `amqps://` scheme, NATS on `tls://`, Redis on `,ssl=true`, MongoDB
 on `tls=true`, and the relational clients on their own equivalent keywords. Enabling server-side
 TLS for those kinds is mechanically a scheme or keyword per kind, with no provider code change at
-all — which is exactly why it is a cheap 1.1 extension rather than a redesign.
+all — which is exactly why it is a small additive extension rather than a redesign.
 
 **What is missing is a channel for it in 1.0.** The connection string a provider consumes is built
 by the engine from the orchestrated resource; there is no DSL field through which an author supplies
@@ -297,8 +297,9 @@ made in the emitted client configuration rather than carried in a URL.
 Rather than leaving blanks in the tables:
 
 - **Server-side TLS for RabbitMQ, NATS, MongoDB, Redis and the relational stores (PostgreSQL, SQL
-  Server, MySQL)** is **deferred to 1.1** by owner decision, taken on 3 August 2026. The design and
-  acceptance criteria are written and unchanged; only the release is deferred. Because both gates
+  Server, MySQL)** remains **deferred**. The original 1.1 forecast has not been delivered;
+  Core 1.1.0 adds inbound listener security, without widening this outbound dependency set.
+  The design and acceptance criteria remain future work. Because both gates
   that exclude these kinds run at validation time, widening is additive and breaks nothing that
   validates today.
 - **Mutual TLS for MongoDB and Redis** goes further out than server-side TLS for them. Neither .NET
@@ -311,9 +312,9 @@ Rather than leaving blanks in the tables:
   an SMTP capture server, the Service Bus emulator, DynamoDB Local, MinIO, RustFS — reached at fixed,
   engine-supplied local credentials. Pointing these providers at a real, secured, credentialed
   service is not supported in 1.0 and is not part of 1.1's named set.
-- **Mutual TLS on the engine's own inbound listeners** is out of scope; see below.
+- **Mutual TLS on the engine's own inbound listeners** is supported from Core 1.1.0; see below.
 
-## Inbound listeners are plaintext
+## Inbound listeners
 
 Two providers do not connect *out* to infrastructure — the engine stands up an ephemeral listener
 and waits for the system under test to call *in*:
@@ -321,11 +322,12 @@ and waits for the system under test to call *in*:
 - **`webhook-listen.http`** captures inbound webhook deliveries.
 - **`trace-expect.otlp`** receives OTLP trace exports.
 
-Both bind plaintext HTTP on an OS-assigned port. Your system under test must be able to reach the
-engine host over plain HTTP to deliver a callback or a span. A system under test that can only make
-mutually-authenticated outbound calls would need the listener to present a server certificate, which
-it does not do. Plan for this when the system under test is itself hardened: it is the one place in
-a secured topology where vouchfx is the server rather than the client.
+Without a top-level `listeners:` policy, both bind plaintext HTTP on an OS-assigned port.
+From Core 1.1.0, a named listener can instead use TLS or mutual TLS with author-supplied
+server material and a client CA for mutual TLS. Accepted mutual-TLS captures can match the
+validated client certificate's SHA-256 fingerprint. The system under test must be able to
+reach the engine host and trust the server identity. See [TLS for host-owned listeners](inbound-listener-tls.md)
+for certificate requirements, routing and refusal behaviour. Earlier releases expose plaintext only.
 
 ## What a green secured suite actually proves
 
@@ -375,10 +377,10 @@ Three honest options, in order of how often they apply:
    drives a secured REST API and a mutual-TLS Kafka broker, and then asserts against a plaintext
    database *inside the private topology vouchfx created*, is a realistic and defensible shape — the
    database is not exposed beyond the suite's own network.
-2. **Wait for 1.1** for the deferred kinds. The widening is additive; nothing you author today
+2. **Wait for the deferred extension** for the deferred kinds. The widening is additive; nothing you author today
    breaks.
 3. **Raise it.** If a specific kind blocks an adoption, say so on the issue tracker — the ordering
-   within 1.1 is not fixed, and the deferred work is designed rather than merely intended.
+   of the deferred integrations is not fixed, and the deferred work is designed rather than merely intended.
 
 ## Test certificate-store hygiene
 

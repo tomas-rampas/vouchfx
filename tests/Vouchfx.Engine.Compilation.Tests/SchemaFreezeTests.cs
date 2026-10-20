@@ -204,6 +204,34 @@ public sealed class SchemaFreezeTests
         Assert.Contains("\"v1\"", json, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// The v2 export is the immutable engine artefact downstream consumers vendor.
+    /// Compare bytes, including UTF-8 encoding and final-newline policy, with the
+    /// same full Core registry used by the v1 freeze gate and CLI schema export.
+    /// VOUCHFX_REGEN_SCHEMA regenerates both versions through the guarded local path.
+    /// </summary>
+    [Fact]
+    public void ComposedV2Schema_MatchesGolden_ByteForByte()
+    {
+        var registry = StepKindRegistry.BuildAndFreeze(CoreProviderAssemblies());
+        var actual = System.Text.Encoding.UTF8.GetBytes(
+            EngineExport.ComposeVersionedSchemaJson(registry, "v2"));
+        const string fileName = "composed-schema.v2.json";
+        if (IsRegenRequested())
+        {
+            File.WriteAllBytes(Path.Combine(FindRepoRoot(), "tests",
+                "Vouchfx.Engine.Compilation.Tests", "Golden", fileName), actual);
+            return;
+        }
+
+        var goldenPath = Path.Combine(AppContext.BaseDirectory, "Golden", fileName);
+        Assert.True(File.Exists(goldenPath), "The committed v2 schema golden must be copied to test output.");
+        Assert.True(actual.AsSpan().SequenceEqual(File.ReadAllBytes(goldenPath)),
+            "The composed v2 schema export differs from its committed UTF-8 artefact. "
+            + "Review the contract change and regenerate locally with VOUCHFX_REGEN_SCHEMA=1; "
+            + "never regenerate or verify with --no-build.");
+    }
+
     // ── Helpers ────────────────────────────────────────────────────────────────
 
     // Collapse CRLF/CR → LF and drop any trailing final newline(s): the freeze

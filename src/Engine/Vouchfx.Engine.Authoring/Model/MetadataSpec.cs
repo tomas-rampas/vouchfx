@@ -9,8 +9,8 @@ namespace Vouchfx.Engine.Authoring.Model;
 /// Human-facing description of the test (§3.1).
 /// </summary>
 /// <remarks>
-/// All fields are optional.  Values here have no execution effect; they feed
-/// reporting dashboards and the runner's test-selection language (§16).
+/// All fields are optional. Values feed reporting and selection; the v2 telemetry
+/// flag may suppress collection but never enables it.
 /// </remarks>
 /// <param name="Name">
 /// Human-readable name for the test scenario.
@@ -26,18 +26,16 @@ namespace Vouchfx.Engine.Authoring.Model;
 /// Longer free-text explanation shown in test output.
 /// </param>
 /// <param name="SchemaVersion">
-/// Optional explicit language schema version string. Bound here verbatim, but
-/// read nowhere else in the engine — it is a future rejection hook, not a live
-/// version-selection mechanism. The root JSON Schema constrains it to the
-/// literal <c>"v1"</c> (the only language schema version that exists); a
-/// document declaring anything else fails schema validation before this
-/// binding is ever consulted, and an absent value remains valid (the field
-/// stays optional). There is exactly one schema fragment today, so there is
-/// nothing for this value to select between.
+/// Optional language schema version. Absent means v1; explicit v2 selects the
+/// separate v2 schema, including its telemetry suppression field.
 /// </param>
 public sealed record MetadataSpec(
     string? Name,
     string? Owner,
     IReadOnlyList<string>? Tags,
     string? Description,
-    string? SchemaVersion);
+    string? SchemaVersion)
+{
+    /// <summary>Optional v2 suppression; true never enables telemetry without consent.</summary>
+    public bool? Telemetry { get; init; }
+}

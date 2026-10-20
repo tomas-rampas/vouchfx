@@ -573,6 +573,86 @@ public sealed class TelemetryCliTests
     };
 
     /// <summary>A temp-dir-rooted <see cref="ITelemetryPaths"/> for the CLI tests.</summary>
+    [Theory]
+    [InlineData(false, false, true)]
+    [InlineData(true, false, false)]
+    [InlineData(false, true, false)]
+    public async Task V2OptOut_SuppressesMixedAggregate_AndNeverGrantsConsent(
+        bool scenarioOptOut, bool globalOptOut, bool emits)
+    {
+        using var temp = new TempPathsCli();
+        var store = new TelemetryConsentStore(temp);
+        store.Enable();
+        var sink = new RecordingSinkCli();
+        var hook = new TelemetryRunHook(store, temp, sink, globalOptOut, TextWriter.Null);
+        var path = Path.Combine(Path.GetDirectoryName(temp.ConsentStorePath)!, "mixed.jsonl");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        await File.WriteAllLinesAsync(path, SyntheticStream().Concat(
+            SyntheticStream().Select(line => line.Replace("run0", "run1", StringComparison.Ordinal))));
+        await hook.EmitAsync(path, false, T0, CancellationToken.None,
+            currentArchiveWritten: true, scenarioOptOut: scenarioOptOut);
+        Assert.Equal(emits ? 1 : 0, sink.Sent.Count);
+    }
+
+    [Fact]
+    public void V2OptOut_AppliesAfterSelection_AndIsNotSticky()
+    {
+        var normal = TelemetryScenario("v1", null, "normal");
+        var privateScenario = TelemetryScenario("v2", false, "private");
+        var all = new[] { normal, privateScenario };
+        Assert.True(RunCommand.SuppressesScenarioTelemetry(all));
+        var selected = Vouchfx.Cli.Selection.ScenarioSelector.Apply(all,
+            new Vouchfx.Cli.Selection.SelectionCriteria(new[] { "normal" }, Array.Empty<string>(), null, null),
+            Vouchfx.Cli.Selection.NullChangeSet.Instance);
+        Assert.Single(selected);
+        Assert.False(RunCommand.SuppressesScenarioTelemetry(selected));
+        Assert.False(RunCommand.SuppressesScenarioTelemetry(new[] { TelemetryScenario("v2", true, "normal") }));
+        Assert.False(RunCommand.SuppressesScenarioTelemetry(new[] { TelemetryScenario("v1", false, "normal") }));
+    }
+
+    [Fact]
+    public void SchemaCommand_ExportsV2Explicitly_LeavesDefaultV1()
+    {
+        Assert.Empty(SchemaCommand.Build().Parse(new[] { "--schema-version", "v2" }).Errors);
+        var v1 = new StringWriter();
+        var v2 = new StringWriter();
+        Assert.Equal(0, SchemaCommand.Execute(null, v1, TextWriter.Null));
+        Assert.Equal(0, SchemaCommand.Execute(null, v2, TextWriter.Null, schemaVersion: "v2"));
+        Assert.Contains("v2/root-language-schema.json", v2.ToString());
+        Assert.DoesNotContain("v2/root-language-schema.json", v1.ToString());
+        Assert.Equal(2, SchemaCommand.Execute(null, TextWriter.Null, TextWriter.Null, schemaVersion: "v3"));
+    }
+
+    [Fact]
+    public void V2OptOut_BindsFromYaml_AndWatchReturnsBeforeTelemetryCapture()
+    {
+        var document = Vouchfx.Engine.Authoring.YamlDocumentParser.Parse(
+            "metadata:\n  schemaVersion: v2\n  telemetry: false\nsteps:\n  - id: one\n    type: script.csharp\n    code: 'return;'");
+        Assert.False(document.Metadata!.Telemetry);
+        Assert.Equal("v2", document.Metadata.SchemaVersion);
+
+        // Pin the runtime boundaries: watch has no aggregate; both non-watch
+        // runners share the selected-file decision and the final emission gate.
+        var method = ExecuteRunPipelineAsyncMethod();
+        var statements = method.Body!.ToString();
+        var watchReturn = statements.IndexOf("WatchRunner.RunAsync", StringComparison.Ordinal);
+        var suppression = statements.IndexOf("SuppressesScenarioTelemetry(discovered)", StringComparison.Ordinal);
+        var capture = statements.IndexOf("ResolveEventsCapturePath", StringComparison.Ordinal);
+        var emission = statements.IndexOf("scenarioOptOut: scenarioTelemetryOptOut", StringComparison.Ordinal);
+        Assert.True(watchReturn >= 0 && suppression > watchReturn && capture > suppression && emission > capture);
+    }
+
+    private static DiscoveredScenario TelemetryScenario(string version, bool? telemetry, string tag)
+    {
+        var metadata = new Vouchfx.Engine.Authoring.Model.MetadataSpec(null, null, new[] { tag }, null, version)
+        {
+            Telemetry = telemetry,
+        };
+        return new DiscoveredScenario(Path.GetFullPath(tag + ".e2e.yaml"), "",
+            new Vouchfx.Engine.Authoring.Ast.ScenarioAst(metadata, null,
+                new Dictionary<string, string>(), Array.Empty<Vouchfx.Engine.Authoring.Ast.StepNode>()), null);
+    }
+
     private sealed class TempPathsCli : ITelemetryPaths, IDisposable
     {
         private readonly string _baseDir;

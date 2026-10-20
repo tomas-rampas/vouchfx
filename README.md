@@ -452,12 +452,15 @@ self-contained per-OS executables (`.tar.gz`, `.msi`, `.deb`, `.pkg`). Single-fi
 produced — the compiler discovers provider assemblies via `Assembly.Location`, which returns an empty
 string in single-file mode.
 
-> **A note on `validate`.** It compiles your test in-process using the same Roslyn compiler as `run`,
-> with no sandboxing. That is safe for suites you author and trust, but not for actively hostile input:
-> a determined hostile author can still crash or hang the in-process compiler (a stack overflow is
-> uncatchable by design). The engine bounds `script.csharp` bodies at 64 KiB, documents at 1 MiB, and
-> YAML-to-JSON conversion output at 16 Mi characters as resource limits, not as a defence. For untrusted input,
-> isolate validation in a separate worker process — which is exactly what the vouchfx MCP server does.
+> **Compiler isolation.** `vouchfx validate <path> --isolate-compile` and
+> `vouchfx run <path> --isolate-compile` compile each scenario in a one-shot subprocess.
+> The parent bounds compilation to 30 seconds, terminates timed-out workers and reports
+> crashes or timeouts as Inconclusive. Isolated compilation reports a generic compiler
+> diagnostic instead of Roslyn detail, which can contain authored values or secrets.
+> Isolation is off by default; trusted authors retain the in-process compiler.
+> This isolates Roslyn compilation only: YAML/provider processing and script execution
+> remain in the parent. It is not an execution sandbox. Run untrusted suites only in
+> an appropriately restricted environment without secrets.
 
 ## AI assistance
 

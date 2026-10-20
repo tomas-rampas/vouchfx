@@ -21,9 +21,24 @@ to published pre-releases on 2026-07-14.
 
 ## [Unreleased]
 
+## [1.1.0] — 2026-10-20
+
 ### Added
 
+- Opt-in `--isolate-compile` on `run` and `validate` compiles Roslyn scripts in bounded one-shot workers. Compiler crashes and timeouts become Inconclusive; script execution stays in the parent.
+
+- Explicit language schema v2 adds per-file `metadata.telemetry: false` suppression
+  ([#154](https://github.com/tomas-rampas/vouchfx/issues/154)). The CLI suppresses the
+  whole selected invocation's aggregate if any selected v2 file opts out, so shared
+  counts and timings cannot include that file. Consent and global opt-outs still
+  apply. The frozen v1 schema and default export are unchanged; export the new
+  contract and editor schema with `schema --schema-version v2`.
+
 - Optional top-level `listeners:` policies enable TLS and mutual TLS on engine-owned webhook and OTLP/HTTP listeners. HTTPS URLs are staged for configured listeners; a declared but unconfirmed inbound identity makes the default run exit nonzero. Accepted mutual-TLS captures can assert the validated client certificate's SHA-256 fingerprint. Plaintext listeners and outbound security behavior remain unchanged.
+
+### Changed
+
+- Advance JsonSchema.Net to 9.3.0 while suppressing applicator roll-up errors and retaining specific validation diagnostics, including mutually exclusive field errors (#302).
 
 ## [1.0.7] — 2026-10-17
 
