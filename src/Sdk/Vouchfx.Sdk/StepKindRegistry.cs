@@ -105,8 +105,8 @@ public sealed record RegisteredProvider(
 /// collection reference either.
 /// </para>
 /// <para>
-/// Providers are compile-time, source-level plugins — no runtime dynamic
-/// loading or sandboxing (§13).
+/// Providers are compile-time, source-level plugins. Hosts may admit trusted
+/// provider assemblies before registry construction; no sandboxing is provided (§13).
 /// </para>
 /// </remarks>
 public sealed class StepKindRegistry

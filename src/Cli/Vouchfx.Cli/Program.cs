@@ -37,6 +37,7 @@ var rootCommand = new RootCommand(
     "vouchfx - compile and run declarative .e2e.yaml integration tests end-to-end.");
 
 rootCommand.Add(RunCommand.Build());
+rootCommand.Add(ProvidersCommand.Build());
 
 // Opt-in, privacy-first telemetry consent surface (S10-G-04):
 //   vouchfx telemetry enable|disable|status

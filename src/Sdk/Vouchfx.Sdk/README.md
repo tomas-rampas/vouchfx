@@ -15,8 +15,9 @@ call, a Kafka event, a DB mutation and an outbound webhook.
 
 ## What this package gives you
 
-A step provider is a **compile-time, source-level plugin** — there is no runtime loader, no
-dynamic assembly loading, and no sandbox. You add a project, reference `Vouchfx.Sdk`,
+A step provider is a **compile-time, source-level plugin**. The CLI supports trusted external
+provider directory loading before registry freeze (unreleased), alongside bundled project references.
+Provider code executes in the default assembly context without sandboxing. You add a project, reference `Vouchfx.Sdk`,
 implement the contract interfaces, and mark your provider class `[StepProvider]`; the
 engine's reflective `StepKindRegistry` (frozen at startup) discovers it.
 

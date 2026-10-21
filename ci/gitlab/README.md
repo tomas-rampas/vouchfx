@@ -66,9 +66,19 @@ default) contributes no flag.
 vouchfx stands up an Aspire/Testcontainers container topology, so the job needs a Docker
 daemon. The template uses the standard GitLab **Docker-in-Docker (dind)** pattern: a
 `docker:dind` `services:` entry provides the daemon, and `DOCKER_HOST` + the TLS variables
-point the build's Docker client and Testcontainers/Aspire/DCP at it.
-`TESTCONTAINERS_HOST_OVERRIDE=docker` tells Testcontainers the reachable hostname for the
-ports the topology publishes on the sibling dind service.
+point the job's Docker client at it. The default SDK image lacks a Docker client, so
+the template installs Docker CLI 27.5.1 after verifying its official archive SHA-256.
+Custom images that already provide a client retain it.
+
+The template copies the prepared checkout into a second SDK container and builds and
+runs vouchfx there with host networking and the daemon's Unix socket. Aspire/DCP's
+loopback proxy endpoints then share the daemon's network namespace; merely setting
+`TESTCONTAINERS_HOST_OVERRIDE` in the sibling job does not provide this. The outer
+connection keeps TLS verification enabled. The inner runner receives the job's exported
+environment through a private temporary file, resets Docker access to the local socket,
+and is removed when the script exits. JUnit and HTML reports are copied back before the
+original engine exit code gates the job. Setup scripts run before this copy, so generated
+fixture paths remain available at the same absolute paths inside the runner.
 
 > **dind needs a PRIVILEGED runner.** The `docker:dind` service only starts on a GitLab
 > Runner configured with `privileged = true` (Docker executor) or an equivalently
@@ -157,8 +167,24 @@ supply digests — mirroring the GitHub header guidance.)
 - **GitLab CI JSON schema:** validates clean against the official GitLab CI schema
   (`app/assets/javascripts/editor/schema/ci.json`, JSON Schema draft-07) using `ajv`; the
   realistic consumer `include` form validates too.
-- **Live verification (a real GitLab pipeline run, or the GitLab `/ci/lint` API):**
-  **NOT performed — it requires a GitLab instance + token, which is not available in this
-  environment.** The template is therefore **static-validated only** (yamllint + JSON
-  schema + point-by-point behavioural cross-check against the GitHub workflow). A live
-  pipeline / `ci/lint` run is an **infrastructure-gated follow-up**.
+- **Live GitLab verification, 20 October 2026 (UTC):** the `/ci/lint` API accepted
+  the reference consumer with zero errors and warnings on GitLab SaaS `19.6.0-pre`
+  (revision `27a841f4bf2`). The consumer imported the published template at
+  `69cc2a2e4747415a3cea7ac6d1a92b266a67358b` and built source candidate
+  `574863fa6242aa6dff2b87ac7d6a5a87b1c84521` on privileged SaaS Linux
+  `saas-linux-small-amd64` Docker-in-Docker runners.
+  [Positive reference pipeline 2969645952](https://gitlab.com/mcquant/vouchfx-ci-acceptance/-/pipelines/2969645952)
+  succeeded: its sole smoke job `17331882403` produced PASS and exit 0, with downloaded
+  JUnit counts `(tests=1, failures=0, errors=0)` and a nonempty HTML report. The consumer
+  explicitly excluded the negative controls for this positive-only run.
+  [Negative-control pipeline 2969340980](https://gitlab.com/mcquant/vouchfx-ci-acceptance/-/pipelines/2969340980)
+  failed as intended: smoke produced PASS/0, the product control produced FAIL/1,
+  and the invalid-image environment control produced ENV_ERROR/0 under default gating.
+  All three retained downloadable JUnit and HTML reports; downloaded JUnit counts were
+  respectively `(1, 0, 0)`, `(1, 1, 0)`, and `(1, 0, 1)`.
+  The private acceptance project requires authenticated access. These runs validate a
+  reviewed candidate, not an official release. The Docker-client bootstrap and daemon
+  loopback differences are tracked in [#639](https://github.com/tomas-rampas/vouchfx/issues/639).
+  Final official-source-SHA acceptance will be recorded in
+  [PR #638](https://github.com/tomas-rampas/vouchfx/pull/638) before merge. Self-managed
+  Kubernetes and socket-bind runners remain unmeasured.

@@ -213,7 +213,9 @@ public static class AstBuilder
                     step.Id,
                     line,
                     col,
-                    $"unknown step type '{raw}' - no registered provider");
+                    $"unknown step type '{raw}' - no registered provider" +
+                    (registry.All.Any(item => item.Kind.Family == family) ? "" :
+                        ". Load a trusted external provider with --providers <dir>; browse https://providers.vouchfx.io/registry/"));
             }
 
             return new StepKindId(family, provider);

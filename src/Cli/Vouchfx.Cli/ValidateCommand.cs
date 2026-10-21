@@ -69,7 +69,8 @@ internal static class ValidateCommand
         var jsonOption = BuildJsonOption();
         command.Add(jsonOption);
 
-        command.SetAction((parseResult, _) =>
+        var providerOptions = ProviderOptions.Add(command);
+        command.SetAction((parseResult, _) => providerOptions.InvokeAsync(parseResult, () =>
         {
             using var compilerScope = parseResult.GetValue(isolateCompileOption)
                 ? new ScriptCompilerScope(CompileWorkerMode.Compile)
@@ -77,7 +78,7 @@ internal static class ValidateCommand
             var path = parseResult.GetValue(pathArgument) ?? ".";
             var json = parseResult.GetValue(jsonOption);
             return Task.FromResult(Execute(path, json, Console.Out, Console.Error));
-        });
+        }));
 
         return command;
     }
@@ -126,7 +127,7 @@ internal static class ValidateCommand
     /// </remarks>
     internal static int Execute(string path, bool json, TextWriter output, TextWriter errorOutput)
     {
-        StepKindRegistry registry = ProviderRegistryFactory.BuildCoreRegistry();
+        StepKindRegistry registry = ProviderRegistryFactory.BuildRegistry();
 
         IReadOnlyList<DiscoveredScenario> discovered;
         try

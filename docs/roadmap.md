@@ -142,12 +142,12 @@ Within that constraint, the near-term direction is:
   contributed as source into the [hub repository](https://github.com/tomas-rampas/vouchfx-providers)'s
   `community/` directory (each building and testing in isolation, author-owned, explicitly unendorsed —
   hosting is not endorsement) so authors need no NuGet account to participate; see the hub's contributing
-  guide. Still ahead: a **provider directory loader** — the CLI learns to load provider assemblies from a
-  directory (a `--providers` flag, an environment variable, and a default probe location), guarded by the
-  same reserved-namespace and version-conflict checks the engine already enforces — and then **one-command
-  acquisition**: `vouchfx providers install <id>` resolves a step kind through the community registry,
-  downloads the package, and places it in the providers directory, with a dependency-only *Vouched
-  metapackage* installing the whole badge-holding set once Vouched providers exist. The frozen v1 SDK contract
+  guide. The **provider directory loader** is implemented under Unreleased: the CLI loads trusted
+  provider assemblies from configured directories with namespace, dependency and engine-compatibility
+  admission. See the [external provider guide](external-providers.md). **One-command acquisition** is also
+  implemented under Unreleased: `vouchfx providers install <id>` resolves a step kind through the community registry,
+  downloads compatible managed assets and places them transactionally in the providers directory. A
+  dependency-only *Vouched metapackage* remains deferred until Vouched providers exist. The frozen v1 SDK contract
   is what makes externally-built provider binaries loadable across the whole v1.x series.
 - **Transport security for the remaining dependency kinds** — 1.0 wires a client connection for exactly two
   target kinds: any declared service, and a `kafka` dependency. On every other dependency kind a `security:`
@@ -159,8 +159,10 @@ Within that constraint, the near-term direction is:
   which are out of scope, is the [security compatibility matrix](security-matrix.md).
 - **Additional secret sources** — the `${secret:…}` syntax is forward-compatible with cloud secret managers
   (Azure Key Vault, AWS Secrets Manager); adding them is configuration, not redesign.
-- **Live GitLab validation** — the GitLab CI template is static-validated and behaviourally cross-checked
-  against the GitHub workflow; a live-instance run is the outstanding confirmation.
+- **Live GitLab validation** — candidate source passed real SaaS Docker-in-Docker smoke,
+  product-failure and environment-error controls with JUnit and HTML artifacts on 20 October 2026
+  ([evidence](https://github.com/tomas-rampas/vouchfx/blob/main/ci/gitlab/README.md#validation-status)). Final official-source SHA acceptance
+  and self-managed runner coverage remain separate.
 - **Editor depth** — full in-block C# IntelliSense for `script.csharp` is a documented fast-follow.
 
 ## Language evolution

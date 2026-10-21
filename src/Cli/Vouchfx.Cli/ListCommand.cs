@@ -48,7 +48,8 @@ internal static class ListCommand
         var jsonOption = BuildJsonOption();
         command.Add(jsonOption);
 
-        command.SetAction((parseResult, _) =>
+        var providerOptions = ProviderOptions.Add(command);
+        command.SetAction((parseResult, _) => providerOptions.InvokeAsync(parseResult, () =>
         {
             // --step-types is the only mode and the default when omitted: its presence
             // does not currently change behaviour, but the explicit flag exists so a
@@ -56,7 +57,7 @@ internal static class ListCommand
             parseResult.GetValue(stepTypesOption);
             var json = parseResult.GetValue(jsonOption);
             return Task.FromResult(Execute(json, Console.Out, Console.Error));
-        });
+        }));
 
         return command;
     }
@@ -109,7 +110,7 @@ internal static class ListCommand
     {
         errorOutput ??= TextWriter.Null;
 
-        var registry = ProviderRegistryFactory.BuildCoreRegistry();
+        var registry = ProviderRegistryFactory.BuildRegistry();
 
         StepCatalogueDocument catalogue;
         try
