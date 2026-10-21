@@ -138,5 +138,8 @@ jobs:
       # regressed (see the header note on why the permissive default is wrong here).
       fail-on-env-error: true
       fail-on-inconclusive: true
+      # Match build.yml's MongoDB kernel compatibility pin; the other examples
+      # retain the reusable workflow's current hosted-runner default.
+      runs-on: ${{ matrix.example == 'db-assert-mongodb' && 'ubuntu-22.04' || 'ubuntu-latest' }}
       # v4+ artefact names are immutable within one run — one name per leg.
       artifact-name: vouchfx-reports-example-${{ matrix.example }}
