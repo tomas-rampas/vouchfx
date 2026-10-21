@@ -226,6 +226,59 @@ public sealed class ProviderAcquisitionTests
         Assert.Equal(0, (await Cli("providers", "install", "rpc.fixture", "--package-id", "--source", feed, "--directory", Temp())).Exit);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Dependency_solver_skips_host_incompatible_versions(bool referenceConflict)
+    {
+        var feed = Temp(); var id = Unique(); var dependency = Unique();
+        var host = typeof(Json.Path.JsonPath).Assembly.Location;
+        var hostName = System.Reflection.AssemblyName.GetAssemblyName(host).Name!;
+        var wrongHost = Compile(Temp(), hostName,
+            "[assembly: System.Reflection.AssemblyVersion(\"99.0.0.0\")] public class WrongHostCopy { }");
+        var lower = referenceConflict
+            ? Compile(Temp(), dependency, "public class PrivateDependency : WrongHostCopy { }", wrongHost)
+            : wrongHost;
+        var higher = referenceConflict ? Compile(Temp(), dependency, "public class PrivateDependency { }") : host;
+        Package(feed, dependency, "1.0.0", lower);
+        Package(feed, dependency, "2.0.0", higher);
+        Package(feed, id, "1.0.0", Compile(Temp(), id, Provider), new[] { Dependency(dependency, "[1.0.0,3.0.0)") });
+        var root = Temp(); var store = new ProviderStore(root);
+        var installed = await store.InstallAsync(id, null, feed, CancellationToken.None);
+        Assert.Contains(dependency + ".2.0.0", installed.PackageSha256!.Keys);
+        Assert.DoesNotContain(dependency + ".1.0.0", installed.PackageSha256.Keys);
+        Assert.False(File.Exists(Path.Combine(installed.Directory, hostName + ".dll")));
+        Assert.Equal(id, Assert.Single(store.List()).Id);
+        Assert.Empty(Directory.GetFileSystemEntries(Transactions(root)));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task No_host_compatible_graph_preserves_installation_and_cleans_transaction(bool existingInstallation)
+    {
+        var feed = Temp(); var id = Unique(); var dependency = Unique(); var root = Temp();
+        var store = new ProviderStore(root);
+        var provider = Compile(Temp(), id, Provider);
+        if (existingInstallation)
+        {
+            Package(feed, id, "1.0.0", provider);
+            await store.InstallAsync(id, "1.0.0", feed, CancellationToken.None);
+        }
+        var before = Directory.GetFiles(root, "*", SearchOption.AllDirectories)
+            .ToDictionary(path => Path.GetRelativePath(root, path), File.ReadAllBytes);
+        Package(feed, dependency, "1.0.0", Compile(Temp(), "JsonPath.Net", "public class WrongHostCopy { }"));
+        Package(feed, dependency, "2.0.0", Compile(Temp(), "JsonPath.Net", "public class AnotherWrongHostCopy { }"));
+        Package(feed, id, "2.0.0", provider, new[] { Dependency(dependency, "[1.0.0,3.0.0)") });
+        await Assert.ThrowsAsync<ProviderLoadException>(() => store.InstallAsync(id, "2.0.0", feed, CancellationToken.None));
+        var after = Directory.GetFiles(root, "*", SearchOption.AllDirectories);
+        Assert.Equal(before.Count, after.Length);
+        foreach (var path in after) Assert.Equal(before[Path.GetRelativePath(root, path)], File.ReadAllBytes(path));
+        if (existingInstallation) Assert.Equal("1.0.0", Assert.Single(store.List()).Version);
+        else Assert.Empty(store.List());
+        Assert.Empty(Directory.GetFileSystemEntries(Transactions(root)));
+    }
+
     [Fact]
     public async Task Incompatible_host_copy_is_refused_instead_of_blindly_pruned()
     {

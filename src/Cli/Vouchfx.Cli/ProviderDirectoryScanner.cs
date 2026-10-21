@@ -73,6 +73,30 @@ internal static class ProviderDirectoryScanner
         }
     }
 
+    // Snapshot host metadata once per resolution; candidate checks never load provider code.
+    internal static Func<string, bool> CreateHostCompatibilityCheck()
+    {
+        Dictionary<string, Image> canonical;
+        lock (s_gate) canonical = CanonicalImages();
+        return directory =>
+        {
+            foreach (var path in Directory.GetFiles(directory))
+            {
+                var image = ReadImage(path);
+                if (image is null) continue;
+                if (canonical.TryGetValue(image.Identity.Name!, out var host))
+                {
+                    if (!CompatibleHost(image.Identity, host)) return false;
+                    continue; // Admission prunes compatible host copies, including their references.
+                }
+                foreach (var reference in image.References)
+                    if (canonical.TryGetValue(reference.Name!, out host) && !CompatibleHost(reference, host))
+                        return false;
+            }
+            return true;
+        };
+    }
+
     private static Dictionary<string, Image> InspectDirectories(IReadOnlyList<string> directories, bool considerAdmitted)
     {
         var canonical = CanonicalImages();

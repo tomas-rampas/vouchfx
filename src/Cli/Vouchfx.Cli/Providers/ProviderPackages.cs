@@ -23,6 +23,7 @@ internal sealed class ProviderPackages : IDisposable
     private readonly Dictionary<string, ProviderPackage> _downloads = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, NuGetVersion[]> _versions = new(StringComparer.OrdinalIgnoreCase);
     private readonly string _workDirectory;
+    private Func<string, bool>? _hostCompatible;
     private long _downloadedBytes;
     private int _attempts;
 
@@ -65,7 +66,7 @@ internal sealed class ProviderPackages : IDisposable
         { [id] = new() { new VersionRange(chosen, true, chosen, true) } };
         var resolved = await SearchAsync(constraints, new(StringComparer.OrdinalIgnoreCase), token);
         return resolved?.Values.OrderBy(package => package.Identity.Id, StringComparer.OrdinalIgnoreCase).ToArray()
-            ?? throw new ProviderLoadException("Provider dependency graph has incompatible version ranges for .NET 8.");
+            ?? throw new ProviderLoadException("Provider dependency graph has incompatible version ranges or host assemblies for .NET 8.");
     }
 
     private async Task<NuGetVersion?> LatestStableAsync(string id, NuGetVersion[] available, CancellationToken token)
@@ -153,6 +154,22 @@ internal sealed class ProviderPackages : IDisposable
             ? groups.Length == 0 || nearest is not null
             : new FrameworkReducer().GetNearest(TargetFramework, libraries.Select(group => group.TargetFramework)) is not null;
         downloaded = new ProviderPackage(identity, path, Convert.ToHexString(SHA256.HashData(input)), dependencies, compatible);
+        if (compatible)
+        {
+            var candidate = Path.Combine(_workDirectory, Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(candidate);
+            try
+            {
+                await ProviderArchive.ExtractAsync(downloaded, candidate, token);
+                _hostCompatible ??= ProviderDirectoryScanner.CreateHostCompatibilityCheck();
+                downloaded = downloaded with { Compatible = _hostCompatible(candidate) };
+            }
+            finally
+            {
+                // This generated child contains only assets from the validated archive.
+                Directory.Delete(candidate, recursive: true);
+            }
+        }
         _downloads.Add(key, downloaded);
         return downloaded;
     }
