@@ -1,10 +1,10 @@
 # External step providers
 
-The CLI can load trusted provider assemblies at startup without rebuilding the engine. This capability is prepared for Core 1.2.0 and remains unreleased until its GitHub Release is published. Providers use the frozen `Vouchfx.Sdk` v1 contract and contribute schema, binding, validation and generated C# exactly as bundled providers do.
+The CLI can load trusted provider assemblies at startup without rebuilding the engine. This capability is available in the current Core release. Providers use the frozen `Vouchfx.Sdk` v1 contract and contribute schema, binding, validation and generated C# exactly as bundled providers do.
 
 ## Install from a package
 
-Package acquisition is also unreleased. Install a published provider by exact NuGet package ID or by its Community registry step kind:
+Install a published provider by exact NuGet package ID or by its Community registry step kind:
 
 ```bash
 vouchfx providers install rpc.json-rpc

@@ -134,18 +134,18 @@ Within that constraint, the near-term direction is:
   are live on the hub.
 - **Provider distribution and consumption** — the first Community provider package
   ([`Vouchfx.Community.JsonRpc`](https://www.nuget.org/packages/Vouchfx.Community.JsonRpc)) is published on
-  NuGet.org and consumable today from a small custom runner built on the public engine API (the
+  NuGet.org and installable with the released CLI. A custom runner built on the public engine API remains an option (the
   [`ledger-jsonrpc` sample](https://github.com/tomas-rampas/vouchfx-samples/tree/main/samples/ledger-jsonrpc)
-  is the worked example); using an unpublished provider still means building from source with the provider
-  referenced. The programme closing the remaining gap has additive steps.
+  is the worked example); unpublished providers can be built from source and loaded from a configured directory.
+  Further distribution work remains additive.
   **Community source submissions on the hub are already open**: community-tier providers may be
   contributed as source into the [hub repository](https://github.com/tomas-rampas/vouchfx-providers)'s
   `community/` directory (each building and testing in isolation, author-owned, explicitly unendorsed —
   hosting is not endorsement) so authors need no NuGet account to participate; see the hub's contributing
-  guide. The **provider directory loader** is implemented under Unreleased: the CLI loads trusted
+  guide. The **provider directory loader** is released: the CLI loads trusted
   provider assemblies from configured directories with namespace, dependency and engine-compatibility
   admission. See the [external provider guide](external-providers.md). **One-command acquisition** is also
-  implemented under Unreleased: `vouchfx providers install <id>` resolves a step kind through the community registry,
+  released: `vouchfx providers install <id>` resolves a step kind through the community registry,
   downloads compatible managed assets and places them transactionally in the providers directory. A
   dependency-only *Vouched metapackage* remains deferred until Vouched providers exist. The frozen v1 SDK contract
   is what makes externally-built provider binaries loadable across the whole v1.x series.

@@ -163,7 +163,7 @@ that have passed the published rubric. Writing your own is documented in the hub
 [implementation guide](https://providers.vouchfx.io/docs/implementing-a-provider.html).
 
 Install published Community providers with `vouchfx providers install <id>`, or load trusted external
-provider DLLs with `--providers <directory>` without rebuilding the CLI (both unreleased). The [external provider guide](https://vouchfx.io/external-providers/) covers directory layout,
+provider DLLs with `--providers <directory>` without rebuilding the CLI. The [external provider guide](https://vouchfx.io/external-providers/) covers directory layout,
 shared dependencies and the trust boundary.
 
 ## Running suites

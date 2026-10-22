@@ -560,7 +560,7 @@ A specific commitment follows from the telemetry design, and it is worth stating
 
 Step types in the DSL — http, db-assert, mq-publish — name what is being done at the level of intent, not at the level of implementation. There is no universal way to assert against a database: PostgreSQL gives the author JSONB, arrays, and RETURNING clauses; SQL Server gives MERGE statements and a CLR type system; Oracle has its own NULL semantics and PL/SQL extensions; MongoDB is not SQL at all; Redis is not even relational. The same fracture applies to messaging — Kafka offsets are nothing like RabbitMQ acknowledgements, which are nothing like SQS visibility timeouts — and to synchronous remote calls, where REST, SOAP, and gRPC share a transport and almost nothing else. A platform that fixed one implementation behind each step type would either constrain authors to a lowest-common-denominator subset or grow a tangle of switch statements inside the engine. Neither outcome is acceptable for a tool that intends to last.
 
-This section defines the architecture's answer: a provider model that lets the DSL grow new step kinds through additional source code rather than through engine changes. Each step type is a family — db-assert, mq-publish, rpc, http, script — and each family is implemented by one or more providers. Providers are first-class participants in the compilation pipeline, contribute schema fragments to the editor experience, declare the orchestration resources they need, and live alongside the engine as Apache-licensed source code that any team in the community can extend by pull request. Bundled providers are compile-referenced by the CLI. The unreleased [external provider loader](external-providers.md) additionally admits trusted assemblies at startup, before freezing the registry; both paths use the same source-level compilation contract and neither provides sandboxing.
+This section defines the architecture's answer: a provider model that lets the DSL grow new step kinds through additional source code rather than through engine changes. Each step type is a family — db-assert, mq-publish, rpc, http, script — and each family is implemented by one or more providers. Providers are first-class participants in the compilation pipeline, contribute schema fragments to the editor experience, declare the orchestration resources they need, and live alongside the engine as Apache-licensed source code that any team in the community can extend by pull request. Bundled providers are compile-referenced by the CLI. The [external provider loader](external-providers.md) additionally admits trusted assemblies at startup, before freezing the registry; both paths use the same source-level compilation contract and neither provides sandboxing.
 
 ## 13.1 Why the DSL must be extensible at the source level
 
@@ -574,7 +574,7 @@ The third is that the customers most likely to extend the platform — engineers
 
 > **The compile-time plugin principle**
 >
-> Core providers are pulled in by project reference. Trusted external providers can also be admitted from a configured directory at CLI startup (unreleased), using the frozen SDK v1 contract. They participate in the same compilation pipeline and default assembly context; there is no separate execution host or sandbox. See the [loading decision](decisions/external-provider-loading.md).
+> Core providers are pulled in by project reference. Trusted external providers can also be admitted from a configured directory at CLI startup, using the frozen SDK v1 contract. They participate in the same compilation pipeline and default assembly context; there is no separate execution host or sandbox. See the [loading decision](decisions/external-provider-loading.md).
 
 ## 13.2 Step families and the provider naming convention
 
@@ -765,7 +765,7 @@ This is also how the documentation generator works: it reads the unified schema 
 
 ## 13.7 The provider registry and source-level discovery
 
-Discovery happens once at startup. The registry reflects over bundled assemblies and any trusted external assemblies admitted by the CLI directory loader (unreleased), finds types tagged with `[StepProvider]` or implementing `IProviderModule`, instantiates them, and indexes them by `StepKindId`. The result is a frozen, immutable registry for the invocation. There is no late rebinding or provider hot reload. See the [directory contract](external-providers.md).
+Discovery happens once at startup. The registry reflects over bundled assemblies and any trusted external assemblies admitted by the CLI directory loader, finds types tagged with `[StepProvider]` or implementing `IProviderModule`, instantiates them, and indexes them by `StepKindId`. The result is a frozen, immutable registry for the invocation. There is no late rebinding or provider hot reload. See the [directory contract](external-providers.md).
 
 ```csharp
 // Convenience attribute for single-provider assemblies.
@@ -1385,7 +1385,7 @@ This appendix consolidates the concrete technologies named in the blueprint, so 
 | SSH tunnelling / reverse port forwarding | Carries traffic between the local runner and the cloud fabric, including inbound webhooks. |
 | SAML 2.0 / OpenID Connect | Enterprise identity integration feeding RBAC into the CLI and IDE. |
 | StepKindRegistry | Source-level registry of step providers, frozen at engine startup and indexed by family-and-provider name; powers the resolve stage of compilation. |
-| [StepProvider] attribute / IProviderModule | Markers the registry uses to discover provider types at startup via reflection over referenced assemblies. Trusted external assemblies may also be admitted before registry construction (unreleased). |
+| [StepProvider] attribute / IProviderModule | Markers the registry uses to discover provider types at startup via reflection over referenced assemblies. Trusted external assemblies may also be admitted before registry construction. |
 | Schema fragments (per provider) | Each provider contributes a JSON Schema fragment for its step kind; the engine merges them into the unified schema consumed by the editor and the documentation generator. |
 | Structured event stream | JSON Lines, schema-versioned event stream emitted by the engine during a run; the single substrate every renderer and the Healer agent consume. |
 | Verdict taxonomy | The four-state classification of every step and scenario outcome — pass, fail, environment error, inconclusive — surfaced separately by the renderers. |
