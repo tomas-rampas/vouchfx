@@ -392,14 +392,16 @@
       docker exec "$vouchfx_runner" mkdir -p "$CI_PROJECT_DIR"
       docker cp "$CI_PROJECT_DIR/." "$vouchfx_runner:$CI_PROJECT_DIR"
       docker cp "$(command -v docker)" "$vouchfx_runner:/usr/local/bin/docker"
-      docker cp "$vouchfx_private/environment.sh" "$vouchfx_runner:/tmp/vouchfx-environment.sh"
       # The build gets its own exec, as it gets its own step in the GH workflow. A restore or
       # compile failure happens before any scenario runs, so the job keeps the build's exit
       # code and prints no verdict legend, which would otherwise label exit 1 as a product Fail.
+      # Each exec receives its own copy of the private file and deletes it before running.
       build_exit=0
+      docker cp "$vouchfx_private/environment.sh" "$vouchfx_runner:/tmp/vouchfx-environment.sh"
       docker exec "$vouchfx_runner" bash -c '
         set -eu
         source /tmp/vouchfx-environment.sh
+        rm /tmp/vouchfx-environment.sh
         unset DOCKER_TLS_CERTDIR DOCKER_TLS_VERIFY DOCKER_CERT_PATH TESTCONTAINERS_HOST_OVERRIDE
         export DOCKER_HOST=unix:///var/run/docker.sock
         cd "$CI_PROJECT_DIR"
@@ -409,6 +411,7 @@
         echo "ERROR: the vouchfx build failed (exit $build_exit) before any scenario ran; no verdict." >&2
         exit "$build_exit"
       fi
+      docker cp "$vouchfx_private/environment.sh" "$vouchfx_runner:/tmp/vouchfx-environment.sh"
       # shellcheck disable=SC2086 # Fixed literal flags, deliberately word-split.
       docker exec "$vouchfx_runner" bash -c '
         set -eu

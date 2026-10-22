@@ -2,6 +2,7 @@
 
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import tempfile
@@ -91,7 +92,8 @@ docker() {
       *"dotnet build"*) printf 'cli-build\n'; return "$BUILD_EXIT" ;;
       *) printf 'suite-run\n'; return "$RUN_EXIT" ;;
     esac ;; esac ;;
-    cp) case "$2" in runner-id:*) [ "$COPY_EXIT" = 0 ] || return "$COPY_EXIT"; printf 'report-copy\n' ;; esac ;;
+    cp) case "$2" in runner-id:*) [ "$COPY_EXIT" = 0 ] || return "$COPY_EXIT"; printf 'report-copy\n' ;; esac
+      case "$3" in runner-id:/tmp/vouchfx-environment.sh) printf 'environment-copy\n' ;; esac ;;
     rm) printf 'runner-cleanup\n' > "$CLEANUP_MARKER" ;;
   esac
 }
@@ -104,12 +106,18 @@ docker() {
         return subprocess.run([BASH, "-c", prefix + self.script], env=env,
                               capture_output=True, text=True, timeout=10)
 
+    @staticmethod
+    def sequence(result):
+        return [line for line in result.stdout.splitlines()
+                if line in ("environment-copy", "cli-build", "suite-run")]
+
     def test_run_exit_and_reports_survive_product_failure(self):
         for code in (0, 1, 3, 4):
             with self.subTest(code=code), tempfile.TemporaryDirectory(prefix="vouchfx-gitlab-run-") as scratch:
                 result = self.run_runner(scratch, run_exit=code)
                 self.assertEqual(code, result.returncode, result.stdout + result.stderr)
-                self.assertLess(result.stdout.index("cli-build\n"), result.stdout.index("suite-run\n"))
+                self.assertEqual(["environment-copy", "cli-build", "environment-copy", "suite-run"],
+                                 self.sequence(result))
                 self.assertEqual(2, result.stdout.count("report-copy"))
                 self.assertIn(f"vouchfx exit code: {code}", result.stdout)
                 self.assertEqual("runner-cleanup\n", (Path(scratch) / "cleanup-marker").read_text())
@@ -134,7 +142,17 @@ docker() {
                 result = self.run_runner(scratch, build_exit=code)
                 self.assertEqual(code, result.returncode, result.stdout + result.stderr)
                 self.assertIn(f"ERROR: the vouchfx build failed (exit {code})", result.stderr)
-                self.assertNotIn("suite-run", result.stdout)
+                self.assertEqual(["environment-copy", "cli-build"], self.sequence(result))
                 self.assertNotIn("report-copy", result.stdout)
                 self.assertNotIn("vouchfx exit code:", result.stdout)
                 self.assertEqual("runner-cleanup\n", (Path(scratch) / "cleanup-marker").read_text())
+
+    def test_each_exec_deletes_the_private_environment_before_running(self):
+        # The file holds every exported CI variable, so neither the build nor the suite may
+        # start while it is still on the runner's disk.
+        execs = re.findall(r"docker exec \"\$vouchfx_runner\" bash -c '(.*?)'", self.script, re.DOTALL)
+        self.assertEqual(2, len(execs))
+        for inner in execs:
+            lines = [line.strip() for line in inner.strip().splitlines()]
+            self.assertEqual(["set -eu", "source /tmp/vouchfx-environment.sh",
+                              "rm /tmp/vouchfx-environment.sh"], lines[:3])
