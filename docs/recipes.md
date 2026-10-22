@@ -1225,7 +1225,7 @@ Reports are published to the job's default artifact path (native GitLab test-rep
 - **`results.xml`** — JUnit XML, surfaced in GitLab's pipeline and merge-request test-report UI.
 - **`report.html`** — Self-contained HTML report.
 
-**Verification status:** The GitLab template is static-validated (schema, behavioural equivalence) but has not been run on a live GitLab instance — a live pipeline run is a follow-up. The primary unknown is whether vouchfx's Aspire/DCP-managed containers are reachable under dind (set `TESTCONTAINERS_HOST_OVERRIDE=docker` in the template).
+**Verification status:** The template has run on gitlab.com's privileged Docker-in-Docker runners: a smoke PASS exited 0, a product FAIL exited 1 and an environment error exited 0 under default gating, each with downloadable JUnit and HTML reports. Self-managed Kubernetes and socket-bind runners remain unmeasured.
 
 For the full reference, see [CI integration reference § GitLab CI](ci-integration.md#gitlab-ci) and [`ci/gitlab/vouchfx-run.gitlab-ci.yml`](https://github.com/tomas-rampas/vouchfx/blob/main/ci/gitlab/vouchfx-run.gitlab-ci.yml).
 

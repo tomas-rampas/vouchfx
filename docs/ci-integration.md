@@ -493,16 +493,31 @@ then drop the `services:` block and the dind/TLS variables, and set
 `DOCKER_HOST: "unix:///var/run/docker.sock"`. Socket-bind trades isolation for not needing privileged
 mode — choose per your security posture.
 
+**Overriding `before_script`.** GitLab replaces a job's `before_script` list rather than merging
+it, and the template's own steps install the Docker client the default SDK image lacks. A job that
+defines its own `before_script` without them fails with exit 127. Keep them first:
+
+```yaml
+vouchfx-run:
+  before_script:
+    - !reference [.vouchfx-run, before_script]
+    - ./scripts/my-extra-setup.sh
+```
+
 ### Verification status (important)
 
-The GitLab template is **static-validated only** — yamllint, the GitLab CI JSON schema, and a
-behavioural-equivalence cross-check against the GitHub workflow. It has **not been run on a live
-GitLab instance**; a live pipeline / `ci/lint` run is an infrastructure-gated follow-up.
+The template has run on gitlab.com's privileged SaaS Linux Docker-in-Docker runners, with the
+consumer's `ci/lint` reporting no errors or warnings. A positive pipeline produced a genuine smoke
+PASS with exit 0. A negative-control pipeline produced a product FAIL with exit 1 and an
+environment error with exit 0 under default gating. Every job kept downloadable JUnit and HTML
+reports. These runs covered a reviewed candidate first and then official Core 1.1.0 source, and the
+template that ran them shipped unchanged in Core 1.2.0
+([issue #639](https://github.com/tomas-rampas/vouchfx/issues/639); [evidence](https://github.com/tomas-rampas/vouchfx/blob/main/ci/gitlab/README.md#validation-status)).
 
-The one substantive risk to verify when running live is whether vouchfx's **Aspire/DCP-managed
-containers are reachable under sibling Docker-in-Docker**. The template sets
-`TESTCONTAINERS_HOST_OVERRIDE=docker`, but DCP may resolve endpoints differently than raw
-Testcontainers — that dind-to-DCP networking is the primary unknown.
+Core 1.2.0 runs the engine in an owned SDK container that shares the Docker-in-Docker daemon's
+network namespace and Unix socket, because Aspire/DCP publishes loopback proxy endpoints that a
+sibling job container cannot reach. `TESTCONTAINERS_HOST_OVERRIDE` does not solve this and is not
+needed. Self-managed Kubernetes and socket-bind runners remain unmeasured.
 
 See [`ci/gitlab/vouchfx-run.gitlab-ci.yml`](https://github.com/tomas-rampas/vouchfx/blob/main/ci/gitlab/vouchfx-run.gitlab-ci.yml)
 and [`ci/gitlab/README.md`](https://github.com/tomas-rampas/vouchfx/blob/main/ci/gitlab/README.md)

@@ -21,12 +21,24 @@ to published pre-releases on 2026-07-14.
 
 ## [Unreleased]
 
-## [1.2.0] — 2026-10-20
+### Fixed
+
+- The GitLab CI template keeps the engine's exit code when a report is missing, warning instead of exiting 2. The engine writes no report when it discovers no scenario and exits 0 by policy, which the template had turned into a usage error; the GitHub workflow already only warned ([#639](https://github.com/tomas-rampas/vouchfx/issues/639)).
+
+### Removed
+
+- The GitLab CI template no longer sets `TESTCONTAINERS_HOST_OVERRIDE`. It did not make Aspire/DCP's loopback endpoints reachable, and since 1.2.0 the engine runs on the Docker-in-Docker daemon's own network, where the runner script clears it ([#639](https://github.com/tomas-rampas/vouchfx/issues/639)).
+
+## [1.2.0] — 2026-10-21
 
 ### Added
 
 - `providers install/list/uninstall` acquires compatible managed provider packages from one HTTPS or explicit local NuGet feed, with registry aliases, transactional replacement/recovery, bounded archives and host dependency pruning.
 - Trusted external provider directory loading across run/watch, validation, catalogue, schema, scaffold and planning, with repeatable `--providers`, `VOUCHFX_PROVIDERS`, optional home probing and startup compatibility checks.
+
+### Fixed
+
+- The GitLab CI template installs a Docker client after checking Docker's official static archive against a pinned SHA-256, and runs the engine in an owned SDK container that shares the Docker-in-Docker daemon's network namespace and Unix socket, keeping TLS verification on the job's own Docker connection. The default SDK image previously had no Docker client (exit 127), and Aspire/DCP's loopback endpoints were unreachable from the sibling job container. Live gitlab.com runs produced smoke PASS/0, product FAIL/1 and environment-error 0 with downloadable JUnit and HTML reports ([#639](https://github.com/tomas-rampas/vouchfx/issues/639)).
 
 ## [1.1.0] — 2026-10-20
 
