@@ -104,3 +104,30 @@ docker() {
                 self.assertEqual(2, result.stdout.count("report-copy"))
                 self.assertIn(f"vouchfx exit code: {code}", result.stdout)
                 self.assertEqual("runner-cleanup\n", (Path(scratch) / "cleanup-marker").read_text())
+
+    def test_missing_reports_warn_without_changing_the_exit(self):
+        # The engine exits 0 and writes no report when it discovers no scenario, so a
+        # missing report must not turn that run, or any other verdict, into a new code.
+        for code in (0, 1, 3, 4):
+            with self.subTest(code=code), tempfile.TemporaryDirectory(prefix="vouchfx-gitlab-run-") as scratch:
+                prefix = r'''set -eu
+docker() {
+  case "$1" in
+    create) printf 'runner-id\n' ;;
+    exec) case "$3" in bash) return "$RUN_EXIT" ;; esac ;;
+    cp) case "$2" in runner-id:*) return 1 ;; esac ;;
+    rm) printf 'runner-cleanup\n' > "$CLEANUP_MARKER" ;;
+  esac
+}
+'''
+                env = dict(os.environ, CI_PROJECT_DIR=scratch, VOUCHFX_SCENARIO_PATH="suite",
+                           VOUCHFX_DOTNET_IMAGE="sdk:fixture", VOUCHFX_FAIL_ON_ENV_ERROR="false",
+                           VOUCHFX_FAIL_ON_INCONCLUSIVE="false", RUN_EXIT=str(code),
+                           CLEANUP_MARKER=str(Path(scratch) / "cleanup-marker"))
+                result = subprocess.run([BASH, "-c", prefix + self.script], env=env,
+                                        capture_output=True, text=True, timeout=10)
+                self.assertEqual(code, result.returncode, result.stdout + result.stderr)
+                self.assertIn("WARNING: no results.xml to retain", result.stderr)
+                self.assertIn("WARNING: no report.html to retain", result.stderr)
+                self.assertIn(f"vouchfx exit code: {code}", result.stdout)
+                self.assertEqual("runner-cleanup\n", (Path(scratch) / "cleanup-marker").read_text())

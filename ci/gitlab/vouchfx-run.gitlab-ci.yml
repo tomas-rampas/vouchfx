@@ -409,11 +409,13 @@
           -c Release --no-build -- run "$CI_PROJECT_DIR/$VOUCHFX_SCENARIO_PATH" \
           --junit "$CI_PROJECT_DIR/results.xml" --html "$CI_PROJECT_DIR/report.html" "$@"
       ' vouchfx $FAIL_FLAGS || exit_code=$?
-      # Retain reports even when a product assertion fails.
-      docker cp "$vouchfx_runner:$CI_PROJECT_DIR/results.xml" "$CI_PROJECT_DIR/results.xml" \
-        || { [ "$exit_code" -ne 0 ] || exit_code=2; }
-      docker cp "$vouchfx_runner:$CI_PROJECT_DIR/report.html" "$CI_PROJECT_DIR/report.html" \
-        || { [ "$exit_code" -ne 0 ] || exit_code=2; }
+      # Retain reports even when a product assertion fails. A missing report never changes
+      # the job's exit code: the engine writes none when it discovers no scenario, and that
+      # run exits 0 by policy. The GH workflow likewise only warns (if-no-files-found: warn).
+      for report in results.xml report.html; do
+        docker cp "$vouchfx_runner:$CI_PROJECT_DIR/$report" "$CI_PROJECT_DIR/$report" \
+          || echo "WARNING: no $report to retain; the job keeps the engine's exit code." >&2
+      done
       # Legend assembled across short lines (not one long literal) to stay within this
       # template's yamllint line-length gate (ci/gitlab/.yamllint.yml, max 120 chars);
       # the PRINTED text is byte-identical to the GH workflow's single-line echo.
