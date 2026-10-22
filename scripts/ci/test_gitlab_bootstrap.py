@@ -2,6 +2,7 @@
 
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import tempfile
@@ -81,26 +82,77 @@ class GitLabDaemonRunnerTests(unittest.TestCase):
     def setUpClass(cls):
         cls.script = workflow(ROOT / "ci/gitlab/vouchfx-run.gitlab-ci.yml")[".vouchfx-run"]["script"][0]
 
-    def test_run_exit_and_reports_survive_product_failure(self):
-        for code in (0, 1, 3, 4):
-            with self.subTest(code=code), tempfile.TemporaryDirectory(prefix="vouchfx-gitlab-run-") as scratch:
-                prefix = r'''set -eu
+    def run_runner(self, scratch, run_exit=0, build_exit=0, copy_exit=0):
+        # The stub tells the build exec from the suite exec by the inline script it receives.
+        prefix = r'''set -eu
 docker() {
   case "$1" in
     create) printf 'runner-id\n' ;;
-    exec) case "$3" in bash) return "$RUN_EXIT" ;; esac ;;
-    cp) case "$2" in runner-id:*) printf 'report-copy\n' ;; esac ;;
+    exec) case "$3" in bash) case "$5" in
+      *"dotnet build"*) printf 'cli-build\n'; return "$BUILD_EXIT" ;;
+      *) printf 'suite-run\n'; return "$RUN_EXIT" ;;
+    esac ;; esac ;;
+    cp) case "$2" in runner-id:*) [ "$COPY_EXIT" = 0 ] || return "$COPY_EXIT"; printf 'report-copy\n' ;; esac
+      case "$3" in runner-id:/tmp/vouchfx-environment.sh) printf 'environment-copy\n' ;; esac ;;
     rm) printf 'runner-cleanup\n' > "$CLEANUP_MARKER" ;;
   esac
 }
 '''
-                env = dict(os.environ, CI_PROJECT_DIR=scratch, VOUCHFX_SCENARIO_PATH="suite",
-                           VOUCHFX_DOTNET_IMAGE="sdk:fixture", VOUCHFX_FAIL_ON_ENV_ERROR="false",
-                           VOUCHFX_FAIL_ON_INCONCLUSIVE="false", RUN_EXIT=str(code),
-                           CLEANUP_MARKER=str(Path(scratch) / "cleanup-marker"))
-                result = subprocess.run([BASH, "-c", prefix + self.script], env=env,
-                                        capture_output=True, text=True, timeout=10)
+        env = dict(os.environ, CI_PROJECT_DIR=scratch, VOUCHFX_SCENARIO_PATH="suite",
+                   VOUCHFX_DOTNET_IMAGE="sdk:fixture", VOUCHFX_FAIL_ON_ENV_ERROR="false",
+                   VOUCHFX_FAIL_ON_INCONCLUSIVE="false", RUN_EXIT=str(run_exit),
+                   BUILD_EXIT=str(build_exit), COPY_EXIT=str(copy_exit),
+                   CLEANUP_MARKER=str(Path(scratch) / "cleanup-marker"))
+        return subprocess.run([BASH, "-c", prefix + self.script], env=env,
+                              capture_output=True, text=True, timeout=10)
+
+    @staticmethod
+    def sequence(result):
+        return [line for line in result.stdout.splitlines()
+                if line in ("environment-copy", "cli-build", "suite-run")]
+
+    def test_run_exit_and_reports_survive_product_failure(self):
+        for code in (0, 1, 3, 4):
+            with self.subTest(code=code), tempfile.TemporaryDirectory(prefix="vouchfx-gitlab-run-") as scratch:
+                result = self.run_runner(scratch, run_exit=code)
                 self.assertEqual(code, result.returncode, result.stdout + result.stderr)
+                self.assertEqual(["environment-copy", "cli-build", "environment-copy", "suite-run"],
+                                 self.sequence(result))
                 self.assertEqual(2, result.stdout.count("report-copy"))
                 self.assertIn(f"vouchfx exit code: {code}", result.stdout)
                 self.assertEqual("runner-cleanup\n", (Path(scratch) / "cleanup-marker").read_text())
+
+    def test_missing_reports_warn_without_changing_the_exit(self):
+        # The engine exits 0 and writes no report when it discovers no scenario, so a
+        # missing report must not turn that run, or any other verdict, into a new code.
+        for code in (0, 1, 3, 4):
+            with self.subTest(code=code), tempfile.TemporaryDirectory(prefix="vouchfx-gitlab-run-") as scratch:
+                result = self.run_runner(scratch, run_exit=code, copy_exit=1)
+                self.assertEqual(code, result.returncode, result.stdout + result.stderr)
+                self.assertIn("WARNING: no results.xml to retain", result.stderr)
+                self.assertIn("WARNING: no report.html to retain", result.stderr)
+                self.assertIn(f"vouchfx exit code: {code}", result.stdout)
+                self.assertEqual("runner-cleanup\n", (Path(scratch) / "cleanup-marker").read_text())
+
+    def test_build_failure_keeps_its_exit_without_a_verdict(self):
+        # A restore or compile failure precedes every scenario, so its exit 1 must not be
+        # printed beside the legend's "1=Fail", and the suite must not start.
+        for code in (1, 137):
+            with self.subTest(code=code), tempfile.TemporaryDirectory(prefix="vouchfx-gitlab-run-") as scratch:
+                result = self.run_runner(scratch, build_exit=code)
+                self.assertEqual(code, result.returncode, result.stdout + result.stderr)
+                self.assertIn(f"ERROR: the vouchfx build failed (exit {code})", result.stderr)
+                self.assertEqual(["environment-copy", "cli-build"], self.sequence(result))
+                self.assertNotIn("report-copy", result.stdout)
+                self.assertNotIn("vouchfx exit code:", result.stdout)
+                self.assertEqual("runner-cleanup\n", (Path(scratch) / "cleanup-marker").read_text())
+
+    def test_each_exec_deletes_the_private_environment_before_running(self):
+        # The file holds every exported CI variable, so neither the build nor the suite may
+        # start while it is still on the runner's disk.
+        execs = re.findall(r"docker exec \"\$vouchfx_runner\" bash -c '(.*?)'", self.script, re.DOTALL)
+        self.assertEqual(2, len(execs))
+        for inner in execs:
+            lines = [line.strip() for line in inner.strip().splitlines()]
+            self.assertEqual(["set -eu", "source /tmp/vouchfx-environment.sh",
+                              "rm /tmp/vouchfx-environment.sh"], lines[:3])
