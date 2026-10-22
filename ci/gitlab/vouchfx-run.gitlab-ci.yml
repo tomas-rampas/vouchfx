@@ -70,8 +70,8 @@
 #   host daemon socket into the build (runner config `volumes = ["/var/run/docker.sock:/var/run/docker.sock", ...]`),
 #   then DROP the `services:` block and the dind/TLS variables below and instead set
 #   `DOCKER_HOST: "unix:///var/run/docker.sock"`. Socket-bind trades isolation for not
-#   needing privileged mode; choose per your security posture. (Either way Testcontainers
-#   reaches the same daemon — see TESTCONTAINERS_HOST_OVERRIDE below.)
+#   needing privileged mode; choose per your security posture. (Either way the engine's
+#   runner container shares the daemon's network namespace and socket — see the script.)
 #
 # ── Supply-chain hygiene (please read before including this template) ───────────────
 #   • PIN the `include:` `ref:` to a full commit SHA, NOT a moving branch or tag. A
@@ -184,12 +184,9 @@
     DOCKER_TLS_CERTDIR: "/certs"
     DOCKER_TLS_VERIFY: "1"
     DOCKER_CERT_PATH: "/certs/client"
-    # Testcontainers (used by Aspire/DCP under the hood) honours DOCKER_HOST, but when the
-    # daemon is a sibling dind service the *containers it starts* publish ports on the
-    # `docker` host, not on `localhost`. TESTCONTAINERS_HOST_OVERRIDE tells Testcontainers
-    # the reachable hostname for those mapped ports so the engine's clients can connect.
-    # (For a socket-bind runner — DOCKER_HOST=unix:///var/run/docker.sock — drop this.)
-    TESTCONTAINERS_HOST_OVERRIDE: "docker"
+    # No TESTCONTAINERS_HOST_OVERRIDE: it did not make Aspire/DCP's loopback proxy endpoints
+    # reachable from this sibling job, and the engine now runs on the daemon's own network,
+    # where mapped ports are on localhost. The runner script clears any value a consumer sets.
     # Skip Ryuk's reaper: in dind it cannot reliably reach back, and we tear topology down
     # ourselves (HeadlessTopology.DisposeAsync). Harmless on a fresh, ephemeral dind.
     TESTCONTAINERS_RYUK_DISABLED: "true"

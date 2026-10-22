@@ -148,7 +148,7 @@ supply digests — mirroring the GitHub header guidance.)
 | vouchfx source | `vouchfx-repo` (default `${{ github.repository }}`) | `VOUCHFX_REPO_URL` (default `$CI_REPOSITORY_URL`) |
 | vouchfx ref | `vouchfx-ref` (default `${{ github.sha }}`) | `VOUCHFX_REF` (default `$CI_COMMIT_SHA`) |
 | .NET SDK | `dotnet-version` (default `8.0.x`) via `setup-dotnet` | `VOUCHFX_DOTNET_IMAGE` (default `mcr.microsoft.com/dotnet/sdk:8.0`) as job image |
-| Docker for topology | runner provides Docker (`ubuntu-latest`) | `docker:dind` service + `DOCKER_HOST`/TLS + Testcontainers host override (privileged runner; socket-bind alternative) |
+| Docker for topology | runner provides Docker (`ubuntu-latest`) | `docker:dind` service + `DOCKER_HOST`/TLS for the job; the engine runs in an owned SDK container on the daemon's network and Unix socket (privileged runner; socket-bind alternative) |
 | Install | checkout vouchfx → `dotnet build -c Release` | `git clone` vouchfx → `dotnet build -c Release` |
 | Image pre-warm | `prewarm-images`, per-image `docker pull \|\| echo` (best-effort) | `VOUCHFX_PREWARM_IMAGES`, per-image `docker pull \|\| echo` (best-effort) |
 | Run | `dotnet run --project … -c Release --no-build -- run "$SCENARIO_PATH" --junit … --html …` | identical `dotnet run … -- run "$VOUCHFX_SCENARIO_PATH" --junit … --html …` |
