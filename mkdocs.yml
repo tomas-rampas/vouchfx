@@ -161,7 +161,7 @@ nav:
       - Getting started (60-minute path): getting-started.md
       - Recipes: recipes.md
       - Common patterns: common-patterns.md
-      - External step providers (unreleased): external-providers.md
+      - External step providers: external-providers.md
       - Owned Docker Compose environments: compose-environments.md
       - S3 and MinIO application access: object-storage-sut.md
       - SQL seed fixtures: seed-fixtures.md
