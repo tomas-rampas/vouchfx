@@ -24,6 +24,7 @@ to published pre-releases on 2026-07-14.
 ### Fixed
 
 - The GitLab CI template keeps the engine's exit code when a report is missing, warning instead of exiting 2. The engine writes no report when it discovers no scenario and exits 0 by policy, which the template had turned into a usage error; the GitHub workflow already only warned ([#639](https://github.com/tomas-rampas/vouchfx/issues/639)).
+- The GitLab CI template builds vouchfx separately from the suite run inside the runner container, so a restore or compile failure keeps the build's exit code and is reported as a build failure. In 1.2.0 both ran in one command, so a failed build's exit 1 was printed beside the verdict legend's `1=Fail`; the GitHub workflow already builds in a separate step ([#639](https://github.com/tomas-rampas/vouchfx/issues/639)).
 
 ### Removed
 

@@ -301,8 +301,8 @@
         bash "$setup_script"
       fi
 
-    # 4. The source build runs in the daemon-network container below, together with
-    #    the suite, so Aspire's generated paths resolve in the execution environment.
+    # 4. The source build runs in the daemon-network container below, just before the
+    #    suite, so Aspire's generated paths resolve in the execution environment.
 
     # 5. OPTIONAL image pre-warm. Pull each requested image BEFORE the run so DCP's internal
     #    ~20s per-resource startup watchdog is never spent on a cold pull (the documented
@@ -393,6 +393,22 @@
       docker cp "$CI_PROJECT_DIR/." "$vouchfx_runner:$CI_PROJECT_DIR"
       docker cp "$(command -v docker)" "$vouchfx_runner:/usr/local/bin/docker"
       docker cp "$vouchfx_private/environment.sh" "$vouchfx_runner:/tmp/vouchfx-environment.sh"
+      # The build gets its own exec, as it gets its own step in the GH workflow. A restore or
+      # compile failure happens before any scenario runs, so the job keeps the build's exit
+      # code and prints no verdict legend, which would otherwise label exit 1 as a product Fail.
+      build_exit=0
+      docker exec "$vouchfx_runner" bash -c '
+        set -eu
+        source /tmp/vouchfx-environment.sh
+        unset DOCKER_TLS_CERTDIR DOCKER_TLS_VERIFY DOCKER_CERT_PATH TESTCONTAINERS_HOST_OVERRIDE
+        export DOCKER_HOST=unix:///var/run/docker.sock
+        cd "$CI_PROJECT_DIR"
+        dotnet build "$VOUCHFX_SRC_DIR/src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj" -c Release
+      ' || build_exit=$?
+      if [ "$build_exit" -ne 0 ]; then
+        echo "ERROR: the vouchfx build failed (exit $build_exit) before any scenario ran; no verdict." >&2
+        exit "$build_exit"
+      fi
       # shellcheck disable=SC2086 # Fixed literal flags, deliberately word-split.
       docker exec "$vouchfx_runner" bash -c '
         set -eu
@@ -401,7 +417,6 @@
         unset DOCKER_TLS_CERTDIR DOCKER_TLS_VERIFY DOCKER_CERT_PATH TESTCONTAINERS_HOST_OVERRIDE
         export DOCKER_HOST=unix:///var/run/docker.sock
         cd "$CI_PROJECT_DIR"
-        dotnet build "$VOUCHFX_SRC_DIR/src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj" -c Release
         dotnet run --project "$VOUCHFX_SRC_DIR/src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj" \
           -c Release --no-build -- run "$CI_PROJECT_DIR/$VOUCHFX_SCENARIO_PATH" \
           --junit "$CI_PROJECT_DIR/results.xml" --html "$CI_PROJECT_DIR/report.html" "$@"

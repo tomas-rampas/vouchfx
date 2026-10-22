@@ -76,15 +76,18 @@ rather than merging it and the default image then has no Docker client (exit 127
 shows the full form.
 
 The template copies the prepared checkout into a second SDK container and builds and
-runs vouchfx there with host networking and the daemon's Unix socket. Aspire/DCP's
-loopback proxy endpoints then share the daemon's network namespace; merely setting
-`TESTCONTAINERS_HOST_OVERRIDE` in the sibling job does not provide this. The outer
-connection keeps TLS verification enabled. The inner runner receives the job's exported
-environment through a private temporary file, resets Docker access to the local socket,
-and is removed when the script exits. JUnit and HTML reports are copied back before the
-original engine exit code gates the job. A report the engine did not write, as when it
-discovers no scenario and exits 0, produces a warning and leaves that exit code unchanged. Setup scripts run before this copy, so generated
-fixture paths remain available at the same absolute paths inside the runner.
+runs vouchfx there with host networking and the daemon's Unix socket. Setup scripts run
+before that copy, so generated fixture paths remain available at the same absolute paths
+inside the runner. Aspire/DCP's loopback proxy endpoints then share the daemon's network
+namespace; merely setting `TESTCONTAINERS_HOST_OVERRIDE` in the sibling job does not
+provide this. The outer connection keeps TLS verification enabled. The inner runner
+receives the job's exported environment through a private temporary file, resets Docker
+access to the local socket, and is removed when the script exits. The build runs before
+the suite in its own `docker exec`; if it fails, the job exits with the build's code,
+copies no reports and prints no verdict legend. JUnit and HTML reports are copied back
+before the original engine exit code gates the job. A report the engine did not write, as
+when it discovers no scenario and exits 0, produces a warning and leaves that exit code
+unchanged.
 
 > **dind needs a PRIVILEGED runner.** The `docker:dind` service only starts on a GitLab
 > Runner configured with `privileged = true` (Docker executor) or an equivalently
@@ -199,7 +202,10 @@ supply digests — mirroring the GitHub header guidance.)
   1.2.0 (`0af21de5bd0a4e91ca002e03e6c256bc4e8ca4e8`) released, which closes the Docker-client
   bootstrap and daemon loopback differences recorded in
   [#639](https://github.com/tomas-rampas/vouchfx/issues/639). Since then the template keeps
-  the engine's exit code when a report is missing, instead of exiting 2, and no longer sets
-  `TESTCONTAINERS_HOST_OVERRIDE`. Every live job above wrote both reports, so none took the
-  changed path; the GitLab regression tests cover it. Self-managed Kubernetes and
-  socket-bind runners remain unmeasured.
+  the engine's exit code when a report is missing, instead of exiting 2; builds vouchfx in
+  its own `docker exec` before the suite, so a failed build keeps its exit code and prints
+  no verdict legend; and no longer sets `TESTCONTAINERS_HOST_OVERRIDE`, which the runner
+  script already cleared before starting the engine. No live run has exercised these
+  changes: every job above built successfully, wrote both reports, and built and ran in a
+  single exec. The GitLab regression tests cover the report and build paths. Self-managed
+  Kubernetes and socket-bind runners remain unmeasured.
