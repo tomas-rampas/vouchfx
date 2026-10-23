@@ -389,7 +389,7 @@ The `--json` output carries the schema version and a per-scenario diagnostics li
 
 ## Listing step types
 
-The `vouchfx list` command displays the engine's sealed Core step-type catalogue — all twenty-five `<family>.<provider>` step types compiled into this build. It reflects what the engine ships in the default CLI process. When additional providers are registered in-process (custom host or library API), the same catalogue export includes those types as well — there is no silent Core-only filter on the export path.
+The `vouchfx list` command displays the step-type catalogue sealed at startup. Without external providers it contains the twenty-five Core `<family>.<provider>` types shipped with this build. Since Core 1.2.0, the normal CLI also includes providers loaded from `--providers`, `VOUCHFX_PROVIDERS` and the default provider directory; see [external providers](external-providers.md). Providers registered through a custom host or library API are likewise included — there is no silent Core-only filter on the export path.
 
 ```bash
 # List all step types (default)

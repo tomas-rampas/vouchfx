@@ -121,11 +121,14 @@ optional mode later; the install step is intentionally the only thing that would
 | 0 | Pass (or un-gated EnvError / Inconclusive) | no |
 | 1 | **Fail** | **always** |
 | 2 | usage error | yes (bad arguments) |
-| 3 | EnvironmentError | only with `VOUCHFX_FAIL_ON_ENV_ERROR` truthy |
-| 4 | Inconclusive | only with `VOUCHFX_FAIL_ON_INCONCLUSIVE` truthy |
+| 3 | EnvironmentError | with `VOUCHFX_FAIL_ON_ENV_ERROR` truthy, or unconditionally for unconfirmed declared security |
+| 4 | Inconclusive / refusal | with `VOUCHFX_FAIL_ON_INCONCLUSIVE` truthy, or an unconditional refusal/security check |
 
 A non-zero exit fails the job — so a product **Fail** gates the consumer's CI by default,
-infra errors / inconclusives only on opt-in. The run step also echoes the vouchfx exit code
+genuine runtime infra errors / inconclusives gate only on opt-in. Parse failures, typed authoring/schema/compilation
+refusals, an Inconclusive suite with no executed scenario, provider/engine-surface refusals and unconfirmed
+declared security prevent exit 0 regardless of those flags; an already-selected non-zero code is preserved.
+See the [exit-code policy](../../docs/ci-integration.md) for precedence. The run step also echoes the vouchfx exit code
 and its taxonomy legend on every run, pass or fail, so the job log always records both the
 verdict token and the numeric code.
 
