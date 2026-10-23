@@ -4,7 +4,7 @@ Thank you for your interest in vouchfx. This guide explains how to build and sub
 
 ## Writing a vouchfx Provider
 
-vouchfx is built on a **compile-time, source-level plugin model** — there is no runtime loader, no dynamic assembly loading, and no sandbox. If you want to add support for a new database, message broker, protocol, or assertion, you implement a provider and vouchfx discovers it automatically at startup.
+vouchfx providers emit source fragments that the engine compiles into the suite. Implement a provider to add support for a new database, message broker, protocol or assertion. The registry discovers providers at startup; since Core 1.2.0, the CLI can also load external provider assemblies from configured directories. See [external-provider loading](docs/external-providers.md) for installation and discovery. Providers run as trusted code in the engine process, with no sandbox.
 
 ### Getting Started
 
