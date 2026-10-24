@@ -95,5 +95,10 @@
   },
   "dependencies": {
     "yaml": "^2.9.0"
+  },
+  "overrides": {
+    "@azure/identity": {
+      "@azure/msal-node": "7.1.1"
+    }
   }
 }
