@@ -208,7 +208,51 @@ supply digests — mirroring the GitHub header guidance.)
   the engine's exit code when a report is missing, instead of exiting 2; builds vouchfx in
   its own `docker exec` before the suite, so a failed build keeps its exit code and prints
   no verdict legend; and no longer sets `TESTCONTAINERS_HOST_OVERRIDE`, which the runner
-  script already cleared before starting the engine. No live run has exercised these
-  changes: every job above built successfully, wrote both reports, and built and ran in a
-  single exec. The GitLab regression tests cover the report and build paths. Self-managed
-  Kubernetes and socket-bind runners remain unmeasured.
+  script already cleared before starting the engine. These three post-release changes
+  remain under `Unreleased`; the live acceptance below does not make them part of Core 1.2.0.
+
+### Live verification, 23 October 2026 (UTC)
+
+Template and engine source were both pinned to
+`93881722b5ccba2631814394d76f10e7dd36568e`; the private acceptance consumer was
+`647309016848428670698e66601d8feda91e6ba6`. GitLab CI lint returned zero errors and warnings.
+The consumer retained the native template's preparation and execution scripts, adding only
+control selection, disposable source changes for build failures, and evidence collection.
+
+[Positive pipeline 2982288601](https://gitlab.com/mcquant/vouchfx-ci-acceptance/-/pipelines/2982288601)
+succeeded with all three controls.
+[Negative-control pipeline 2982296539](https://gitlab.com/mcquant/vouchfx-ci-acceptance/-/pipelines/2982296539)
+failed as intended, with all five controls completed. The project and evidence links require
+authenticated access. JUnit counts below are `(tests, failures, errors)`.
+
+| Control | Job | Measured result | Downloaded reports |
+|---|---|---|---|
+| Smoke | [17424152429](https://gitlab.com/mcquant/vouchfx-ci-acceptance/-/jobs/17424152429) | PASS; engine/job exit 0 | JUnit `(1, 0, 0)`; nonempty HTML |
+| No scenarios | [17424152430](https://gitlab.com/mcquant/vouchfx-ci-acceptance/-/jobs/17424152430) | Engine/job exit 0; two missing-report warnings | No JUnit or HTML, as expected |
+| Host-override sentinel | [17424152431](https://gitlab.com/mcquant/vouchfx-ci-acceptance/-/jobs/17424152431) | PASS; engine/job exit 0 | JUnit `(1, 0, 0)`; nonempty HTML |
+| Product assertion failure | [17424221269](https://gitlab.com/mcquant/vouchfx-ci-acceptance/-/jobs/17424221269) | FAIL; engine/job exit 1 | JUnit `(1, 1, 0)`; nonempty HTML |
+| Environment error, default policy | [17424221270](https://gitlab.com/mcquant/vouchfx-ci-acceptance/-/jobs/17424221270) | ENV_ERROR; engine/job exit 0 | JUnit `(1, 0, 1)`; nonempty HTML |
+| Environment error, strict policy | [17424221271](https://gitlab.com/mcquant/vouchfx-ci-acceptance/-/jobs/17424221271) | ENV_ERROR; engine/job exit 3 | JUnit `(1, 0, 1)`; nonempty HTML |
+| Restore failure | [17424221272](https://gitlab.com/mcquant/vouchfx-ci-acceptance/-/jobs/17424221272) | NuGet `NU1101`; build/job exit 1; no suite run or verdict legend | No JUnit or HTML, as expected |
+| Compile failure | [17424221273](https://gitlab.com/mcquant/vouchfx-ci-acceptance/-/jobs/17424221273) | C# `CS1029`; build/job exit 1; no suite run or verdict legend | No JUnit or HTML, as expected |
+
+The restore control added an unavailable package and an empty local restore source; the compile
+control added an intentional `#error`. Both changed only the job's disposable engine clone.
+Downloaded evidence retained the source change and hash. Neither control substituted an executable
+or a synthetic exit code.
+
+All eight jobs recorded GitLab `19.6.0-pre`, SaaS Linux `saas-linux-small-amd64` Docker-in-Docker
+runners (`19.6.0~pre.2364.gcc7d9535`, Linux/amd64), SDK `8.0.426`, and Docker client/server
+`27.5.1`. The authenticated GitLab version probe reported revision `dbcf8f9a71a` before the runs.
+The SDK image was
+`mcr.microsoft.com/dotnet/sdk:8.0@sha256:738f72aff955d5c5690e06b6fc8ecd1b90ead564099a257ac528ff720b8da85f`.
+
+After the native template's cleanup, all eight jobs' container, network and volume ID snapshots
+exactly matched their pre-run baselines. All six remaining/missing-baseline counts were zero at
+the first post-job sample; this does not establish behaviour after that sample. The observer
+deleted nothing. Cleanup evidence was checked separately because a failing GitLab `after_script`
+does not change the main job's result.
+
+The sentinel smoke establishes compatibility with a consumer-set host override, not direct
+observation of the inner environment. The pinned template separately unsets that variable before
+both native execs. Self-managed Kubernetes and socket-bind runners remain unmeasured.

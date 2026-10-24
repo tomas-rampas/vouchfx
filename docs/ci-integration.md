@@ -514,6 +514,15 @@ reports. These runs covered a reviewed candidate first and then official Core 1.
 template that ran them shipped unchanged in Core 1.2.0
 ([issue #639](https://github.com/tomas-rampas/vouchfx/issues/639); [evidence](https://github.com/tomas-rampas/vouchfx/blob/main/ci/gitlab/README.md#validation-status)).
 
+Live acceptance on 23 October 2026 also exercised the subsequent template changes at source
+`93881722b5ccba2631814394d76f10e7dd36568e`: a no-scenarios run kept exit 0 with missing-report
+warnings, and genuine NuGet restore and C# compile failures kept build exit 1 without a run verdict.
+Smoke and host-override compatibility controls passed; product failure exited 1 and environment
+errors exited 0 by default or 3 under strict policy. All eight jobs returned to their observed daemon
+baselines. These changes remain under `Unreleased`; see the
+[dated receipt](https://github.com/tomas-rampas/vouchfx/blob/main/ci/gitlab/README.md#live-verification-23-october-2026-utc)
+for pipeline/job links, report counts, exact revisions and observation limits.
+
 Core 1.2.0 runs the engine in an owned SDK container that shares the Docker-in-Docker daemon's
 network namespace and Unix socket, because Aspire/DCP publishes loopback proxy endpoints that a
 sibling job container cannot reach. `TESTCONTAINERS_HOST_OVERRIDE` does not solve this and is not
