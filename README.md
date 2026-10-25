@@ -39,6 +39,12 @@ are Docker-free, so authoring and checking suites works on a machine without one
 .NET SDK can use the self-contained per-OS archives and MSI/deb/pkg installers available from the
 [latest stable release](https://github.com/tomas-rampas/vouchfx/releases/latest).
 
+**Testing .NET 8, 9 or 10 applications:** the CLI targets `net8.0`, while containerised applications
+carry their own runtimes. For the global tool, keep the .NET 8 runtime alongside SDK 9/10;
+self-contained distributions bundle it. Source builds use the .NET 8 SDK selected by `global.json`.
+See the [.NET compatibility table](https://vouchfx.io/getting-started/#net-8-9-and-10-compatibility)
+for host, application and project-service requirements.
+
 Core `1.0.0` introduced bundled Aspire DCP tools for Windows x64, Linux x64 (glibc),
 macOS x64 and macOS ARM64. The installed CLI needs no source checkout, Aspire workload or warmed
 NuGet cache. Legacy `1.0.0-rc.6` packages still need external matching tools; see
