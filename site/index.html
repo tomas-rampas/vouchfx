@@ -349,8 +349,9 @@ alc.<span class="t">Unload</span>();</code></pre>
     <h2 class="section__title">Step type = <code>&lt;family&gt;.&lt;provider&gt;</code> — intent, then technology.</h2>
     <p class="section__lede">
       Providers are <strong>compile-time, source-level plugins</strong>: add a project, implement the frozen v1.x
-      contract, mark it <code>[StepProvider]</code>, and a reflective registry discovers it at startup. No runtime
-      loader, no dynamic assembly loading, no sandbox. Models are strongly-typed records, never
+      contract, mark it <code>[StepProvider]</code>, and a reflective registry discovers it at startup. Since Core 1.2.0,
+      the CLI also loads external provider assemblies from configured directories. Providers are trusted code
+      with no sandbox. Models are strongly-typed records, never
       <code>Dictionary&lt;string,object&gt;</code>.
     </p>
     <div class="providers">

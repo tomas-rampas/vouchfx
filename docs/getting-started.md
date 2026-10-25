@@ -19,10 +19,12 @@ This guide focuses on the essentials. For architecture, the provider model, secr
 ### .NET 8, 9 or 10 SDK
 
 Current source retains a **.NET 8** binary baseline and supports building and running with
-the **.NET 8, 9 and 10 SDKs**. Check your SDK version:
+the **.NET 8, 9 and 10 SDKs**. The repository selects its build SDK separately in `global.json`.
+Check the SDKs and runtimes installed on your machine:
 
 ```bash
-dotnet --version
+dotnet --list-sdks
+dotnet --list-runtimes
 ```
 
 Use SDK 8.0.424 or a later stable .NET 8, 9 or 10 SDK. `global.json` prefers a compatible
@@ -31,6 +33,30 @@ this source use runtime `RollForward=Major`, so they also run on .NET 9 or 10 wi
 Library packages continue to expose `net8.0` assets, which .NET 9 and 10 projects can reference.
 Older published tools retain their original runtime requirements; install .NET 8 alongside a
 newer SDK when using a release that predates this policy.
+
+Run `dotnet --version` from the repository to check the selected SDK. See Microsoft's
+[SDK selection rules](https://learn.microsoft.com/en-us/dotnet/core/tools/global-json#rollforward).
+
+### .NET 8, 9 and 10 compatibility
+
+The runtime used by vouchfx and the runtime used by your application are separate:
+
+| Use case | .NET 8 | .NET 9 and 10 |
+|----------|--------|---------------|
+| Run a global tool built from current source | Uses the installed .NET 8 runtime. | Rolls forward to the installed .NET 9 or 10 runtime when .NET 8 is absent. Older published packages retain their original runtime policy. |
+| Run a self-contained archive or native installer | Uses its bundled runtime. | Uses its bundled runtime; no machine-wide .NET installation is required for the CLI. |
+| Build vouchfx from source | Use SDK 8.0.424 or later. | `global.json` permits SDK 9 or 10 when a compatible .NET 8 SDK is absent. |
+| Test an application packaged as a container image | The image supplies the application's runtime. | The image supplies the application's runtime, independently of vouchfx's runtime. |
+| Test an application through `environment.services[].project` | Install the SDK/runtime required by that application. | Install the matching SDK/runtime and ensure the application's SDK selection allows its target framework. |
+
+For applications targeting .NET 8, 9 or 10, container images keep the application's build and runtime requirements inside its image. This is the same protocol-based testing model used for applications written in other languages. A `project:` service instead runs through Aspire's project hosting and needs the application's toolchain on the host; the CLI's bundled runtime does not provide that toolchain. A `global.json` selecting SDK 8 cannot build a `net9.0` or `net10.0` application.
+
+The engine keeps one `net8.0` asset baseline. Compatibility workflows test the SDKs and runtimes
+in isolation; the separate .NET 10 analyser job remains advisory. Microsoft's
+[runtime selection rules](https://learn.microsoft.com/en-us/dotnet/core/versions/selection)
+describe the explicit major roll-forward policy used by executables built from current source.
+
+Microsoft lists .NET 8 and .NET 9 support ending on 10 November 2026, and .NET 10 support ending on 14 November 2028. These are Microsoft's runtime lifecycle dates; see the [official support policy](https://dotnet.microsoft.com/en-us/platform/support/policy) when choosing your application's runtime.
 
 ### Docker daemon
 
@@ -62,6 +88,8 @@ intentionally testing a pre-release. Self-contained platform archives and instal
 [the latest stable GitHub release](https://github.com/tomas-rampas/vouchfx/releases/latest).
 
 The global-tool installer places the `vouchfx` command in `~/.dotnet/tools` (`%USERPROFILE%\.dotnet\tools` on Windows). If your shell cannot find `vouchfx` afterwards, add that directory to your `PATH` or open a fresh shell.
+
+**Using vouchfx-mcp?** Keep its CLI at the version required by the installed MCP package. Published MCP 1.1.0 [pins Core 1.2.0](https://github.com/tomas-rampas/vouchfx-mcp/blob/v1.1.0/ENGINE_PIN), whose full version is `1.2.0+0af21de5bd0a4e91ca002e03e6c256bc4e8ca4e8`; it does not accept Core 1.2.1. If you also need another Core version, install the MCP-compatible CLI in a separate tool directory and put that directory first on `PATH` for the MCP server process.
 
 ### Native installers
 
@@ -145,7 +173,7 @@ dotnet build src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj -c Release
 A test file has four top-level sections; only `steps` is mandatory:
 
 - **`metadata`** — name, owner, tags, description. Used for reporting and filtering; no execution effect.
-- **`environment`** — `services` (containers under test), `dependencies` (managed Aspire resources like databases), optional `seed` (SQL/fixtures applied after topology is healthy).
+- **`environment`** — inline `services` (containers under test), `dependencies` (managed Aspire resources like databases), optional `seed` (SQL/fixtures applied after topology is healthy); or an exclusive `source` selecting an owned Compose environment.
 - **`variables`** — optional constants pre-loaded into the shared context, available to all steps.
 - **`steps`** — the ordered list of actions and assertions (HTTP calls, database queries, scripts, listeners).
 
@@ -207,7 +235,27 @@ You can save it anywhere in your project tree. For example:
 
 - `examples/getting-started/hello-world.e2e.yaml` (in the vouchfx repo itself, as shipped)
 - `tests/e2e/hello-world.e2e.yaml` (a typical project layout)
-- Any directory with a `.e2e.yaml` extension is discoverable by the `vouchfx` CLI
+- Any file ending in `.e2e.yaml`; passing a directory discovers matching files recursively.
+
+### Use your application's Dockerfile
+
+For an inline suite, build your application image before running the test:
+
+```sh
+docker build -t my-backend:e2e -f ./app/Dockerfile.e2e ./app
+```
+
+Replace the example service's `image` with `my-backend:e2e` and set `httpPort` to
+the port your application listens on. The image must be available to the Docker
+daemon used by vouchfx. The inline runner starts images; it does not build them.
+
+If you already describe your backend in Compose, put `build.context` and optional
+`build.dockerfile` in that manifest and select it through
+`environment.source.driver: compose` and a separate binding configuration.
+Compose builds the application when vouchfx acquires the environment. Follow the
+[Dockerfile and Compose guide](compose-environments.md#build-your-backend-from-a-dockerfile)
+for the files, logical target bindings and readiness checks. A Dockerfile alone
+is not a source configuration.
 
 ## Running your test
 
@@ -275,7 +323,7 @@ The scenario's `total` is its wall-clock time from `scenario-started` to `scenar
 
 (Before the scenario line, you may see Aspire/topology startup messages such as "Distributed application started.")
 
-On an interactive terminal, the verdict is colour-coded and prefixed with a shape glyph: `[+]` for PASS, `[x]` for FAIL, `[!]` for ENV_ERROR, or `[?]` for INCONCLUSIVE. When output is piped (as in CI), glyphs and colours are omitted and you see plain text as shown above. The process exit code (0 on Pass) is the shell's `$?`, not a printed line.
+On an interactive terminal, the verdict is colour-coded and prefixed with a shape glyph: `[+]` for PASS, `[x]` for FAIL, `[!]` for ENV_ERROR, or `[?]` for INCONCLUSIVE. When output is piped (as in CI), glyphs and colours are omitted and you see plain text as shown above. Read the numeric process exit code immediately after the command: `$?` in Bash, or `$LASTEXITCODE` in PowerShell. PowerShell's `$?` is a Boolean success flag.
 
 **If something goes wrong:**
 
@@ -395,7 +443,7 @@ The `--json` output carries the schema version and a per-scenario diagnostics li
 
 ## Listing step types
 
-The `vouchfx list` command displays the engine's sealed Core step-type catalogue — all twenty-five `<family>.<provider>` step types compiled into this build. It reflects what the engine ships in the default CLI process. When additional providers are registered in-process (custom host or library API), the same catalogue export includes those types as well — there is no silent Core-only filter on the export path.
+The `vouchfx list` command displays the step-type catalogue sealed at startup. Without external providers it contains the twenty-five Core `<family>.<provider>` types shipped with this build. Since Core 1.2.0, the normal CLI also includes providers loaded from `--providers`, `VOUCHFX_PROVIDERS` and the default provider directory; see [external providers](external-providers.md). Providers registered through a custom host or library API are likewise included — there is no silent Core-only filter on the export path.
 
 ```bash
 # List all step types (default)
@@ -420,7 +468,7 @@ The `--json` output is a versioned catalogue document carrying the engine versio
 - `exactlyOneOfGroups` and `atLeastOneOfGroups` (arrays of field-name groups, for a type whose schema requires exactly one, or at least one, of a set of fields — e.g. `script.csharp`'s `[["code", "file"]]`). A field name that appears in one of these groups is deliberately excluded from `requiredFields`/`optionalFields`: it is neither unconditionally required nor freely optional, so listing it in either would misstate the constraint.
 - `captureSupported` (boolean; capture is a common language field and is supported on every fragment-backed type)
 - `familyIntent` (a short one-liner describing the family's purpose)
-- `tier` (`"core"` or `"community"`; every type `vouchfx list` reports is `"core"`, because the CLI ships only Core providers). It is `null` only when an in-process host builds the catalogue without saying which providers are Core — the engine never guesses a tier from a name.
+- `tier` (`"core"` for a bundled provider, `"community"` for a loaded external provider). The CLI reports both tiers when external providers are loaded. It is `null` only when an in-process host builds the catalogue without saying which providers are Core — the engine never guesses a tier from a name.
 - `supportedVerifyModes` (the `verifyMode` values the type accepts, as wire tokens: `["IMMEDIATE", "RETRY"]` for every type, since the engine owns the `RETRY` polling loop for all of them)
 - `docsUrl` (a link to the type's section of the [language reference](language-reference.md), e.g. `https://vouchfx.io/language-reference/#httprest`; `null` for a type that is not Core, which the reference does not document, and — like `tier` — `null` for every entry when the catalogue is built without a Core set at all)
 - `example` (a complete, minimal `.e2e.yaml` suite exercising one step of the type, as a YAML string; `null` for a type that is not Core, and — like `tier` and `docsUrl` — `null` for every entry when the catalogue is built without a Core set at all). It is exactly what `vouchfx scaffold` produces for that step, without the provenance comments, over the smallest environment the step needs: one service named `app` for the `http` and `metrics-assert` families, one dependency named after its kind (`postgres`, `kafka`, `mailpit`, …) for a type that targets a dependency, and none for `script.csharp`, `trace-expect.otlp` or `webhook-listen.http`, which target nothing declared. A Core type can also get `null`, when its step declares a `target` that this environment cannot supply: the engine withholds an example it knows would fail rather than publish it. No shipped Core type hits this today, because each one either has no `target` or targets a dependency the scaffolder can name after its kind; a future type whose family maps to no known dependency kind would. Every example passes `vouchfx validate`. The values are placeholders that validate, not a meaningful test; replace them before trusting the result. Because dependencies are named after their kind and step ids after their type, examples can be merged: those for `mq-publish.kafka` and `mq-expect.kafka` share one `kafka` dependency.
@@ -445,7 +493,7 @@ not be paired with this release. Earlier pre-releases may predate this change.
 
 ## Exporting the composed JSON Schema
 
-The `vouchfx schema` command emits the **composed** v1 JSON Schema that the engine uses for validation: the root language grammar merged with every registered provider fragment. Default output is stdout (pipe-friendly); use `--output` to write a file.
+The `vouchfx schema` command emits the **composed** JSON Schema: the selected root language grammar merged with every registered provider fragment. The default language is v1; use `--schema-version v2` to export v2. Default output is stdout (pipe-friendly); use `--output` to write a file.
 
 ```bash
 # Print the composed schema to stdout
@@ -454,9 +502,27 @@ vouchfx schema
 # Write to a file (parent directory must already exist)
 vouchfx schema --output ./composed-schema.json
 
+# Export the opt-in v2 language schema
+vouchfx schema --schema-version v2 --output ./composed-schema.v2.json
+
 # Pipe to a file
 vouchfx schema > composed-schema.json
 ```
+
+Exporting v2 does not change how a suite is interpreted. Select it in the file explicitly:
+
+```yaml
+metadata:
+  name: api-check-v2
+  schemaVersion: v2
+  telemetry: false
+```
+
+This fragment replaces only the suite's metadata; retain its environment and steps.
+The v2 language adds per-file telemetry suppression. If any selected v2 file sets
+`telemetry: false`, the CLI suppresses that invocation's aggregate. Omitting the
+language version retains v1; `telemetry: true` never grants telemetry consent.
+See the [v2 language specification](02_YAML_DSL_Specification_and_VSCode_Extension_Design.md#13-opt-in-language-schema-v2).
 
 Exit codes for `vouchfx schema`:
 
@@ -470,7 +536,7 @@ The exported document is draft 2020-12 JSON Schema and includes Core types such 
 
 ### Library API (in-process hosts)
 
-In-process hosts (MCP servers, custom runners) should call the public API in the **`Vouchfx.Engine.Compilation`** package rather than shelling out:
+Hosts that embed the engine, such as custom runners, can call the public API in the **`Vouchfx.Engine.Compilation`** package:
 
 - `Vouchfx.Engine.Compilation.Schema.EngineExport.ComposeSchemaJson(StepKindRegistry)` — composed schema JSON
 - `Vouchfx.Engine.Compilation.Schema.EngineExport.BuildCatalogue(StepKindRegistry, engineVersion?)` — catalogue document model
@@ -478,6 +544,8 @@ In-process hosts (MCP servers, custom runners) should call the public API in the
 - `EngineExport.SerializeCatalogue(...)` — same wire shape as `vouchfx list --json`
 
 Pass the same frozen `StepKindRegistry` the process uses for validation/run so the export always matches live registration. Incomplete metadata throws `CatalogueExportException` naming the offending step type.
+
+The official [vouchfx-mcp server](https://vouchfx-mcp.vouchfx.io/) uses its pinned CLI as a subprocess; it does not embed these engine APIs. Its offline schema resources come from the vendored engine pin.
 
 ## Coverage analysis (the Planner)
 

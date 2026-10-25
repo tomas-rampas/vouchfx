@@ -21,6 +21,12 @@ to published pre-releases on 2026-07-14.
 
 ## [Unreleased]
 
+## [1.2.1] — 2026-10-25
+
+### Security
+
+- Use patched MSAL Node 7.1.1 in the VS Code packaging toolchain for [GHSA-xcx6-jx8p-x3h5](https://github.com/AzureAD/microsoft-authentication-library-for-js/security/advisories/GHSA-xcx6-jx8p-x3h5). A scoped VSCE dependency override bridges Azure Identity's current MSAL 6.x requirement.
+
 ### Fixed
 
 - The GitLab CI template keeps the engine's exit code when a report is missing, warning instead of exiting 2. The engine writes no report when it discovers no scenario and exits 0 by policy, which the template had turned into a usage error; the GitHub workflow already only warned ([#639](https://github.com/tomas-rampas/vouchfx/issues/639)).

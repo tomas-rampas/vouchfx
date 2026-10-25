@@ -87,7 +87,7 @@ class GitLabDaemonRunnerTests(unittest.TestCase):
         prefix = r'''set -eu
 docker() {
   case "$1" in
-    create) printf 'runner-id\n' ;;
+    create) printf '%s\n' "$@" > "$CREATE_ARGUMENTS"; printf 'runner-id\n' ;;
     exec) case "$3" in bash) case "$5" in
       *"dotnet build"*) printf 'cli-build\n'; return "$BUILD_EXIT" ;;
       *) printf 'suite-run\n'; return "$RUN_EXIT" ;;
@@ -102,6 +102,7 @@ docker() {
                    VOUCHFX_DOTNET_IMAGE="sdk:fixture", VOUCHFX_FAIL_ON_ENV_ERROR="false",
                    VOUCHFX_FAIL_ON_INCONCLUSIVE="false", RUN_EXIT=str(run_exit),
                    BUILD_EXIT=str(build_exit), COPY_EXIT=str(copy_exit),
+                   CREATE_ARGUMENTS=str(Path(scratch) / "create-arguments"),
                    CLEANUP_MARKER=str(Path(scratch) / "cleanup-marker"))
         return subprocess.run([BASH, "-c", prefix + self.script], env=env,
                               capture_output=True, text=True, timeout=10)
@@ -110,6 +111,24 @@ docker() {
     def sequence(result):
         return [line for line in result.stdout.splitlines()
                 if line in ("environment-copy", "cli-build", "suite-run")]
+
+    def test_runner_uses_host_network(self):
+        with tempfile.TemporaryDirectory(prefix="vouchfx-gitlab-run-") as scratch:
+            result = self.run_runner(scratch)
+            self.assertEqual(0, result.returncode, "Runner fixture must succeed")
+            arguments = (Path(scratch) / "create-arguments").read_text().splitlines()
+            self.assertTrue(any(pair == ("--network", "host")
+                                for pair in zip(arguments, arguments[1:])),
+                            "Runner must use the daemon host network")
+
+    def test_runner_mounts_daemon_socket(self):
+        with tempfile.TemporaryDirectory(prefix="vouchfx-gitlab-run-") as scratch:
+            result = self.run_runner(scratch)
+            self.assertEqual(0, result.returncode, "Runner fixture must succeed")
+            arguments = (Path(scratch) / "create-arguments").read_text().splitlines()
+            self.assertTrue(any(pair == ("--volume", "/var/run/docker.sock:/var/run/docker.sock")
+                                for pair in zip(arguments, arguments[1:])),
+                            "Runner must mount the daemon socket at its standard location")
 
     def test_run_exit_and_reports_survive_product_failure(self):
         for code in (0, 1, 3, 4):

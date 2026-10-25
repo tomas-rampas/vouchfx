@@ -49,6 +49,12 @@ are Docker-free, so authoring and checking suites works on a machine without one
 .NET SDK can use the self-contained per-OS archives and MSI/deb/pkg installers available from the
 [latest stable release](https://github.com/tomas-rampas/vouchfx/releases/latest).
 
+**Testing .NET 8, 9 or 10 applications:** the CLI targets `net8.0`, while containerised applications
+carry their own runtimes. For the global tool, keep the .NET 8 runtime alongside SDK 9/10;
+self-contained distributions bundle it. Source builds use the .NET 8 SDK selected by `global.json`.
+See the [.NET compatibility table](https://vouchfx.io/getting-started/#net-8-9-and-10-compatibility)
+for host, application and project-service requirements.
+
 Core `1.0.0` introduced bundled Aspire DCP tools for Windows x64, Linux x64 (glibc),
 macOS x64 and macOS ARM64. The installed CLI needs no source checkout, Aspire workload or warmed
 NuGet cache. Legacy `1.0.0-rc.6` packages still need external matching tools; see
@@ -89,6 +95,11 @@ step, reports a verdict and tears everything down. The annotated original is
 [`examples/getting-started/hello-world.e2e.yaml`](https://github.com/tomas-rampas/vouchfx/blob/main/examples/getting-started/hello-world.e2e.yaml);
 the [Getting Started guide](https://vouchfx.io/getting-started/) walks through it in 60 minutes.
 
+**Your own Dockerfile:** use native Compose `build.context` and `build.dockerfile`
+through an owned [Compose environment](https://vouchfx.io/compose-environments/#build-your-backend-from-a-dockerfile).
+For inline services, run `docker build` first and reference the resulting image with
+`image:`. A Dockerfile alone is not an `environment.source`.
+
 **The document shape.** Four top-level sections, of which only `steps` is mandatory:
 
 | Section | Purpose |
@@ -111,7 +122,7 @@ backoff (Polly v8) — authors never write `Thread.Sleep`.
 - **Four verdicts, never three.** **Pass**, **Fail**, **Environment error** (unhealthy container,
   image-pull or seed failure) and **Inconclusive** (timeout, unmet capture) stay distinct through the
   taxonomy, the reports and the exit codes. **Only `Fail` breaks CI by default** — conflating an
-  environment error with a defect destroys trust in the tool. Four deliberate exceptions serve that
+  environment error with a defect destroys trust in the tool. Five deliberate exceptions serve that
   same argument rather than retracting it. A suite that declares a `security:` block the engine cannot
   confirm exits non-zero whatever the flags say, because that is an assertion the author wrote, not an
   infrastructure flake, and treating it as opt-in-only would hand a team who forgot a flag a green
@@ -120,7 +131,8 @@ backoff (Polly v8) — authors never write `Thread.Sleep`.
   before any scenario ran, for the same reason: a suite it refused outright verified nothing either.
   So does a scenario refused because a provider threw at one of the engine's SDK surfaces — a fault in
   the testing machinery rather than in the system under test, which verified nothing whatever its
-  siblings managed. The rule is keyed on *where* the fault arose, not on whose it is: usually a
+  siblings managed. Typed authoring, schema and compilation refusals also prevent exit 0, even beside
+  a passing sibling; an already-selected non-zero code is preserved. The provider-surface rule is keyed on *where* the fault arose, not on whose it is: usually a
   provider defect, sometimes a dispatch failure before the provider's own body ran, or a filesystem or
   memory condition that may be the host's. The diagnostic says which. A run that executed nothing
   because its topology never came up is an environment error, keeps that verdict's own gate, and still
@@ -149,8 +161,9 @@ backoff (Polly v8) — authors never write `Thread.Sleep`.
 
 Steps are typed `<family>.<provider>` — *family* is intent, *provider* is technology
 (`db-assert.postgres`, `mq-publish.kafka`). Providers are **compile-time, source-level plugins**: add a
-project, implement the contract, and a reflective registry discovers it at startup — no runtime loader,
-no sandbox. **Twenty-five Core providers ship across eleven families:**
+project, implement the contract, and a reflective registry discovers it at startup. Since Core 1.2.0,
+the CLI also loads external provider assemblies from configured directories; see
+[external providers](https://vouchfx.io/external-providers/). Providers run as trusted code with no sandbox. **Twenty-five Core providers ship across eleven families:**
 
 | Family | Providers |
 |---|---|
@@ -173,7 +186,7 @@ that have passed the published rubric. Writing your own is documented in the hub
 [implementation guide](https://providers.vouchfx.io/docs/implementing-a-provider.html).
 
 Install published Community providers with `vouchfx providers install <id>`, or load trusted external
-provider DLLs with `--providers <directory>` without rebuilding the CLI (both unreleased). The [external provider guide](https://vouchfx.io/external-providers/) covers directory layout,
+provider DLLs with `--providers <directory>` without rebuilding the CLI. The [external provider guide](https://vouchfx.io/external-providers/) covers directory layout,
 shared dependencies and the trust boundary.
 
 ## Running suites
@@ -190,7 +203,7 @@ vouchfx run ./tests --html ./report.html --junit ./results.xml
 
 Five Docker-free subcommands round out the loop: `vouchfx validate` runs the full compile-time pipeline
 (schema, parse, AST, provider binding, Roslyn) without starting anything; `vouchfx list` prints the
-sealed step-type catalogue (with shape-level fields on `--json`); `vouchfx schema` emits the
+startup-sealed step-type catalogue, including configured external providers (with shape-level fields on `--json`); `vouchfx schema` emits the
 composed v1 JSON Schema; `vouchfx scaffold` generates machine-drafted `.e2e.yaml` skeletons from a structured JSON intent; and `vouchfx plan` performs coverage-and-gap analysis over your declared suites,
 run history, and available providers, emitting findings for coverage gaps (suite never run, step never
 exercised, dependency not asserted, vocabulary missing, service missing HTTP step), history-health signals

@@ -247,6 +247,19 @@ drives the same engine VSCode uses (`vscode-textmate` + `vscode-oniguruma`),
 confirming the embedded C# region starts at the `code:` body and stops at the
 block-scalar dedent boundary.
 
+### Packaging dependency override
+
+`package.json` temporarily overrides `@azure/msal-node` beneath `@azure/identity`
+to resolve [GHSA-xcx6-jx8p-x3h5](https://github.com/advisories/GHSA-xcx6-jx8p-x3h5).
+The upstream Identity dependency range does not yet include the patched MSAL major.
+The override applies to the development packaging toolchain; the packaged extension
+includes only its `yaml` runtime dependency.
+
+Remove the override when upstream Identity accepts a patched MSAL version. Verify
+that change with `npm ci`, `npm audit`, lint, compilation, tests and VSIX packaging.
+The compatibility review covers module/API loading and credential construction;
+it does not establish live Azure authentication compatibility.
+
 ## Licence
 
 Apache-2.0.
