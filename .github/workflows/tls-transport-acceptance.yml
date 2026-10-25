@@ -51,6 +51,15 @@ jobs:
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: '${{ inputs.dotnet_sdk }}.x'
+
+      - name: Test runtime-isolation guard safety
+        shell: pwsh
+        run: ./scripts/ci/test-select-dotnet-runtime.ps1
+      - name: Keep only the selected SDK and shared frameworks
+        env:
+          EXPECTED_DOTNET: '${{ inputs.dotnet_sdk }}'
+        shell: pwsh
+        run: ./scripts/ci/select-dotnet-runtime.ps1 -ExpectedDotnet $env:EXPECTED_DOTNET
       - name: Require the selected SDK and runtime only
         env:
           EXPECTED_DOTNET: ${{ inputs.dotnet_sdk }}

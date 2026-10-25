@@ -32,7 +32,7 @@ It is **not** a unit-test framework and **not** a UI/browser tool.
 Current source builds with .NET 8, 9 and 10 SDKs and retains a `net8.0` binary baseline.
 Framework-dependent executables use major-version roll-forward when .NET 8 is absent;
 SDK libraries can be consumed by .NET 8, 9 and 10 projects. The
-[compatibility matrix](.github/workflows/dotnet-compatibility.yml) builds and runs
+[compatibility matrix](https://github.com/tomas-rampas/vouchfx/blob/main/.github/workflows/dotnet-compatibility.yml) builds and runs
 Docker-free tests with each SDK/runtime installed in isolation. Previously published
 packages retain the runtime policy with which they were built.
 

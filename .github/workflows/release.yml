@@ -144,6 +144,15 @@ jobs:
         with:
           dotnet-version: "10.0.x"
 
+      - name: Test runtime-isolation guard safety
+        shell: pwsh
+        run: ./scripts/ci/test-select-dotnet-runtime.ps1
+      - name: Keep only the selected SDK and shared frameworks
+        env:
+          EXPECTED_DOTNET: '10.0'
+        shell: pwsh
+        run: ./scripts/ci/select-dotnet-runtime.ps1 -ExpectedDotnet $env:EXPECTED_DOTNET
+
       - name: Require the isolated .NET 10 product SDK
         run: |
           set -euo pipefail
