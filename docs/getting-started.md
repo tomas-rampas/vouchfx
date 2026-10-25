@@ -57,6 +57,8 @@ intentionally testing a pre-release. Self-contained platform archives and instal
 
 The global-tool installer places the `vouchfx` command in `~/.dotnet/tools` (`%USERPROFILE%\.dotnet\tools` on Windows). If your shell cannot find `vouchfx` afterwards, add that directory to your `PATH` or open a fresh shell.
 
+**Using vouchfx-mcp?** Keep its CLI at the version required by the installed MCP package. Published MCP 1.1.0 [pins Core 1.2.0](https://github.com/tomas-rampas/vouchfx-mcp/blob/v1.1.0/ENGINE_PIN), whose full version is `1.2.0+0af21de5bd0a4e91ca002e03e6c256bc4e8ca4e8`; it does not accept Core 1.2.1. If you also need another Core version, install the MCP-compatible CLI in a separate tool directory and put that directory first on `PATH` for the MCP server process.
+
 ### Native installers
 
 The GitHub release also provides a Windows x64 MSI, a Linux x64 Debian package and a macOS
@@ -201,7 +203,7 @@ You can save it anywhere in your project tree. For example:
 
 - `examples/getting-started/hello-world.e2e.yaml` (in the vouchfx repo itself, as shipped)
 - `tests/e2e/hello-world.e2e.yaml` (a typical project layout)
-- Any directory with a `.e2e.yaml` extension is discoverable by the `vouchfx` CLI
+- Any file ending in `.e2e.yaml`; passing a directory discovers matching files recursively.
 
 ### Use your application's Dockerfile
 
@@ -289,7 +291,7 @@ The scenario's `total` is its wall-clock time from `scenario-started` to `scenar
 
 (Before the scenario line, you may see Aspire/topology startup messages such as "Distributed application started.")
 
-On an interactive terminal, the verdict is colour-coded and prefixed with a shape glyph: `[+]` for PASS, `[x]` for FAIL, `[!]` for ENV_ERROR, or `[?]` for INCONCLUSIVE. When output is piped (as in CI), glyphs and colours are omitted and you see plain text as shown above. The process exit code (0 on Pass) is the shell's `$?`, not a printed line.
+On an interactive terminal, the verdict is colour-coded and prefixed with a shape glyph: `[+]` for PASS, `[x]` for FAIL, `[!]` for ENV_ERROR, or `[?]` for INCONCLUSIVE. When output is piped (as in CI), glyphs and colours are omitted and you see plain text as shown above. Read the numeric process exit code immediately after the command: `$?` in Bash, or `$LASTEXITCODE` in PowerShell. PowerShell's `$?` is a Boolean success flag.
 
 **If something goes wrong:**
 
@@ -434,7 +436,7 @@ The `--json` output is a versioned catalogue document carrying the engine versio
 - `exactlyOneOfGroups` and `atLeastOneOfGroups` (arrays of field-name groups, for a type whose schema requires exactly one, or at least one, of a set of fields — e.g. `script.csharp`'s `[["code", "file"]]`). A field name that appears in one of these groups is deliberately excluded from `requiredFields`/`optionalFields`: it is neither unconditionally required nor freely optional, so listing it in either would misstate the constraint.
 - `captureSupported` (boolean; capture is a common language field and is supported on every fragment-backed type)
 - `familyIntent` (a short one-liner describing the family's purpose)
-- `tier` (`"core"` or `"community"`; every type `vouchfx list` reports is `"core"`, because the CLI ships only Core providers). It is `null` only when an in-process host builds the catalogue without saying which providers are Core — the engine never guesses a tier from a name.
+- `tier` (`"core"` for a bundled provider, `"community"` for a loaded external provider). The CLI reports both tiers when external providers are loaded. It is `null` only when an in-process host builds the catalogue without saying which providers are Core — the engine never guesses a tier from a name.
 - `supportedVerifyModes` (the `verifyMode` values the type accepts, as wire tokens: `["IMMEDIATE", "RETRY"]` for every type, since the engine owns the `RETRY` polling loop for all of them)
 - `docsUrl` (a link to the type's section of the [language reference](language-reference.md), e.g. `https://vouchfx.io/language-reference/#httprest`; `null` for a type that is not Core, which the reference does not document, and — like `tier` — `null` for every entry when the catalogue is built without a Core set at all)
 - `example` (a complete, minimal `.e2e.yaml` suite exercising one step of the type, as a YAML string; `null` for a type that is not Core, and — like `tier` and `docsUrl` — `null` for every entry when the catalogue is built without a Core set at all). It is exactly what `vouchfx scaffold` produces for that step, without the provenance comments, over the smallest environment the step needs: one service named `app` for the `http` and `metrics-assert` families, one dependency named after its kind (`postgres`, `kafka`, `mailpit`, …) for a type that targets a dependency, and none for `script.csharp`, `trace-expect.otlp` or `webhook-listen.http`, which target nothing declared. A Core type can also get `null`, when its step declares a `target` that this environment cannot supply: the engine withholds an example it knows would fail rather than publish it. No shipped Core type hits this today, because each one either has no `target` or targets a dependency the scaffolder can name after its kind; a future type whose family maps to no known dependency kind would. Every example passes `vouchfx validate`. The values are placeholders that validate, not a meaningful test; replace them before trusting the result. Because dependencies are named after their kind and step ids after their type, examples can be merged: those for `mq-publish.kafka` and `mq-expect.kafka` share one `kafka` dependency.
@@ -459,7 +461,7 @@ not be paired with this release. Earlier pre-releases may predate this change.
 
 ## Exporting the composed JSON Schema
 
-The `vouchfx schema` command emits the **composed** v1 JSON Schema that the engine uses for validation: the root language grammar merged with every registered provider fragment. Default output is stdout (pipe-friendly); use `--output` to write a file.
+The `vouchfx schema` command emits the **composed** JSON Schema: the selected root language grammar merged with every registered provider fragment. The default language is v1; use `--schema-version v2` to export v2. Default output is stdout (pipe-friendly); use `--output` to write a file.
 
 ```bash
 # Print the composed schema to stdout
@@ -468,9 +470,27 @@ vouchfx schema
 # Write to a file (parent directory must already exist)
 vouchfx schema --output ./composed-schema.json
 
+# Export the opt-in v2 language schema
+vouchfx schema --schema-version v2 --output ./composed-schema.v2.json
+
 # Pipe to a file
 vouchfx schema > composed-schema.json
 ```
+
+Exporting v2 does not change how a suite is interpreted. Select it in the file explicitly:
+
+```yaml
+metadata:
+  name: api-check-v2
+  schemaVersion: v2
+  telemetry: false
+```
+
+This fragment replaces only the suite's metadata; retain its environment and steps.
+The v2 language adds per-file telemetry suppression. If any selected v2 file sets
+`telemetry: false`, the CLI suppresses that invocation's aggregate. Omitting the
+language version retains v1; `telemetry: true` never grants telemetry consent.
+See the [v2 language specification](02_YAML_DSL_Specification_and_VSCode_Extension_Design.md#13-opt-in-language-schema-v2).
 
 Exit codes for `vouchfx schema`:
 
@@ -484,7 +504,7 @@ The exported document is draft 2020-12 JSON Schema and includes Core types such 
 
 ### Library API (in-process hosts)
 
-In-process hosts (MCP servers, custom runners) should call the public API in the **`Vouchfx.Engine.Compilation`** package rather than shelling out:
+Hosts that embed the engine, such as custom runners, can call the public API in the **`Vouchfx.Engine.Compilation`** package:
 
 - `Vouchfx.Engine.Compilation.Schema.EngineExport.ComposeSchemaJson(StepKindRegistry)` — composed schema JSON
 - `Vouchfx.Engine.Compilation.Schema.EngineExport.BuildCatalogue(StepKindRegistry, engineVersion?)` — catalogue document model
@@ -492,6 +512,8 @@ In-process hosts (MCP servers, custom runners) should call the public API in the
 - `EngineExport.SerializeCatalogue(...)` — same wire shape as `vouchfx list --json`
 
 Pass the same frozen `StepKindRegistry` the process uses for validation/run so the export always matches live registration. Incomplete metadata throws `CatalogueExportException` naming the offending step type.
+
+The official [vouchfx-mcp server](https://vouchfx-mcp.vouchfx.io/) uses its pinned CLI as a subprocess; it does not embed these engine APIs. Its offline schema resources come from the vendored engine pin.
 
 ## Coverage analysis (the Planner)
 
