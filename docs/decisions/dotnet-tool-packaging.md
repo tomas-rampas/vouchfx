@@ -2,7 +2,7 @@
 
 **Status:** published in stable Core `1.0.0`; legacy `1.0.0-rc.6` remains cache-dependent.
 
-**Updated:** 2026-10-13. Original tool decision: 2026-06-25.
+**Updated:** 2026-10-25. Original tool decision: 2026-06-25.
 
 ## Problem and evidence
 
@@ -18,6 +18,13 @@ allowed topology execution. Neither result proves the published tool works stand
 Keep the framework-dependent `net8.0` global tool (`PackAsTool`, `ToolCommandName: vouchfx`) and
 self-contained multi-file archives/installers. Do not use single-file publishing: provider discovery
 needs `Assembly.Location`.
+
+Current source enables major runtime roll-forward, so the same `net8.0` tool runs on .NET 8,
+9 and 10. Source builds and installed-tool smoke tests cover each SDK/runtime in isolation.
+Release packaging continues to use the .NET 8 SDK. Packing identical managed/native payloads
+with SDK 8.0.426 produced 246,583,871 bytes; SDK 10.0.401 produced 252,322,360 bytes because of
+different ZIP compression, exceeding the release ceiling below. Building and testing with a
+newer SDK does not qualify its package for publication; the release size gate still applies.
 
 The tool contains the complete pinned Aspire 13.4.2 native tools trees for `win-x64`, glibc
 `linux-x64`, `osx-x64` and `osx-arm64`. RID-specific publications contain only their own tree.
