@@ -21,7 +21,7 @@ to published pre-releases on 2026-07-14.
 
 ## [Unreleased]
 
-## [1.2.1] — Unreleased
+## [1.2.1] — 2026-10-25
 
 ### Security
 

@@ -139,7 +139,7 @@ dotnet build src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj -c Release
 A test file has four top-level sections; only `steps` is mandatory:
 
 - **`metadata`** — name, owner, tags, description. Used for reporting and filtering; no execution effect.
-- **`environment`** — `services` (containers under test), `dependencies` (managed Aspire resources like databases), optional `seed` (SQL/fixtures applied after topology is healthy).
+- **`environment`** — inline `services` (containers under test), `dependencies` (managed Aspire resources like databases), optional `seed` (SQL/fixtures applied after topology is healthy); or an exclusive `source` selecting an owned Compose environment.
 - **`variables`** — optional constants pre-loaded into the shared context, available to all steps.
 - **`steps`** — the ordered list of actions and assertions (HTTP calls, database queries, scripts, listeners).
 
@@ -202,6 +202,26 @@ You can save it anywhere in your project tree. For example:
 - `examples/getting-started/hello-world.e2e.yaml` (in the vouchfx repo itself, as shipped)
 - `tests/e2e/hello-world.e2e.yaml` (a typical project layout)
 - Any directory with a `.e2e.yaml` extension is discoverable by the `vouchfx` CLI
+
+### Use your application's Dockerfile
+
+For an inline suite, build your application image before running the test:
+
+```sh
+docker build -t my-backend:e2e -f ./app/Dockerfile.e2e ./app
+```
+
+Replace the example service's `image` with `my-backend:e2e` and set `httpPort` to
+the port your application listens on. The image must be available to the Docker
+daemon used by vouchfx. The inline runner starts images; it does not build them.
+
+If you already describe your backend in Compose, put `build.context` and optional
+`build.dockerfile` in that manifest and select it through
+`environment.source.driver: compose` and a separate binding configuration.
+Compose builds the application when vouchfx acquires the environment. Follow the
+[Dockerfile and Compose guide](compose-environments.md#build-your-backend-from-a-dockerfile)
+for the files, logical target bindings and readiness checks. A Dockerfile alone
+is not a source configuration.
 
 ## Running your test
 
