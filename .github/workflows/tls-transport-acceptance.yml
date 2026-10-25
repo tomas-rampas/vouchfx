@@ -2,12 +2,23 @@ name: TLS transport acceptance
 on:
   workflow_dispatch:
     inputs:
+      dotnet_sdk:
+        description: Isolated SDK/runtime line to test
+        required: false
+        default: '8.0'
+        type: choice
+        options: ['8.0', '9.0', '10.0']
       reviewed_sha:
         description: Exact source commit selected for manual acceptance; review approval is checked separately
         required: true
         type: string
   workflow_call:
     inputs:
+      dotnet_sdk:
+        description: Isolated SDK/runtime line to test
+        required: false
+        default: '8.0'
+        type: string
       reviewed_sha:
         description: Exact source commit selected by the calling CI or release workflow
         required: true
@@ -16,7 +27,7 @@ permissions:
   contents: read
 jobs:
   transport:
-    name: Hosted TLS (${{ matrix.os }})
+    name: Hosted TLS (${{ matrix.os }})${{ inputs.dotnet_sdk != '8.0' && format(' .NET {0}', inputs.dotnet_sdk) || '' }}
     strategy:
       fail-fast: false
       matrix:
@@ -32,9 +43,37 @@ jobs:
         with:
           persist-credentials: false
           ref: ${{ inputs.reviewed_sha }}
+      - name: Configure isolated SDK and apphost roots
+        shell: bash
+        run: |
+          printf 'DOTNET_INSTALL_DIR=%s/dotnet-compatibility\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          printf 'DOTNET_ROOT_X64=%s/dotnet-compatibility\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
-          dotnet-version: '8.0.x'
+          dotnet-version: '${{ inputs.dotnet_sdk }}.x'
+
+      - name: Test runtime-isolation guard safety
+        shell: pwsh
+        run: ./scripts/ci/test-select-dotnet-runtime.ps1
+      - name: Keep only the selected SDK and shared frameworks
+        env:
+          EXPECTED_DOTNET: '${{ inputs.dotnet_sdk }}'
+        shell: pwsh
+        run: ./scripts/ci/select-dotnet-runtime.ps1 -ExpectedDotnet $env:EXPECTED_DOTNET
+      - name: Require the selected SDK and runtime only
+        env:
+          EXPECTED_DOTNET: ${{ inputs.dotnet_sdk }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_DOTNET" =~ ^(8|9|10)\.0$ ]]
+          [[ "$(dotnet --version)" == "$EXPECTED_DOTNET".* ]]
+          runtimes="$(dotnet --list-runtimes)"
+          printf '%s\n' "$runtimes"
+          [[ "$runtimes" == *Microsoft.NETCore.App* ]]
+          while read -r _framework version _location; do
+            [[ "$version" == "$EXPECTED_DOTNET".* ]]
+          done <<< "$runtimes"
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.12'
@@ -62,7 +101,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: tls-transport-${{ matrix.os }}
+          name: tls-transport-${{ matrix.os }}${{ inputs.dotnet_sdk != '8.0' && format('-net{0}', inputs.dotnet_sdk) || '' }}
           path: ${{ runner.temp }}/vouchfx-tls-acceptance
           if-no-files-found: error
           retention-days: 14

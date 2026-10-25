@@ -27,13 +27,23 @@ It is **not** a unit-test framework and **not** a UI/browser tool.
 > contract. See the [roadmap](https://vouchfx.io/roadmap/) for release checks and
 > planned capabilities.
 
+## .NET compatibility
+
+Current source builds with .NET 8, 9 and 10 SDKs and retains a `net8.0` binary baseline.
+Framework-dependent executables use major-version roll-forward when .NET 8 is absent;
+SDK libraries can be consumed by .NET 8, 9 and 10 projects. The
+[compatibility matrix](https://github.com/tomas-rampas/vouchfx/blob/main/.github/workflows/dotnet-compatibility.yml) builds and runs
+Docker-free tests with each SDK/runtime installed in isolation. Previously published
+packages retain the runtime policy with which they were built.
+
 ## Install
 
 ```bash
 dotnet tool install --global vouchfx
 ```
 
-Requires the [.NET 8 SDK](https://dotnet.microsoft.com/en-us/download/dotnet/8.0). Running a suite also
+Current source supports the [.NET 8, 9 and 10 SDKs](https://dotnet.microsoft.com/download/dotnet).
+Previously published packages may still require .NET 8. Running a suite also
 needs a Docker daemon, since vouchfx starts real containers — but `vouchfx validate` and `vouchfx list`
 are Docker-free, so authoring and checking suites works on a machine without one. Machines without a
 .NET SDK can use the self-contained per-OS archives and MSI/deb/pkg installers available from the
@@ -317,7 +327,7 @@ storage locations.
 
 ## Building from source
 
-**Prerequisites:** the .NET 8 SDK (pinned in `global.json`) and, for the integration tests only, a
+**Prerequisites:** a .NET 8, 9 or 10 SDK (`global.json` sets the minimum and roll-forward policy) and, for the integration tests only, a
 running Docker daemon. The unit tests require the SDK but do not need Docker.
 
 ```bash

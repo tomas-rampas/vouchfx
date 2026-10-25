@@ -16,18 +16,26 @@ This guide focuses on the essentials. For architecture, the provider model, secr
 
 **What you need on your machine.**
 
-### .NET 8 SDK
+### .NET 8, 9 or 10 SDK
 
-The vouchfx engine and CLI target **`net8.0`**. The repository selects its build SDK separately in `global.json`. Check the SDKs and runtimes installed on your machine:
+Current source retains a **.NET 8** binary baseline and supports building and running with
+the **.NET 8, 9 and 10 SDKs**. The repository selects its build SDK separately in `global.json`.
+Check the SDKs and runtimes installed on your machine:
 
 ```bash
 dotnet --list-sdks
 dotnet --list-runtimes
 ```
 
-Building from source requires an `8.0.x` SDK satisfying `global.json` (currently 8.0.424 or later). Its `latestFeature` policy stays within .NET 8; it does not select SDK 9 or 10. Run `dotnet --version` from the repository to check the selected SDK. See Microsoft's [SDK selection rules](https://learn.microsoft.com/en-us/dotnet/core/tools/global-json#rollforward).
+Use SDK 8.0.424 or a later stable .NET 8, 9 or 10 SDK. `global.json` prefers a compatible
+.NET 8 SDK when installed and permits a higher major when it is absent. Executables built from
+this source use runtime `RollForward=Major`, so they also run on .NET 9 or 10 without .NET 8.
+Library packages continue to expose `net8.0` assets, which .NET 9 and 10 projects can reference.
+Older published tools retain their original runtime requirements; install .NET 8 alongside a
+newer SDK when using a release that predates this policy.
 
-The NuGet global tool needs a .NET SDK for installation and the .NET 8 runtime for execution. If you only have SDK 9 or 10, [install .NET 8](https://dotnet.microsoft.com/en-us/download/dotnet/8.0) alongside it, or use a self-contained distribution as described below. SDKs and runtimes install side by side.
+Run `dotnet --version` from the repository to check the selected SDK. See Microsoft's
+[SDK selection rules](https://learn.microsoft.com/en-us/dotnet/core/tools/global-json#rollforward).
 
 ### .NET 8, 9 and 10 compatibility
 
@@ -35,15 +43,18 @@ The runtime used by vouchfx and the runtime used by your application are separat
 
 | Use case | .NET 8 | .NET 9 and 10 |
 |----------|--------|---------------|
-| Run the NuGet global tool | Uses the installed .NET 8 runtime. | Keep the .NET 8 runtime alongside your newer SDK/runtime. A newer major runtime alone does not satisfy the tool's default runtime requirement. |
+| Run a global tool built from current source | Uses the installed .NET 8 runtime. | Rolls forward to the installed .NET 9 or 10 runtime when .NET 8 is absent. Older published packages retain their original runtime policy. |
 | Run a self-contained archive or native installer | Uses its bundled runtime. | Uses its bundled runtime; no machine-wide .NET installation is required for the CLI. |
-| Build vouchfx from source | Use the SDK selected by `global.json`. | The supported source build still selects SDK 8; install it alongside SDK 9/10. |
+| Build vouchfx from source | Use SDK 8.0.424 or later. | `global.json` permits SDK 9 or 10 when a compatible .NET 8 SDK is absent. |
 | Test an application packaged as a container image | The image supplies the application's runtime. | The image supplies the application's runtime, independently of vouchfx's runtime. |
 | Test an application through `environment.services[].project` | Install the SDK/runtime required by that application. | Install the matching SDK/runtime and ensure the application's SDK selection allows its target framework. |
 
 For applications targeting .NET 8, 9 or 10, container images keep the application's build and runtime requirements inside its image. This is the same protocol-based testing model used for applications written in other languages. A `project:` service instead runs through Aspire's project hosting and needs the application's toolchain on the host; the CLI's bundled runtime does not provide that toolchain. A `global.json` selecting SDK 8 cannot build a `net9.0` or `net10.0` application.
 
-The engine does not currently multi-target `net8.0;net9.0;net10.0`. CI's .NET 10 analyser job is advisory and does not establish a three-runtime test matrix. Microsoft's [runtime selection rules](https://learn.microsoft.com/en-us/dotnet/core/versions/selection) explain why a framework-dependent .NET 8 tool does not automatically use a newer major runtime.
+The engine keeps one `net8.0` asset baseline. Compatibility workflows test the SDKs and runtimes
+in isolation; the separate .NET 10 analyser job remains advisory. Microsoft's
+[runtime selection rules](https://learn.microsoft.com/en-us/dotnet/core/versions/selection)
+describe the explicit major roll-forward policy used by executables built from current source.
 
 Microsoft lists .NET 8 and .NET 9 support ending on 10 November 2026, and .NET 10 support ending on 14 November 2028. These are Microsoft's runtime lifecycle dates; see the [official support policy](https://dotnet.microsoft.com/en-us/platform/support/policy) when choosing your application's runtime.
 
@@ -676,7 +687,7 @@ Once you're comfortable with the built-in steps, you can write your own. See the
 
 You now have:
 
-1. ✓ Verified the .NET 8 SDK and Docker daemon are installed.
+1. ✓ Verified a supported .NET SDK and Docker daemon are installed.
 2. ✓ Installed the `vouchfx` CLI (or built it from source).
 3. ✓ Authored a minimal `.e2e.yaml` test file.
 4. ✓ Run the test and seen a **PASS** verdict.
