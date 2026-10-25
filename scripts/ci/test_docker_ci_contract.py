@@ -201,6 +201,25 @@ source "$1"
         self.assertNotIn("paths", data["on"]["push"])
         self.assertNotIn("paths", data["on"]["pull_request"])
 
+    def test_all_solution_test_lanes_bound_cross_project_contention(self):
+        compatibility = ROOT / ".github/workflows/dotnet-compatibility.yml"
+        lanes = [
+            (WORKFLOW, "build", "Unit tests (requires!=docker)"),
+            (WORKFLOW, "windows-unit", "Unit tests (requires!=docker)"),
+            (WORKFLOW, "integration", TEST_NAME),
+            (compatibility, "compatibility", "Docker-free tests"),
+            (compatibility, "docker", "All Docker integration tests (requires=docker)"),
+        ]
+        for path, job, name in lanes:
+            with self.subTest(workflow=path.name, job=job):
+                current = step(name, workflow(path), job_name=job)
+                command = shlex.split(current["run"])
+                self.assertEqual(["dotnet", "test", "vouchfx.sln"], command[:3])
+                self.assertIn("-m:1", command)
+                self.assertIn("--no-build", command)
+                self.assertNotIn("if", current)
+                self.assertNotIn("continue-on-error", current)
+
     def test_success_visits_every_image(self):
         _, _, calls, _ = self.run_case("success", {"one": [reply()], "quay.io/two": [reply()]}, tally=(0, 0))
         self.assertEqual(2, sum(c["command"] == "docker" for c in calls))

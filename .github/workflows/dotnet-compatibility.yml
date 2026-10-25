@@ -81,7 +81,9 @@ jobs:
         run: dotnet build vouchfx.sln -c Release --no-restore -warnaserror
 
       - name: Docker-free tests
-        run: dotnet test vouchfx.sln -c Release --no-build --filter "requires!=docker"
+        # Match the baseline lanes' scheduling bound: concurrent solution test
+        # hosts can starve real Roslyn child processes of their compile budget.
+        run: dotnet test vouchfx.sln -m:1 -c Release --no-build --filter "requires!=docker"
 
 
       - name: Pack and run the installed CLI
