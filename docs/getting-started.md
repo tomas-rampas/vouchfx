@@ -16,15 +16,21 @@ This guide focuses on the essentials. For architecture, the provider model, secr
 
 **What you need on your machine.**
 
-### .NET 8 SDK
+### .NET 8, 9 or 10 SDK
 
-vouchfx targets **.NET 8 LTS**. Check your SDK version:
+Current source retains a **.NET 8** binary baseline and supports building and running with
+the **.NET 8, 9 and 10 SDKs**. Check your SDK version:
 
 ```bash
 dotnet --version
 ```
 
-You should see an `8.0.x` version (8.0.424 or later). Building from source requires an 8.0.x SDK — `global.json` pins it — and the packaged tool needs the .NET 8 *runtime* (included with the SDK); a newer major SDK alone (9.x or later) satisfies neither. If you only have a newer version, [install .NET 8.0 LTS](https://dotnet.microsoft.com/en-us/download/dotnet/8.0) alongside it — SDKs and runtimes install side by side.
+Use SDK 8.0.424 or a later stable .NET 8, 9 or 10 SDK. `global.json` prefers a compatible
+.NET 8 SDK when installed and permits a higher major when it is absent. Executables built from
+this source use runtime `RollForward=Major`, so they also run on .NET 9 or 10 without .NET 8.
+Library packages continue to expose `net8.0` assets, which .NET 9 and 10 projects can reference.
+Older published tools retain their original runtime requirements; install .NET 8 alongside a
+newer SDK when using a release that predates this policy.
 
 ### Docker daemon
 
@@ -613,7 +619,7 @@ Once you're comfortable with the built-in steps, you can write your own. See the
 
 You now have:
 
-1. ✓ Verified the .NET 8 SDK and Docker daemon are installed.
+1. ✓ Verified a supported .NET SDK and Docker daemon are installed.
 2. ✓ Installed the `vouchfx` CLI (or built it from source).
 3. ✓ Authored a minimal `.e2e.yaml` test file.
 4. ✓ Run the test and seen a **PASS** verdict.

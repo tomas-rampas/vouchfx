@@ -5,6 +5,9 @@
     <VouchfxEngineVersion Condition="'$(Version)' != ''">$(Version)</VouchfxEngineVersion>
     <VouchfxEngineVersion Condition="'$(VouchfxEngineVersion)' == ''">1.0.7</VouchfxEngineVersion>
     <TargetFramework>net8.0</TargetFramework>
+    <!-- Retain the .NET 8 API baseline while allowing the CLI, test hosts and
+         executable fixtures to run when only a newer major runtime is installed. -->
+    <RollForward>Major</RollForward>
     <LangVersion>11</LangVersion>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>

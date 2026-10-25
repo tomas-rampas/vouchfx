@@ -17,7 +17,9 @@ dotnet tool update --global vouchfx
 
 These commands select the latest stable release. For intentional preview validation, select the matching prerelease version explicitly.
 
-Requires the .NET 8 SDK and a running Docker engine with Linux containers. This package includes
+Requires the .NET 8, 9 or 10 SDK and a running Docker engine with Linux containers. The tool keeps
+a `net8.0` binary baseline and rolls forward when only a newer supported runtime is installed.
+This package includes
 the matching Aspire DCP tools for Windows x64, Linux x64 (glibc), macOS x64 and macOS ARM64;
 no source checkout or Aspire restore is required. Keep the complete installed payload. An explicit
 `ASPIRE_DCP_PATH` still selects an external matching tools directory.
