@@ -366,6 +366,26 @@ on GitLab — so artefacts are available precisely when a suite does not pass:
   When the HTML renderer could not read a line, the report states how many after its run summary
   and warns that it may be incomplete.
 
+### Build your test backend
+
+An inline service's `image:` must be available locally or pullable from a registry
+under the suite's image-pull policy. Build your custom Dockerfile in an earlier
+CI step, or publish the image to a registry the runner can access:
+
+```sh
+docker build -t my-backend:e2e -f ./app/Dockerfile.e2e ./app
+vouchfx run ./tests/e2e --fail-on-env-error --fail-on-inconclusive
+```
+
+That command assumes the suite references `image: my-backend:e2e` and both commands
+use the same daemon. For owned Compose environments, declare `build.context` and
+optional `build.dockerfile` in the native manifest; acquisition runs Compose with
+`--build`. Install the Compose v2 plugin and use a supported local Docker daemon.
+The built-in adapter does not support remote TCP/SSH Docker contexts, so do not
+assume a Docker-in-Docker template also establishes Compose compatibility. See
+[Compose setup and limits](compose-environments.md) for bindings, readiness and
+cleanup ownership.
+
 ### Installation model
 
 The vouchfx CLI is packaged as a `dotnet` global tool (`ToolCommandName: vouchfx`), live on NuGet.org:

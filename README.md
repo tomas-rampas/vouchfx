@@ -79,6 +79,11 @@ step, reports a verdict and tears everything down. The annotated original is
 [`examples/getting-started/hello-world.e2e.yaml`](https://github.com/tomas-rampas/vouchfx/blob/main/examples/getting-started/hello-world.e2e.yaml);
 the [Getting Started guide](https://vouchfx.io/getting-started/) walks through it in 60 minutes.
 
+**Your own Dockerfile:** use native Compose `build.context` and `build.dockerfile`
+through an owned [Compose environment](https://vouchfx.io/compose-environments/#build-your-backend-from-a-dockerfile).
+For inline services, run `docker build` first and reference the resulting image with
+`image:`. A Dockerfile alone is not an `environment.source`.
+
 **The document shape.** Four top-level sections, of which only `steps` is mandatory:
 
 | Section | Purpose |

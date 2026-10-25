@@ -28,6 +28,49 @@ environment:
 
 The configuration path is relative to the suite. It cannot be combined with inline services, dependencies, seed or image defaults.
 
+## Build your backend from a Dockerfile
+
+Declare the build in your native Compose manifest. For example, with `compose.yaml`
+beside `environment.compose.yaml`, and an `app/` directory beside both:
+
+```yaml
+# compose.yaml
+services:
+  web:
+    build:
+      context: ./app
+      dockerfile: Dockerfile.e2e
+    ports:
+      - target: 8080
+        host_ip: 127.0.0.1
+```
+
+Here Compose builds `app/Dockerfile.e2e` with `app/` as its build context. The
+`dockerfile` path is relative to that context; omit it to use the usual
+`app/Dockerfile`. The application must listen on port 8080 and expose the health
+path selected in the binding below. Vouchfx starts the owned project with native
+`docker compose up --detach --build`, then checks the declared endpoints before
+running assertions. The build remains subject to the startup deadline.
+
+The suite selects the Compose configuration, rather than a Dockerfile directly.
+There is no inline `dockerfile` or `build` field under `environment.services`.
+For an inline environment, build the image first:
+
+```sh
+docker build -t my-backend:e2e -f ./app/Dockerfile.e2e ./app
+```
+
+```yaml
+environment:
+  services:
+    api:
+      image: my-backend:e2e
+      httpPort: 8080
+```
+
+Run that suite against the same Docker daemon that holds the built image. Inline
+provisioning starts the image; it does not build the Dockerfile.
+
 ## Bind logical targets
 
 Name the HTTP, TCP and PostgreSQL targets your assertions use. Manifest/env-file paths are relative to this configuration; native Compose handles merging, interpolation and project/build/mount paths.
@@ -113,7 +156,7 @@ This driver supports owned HTTP/TCP/PostgreSQL environments with IPv4 published 
 
 In this matching source checkout, follow `examples/compose-orders/README.md` for the HTTP mutation and database example, including its identical inline assertion steps.
 
-The [shared-app .NET Compose orders sample](https://github.com/tomas-rampas/vouchfx-samples/tree/main/samples/orders-dotnet-compose) demonstrates all five business assertions: REST creation, the PostgreSQL row, the retained Kafka event, the outbound webhook and the final REST refetch. Its README describes the pinned images, native readiness checks and standard sample runner.
+The [shared-app .NET Compose orders sample](https://github.com/tomas-rampas/vouchfx-samples/tree/main/samples/orders-dotnet-compose) builds its application from the shared Dockerfile and demonstrates all five business assertions: REST creation, the PostgreSQL row, the retained Kafka event, the outbound webhook and the final REST refetch. A Windows run with Linux Docker containers on 25 October 2026 passed all five assertions and exited 0 using the official Core 1.2.1 GitHub Release package. Its README describes the pinned images, native readiness checks and standard sample runner. Compose support predates that release; 1.2.1 also corrects GitLab CI exit handling.
 
 ## Contributor acceptance coverage
 
