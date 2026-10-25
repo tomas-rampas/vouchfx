@@ -189,4 +189,5 @@
   </ItemGroup>
 
   <Import Project="Vouchfx.Dcp.targets" />
+  <Import Project="Vouchfx.PackageCompression.targets" />
 </Project>

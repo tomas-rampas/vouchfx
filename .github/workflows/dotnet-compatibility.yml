@@ -84,6 +84,9 @@ jobs:
           tools="$RUNNER_TEMP/compatibility-tools"
           dotnet pack src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj -c Release --no-build \
             -p:PackageVersion=0.0.0-compatibility -o "$packages"
+          python3 -m unittest discover -s scripts/tests -p test_package_compression.py -v
+          python3 scripts/check_distribution.py --package "$packages/vouchfx.0.0.0-compatibility.nupkg" \
+            --nuget-cache "$HOME/.nuget/packages"
           printf '<configuration><packageSources><clear/><add key="local" value="%s"/></packageSources></configuration>\n' \
             "$packages" > "$RUNNER_TEMP/compatibility-nuget.config"
           dotnet tool install vouchfx --version 0.0.0-compatibility \
@@ -105,3 +108,193 @@ jobs:
             --fail-on-env-error --fail-on-inconclusive --no-telemetry --no-decorations \
             | tee "$RUNNER_TEMP/compatibility-runtime.log"
           grep -F "RUNTIME=$expected_major." "$RUNNER_TEMP/compatibility-runtime.log"
+
+  # SDK 8 keeps its existing CI lanes and check names. These lanes exercise
+  # all Docker tests and the permanent memory gate on the newer runtimes.
+  docker:
+    name: Docker integration .NET ${{ matrix.dotnet }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        dotnet: ['9.0', '10.0']
+    env:
+      DOTNET_MULTILEVEL_LOOKUP: '0'
+      DOTNET_NOLOGO: 'true'
+      DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
+      VOUCHFX_TOPOLOGY_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Configure isolated SDK and apphost roots
+        run: |
+          printf 'DOTNET_INSTALL_DIR=%s/dotnet-compatibility\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          printf 'DOTNET_ROOT_X64=%s/dotnet-compatibility\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Install isolated .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: ${{ matrix.dotnet }}.x
+      - name: Require selected SDK, runtimes and Docker
+        env:
+          EXPECTED_DOTNET: ${{ matrix.dotnet }}
+        run: |
+          set -euo pipefail
+          [[ "$(dotnet --version)" == "$EXPECTED_DOTNET".* ]]
+          runtimes="$(dotnet --list-runtimes)"
+          printf '%s\n' "$runtimes"
+          [[ "$runtimes" == *Microsoft.NETCore.App* ]]
+          [[ "$runtimes" == *Microsoft.AspNetCore.App* ]]
+          while read -r _framework version _location; do
+            [[ "$version" == "$EXPECTED_DOTNET".* ]]
+          done <<< "$runtimes"
+          test "$(docker info --format '{{.OSType}}')" = linux
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      - name: Install pinned workflow tools
+        run: bash scripts/ci/install-workflow-tools.sh
+      # Extract the exact, parser-verified script used by the existing SDK 8
+      # integration lane; keep its image pins, retry policy and diagnostics.
+      - name: Pre-pull the integration lane's pinned images
+        timeout-minutes: 25
+        run: |
+          set -euo pipefail
+          PYTHONPATH=scripts/ci python -c 'from pathlib import Path; import sys; from docker_ci_support import extract_pull; Path(sys.argv[1]).write_bytes(extract_pull())' \
+            "$RUNNER_TEMP/compatibility-pull.sh"
+          bash "$RUNNER_TEMP/compatibility-pull.sh"
+      - name: Restore and build
+        run: |
+          set -euo pipefail
+          dotnet restore vouchfx.sln
+          dotnet build vouchfx.sln -c Release --no-restore -warnaserror
+      - name: Snapshot default-root DCP captures
+        run: |
+          python -B scripts/ci/collect_dcp_captures.py snapshot \
+            --source "${XDG_DATA_HOME:-$HOME/.local/share}/vouchfx" \
+            --state "$RUNNER_TEMP/dcp-capture-baseline.json"
+      - name: Prepare first-attempt topology evidence
+        id: topology
+        run: |
+          set -euo pipefail
+          results="$RUNNER_TEMP/vouchfx-topology-acceptance"
+          python -B scripts/assert-owned-environment-acceptance.py --prepare \
+            --directory "$results" \
+            --cli src/Cli/Vouchfx.Cli/bin/Release/net8.0/vouchfx.dll \
+            --checkout-sha "$(git rev-parse HEAD)" --head-sha "$VOUCHFX_TOPOLOGY_PR_HEAD_SHA"
+          printf 'VOUCHFX_TOPOLOGY_ACCEPTANCE_RESULTS=%s\n' "$results" >> "$GITHUB_ENV"
+      - name: All Docker integration tests (requires=docker)
+        id: tests
+        run: |
+          dotnet test vouchfx.sln -m:1 -c Release --no-build \
+            --filter "requires=docker" --blame-crash --blame-crash-dump-type mini \
+            --results-directory "$RUNNER_TEMP/docker-test-results"
+      - name: Require owned-topology execution and closure
+        if: always() && steps.topology.outcome == 'success'
+        run: |
+          python -B scripts/assert-owned-environment-acceptance.py \
+            --directory "$VOUCHFX_TOPOLOGY_ACCEPTANCE_RESULTS" \
+            --cli src/Cli/Vouchfx.Cli/bin/Release/net8.0/vouchfx.dll
+      - name: Collect new DCP captures
+        id: captures
+        if: always() && steps.topology.outcome == 'success'
+        env:
+          VOUCHFX_CI_TEST_OUTCOME: ${{ steps.tests.outcome }}
+        run: |
+          python -B scripts/ci/collect_dcp_captures.py collect \
+            --source "${XDG_DATA_HOME:-$HOME/.local/share}/vouchfx" \
+            --state "$RUNNER_TEMP/dcp-capture-baseline.json" \
+            --destination "$RUNNER_TEMP/dcp-captures" \
+            --test-outcome "$VOUCHFX_CI_TEST_OUTCOME"
+      - name: Retain Docker results and topology evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dotnet-${{ matrix.dotnet }}-docker-results
+          path: |
+            ${{ runner.temp }}/docker-test-results
+            ${{ runner.temp }}/vouchfx-topology-acceptance
+          if-no-files-found: error
+          retention-days: 7
+      - name: Retain collected DCP diagnostics
+        if: always() && steps.captures.outcome == 'success'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dotnet-${{ matrix.dotnet }}-dcp-captures
+          path: ${{ runner.temp }}/dcp-captures
+          if-no-files-found: error
+          retention-days: 7
+
+  memory:
+    name: Provider-closure memory gate .NET ${{ matrix.dotnet }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        dotnet: ['9.0', '10.0']
+    env:
+      DOTNET_MULTILEVEL_LOOKUP: '0'
+      DOTNET_NOLOGO: 'true'
+      DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Configure isolated SDK and apphost roots
+        run: |
+          printf 'DOTNET_INSTALL_DIR=%s/dotnet-compatibility\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          printf 'DOTNET_ROOT_X64=%s/dotnet-compatibility\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Install isolated .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: ${{ matrix.dotnet }}.x
+      - name: Require selected SDK and runtime only
+        env:
+          EXPECTED_DOTNET: ${{ matrix.dotnet }}
+        run: |
+          set -euo pipefail
+          [[ "$(dotnet --version)" == "$EXPECTED_DOTNET".* ]]
+          runtimes="$(dotnet --list-runtimes)"
+          printf '%s\n' "$runtimes"
+          [[ "$runtimes" == *Microsoft.NETCore.App* ]]
+          while read -r _framework version _location; do
+            [[ "$version" == "$EXPECTED_DOTNET".* ]]
+          done <<< "$runtimes"
+      - name: Build the provider-closure harness
+        run: dotnet build tests/Vouchfx.Engine.Compilation.MemoryHarness -c Release -warnaserror
+      - name: Run permanent 5000-iteration memory gate
+        run: |
+          set -euo pipefail
+          dotnet run -c Release --no-build --project tests/Vouchfx.Engine.Compilation.MemoryHarness \
+            -- --mode closure --iterations 5000 --threshold-bytes 2000000 \
+            | tee "$RUNNER_TEMP/memory-closure.log"
+      - name: Retain memory result
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dotnet-${{ matrix.dotnet }}-memory-closure
+          path: ${{ runner.temp }}/memory-closure.log
+          if-no-files-found: error
+          retention-days: 7
+
+  tls:
+    name: Native TLS .NET ${{ matrix.dotnet }}
+    strategy:
+      fail-fast: false
+      matrix:
+        dotnet: ['9.0', '10.0']
+    uses: ./.github/workflows/tls-transport-acceptance.yml
+    with:
+      reviewed_sha: ${{ github.event.pull_request.head.sha || github.sha }}
+      dotnet_sdk: ${{ matrix.dotnet }}

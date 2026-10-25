@@ -134,10 +134,22 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up .NET 8 SDK
+      # Keep the product build on .NET 10 even when the hosted image contains
+      # an older SDK that global.json's fallback policy would otherwise prefer.
+      - name: Configure isolated product SDK
+        run: printf 'DOTNET_INSTALL_DIR=%s/vouchfx-release-dotnet\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+
+      - name: Set up .NET 10 SDK
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
-          dotnet-version: "8.0.x"
+          dotnet-version: "10.0.x"
+
+      - name: Require the isolated .NET 10 product SDK
+        run: |
+          set -euo pipefail
+          test "$(dirname "$(command -v dotnet)")" = "$DOTNET_INSTALL_DIR"
+          [[ "$(dotnet --version)" == 10.0.* ]]
+          dotnet --info
 
       - name: Restore dependencies
         run: dotnet restore vouchfx.sln
@@ -194,6 +206,7 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
+          python -m unittest discover -s scripts/tests -p test_package_compression.py -v
           python -m unittest discover -s scripts/tests -p test_check_distribution.py -v
           python scripts/check_distribution.py --package "artifacts/nuget/vouchfx.${VERSION}.nupkg" \
             --nuget-cache "$HOME/.nuget/packages"
@@ -303,7 +316,7 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
-          dotnet tool install --global CycloneDX
+          dotnet tool install --global CycloneDX --allow-roll-forward
           dotnet-CycloneDX vouchfx.sln \
             -o artifacts/sbom \
             --set-version "$VERSION" \

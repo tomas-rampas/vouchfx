@@ -21,10 +21,14 @@ needs `Assembly.Location`.
 
 Current source enables major runtime roll-forward, so the same `net8.0` tool runs on .NET 8,
 9 and 10. Source builds and installed-tool smoke tests cover each SDK/runtime in isolation.
-Release packaging continues to use the .NET 8 SDK. Packing identical managed/native payloads
-with SDK 8.0.426 produced 246,583,871 bytes; SDK 10.0.401 produced 252,322,360 bytes because of
-different ZIP compression, exceeding the release ceiling below. Building and testing with a
-newer SDK does not qualify its package for publication; the release size gate still applies.
+Release packaging uses an isolated .NET 10 SDK. NuGet's default ZIP compression produced
+252,322,360 bytes with SDK 10.0.401 for a payload that SDK 8.0.426 packed into 246,583,871 bytes.
+The CLI's final pack target therefore recompresses the unsigned NuGet package with
+`CompressionLevel.SmallestSize`. The .NET 10 candidate measured 244,880,053 bytes, without
+removing any of its 448 members. Every member's SHA-256, length, order, name, timestamp,
+external attributes and comment, plus the archive comment, are verified before atomic
+replacement. Signed packages are refused; signing and attestation happen after packing.
+Ordinary `dotnet pack` applies the same target without requiring a separate compression tool.
 
 The tool contains the complete pinned Aspire 13.4.2 native tools trees for `win-x64`, glibc
 `linux-x64`, `osx-x64` and `osx-arm64`. RID-specific publications contain only their own tree.

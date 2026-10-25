@@ -1,0 +1,108 @@
+<Project>
+  <!-- NuGet hardcodes ZIP Optimal, whose zlib-ng output on newer SDKs pushes
+       the complete four-platform tool above NuGet's size ceiling. Recompress
+       the unsigned package with SmallestSize; do not remove any payload.
+
+       This is an MSBuild task so ordinary `dotnet pack` needs no extra tool.
+       RoslynCodeTaskFactory references netstandard2.0; the runtime's newer ZIP
+       metadata properties are accessed reflectively to preserve them on all
+       supported SDKs. Signing must happen AFTER this target. -->
+  <UsingTask TaskName="VouchfxRecompressToolPackage"
+             TaskFactory="RoslynCodeTaskFactory"
+             AssemblyFile="$(MSBuildToolsPath)/Microsoft.Build.Tasks.Core.dll">
+    <ParameterGroup>
+      <PackagePath ParameterType="System.String" Required="true" />
+    </ParameterGroup>
+    <Task>
+      <Using Namespace="System" />
+      <Using Namespace="System.Collections.Generic" />
+      <Using Namespace="System.IO" />
+      <Using Namespace="System.IO.Compression" />
+      <Using Namespace="System.Security.Cryptography" />
+      <Code Type="Fragment" Language="cs"><![CDATA[
+        var temporary = PackagePath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            var before = new FileInfo(PackagePath).Length;
+            var compression = (CompressionLevel)Enum.Parse(typeof(CompressionLevel), "SmallestSize");
+            var attributes = typeof(ZipArchiveEntry).GetProperty("ExternalAttributes");
+            var entryComment = typeof(ZipArchiveEntry).GetProperty("Comment");
+            var archiveComment = typeof(ZipArchive).GetProperty("Comment");
+            if (attributes == null || entryComment == null || archiveComment == null)
+                throw new InvalidOperationException("The packaging runtime must expose ZIP attributes and comments.");
+
+            using (var original = ZipFile.OpenRead(PackagePath))
+            {
+                var names = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var entry in original.Entries)
+                {
+                    if (string.Equals(entry.FullName, ".signature.p7s", StringComparison.OrdinalIgnoreCase))
+                        throw new InvalidOperationException("Refusing to recompress a signed NuGet package. Sign only after packing.");
+                    if (!names.Add(entry.FullName))
+                        throw new InvalidOperationException("Duplicate package entry: " + entry.FullName);
+                }
+
+                using (var compressed = ZipFile.Open(temporary, ZipArchiveMode.Create))
+                {
+                    archiveComment.SetValue(compressed, archiveComment.GetValue(original));
+                    foreach (var entry in original.Entries)
+                    {
+                        var copy = compressed.CreateEntry(entry.FullName, compression);
+                        copy.LastWriteTime = entry.LastWriteTime;
+                        attributes.SetValue(copy, attributes.GetValue(entry));
+                        entryComment.SetValue(copy, entryComment.GetValue(entry));
+                        using (var input = entry.Open())
+                        using (var output = copy.Open())
+                            input.CopyTo(output);
+                    }
+                }
+
+                // Verify every member, including native tools, notices and manifests,
+                // before replacing the package. A failed compression leaves it intact.
+                using (var compressed = ZipFile.OpenRead(temporary))
+                {
+                    if (compressed.Entries.Count != original.Entries.Count ||
+                        !Equals(archiveComment.GetValue(original), archiveComment.GetValue(compressed)))
+                        throw new InvalidDataException("Recompression changed the ZIP member count or archive comment.");
+                    for (var index = 0; index < original.Entries.Count; index++)
+                    {
+                        var entry = original.Entries[index];
+                        var copy = compressed.Entries[index];
+                        if (entry.FullName != copy.FullName || entry.Length != copy.Length ||
+                            entry.LastWriteTime != copy.LastWriteTime ||
+                            !Equals(attributes.GetValue(entry), attributes.GetValue(copy)) ||
+                            !Equals(entryComment.GetValue(entry), entryComment.GetValue(copy)))
+                            throw new InvalidDataException("Recompression changed ZIP metadata: " + entry.FullName);
+                        using (var hash = SHA256.Create())
+                        using (var input = entry.Open())
+                        using (var output = copy.Open())
+                        {
+                            var expected = Convert.ToBase64String(hash.ComputeHash(input));
+                            var actual = Convert.ToBase64String(hash.ComputeHash(output));
+                            if (expected != actual)
+                                throw new InvalidDataException("Recompression changed package bytes: " + entry.FullName);
+                        }
+                    }
+                }
+            }
+
+            var after = new FileInfo(temporary).Length;
+            File.Replace(temporary, PackagePath, null);
+            Log.LogMessage(Microsoft.Build.Framework.MessageImportance.High,
+                "Tool package compression: {0} -> {1} bytes; all payload hashes and ZIP metadata verified.", before, after);
+        }
+        finally
+        {
+            if (File.Exists(temporary))
+                File.Delete(temporary);
+        }
+      ]]></Code>
+    </Task>
+  </UsingTask>
+
+  <Target Name="CompressVouchfxToolPackage" AfterTargets="Pack"
+          Condition="'$(IsPackable)' == 'true' and '$(PackAsTool)' == 'true'">
+    <VouchfxRecompressToolPackage PackagePath="%(NuGetPackOutput.Identity)"
+                                 Condition="'%(NuGetPackOutput.Extension)' == '.nupkg'" />
+  </Target>
+</Project>

@@ -132,7 +132,8 @@ on:
       dotnet-version:
         description: >-
           The .NET SDK version to install for building vouchfx and running the suite.
-          vouchfx targets .NET 8; "8.0.x" resolves the latest 8.0 feature band on the runner.
+          Current source supports .NET 8, 9 and 10 with a net8.0 binary baseline.
+          The SDK is isolated so another installed major cannot satisfy this run.
         type: string
         required: false
         default: "8.0.x"
@@ -248,11 +249,33 @@ jobs:
           ref: ${{ inputs.vouchfx-ref }}
           path: .vouchfx-src
 
-      # 3. Install the .NET 8 SDK used to build vouchfx and run the suite.
+      # 3. Isolate the requested SDK so a preinstalled .NET 8 cannot hide a
+      # failure to build or start the executable on a newer runtime.
+      - name: Configure isolated suite SDK
+        run: printf 'DOTNET_INSTALL_DIR=%s/vouchfx-suite-dotnet\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+
       - name: Set up .NET SDK
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: ${{ inputs.dotnet-version }}
+
+      - name: Require the selected SDK and runtime only
+        env:
+          REQUESTED_DOTNET: ${{ inputs.dotnet-version }}
+        run: |
+          set -euo pipefail
+          test "$(dirname "$(command -v dotnet)")" = "$DOTNET_INSTALL_DIR"
+          expected_major="${REQUESTED_DOTNET%%.*}"
+          [[ "$expected_major" =~ ^[0-9]+$ ]]
+          sdk="$(dotnet --version)"
+          [[ "$sdk" == "$expected_major".* ]]
+          runtimes="$(dotnet --list-runtimes)"
+          printf '%s\n' "$sdk" "$runtimes"
+          [[ "$runtimes" == *Microsoft.NETCore.App* ]]
+          [[ "$runtimes" == *Microsoft.AspNetCore.App* ]]
+          while read -r _framework version _location; do
+            [[ "$version" == "$expected_major".* ]]
+          done <<< "$runtimes"
 
       # 3b. OPTIONAL fixture preparation. Runs on THIS runner, against the consumer's own
       #    checkout, before anything reads the suite. This is the only supported point at
