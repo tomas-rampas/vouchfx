@@ -164,6 +164,16 @@ jobs:
       - name: Build (Release, 0-warning gate)
         run: dotnet build vouchfx.sln -c Release --no-restore
 
+      # ubuntu-26.04 (now behind ubuntu-latest) ships fs.inotify.max_user_instances=128.
+      # Each IConfiguration JSON source with reloadOnChange opens a FileSystemWatcher, so
+      # test hosts exhaust it and fail with "The configured user limit (128) on the number
+      # of inotify instances has been reached" (run 41217231299). Raise instances and
+      # watches to common CI values before any test host starts.
+      - name: Raise inotify limits (ubuntu-26.04 defaults to 128 instances)
+        run: |
+          sudo sysctl -w fs.inotify.max_user_instances=8192
+          sudo sysctl -w fs.inotify.max_user_watches=524288
+
       # Format gate: dotnet format re-runs the formatter and errors if any file
       # would change.  This catches whitespace drift, import ordering, and any
       # EditorConfig rule that the formatter enforces.
@@ -421,6 +431,17 @@ jobs:
 
       - name: Build (Release)
         run: dotnet build vouchfx.sln -c Release --no-restore
+
+      # ubuntu-26.04 (now behind ubuntu-latest) ships fs.inotify.max_user_instances=128.
+      # Each IConfiguration JSON source with reloadOnChange opens a FileSystemWatcher, so
+      # test hosts exhaust it and fail with "The configured user limit (128) on the number
+      # of inotify instances has been reached" (run 41217231299). Raise instances and
+      # watches to common CI values before any test host starts. This lane is pinned to
+      # ubuntu-22.04 today; the step is a no-op there and keeps a future move safe.
+      - name: Raise inotify limits (ubuntu-26.04 defaults to 128 instances)
+        run: |
+          sudo sysctl -w fs.inotify.max_user_instances=8192
+          sudo sysctl -w fs.inotify.max_user_watches=524288
 
       # Warm the Docker image cache BEFORE dotnet test so DCP's internal
       # ~20s per-resource start window is never spent on a cold image pull.
