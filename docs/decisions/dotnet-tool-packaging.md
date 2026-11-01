@@ -2,7 +2,7 @@
 
 **Status:** published in stable Core `1.0.0`; legacy `1.0.0-rc.6` remains cache-dependent.
 
-**Updated:** 2026-10-13. Original tool decision: 2026-06-25.
+**Updated:** 2026-10-25. Original tool decision: 2026-06-25.
 
 ## Problem and evidence
 
@@ -18,6 +18,17 @@ allowed topology execution. Neither result proves the published tool works stand
 Keep the framework-dependent `net8.0` global tool (`PackAsTool`, `ToolCommandName: vouchfx`) and
 self-contained multi-file archives/installers. Do not use single-file publishing: provider discovery
 needs `Assembly.Location`.
+
+Current source enables major runtime roll-forward, so the same `net8.0` tool runs on .NET 8,
+9 and 10. Source builds and installed-tool smoke tests cover each SDK/runtime in isolation.
+Release packaging uses an isolated .NET 10 SDK. NuGet's default ZIP compression produced
+252,322,360 bytes with SDK 10.0.401 for a payload that SDK 8.0.426 packed into 246,583,871 bytes.
+The CLI's final pack target therefore recompresses the unsigned NuGet package with
+`CompressionLevel.SmallestSize`. The .NET 10 candidate measured 244,880,053 bytes, without
+removing any of its 448 members. Every member's SHA-256, length, order, name, timestamp,
+external attributes and comment, plus the archive comment, are verified before atomic
+replacement. Signed packages are refused; signing and attestation happen after packing.
+Ordinary `dotnet pack` applies the same target without requiring a separate compression tool.
 
 The tool contains the complete pinned Aspire 13.4.2 native tools trees for `win-x64`, glibc
 `linux-x64`, `osx-x64` and `osx-arm64`. RID-specific publications contain only their own tree.

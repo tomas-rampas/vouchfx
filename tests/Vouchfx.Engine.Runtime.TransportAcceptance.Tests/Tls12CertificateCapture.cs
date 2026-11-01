@@ -82,7 +82,7 @@ internal sealed class Tls12CertificateCapture
         }
     }
 
-    private static int U24(IReadOnlyList<byte> bytes, int offset) => (bytes[offset] << 16) | (bytes[offset + 1] << 8) | bytes[offset + 2];
+    private static int U24(List<byte> bytes, int offset) => (bytes[offset] << 16) | (bytes[offset + 1] << 8) | bytes[offset + 2];
 }
 
 internal sealed class CapturingStream : Stream
