@@ -12,6 +12,25 @@
 # reason for pinning, since that comment is the only human-readable statement of what
 # the SHA is. Actions sharing a repository are therefore grouped below, so one upstream
 # release lands as one commit.
+#
+# nuget: keeps the centrally managed package versions in Directory.Packages.props
+# (ManagePackageVersionsCentrally + CentralPackageTransitivePinningEnabled) current, and
+# lets Dependabot open security-update PRs for NuGet advisories. Without this entry an
+# advisory such as GHSA-473q-m89c-ghf8 (MySqlConnector 2.4.0, 2026-10-28) turns every
+# branch red via NuGet audit (NU1902 under TreatWarningsAsErrors) with no fix PR raised.
+#
+# LOCK FILES: unlike vouchfx-mcp, this repo does NOT set RestorePackagesWithLockFile and
+# commits no packages.lock.json, and CI restores without --locked-mode, so the mcp
+# NU1004 / dependabot-core#12318 manual lock-file regeneration remedy does not apply here.
+# If lock files are ever adopted, copy vouchfx-mcp's "LOCK FILES AND DEPENDABOT" paragraph
+# and its remedy (`dotnet restore vouchfx.sln` without --locked-mode on the PR branch, then
+# commit every regenerated packages.lock.json) into this comment.
+#
+# TRANSITIVE PINS: several entries in Directory.Packages.props are exact-minimum pins chosen
+# to avoid NU1109/NU1605 under transitive pinning (Microsoft.Data.SqlClient, RabbitMQ.Client,
+# SharpCompress, System.Text.Json). A Dependabot bump of one of those (or of Aspire.Hosting.*)
+# can fail restore with NU1109/NU1605; resolve it on the PR branch by moving the paired pins
+# together, not by reverting the bump.
 version: 2
 updates:
   - package-ecosystem: "github-actions"
@@ -23,3 +42,31 @@ updates:
       codeql-action:
         patterns:
           - "github/codeql-action*"
+
+  - package-ecosystem: "nuget"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    # Collapse each week's version updates into ONE pull request (fewer PRs to triage, and
+    # any paired-pin / NU1109 fix-up is paid once per week). Aspire.Hosting.* ships in
+    # lockstep, so it is grouped on its own so a partial Aspire bump never lands.
+    # Security updates are not affected by `groups` unless `applies-to: security-updates`
+    # is set, so advisory fixes still arrive immediately as their own PRs.
+    groups:
+      aspire:
+        patterns:
+          - "Aspire.*"
+      nuget-dependencies:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "Aspire.*"
+    ignore:
+      # Roslyn follows the pinned .NET 8 SDK's compiler (mcp measured CS9057 on a 5.x bump
+      # under -warnaserror). Scripting and the plain compiler move in lockstep.
+      - dependency-name: "Microsoft.CodeAnalysis.*"
+        update-types: ["version-update:semver-major"]
+      # System.CommandLine is pinned to the 2.0.0 GA API surface (see Directory.Packages.props).
+      - dependency-name: "System.CommandLine"
+        update-types: ["version-update:semver-major"]

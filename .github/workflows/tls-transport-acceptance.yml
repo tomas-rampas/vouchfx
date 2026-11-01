@@ -89,6 +89,16 @@ jobs:
           set -euo pipefail
           dotnet restore tests/Vouchfx.Engine.Runtime.TransportAcceptance.Tests --source https://api.nuget.org/v3/index.json
           dotnet build tests/Vouchfx.Engine.Runtime.TransportAcceptance.Tests -c Release --no-restore -warnaserror -p:Version=1.0.2
+      # ubuntu-26.04 (now behind ubuntu-latest) ships fs.inotify.max_user_instances=128.
+      # Each IConfiguration JSON source with reloadOnChange opens a FileSystemWatcher, so
+      # test hosts exhaust it and fail with "The configured user limit (128) on the number
+      # of inotify instances has been reached" (run 41217231299). Raise instances and
+      # watches to common CI values before any test host starts.
+      - name: Raise inotify limits (ubuntu-26.04 defaults to 128 instances)
+        if: runner.os == 'Linux'
+        run: |
+          sudo sysctl -w fs.inotify.max_user_instances=8192
+          sudo sysctl -w fs.inotify.max_user_watches=524288
       - name: Run four opted-in transport facts and their final guard
         env:
           VOUCHFX_TLS_EVIDENCE_DIRECTORY: ${{ runner.temp }}/vouchfx-tls-acceptance/evidence
