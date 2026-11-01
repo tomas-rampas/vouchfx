@@ -382,6 +382,11 @@ jobs:
           } -ExpectedDotnet $expectedLine
 
       - name: Require the selected SDK and runtime only
+        # Run from the vouchfx checkout so SDK selection uses vouchfx's own global.json
+        # (rollForward: major), not a global.json in the consumer's repository root. A
+        # consumer pinned to another SDK would otherwise fail this check even though
+        # vouchfx itself builds and runs fine with the isolated SDK.
+        working-directory: .vouchfx-src
         env:
           REQUESTED_DOTNET: ${{ inputs.dotnet-version }}
         run: |
@@ -560,6 +565,10 @@ jobs:
       #    so a RELATIVE scenario path would misresolve under the vouchfx source tree. We
       #    therefore pass the scenario path and the report paths as ABSOLUTE
       #    ($GITHUB_WORKSPACE/…), which resolve correctly regardless of the run CWD.
+      #    SDK SELECTION: `dotnet run` resolves the SDK from global.json starting at the
+      #    shell's working directory, so the step runs from .vouchfx-src. Starting from the
+      #    consumer checkout would apply the consumer's global.json, which may pin an SDK
+      #    the isolated install does not have.
       #    SECURITY: the caller-supplied `scenario-path` is bound to an `env:` var and
       #    dereferenced as "$SCENARIO_PATH" rather than interpolated into the shell line
       #    via ${{ … }}, so a value containing shell metacharacters cannot be executed
@@ -591,10 +600,11 @@ jobs:
           VOUCHFX_TELEMETRY_ENDPOINT: ${{ inputs.telemetry-endpoint }}
           VOUCHFX_TELEMETRY_INSTALL_ID: ${{ inputs.telemetry-install-id }}
           VOUCHFX_TELEMETRY_TOKEN: ${{ secrets.telemetry-token }}
+        working-directory: .vouchfx-src
         run: |
           exit_code=0
           dotnet run \
-            --project .vouchfx-src/src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj \
+            --project src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj \
             -c Release \
             --no-build \
             -- \
