@@ -80,6 +80,15 @@ jobs:
       - name: Build (Release, warnings as errors)
         run: dotnet build vouchfx.sln -c Release --no-restore -warnaserror
 
+      # ubuntu-26.04 (now behind ubuntu-latest) ships fs.inotify.max_user_instances=128.
+      # Each IConfiguration JSON source with reloadOnChange opens a FileSystemWatcher, so
+      # test hosts exhaust it and fail with "The configured user limit (128) on the number
+      # of inotify instances has been reached" (run 41311946394). Same step as build.yml.
+      - name: Raise inotify limits (ubuntu-26.04 defaults to 128 instances)
+        run: |
+          sudo sysctl -w fs.inotify.max_user_instances=8192
+          sudo sysctl -w fs.inotify.max_user_watches=524288
+
       - name: Docker-free tests
         # Match the baseline lanes' scheduling bound: concurrent solution test
         # hosts can starve real Roslyn child processes of their compile budget.
