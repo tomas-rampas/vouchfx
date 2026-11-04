@@ -21,6 +21,28 @@ to published pre-releases on 2026-07-14.
 
 ## [Unreleased]
 
+## [1.3.0] — TBD
+
+### Security
+
+- Pin `MySqlConnector` 2.6.1 (was 2.4.0) for [GHSA-473q-m89c-ghf8](https://github.com/advisories/GHSA-473q-m89c-ghf8), a moderate-severity advisory where the account password can be disclosed to a man-in-the-middle in zero-configuration TLS mode. The package is a runtime dependency of the CLI and the `db-assert.mysql` Core provider. NuGet audit reported `NU1902`, which `TreatWarningsAsErrors` turned into a restore failure on every build. The 2.5.0/2.6.0 behaviour changes (`MySqlConnection.State` after a network error, `ResetConnectionAsync`, `EnableResultSetHeaderEvent`, `AddMySqlDataSource`) affect no API that vouchfx uses ([#655](https://github.com/tomas-rampas/vouchfx/pull/655)).
+
+### Added
+
+- vouchfx builds and runs on machines with only .NET 9 or .NET 10 installed. Assemblies keep the `net8.0` binary baseline and the frozen SDK/provider asset contract, while `RollForward=Major` (in `Directory.Build.props`) lets the CLI, test hosts and executable fixtures start on a newer major runtime, and `global.json` now uses `rollForward: major` so a newer SDK can build the source ([#652](https://github.com/tomas-rampas/vouchfx/pull/652)).
+- A `.NET compatibility` workflow (`.github/workflows/dotnet-compatibility.yml`) validates isolated .NET 8, 9 and 10 installations, covering Docker integration, the 5,000-cycle provider-closure memory gate and native TLS on Windows and Linux. It also checks the runtime and `System.Text.Json` serializer the CLI actually loads ([#652](https://github.com/tomas-rampas/vouchfx/pull/652)).
+- Weekly Dependabot `nuget` updates, with Aspire in its own group and major bumps of `Microsoft.CodeAnalysis.*` and `System.CommandLine` ignored ([#655](https://github.com/tomas-rampas/vouchfx/pull/655)).
+
+### Changed
+
+- Release packages are built with the .NET 10 SDK in an isolated runner installation. An after-pack MSBuild step (`Vouchfx.PackageCompression.targets`) losslessly recompresses the unsigned `vouchfx` nupkg and verifies every entry's contents and metadata before atomic replacement, which keeps it below the 250,000,000-byte NuGet limit with all four DCP bundles intact. No payload is removed ([#652](https://github.com/tomas-rampas/vouchfx/pull/652)).
+- The reusable `vouchfx-run.yml` workflow installs the requested SDK into an isolated `RUNNER_TEMP` directory and keeps only that SDK's runtime line, so a preinstalled .NET 8 cannot mask a failure on a newer runtime. The `dotnet-version` input (default `8.0.x`) now accepts only .NET 8, 9 or 10 versions in the `8.0`, `9.0` or `10.0` form and fails for anything else. The isolation step requires PowerShell 7 (`pwsh`) on the runner ([#652](https://github.com/tomas-rampas/vouchfx/pull/652)).
+- `EventContractRuntimeTests` now checks the serializer the CLI actually loads, through a CLI probe, instead of requiring the bundled `System.Text.Json.dll` file hash to match. A newer runtime may serve that package from its in-box assembly. This is a test change only: the v1 event-wire contract and every golden file are unchanged ([#652](https://github.com/tomas-rampas/vouchfx/pull/652)).
+- The CLI package README and the getting-started guide document .NET 8, 9 and 10 support, and the compatibility table covers the global tool, self-contained distributions, source builds and services under test ([#650](https://github.com/tomas-rampas/vouchfx/pull/650), [#651](https://github.com/tomas-rampas/vouchfx/pull/651), [#652](https://github.com/tomas-rampas/vouchfx/pull/652)).
+- Documentation explains Dockerfile-based backends and validated release usage ([#649](https://github.com/tomas-rampas/vouchfx/pull/649)).
+- CI raises the Linux inotify limits before test hosts start, because `ubuntu-latest` (ubuntu-26.04) defaults to 128 instances ([#655](https://github.com/tomas-rampas/vouchfx/pull/655)).
+- Dependency upgrades via Dependabot: `github/codeql-action` 4.39.1 ([#653](https://github.com/tomas-rampas/vouchfx/pull/653)), `actions/setup-python` 7.1.0 ([#654](https://github.com/tomas-rampas/vouchfx/pull/654)) and the VS Code extension's `qs` development dependency 6.17.1 ([#656](https://github.com/tomas-rampas/vouchfx/pull/656)).
+
 ## [1.2.1] — 2026-10-25
 
 ### Security
