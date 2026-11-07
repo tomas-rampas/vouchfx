@@ -53,7 +53,7 @@ ready-to-run `vouchfx-run` job that `extends:` it.
 | `VOUCHFX_SCENARIO_PATH` | `.` | Directory (relative to the cloned project root) to search recursively for `*.e2e.yaml`. |
 | `VOUCHFX_REPO_URL` | `$CI_REPOSITORY_URL` | Git URL to clone vouchfx from for the build-from-source install (defaults to the including project, whose CI job token clones a private repo without extra credentials). |
 | `VOUCHFX_REF` | `$CI_COMMIT_SHA` | Git ref (branch, tag, or — recommended — a full commit SHA) of `VOUCHFX_REPO_URL` to build. |
-| `VOUCHFX_DOTNET_IMAGE` | `mcr.microsoft.com/dotnet/sdk:8.0` | .NET 8 SDK image the job runs in. Pin to a digest in production. |
+| `VOUCHFX_DOTNET_IMAGE` | `mcr.microsoft.com/dotnet/sdk:8.0` | SDK image the job runs in. The default is .NET 8. Current source also builds in the `9.0` and `10.0` SDK images because `global.json` uses `rollForward: major` and executables set `RollForward=Major`. Pin to a digest in production. |
 | `VOUCHFX_FAIL_ON_ENV_ERROR` | `"false"` | When truthy, append `--fail-on-env-error` (Environment-error verdict fails the job, exit 3). |
 | `VOUCHFX_FAIL_ON_INCONCLUSIVE` | `"false"` | When truthy, append `--fail-on-inconclusive` (Inconclusive verdict fails the job, exit 4). |
 | `VOUCHFX_PREWARM_IMAGES` | `""` | Optional whitespace/newline-separated list of images to `docker pull` before the run (best-effort, non-fatal). Pin each entry to a digest. |
@@ -114,6 +114,13 @@ in the GitHub template. A consumer tracking a released engine pins `VOUCHFX_REF`
 tag (e.g. the stable `v1.0.0` baseline), still as a source build. A packaged-tool install could become an
 optional mode later; the install step is intentionally the only thing that would change.
 
+The default image is .NET 8. Set `VOUCHFX_DOTNET_IMAGE` to
+`mcr.microsoft.com/dotnet/sdk:9.0` or `mcr.microsoft.com/dotnet/sdk:10.0` (pinned to a digest in
+production) to build current source on that SDK. The image is the whole runtime boundary: unlike
+[the GitHub workflow](../../docs/ci-integration.md#isolated-sdk-on-github-actions), this template
+does not remove an extra major that the image already contains. A `net8.0` executable uses .NET 8
+when that runtime is present and rolls forward only when it is absent.
+
 ## Exit-code gating (verdict taxonomy §12.1)
 
 | Exit | Verdict | Gates CI? |
@@ -159,7 +166,7 @@ supply digests — mirroring the GitHub header guidance.)
 | Scenario path | `scenario-path` (default `.`) | `VOUCHFX_SCENARIO_PATH` (default `.`) |
 | vouchfx source | `vouchfx-repo` (default `${{ github.repository }}`) | `VOUCHFX_REPO_URL` (default `$CI_REPOSITORY_URL`) |
 | vouchfx ref | `vouchfx-ref` (default `${{ github.sha }}`) | `VOUCHFX_REF` (default `$CI_COMMIT_SHA`) |
-| .NET SDK | `dotnet-version` (default `8.0.x`) via `setup-dotnet` | `VOUCHFX_DOTNET_IMAGE` (default `mcr.microsoft.com/dotnet/sdk:8.0`) as job image |
+| .NET SDK | `dotnet-version` (default `8.0.x`; .NET 8, 9 or 10) installed by `setup-dotnet` into an isolated tree, then reduced to that major | `VOUCHFX_DOTNET_IMAGE` (default `mcr.microsoft.com/dotnet/sdk:8.0`; `9.0` and `10.0` images also build current source). The image is the boundary; extra majors inside it are left in place |
 | Docker for topology | runner provides Docker (`ubuntu-latest`) | `docker:dind` service + `DOCKER_HOST`/TLS for the job; the engine runs in an owned SDK container on the daemon's network and Unix socket (privileged runner; socket-bind alternative) |
 | Install | checkout vouchfx → `dotnet build -c Release` | `git clone` vouchfx → `dotnet build -c Release` |
 | Image pre-warm | `prewarm-images`, per-image `docker pull \|\| echo` (best-effort) | `VOUCHFX_PREWARM_IMAGES`, per-image `docker pull \|\| echo` (best-effort) |

@@ -322,7 +322,7 @@ The compiler and runtime layer depends on a small number of external libraries w
 
 *Table 5.1 — Library and version commitments at v1.0. The platform pins majors and selects minors to track upstream security patches; providers target the same majors so the engine's load context never serves two versions of the same package.*
 
-**.NET runtime baseline. **The platform targets .NET 8 LTS as its runtime, because most adopter organisations are on the current LTS and will not move to a non-LTS version of .NET to adopt a testing tool. This is the runtime the platform itself requires, not a constraint on the system under test: the system under test may be on any .NET version that runs in a container, while the platform's engine, CLI, and extension run on .NET 8 LTS.
+**.NET runtime baseline. **Assemblies keep a `net8.0` binary baseline so an organisation on .NET 8 LTS can adopt the tool without retargeting. Executables built from current source set `RollForward=Major`, and `global.json` uses `rollForward: major`, so the same source also builds and runs when only .NET 9 or 10 is installed. That baseline is the platform's own runtime contract, not a constraint on the system under test: the system under test may use any runtime that runs in a container. A `project:` service still needs the application's SDK on the host. A published tool keeps the runtime policy of the release that packed it.
 
 **Aspire version stance. **Aspire's API surface is still moving across minor versions, and the platform team has been bitten by tracking previews. The platform pins to a known-stable Aspire minor version per engine release and follows Aspire forward at engine-minor cadence, not Aspire-minor cadence. Adopters therefore upgrade Aspire alongside the engine rather than independently of it. This trade-off buys adopters predictability at the cost of some Aspire-newer-feature availability, which is the right trade for a tool that must be stable enough to trust in CI.
 
@@ -1366,7 +1366,7 @@ This appendix consolidates the concrete technologies named in the blueprint, so 
 
 | Component | Role in the platform |
 |---|---|
-| .NET 8 LTS | The runtime baseline. The engine targets .NET 8 LTS so adopter organisations on the current LTS can use the platform without changing runtime. |
+| .NET 8, with roll-forward to 9 and 10 | The binary baseline. Assemblies target `net8.0`. Current-source executables roll forward to a newer major runtime when .NET 8 is absent, so a .NET 8, 9 or 10 SDK can build and run the engine. |
 | .NET Aspire | Orchestrates the application topology; provides service discovery, health-gated startup, and connection-string resolution. |
 | DistributedApplication.CreateBuilder() | The programmatic Aspire builder API the engine uses to construct an AppHost from the YAML environment section. The headless runner passes DistributedApplicationOptions { DisableDashboard = true } because the dashboard requires environment variables that only the 'aspire run' tooling injects. AddContainer adds an image; AddProject(name, csprojPath) adds a project; AddPostgres / AddKafka / AddMongoDB / AddRedis / AddRabbitMQ / AddElasticsearch add typed managed resources. Each Add* call returns an IResourceBuilder that the runner retains so endpoints can be resolved through it (builder.GetEndpoint("http").Url) after StartAsync returns. |
 | Testcontainers | Manages the lifecycle of dependency containers; supplies the k6 load-injection module and the Ryuk reaper. |

@@ -10,6 +10,8 @@ This guide covers real failure modes, what they mean, and how to fix them.
 - [Private registry and air-gapped operation](#private-registry-and-air-gapped-operation)
 - [Discovery root does not exist (dotnet run path resolution gotcha)](#discovery-root-does-not-exist-dotnet-run-path-resolution-gotcha)
 - [Script body, document, and YAML expansion limits](#script-body-document-and-yaml-expansion-limits)
+- [Isolated script compilation (`--isolate-compile`)](#isolated-script-compilation---isolate-compile)
+- [GitHub Actions rejects the requested .NET SDK](#github-actions-rejects-the-requested-net-sdk)
 - [Understanding the four verdicts](#understanding-the-four-verdicts)
 - [Secret leakage in exception messages](#secret-leakage-in-exception-messages)
 - [Build fails with warnings-as-errors](#build-fails-with-warnings-as-errors)
@@ -475,7 +477,7 @@ Use one of these approaches:
    ```
    (On Windows: `dotnet run --project src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj -- run $((Get-Location).Path)/tests/e2e`)
 
-**Best practice:** For running container-backed vouchfx test suites, use the packaged CLI with the supported .NET 8 runtime, Docker running Linux containers and its [version-specific DCP prerequisites](getting-started.md#installing-vouchfx). Published `1.0.0` bundles matching DCP tools without a source checkout, Aspire workload or warmed NuGet cache. Legacy rc.6 requires externally provisioned matching tools. The packaged CLI runs from your current directory without path-resolution workarounds. If you are working on vouchfx itself from source, build the CLI once and run the binary directly — it is faster (skips compilation) and avoids `dotnet run` quirks altogether.
+**Best practice:** For running container-backed vouchfx test suites, use the packaged CLI, Docker running Linux containers and its [version-specific DCP prerequisites](getting-started.md#installing-vouchfx). A global tool built from current source runs on .NET 8, or on .NET 9 or 10 when .NET 8 is absent; an older published tool keeps that release's runtime requirement. Self-contained installers bundle their own runtime. Published `1.0.0` bundles matching DCP tools without a source checkout, Aspire workload or warmed NuGet cache. Legacy rc.6 requires externally provisioned matching tools. The packaged CLI runs from your current directory without path-resolution workarounds. If you are working on vouchfx itself from source, build the CLI once and run the binary directly — it is faster (skips compilation) and avoids `dotnet run` quirks altogether.
 
 ---
 
@@ -530,6 +532,74 @@ When a limit is exceeded, the scenario is marked **Inconclusive** on `run` and *
    ```
 
 3. **YAML expands too large during validation?** Reduce YAML aliases and anchors, or split the suite. Anchors and aliases (the `&` and `*` syntax) expand to repeat their target content, and deeply nested or frequently reused anchors can make the expanded JSON exceed 16 Mi characters during validation.
+
+---
+
+## Isolated script compilation (`--isolate-compile`)
+
+**Symptom:**
+
+```
+Script compilation failed in the isolated worker.
+```
+
+or, on `run`:
+
+```
+Compile/run error (Inconclusive): CompileWorkerException: Compile worker was cancelled or exceeded its compile budget.
+```
+
+The same `CompileWorkerException` prefix appears for `Compile worker terminated without a valid result.`, `Compile worker returned an invalid result.`, `Compile worker could not produce a valid result.`, `Compile worker request exceeds the size limit.`, `Compile worker exceeded its response size limit.`, `Compile worker requires an absolute .NET host path.` and `Compile worker exit could not be confirmed.`
+
+**What it means:**
+
+`vouchfx validate <path> --isolate-compile` and `vouchfx run <path> --isolate-compile` compile each scenario in a one-shot child process. The flag is off by default. The child receives the assembled script and reference paths on standard input, emits an image or a fixed diagnostic, and does not execute the script. The parent discards the child's standard error and does not return Roslyn's own text, so a secret or other authored value in the script is not printed back. A script that does not compile becomes the fixed diagnostic `Script compilation failed in the isolated worker.`
+
+The parent allows 30 seconds for the worker, then kills the process tree and waits up to 5 seconds for the exit to be confirmed. The request JSON and the response text are each capped at 32 Mi characters (33,554,432). The `vouchfx` executable and a `dotnet` host start the worker directly. Otherwise `ResolveDotnetHost()` uses `DOTNET_HOST_PATH` when it is an absolute path of an existing binary; if that variable is unset or unusable, it derives a `dotnet` / `dotnet.exe` path from the current runtime directory. The host-path error is reported only when neither resolution succeeds.
+
+`validate` records either failure as a Roslyn-stage diagnostic and exits 4. `run` records a script that did not compile as an authoring refusal: the scenario is Inconclusive, and a suite that would otherwise exit 0 exits 4. A worker crash, invalid result or budget expiry is an ordinary Inconclusive outcome and, when a step has already started, fails the process only when `--fail-on-inconclusive` is set. Under `--parallel`, if no step starts, `ParallelSuiteRunner` reports `ExecutedAnyScenario=false` and `RunCommand` still exits 4 without that flag. Passing scenarios do not hide an authoring refusal; a product Fail still exits 1.
+
+Isolation covers Roslyn compilation only. YAML parsing, provider loading and script execution stay in the parent. It is not a sandbox for an untrusted suite.
+
+**Fix:**
+
+1. Reproduce without the flag when you need the Roslyn diagnostic, and only on a suite whose contents you trust. The in-process compiler prints the compilation failure; the worker deliberately does not.
+2. For a budget or crash message, shorten or split the `script.csharp` body. A nested interpolation or a very deep generic can spend the whole 30 seconds, or crash the compiler, while staying under the 64 KiB script-body limit.
+3. For the size-limit messages, the assembled script plus its reference list, or the emitted image, exceeded 32 Mi characters of JSON. Split the scenario.
+4. For the host-path message, run `vouchfx` or `dotnet run`, set `DOTNET_HOST_PATH` to the absolute path of an existing `dotnet` / `dotnet.exe`, or run from a layout where the host can be derived from the current runtime directory. The error means both resolution paths failed.
+5. Leave the flag off for ordinary local authoring. Turn it on when a compile must not be able to take down the parent process. Run untrusted suites in an environment that has no secrets.
+
+---
+
+## GitHub Actions rejects the requested .NET SDK
+
+**Symptom:**
+
+The `Set up .NET SDK` step can fail first, with an `actions/setup-dotnet` error.
+
+If that step succeeds, the selector can emit:
+
+```
+The isolated workflow supports .NET 8, 9 and 10 SDKs.
+```
+
+or stop with `The selected .NET 9.0 SDK and both shared frameworks must be installed before isolation.` (the major in the message is the one you requested), `Unexpected shared-framework directory in the isolated SDK tree.`, or a refusal to touch an install outside `RUNNER_TEMP`.
+
+A later check can also fail because `dotnet` on `PATH` is not the copy under `$RUNNER_TEMP/vouchfx-suite-dotnet`, or because `dotnet --list-runtimes` still shows another major.
+
+**What it means:**
+
+`.github/workflows/vouchfx-run.yml` installs `dotnet-version` into its own directory and then deletes every SDK and shared-framework line other than the requested major. `actions/setup-dotnet` v6 first installs the latest LTS runtime (`--channel LTS`); that major can change without a workflow update, and the selector removes it when it is not the selected major. Leaving that extra runtime in place would let the `net8.0` CLI start even when the job asked for a different major. The selector runs under PowerShell 7. Accepted values begin with `8.0`, `9.0` or `10.0` and then either end or continue with a version suffix (`8.0.x`, `10.0.401`). `actions/setup-dotnet` runs before that selector and can fail first, with its own error. If the selector is reached, a value outside the accepted form is refused with `The isolated workflow supports .NET 8, 9 and 10 SDKs.` before anything is deleted.
+
+The following `dotnet --version` check runs inside the vouchfx checkout, so the caller's `global.json` is not what selects the SDK. See [Isolated SDK on GitHub Actions](ci-integration.md#isolated-sdk-on-github-actions).
+
+**Fix:**
+
+1. Pass `8.0.x`, `9.0.x` or `10.0.x` (or an explicit `8.0` / `9.0` / `10.0` patch). The default is `8.0.x`.
+2. Use a runner that provides `pwsh` (PowerShell 7). GitHub-hosted runners do.
+3. Do not point `DOTNET_INSTALL_DIR` at a shared or pre-warmed SDK for this workflow. The selector only accepts a physical directory directly under `RUNNER_TEMP` named `vouchfx-suite-dotnet`.
+4. If the selected shared frameworks are missing, the requested SDK channel did not install both `Microsoft.NETCore.App` and `Microsoft.AspNetCore.App`. Retry with a complete `8.0.x`, `9.0.x` or `10.0.x` channel.
+5. On GitLab, choose the SDK with `VOUCHFX_DOTNET_IMAGE` instead. That template does not run this selector; an image that still contains .NET 8 will run the CLI on .NET 8.
 
 ---
 
