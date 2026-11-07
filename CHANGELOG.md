@@ -26,6 +26,7 @@ to published pre-releases on 2026-07-14.
 ### Security
 
 - Pin `MySqlConnector` 2.6.1 (was 2.4.0) for [GHSA-473q-m89c-ghf8](https://github.com/advisories/GHSA-473q-m89c-ghf8), a moderate-severity advisory where the account password can be disclosed to a man-in-the-middle in zero-configuration TLS mode. The package is a runtime dependency of the CLI and the `db-assert.mysql` Core provider. NuGet audit reported `NU1902`, which `TreatWarningsAsErrors` turned into a restore failure on every build. The 2.5.0/2.6.0 behaviour changes (`MySqlConnection.State` after a network error, `ResetConnectionAsync`, `EnableResultSetHeaderEvent`, `AddMySqlDataSource`) affect no API that vouchfx uses ([#655](https://github.com/tomas-rampas/vouchfx/pull/655)).
+- Override `minimatch` to 11.0.1 or later beneath `@vscode/vsce` and `@typescript-eslint/typescript-estree` in the VS Code extension's development toolchain for [GHSA-g3hv-75wg-m249](https://github.com/advisories/GHSA-g3hv-75wg-m249). Both parents require `minimatch` `^10.x` and no patched 10.x release exists, so Dependabot could not raise a fix. The packaged extension ships only its `yaml` runtime dependency ([#661](https://github.com/tomas-rampas/vouchfx/pull/661)).
 
 ### Added
 
@@ -42,6 +43,7 @@ to published pre-releases on 2026-07-14.
 - Documentation explains Dockerfile-based backends and validated release usage ([#649](https://github.com/tomas-rampas/vouchfx/pull/649)).
 - CI raises the Linux inotify limits before test hosts start, because `ubuntu-latest` (ubuntu-26.04) defaults to 128 instances ([#655](https://github.com/tomas-rampas/vouchfx/pull/655)).
 - Dependency upgrades via Dependabot: `github/codeql-action` 4.39.1 ([#653](https://github.com/tomas-rampas/vouchfx/pull/653)), `actions/setup-python` 7.1.0 ([#654](https://github.com/tomas-rampas/vouchfx/pull/654)), `actions/setup-dotnet` 6.1.0 ([#658](https://github.com/tomas-rampas/vouchfx/pull/658)) and the VS Code extension's `qs` development dependency 6.17.1 ([#656](https://github.com/tomas-rampas/vouchfx/pull/656)).
+- NuGet dependency upgrades: 20 of the 24 updates in Dependabot's `nuget-dependencies` group, including the StackExchange.Redis 3 and NATS.Net 3 majors. `AWSSDK.DynamoDBv2`/`AWSSDK.S3` 4, YamlDotNet 18 and Npgsql 10 are held back: AWSSDK 4 and Npgsql 10 change provider behaviour, and YamlDotNet types are part of the frozen v1 SDK surface, so a new major would stop published providers from loading ([#662](https://github.com/tomas-rampas/vouchfx/pull/662), [#659](https://github.com/tomas-rampas/vouchfx/pull/659)).
 
 ## [1.2.1] — 2026-10-25
 

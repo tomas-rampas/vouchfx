@@ -260,6 +260,14 @@ that change with `npm ci`, `npm audit`, lint, compilation, tests and VSIX packag
 The compatibility review covers module/API loading and credential construction;
 it does not establish live Azure authentication compatibility.
 
+`package.json` also overrides `minimatch` to `^11.0.1` beneath `@vscode/vsce` and
+`@typescript-eslint/typescript-estree` to resolve
+[GHSA-g3hv-75wg-m249](https://github.com/advisories/GHSA-g3hv-75wg-m249) (affected
+range `>=7.0.0 <11.0.1`). Both parents declare `^10.x`, and no patched 10.x release
+exists. The override is scoped so the eslint 8 toolchain keeps its own `minimatch`
+3.x copies, which are outside the affected range. These are development dependencies only.
+Remove the override when both parents accept `minimatch` 11.
+
 ## Licence
 
 Apache-2.0.
