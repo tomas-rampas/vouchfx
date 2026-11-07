@@ -21,6 +21,10 @@ to published pre-releases on 2026-07-14.
 
 ## [Unreleased]
 
+### Security
+
+- Override `minimatch` to 11.0.1 or later beneath `@vscode/vsce` and `@typescript-eslint/typescript-estree` in the VS Code extension's development toolchain for [GHSA-g3hv-75wg-m249](https://github.com/advisories/GHSA-g3hv-75wg-m249). Both parents require `minimatch` `^10.x` and no patched 10.x release exists, so Dependabot could not raise a fix. The packaged extension ships only its `yaml` runtime dependency.
+
 ## [1.3.0] — TBD
 
 ### Security

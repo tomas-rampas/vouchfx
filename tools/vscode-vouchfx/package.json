@@ -61,7 +61,7 @@
         "vouchfx.schemaPath": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Optional absolute path (or path relative to the workspace root) to a **v1-compatible copy of the composed vouchfx schema**. **Schema source precedence:** (1) live export from the engine CLI (`vouchfx schema`, after a bar-B `list --json` check) when `vouchfx.cliPath` is available; (2) this override when set; (3) the small **bundled offline fallback** (`src/schema/composed-schema.v1.json`, version-checked via `x-vouchfx-schema-version: v1`). Use this setting only when the CLI is unavailable and you need an internal/enterprise mirror of the same v1 schema — not for pointing at a divergent document. Leave empty to use the live engine or the bundled fallback. See the **vouchfx** Output channel for which source was chosen.",
+          "markdownDescription": "Optional absolute path (or path relative to the workspace root) to a **v1-compatible copy of the composed vouchfx schema**. **Schema source precedence:** (1) live export from the engine CLI (`vouchfx schema`, after a bar-B `list --json` check) when `vouchfx.cliPath` is available; (2) this override when set; (3) the small **bundled offline fallback** (`src/schema/composed-schema.v1.json`, version-checked via `x-vouchfx-schema-version: v1`). Use this setting only when the CLI is unavailable and you need an internal/enterprise mirror of the same v1 schema \u2014 not for pointing at a divergent document. Leave empty to use the live engine or the bundled fallback. See the **vouchfx** Output channel for which source was chosen.",
           "scope": "resource"
         },
         "vouchfx.cliPath": {
@@ -99,6 +99,12 @@
   "overrides": {
     "@azure/identity": {
       "@azure/msal-node": "7.1.1"
+    },
+    "@vscode/vsce": {
+      "minimatch": "^11.0.1"
+    },
+    "@typescript-eslint/typescript-estree": {
+      "minimatch": "^11.0.1"
     }
   }
 }
