@@ -65,7 +65,7 @@
   <ItemGroup Label="JSON / Schema / YAML (§5.7)">
     <PackageVersion Include="JsonPath.Net" Version="3.0.3" />
     <PackageVersion Include="JsonSchema.Net" Version="9.6.0" />
-    <PackageVersion Include="YamlDotNet" Version="16.3.0" />
+    <PackageVersion Include="YamlDotNet" Version="18.1.0" />
   </ItemGroup>
   <ItemGroup Label="Azure Service Bus emulator (mq-publish/expect.azureservicebus)">
     <!-- Azure.Messaging.ServiceBus 7.18.x: ServiceBusClient, ServiceBusSender,
@@ -75,7 +75,7 @@
     <PackageVersion Include="Azure.Messaging.ServiceBus" Version="7.18.2" />
   </ItemGroup>
   <ItemGroup Label="Canonical clients (§5.7) — net8-era stable lines">
-    <PackageVersion Include="Npgsql" Version="8.0.7" />
+    <PackageVersion Include="Npgsql" Version="10.0.3" />
     <!-- Aspire.Hosting.SqlServer 13.4.2 transitively requires >= 7.0.1; pin to the
          exact required minimum to avoid NU1109/NU1605 downgrade errors under
          CentralPackageTransitivePinningEnabled. -->
@@ -99,8 +99,8 @@
          line is the mature, stable series every existing worked example and StackOverflow
          answer targets, and it fully supports net8.0. Pin to the latest 3.7.x build of each
          package rather than v4 to avoid absorbing an unreviewed major-version migration here. -->
-    <PackageVersion Include="AWSSDK.DynamoDBv2" Version="3.7.513.4" />
-    <PackageVersion Include="AWSSDK.S3" Version="3.7.511.8" />
+    <PackageVersion Include="AWSSDK.DynamoDBv2" Version="4.0.110.2" />
+    <PackageVersion Include="AWSSDK.S3" Version="4.0.104.11" />
   </ItemGroup>
   <ItemGroup Label="Avro / schema-registry (S06) — ship in lockstep with Confluent.Kafka 2.14.2">
     <!-- Confluent.SchemaRegistry + Serdes.Avro version-match Confluent.Kafka (2.14.2).
