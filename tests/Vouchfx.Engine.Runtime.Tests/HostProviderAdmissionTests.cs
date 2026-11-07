@@ -47,6 +47,54 @@ public sealed class HostProviderAdmissionTests
         Assert.Single(HostProviderRegistry.Build(new[] { CreateModuleAssembly("1.0.2", rejectSchema: false) }).All);
     }
 
+    [Fact]
+    public void SourceCapabilityStamp_AdmitsTheLatestReleasedEngine()
+    {
+        // Source builds and CI omit -p:Version. Directory.Build.props then supplies the
+        // capability stamp, and a stale fallback refuses providers whose MinEngineVersion
+        // the source can actually host. The community template and JsonRpc source both
+        // require 1.2.0; the floor is the latest CHANGELOG release so the next release
+        // cannot leave the fallback behind.
+        var released = LatestReleasedEngineVersion();
+        var actual = HostProviderRegistry.EngineVersion;
+        Assert.True(
+            EngineSemVersion.Parse(actual).CompareTo(EngineSemVersion.Parse(released)) >= 0,
+            $"Engine capability stamp '{actual}' is older than CHANGELOG.md release {released}.");
+        Assert.Single(HostProviderRegistry.Build(new[] { CreateModuleAssembly(released, rejectSchema: false) }).All);
+    }
+
+    private static string LatestReleasedEngineVersion()
+    {
+        foreach (var line in File.ReadLines(Path.Combine(RepositoryRoot(), "CHANGELOG.md")))
+        {
+            if (!line.StartsWith("## [", StringComparison.Ordinal)
+                || line.StartsWith("## [Unreleased]", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var end = line.IndexOf(']', 4);
+            if (end > 4)
+            {
+                return line[4..end];
+            }
+        }
+
+        throw new InvalidOperationException("CHANGELOG.md has no released version heading.");
+    }
+
+    private static string RepositoryRoot()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "vouchfx.sln")))
+        {
+            dir = dir.Parent;
+        }
+
+        Assert.NotNull(dir);
+        return dir!.FullName;
+    }
+
     [Theory]
     [InlineData("single")]
     [InlineData("suite")]
