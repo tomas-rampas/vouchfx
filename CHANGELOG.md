@@ -21,7 +21,7 @@ to published pre-releases on 2026-07-14.
 
 ## [Unreleased]
 
-## [1.3.0] — TBD
+## [1.3.0] — 2026-11-07
 
 ### Security
 
@@ -41,7 +41,7 @@ to published pre-releases on 2026-07-14.
 - The CLI package README and the getting-started guide document .NET 8, 9 and 10 support, and the compatibility table covers the global tool, self-contained distributions, source builds and services under test ([#650](https://github.com/tomas-rampas/vouchfx/pull/650), [#651](https://github.com/tomas-rampas/vouchfx/pull/651), [#652](https://github.com/tomas-rampas/vouchfx/pull/652)).
 - Documentation explains Dockerfile-based backends and validated release usage ([#649](https://github.com/tomas-rampas/vouchfx/pull/649)).
 - CI raises the Linux inotify limits before test hosts start, because `ubuntu-latest` (ubuntu-26.04) defaults to 128 instances ([#655](https://github.com/tomas-rampas/vouchfx/pull/655)).
-- Dependency upgrades via Dependabot: `github/codeql-action` 4.39.1 ([#653](https://github.com/tomas-rampas/vouchfx/pull/653)), `actions/setup-python` 7.1.0 ([#654](https://github.com/tomas-rampas/vouchfx/pull/654)) and the VS Code extension's `qs` development dependency 6.17.1 ([#656](https://github.com/tomas-rampas/vouchfx/pull/656)).
+- Dependency upgrades via Dependabot: `github/codeql-action` 4.39.1 ([#653](https://github.com/tomas-rampas/vouchfx/pull/653)), `actions/setup-python` 7.1.0 ([#654](https://github.com/tomas-rampas/vouchfx/pull/654)), `actions/setup-dotnet` 6.1.0 ([#658](https://github.com/tomas-rampas/vouchfx/pull/658)) and the VS Code extension's `qs` development dependency 6.17.1 ([#656](https://github.com/tomas-rampas/vouchfx/pull/656)).
 
 ## [1.2.1] — 2026-10-25
 
