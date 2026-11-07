@@ -31,7 +31,7 @@
     <PackageVersion Include="Aspire.Hosting.Nats" Version="13.4.2" />
   </ItemGroup>
   <ItemGroup Label="Resilience (§5.7) — Polly v8">
-    <PackageVersion Include="Polly.Core" Version="8.6.6" />
+    <PackageVersion Include="Polly.Core" Version="8.9.0" />
   </ItemGroup>
   <ItemGroup Label="Transitive security pins (Dependabot alerts) — CentralPackageTransitivePinningEnabled">
     <!-- Pulled in via Aspire.Hosting -> StreamJsonRpc 2.22.23 (>= 2.5.192); pinned to the
@@ -51,7 +51,7 @@
          10.0.8, the exact floor Aspire.Hosting.* 13.4.2 already imposes everywhere else,
          to avoid NU1109 downgrade errors under CentralPackageTransitivePinningEnabled
          (the CVE fix landed in 8.0.5; 10.0.8 targets net8.0). -->
-    <PackageVersion Include="System.Text.Json" Version="10.0.8" />
+    <PackageVersion Include="System.Text.Json" Version="10.0.14" />
   </ItemGroup>
   <ItemGroup Label="CLI runner (S07-C-01) — System.CommandLine GA 2.0.x">
     <!-- Pinned to the 2.0.0 GA line: Argument&lt;T&gt;(name)-only ctor + init Description /
@@ -59,12 +59,12 @@
          CancellationToken, Task&lt;int&gt;&gt;); rootCommand.Parse(args).InvokeAsync(ct). The pre-GA
          betas exposed different ctor overloads (e.g. Argument&lt;T&gt;(name, () =&gt; default, desc)),
          so the version is pinned to keep the API surface this CLI compiles against stable. -->
-    <PackageVersion Include="System.CommandLine" Version="2.0.0" />
+    <PackageVersion Include="System.CommandLine" Version="2.0.14" />
     <PackageVersion Include="NuGet.Protocol" Version="7.9.0" />
   </ItemGroup>
   <ItemGroup Label="JSON / Schema / YAML (§5.7)">
-    <PackageVersion Include="JsonPath.Net" Version="3.0.2" />
-    <PackageVersion Include="JsonSchema.Net" Version="9.3.0" />
+    <PackageVersion Include="JsonPath.Net" Version="3.0.3" />
+    <PackageVersion Include="JsonSchema.Net" Version="9.6.0" />
     <PackageVersion Include="YamlDotNet" Version="16.3.0" />
   </ItemGroup>
   <ItemGroup Label="Azure Service Bus emulator (mq-publish/expect.azureservicebus)">
@@ -75,24 +75,24 @@
     <PackageVersion Include="Azure.Messaging.ServiceBus" Version="7.18.2" />
   </ItemGroup>
   <ItemGroup Label="Canonical clients (§5.7) — net8-era stable lines">
-    <PackageVersion Include="Npgsql" Version="8.0.7" />
+    <PackageVersion Include="Npgsql" Version="10.0.3" />
     <!-- Aspire.Hosting.SqlServer 13.4.2 transitively requires >= 7.0.1; pin to the
          exact required minimum to avoid NU1109/NU1605 downgrade errors under
          CentralPackageTransitivePinningEnabled. -->
-    <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.0.1" />
-    <PackageVersion Include="MySqlConnector" Version="2.6.1" />
-    <PackageVersion Include="Confluent.Kafka" Version="2.14.2" />
-    <PackageVersion Include="MongoDB.Driver" Version="3.8.1" />
-    <PackageVersion Include="StackExchange.Redis" Version="2.13.1" />
+    <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.1.1" />
+    <PackageVersion Include="MySqlConnector" Version="2.6.2" />
+    <PackageVersion Include="Confluent.Kafka" Version="2.16.0" />
+    <PackageVersion Include="MongoDB.Driver" Version="3.13.0" />
+    <PackageVersion Include="StackExchange.Redis" Version="3.4.31" />
     <!-- Aspire.Hosting.RabbitMQ 13.4.2 transitively requires >= 7.2.1; pin to the
          exact required minimum to avoid NU1109/NU1605 downgrade errors under
          CentralPackageTransitivePinningEnabled. -->
-    <PackageVersion Include="RabbitMQ.Client" Version="7.2.1" />
+    <PackageVersion Include="RabbitMQ.Client" Version="7.2.2" />
     <!-- Aspire.Hosting.Nats 13.4.2 transitively requires >= 2.7.3; pin to the
          exact required minimum to avoid NU1109 downgrade errors under
          CentralPackageTransitivePinningEnabled. The mq-publish.nats and
          mq-expect.nats providers were authored against this API surface. -->
-    <PackageVersion Include="NATS.Net" Version="2.7.3" />
+    <PackageVersion Include="NATS.Net" Version="3.3.2" />
   </ItemGroup>
   <ItemGroup Label="AWS SDK (db-assert.dynamodb / storage-assert.s3) — pinned to the latest 3.7.x line">
     <!-- AWS SDK v4 (4.0.x) is a recent major rewrite with breaking API changes; the 3.7.x
@@ -106,19 +106,19 @@
     <!-- Confluent.SchemaRegistry + Serdes.Avro version-match Confluent.Kafka (2.14.2).
          Apache.Avro is pinned to exactly the version Serdes.Avro 2.14.2 transitively
          requires, to avoid an NU1605 downgrade warning under TreatWarningsAsErrors. -->
-    <PackageVersion Include="Confluent.SchemaRegistry" Version="2.14.2" />
-    <PackageVersion Include="Confluent.SchemaRegistry.Serdes.Avro" Version="2.14.2" />
-    <PackageVersion Include="Apache.Avro" Version="1.12.1" />
+    <PackageVersion Include="Confluent.SchemaRegistry" Version="2.16.0" />
+    <PackageVersion Include="Confluent.SchemaRegistry.Serdes.Avro" Version="2.16.0" />
+    <PackageVersion Include="Apache.Avro" Version="1.12.2" />
   </ItemGroup>
   <ItemGroup Label="Per-scenario isolation (S04-A-01)">
     <!-- Respawn 6.x: Respawner.CreateAsync(DbConnection, RespawnerOptions { DbAdapter = DbAdapter.Postgres })
          then respawner.ResetAsync(connection).  Npgsql adapter is included in Respawn 6.2.1. -->
-    <PackageVersion Include="Respawn" Version="6.2.1" />
+    <PackageVersion Include="Respawn" Version="7.0.0" />
   </ItemGroup>
   <ItemGroup Label="Test stack">
-    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
-    <PackageVersion Include="xunit" Version="2.9.2" />
-    <PackageVersion Include="xunit.runner.visualstudio" Version="2.8.2" />
-    <PackageVersion Include="coverlet.collector" Version="6.0.4" />
+    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.11.0" />
+    <PackageVersion Include="xunit" Version="2.9.3" />
+    <PackageVersion Include="xunit.runner.visualstudio" Version="4.0.1" />
+    <PackageVersion Include="coverlet.collector" Version="10.1.0" />
   </ItemGroup>
 </Project>
