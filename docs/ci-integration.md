@@ -463,9 +463,10 @@ jobs:
 
 ### Isolated SDK on GitHub Actions
 
-`actions/setup-dotnet` v6 installs the latest .NET 8 LTS runtime before the SDK you request. On a
-hosted runner that extra runtime would let a `net8.0` executable start even when the job asked for
-.NET 9 or 10, so a roll-forward failure would stay hidden. The reusable workflow therefore:
+`actions/setup-dotnet` v6 first installs the latest LTS runtime (`--channel LTS`); that major can
+change without a workflow update. On a hosted runner the extra runtime would let a `net8.0`
+executable start even when the job asked for a different major, so a roll-forward failure would stay
+hidden. The reusable workflow therefore:
 
 1. Installs `dotnet-version` into `$RUNNER_TEMP/vouchfx-suite-dotnet`, not the runner's default SDK directory.
 2. `actions/setup-dotnet` runs before the selector and can fail first, with its own error. If that step is reached and the install succeeded, the selector refuses a value that does not begin with `8.0`, `9.0` or `10.0`, followed by the end of the string or a further version suffix, and emits `The isolated workflow supports .NET 8, 9 and 10 SDKs.` before any SDK directory is removed.
