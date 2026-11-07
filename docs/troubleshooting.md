@@ -575,17 +575,21 @@ Isolation covers Roslyn compilation only. YAML parsing, provider loading and scr
 
 **Symptom:**
 
+The `Set up .NET SDK` step can fail first, with an `actions/setup-dotnet` error.
+
+If that step succeeds, the selector can emit:
+
 ```
 The isolated workflow supports .NET 8, 9 and 10 SDKs.
 ```
 
-or the selector stops with `The selected .NET 9.0 SDK and both shared frameworks must be installed before isolation.` (the major in the message is the one you requested), `Unexpected shared-framework directory in the isolated SDK tree.`, or a refusal to touch an install outside `RUNNER_TEMP`.
+or stop with `The selected .NET 9.0 SDK and both shared frameworks must be installed before isolation.` (the major in the message is the one you requested), `Unexpected shared-framework directory in the isolated SDK tree.`, or a refusal to touch an install outside `RUNNER_TEMP`.
 
 A later check can also fail because `dotnet` on `PATH` is not the copy under `$RUNNER_TEMP/vouchfx-suite-dotnet`, or because `dotnet --list-runtimes` still shows another major.
 
 **What it means:**
 
-`.github/workflows/vouchfx-run.yml` installs `dotnet-version` into its own directory and then deletes every SDK and shared-framework line other than the requested major. `actions/setup-dotnet` v6 installs the latest .NET 8 runtime first; leaving that runtime in place would let the `net8.0` CLI start even when the job asked for .NET 9 or 10. The step runs under PowerShell 7. Accepted values begin with `8.0`, `9.0` or `10.0` and then either end or continue with a version suffix (`8.0.x`, `10.0.401`). `8`, `8.1` and `11.0` are refused before anything is deleted.
+`.github/workflows/vouchfx-run.yml` installs `dotnet-version` into its own directory and then deletes every SDK and shared-framework line other than the requested major. `actions/setup-dotnet` v6 installs the latest .NET 8 runtime first; leaving that runtime in place would let the `net8.0` CLI start even when the job asked for .NET 9 or 10. The selector runs under PowerShell 7. Accepted values begin with `8.0`, `9.0` or `10.0` and then either end or continue with a version suffix (`8.0.x`, `10.0.401`). `actions/setup-dotnet` runs before that selector and can fail first, with its own error. If the selector is reached, a value outside the accepted form is refused with `The isolated workflow supports .NET 8, 9 and 10 SDKs.` before anything is deleted.
 
 The following `dotnet --version` check runs inside the vouchfx checkout, so the caller's `global.json` is not what selects the SDK. See [Isolated SDK on GitHub Actions](ci-integration.md#isolated-sdk-on-github-actions).
 

@@ -468,7 +468,7 @@ hosted runner that extra runtime would let a `net8.0` executable start even when
 .NET 9 or 10, so a roll-forward failure would stay hidden. The reusable workflow therefore:
 
 1. Installs `dotnet-version` into `$RUNNER_TEMP/vouchfx-suite-dotnet`, not the runner's default SDK directory.
-2. Refuses a value that does not begin with `8.0`, `9.0` or `10.0`, followed by the end of the string or a further version suffix. `8`, `8.1` and `11.0` stop the job with `The isolated workflow supports .NET 8, 9 and 10 SDKs.` before any SDK directory is removed.
+2. `actions/setup-dotnet` runs before the selector and can fail first, with its own error. If that step is reached and the install succeeded, the selector refuses a value that does not begin with `8.0`, `9.0` or `10.0`, followed by the end of the string or a further version suffix, and emits `The isolated workflow supports .NET 8, 9 and 10 SDKs.` before any SDK directory is removed.
 3. Runs the selector with PowerShell 7 (`pwsh`). A self-hosted runner without `pwsh` fails this step.
 4. Deletes every other SDK and shared-framework line from that owned tree, after checking the tree is a physical directory directly under `RUNNER_TEMP` and contains no links or reparse points. `Microsoft.NETCore.App` and `Microsoft.AspNetCore.App` for the selected line must both be present; an unexpected shared-framework directory aborts before deletion.
 5. Runs `dotnet --version` and `dotnet --list-runtimes` from the vouchfx checkout. SDK selection uses vouchfx's own `global.json`, so a `global.json` in the calling repository does not change this check. `dotnet` on `PATH` must be the isolated install, and every listed runtime must belong to the requested major.
