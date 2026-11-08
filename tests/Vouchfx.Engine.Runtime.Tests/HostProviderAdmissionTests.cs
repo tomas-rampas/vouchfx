@@ -59,7 +59,7 @@ public sealed class HostProviderAdmissionTests
         var actual = HostProviderRegistry.EngineVersion;
         Assert.True(
             EngineSemVersion.Parse(actual).CompareTo(EngineSemVersion.Parse(newest)) >= 0,
-            $"Engine capability stamp '{actual}' is older than the newest CHANGELOG.md version heading {newest}.");
+            $"Engine capability stamp '{actual}' is older than the newest CHANGELOG.md version heading {newest}. Raise the VouchfxEngineVersion fallback in Directory.Build.props.");
         Assert.Single(HostProviderRegistry.Build(new[] { CreateModuleAssembly(newest, rejectSchema: false) }).All);
     }
 

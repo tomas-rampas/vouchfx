@@ -1,8 +1,9 @@
 <Project>
   <PropertyGroup>
     <!-- Source capability version. Release packaging passes -p:Version, which is
-         visible here and wins. A plain source build, including CI, does not, and the
-         SDK's later 1.0.0-0.local package identity must not become this stamp.
+         visible here and wins. A plain source build, including the main CI build, does
+         not, and the SDK's later 1.0.0-0.local package identity must not become this
+         stamp.
          Provider admission compares it with MinEngineVersion, so the fallback has to
          stay at or above the newest version heading in CHANGELOG.md (the release being
          prepared, or the latest published one). A stale fallback refuses providers the
