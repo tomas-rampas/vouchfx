@@ -20,6 +20,8 @@ public sealed class MySqlConnectorPinGuardTests
 {
     private const string PackageId = "MySqlConnector";
 
+    private const string AdvisoryId = "GHSA-473q-m89c-ghf8";
+
     /// <summary>First patched MySqlConnector release named by GHSA-473q-m89c-ghf8.</summary>
     private static readonly Version FirstPatchedVersion = new(2, 6, 1);
 
@@ -43,17 +45,18 @@ public sealed class MySqlConnectorPinGuardTests
             .ToList();
 
         var versionText = Assert.Single(versions);
-        _output.WriteLine($"Central {PackageId} PackageVersion: {versionText}");
         Assert.False(
             string.IsNullOrWhiteSpace(versionText),
             "Directory.Packages.props MySqlConnector PackageVersion is missing.");
+        var version = versionText!.Trim();
+        _output.WriteLine($"Central {PackageId} PackageVersion: {version}");
         Assert.True(
-            Version.TryParse(versionText, out var parsed),
-            $"Directory.Packages.props MySqlConnector Version '{versionText}' is not a plain numeric version.");
+            Version.TryParse(version, out var parsed),
+            $"Directory.Packages.props MySqlConnector Version '{version}' is not a plain numeric version.");
         Assert.True(
             IsAtLeast(parsed!, FirstPatchedVersion),
-            $"Directory.Packages.props pins MySqlConnector {versionText}, below 2.6.1, the first patched "
-            + "release named by GHSA-473q-m89c-ghf8 (vulnerable range < 2.6.1).");
+            $"Directory.Packages.props pins MySqlConnector {version}, below {FirstPatchedVersion}, the first patched "
+            + $"release named by {AdvisoryId} (vulnerable range < {FirstPatchedVersion}).");
     }
 
     /// <summary>
