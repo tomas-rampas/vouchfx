@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Reflection.Emit;
 using Vouchfx.Engine.Authoring.Ast;
 using Vouchfx.Sdk;
+using Vouchfx.TestSupport;
 using Xunit;
 
 namespace Vouchfx.Engine.Runtime.Tests;
@@ -65,7 +66,7 @@ public sealed class HostProviderAdmissionTests
 
     private static string NewestChangelogVersion()
     {
-        foreach (var line in File.ReadLines(Path.Combine(RepositoryRoot(), "CHANGELOG.md")))
+        foreach (var line in File.ReadLines(Path.Combine(RepoRoot.Resolve(), "CHANGELOG.md")))
         {
             if (!line.StartsWith("## [", StringComparison.Ordinal)
                 || line.StartsWith("## [Unreleased]", StringComparison.Ordinal))
@@ -81,18 +82,6 @@ public sealed class HostProviderAdmissionTests
         }
 
         throw new InvalidOperationException("CHANGELOG.md has no version heading.");
-    }
-
-    private static string RepositoryRoot()
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "vouchfx.sln")))
-        {
-            dir = dir.Parent;
-        }
-
-        Assert.NotNull(dir);
-        return dir!.FullName;
     }
 
     [Theory]
