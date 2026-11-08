@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Reflection.Emit;
 using Vouchfx.Engine.Authoring.Ast;
 using Vouchfx.Sdk;
+using Vouchfx.TestSupport;
 using Xunit;
 
 namespace Vouchfx.Engine.Runtime.Tests;
@@ -45,6 +46,42 @@ public sealed class HostProviderAdmissionTests
         Assert.NotEqual("1.0.0-0.local", HostProviderRegistry.EngineVersion);
         _ = EngineSemVersion.Parse(HostProviderRegistry.EngineVersion);
         Assert.Single(HostProviderRegistry.Build(new[] { CreateModuleAssembly("1.0.2", rejectSchema: false) }).All);
+    }
+
+    [Fact]
+    public void SourceCapabilityStamp_IsAtLeastTheNewestChangelogVersion()
+    {
+        // Source builds and CI omit -p:Version. Directory.Build.props then supplies the
+        // capability stamp, and a stale fallback refuses providers whose MinEngineVersion
+        // the source can actually host. The community template and JsonRpc source both
+        // require 1.2.0; the floor is the newest CHANGELOG.md version heading so the next
+        // release cannot leave the fallback behind.
+        var newest = NewestChangelogVersion();
+        var actual = HostProviderRegistry.EngineVersion;
+        Assert.True(
+            EngineSemVersion.Parse(actual).CompareTo(EngineSemVersion.Parse(newest)) >= 0,
+            $"Engine capability stamp '{actual}' is older than the newest CHANGELOG.md version heading {newest}. Raise the VouchfxEngineVersion fallback in Directory.Build.props.");
+        Assert.Single(HostProviderRegistry.Build(new[] { CreateModuleAssembly(newest, rejectSchema: false) }).All);
+    }
+
+    private static string NewestChangelogVersion()
+    {
+        foreach (var line in File.ReadLines(Path.Combine(RepoRoot.Resolve(), "CHANGELOG.md")))
+        {
+            if (!line.StartsWith("## [", StringComparison.Ordinal)
+                || line.StartsWith("## [Unreleased]", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var end = line.IndexOf(']', 4);
+            if (end > 4)
+            {
+                return line[4..end];
+            }
+        }
+
+        throw new InvalidOperationException("CHANGELOG.md has no version heading.");
     }
 
     [Theory]

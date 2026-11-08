@@ -45,6 +45,10 @@ to published pre-releases on 2026-07-14.
 - Dependency upgrades via Dependabot: `github/codeql-action` 4.39.1 ([#653](https://github.com/tomas-rampas/vouchfx/pull/653)), `actions/setup-python` 7.1.0 ([#654](https://github.com/tomas-rampas/vouchfx/pull/654)), `actions/setup-dotnet` 6.1.0 ([#658](https://github.com/tomas-rampas/vouchfx/pull/658)) and the VS Code extension's `qs` development dependency 6.17.1 ([#656](https://github.com/tomas-rampas/vouchfx/pull/656)).
 - NuGet dependency upgrades: 20 of the 24 updates in Dependabot's `nuget-dependencies` group, including the StackExchange.Redis 3 and NATS.Net 3 majors. `AWSSDK.DynamoDBv2`/`AWSSDK.S3` 4, YamlDotNet 18 and Npgsql 10 are held back: AWSSDK 4 and Npgsql 10 change provider behaviour, and YamlDotNet types are part of the frozen v1 SDK surface, so a new major would stop published providers from loading ([#662](https://github.com/tomas-rampas/vouchfx/pull/662), [#659](https://github.com/tomas-rampas/vouchfx/pull/659)).
 
+### Fixed
+
+- Source builds that omit `-p:Version` now stamp the engine capability as 1.3.0. The fallback had remained 1.0.7, so startup refused any provider declaring `MinEngineVersion` 1.2.0 or newer, including the current community provider template and JsonRpc source, and `vouchfx` exited 3 before the suite ran. A new test keeps the fallback at or above the newest CHANGELOG.md version heading. Release builds that pass `-p:Version` were already stamped with the release version, and custom runners that skip provider admission are unaffected ([#666](https://github.com/tomas-rampas/vouchfx/pull/666)).
+
 ## [1.2.1] — 2026-10-25
 
 ### Security
