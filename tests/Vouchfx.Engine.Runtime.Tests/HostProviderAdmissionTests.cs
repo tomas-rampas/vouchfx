@@ -48,22 +48,22 @@ public sealed class HostProviderAdmissionTests
     }
 
     [Fact]
-    public void SourceCapabilityStamp_AdmitsTheLatestReleasedEngine()
+    public void SourceCapabilityStamp_IsAtLeastTheNewestChangelogVersion()
     {
         // Source builds and CI omit -p:Version. Directory.Build.props then supplies the
         // capability stamp, and a stale fallback refuses providers whose MinEngineVersion
         // the source can actually host. The community template and JsonRpc source both
-        // require 1.2.0; the floor is the latest CHANGELOG release so the next release
-        // cannot leave the fallback behind.
-        var released = LatestReleasedEngineVersion();
+        // require 1.2.0; the floor is the newest CHANGELOG.md version heading so the next
+        // release cannot leave the fallback behind.
+        var newest = NewestChangelogVersion();
         var actual = HostProviderRegistry.EngineVersion;
         Assert.True(
-            EngineSemVersion.Parse(actual).CompareTo(EngineSemVersion.Parse(released)) >= 0,
-            $"Engine capability stamp '{actual}' is older than CHANGELOG.md release {released}.");
-        Assert.Single(HostProviderRegistry.Build(new[] { CreateModuleAssembly(released, rejectSchema: false) }).All);
+            EngineSemVersion.Parse(actual).CompareTo(EngineSemVersion.Parse(newest)) >= 0,
+            $"Engine capability stamp '{actual}' is older than the newest CHANGELOG.md version heading {newest}.");
+        Assert.Single(HostProviderRegistry.Build(new[] { CreateModuleAssembly(newest, rejectSchema: false) }).All);
     }
 
-    private static string LatestReleasedEngineVersion()
+    private static string NewestChangelogVersion()
     {
         foreach (var line in File.ReadLines(Path.Combine(RepositoryRoot(), "CHANGELOG.md")))
         {
@@ -80,7 +80,7 @@ public sealed class HostProviderAdmissionTests
             }
         }
 
-        throw new InvalidOperationException("CHANGELOG.md has no released version heading.");
+        throw new InvalidOperationException("CHANGELOG.md has no version heading.");
     }
 
     private static string RepositoryRoot()

@@ -23,7 +23,7 @@ to published pre-releases on 2026-07-14.
 
 ### Fixed
 
-- Source builds that omit `-p:Version` stamp the engine capability as 1.3.0. The fallback had remained 1.0.7, so startup refused any provider declaring `MinEngineVersion` 1.2.0 or newer, including the current community provider template and JsonRpc source, and `vouchfx` exited 3 before the suite ran. Release builds that pass `-p:Version` were already stamped with the release version.
+- Source builds that omit `-p:Version` now stamp the engine capability as 1.3.0, the version being prepared. The fallback had remained 1.0.7, so startup refused any provider declaring `MinEngineVersion` 1.2.0 or newer, including the current community provider template and JsonRpc source, and `vouchfx` exited 3 before the suite ran. A new test keeps the fallback at or above the newest CHANGELOG.md version heading. Release builds that pass `-p:Version` were already stamped with the release version, and custom runners that skip provider admission are unaffected.
 
 ## [1.3.0] — 2026-11-07
 
