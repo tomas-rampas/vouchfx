@@ -122,8 +122,8 @@ setting was found under `Vouchfx.Steps.DbAssert.Mysql`; connection strings may
 come from the suite or the system under test.
 
 On 1.2.1, avoid `VerifyCA` or `VerifyFull` without a configured CA (set
-`SslCa`), or upgrade to vouchfx >= 1.3.0 (or any later release) which includes
-a patched MySqlConnector (>= 2.6.1).
+`SslCa`), or upgrade to 1.3.0 or later once published (those releases include
+MySqlConnector >= 2.6.1).
 
 This notice records the library version inside that published package and the
 advisory's own conditions. Report newly discovered issues through the private
