@@ -36,7 +36,8 @@ public sealed class MySqlConnectorPinGuardTests
         var propsPath = Path.Combine(RepoRoot.Resolve(), "Directory.Packages.props");
         var document = XDocument.Load(propsPath);
         var versions = document
-            .Descendants("PackageVersion")
+            .Descendants()
+            .Where(element => element.Name.LocalName == "PackageVersion")
             .Where(element => string.Equals((string?)element.Attribute("Include"), PackageId, StringComparison.Ordinal))
             .Select(element => (string?)element.Attribute("Version"))
             .ToList();
