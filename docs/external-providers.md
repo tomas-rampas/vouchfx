@@ -76,7 +76,7 @@ Search order is not a shadowing mechanism. Duplicate step kinds always fail, inc
 
 Providers execute trusted code in the default assembly load context. Directory loading is not a sandbox. Installing a Community provider does not imply maintainer endorsement. Only use assemblies and dependencies you trust.
 
-Before loading external code, the CLI inspects managed metadata, refuses engine/provider namespace impersonation (`Vouchfx.Engine.*`, `Vouchfx.Steps.*`), checks dependency identities, and requires SDK v1. Provider `MinEngineVersion` is checked before schema contribution. Frozen SDK v1 references and the engine's shared abstractions bind to the host's v1 assemblies; framework references bind to the host's compatible framework assembly. Private dependencies must have matching identities, and conflicting copies are refused rather than silently selected.
+Before loading external code, the CLI inspects managed metadata, refuses engine/provider namespace impersonation (`Vouchfx.Engine.*`, `Vouchfx.Steps.*`), checks dependency identities, and requires SDK v1. Provider `MinEngineVersion` is checked before schema contribution, against `VouchfxEngineVersion` metadata on `Vouchfx.Engine.Runtime`. On a source build that omits `-p:Version`, that stamp is the fallback in `Directory.Build.props` (currently `1.3.0`), not the `1.0.0-0.local` package identity and not the string `vouchfx --version` prints. A provider above the stamp is reported as `Provider '<family>.<provider>' requires engine <minimum>; the running engine is <stamp>.`, wrapped as `Provider registration refused`, and the CLI exits 3 before the suite runs. Upgrade a published engine that is genuinely older. Raise the fallback and rebuild when a source build's stamp lags the newest `CHANGELOG.md` heading. See [Provider requires a newer engine](troubleshooting.md#provider-requires-a-newer-engine). Frozen SDK v1 references and the engine's shared abstractions bind to the host's v1 assemblies; framework references bind to the host's compatible framework assembly. Private dependencies must have matching identities, and conflicting copies are refused rather than silently selected.
 
 Providers and their dependencies remain loaded for the process lifetime. Restart watch mode after changing provider binaries. Generated scripts retain their collectible execution contexts; `--isolate-compile` moves compilation into a worker and does not isolate provider code or script execution.
 
@@ -86,7 +86,7 @@ Providers and their dependencies remain loaded for the process lifetime. Restart
 | Missing dependency | Place the matching managed dependency beside the provider DLL. |
 | Provider assembly conflict | Remove incompatible copies; rebuild against the CLI's shared dependencies where necessary. |
 | Unsupported SDK | Use a provider built against SDK v1. |
-| Requires engine version | Upgrade the engine to the provider's declared minimum. |
+| Requires engine version | Read the stamp in `the running engine is`. Upgrade a published engine that is older than the provider. For a source build, raise the `VouchfxEngineVersion` fallback when it lags the newest changelog heading, then rebuild. |
 | Reserved namespace or host identity | Obtain a provider using its own namespace and assembly name. |
 | Duplicate step kind | Remove one of the competing provider assemblies. |
 

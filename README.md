@@ -330,6 +330,8 @@ storage locations.
 **Prerequisites:** a .NET 8, 9 or 10 SDK (`global.json` sets the minimum and roll-forward policy) and, for the integration tests only, a
 running Docker daemon. The unit tests require the SDK but do not need Docker.
 
+A plain `dotnet build` does not pass `-p:Version`. Provider admission then uses the `VouchfxEngineVersion` fallback in `Directory.Build.props` (currently `1.3.0`), which must stay at or above the newest version heading in `CHANGELOG.md`. That stamp is assembly metadata on `Vouchfx.Engine.Runtime`. It is separate from the source package identity `1.0.0-0.local`, which `vouchfx --version` reports. See [Building vouchfx from source](https://vouchfx.io/getting-started/#engine-capability-stamp) and [Provider requires a newer engine](https://vouchfx.io/troubleshooting/#provider-requires-a-newer-engine).
+
 ```bash
 dotnet build vouchfx.sln                             # C# 11, nullable, warnings-as-errors
 dotnet test vouchfx.sln --filter "requires!=docker"  # unit tests — fast, no Docker

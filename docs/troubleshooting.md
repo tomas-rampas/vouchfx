@@ -1608,6 +1608,32 @@ All three selection refusals retain exit 2. A timeout or failed capture also ref
 
 ---
 
+## Provider requires a newer engine
+
+**Symptom:**
+
+```text
+Provider registration refused: Provider 'rpc.json-rpc' requires engine 1.2.0; the running engine is 1.0.7.
+```
+
+`run`, `validate`, `list`, `schema`, `scaffold` and `plan` print this while discovering providers and exit 3. No scenario runs. Further lines name each loaded assembly and its path. An invalid declaration uses the same wrapper with `declares an invalid MinEngineVersion`.
+
+**What it means:**
+
+The CLI compares `MinEngineVersion` with `VouchfxEngineVersion` metadata on `Vouchfx.Engine.Runtime` before the provider contributes a schema. Comparison is strict SemVer 2. A prerelease sorts before the matching stable version, and build metadata is ignored.
+
+`Directory.Build.props` copies `-p:Version` into that stamp when release packaging sets it. A plain source build, including CI, omits `-p:Version` and uses the checked-in fallback. That fallback stayed at `1.0.7` after the changelog had moved on, so current community provider source declaring `1.2.0` was refused by an engine that could host it. Current source sets the fallback to `1.3.0`. Adding a newer changelog heading without raising the fallback fails `HostProviderAdmissionTests.SourceCapabilityStamp_IsAtLeastTheNewestChangelogVersion`.
+
+`vouchfx --version` and JSON `engineVersion` report the informational version. A pack without `-p:Version` uses the package identity `1.0.0-0.local`. That string is not the capability stamp.
+
+**Fix:**
+
+1. Read the version after `the running engine is`. When it is older than the newest `CHANGELOG.md` heading for the commit you built, raise the `VouchfxEngineVersion` fallback in `Directory.Build.props` to that heading and rebuild. Leave the package identity at `1.0.0-0.local`.
+2. When the stamp already matches the release you are running and is still below the provider's minimum, install or build an engine at least that new. Loading a provider directory does not raise the host version.
+3. A catalogue built only with the public `StepKindRegistry.BuildAndFreeze` overload skips this check. `ScenarioRunner.RunAsync`, `ScenarioRunner.RunSuiteAsync` and `ParallelSuiteRunner` apply it when they rebuild the catalogue for a run. The ledger sample's custom runner is the first shape for its own listing and the second shape for the suite.
+
+---
+
 ## See also
 
 - **[Recipes](recipes.md)** — Task-oriented examples for common scenarios.
