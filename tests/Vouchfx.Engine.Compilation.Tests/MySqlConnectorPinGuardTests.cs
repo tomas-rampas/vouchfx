@@ -49,32 +49,19 @@ public sealed class MySqlConnectorPinGuardTests
         Assert.True(
             Version.TryParse(versionText, out var parsed),
             $"Directory.Packages.props MySqlConnector Version '{versionText}' is not a plain numeric version.");
-        Assert.NotNull(parsed);
         Assert.True(
-            IsAtLeast(parsed, FirstPatchedVersion),
+            IsAtLeast(parsed!, FirstPatchedVersion),
             $"Directory.Packages.props pins MySqlConnector {versionText}, below 2.6.1, the first patched "
             + "release named by GHSA-473q-m89c-ghf8 (vulnerable range < 2.6.1).");
     }
 
     /// <summary>
-    /// Compares major, minor and build. <see cref="Version"/> stores an omitted revision as -1,
-    /// so a three-part pin such as 2.6.2 must not be treated as older than 2.6.1.0.
-    /// An omitted build is treated as 0, so 2.6 is below 2.6.1.
+    /// Compares major, minor and build. <see cref="Version"/> stores an omitted build as -1,
+    /// so that component is treated as 0 and 2.6 is below 2.6.1. Revision is not compared.
     /// </summary>
     private static bool IsAtLeast(Version actual, Version minimum)
     {
-        if (actual.Major != minimum.Major)
-        {
-            return actual.Major > minimum.Major;
-        }
-
-        if (actual.Minor != minimum.Minor)
-        {
-            return actual.Minor > minimum.Minor;
-        }
-
-        var actualBuild = actual.Build < 0 ? 0 : actual.Build;
-        var minimumBuild = minimum.Build < 0 ? 0 : minimum.Build;
-        return actualBuild >= minimumBuild;
+        var normalised = new Version(actual.Major, actual.Minor, Math.Max(actual.Build, 0));
+        return normalised >= minimum;
     }
 }

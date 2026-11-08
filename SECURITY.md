@@ -123,8 +123,7 @@ come from the suite or the system under test.
 
 On 1.2.1, avoid `VerifyCA` or `VerifyFull` without a configured CA (set
 `SslCa`), or use the upcoming 1.3.0 release once it is published. 1.3.0 is
-not released yet and includes a patched MySqlConnector. The central pin on
-this branch is 2.6.2 in `Directory.Packages.props`.
+not released yet and includes a patched MySqlConnector.
 
 This notice records the library version inside that published package and the
 advisory's own conditions. Report newly discovered issues through the private

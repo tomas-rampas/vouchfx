@@ -89,28 +89,13 @@ intentionally testing a pre-release. Self-contained platform archives and instal
 
 The global-tool installer places the `vouchfx` command in `~/.dotnet/tools` (`%USERPROFILE%\.dotnet\tools` on Windows). If your shell cannot find `vouchfx` afterwards, add that directory to your `PATH` or open a fresh shell.
 
-**Published `vouchfx` 1.2.1 bundles MySqlConnector 2.4.0.** That NuGet tool package
-(repository commit `204267fdfef8eb139a4cd88e08ea917e97bf7668`) contains
-`tools/net8.0/any/MySqlConnector.dll` with FileVersion 2.4.0 and ProductVersion
-`2.4.0+76f8c519f746d65b1847a5bf5f168a2744589958`. It is a `DotnetTool`, so the nuspec
-has no package dependencies; the bundled DLL is the library that ships. FileVersion 2.4.0
-is inside [GHSA-473q-m89c-ghf8](https://github.com/advisories/GHSA-473q-m89c-ghf8)
-(vulnerable range `< 2.6.1`, first patched version 2.6.1, severity medium).
-
-The advisory states that with `SslMode` set to `VerifyCA` or `VerifyFull` and no
-configured CA certificate, an unvalidated TLS connection is treated as secure and a
-clear-text password can be sent before the certificate is checked. Its impact is a
-man-in-the-middle proxy that presents any self-signed certificate and captures the
-password of a client whose connection string uses `VerifyCA` or `VerifyFull`, does not
-set `SslCa`, and uses a non-empty password. A configured `SslCa`, CA-validated TLS,
-local connections (Unix socket or loopback) and empty passwords are not affected.
-`SslMode` `Preferred` or `Required` is out of scope. You are affected only when your
-connection string meets those preconditions. No `SslMode` or `VerifyFull` setting was
-found under `Vouchfx.Steps.DbAssert.Mysql`; connection strings may come from the suite
-or the system under test. On 1.2.1, avoid `VerifyCA` or `VerifyFull` without a configured CA
-(set `SslCa`), or use the upcoming 1.3.0 release once it is published. 1.3.0 is not
-released yet and includes a patched MySqlConnector. The central pin on this branch
-is 2.6.2.
+**Published `vouchfx` 1.2.1 bundles MySqlConnector 2.4.0.** Its
+`tools/net8.0/any/MySqlConnector.dll` has FileVersion 2.4.0, which is inside
+[GHSA-473q-m89c-ghf8](https://github.com/advisories/GHSA-473q-m89c-ghf8)
+(vulnerable range `< 2.6.1`, severity medium). Only connection strings that use
+`VerifyCA` or `VerifyFull`, omit `SslCa`, and carry a non-empty password are affected.
+On 1.2.1, set `SslCa`, or use 1.3.0 once it is published. The full conditions are in the
+[security policy](https://github.com/tomas-rampas/vouchfx/blob/main/SECURITY.md#published-121-tool-and-ghsa-473q-m89c-ghf8).
 
 **Using vouchfx-mcp?** Keep its CLI at the version required by the installed MCP package. Published MCP 1.1.0 [pins Core 1.2.0](https://github.com/tomas-rampas/vouchfx-mcp/blob/v1.1.0/ENGINE_PIN), whose full version is `1.2.0+0af21de5bd0a4e91ca002e03e6c256bc4e8ca4e8`; it does not accept Core 1.2.1. If you also need another Core version, install the MCP-compatible CLI in a separate tool directory and put that directory first on `PATH` for the MCP server process.
 
