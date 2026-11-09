@@ -37,7 +37,8 @@ which can deadlock when a script exceeds the OS pipe capacity. Tools have bounde
 waits, and any non-zero lint exit fails the gate. Python syntax is checked too.
 
 `install-workflow-tools.sh` installs into the runner's temporary directory and
-checks exact official release-asset SHA-256 values: [actionlint 1.7.12](https://github.com/rhysd/actionlint/releases/tag/v1.7.12)
+checks exact official release-asset SHA-256 values. Each download retries
+transient release-host failures, including HTTP 504, before that check: [actionlint 1.7.12](https://github.com/rhysd/actionlint/releases/tag/v1.7.12)
 (source commit `914e7df21a07ef503a81201c76d2b11c789d3fca`),
 [ShellCheck 0.11.0](https://github.com/koalaman/shellcheck/releases/tag/v0.11.0) and
 [yq 4.53.2](https://github.com/mikefarah/yq/releases/tag/v4.53.2).
