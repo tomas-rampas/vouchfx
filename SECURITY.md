@@ -96,6 +96,39 @@ golden-file CI gates. Security fixes land on the latest v1.x release.
 When a `0.x`/pre-1.0 series is published, only the latest minor receives security
 fixes; please upgrade rather than relying on an older pre-release.
 
+## Published 1.2.1 tool and GHSA-473q-m89c-ghf8
+
+The published NuGet tool `vouchfx` 1.2.1 (repository commit
+`204267fdfef8eb139a4cd88e08ea917e97bf7668`) bundles
+`tools/net8.0/any/MySqlConnector.dll` with FileVersion 2.4.0 and ProductVersion
+`2.4.0+76f8c519f746d65b1847a5bf5f168a2744589958`. The nuspec has no
+`<dependencies>` because the package type is `DotnetTool`; the bundled DLL is
+the shipped library. FileVersion 2.4.0 is inside
+[GHSA-473q-m89c-ghf8](https://github.com/advisories/GHSA-473q-m89c-ghf8)
+(NuGet `MySqlConnector`, vulnerable range `< 2.6.1`, first patched version
+2.6.1, severity medium).
+
+The advisory states that with `SslMode` set to `VerifyCA` or `VerifyFull` and
+no configured CA certificate, an unvalidated TLS connection is treated as
+secure and a clear-text password can be sent before the certificate is
+checked. Its impact is a man-in-the-middle proxy that presents any
+self-signed certificate and captures the password of a client whose
+connection string uses `VerifyCA` or `VerifyFull`, omits `SslCa`, and uses a
+non-empty password. A configured `SslCa`, CA-validated TLS, local connections
+(Unix socket or loopback) and empty passwords are not affected. `SslMode`
+`Preferred` or `Required` is out of scope. Users are affected only when their
+connection strings meet those preconditions. No `SslMode` or `VerifyFull`
+setting was found under `Vouchfx.Steps.DbAssert.Mysql`; connection strings may
+come from the suite or the system under test.
+
+On 1.2.1, avoid `VerifyCA` or `VerifyFull` without a configured CA (set
+`SslCa`), or upgrade to 1.3.0 or later once published (those releases include
+MySqlConnector >= 2.6.1).
+
+This notice records the library version inside that published package and the
+advisory's own conditions. Report newly discovered issues through the private
+channels above.
+
 ## Scope
 
 ### In scope

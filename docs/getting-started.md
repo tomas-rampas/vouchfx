@@ -89,6 +89,15 @@ intentionally testing a pre-release. Self-contained platform archives and instal
 
 The global-tool installer places the `vouchfx` command in `~/.dotnet/tools` (`%USERPROFILE%\.dotnet\tools` on Windows). If your shell cannot find `vouchfx` afterwards, add that directory to your `PATH` or open a fresh shell.
 
+**Published `vouchfx` 1.2.1 bundles MySqlConnector 2.4.0.** Its
+`tools/net8.0/any/MySqlConnector.dll` has FileVersion 2.4.0, which is inside
+[GHSA-473q-m89c-ghf8](https://github.com/advisories/GHSA-473q-m89c-ghf8)
+(vulnerable range `< 2.6.1`, severity medium). Only remote (non-loopback, non-Unix-socket)
+connections whose connection string uses `VerifyCA` or `VerifyFull`, omits `SslCa`, and
+carries a non-empty password are affected; the
+[security policy](https://github.com/tomas-rampas/vouchfx/blob/main/SECURITY.md#published-121-tool-and-ghsa-473q-m89c-ghf8)
+lists every exclusion. On 1.2.1, set `SslCa`, or use 1.3.0 once it is published.
+
 **Using vouchfx-mcp?** Keep its CLI at the version required by the installed MCP package. Published MCP 1.1.0 [pins Core 1.2.0](https://github.com/tomas-rampas/vouchfx-mcp/blob/v1.1.0/ENGINE_PIN), whose full version is `1.2.0+0af21de5bd0a4e91ca002e03e6c256bc4e8ca4e8`; it does not accept Core 1.2.1. If you also need another Core version, install the MCP-compatible CLI in a separate tool directory and put that directory first on `PATH` for the MCP server process.
 
 ### Native installers
