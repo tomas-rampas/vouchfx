@@ -21,6 +21,10 @@ to published pre-releases on 2026-07-14.
 
 ## [Unreleased]
 
+### Changed
+
+- Commits no longer need a DCO `Signed-off-by` trailer; the DCO check workflow is removed.
+
 ## [1.3.0] — 2026-11-07
 
 ### Security
