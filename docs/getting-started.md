@@ -177,17 +177,7 @@ dotnet build src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj -c Release
 
 ### Engine capability stamp
 
-Provider admission compares each provider's `MinEngineVersion` with the `VouchfxEngineVersion` assembly metadata on `Vouchfx.Engine.Runtime`. `Directory.Build.props` copies `-p:Version` into that stamp when the property is already set at import, which is how release packaging records the release. A plain `dotnet build`, including CI, does not pass `-p:Version`, so the checked-in fallback applies. The fallback is `1.3.0` and has to stay at or above the newest `## [x.y.z]` heading in `CHANGELOG.md`. `HostProviderAdmissionTests.SourceCapabilityStamp_IsAtLeastTheNewestChangelogVersion` fails the build when the stamp is older.
-
-The local package identity stays `1.0.0-0.local`. `vouchfx --version` and the `engineVersion` field in CLI JSON follow the informational version, so a source-built CLI can print `1.0.0-0.local` while admitting providers against `1.3.0`. Do not copy the package identity into `VouchfxEngineVersion`.
-
-The CLI performs the check while building the provider catalogue, before a suite runs. A provider above the stamp produces a line of this form and the process exits 3:
-
-```text
-Provider registration refused: Provider 'family.provider' requires engine 1.2.0; the running engine is 1.0.7.
-```
-
-The version after `the running engine is` is the capability stamp. A following line lists each loaded assembly and its path. Rebuild after the fallback matches the changelog heading you are building. A published CLI whose stamp is genuinely older than the provider needs a newer engine. The symptom, the invalid-minimum variant, and the custom-runner split are in [Provider requires a newer engine](troubleshooting.md#provider-requires-a-newer-engine).
+A source build admits providers against the `VouchfxEngineVersion` fallback in `Directory.Build.props`, which a unit test keeps at or above the newest version heading in `CHANGELOG.md` (possibly a release still being prepared); the build records that fallback as metadata on `Vouchfx.Engine.Runtime`. `vouchfx --version` prints a different value, the local identity `1.0.0-0.local+<commit>`, which admission does not use. If a provider is refused with `Provider registration refused` and exit code 3, see [Provider requires a newer engine](troubleshooting.md#provider-requires-a-newer-engine).
 
 ## Authoring your first test
 
