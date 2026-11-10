@@ -28,8 +28,7 @@ Earning the Vouched badge is a checklist, not a conversation. The minimum bar:
 - The security checklist is signed off: credential handling reviewed for correctness, transitive dependency
   vulnerabilities scanned (zero high-severity at review), TLS defaults inspected, no telemetry phoning
   home, package signature verified.
-- The licence is Apache-2.0 (or compatible) and the contributor has signed off via the Developer Certificate
-  of Origin (DCO).
+- The licence is Apache-2.0 (or compatible).
 - The provider declares a `MinEngineVersion` compatible with the engine's current major version.
 - At least one platform-team maintainer has read the emitted CSX for the provider's representative steps and
   confirmed it follows the CsxFragment composition contract (Architecture Blueprint §13.3.1).
@@ -38,11 +37,10 @@ A provider listed in Community that does not yet meet the rubric will remain unb
 actionable feedback for what is needed to earn the Vouched badge. The badge is point-in-time and records the exact reviewed version. See [CONTRIBUTING.md](https://github.com/tomas-rampas/vouchfx/blob/main/CONTRIBUTING.md) for the full authoring
 guide.
 
-## Contributor sign-off
+## Contributor licensing
 
-Contributions are accepted under the **Developer Certificate of Origin** (DCO) — sign your commits with
-`git commit -s`. The DCO was chosen over a Contributor Licence Agreement deliberately: it is lighter-weight,
-requires no separate signing infrastructure, and matches .NET Foundation practice.
+Contributions are accepted under Apache-2.0 (inbound = outbound). No Contributor Licence Agreement and no
+`Signed-off-by` trailer is required.
 
 ## Commit rights
 

@@ -230,7 +230,7 @@ Core providers are bundled with the engine, versioned together, and fully suppor
 - The provider's integration-test fixture passes on the official matrix (the engine's main branch plus the two preceding minor versions).
 - The provider's README contains worked examples covering at least three realistic use cases and a known-limitations section.
 - Security sign-off completed: credential handling reviewed for correctness, transitive dependency vulnerabilities scanned (zero high-severity at review), TLS defaults inspected, no telemetry phoning home, package signature verified.
-- The licence is Apache-2.0 (or compatible) and the contributor has signed off via DCO (Developer Certificate of Origin).
+- The licence is Apache-2.0 (or compatible).
 - The provider declares a `MinEngineVersion` compatible with the engine's current major version.
 - At least one platform-team maintainer has read the emitted CSX for the provider's representative steps and confirmed it follows the CsxFragment composition contract in the architecture blueprint's section 13.3.1.
 
