@@ -146,9 +146,9 @@
          SkipAddAspireDefaultReferences=true and Vouchfx.Dcp.targets sets a placeholder
          dashboard path instead of shipping the dashboard. vouchfx adds no YARP resource of its
          own. A suite can declare a YARP image under services:, but vouchfx still starts no
-         dashboard alongside it. The published tool does bundle the Aspire.Hosting and Aspire.Hosting.AppHost 13.4.2 DLLs,
-         so scanners reading its deps.json will report the advisory. A source check cannot
-         prove unreachability. The guard in
+         dashboard alongside it. The published tool does bundle the Aspire.Hosting and
+         Aspire.Hosting.AppHost 13.4.2 DLLs, so scanners reading its deps.json will report the
+         advisory. A source check cannot prove unreachability. The guard in
          tests/Vouchfx.Engine.Compilation.Tests/AspireAuditSuppressionGuardTests.cs fails CI
          if any other audit suppression or audit-level override appears in an MSBuild or
          NuGet config file, if this entry is still present once the Aspire pin is 13.6.5 or

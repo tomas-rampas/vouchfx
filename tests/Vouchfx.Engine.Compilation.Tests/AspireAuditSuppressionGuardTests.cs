@@ -75,9 +75,9 @@ public sealed class AspireAuditSuppressionGuardTests
         "NET5_0_OR_GREATER", "NET6_0_OR_GREATER", "NET7_0_OR_GREATER", "NET8_0_OR_GREATER",
     };
 
-    private static readonly Regex AuditWarningCode = new(@"\bNU190\d\b", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+    private static readonly Regex AuditWarningCode = new(@"(?<![0-9])NU190\d(?![0-9])", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
 
-    private static readonly Regex AuditTextPattern = new(@"NuGetAudit|\bNU190\d\b", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+    private static readonly Regex AuditTextPattern = new(@"NuGetAudit|(?<![0-9])NU190\d(?![0-9])", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
 
     private static readonly Lazy<List<(string File, XDocument Document)>> MsBuildDocuments = new(LoadMsBuildDocuments);
 
@@ -110,6 +110,37 @@ public sealed class AspireAuditSuppressionGuardTests
             $"{RootPropsName} must suppress at most the single approved advisory {AdvisoryUrl}. "
             + $"Found: [{string.Join(", ", urls)}]. Delete the extra entries. A second suppression needs "
             + $"a maintainer approval and a deliberate change to this test.");
+    }
+
+    [Theory]
+    [InlineData("$(NoWarn);NU1903")]
+    [InlineData("-nowarn:NU1903")]
+    [InlineData("/nowarn:NU1903,NU1904")]
+    [InlineData("CS1591%3BNU1903")]
+    [InlineData("CS1591%3bNU1903")]
+    [InlineData("-p:NoWarn=\"NU1603%3BNU1903\"")]
+    [InlineData("nu1903")]
+    public void GivenAuditWarningCodeText_WhenPatternsAreMatched_ThenBothPatternsMatch(string text)
+    {
+        Assert.Matches(AuditWarningCode, text);
+        Assert.Matches(AuditTextPattern, text);
+    }
+
+    [Fact]
+    public void GivenNuGetAuditSwitch_WhenTextPatternIsMatched_ThenItMatchesButTheWarningCodePatternDoesNot()
+    {
+        const string text = "-p:NuGetAudit=false";
+
+        Assert.Matches(AuditTextPattern, text);
+        Assert.DoesNotMatch(AuditWarningCode, text);
+    }
+
+    [Theory]
+    [InlineData("NU19034")]
+    public void GivenLongerNumericCode_WhenPatternsAreMatched_ThenNeitherPatternMatches(string text)
+    {
+        Assert.DoesNotMatch(AuditWarningCode, text);
+        Assert.DoesNotMatch(AuditTextPattern, text);
     }
 
     [Fact]
@@ -206,8 +237,7 @@ public sealed class AspireAuditSuppressionGuardTests
             return;
         }
 
-        Assert.False(
-            RootSuppressionIsPresent(),
+        Assert.Fail(
             $"{PackagesPropsName} pins {HostingPackageId} {version}, which is {FirstPatchedVersion} or "
             + $"later and therefore patched for {AdvisoryId}. Delete the NuGetAuditSuppress item for "
             + $"{AdvisoryUrl} from {RootPropsName}, and lift the Aspire.* hold in "
