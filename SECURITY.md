@@ -129,6 +129,67 @@ This notice records the library version inside that published package and the
 advisory's own conditions. Report newly discovered issues through the private
 channels above.
 
+## Published v1.x tools and GHSA-f7vh-h5g3-7jrh
+
+Every published `vouchfx` tool in the v1.x series bundles
+`Aspire.Hosting` 13.4.2 (the DLL), and later v1.x releases will bundle a
+13.4.x release, all of which are inside the advisory's range. The source pin
+is 13.4.2 at every v1.x release tag; the published packages for v1.0.4,
+v1.1.0, v1.2.0 and v1.2.1 were inspected. The tool bundles no Aspire
+dashboard binaries. 13.4.2 is inside
+[GHSA-f7vh-h5g3-7jrh](https://github.com/advisories/GHSA-f7vh-h5g3-7jrh)
+(NuGet `Aspire.Hosting` and `Aspire.Hosting.AppHost`, vulnerable range
+`< 13.6.5`, first and only patched version 13.6.5, severity high). The
+advisory describes a macOS Aspire dashboard cookie leak via a YARP link.
+
+The fix is not available in v1.x. Aspire 13.6.0 and 13.6.5 require
+YamlDotNet 18.1.0 or later, and YamlDotNet is held at 16.x for the whole v1.x
+series because `IStepBinder<T>.Bind(YamlNode, ...)` is part of the frozen
+provider contract. Aspire 13.5.0 to 13.5.4 work with YamlDotNet 16.3.0 but are
+not patched, so v1.x stays on the 13.4.x patch line. The decision was made on
+11 November 2026. Moving to 13.6.5 is a v2 engine change.
+
+The affected path is judged unreachable. This is an inference from the code,
+not a tested result. The reasons:
+
+- The only production construction site of the Aspire host
+  (`HeadlessTopology`) sets `DisableDashboard = true`. That flag can only be
+  set in code: no configuration key or environment variable maps to it, and
+  the host passes empty arguments.
+- The tool ships no dashboard binaries. The CLI project sets
+  `SkipAddAspireDefaultReferences=true`, and its build targets set a
+  placeholder dashboard path rather than shipping the dashboard.
+- vouchfx adds no YARP resource of its own. A suite can declare a YARP image
+  under `services:`, but vouchfx still starts no dashboard alongside it.
+
+Scanners that read the tool's `deps.json` or inspect the bundled DLL will
+flag the bundled `Aspire.Hosting` 13.4.x against this advisory. That finding
+is expected for every v1.x tool; it does not mean the dashboard is running.
+
+The repository builds with a single NuGet audit suppression for this advisory
+in the root `Directory.Build.props`, approved by the maintainer on
+11 November 2026. A guard test fails CI if any other audit suppression
+or audit-level override is added to the repository's build files or
+workflows, if a production Aspire host is constructed
+outside `HeadlessTopology` or the dashboard is not disabled, if a YARP
+package is referenced, or if `AddYarp` is called in engine source. The
+suppression is removed when Aspire reaches 13.6.5 or later. Dependabot will
+still attempt a security update to 13.6.5 (a pull request that cannot pass, or
+an update error on the alert); it cannot succeed while YamlDotNet is held, and
+the repository's Dependabot alert stays open.
+
+What to do:
+
+- If you run your own Aspire dashboard (your own AppHost or the Aspire CLI),
+  upgrade it to 13.6.5 or later; vouchfx does not constrain its version.
+- vouchfx passes no Aspire dependency to consumers of its library packages.
+- Treat a scanner finding for the bundled `Aspire.Hosting` 13.4.x as known,
+  with the basis above.
+
+This notice records the library version inside the published packages and the
+basis for the judgement. Report newly discovered issues through the private
+channels above.
+
 ## Scope
 
 ### In scope

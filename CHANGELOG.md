@@ -21,6 +21,10 @@ to published pre-releases on 2026-07-14.
 
 ## [Unreleased]
 
+### Security
+
+- Suppress [GHSA-f7vh-h5g3-7jrh](https://github.com/advisories/GHSA-f7vh-h5g3-7jrh) (high severity, macOS, an Aspire dashboard cookie leak via a YARP link) in NuGet audit for `Aspire.Hosting` and `Aspire.Hosting.AppHost` 13.4.2, which otherwise fail restore with `NU1903` under `TreatWarningsAsErrors`. The advisory affects those packages below 13.6.5, and 13.6.5 is the only patched release. Aspire 13.6.0 and 13.6.5 require `YamlDotNet` 18.1.0 or later, which is not available in the v1.x series because `YamlDotNet` types are part of the frozen provider SDK surface. Aspire 13.5.x works with `YamlDotNet` 16 but is not patched, so v1.x stays on the 13.4.x patch line. The published `vouchfx` tool bundles `Aspire.Hosting` 13.4.2, and later v1.x releases will bundle a 13.4.x release. The tool bundles no dashboard binaries, the engine starts Aspire with the dashboard disabled, and vouchfx adds no YARP resource, so the affected path is judged unreachable; this is an inference from the code, not a tested result. The suppression covers this one advisory only and will be removed when Aspire 13.6.5 or later is adopted. Dependabot now holds Aspire minor and major updates, since no minor release before 13.6 contains the fix. See [SECURITY.md](SECURITY.md) for what users of the published tool should do.
+
 ### Changed
 
 - Commits no longer need a DCO `Signed-off-by` trailer; the DCO check workflow is removed.

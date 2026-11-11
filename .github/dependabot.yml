@@ -72,6 +72,18 @@ updates:
         update-types: ["version-update:semver-major"]
       # These holds use update-types only, which apply to version updates and not to
       # security updates. Never add a versions: range here: that WOULD suppress security PRs.
+      # Aspire is held at the 13.4.x patch line for the v1.x series (ZEB-33). 13.5.x is
+      # unpatched for GHSA-f7vh-h5g3-7jrh, and 13.6.5, the only patched release, requires
+      # YamlDotNet 18.1.0 or later, which the YamlDotNet hold below rules out. Patch updates
+      # within 13.4.x still flow. Security updates are unaffected by this hold, so Dependabot
+      # will still attempt a security update to 13.6.5 (a pull request that cannot pass, or
+      # an update error on the alert); it cannot succeed while YamlDotNet is held, and the
+      # repository's Dependabot alert stays open. The advisory is suppressed in NuGet audit
+      # in Directory.Build.props; lift this hold when that entry is removed. The hold also
+      # covers Aspire.Hosting.Elasticsearch (pinned 13.3.0, see Directory.Packages.props), so
+      # its move to 13.4.x is a manual edit.
+      - dependency-name: "Aspire.*"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
       # YamlDotNet types are part of the frozen Vouchfx.Sdk v1 surface (IStepBinder<T>.Bind
       # takes a YamlNode). A new assembly major makes the CLI refuse external providers built
       # against YamlDotNet 16 (ProviderLoadException). Held for the whole v1.x engine series.
