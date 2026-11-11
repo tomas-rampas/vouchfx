@@ -340,6 +340,8 @@ dotnet test vouchfx.sln --filter "requires=docker" \
   --blame-crash --blame-crash-dump-type full
 ```
 
+A plain `dotnet build` does not pass `-p:Version`, so provider admission uses the `VouchfxEngineVersion` fallback in `Directory.Build.props`, which a unit test keeps at or above the newest version heading in `CHANGELOG.md`. It is not the `1.0.0-0.local+<commit>` that `vouchfx --version` prints. See [Engine capability stamp](https://vouchfx.io/getting-started/#engine-capability-stamp) and [Provider requires a newer engine](https://vouchfx.io/troubleshooting/#provider-requires-a-newer-engine).
+
 On Windows, `pwsh -NoProfile -File scripts/report-expired-fixture-certificates.ps1`
 prints expired certificate candidates from the read-only `CurrentUser\CA` store. The
 report includes only store, subject, thumbprint and UTC expiry; it never removes a

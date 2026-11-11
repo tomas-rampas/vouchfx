@@ -175,6 +175,10 @@ Alternatively, if you want only the CLI (faster), build that project:
 dotnet build src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj -c Release
 ```
 
+### Engine capability stamp
+
+A source build admits providers against the `VouchfxEngineVersion` fallback in `Directory.Build.props`, which a unit test keeps at or above the newest version heading in `CHANGELOG.md` (possibly a release still being prepared); the build records that fallback as metadata on `Vouchfx.Engine.Runtime`. `vouchfx --version` prints a different value, the local identity `1.0.0-0.local+<commit>`, which admission does not use. If a provider is refused with `Provider registration refused` and exit code 3, see [Provider requires a newer engine](troubleshooting.md#provider-requires-a-newer-engine).
+
 ## Authoring your first test
 
 ### The structure of a `.e2e.yaml` file

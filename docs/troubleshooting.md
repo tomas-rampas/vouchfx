@@ -21,6 +21,7 @@ This guide covers real failure modes, what they mean, and how to fix them.
 - [Kafka messages not consumed (ordering or timing)](#kafka-messages-not-consumed-ordering-or-timing)
 - [Validation errors at authoring time](#validation-errors-at-authoring-time)
 - [Git selection diagnostics](#git-selection-diagnostics)
+- [Provider requires a newer engine](#provider-requires-a-newer-engine)
 
 ---
 
@@ -1605,6 +1606,32 @@ Every attempted candidate failed before execution with a supported OS load error
 3. Retry selection from an existing repository. A real git that starts and rejects the repository or reference keeps its own failure; vouchfx never retries that result with another binary.
 
 All three selection refusals retain exit 2. A timeout or failed capture also refuses selection without using partial output; caller cancellation follows the cancellation path instead.
+
+---
+
+## Provider requires a newer engine
+
+**Symptom:**
+
+```text
+Provider registration refused: Provider 'rpc.json-rpc' requires engine 1.2.0; the running engine is 1.0.7.
+```
+
+`run`, `validate`, `list`, `schema` (`schema` only without `--environment-driver`), `scaffold` and `plan` print this while discovering providers and exit 3. No scenario runs. Further lines name each loaded assembly and its path. An invalid declaration uses the same wrapper with `declares an invalid MinEngineVersion`.
+
+**What it means:**
+
+The CLI compares `MinEngineVersion` with `VouchfxEngineVersion` metadata on `Vouchfx.Engine.Runtime` before the provider contributes a schema. Comparison is strict SemVer 2. A prerelease sorts before the matching stable version, and build metadata is ignored.
+
+`Directory.Build.props` copies `-p:Version` into that stamp when release packaging sets it. A plain source build, including the main CI build, omits `-p:Version` and uses the checked-in fallback. A stale fallback refuses providers the source can host; see the 1.3.0 entry in the [changelog](changelog.md). Adding a newer changelog heading without raising the fallback fails `HostProviderAdmissionTests.SourceCapabilityStamp_IsAtLeastTheNewestChangelogVersion` in the unit-test run, not in the build.
+
+`vouchfx --version` and JSON `engineVersion` report the informational version. A build or pack without `-p:Version` reports `1.0.0-0.local` plus a `+<commit>` suffix. That string is not the capability stamp.
+
+**Fix:**
+
+1. Read the version after `the running engine is`. When it is older than the newest version heading in `CHANGELOG.md` for the commit you built, raise the `VouchfxEngineVersion` fallback in `Directory.Build.props` to that heading and rebuild. Leave the package identity at `1.0.0-0.local`.
+2. When the stamp already matches the release you are running and is still below the provider's minimum, install or build an engine at least that new. Loading a provider directory does not raise the host version.
+3. The public `StepKindRegistry.BuildAndFreeze` overloads do not compare a host version. `ScenarioRunner.RunAsync`, `ScenarioRunner.RunSuiteAsync` and `ParallelSuiteRunner` apply the check when they rebuild the catalogue for a run. For example, the [ledger sample's runner](https://github.com/tomas-rampas/vouchfx-samples/tree/main/samples/ledger-jsonrpc) lists step kinds with the public assembly overload, which skips admission, and then calls `RunSuiteAsync`, which applies it.
 
 ---
 
