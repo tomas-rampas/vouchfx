@@ -75,9 +75,9 @@ public sealed class AspireAuditSuppressionGuardTests
         "NET5_0_OR_GREATER", "NET6_0_OR_GREATER", "NET7_0_OR_GREATER", "NET8_0_OR_GREATER",
     };
 
-    private static readonly Regex AuditWarningCode = new(@"NU190[0-9]", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+    private static readonly Regex AuditWarningCode = new(@"\bNU190\d\b", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
 
-    private static readonly Regex AuditTextPattern = new(@"NuGetAudit|NU190[0-9]", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+    private static readonly Regex AuditTextPattern = new(@"NuGetAudit|\bNU190\d\b", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
 
     private static readonly Lazy<List<(string File, XDocument Document)>> MsBuildDocuments = new(LoadMsBuildDocuments);
 
@@ -193,6 +193,11 @@ public sealed class AspireAuditSuppressionGuardTests
     [Fact]
     public void GivenAspireHostingPin_WhenItReachesTheFirstPatchedRelease_ThenTheSuppressionIsAbsent()
     {
+        if (!RootSuppressionIsPresent())
+        {
+            return;
+        }
+
         var version = ReadAspireHostingVersion();
         _output.WriteLine($"Central {HostingPackageId} PackageVersion: {version}");
 
