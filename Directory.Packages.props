@@ -51,7 +51,7 @@
          10.0.8, the exact floor Aspire.Hosting.* 13.4.2 already imposes everywhere else,
          to avoid NU1109 downgrade errors under CentralPackageTransitivePinningEnabled
          (the CVE fix landed in 8.0.5; 10.0.8 targets net8.0). -->
-    <PackageVersion Include="System.Text.Json" Version="10.0.14" />
+    <PackageVersion Include="System.Text.Json" Version="11.0.0" />
   </ItemGroup>
   <ItemGroup Label="CLI runner (S07-C-01) — System.CommandLine GA 2.0.x">
     <!-- Pinned to the 2.0.0 GA line: Argument&lt;T&gt;(name)-only ctor + init Description /
@@ -59,12 +59,12 @@
          CancellationToken, Task&lt;int&gt;&gt;); rootCommand.Parse(args).InvokeAsync(ct). The pre-GA
          betas exposed different ctor overloads (e.g. Argument&lt;T&gt;(name, () =&gt; default, desc)),
          so the version is pinned to keep the API surface this CLI compiles against stable. -->
-    <PackageVersion Include="System.CommandLine" Version="2.0.14" />
+    <PackageVersion Include="System.CommandLine" Version="2.0.15" />
     <PackageVersion Include="NuGet.Protocol" Version="7.9.0" />
   </ItemGroup>
   <ItemGroup Label="JSON / Schema / YAML (§5.7)">
-    <PackageVersion Include="JsonPath.Net" Version="3.0.3" />
-    <PackageVersion Include="JsonSchema.Net" Version="9.6.0" />
+    <PackageVersion Include="JsonPath.Net" Version="3.1.0" />
+    <PackageVersion Include="JsonSchema.Net" Version="9.7.0" />
     <PackageVersion Include="YamlDotNet" Version="16.3.0" />
   </ItemGroup>
   <ItemGroup Label="Azure Service Bus emulator (mq-publish/expect.azureservicebus)">
@@ -79,11 +79,11 @@
     <!-- Aspire.Hosting.SqlServer 13.4.2 transitively requires >= 7.0.1; pin to the
          exact required minimum to avoid NU1109/NU1605 downgrade errors under
          CentralPackageTransitivePinningEnabled. -->
-    <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.1.1" />
-    <PackageVersion Include="MySqlConnector" Version="2.6.2" />
+    <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.1.2" />
+    <PackageVersion Include="MySqlConnector" Version="3.0.0" />
     <PackageVersion Include="Confluent.Kafka" Version="2.16.0" />
-    <PackageVersion Include="MongoDB.Driver" Version="3.13.0" />
-    <PackageVersion Include="StackExchange.Redis" Version="3.4.31" />
+    <PackageVersion Include="MongoDB.Driver" Version="3.14.0" />
+    <PackageVersion Include="StackExchange.Redis" Version="3.4.35" />
     <!-- Aspire.Hosting.RabbitMQ 13.4.2 transitively requires >= 7.2.1; pin to the
          exact required minimum to avoid NU1109/NU1605 downgrade errors under
          CentralPackageTransitivePinningEnabled. -->
@@ -116,7 +116,7 @@
     <PackageVersion Include="Respawn" Version="7.0.0" />
   </ItemGroup>
   <ItemGroup Label="Test stack">
-    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.11.0" />
+    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.12.0" />
     <PackageVersion Include="xunit" Version="2.9.3" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="4.0.1" />
     <PackageVersion Include="coverlet.collector" Version="10.1.0" />
