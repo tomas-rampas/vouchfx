@@ -74,7 +74,8 @@ updates:
       # security updates. Never add a versions: range here: that WOULD suppress security PRs.
       # Aspire is held at the 13.4.x patch line for the v1.x series (ZEB-33). 13.5.x is
       # unpatched for GHSA-f7vh-h5g3-7jrh, and 13.6.5, the only patched release, requires
-      # YamlDotNet 18.1.0 or later, which the YamlDotNet hold below rules out. Patch updates
+      # YamlDotNet 18.1.0 or later (as does 13.6.0), which the YamlDotNet hold below rules
+      # out. Patch updates
       # within 13.4.x still flow. Security updates are unaffected by this hold, so Dependabot
       # will still attempt a security update to 13.6.5 (a pull request that cannot pass, or
       # an update error on the alert); it cannot succeed while YamlDotNet is held, and the

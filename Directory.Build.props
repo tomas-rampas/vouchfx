@@ -132,7 +132,7 @@
          file only: the guard test fails CI if an audit suppression or audit-level
          override appears in any other MSBuild or NuGet config file.
 
-         WHY THE FIX IS UNAVAILABLE IN v1.x: Aspire 13.6.5 requires YamlDotNet 18.1.0 or later,
+         WHY THE FIX IS UNAVAILABLE IN v1.x: Aspire 13.6.0 and 13.6.5 require YamlDotNet 18.1.0+,
          and YamlDotNet is held at 16.x for the whole v1.x engine series because YamlDotNet types
          are part of the frozen Vouchfx.Sdk v1 surface (IStepBinder&lt;T&gt;.Bind takes a
          YamlNode). Raising it would make the CLI refuse external providers built against
