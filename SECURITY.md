@@ -191,6 +191,28 @@ This notice records the library version inside the published packages and the
 basis for the judgement. Report newly discovered issues through the private
 channels above.
 
+## Published tools and GHSA-4g86-54fm-h9h8
+
+[GHSA-4g86-54fm-h9h8](https://github.com/advisories/GHSA-4g86-54fm-h9h8)
+(severity critical) affects the NuGet `Aspire.Dashboard.Sdk` packages for
+every platform below 13.6.5. NuGet's vulnerability data lists no other
+package for it.
+
+Stable `vouchfx` tools, v1.0.0 to v1.2.1, do not reference
+`Aspire.Dashboard.Sdk` and contain no dashboard binaries. The CLI project
+skips Aspire's default references at every stable release tag, and the
+published v1.0.0 and v1.2.1 packages were inspected.
+
+The 1.0.0 pre-releases (alpha and release-candidate builds) list
+`Aspire.Dashboard.Sdk.linux-x64` 13.4.2 in the tool's `deps.json`, so
+scanners will report this advisory against them. Those packages contain no
+dashboard files (the alpha.1 and rc.6 packages were inspected), and the
+engine starts Aspire with the dashboard disabled. Pre-releases are
+unsupported: upgrade to the latest 1.x release, which removes the finding.
+
+The repository builds without restoring the dashboard package and adds no
+audit suppression for this advisory.
+
 ## Scope
 
 ### In scope

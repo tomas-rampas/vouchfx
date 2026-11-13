@@ -1,0 +1,48 @@
+<Project>
+  <!-- CLI only: bundles DCP into the published tool. Requires Vouchfx.Dcp.targets, which
+       declares the four DCP package references whose Pkg* path properties are read here.
+       Aspire's default references contain only the BUILD host's DCP; the explicit references
+       restore the four advertised platforms. Full tools trees retain the tunnel helper,
+       licence, notices and integrity manifests. Ordinary builds do not copy hundreds of MB
+       into every test output; publish/PackAsTool does. -->
+  <ItemGroup>
+    <_VouchfxDcpBundle Include="win-x64" PackageRoot="$(PkgAspire_Hosting_Orchestration_win-x64)" Executable="dcp.exe" />
+    <_VouchfxDcpBundle Include="linux-x64" PackageRoot="$(PkgAspire_Hosting_Orchestration_linux-x64)" Executable="dcp" />
+    <_VouchfxDcpBundle Include="osx-x64" PackageRoot="$(PkgAspire_Hosting_Orchestration_osx-x64)" Executable="dcp" />
+    <_VouchfxDcpBundle Include="osx-arm64" PackageRoot="$(PkgAspire_Hosting_Orchestration_osx-arm64)" Executable="dcp" />
+    <_VouchfxSelectedDcpBundle Include="@(_VouchfxDcpBundle)" Condition="'$(RuntimeIdentifier)' == ''" />
+    <_VouchfxSelectedDcpBundle Include="@(_VouchfxDcpBundle->WithMetadataValue('Identity', '$(RuntimeIdentifier)'))" Condition="'$(RuntimeIdentifier)' != ''" />
+    <Content Include="dcp-supported-rids.txt" Link="dcp/supported-rids.txt" CopyToOutputDirectory="Never" CopyToPublishDirectory="PreserveNewest" Pack="false" />
+    <Content Include="$(PkgAspire_Hosting_Orchestration_win-x64)/tools/**/*" Condition="'$(RuntimeIdentifier)' == '' or '$(RuntimeIdentifier)' == 'win-x64'">
+      <Link>dcp/$(VouchfxDcpVersion)/win-x64/tools/%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      <Pack>false</Pack>
+    </Content>
+    <Content Include="$(PkgAspire_Hosting_Orchestration_linux-x64)/tools/**/*" Condition="'$(RuntimeIdentifier)' == '' or '$(RuntimeIdentifier)' == 'linux-x64'">
+      <Link>dcp/$(VouchfxDcpVersion)/linux-x64/tools/%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      <Pack>false</Pack>
+    </Content>
+    <Content Include="$(PkgAspire_Hosting_Orchestration_osx-x64)/tools/**/*" Condition="'$(RuntimeIdentifier)' == '' or '$(RuntimeIdentifier)' == 'osx-x64'">
+      <Link>dcp/$(VouchfxDcpVersion)/osx-x64/tools/%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      <Pack>false</Pack>
+    </Content>
+    <Content Include="$(PkgAspire_Hosting_Orchestration_osx-arm64)/tools/**/*" Condition="'$(RuntimeIdentifier)' == '' or '$(RuntimeIdentifier)' == 'osx-arm64'">
+      <Link>dcp/$(VouchfxDcpVersion)/osx-arm64/tools/%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      <Pack>false</Pack>
+    </Content>
+  </ItemGroup>
+
+  <Target Name="ValidateVouchfxDcpBundle" BeforeTargets="ComputeFilesToPublish">
+    <Error Condition="'@(_VouchfxSelectedDcpBundle)' == ''" Text="Unsupported vouchfx DCP runtime '$(RuntimeIdentifier)'. Supported: win-x64, linux-x64, osx-x64, osx-arm64." />
+    <Error Condition="!Exists('%(_VouchfxSelectedDcpBundle.PackageRoot)/tools/%(_VouchfxSelectedDcpBundle.Executable)')" Text="Missing DCP $(VouchfxDcpVersion) executable for %(_VouchfxSelectedDcpBundle.Identity). Restore the CLI dependencies before packaging." />
+    <Error Condition="!Exists('%(_VouchfxSelectedDcpBundle.PackageRoot)/tools/dcptun_c')" Text="Missing DCP tunnel helper for %(_VouchfxSelectedDcpBundle.Identity). Refusing an incomplete package." />
+    <Error Condition="!Exists('%(_VouchfxSelectedDcpBundle.PackageRoot)/tools/LICENSE') or !Exists('%(_VouchfxSelectedDcpBundle.PackageRoot)/tools/NOTICE')" Text="Missing DCP licence or notices for %(_VouchfxSelectedDcpBundle.Identity)." />
+  </Target>
+</Project>

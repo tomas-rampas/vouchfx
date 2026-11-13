@@ -142,9 +142,10 @@
          the only production construction site, HeadlessTopology.cs, sets DisableDashboard =
          true. That flag can only be set in code (no configuration key or environment variable
          maps to it) and the host passes empty args, so the dashboard the advisory concerns is
-         not started. No dashboard is shipped: Vouchfx.Cli.csproj sets
-         SkipAddAspireDefaultReferences=true and Vouchfx.Dcp.targets sets a placeholder
-         dashboard path instead of shipping the dashboard. vouchfx adds no YARP resource of its
+         not started. No dashboard is shipped or restored: Vouchfx.Dcp.targets, imported by the
+         CLI and by both topology test hosts, sets SkipAddAspireDefaultReferences=true and a
+         placeholder dashboard path, so no project restores an Aspire.Dashboard.Sdk package.
+         vouchfx adds no YARP resource of its
          own. A suite can declare a YARP image under services:, but vouchfx still starts no
          dashboard alongside it. The published tool does bundle the Aspire.Hosting and
          Aspire.Hosting.AppHost 13.4.2 DLLs, so scanners reading its deps.json will report the
