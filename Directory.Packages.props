@@ -14,21 +14,21 @@
     <PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="4.14.0" />
   </ItemGroup>
   <ItemGroup Label="Aspire orchestration (§4) — net8.0 compatible">
-    <PackageVersion Include="Aspire.Hosting" Version="13.4.2" />
-    <PackageVersion Include="Aspire.Hosting.AppHost" Version="13.4.2" />
-    <PackageVersion Include="Aspire.Hosting.PostgreSQL" Version="13.4.2" />
-    <PackageVersion Include="Aspire.Hosting.Kafka" Version="13.4.2" />
-    <PackageVersion Include="Aspire.Hosting.Testing" Version="13.4.2" />
-    <PackageVersion Include="Aspire.Hosting.SqlServer" Version="13.4.2" />
-    <PackageVersion Include="Aspire.Hosting.MySql" Version="13.4.2" />
-    <PackageVersion Include="Aspire.Hosting.MongoDB" Version="13.4.2" />
-    <PackageVersion Include="Aspire.Hosting.Redis" Version="13.4.2" />
+    <PackageVersion Include="Aspire.Hosting" Version="13.4.6" />
+    <PackageVersion Include="Aspire.Hosting.AppHost" Version="13.4.6" />
+    <PackageVersion Include="Aspire.Hosting.PostgreSQL" Version="13.4.6" />
+    <PackageVersion Include="Aspire.Hosting.Kafka" Version="13.4.6" />
+    <PackageVersion Include="Aspire.Hosting.Testing" Version="13.4.6" />
+    <PackageVersion Include="Aspire.Hosting.SqlServer" Version="13.4.6" />
+    <PackageVersion Include="Aspire.Hosting.MySql" Version="13.4.6" />
+    <PackageVersion Include="Aspire.Hosting.MongoDB" Version="13.4.6" />
+    <PackageVersion Include="Aspire.Hosting.Redis" Version="13.4.6" />
     <!-- Pinned to 13.3.0 — no 13.4.2 build is published on NuGet for this integration.
          Same major (13), API-identical surface (AddElasticsearch / WithImageTag); bump to
          13.4.x when a matching build is published. -->
     <PackageVersion Include="Aspire.Hosting.Elasticsearch" Version="13.3.0" />
-    <PackageVersion Include="Aspire.Hosting.RabbitMQ" Version="13.4.2" />
-    <PackageVersion Include="Aspire.Hosting.Nats" Version="13.4.2" />
+    <PackageVersion Include="Aspire.Hosting.RabbitMQ" Version="13.4.6" />
+    <PackageVersion Include="Aspire.Hosting.Nats" Version="13.4.6" />
   </ItemGroup>
   <ItemGroup Label="Resilience (§5.7) — Polly v8">
     <PackageVersion Include="Polly.Core" Version="8.9.1" />
