@@ -53,6 +53,8 @@
 /Directory.Packages.props                       @tomas-rampas
 /global.json                                    @tomas-rampas
 /nuget.config                                   @tomas-rampas
+# The guard for the NuGet audit suppression is owner-reviewed alongside the suppression itself.
+/tests/Vouchfx.Engine.Compilation.Tests/AspireAuditSuppressionGuardTests.cs @tomas-rampas
 
 # Memory-leak regression harness — the permanent Phase-1 (M1) CI gate (5,000-iteration
 # provider-closure leak test, blocking in build.yml). WHY: weakening it (fewer

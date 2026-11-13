@@ -119,4 +119,50 @@
          component that timestamp never carried. -->
     <VSTestLogger>trx%3bLogFilePrefix=unit_$(MSBuildProjectName)</VSTestLogger>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- NuGet audit suppression for ONE advisory (ZEB-33): GHSA-f7vh-h5g3-7jrh,
+         high severity, a macOS Aspire dashboard cookie leak via a YARP link. It affects
+         Aspire.Hosting and Aspire.Hosting.AppHost below 13.6.5, and 13.6.5 is the only patched
+         release; the pin is 13.4.2 (Directory.Packages.props). Without this item NuGet audit
+         reports NU1903 for both packages, which TreatWarningsAsErrors above turns into a restore
+         failure on every build. NuGetAuditLevel, NuGetAuditMode, NoWarn and
+         WarningsNotAsErrors are deliberately untouched, so every other advisory NuGet audit
+         reports under the current settings still fails restore. This entry must stay in this
+         file only: the guard test fails CI if an audit suppression or audit-level
+         override appears in any other MSBuild or NuGet config file.
+
+         WHY THE FIX IS UNAVAILABLE IN v1.x: Aspire 13.6.0 and 13.6.5 require YamlDotNet 18.1.0+,
+         and YamlDotNet is held at 16.x for the whole v1.x engine series because YamlDotNet types
+         are part of the frozen Vouchfx.Sdk v1 surface (IStepBinder&lt;T&gt;.Bind takes a
+         YamlNode). Raising it would make the CLI refuse external providers built against
+         YamlDotNet 16.
+
+         WHY THE PATH IS JUDGED UNREACHABLE (an inference from the code, not a tested result):
+         the only production construction site, HeadlessTopology.cs, sets DisableDashboard =
+         true. That flag can only be set in code (no configuration key or environment variable
+         maps to it) and the host passes empty args, so the dashboard the advisory concerns is
+         not started. No dashboard is shipped or restored: Vouchfx.Dcp.targets, imported by the
+         CLI and by both topology test hosts, sets SkipAddAspireDefaultReferences=true and a
+         placeholder dashboard path, so no project restores an Aspire.Dashboard.Sdk package.
+         vouchfx adds no YARP resource of its
+         own. A suite can declare a YARP image under services:, but vouchfx still starts no
+         dashboard alongside it. The published tool does bundle the Aspire.Hosting and
+         Aspire.Hosting.AppHost 13.4.2 DLLs, so scanners reading its deps.json will report the
+         advisory. A source check cannot prove unreachability. The guard in
+         tests/Vouchfx.Engine.Compilation.Tests/AspireAuditSuppressionGuardTests.cs fails CI
+         if any other audit suppression or audit-level override appears in an MSBuild or
+         NuGet config file, if this entry is still present once the Aspire pin is 13.6.5 or
+         later, if a production Aspire host is constructed outside HeadlessTopology.cs or the
+         dashboard is not disabled, if a package id containing Yarp is referenced (including
+         Aspire.Hosting.Yarp), or if AddYarp is called in engine source.
+
+         Approved by the maintainer on 2026-11-11.
+
+         REMOVAL CONDITION: delete this item when Aspire is pinned at 13.6.5 or later, which is
+         when the YamlDotNet hold is lifted, expected with the v2 engine. The guard test fails
+         once the pin reaches 13.6.5 while this item is still present. A second suppression
+         needs a deliberate change to that guard. See also SECURITY.md. -->
+    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-f7vh-h5g3-7jrh" />
+  </ItemGroup>
 </Project>

@@ -1,8 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <!-- Aspire.AppHost.Sdk injects the DCP binary references and embeds the
+  <!-- Aspire.AppHost.Sdk (with Aspire.Hosting.AppHost's build targets) embeds the
        dcpclipath / aspiredashboardpath AssemblyMetadata attributes that
-       DistributedApplication.CreateBuilder requires to locate the DCP process.
+       DistributedApplication.CreateBuilder requires to locate the DCP process;
+       Vouchfx.Dcp.targets supplies the DCP references.
        This is the pre-approved R-1 fallback documented in CLAUDE.md §"Aspire (§4, §19)":
        a plain Aspire.Hosting library reference alone does NOT carry the DCP binaries,
        and StartAsync then throws OptionsValidationException ("CliPath ... is required").
@@ -19,14 +20,17 @@
     <!-- Mark this project as an Aspire host so the AppHost build targets embed the
          DCP metadata onto THIS assembly (the one whose name we pass to the runner). -->
     <IsAspireHost>true</IsAspireHost>
-    <!-- Headless: no dashboard. Vouchfx.Dcp.targets supplies all supported DCP RIDs. -->
+    <!-- Headless: no dashboard. Vouchfx.Dcp.targets (shared with the topology test hosts)
+         also sets this and supplies all supported DCP RIDs; Vouchfx.DcpBundle.targets
+         bundles them into the published tool. -->
     <SkipAddAspireDefaultReferences>true</SkipAddAspireDefaultReferences>
   </PropertyGroup>
 
   <!-- Framework-dependent .NET 8 tool, including full version-matched DCP tools for
        every advertised RID. RID-specific archives include only their own DCP tree.
        No source checkout or pre-existing Aspire restore is an installation prerequisite.
-       See Vouchfx.Dcp.targets and docs/decisions/dotnet-tool-packaging.md. -->
+       See Vouchfx.Dcp.targets, Vouchfx.DcpBundle.targets and
+       docs/decisions/dotnet-tool-packaging.md. -->
   <PropertyGroup>
     <IsPackable>true</IsPackable>
     <PackAsTool>true</PackAsTool>
@@ -91,8 +95,8 @@
     <PackageReference Include="System.CommandLine" />
     <PackageReference Include="NuGet.Protocol" />
     <!-- AppHost must be a direct reference so its build targets run and embed the DCP
-         metadata. Aspire.AppHost.Sdk auto-adds this package; the explicit reference
-         pins the CPM version. -->
+         metadata. SkipAddAspireDefaultReferences turns off the SDK's implicit reference,
+         so this one is required (and takes its version from CPM). -->
     <PackageReference Include="Aspire.Hosting.AppHost" />
   </ItemGroup>
 
@@ -189,5 +193,6 @@
   </ItemGroup>
 
   <Import Project="Vouchfx.Dcp.targets" />
+  <Import Project="Vouchfx.DcpBundle.targets" />
   <Import Project="Vouchfx.PackageCompression.targets" />
 </Project>

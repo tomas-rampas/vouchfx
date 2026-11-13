@@ -1,67 +1,53 @@
 <Project>
-  <!-- Aspire's default references contain only the BUILD host's DCP. Explicit private
-       references restore the four advertised platforms; exclude their build targets so a
-       foreign RID cannot overwrite the build host's metadata. Full tools trees retain the
-       tunnel helper, licence, notices and integrity manifests. Ordinary builds do not copy
-       hundreds of MB into every test output; publish/PackAsTool does. -->
+  <!-- Headless Aspire host wiring, shared by EVERY project that uses Aspire.AppHost.Sdk: the
+       CLI runner and the topology test hosts (Vouchfx.Engine.Orchestration.Tests,
+       Vouchfx.Engine.Runtime.Tests). A new Aspire host must import this file too.
+
+       The SDK's default references add Aspire.Hosting.AppHost plus TWO packages for the build
+       host's RID: Aspire.Hosting.Orchestration.<rid> (DCP, which the engine needs) and
+       Aspire.Dashboard.Sdk.<rid> (the dashboard, which the engine never starts: HeadlessTopology
+       always sets DisableDashboard = true). Skipping the defaults and referencing DCP explicitly
+       keeps the dashboard package out of the restore graph altogether, so its advisories
+       (GHSA-4g86-54fm-h9h8, critical, every Aspire.Dashboard.Sdk.<rid> below 13.6.5; ZEB-33 holds Aspire at 13.4.x for v1.x)
+       do not apply to any project here. That is removal of an unused dependency, not an audit
+       suppression. Each host must therefore reference Aspire.Hosting.AppHost itself; the SDK
+       reports ASPIRE002 when it is missing. -->
+  <PropertyGroup>
+    <SkipAddAspireDefaultReferences>true</SkipAddAspireDefaultReferences>
+  </PropertyGroup>
+
+  <!-- Explicit private references to DCP for the four advertised platforms. Their build
+       assets are excluded so a foreign RID cannot overwrite the build host's DcpDir; DcpDir
+       is set below instead. All four are restored so the CLI can bundle every RID (see
+       Vouchfx.DcpBundle.targets); the test hosts share the same four packages, which keeps
+       the solution's package set identical across hosts. -->
   <ItemGroup>
-    <!-- VersionOverride is scoped to this explicit CLI reference. Central PackageVersion
-         entries would conflict with Aspire's implicit references in other AppHosts. -->
+    <!-- VersionOverride keeps these ids out of Directory.Packages.props: a central
+         PackageVersion would conflict with the SDK's own versioned implicit reference in any
+         Aspire host that does not import this file. -->
     <PackageReference Include="Aspire.Hosting.Orchestration.win-x64" VersionOverride="$(VouchfxDcpVersion)" GeneratePathProperty="true" PrivateAssets="all" ExcludeAssets="all" />
     <PackageReference Include="Aspire.Hosting.Orchestration.linux-x64" VersionOverride="$(VouchfxDcpVersion)" GeneratePathProperty="true" PrivateAssets="all" ExcludeAssets="all" />
     <PackageReference Include="Aspire.Hosting.Orchestration.osx-x64" VersionOverride="$(VouchfxDcpVersion)" GeneratePathProperty="true" PrivateAssets="all" ExcludeAssets="all" />
     <PackageReference Include="Aspire.Hosting.Orchestration.osx-arm64" VersionOverride="$(VouchfxDcpVersion)" GeneratePathProperty="true" PrivateAssets="all" ExcludeAssets="all" />
-    <_VouchfxDcpBundle Include="win-x64" PackageRoot="$(PkgAspire_Hosting_Orchestration_win-x64)" Executable="dcp.exe" />
-    <_VouchfxDcpBundle Include="linux-x64" PackageRoot="$(PkgAspire_Hosting_Orchestration_linux-x64)" Executable="dcp" />
-    <_VouchfxDcpBundle Include="osx-x64" PackageRoot="$(PkgAspire_Hosting_Orchestration_osx-x64)" Executable="dcp" />
-    <_VouchfxDcpBundle Include="osx-arm64" PackageRoot="$(PkgAspire_Hosting_Orchestration_osx-arm64)" Executable="dcp" />
-    <_VouchfxSelectedDcpBundle Include="@(_VouchfxDcpBundle)" Condition="'$(RuntimeIdentifier)' == ''" />
-    <_VouchfxSelectedDcpBundle Include="@(_VouchfxDcpBundle->WithMetadataValue('Identity', '$(RuntimeIdentifier)'))" Condition="'$(RuntimeIdentifier)' != ''" />
-    <Content Include="dcp-supported-rids.txt" Link="dcp/supported-rids.txt" CopyToOutputDirectory="Never" CopyToPublishDirectory="PreserveNewest" Pack="false" />
-    <Content Include="$(PkgAspire_Hosting_Orchestration_win-x64)/tools/**/*" Condition="'$(RuntimeIdentifier)' == '' or '$(RuntimeIdentifier)' == 'win-x64'">
-      <Link>dcp/$(VouchfxDcpVersion)/win-x64/tools/%(RecursiveDir)%(Filename)%(Extension)</Link>
-      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
-      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
-      <Pack>false</Pack>
-    </Content>
-    <Content Include="$(PkgAspire_Hosting_Orchestration_linux-x64)/tools/**/*" Condition="'$(RuntimeIdentifier)' == '' or '$(RuntimeIdentifier)' == 'linux-x64'">
-      <Link>dcp/$(VouchfxDcpVersion)/linux-x64/tools/%(RecursiveDir)%(Filename)%(Extension)</Link>
-      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
-      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
-      <Pack>false</Pack>
-    </Content>
-    <Content Include="$(PkgAspire_Hosting_Orchestration_osx-x64)/tools/**/*" Condition="'$(RuntimeIdentifier)' == '' or '$(RuntimeIdentifier)' == 'osx-x64'">
-      <Link>dcp/$(VouchfxDcpVersion)/osx-x64/tools/%(RecursiveDir)%(Filename)%(Extension)</Link>
-      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
-      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
-      <Pack>false</Pack>
-    </Content>
-    <Content Include="$(PkgAspire_Hosting_Orchestration_osx-arm64)/tools/**/*" Condition="'$(RuntimeIdentifier)' == '' or '$(RuntimeIdentifier)' == 'osx-arm64'">
-      <Link>dcp/$(VouchfxDcpVersion)/osx-arm64/tools/%(RecursiveDir)%(Filename)%(Extension)</Link>
-      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
-      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
-      <Pack>false</Pack>
-    </Content>
   </ItemGroup>
 
   <!-- Set this during evaluation: Aspire's discovery target is conditionally skipped
-       before BeforeTargets callbacks run when DcpDir is empty. Source builds retain
-       their build-host cache metadata; published builds prefer the portable bundle. -->
+       before BeforeTargets callbacks run when DcpDir is empty. Source builds and the test
+       hosts embed the build host's package-cache path as dcpclipath; the published CLI
+       prefers its portable bundle at run time. A build host whose SDK's portable RID is not
+       one of these four (linux-arm64, win-arm64, linux-musl-x64) gets no dcpclipath, so
+       topology start fails there with Aspire's "CliPath is required". -->
   <PropertyGroup>
+    <!-- Distro-built SDKs report a non-portable RID (ubuntu.24.04-x64); match its portable form. -->
+    <_VouchfxDcpHostRid>$(NETCoreSdkPortableRuntimeIdentifier)</_VouchfxDcpHostRid>
+    <_VouchfxDcpHostRid Condition="'$(_VouchfxDcpHostRid)' == ''">$(NETCoreSdkRuntimeIdentifier)</_VouchfxDcpHostRid>
     <!-- Aspire 13.4.2 validates DashboardPath as non-empty even when disabled.
          HeadlessTopology always disables the dashboard; retain that metadata
          contract without restoring or distributing unused dashboard binaries. -->
     <AspireDashboardPath>disabled-by-vouchfx-headless-host</AspireDashboardPath>
-    <DcpDir Condition="'$(NETCoreSdkRuntimeIdentifier)' == 'win-x64'">$(PkgAspire_Hosting_Orchestration_win-x64)/tools/</DcpDir>
-    <DcpDir Condition="'$(NETCoreSdkRuntimeIdentifier)' == 'linux-x64'">$(PkgAspire_Hosting_Orchestration_linux-x64)/tools/</DcpDir>
-    <DcpDir Condition="'$(NETCoreSdkRuntimeIdentifier)' == 'osx-x64'">$(PkgAspire_Hosting_Orchestration_osx-x64)/tools/</DcpDir>
-    <DcpDir Condition="'$(NETCoreSdkRuntimeIdentifier)' == 'osx-arm64'">$(PkgAspire_Hosting_Orchestration_osx-arm64)/tools/</DcpDir>
+    <DcpDir Condition="'$(_VouchfxDcpHostRid)' == 'win-x64'">$(PkgAspire_Hosting_Orchestration_win-x64)/tools/</DcpDir>
+    <DcpDir Condition="'$(_VouchfxDcpHostRid)' == 'linux-x64'">$(PkgAspire_Hosting_Orchestration_linux-x64)/tools/</DcpDir>
+    <DcpDir Condition="'$(_VouchfxDcpHostRid)' == 'osx-x64'">$(PkgAspire_Hosting_Orchestration_osx-x64)/tools/</DcpDir>
+    <DcpDir Condition="'$(_VouchfxDcpHostRid)' == 'osx-arm64'">$(PkgAspire_Hosting_Orchestration_osx-arm64)/tools/</DcpDir>
   </PropertyGroup>
-
-  <Target Name="ValidateVouchfxDcpBundle" BeforeTargets="ComputeFilesToPublish">
-    <Error Condition="'@(_VouchfxSelectedDcpBundle)' == ''" Text="Unsupported vouchfx DCP runtime '$(RuntimeIdentifier)'. Supported: win-x64, linux-x64, osx-x64, osx-arm64." />
-    <Error Condition="!Exists('%(_VouchfxSelectedDcpBundle.PackageRoot)/tools/%(_VouchfxSelectedDcpBundle.Executable)')" Text="Missing DCP $(VouchfxDcpVersion) executable for %(_VouchfxSelectedDcpBundle.Identity). Restore the CLI dependencies before packaging." />
-    <Error Condition="!Exists('%(_VouchfxSelectedDcpBundle.PackageRoot)/tools/dcptun_c')" Text="Missing DCP tunnel helper for %(_VouchfxSelectedDcpBundle.Identity). Refusing an incomplete package." />
-    <Error Condition="!Exists('%(_VouchfxSelectedDcpBundle.PackageRoot)/tools/LICENSE') or !Exists('%(_VouchfxSelectedDcpBundle.PackageRoot)/tools/NOTICE')" Text="Missing DCP licence or notices for %(_VouchfxSelectedDcpBundle.Identity)." />
-  </Target>
 </Project>

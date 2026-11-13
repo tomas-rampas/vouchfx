@@ -1,7 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <!-- Aspire.AppHost.Sdk injects DCP binary references and embeds the
-       dcpclipath / dcpextensionpaths AssemblyMetadata attributes that
-       DistributedApplication.CreateBuilder requires to locate the DCP process.
+  <!-- Aspire.AppHost.Sdk embeds the dcpclipath / dcpextensionpaths AssemblyMetadata
+       attributes that DistributedApplication.CreateBuilder requires to locate the DCP process.
        This is the pre-approved R-1 fallback documented in CLAUDE.md §"Aspire (§4, §19)":
        a plain Aspire.Hosting library reference alone does NOT carry DCP binaries. -->
   <Sdk Name="Aspire.AppHost.Sdk" Version="13.4.2" />
@@ -11,9 +10,15 @@
     <IsAspireHost>true</IsAspireHost>
   </PropertyGroup>
 
+  <!-- The CLI's headless host wiring: DCP references and DcpDir for the build host's RID, a
+       placeholder dashboard path, and no dashboard package in the restore graph. See that
+       file for why. -->
+  <Import Project="..\..\src\Cli\Vouchfx.Cli\Vouchfx.Dcp.targets" />
+
   <ItemGroup>
     <!-- AppHost must be a direct reference so its build targets run and embed the DCP metadata.
-         Aspire.AppHost.Sdk auto-adds this package; the explicit reference pins the CPM version. -->
+         Vouchfx.Dcp.targets turns off the SDK's implicit reference, so this one is required
+         (and takes its version from CPM). -->
     <PackageReference Include="Aspire.Hosting.AppHost" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="xunit" />
