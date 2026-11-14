@@ -30,7 +30,8 @@
 # to avoid NU1109/NU1605 under transitive pinning (Microsoft.Data.SqlClient, RabbitMQ.Client,
 # SharpCompress, System.Text.Json). A Dependabot bump of one of those (or of Aspire.Hosting.*)
 # can fail restore with NU1109/NU1605; resolve it on the PR branch by moving the paired pins
-# together, not by reverting the bump.
+# together, not by reverting the bump. A System.Text.Json major is the exception: it is held
+# in the nuget `ignore` list below because 11.x ships no net8.0 asset.
 version: 2
 updates:
   - package-ecosystem: "github-actions"
@@ -105,4 +106,17 @@ updates:
       # pending a dedicated upgrade with date/time and TLS-chain regression tests
       # (see PR #662).
       - dependency-name: "Npgsql"
+        update-types: ["version-update:semver-major"]
+      # System.Text.Json 11.x ships no net8.0 asset (only net10.0, net11.0, net462 and
+      # netstandard2.0). On a net8.0 project its build targets, and those of the transitive
+      # System.Text.Encodings.Web, System.IO.Pipelines and Microsoft.Bcl.AsyncInterfaces 11.x,
+      # report "doesn't support net8.0", which -warnaserror turns into an error. Held until the
+      # repository targets net10.0 or later.
+      - dependency-name: "System.Text.Json"
+        update-types: ["version-update:semver-major"]
+      # MySqlConnector 3.x targets net8.0 and builds clean, but it has not been run against the
+      # MySQL seed, reset and TLS paths. Held until a dedicated upgrade passes the Docker
+      # integration jobs. MySqlConnectorPinGuardTests enforces the 2.6.1 security floor, and
+      # security updates are unaffected by this hold.
+      - dependency-name: "MySqlConnector"
         update-types: ["version-update:semver-major"]

@@ -30,6 +30,7 @@ to published pre-releases on 2026-07-14.
 
 - Commits no longer need a DCO `Signed-off-by` trailer; the DCO check workflow is removed.
 - The Aspire packages, the `Aspire.AppHost.Sdk` and the bundled DCP orchestrator move from 13.4.2 to 13.4.6. This is a patch update within the held 13.4.x line; `Aspire.Hosting.Elasticsearch` stays at 13.3.0 because no 13.4.x build is published. The default container image tags of the managed dependencies are unchanged.
+- NuGet dependency upgrades: `System.CommandLine` 2.0.15, `JsonPath.Net` 3.1.0, `JsonSchema.Net` 9.7.0, `Microsoft.Data.SqlClient` 7.1.2 (a servicing release with security updates), `MongoDB.Driver` 3.14.0, `StackExchange.Redis` 3.4.35 and `Microsoft.NET.Test.Sdk` 18.12.0. Two majors from the same Dependabot group are held back, and Dependabot now ignores their major updates: `System.Text.Json` 11 ships no `net8.0` asset, so on every `net8.0` project its build targets report an unsupported-target warning that `-warnaserror` turns into an error, and `MySqlConnector` 3 builds on `net8.0` but has not been run against the MySQL seed, reset and TLS paths.
 
 ## [1.3.0] — 2026-11-07
 
