@@ -28,9 +28,9 @@
 #
 # TRANSITIVE PINS: several entries in Directory.Packages.props are exact-minimum pins chosen
 # to avoid NU1109/NU1605 under transitive pinning (Microsoft.Data.SqlClient, RabbitMQ.Client,
-# SharpCompress, System.Text.Json). A Dependabot bump of one of those (or of Aspire.Hosting.*)
-# can fail restore with NU1109/NU1605; resolve it on the PR branch by moving the paired pins
-# together, not by reverting the bump. A System.Text.Json major is the exception: it is held
+# System.Text.Json). A Dependabot bump of one of those (or of Aspire.Hosting.*) can fail
+# restore with NU1109/NU1605; resolve it on the PR branch by moving the paired pins together,
+# not by reverting the bump. A System.Text.Json major is the exception: it is held
 # in the nuget `ignore` list below because 11.x ships no net8.0 asset.
 version: 2
 updates:
