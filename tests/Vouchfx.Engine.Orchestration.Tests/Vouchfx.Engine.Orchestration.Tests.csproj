@@ -3,7 +3,7 @@
        attributes that DistributedApplication.CreateBuilder requires to locate the DCP process.
        This is the pre-approved R-1 fallback documented in CLAUDE.md §"Aspire (§4, §19)":
        a plain Aspire.Hosting library reference alone does NOT carry DCP binaries. -->
-  <Sdk Name="Aspire.AppHost.Sdk" Version="13.4.2" />
+  <Sdk Name="Aspire.AppHost.Sdk" Version="13.4.6" />
 
   <!-- Mark this project as an Aspire host so the AppHost build targets embed the DCP metadata. -->
   <PropertyGroup>

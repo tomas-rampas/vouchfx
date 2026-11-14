@@ -301,6 +301,18 @@ jobs:
       - name: Rebuild solution with forward analysers
         working-directory: ${{ runner.temp }}
         run: |
+          # The hosted image carries several SDKs and the muxer picks the newest
+          # one when no global.json is in scope, so a newer major (.NET 11) would
+          # beat the 10.0 SDK installed above.  The muxer resolves global.json by
+          # walking up from the working directory, not from the solution, so a
+          # pin written into a scratch directory outside the checkout governs
+          # both the version check and the build while the repository's own
+          # .NET 8 pin stays out of the way.  latestFeature rolls only within
+          # 10.0, so it takes the newest installed 10.0.x and fails closed if
+          # none exists instead of drifting to another major.
+          mkdir -p analyser-forward
+          cd analyser-forward
+          printf '%s\n' '{"sdk":{"version":"10.0.100","rollForward":"latestFeature"}}' > global.json
           sdk_version="$(dotnet --version)"
           echo "Forward analyser SDK: $sdk_version"
           [[ "$sdk_version" == 10.* ]]
@@ -468,11 +480,11 @@ jobs:
       # without Docker by ManagedDefaultImagePullCoverageTests. Retain explicit
       # Docker-test tags alongside the current Aspire defaults:
       # mongo:8.3, redis:8.6, rabbitmq:4.3, and SQL Server:2022-latest.
-      #   postgres:18.3                          — Aspire.Hosting.PostgreSQL 13.4.2
+      #   postgres:18.3                          — Aspire.Hosting.PostgreSQL 13.4.6
       #                                            default (PostgresContainerImageTags:
       #                                            docker.io/library/postgres:18.3);
       #                                            no test overrides the tag.
-      #   confluentinc/confluent-local:8.2.0     — Aspire.Hosting.Kafka 13.4.2 default
+      #   confluentinc/confluent-local:8.2.0     — Aspire.Hosting.Kafka 13.4.6 default
       #                                            (KafkaContainerImageTags:
       #                                            docker.io/confluentinc/confluent-local:8.2.0).
       #   confluentinc/cp-schema-registry:7.6.1  — EnvironmentMapper.cs (explicit
@@ -497,10 +509,10 @@ jobs:
       #                                            the HTTP API for exchange/queue management.
       #   nats:2.14                              — MqNatsDockerTests JetStream broker container
       #                                            (mq-publish.nats / mq-expect.nats);
-      #                                            Aspire.Hosting.Nats 13.4.2 default image tag.
+      #                                            Aspire.Hosting.Nats 13.4.6 default image tag.
       #   mysql:9.7                              — DbAssertMysqlDockerTests MySQL container
       #                                            (db-assert.mysql provider);
-      #                                            Aspire.Hosting.MySql 13.4.2 default
+      #                                            Aspire.Hosting.MySql 13.4.6 default
       #                                            (MySqlContainerImageTags:
       #                                            docker.io/library/mysql:9.7);
       #                                            no test overrides the tag.

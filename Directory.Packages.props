@@ -2,7 +2,7 @@
   <PropertyGroup>
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
     <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
-    <VouchfxDcpVersion>13.4.2</VouchfxDcpVersion>
+    <VouchfxDcpVersion>13.4.6</VouchfxDcpVersion>
   </PropertyGroup>
   <ItemGroup Label="Roslyn scripting (memory model, §5)">
     <PackageVersion Include="Microsoft.CodeAnalysis.CSharp.Scripting" Version="4.14.0" />
@@ -14,41 +14,44 @@
     <PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="4.14.0" />
   </ItemGroup>
   <ItemGroup Label="Aspire orchestration (§4) — net8.0 compatible">
-    <PackageVersion Include="Aspire.Hosting" Version="13.4.2" />
-    <PackageVersion Include="Aspire.Hosting.AppHost" Version="13.4.2" />
-    <PackageVersion Include="Aspire.Hosting.PostgreSQL" Version="13.4.2" />
-    <PackageVersion Include="Aspire.Hosting.Kafka" Version="13.4.2" />
-    <PackageVersion Include="Aspire.Hosting.Testing" Version="13.4.2" />
-    <PackageVersion Include="Aspire.Hosting.SqlServer" Version="13.4.2" />
-    <PackageVersion Include="Aspire.Hosting.MySql" Version="13.4.2" />
-    <PackageVersion Include="Aspire.Hosting.MongoDB" Version="13.4.2" />
-    <PackageVersion Include="Aspire.Hosting.Redis" Version="13.4.2" />
-    <!-- Pinned to 13.3.0 — no 13.4.2 build is published on NuGet for this integration.
+    <PackageVersion Include="Aspire.Hosting" Version="13.4.6" />
+    <PackageVersion Include="Aspire.Hosting.AppHost" Version="13.4.6" />
+    <PackageVersion Include="Aspire.Hosting.PostgreSQL" Version="13.4.6" />
+    <PackageVersion Include="Aspire.Hosting.Kafka" Version="13.4.6" />
+    <PackageVersion Include="Aspire.Hosting.Testing" Version="13.4.6" />
+    <PackageVersion Include="Aspire.Hosting.SqlServer" Version="13.4.6" />
+    <PackageVersion Include="Aspire.Hosting.MySql" Version="13.4.6" />
+    <PackageVersion Include="Aspire.Hosting.MongoDB" Version="13.4.6" />
+    <PackageVersion Include="Aspire.Hosting.Redis" Version="13.4.6" />
+    <!-- Pinned to 13.3.0 — no 13.4.x build is published on NuGet for this integration.
          Same major (13), API-identical surface (AddElasticsearch / WithImageTag); bump to
          13.4.x when a matching build is published. -->
     <PackageVersion Include="Aspire.Hosting.Elasticsearch" Version="13.3.0" />
-    <PackageVersion Include="Aspire.Hosting.RabbitMQ" Version="13.4.2" />
-    <PackageVersion Include="Aspire.Hosting.Nats" Version="13.4.2" />
+    <PackageVersion Include="Aspire.Hosting.RabbitMQ" Version="13.4.6" />
+    <PackageVersion Include="Aspire.Hosting.Nats" Version="13.4.6" />
   </ItemGroup>
   <ItemGroup Label="Resilience (§5.7) — Polly v8">
     <PackageVersion Include="Polly.Core" Version="8.9.1" />
   </ItemGroup>
   <ItemGroup Label="Transitive security pins (Dependabot alerts) — CentralPackageTransitivePinningEnabled">
-    <!-- Pulled in via Aspire.Hosting -> StreamJsonRpc 2.22.23 (>= 2.5.192); pinned to the
-         advisory-fixed 2.5.x build. -->
+    <!-- Pulled in via Aspire.Hosting -> StreamJsonRpc 2.25.29 (>= 2.5.302, which is still
+         inside GHSA-qhrr-8q5h-9q3h, fixed in 2.5.303); pinned to the advisory-fixed 2.5.x
+         build. -->
     <PackageVersion Include="MessagePack" Version="2.5.303" />
-    <!-- Aspire.Hosting.MongoDB 13.4.2 transitively requires >= 1.0.0; pin to the exact
-         required minimum to avoid NU1109 downgrade errors under
-         CentralPackageTransitivePinningEnabled. 1.0.0 also covers the Dependabot
-         advisory (fixed in 0.48.0), which is why Dependabot's own 0.48.0 pin in #213
-         could not restore. -->
+    <!-- Aspire.Hosting.MongoDB 13.4.2 required >= 1.0.0; 13.4.6 no longer declares
+         SharpCompress, and MongoDB.Driver 3.14.0 requires only >= 0.48.1. The pin stays at
+         1.0.0 so the resolved version does not move (it also covers the advisory fixed in
+         0.48.0). -->
     <PackageVersion Include="SharpCompress" Version="1.0.0" />
+    <!-- Aspire.Hosting.SqlServer 13.4.6 requires Pkcs >= 10.0.8 and NuGet.Packaging
+         7.9.0 requires >= 8.0.1; both are inside GHSA-846f-f764-76mx /
+         GHSA-2fmv-rv2c-59x7. Do not lower or remove. -->
     <PackageVersion Include="System.Security.Cryptography.Pkcs" Version="10.0.13" />
     <!-- Azure.Messaging.ServiceBus 7.18.2 (via System.Memory.Data) floors System.Text.Json
          at a 6.0.x build vulnerable to CVE-2024-43485 (GHSA-8g4q-xg66-9fp4, .NET DoS;
          Dependabot alerts #31/#32/#56/#57 on the two azureservicebus providers and their
          tests — the only projects with no Aspire reference to lift them). Pinned to
-         10.0.8, the exact floor Aspire.Hosting.* 13.4.2 already imposes everywhere else,
+         10.0.14, above the 10.0.8 floor Aspire.Hosting.* 13.4.6 imposes everywhere else,
          to avoid NU1109 downgrade errors under CentralPackageTransitivePinningEnabled
          (the CVE fix landed in 8.0.5; 10.0.8 targets net8.0). -->
     <PackageVersion Include="System.Text.Json" Version="11.0.0" />
@@ -76,8 +79,9 @@
   </ItemGroup>
   <ItemGroup Label="Canonical clients (§5.7) — net8-era stable lines">
     <PackageVersion Include="Npgsql" Version="8.0.9" />
-    <!-- Aspire.Hosting.SqlServer 13.4.2 transitively requires >= 7.0.1; pin to the
-         exact required minimum to avoid NU1109/NU1605 downgrade errors under
+    <!-- Aspire.Hosting.SqlServer 13.4.6 transitively requires >= 7.0.1. The pin sits
+         above that floor, at the 7.1.2 servicing release with security updates, and must
+         stay at or above it to avoid NU1109/NU1605 downgrade errors under
          CentralPackageTransitivePinningEnabled. -->
     <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.1.2" />
     <PackageVersion Include="MySqlConnector" Version="3.0.0" />
@@ -88,7 +92,7 @@
          exact required minimum to avoid NU1109/NU1605 downgrade errors under
          CentralPackageTransitivePinningEnabled. -->
     <PackageVersion Include="RabbitMQ.Client" Version="7.2.2" />
-    <!-- Aspire.Hosting.Nats 13.4.2 transitively requires >= 2.7.3; pin to the
+    <!-- Aspire.Hosting.Nats 13.4.6 transitively requires >= 2.7.3; pin to the
          exact required minimum to avoid NU1109 downgrade errors under
          CentralPackageTransitivePinningEnabled. The mq-publish.nats and
          mq-expect.nats providers were authored against this API surface. -->
