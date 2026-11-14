@@ -54,7 +54,7 @@
          10.0.14, above the 10.0.8 floor Aspire.Hosting.* 13.4.6 imposes everywhere else,
          to avoid NU1109 downgrade errors under CentralPackageTransitivePinningEnabled
          (the CVE fix landed in 8.0.5; 10.0.8 targets net8.0). -->
-    <PackageVersion Include="System.Text.Json" Version="10.0.14" />
+    <PackageVersion Include="System.Text.Json" Version="10.0.15" />
   </ItemGroup>
   <ItemGroup Label="CLI runner (S07-C-01) — System.CommandLine GA 2.0.x">
     <!-- Pinned to the 2.0.0 GA line: Argument&lt;T&gt;(name)-only ctor + init Description /
