@@ -43,14 +43,15 @@
          1.0.0 so the resolved version does not move (it also covers the advisory fixed in
          0.48.0). -->
     <PackageVersion Include="SharpCompress" Version="1.0.0" />
-    <!-- Covers GHSA-846f-f764-76mx and GHSA-2fmv-rv2c-59x7 for Microsoft.Data.SqlClient on
-         net8.0 (SqlClient 7.1.2 asks only for >= 8.0.2). Do not lower or remove. -->
+    <!-- Aspire.Hosting.SqlServer 13.4.6 requires Pkcs >= 10.0.8 and NuGet.Packaging
+         7.9.0 requires >= 8.0.1; both are inside GHSA-846f-f764-76mx /
+         GHSA-2fmv-rv2c-59x7. Do not lower or remove. -->
     <PackageVersion Include="System.Security.Cryptography.Pkcs" Version="10.0.13" />
     <!-- Azure.Messaging.ServiceBus 7.18.2 (via System.Memory.Data) floors System.Text.Json
          at a 6.0.x build vulnerable to CVE-2024-43485 (GHSA-8g4q-xg66-9fp4, .NET DoS;
          Dependabot alerts #31/#32/#56/#57 on the two azureservicebus providers and their
          tests — the only projects with no Aspire reference to lift them). Pinned to
-         10.0.8, the exact floor Aspire.Hosting.* 13.4.6 already imposes everywhere else,
+         10.0.14, above the 10.0.8 floor Aspire.Hosting.* 13.4.6 imposes everywhere else,
          to avoid NU1109 downgrade errors under CentralPackageTransitivePinningEnabled
          (the CVE fix landed in 8.0.5; 10.0.8 targets net8.0). -->
     <PackageVersion Include="System.Text.Json" Version="10.0.14" />
