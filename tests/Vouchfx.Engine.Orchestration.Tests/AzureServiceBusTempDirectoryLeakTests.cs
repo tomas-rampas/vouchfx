@@ -6,9 +6,10 @@
 //
 // The staged directories live in a TempDirectoryLedger (see that type's header comment): taking
 // the teardown snapshot and refusing anything staged later are one operation under one lock, so
-// a start hook that still fires after cleanup (per Aspire 13.4.2's source, a cancelled StartAsync
-// can return while DCP is still creating containers in the background) refuses rather than
-// leaving a directory nothing will remove.
+// a start hook that still fires after cleanup (per Aspire's DcpExecutor source, read at 13.4.2 and
+// re-read unchanged in this respect at 13.4.6, a cancelled StartAsync can return while DCP is
+// still creating containers in the background) refuses rather than leaving a directory nothing
+// will remove.
 //
 // Four parts, none needing Docker:
 //   A. Configure(builder) alone (no StartAsync) must never touch the filesystem — the directory
@@ -30,7 +31,8 @@
 //      recorded for cleanup; 32 Stage calls racing one close leave no directory behind under any
 //      interleaving (deterministic, not merely likely); and publishing BeforeResourceStartedEvent
 //      directly against the builder's own eventing fires EnvironmentMapper's actual hook, without
-//      Docker or DCP.
+//      Docker or DCP. Every test that publishes that event first allocates the emulator's
+//      `health` endpoint by hand, standing in for DCP (see AllocateHealthEndpointAsDcpWould).
 //
 // Host temp-directory names are never printed (existence-only assertions), per this repo's
 // testing conventions.
@@ -73,6 +75,42 @@ public sealed class AzureServiceBusTempDirectoryLeakTests
         Seed: null,
         ImageRegistry: null,
         ImagePullPolicy: null);
+
+    /// <summary>
+    /// The fixed fragment of <see cref="TempDirectoryLedger.Stage"/>'s closed-ledger refusal, so a
+    /// post-cleanup assertion proves the ledger refused rather than any other subscriber throwing
+    /// the same exception type.
+    /// </summary>
+    private const string LedgerClosedMessageFragment = "teardown has already removed its temp directories";
+
+    /// <summary>
+    /// Allocates the emulator's <c>health</c> endpoint, as DCP does before it raises
+    /// <see cref="BeforeResourceStartedEvent"/> for a container.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Aspire.Hosting 13.4.6 moved <c>WithHttpHealthCheck</c>'s URL resolution
+    /// (<c>endpoint.Url</c>) out of its <c>OnResourceEndpointsAllocated</c> subscription, where it
+    /// sat in 13.4.2, into a new <c>OnBeforeResourceStarted</c> subscription on the same resource.
+    /// That subscription is registered before EnvironmentMapper's own hook, and the event is
+    /// dispatched in subscription order, so publishing the event against an unallocated endpoint
+    /// throws "The endpoint `health` is not allocated" before the engine's hook ever runs.
+    /// </para>
+    /// <para>
+    /// A real run never meets that state. In 13.4.6's <c>DcpExecutor</c>, each container's
+    /// endpoints are allocated (<c>TryAddWorkloadAllocatedEndpoints</c>, then
+    /// <c>ResourceEndpointsAllocatedEvent</c>) before <c>CreateRenderedResourcesAsync</c> reaches
+    /// <c>OnResourceStartingContext</c>, which is what raises the event. This helper reproduces
+    /// that ordering instead of bypassing Aspire's subscriber, so the publication still runs every
+    /// subscriber a real start runs. Nothing listens on the port: the health-check service is
+    /// never started here, so the address is never probed.
+    /// </para>
+    /// </remarks>
+    private static void AllocateHealthEndpointAsDcpWould(IResource resource)
+    {
+        var health = resource.Annotations.OfType<EndpointAnnotation>().Single(e => e.Name == "health");
+        health.AllocatedEndpoint = new AllocatedEndpoint(health, "localhost", 5300);
+    }
 
     // ── A. Configure() alone never touches the filesystem ────────────────────
 
@@ -388,6 +426,7 @@ public sealed class AzureServiceBusTempDirectoryLeakTests
         var mount = resource.Annotations.OfType<ContainerMountAnnotation>().Single();
         var mountDirectory = Path.GetDirectoryName(mount.Source);
         Assert.NotNull(mountDirectory);
+        AllocateHealthEndpointAsDcpWould(resource);
 
         var services = new ServiceCollection().BuildServiceProvider();
         var app = builder.Build();
@@ -415,6 +454,7 @@ public sealed class AzureServiceBusTempDirectoryLeakTests
                 new BeforeResourceStartedEvent(resource, services),
                 CancellationToken.None));
             Assert.IsType<InvalidOperationException>(exception);
+            Assert.Contains(LedgerClosedMessageFragment, exception!.Message, StringComparison.Ordinal);
         }
         finally
         {
@@ -584,7 +624,8 @@ public sealed class AzureServiceBusTempDirectoryLeakTests
     /// infrastructure fires the exact same subscription <c>OnBeforeResourceStarted</c> registers —
     /// Aspire's own extension resolves it by resource identity, not by which code publishes it —
     /// so this drives EnvironmentMapper's actual <see cref="TempDirectoryLedger.Stage"/> call
-    /// rather than a hand-rolled substitute for it.
+    /// rather than a hand-rolled substitute for it. The <c>health</c> endpoint is allocated first,
+    /// as DCP would, because Aspire's own health-check subscriber on the same event reads its URL.
     /// </summary>
     [Fact]
     public async Task OnBeforeResourceStartedHook_StagesTheRealDirectory_ThenRefusesAfterCleanup()
@@ -597,9 +638,11 @@ public sealed class AzureServiceBusTempDirectoryLeakTests
         var mount = resource.Annotations.OfType<ContainerMountAnnotation>().Single();
         var mountDirectory = Path.GetDirectoryName(mount.Source);
         Assert.NotNull(mountDirectory);
+        AllocateHealthEndpointAsDcpWould(resource);
 
-        // The hook EnvironmentMapper registers discards this parameter entirely ((_, _, _) => ...),
-        // so any IServiceProvider satisfies BeforeResourceStartedEvent's constructor here.
+        // Neither the hook EnvironmentMapper registers ((_, _, _) => ...) nor Aspire's health-check
+        // subscriber reads the event's services, so any IServiceProvider satisfies
+        // BeforeResourceStartedEvent's constructor here.
         var services = new ServiceCollection().BuildServiceProvider();
 
         try
@@ -630,6 +673,7 @@ public sealed class AzureServiceBusTempDirectoryLeakTests
                 CancellationToken.None));
 
             Assert.IsType<InvalidOperationException>(exception);
+            Assert.Contains(LedgerClosedMessageFragment, exception!.Message, StringComparison.Ordinal);
             Assert.False(
                 Directory.Exists(mountDirectory),
                 "A start hook that fired after cleanup must not recreate the directory.");
