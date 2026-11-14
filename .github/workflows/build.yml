@@ -301,6 +301,18 @@ jobs:
       - name: Rebuild solution with forward analysers
         working-directory: ${{ runner.temp }}
         run: |
+          # The hosted image carries several SDKs and the muxer picks the newest
+          # one when no global.json is in scope, so a newer major (.NET 11) would
+          # beat the 10.0 SDK installed above.  The muxer resolves global.json by
+          # walking up from the working directory, not from the solution, so a
+          # pin written into a scratch directory outside the checkout governs
+          # both the version check and the build while the repository's own
+          # .NET 8 pin stays out of the way.  latestFeature rolls only within
+          # 10.0, so it takes the newest installed 10.0.x and fails closed if
+          # none exists instead of drifting to another major.
+          mkdir -p analyser-forward
+          cd analyser-forward
+          printf '%s\n' '{"sdk":{"version":"10.0.100","rollForward":"latestFeature"}}' > global.json
           sdk_version="$(dotnet --version)"
           echo "Forward analyser SDK: $sdk_version"
           [[ "$sdk_version" == 10.* ]]
