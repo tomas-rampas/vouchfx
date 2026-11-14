@@ -480,11 +480,11 @@ jobs:
       # without Docker by ManagedDefaultImagePullCoverageTests. Retain explicit
       # Docker-test tags alongside the current Aspire defaults:
       # mongo:8.3, redis:8.6, rabbitmq:4.3, and SQL Server:2022-latest.
-      #   postgres:18.3                          — Aspire.Hosting.PostgreSQL 13.4.2
+      #   postgres:18.3                          — Aspire.Hosting.PostgreSQL 13.4.6
       #                                            default (PostgresContainerImageTags:
       #                                            docker.io/library/postgres:18.3);
       #                                            no test overrides the tag.
-      #   confluentinc/confluent-local:8.2.0     — Aspire.Hosting.Kafka 13.4.2 default
+      #   confluentinc/confluent-local:8.2.0     — Aspire.Hosting.Kafka 13.4.6 default
       #                                            (KafkaContainerImageTags:
       #                                            docker.io/confluentinc/confluent-local:8.2.0).
       #   confluentinc/cp-schema-registry:7.6.1  — EnvironmentMapper.cs (explicit
@@ -509,10 +509,10 @@ jobs:
       #                                            the HTTP API for exchange/queue management.
       #   nats:2.14                              — MqNatsDockerTests JetStream broker container
       #                                            (mq-publish.nats / mq-expect.nats);
-      #                                            Aspire.Hosting.Nats 13.4.2 default image tag.
+      #                                            Aspire.Hosting.Nats 13.4.6 default image tag.
       #   mysql:9.7                              — DbAssertMysqlDockerTests MySQL container
       #                                            (db-assert.mysql provider);
-      #                                            Aspire.Hosting.MySql 13.4.2 default
+      #                                            Aspire.Hosting.MySql 13.4.6 default
       #                                            (MySqlContainerImageTags:
       #                                            docker.io/library/mysql:9.7);
       #                                            no test overrides the tag.

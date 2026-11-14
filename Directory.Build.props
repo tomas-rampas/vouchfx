@@ -124,7 +124,7 @@
     <!-- NuGet audit suppression for ONE advisory (ZEB-33): GHSA-f7vh-h5g3-7jrh,
          high severity, a macOS Aspire dashboard cookie leak via a YARP link. It affects
          Aspire.Hosting and Aspire.Hosting.AppHost below 13.6.5, and 13.6.5 is the only patched
-         release; the pin is 13.4.2 (Directory.Packages.props). Without this item NuGet audit
+         release; the pin is 13.4.6 (Directory.Packages.props). Without this item NuGet audit
          reports NU1903 for both packages, which TreatWarningsAsErrors above turns into a restore
          failure on every build. NuGetAuditLevel, NuGetAuditMode, NoWarn and
          WarningsNotAsErrors are deliberately untouched, so every other advisory NuGet audit
@@ -148,8 +148,9 @@
          vouchfx adds no YARP resource of its
          own. A suite can declare a YARP image under services:, but vouchfx still starts no
          dashboard alongside it. The published tool does bundle the Aspire.Hosting and
-         Aspire.Hosting.AppHost 13.4.2 DLLs, so scanners reading its deps.json will report the
-         advisory. A source check cannot prove unreachability. The guard in
+         Aspire.Hosting.AppHost DLLs at the pinned 13.4.x release (13.4.2 in releases up to
+         and including v1.2.1), so scanners reading its deps.json will report the advisory.
+         A source check cannot prove unreachability. The guard in
          tests/Vouchfx.Engine.Compilation.Tests/AspireAuditSuppressionGuardTests.cs fails CI
          if any other audit suppression or audit-level override appears in an MSBuild or
          NuGet config file, if this entry is still present once the Aspire pin is 13.6.5 or

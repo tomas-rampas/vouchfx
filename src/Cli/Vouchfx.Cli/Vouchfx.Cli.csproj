@@ -10,7 +10,7 @@
        The CLI runner is the executable that HOSTS the engine, so it (not the engine
        library) must carry this SDK and pass its OWN assembly name ("vouchfx") to
        ScenarioRunner.RunSuiteAsync as appHostAssemblyName (see Program.cs). -->
-  <Sdk Name="Aspire.AppHost.Sdk" Version="13.4.2" />
+  <Sdk Name="Aspire.AppHost.Sdk" Version="13.4.6" />
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>

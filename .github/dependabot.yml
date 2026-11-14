@@ -28,9 +28,10 @@
 #
 # TRANSITIVE PINS: several entries in Directory.Packages.props are exact-minimum pins chosen
 # to avoid NU1109/NU1605 under transitive pinning (Microsoft.Data.SqlClient, RabbitMQ.Client,
-# SharpCompress, System.Text.Json). A Dependabot bump of one of those (or of Aspire.Hosting.*)
-# can fail restore with NU1109/NU1605; resolve it on the PR branch by moving the paired pins
-# together, not by reverting the bump.
+# System.Text.Json). A Dependabot bump of one of those (or of Aspire.Hosting.*) can fail
+# restore with NU1109/NU1605; resolve it on the PR branch by moving the paired pins together,
+# not by reverting the bump. A System.Text.Json major is the exception: it is held
+# in the nuget `ignore` list below because 11.x ships no net8.0 asset.
 version: 2
 updates:
   - package-ecosystem: "github-actions"
@@ -73,16 +74,19 @@ updates:
       # These holds use update-types only, which apply to version updates and not to
       # security updates. Never add a versions: range here: that WOULD suppress security PRs.
       # Aspire is held at the 13.4.x patch line for the v1.x series (ZEB-33). 13.5.x is
-      # unpatched for GHSA-f7vh-h5g3-7jrh, and 13.6.5, the only patched release, requires
-      # YamlDotNet 18.1.0 or later (as does 13.6.0), which the YamlDotNet hold below rules
-      # out. Patch updates
-      # within 13.4.x still flow. Security updates are unaffected by this hold, so Dependabot
-      # will still attempt a security update to 13.6.5 (a pull request that cannot pass, or
-      # an update error on the alert); it cannot succeed while YamlDotNet is held, and the
-      # repository's Dependabot alert stays open. The advisory is suppressed in NuGet audit
-      # in Directory.Build.props; lift this hold when that entry is removed. The hold also
-      # covers Aspire.Hosting.Elasticsearch (pinned 13.3.0, see Directory.Packages.props), so
-      # its move to 13.4.x is a manual edit.
+      # unpatched for GHSA-f7vh-h5g3-7jrh, and 13.6.5, the only patched release,
+      # requires YamlDotNet 18.1.0 or later (as does 13.6.0), which the YamlDotNet hold
+      # below rules out. Patch updates within 13.4.x still flow.
+      # AspireVersionLockstepGuardTests fails an Aspire patch pull request until
+      # VouchfxDcpVersion (Directory.Packages.props) and every Aspire.AppHost.Sdk
+      # version are moved on the same branch. Security updates are unaffected by this
+      # hold, so Dependabot will still attempt a security update to 13.6.5 (a pull
+      # request that cannot pass, or an update error on the alert); it cannot succeed
+      # while YamlDotNet is held, and the repository's Dependabot alert stays open. The
+      # advisory is suppressed in NuGet audit in Directory.Build.props; lift this hold
+      # when that entry is removed. The hold also covers Aspire.Hosting.Elasticsearch
+      # (pinned 13.3.0, see Directory.Packages.props), so its move to 13.4.x is a manual
+      # edit.
       - dependency-name: "Aspire.*"
         update-types: ["version-update:semver-minor", "version-update:semver-major"]
       # YamlDotNet types are part of the frozen Vouchfx.Sdk v1 surface (IStepBinder<T>.Bind
@@ -105,4 +109,17 @@ updates:
       # pending a dedicated upgrade with date/time and TLS-chain regression tests
       # (see PR #662).
       - dependency-name: "Npgsql"
+        update-types: ["version-update:semver-major"]
+      # System.Text.Json 11.x ships no net8.0 asset (only net10.0, net11.0, net462 and
+      # netstandard2.0). On a net8.0 project its build targets, and those of the transitive
+      # System.Text.Encodings.Web, System.IO.Pipelines and Microsoft.Bcl.AsyncInterfaces 11.x,
+      # report "doesn't support net8.0", which -warnaserror turns into an error. Held until the
+      # repository targets net10.0 or later.
+      - dependency-name: "System.Text.Json"
+        update-types: ["version-update:semver-major"]
+      # MySqlConnector 3.x targets net8.0 and builds clean, but it has not been run against the
+      # MySQL seed, reset and TLS paths. Held until a dedicated upgrade passes the Docker
+      # integration jobs. MySqlConnectorPinGuardTests enforces the 2.6.1 security floor, and
+      # security updates are unaffected by this hold.
+      - dependency-name: "MySqlConnector"
         update-types: ["version-update:semver-major"]

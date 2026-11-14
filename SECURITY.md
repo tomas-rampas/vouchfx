@@ -131,12 +131,15 @@ channels above.
 
 ## Published v1.x tools and GHSA-f7vh-h5g3-7jrh
 
-Every published `vouchfx` tool in the v1.x series bundles
-`Aspire.Hosting` and `Aspire.Hosting.AppHost` 13.4.2 (the DLLs), and later
-v1.x releases will bundle a 13.4.x release of both, all of which are inside
-the advisory's range. The source pin is 13.4.2 at every v1.x release tag; the
-published packages for v1.0.4, v1.1.0, v1.2.0 and v1.2.1 were inspected. The
-tool bundles no Aspire dashboard binaries. 13.4.2 is inside
+Every published `vouchfx` tool in the v1.x series bundles the
+`Aspire.Hosting` and `Aspire.Hosting.AppHost` DLLs at the 13.4.x release
+pinned at its release tag, and every 13.4.x release is inside the advisory's
+range. Releases up to and including v1.2.1 bundle 13.4.2; the published
+packages for v1.0.4, v1.1.0, v1.2.0 and v1.2.1 were inspected. The first
+release that includes the Aspire 13.4.6 update recorded in `CHANGELOG.md`
+bundles 13.4.6, a patch update that does not fix this advisory; later v1.x
+releases bundle the 13.4.x release pinned at their tag. The tool bundles no
+Aspire dashboard binaries. 13.4.2 and 13.4.6 are inside
 [GHSA-f7vh-h5g3-7jrh](https://github.com/advisories/GHSA-f7vh-h5g3-7jrh)
 (NuGet `Aspire.Hosting` and `Aspire.Hosting.AppHost`, vulnerable range
 `< 13.6.5`, first and only patched version 13.6.5, severity high). The
