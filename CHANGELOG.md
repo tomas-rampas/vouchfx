@@ -29,6 +29,7 @@ to published pre-releases on 2026-07-14.
 ### Changed
 
 - Commits no longer need a DCO `Signed-off-by` trailer; the DCO check workflow is removed.
+- The Aspire packages, the `Aspire.AppHost.Sdk` and the bundled DCP orchestrator move from 13.4.2 to 13.4.6. This is a patch update within the held 13.4.x line; `Aspire.Hosting.Elasticsearch` stays at 13.3.0 because no 13.4.x build is published. The default container image tags of the managed dependencies are unchanged.
 
 ## [1.3.0] — 2026-11-07
 
