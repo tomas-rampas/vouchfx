@@ -1,4 +1,20 @@
 {
+  "permissions": {
+    "allow": [
+      "mcp__Linear__get_*",
+      "mcp__Linear__list_*",
+      "mcp__Linear__whoami",
+      "mcp__Linear__search_documentation",
+      "mcp__Linear__extract_images",
+      "mcp__Linear__save_issue",
+      "mcp__Linear__save_comment"
+    ],
+    "ask": [
+      "mcp__Linear__merge_diff",
+      "mcp__Linear__share_issue",
+      "mcp__Linear__delete_*"
+    ]
+  },
   "hooks": {
     "SessionStart": [
       {
