@@ -155,7 +155,7 @@ public sealed class SecuredEndpointProbeTests : IDisposable
         private static X509Certificate2 LoadPresentableClientCertificate(TestCertificateBed bed)
         {
             using var pemPair = X509Certificate2.CreateFromPemFile(bed.ClientCertPath, bed.ClientKeyPath);
-            return new X509Certificate2(pemPair.Export(X509ContentType.Pkcs12));
+            return X509CertificateLoader.LoadPkcs12(pemPair.Export(X509ContentType.Pkcs12), password: null);
         }
     }
 
@@ -229,7 +229,7 @@ public sealed class SecuredEndpointProbeTests : IDisposable
         {
             try
             {
-                return new X509Certificate2(_resolved);
+                return X509CertificateLoader.LoadCertificateFromFile(_resolved);
             }
             catch (Exception ex)
                 when (ex is System.Security.Cryptography.CryptographicException
@@ -246,7 +246,7 @@ public sealed class SecuredEndpointProbeTests : IDisposable
         private static X509Certificate2 LoadPresentableClientCertificate(TestCertificateBed bed)
         {
             using var pemPair = X509Certificate2.CreateFromPemFile(bed.ClientCertPath, bed.ClientKeyPath);
-            return new X509Certificate2(pemPair.Export(X509ContentType.Pkcs12));
+            return X509CertificateLoader.LoadPkcs12(pemPair.Export(X509ContentType.Pkcs12), password: null);
         }
     }
 
@@ -2172,7 +2172,7 @@ public sealed class SecuredEndpointProbeTests : IDisposable
             ClientCertificatePath = bed.ClientCertPath;
             ClientKeyPath = bed.ClientKeyPath;
             using var pemPair = X509Certificate2.CreateFromPemFile(bed.ClientCertPath, bed.ClientKeyPath);
-            ClientCertificate = new X509Certificate2(pemPair.Export(X509ContentType.Pkcs12));
+            ClientCertificate = X509CertificateLoader.LoadPkcs12(pemPair.Export(X509ContentType.Pkcs12), password: null);
         }
 
         /// <summary>How many handshakes reached the trust decision.</summary>

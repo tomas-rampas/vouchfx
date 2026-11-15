@@ -215,8 +215,10 @@ public sealed class EnvironmentTopologyDurabilityDockerTests
         try
         {
             // Execute the canonical built CLI, never an instrumented test-output copy.
-            var configuration = new DirectoryInfo(AppContext.BaseDirectory).Parent!.Name;
-            var cli = Path.Combine(RepoRoot.Resolve(), "src", "Cli", "Vouchfx.Cli", "bin", configuration, "net8.0", "vouchfx.dll");
+            var outputDirectory = new DirectoryInfo(AppContext.BaseDirectory);
+            var configuration = outputDirectory.Parent!.Name;
+            // The CLI and this test project share the repository's target framework.
+            var cli = Path.Combine(RepoRoot.Resolve(), "src", "Cli", "Vouchfx.Cli", "bin", configuration, outputDirectory.Name, "vouchfx.dll");
             Assert.True(File.Exists(cli));
             Assert.True(File.Exists(Path.ChangeExtension(cli, ".runtimeconfig.json")));
             evidence.CliSha256 = Convert.ToHexString(SHA256.HashData(await File.ReadAllBytesAsync(cli, deadline.Token)));

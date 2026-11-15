@@ -80,7 +80,7 @@
 
   <Target Name="CopyEncodingProbe" AfterTargets="Build">
     <ItemGroup>
-      <EncodingProbeFiles Include="..\Vouchfx.Cli.Encoding.Probe\bin\$(Configuration)\net8.0\**\*" />
+      <EncodingProbeFiles Include="..\Vouchfx.Cli.Encoding.Probe\bin\$(Configuration)\$(TargetFramework)\**\*" />
     </ItemGroup>
     <Copy SourceFiles="@(EncodingProbeFiles)"
           DestinationFiles="@(EncodingProbeFiles->'$(OutDir)EncodingProbe\%(RecursiveDir)%(Filename)%(Extension)')" />
@@ -88,7 +88,7 @@
 
   <Target Name="CopyKafkaSecurityProbe" AfterTargets="Build">
     <ItemGroup>
-      <KafkaSecurityProbeFiles Include="..\Vouchfx.Kafka.Security.Probe\bin\$(Configuration)\net8.0\**\*" />
+      <KafkaSecurityProbeFiles Include="..\Vouchfx.Kafka.Security.Probe\bin\$(Configuration)\$(TargetFramework)\**\*" />
     </ItemGroup>
     <Copy SourceFiles="@(KafkaSecurityProbeFiles)"
           DestinationFiles="@(KafkaSecurityProbeFiles->'$(OutDir)KafkaSecurityProbe\%(RecursiveDir)%(Filename)%(Extension)')" />

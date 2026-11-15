@@ -3,6 +3,9 @@
   <PropertyGroup>
     <RootNamespace>Vouchfx.Sdk.Testing</RootNamespace>
     <AssemblyName>Vouchfx.Sdk.Testing</AssemblyName>
+    <!-- Published provider-facing closure: stays on the v1.x net8.0 baseline
+         (see Directory.Build.props). -->
+    <TargetFramework>$(VouchfxProviderContractTargetFramework)</TargetFramework>
   </PropertyGroup>
 
   <!-- NuGet packaging (M3 SDK-validation gate): publish the out-of-repo provider

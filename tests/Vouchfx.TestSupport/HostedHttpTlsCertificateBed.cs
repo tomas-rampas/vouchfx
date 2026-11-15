@@ -31,10 +31,10 @@ public sealed class HostedHttpTlsCertificateBed : IDisposable
             using var rootKey = RSA.Create(2048);
             var rootRequest = Request(bed.AuthorityName("Root"), rootKey, ca: true, server: false);
             using var rootSigner = rootRequest.CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddDays(2));
-            bed.Root = bed.Own(new X509Certificate2(rootSigner.Export(X509ContentType.Cert)));
+            bed.Root = bed.Own(X509CertificateLoader.LoadCertificate(rootSigner.Export(X509ContentType.Cert)));
             using var issuerKey = RSA.Create(2048);
             using var issuerPublic = Sign(Request(bed.AuthorityName("Issuer"), issuerKey, ca: true, server: false), rootSigner);
-            bed.Issuer = bed.Own(new X509Certificate2(issuerPublic.Export(X509ContentType.Cert)));
+            bed.Issuer = bed.Own(X509CertificateLoader.LoadCertificate(issuerPublic.Export(X509ContentType.Cert)));
             using var issuerSigner = issuerPublic.CopyWithPrivateKey(issuerKey);
             using var serverKey = RSA.Create(2048);
             var serverRequest = Request("CN=localhost", serverKey, ca: false, server: true);
@@ -52,7 +52,7 @@ public sealed class HostedHttpTlsCertificateBed : IDisposable
                 bed._clientIssuer = bed.Own(LoadForTls(issuerSigner));
                 using var clientKey = RSA.Create(2048);
                 using var clientPublic = Sign(Request("CN=hosted-client-" + bed.Nonce, clientKey, ca: false, server: false), issuerSigner);
-                bed.Client = bed.Own(new X509Certificate2(clientPublic.Export(X509ContentType.Cert)));
+                bed.Client = bed.Own(X509CertificateLoader.LoadCertificate(clientPublic.Export(X509ContentType.Cert)));
                 var pem = bed.Client.ExportCertificatePem();
                 if (candidate == "supplied") { pem += "\n" + bed.Issuer.ExportCertificatePem(); }
                 else if (candidate == "mismatched")
@@ -60,7 +60,7 @@ public sealed class HostedHttpTlsCertificateBed : IDisposable
                     using var unrelatedKey = RSA.Create(2048);
                     var unrelatedRequest = Request(bed.AuthorityName("Unrelated"), unrelatedKey, ca: true, server: false);
                     using var unrelatedSigner = unrelatedRequest.CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddDays(2));
-                    var unrelated = bed.Own(new X509Certificate2(unrelatedSigner.Export(X509ContentType.Cert)));
+                    var unrelated = bed.Own(X509CertificateLoader.LoadCertificate(unrelatedSigner.Export(X509ContentType.Cert)));
                     pem += "\n" + unrelated.ExportCertificatePem();
                 }
                 else if (candidate != "omitted") { throw new ArgumentException("Unknown candidate arm.", nameof(candidate)); }
@@ -124,7 +124,7 @@ public sealed class HostedHttpTlsCertificateBed : IDisposable
     {
         var password = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
         var blob = certificate.Export(X509ContentType.Pkcs12, password);
-        try { return new X509Certificate2(blob, password, X509KeyStorageFlags.DefaultKeySet); }
+        try { return X509CertificateLoader.LoadPkcs12(blob, password, X509KeyStorageFlags.DefaultKeySet); }
         finally { CryptographicOperations.ZeroMemory(blob); }
     }
 

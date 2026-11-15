@@ -49,14 +49,17 @@ internal static class BuiltCli
     {
         var assemblyDirectory = Path.GetDirectoryName(typeof(BuiltCli).Assembly.Location)!;
 
-        // …/tests/<project>/bin/<configuration>/net8.0 — the configuration is the name of this
-        // directory's parent, i.e. the assembly file's grandparent.
+        // …/tests/<project>/bin/<configuration>/<tfm> — the configuration is the name of this
+        // directory's parent, i.e. the assembly file's grandparent. The CLI and this test
+        // project share the repository's target framework, so the <tfm> directory name is
+        // this one's own.
         var configuration = Path.GetFileName(Path.GetDirectoryName(assemblyDirectory))!;
+        var framework = Path.GetFileName(assemblyDirectory);
 
         var repoRoot = ResolveRepoRoot();
 
         var cli = Path.Combine(
-            repoRoot, "src", "Cli", "Vouchfx.Cli", "bin", configuration, "net8.0", "vouchfx.dll");
+            repoRoot, "src", "Cli", "Vouchfx.Cli", "bin", configuration, framework, "vouchfx.dll");
 
         Assert.True(
             File.Exists(cli),

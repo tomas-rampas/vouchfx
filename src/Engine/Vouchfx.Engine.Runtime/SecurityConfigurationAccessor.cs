@@ -667,16 +667,18 @@ internal sealed class SecurityConfigurationAccessor : ISecurityConfigurationAcce
 
             try
             {
-                // The file-path constructor, deliberately: it auto-detects PEM and DER, where
-                // X509Certificate2.CreateFromPem would reject a DER-encoded anchor outright.
-                // (Obsoleted as SYSLIB0057 in .NET 9 in favour of X509CertificateLoader, which
-                // does not exist on this repo's pinned net8.0 target; swap it when the TFM moves.)
+                // X509CertificateLoader.LoadCertificateFromFile, deliberately: it accepts a PEM or
+                // a DER anchor, where X509Certificate2.CreateFromPem would reject a DER-encoded
+                // anchor outright. It replaces the file-path constructor (obsoleted as SYSLIB0057
+                // in .NET 9) now that this project targets net10.0. Unlike that constructor it
+                // loads a single certificate only, so a PKCS#7 or PKCS#12 container declared as
+                // caCert is refused here rather than silently reduced to its first certificate.
                 //
                 // No X509KeyStorageFlags decision to make here, unlike LoadClient below: a trust
                 // anchor is a public certificate with no private key, so nothing is imported into
                 // any key store and EphemeralKeySet would have nothing to apply to. Measured on
                 // this host — loading the anchor adds zero files to the user CNG key store.
-                return new X509Certificate2(ca.Resolved);
+                return X509CertificateLoader.LoadCertificateFromFile(ca.Resolved);
             }
             catch (Exception ex) when (ex is CryptographicException or IOException or UnauthorizedAccessException)
             {
@@ -868,8 +870,8 @@ internal sealed class SecurityConfigurationAccessor : ISecurityConfigurationAcce
                 // private key sitting in a managed byte[] that nothing ever clears and the GC
                 // may copy while compacting. The password itself is a string and so cannot be
                 // zeroed — an accepted residual, and a far smaller one than the key: the
-                // X509Certificate2(byte[], string, ...) overload is the only portable entry
-                // point, its SecureString sibling is obsolete on non-Windows, and the password
+                // X509CertificateLoader.LoadPkcs12(byte[], string, ...) overload takes the
+                // password as a string (or a span of one), and the password
                 // protects a blob that lives for two statements.
                 var password = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
                 var pkcs12 = pemPair.Export(X509ContentType.Pkcs12, password);
@@ -887,7 +889,7 @@ internal sealed class SecurityConfigurationAccessor : ISecurityConfigurationAcce
                     // encrypted-key load has no reason to be exempt from any of this: skipping the
                     // round trip on that branch would ship a path that authenticates on Linux and
                     // fails on Windows.
-                    var leaf = new X509Certificate2(pkcs12, password, X509KeyStorageFlags.DefaultKeySet);
+                    var leaf = X509CertificateLoader.LoadPkcs12(pkcs12, password, X509KeyStorageFlags.DefaultKeySet);
                     var intermediates = new List<X509Certificate2>();
                     try
                     {
@@ -896,7 +898,7 @@ internal sealed class SecurityConfigurationAccessor : ISecurityConfigurationAcce
                         var bundle = ClientCertificateBundle.Parse(File.ReadAllText(_clientCert.Resolved), leaf.RawData);
                         foreach (var der in bundle.Skip(1))
                         {
-                            var candidate = new X509Certificate2(der);
+                            var candidate = X509CertificateLoader.LoadCertificate(der);
                             intermediates.Add(candidate);
                             if (!candidate.Extensions.OfType<X509BasicConstraintsExtension>().Any(extension => extension.CertificateAuthority))
                             {

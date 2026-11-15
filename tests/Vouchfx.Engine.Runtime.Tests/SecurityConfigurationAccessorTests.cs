@@ -263,7 +263,7 @@ public sealed class SecurityConfigurationAccessorTests
         try
         {
             var certificates = accessor.For("payments")!.Certificates!;
-            using var serverCertificate = new X509Certificate2(bed.ServerCertificate.Export(X509ContentType.Cert));
+            using var serverCertificate = X509CertificateLoader.LoadCertificate(bed.ServerCertificate.Export(X509ContentType.Cert));
 
             // A chain error against the platform store, but the certificate chains to the
             // declared anchor → trusted.
@@ -336,7 +336,7 @@ public sealed class SecurityConfigurationAccessorTests
 
             // NEGATIVE CONTROL for the pin: the declared anchor's own leaf, with the platform
             // reporting no errors, is still ACCEPTED. Pinning narrows, it does not break.
-            using var serverCertificate = new X509Certificate2(bed.ServerCertificate.Export(X509ContentType.Cert));
+            using var serverCertificate = X509CertificateLoader.LoadCertificate(bed.ServerCertificate.Export(X509ContentType.Cert));
             Assert.True(certificates.TrustsRemoteCertificate(serverCertificate, null, SslPolicyErrors.None));
         }
         finally
@@ -406,7 +406,7 @@ public sealed class SecurityConfigurationAccessorTests
                 bed.ClientAuthOnlyServerCertificate, null, SslPolicyErrors.None));
 
             // The ordinary server certificate (serverAuth present) is unaffected.
-            using var serverCertificate = new X509Certificate2(bed.ServerCertificate.Export(X509ContentType.Cert));
+            using var serverCertificate = X509CertificateLoader.LoadCertificate(bed.ServerCertificate.Export(X509ContentType.Cert));
             Assert.True(certificates.TrustsRemoteCertificate(
                 serverCertificate, null, SslPolicyErrors.RemoteCertificateChainErrors));
 
@@ -496,7 +496,7 @@ public sealed class SecurityConfigurationAccessorTests
 
             // And the legitimate server certificate still validates with that same hostile
             // ExtraStore attached — the guard rejects the imposter, not everything.
-            using var serverCertificate = new X509Certificate2(bed.ServerCertificate.Export(X509ContentType.Cert));
+            using var serverCertificate = X509CertificateLoader.LoadCertificate(bed.ServerCertificate.Export(X509ContentType.Cert));
             Assert.True(certificates.TrustsRemoteCertificate(
                 serverCertificate, peerChain, SslPolicyErrors.RemoteCertificateChainErrors));
         }
@@ -2373,8 +2373,8 @@ public sealed class SecurityConfigurationAccessorTests
             // The trust decision follows the anchor each was given, and only that one. Each
             // suite's own server certificate validates under its own accessor and is rejected
             // by the other — the inversion, stated as an assertion.
-            using var serverA = new X509Certificate2(suiteA.ServerCertificate.Export(X509ContentType.Cert));
-            using var serverB = new X509Certificate2(suiteB.ServerCertificate.Export(X509ContentType.Cert));
+            using var serverA = X509CertificateLoader.LoadCertificate(suiteA.ServerCertificate.Export(X509ContentType.Cert));
+            using var serverB = X509CertificateLoader.LoadCertificate(suiteB.ServerCertificate.Export(X509ContentType.Cert));
 
             Assert.True(certificatesA.TrustsRemoteCertificate(
                 serverA, null, SslPolicyErrors.RemoteCertificateChainErrors));

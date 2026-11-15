@@ -1,6 +1,6 @@
 <Project>
   <!-- Import the repo-root Directory.Build.props so every shared property
-       (TargetFramework net8.0, LangVersion 11, Nullable, ImplicitUsings,
+       (TargetFramework net10.0, LangVersion 11, Nullable, ImplicitUsings,
        TreatWarningsAsErrors, EnforceCodeStyleInBuild, AnalysisLevel) applies
        to the worked-example projects exactly as it does to the engine and the
        Core providers.  An external contributor copying examples/ gets the same

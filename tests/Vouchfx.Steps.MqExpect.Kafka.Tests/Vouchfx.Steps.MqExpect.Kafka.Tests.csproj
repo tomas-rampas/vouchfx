@@ -1,5 +1,13 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
+  <PropertyGroup>
+    <!-- C# 12 for this project only. The net10.0 [GeneratedRegex] source generator emits a
+         collection expression (SearchValues.Create(["..."], ...)) for a pattern with a
+         literal search prefix whatever the project's LangVersion, so under the repo-wide
+         C# 11 the generated file fails with CS9058. The repo-wide LangVersion stays 11. -->
+    <LangVersion>12</LangVersion>
+  </PropertyGroup>
+
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="xunit" />

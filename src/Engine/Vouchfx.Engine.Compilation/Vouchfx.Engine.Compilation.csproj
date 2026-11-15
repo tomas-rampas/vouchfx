@@ -2,6 +2,9 @@
 
   <PropertyGroup>
     <RootNamespace>Vouchfx.Engine.Compilation</RootNamespace>
+    <!-- Published provider-facing closure: stays on the v1.x net8.0 baseline
+         (see Directory.Build.props). -->
+    <TargetFramework>$(VouchfxProviderContractTargetFramework)</TargetFramework>
   </PropertyGroup>
 
   <!-- NuGet packaging (M3 SDK-validation gate): published to enable the
