@@ -51,7 +51,8 @@
          at a 6.0.x build vulnerable to CVE-2024-43485 (GHSA-8g4q-xg66-9fp4, .NET DoS;
          Dependabot alerts #31/#32/#56/#57 on the two azureservicebus providers and their
          tests — the only projects with no Aspire reference to lift them). Pinned to a
-         10.0.x patch (10.0.14 at the time, now 10.0.15), above the 10.0.8 floor Aspire.Hosting.* 13.4.6 imposes everywhere else,
+         10.0.x patch (10.0.14 at the time, now 10.0.15), above the 10.0.8 floor
+         Aspire.Hosting.* 13.4.6 imposes everywhere else,
          to avoid NU1109 downgrade errors under CentralPackageTransitivePinningEnabled
          (the CVE fix landed in 8.0.5; 10.0.8 targets net8.0).
          Since the move to net10.0 this pin resolves in no project: NuGet prunes the package
