@@ -161,7 +161,12 @@ public sealed class InvocationBoundaryTests
             new MqExpectKafkaModel("broker", "cancelled-retained", new KafkaMatch(null, null, "expected", null)),
             new KafkaCompileContext());
         var assembled = CsxAssembler.Assemble(new[] { new StepCompilePlan("kafka", fragment, retry, timeoutMs, null) });
-        var references = Directory.GetFiles(AppContext.BaseDirectory, "*.dll").Where(IsManagedAssembly).ToArray();
+        // The output directory's assemblies, plus System.Text.Json by location: on net10.0 the
+        // serializer is the shared framework's copy and no longer sits in the output
+        // directory. (Production passes the whole trusted-platform-assemblies list.)
+        var references = Directory.GetFiles(AppContext.BaseDirectory, "*.dll").Where(IsManagedAssembly)
+            .Append(typeof(System.Text.Json.JsonSerializer).Assembly.Location)
+            .Distinct(StringComparer.Ordinal).ToArray();
         var compiled = RoslynScriptCompiler.CompileOnce(assembled.CsxSource, additionalReferencePaths: references);
         using var loaded = reusable ? RoslynScriptCompiler.Load(compiled) : null;
         var globals = new ScriptGlobalVariables(vars, new Dictionary<string, object>(), NullSecretAccessor.Instance,

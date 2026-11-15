@@ -53,7 +53,12 @@
          tests — the only projects with no Aspire reference to lift them). Pinned to
          10.0.14, above the 10.0.8 floor Aspire.Hosting.* 13.4.6 imposes everywhere else,
          to avoid NU1109 downgrade errors under CentralPackageTransitivePinningEnabled
-         (the CVE fix landed in 8.0.5; 10.0.8 targets net8.0). -->
+         (the CVE fix landed in 8.0.5; 10.0.8 targets net8.0).
+         Since the move to net10.0 this pin resolves in no project: NuGet prunes the package
+         from every net10.0 graph in favour of the shared framework's copy, and none of the
+         net8.0 provider-contract libraries pulls it in. It is kept, unchanged, so that a
+         net8.0 library that later gains a transitive System.Text.Json dependency is held
+         on this patched 10.x line rather than whatever floor that dependency declares. -->
     <PackageVersion Include="System.Text.Json" Version="10.0.15" />
   </ItemGroup>
   <ItemGroup Label="CLI runner (S07-C-01) — System.CommandLine GA 2.0.x">

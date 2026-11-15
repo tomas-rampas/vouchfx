@@ -20,8 +20,8 @@ namespace Vouchfx.Engine.Compilation.Tests;
 /// It reads every <c>*.props</c>, <c>*.targets</c>, <c>*.csproj</c>, <c>*.proj</c> and
 /// <c>nuget.config</c> file under the repository root as XML, reads every <c>*.rsp</c> file and
 /// every workflow under <c>.github/workflows</c> as plain text, and parses every
-/// <c>src/**/*.cs</c> file with Roslyn twice, once with the Release and once with the Debug
-/// preprocessor symbols of the <c>net8.0</c> build. The walk skips hidden directories (any name
+/// <c>src/**/*.cs</c> file with Roslyn four times, with the Release and the Debug preprocessor
+/// symbols of both the <c>net10.0</c> and the <c>net8.0</c> build. The walk skips hidden directories (any name
 /// starting with a dot) and <c>bin</c>, <c>obj</c> and <c>node_modules</c>, so a local SDK or
 /// package cache is never mistaken for repository configuration. The workflows are read by
 /// explicit path for that reason.
@@ -71,8 +71,19 @@ public sealed class AspireAuditSuppressionGuardTests
 
     private static readonly string[] SharedPreprocessorSymbols =
     {
-        "TRACE", "NET", "NET8_0", "NETCOREAPP", "NETCOREAPP3_1_OR_GREATER",
+        "TRACE", "NET", "NETCOREAPP", "NETCOREAPP3_1_OR_GREATER",
         "NET5_0_OR_GREATER", "NET6_0_OR_GREATER", "NET7_0_OR_GREATER", "NET8_0_OR_GREATER",
+    };
+
+    /// <summary>
+    /// The framework-specific symbols of each target framework under <c>src</c>: net10.0 for the
+    /// engine, providers and CLI, and net8.0 for the provider-contract libraries. Every file is
+    /// parsed under both, so code that one framework's <c>#if</c> hides is still seen.
+    /// </summary>
+    private static readonly (string Name, string[] Symbols)[] FrameworkPreprocessorSymbols =
+    {
+        ("net8.0", new[] { "NET8_0" }),
+        ("net10.0", new[] { "NET10_0", "NET9_0_OR_GREATER", "NET10_0_OR_GREATER" }),
     };
 
     private static readonly Regex AuditWarningCode = new(@"(?<![0-9])NU190\d(?![0-9])", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
@@ -619,11 +630,15 @@ public sealed class AspireAuditSuppressionGuardTests
         var configurations = new List<ParsedConfiguration>();
         foreach (var (name, buildSymbol) in new[] { ("Release", "RELEASE"), ("Debug", "DEBUG") })
         {
-            var options = CSharpParseOptions.Default.WithPreprocessorSymbols(SharedPreprocessorSymbols.Append(buildSymbol));
-            var files = texts
-                .Select(t => (t.File, CSharpSyntaxTree.ParseText(t.Text, options, path: t.Path).GetRoot()))
-                .ToList();
-            configurations.Add(new ParsedConfiguration(name, files));
+            foreach (var (framework, frameworkSymbols) in FrameworkPreprocessorSymbols)
+            {
+                var options = CSharpParseOptions.Default.WithPreprocessorSymbols(
+                    SharedPreprocessorSymbols.Concat(frameworkSymbols).Append(buildSymbol));
+                var files = texts
+                    .Select(t => (t.File, CSharpSyntaxTree.ParseText(t.Text, options, path: t.Path).GetRoot()))
+                    .ToList();
+                configurations.Add(new ParsedConfiguration($"{name} {framework}", files));
+            }
         }
 
         return configurations;

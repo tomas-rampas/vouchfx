@@ -409,7 +409,7 @@ public static class RoslynScriptCompiler
         if (string.IsNullOrEmpty(abstractionsLocation))
             throw new NotSupportedException(
                 "Could not resolve the assembly location for Vouchfx.Engine.Abstractions. " +
-                "This is unexpected under normal .NET 8 load contexts; ensure the assembly " +
+                "This is unexpected under normal .NET load contexts; ensure the assembly " +
                 "is not loaded from a single-file bundle without extraction.");
 
         var refs = new List<Microsoft.CodeAnalysis.MetadataReference>(tpaRefs)
@@ -504,7 +504,7 @@ public static class RoslynScriptCompiler
             throw new NotSupportedException(
                 $"The following required BCL assemblies could not be found in the " +
                 $"TRUSTED_PLATFORM_ASSEMBLIES list: {string.Join(", ", missing)}. " +
-                "Ensure the .NET 8 runtime is installed and the TPA list is complete.");
+                "Ensure a supported .NET runtime is installed and the TPA list is complete.");
 
         var refs = new List<Microsoft.CodeAnalysis.MetadataReference>(found.Count);
         foreach (var path in found.Values)

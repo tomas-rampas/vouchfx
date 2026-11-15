@@ -671,8 +671,9 @@ internal sealed class SecurityConfigurationAccessor : ISecurityConfigurationAcce
                 // a DER anchor, where X509Certificate2.CreateFromPem would reject a DER-encoded
                 // anchor outright. It replaces the file-path constructor (obsoleted as SYSLIB0057
                 // in .NET 9) now that this project targets net10.0. Unlike that constructor it
-                // loads a single certificate only, so a PKCS#7 or PKCS#12 container declared as
-                // caCert is refused here rather than silently reduced to its first certificate.
+                // loads a single certificate only: measured on Linux / .NET 10.0.15, a PKCS#12
+                // (.pfx) anchor the constructor accepted now fails with CryptographicException
+                // and is refused below, while PEM and DER anchors load as before.
                 //
                 // No X509KeyStorageFlags decision to make here, unlike LoadClient below: a trust
                 // anchor is a public certificate with no private key, so nothing is imported into
