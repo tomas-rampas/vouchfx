@@ -33,8 +33,9 @@
 # diff. So .claude/ is treated like .github/workflows/: it is code-owned in
 # .github/CODEOWNERS, and web sessions should be opened only on branches you trust.
 # The alternative is to move this bootstrap into the Claude Code environment's own
-# setup script, which no branch controls, and delete this file and its registration
-# in .claude/settings.json.
+# setup script, which no branch controls, and delete this file and its registration:
+# remove only the "hooks" block from .claude/settings.json, because that file also
+# carries the project permission rules, which are not part of this bootstrap.
 set -euo pipefail
 
 if [ "${CLAUDE_CODE_REMOTE:-}" != "true" ]; then
