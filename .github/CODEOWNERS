@@ -41,8 +41,10 @@
 # Claude Code on the web bootstrap. WHY: .claude/settings.json registers
 # .claude/hooks/session-start.sh as a SessionStart hook, so a web session runs the
 # checked-out branch's copy of it, as root, before anyone has read the diff: the same
-# supply-chain class as the workflows above. Owner review is mandatory, and web
-# sessions should be opened only on branches you trust.
+# supply-chain class as the workflows above. The same file's allow/ask permission
+# rules also take effect for a session opened on a branch before the diff is read,
+# so a branch could widen them. Owner review is mandatory, and web sessions should
+# be opened only on branches you trust.
 /.claude/                                       @tomas-rampas
 
 # Central build / dependency-version / package-feed control. WHY: an unreviewed
