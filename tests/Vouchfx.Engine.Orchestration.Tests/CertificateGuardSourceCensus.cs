@@ -7,6 +7,10 @@ namespace Vouchfx.Engine.Orchestration.Tests;
 
 // A source contract, not a store scan or whole-program execution analysis. Inspect syntax
 // rather than text so comments and generated-code strings cannot create fictitious callers.
+// The recognised idioms are a closed list: certificate constructors, X509Certificate2.CreateFrom*,
+// X509CertificateLoader.Load*, CreateSelfSigned, the canonical authority and bed factories, and
+// Import or ImportFromPem on a declared X509Certificate2Collection. An idiom outside that list
+// is not seen.
 internal static class CertificateGuardSourceCensus
 {
     internal sealed record Project(string Name, string ProjectXml, IReadOnlyList<string> Sources);
@@ -105,6 +109,7 @@ internal static class CertificateGuardSourceCensus
                     ((owner is "TestCertificateAuthority" or "HostedHttpTlsCertificateBed" || staticAuthority && member is null) &&
                      (name.StartsWith("Create", StringComparison.Ordinal) || name.StartsWith("Write", StringComparison.Ordinal))) ||
                     (owner == "X509Certificate2" && name.StartsWith("CreateFrom", StringComparison.Ordinal)) ||
+                    (owner == "X509CertificateLoader" && name.StartsWith("Load", StringComparison.Ordinal)) ||
                     (member is not null && collectionNames.Contains(LastName(member.Expression.ToString())) && name is "Import" or "ImportFromPem"))
                 {
                     return true;

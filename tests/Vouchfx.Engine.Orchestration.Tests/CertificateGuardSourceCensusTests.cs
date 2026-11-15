@@ -80,6 +80,9 @@ public sealed class CertificateGuardSourceCensusTests
     [InlineData("using Cert = System.Security.Cryptography.X509Certificates.X509Certificate2; class Fixture { void Run() { Cert.CreateFromPemFile(path); } }")]
     [InlineData("class Fixture { void Run() { var certificates = new X509Certificate2Collection(); certificates.Import(bytes); } }")]
     [InlineData("class Fixture { void Run() { request.CreateSelfSigned(before, after); } }")]
+    [InlineData("class Fixture { void Run() { X509CertificateLoader.LoadPkcs12(bytes, null); } }")]
+    [InlineData("class Fixture { void Run() { System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadCertificateFromFile(path); } }")]
+    [InlineData("using Loader = System.Security.Cryptography.X509Certificates.X509CertificateLoader; class Fixture { void Run() { Loader.LoadCertificate(bytes); } }")]
     public void ConstructorFactoryAliasAndImportPathsRequireGuard(string source)
     {
         Assert.True(CertificateGuardSourceCensus.CreatesOrImportsCertificate(new[] { source }));
