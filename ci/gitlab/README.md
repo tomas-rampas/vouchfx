@@ -117,8 +117,11 @@ optional mode later; the install step is intentionally the only thing that would
 The default image is .NET 10 (pin it to a digest in production). The image is the whole runtime
 boundary: unlike
 [the GitHub workflow](../../docs/ci-integration.md#isolated-sdk-on-github-actions), this template
-does not remove an extra major that the image already contains. The `net10.0` executable uses
-.NET 10 when that runtime is present and rolls forward to a newer major only when it is absent.
+does not remove an extra major that the image already contains. Because the template builds
+vouchfx from source, the image must contain a .NET 10 SDK (10.0.100 or a later 10.0 feature
+band): `global.json` refuses an image that has only a newer-major SDK. Roll-forward applies only
+to running the built CLI: the `net10.0` executable uses .NET 10 when that runtime is present and
+rolls forward to a newer major only when it is absent.
 
 ## Exit-code gating (verdict taxonomy §12.1)
 

@@ -600,7 +600,7 @@ The following `dotnet --version` check runs inside the vouchfx checkout, so the 
 2. Use a runner that provides `pwsh` (PowerShell 7). GitHub-hosted runners do.
 3. Do not point `DOTNET_INSTALL_DIR` at a shared or pre-warmed SDK for this workflow. The selector only accepts a physical directory directly under `RUNNER_TEMP` named `vouchfx-suite-dotnet`.
 4. If the selected shared frameworks are missing, the requested SDK channel did not install both `Microsoft.NETCore.App` and `Microsoft.AspNetCore.App`. Retry with a complete `8.0.x`, `9.0.x` or `10.0.x` channel.
-5. On GitLab, choose the SDK with `VOUCHFX_DOTNET_IMAGE` instead. That template does not run this selector; the CLI runs on whichever .NET 10 or newer runtime the image contains.
+5. On GitLab, choose the SDK with `VOUCHFX_DOTNET_IMAGE` instead. That template does not run this selector. It builds vouchfx from source, so the image must contain a .NET 10 SDK; `global.json` refuses an image that has only a newer-major SDK. Roll-forward applies only to running the built CLI.
 
 ---
 
