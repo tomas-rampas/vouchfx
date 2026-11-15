@@ -49,11 +49,27 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
-    # Collapse each week's version updates into ONE pull request (fewer PRs to triage, and
-    # any paired-pin / NU1109 fix-up is paid once per week). Aspire.Hosting.* ships in
-    # lockstep, so it is grouped on its own so a partial Aspire bump never lands.
+    # Collapse each week's MINOR and PATCH version updates into ONE pull request (fewer PRs
+    # to triage, and any paired-pin / NU1109 fix-up is paid once per week). Aspire.Hosting.*
+    # ships in lockstep, so it is grouped on its own so a partial Aspire bump never lands.
     # Security updates are not affected by `groups` unless `applies-to: security-updates`
-    # is set, so advisory fixes still arrive immediately as their own PRs.
+    # is set, so these groups never batch an advisory fix: any security update that is
+    # raised comes as its own PR. Whether a hold in the ignore list also stops one is a
+    # separate question; see the note on security updates in the ignore list below.
+    #
+    # Majors are deliberately kept OUT of the weekly group (update-types below). Dependabot
+    # cannot split a grouped pull request, so when a major that cannot build sat in the
+    # group, every safe minor and patch in the same pull request went red with it. A major
+    # that is not in the group arrives as its own pull request, which can fail or be
+    # deferred without blocking the rest. A package with a major available still gets its
+    # minor and patch updates in the group; only the major arrives as its own pull request.
+    # The aspire group is left without update-types on purpose: the Aspire.* ignore below
+    # already limits it to patches, and if that hold is ever lifted a major must still move
+    # every Aspire package together in one pull request, never one package at a time.
+    # open-pull-requests-limit stays at 5: two slots serve the groups, leaving three for
+    # individual majors. Most majors are held below, so few are expected at once. Security
+    # updates have their own separate limit (10 open pull requests) and are not queued
+    # behind these.
     groups:
       aspire:
         patterns:
@@ -63,6 +79,9 @@ updates:
           - "*"
         exclude-patterns:
           - "Aspire.*"
+        update-types:
+          - "minor"
+          - "patch"
     ignore:
       # Roslyn follows the pinned .NET 8 SDK's compiler (mcp measured CS9057 on a 5.x bump
       # under -warnaserror). Scripting and the plain compiler move in lockstep.
@@ -71,22 +90,30 @@ updates:
       # System.CommandLine is pinned to the 2.0.0 GA API surface (see Directory.Packages.props).
       - dependency-name: "System.CommandLine"
         update-types: ["version-update:semver-major"]
-      # These holds use update-types only, which apply to version updates and not to
-      # security updates. Never add a versions: range here: that WOULD suppress security PRs.
+      # SECURITY UPDATES AND THESE HOLDS. Never add a versions: range to any entry here: that
+      # suppresses security updates on every code path. Whether an update-types hold also
+      # filters a NuGet security update is not settled. Observed: on 15 November 2026 a
+      # security update moving Aspire.Hosting and Aspire.Hosting.AppHost from 13.4.6 to 13.6.5
+      # was raised while the Aspire.* minor and major hold below was in place. But the NuGet
+      # updater's own code can apply update-types to security jobs when the service passes
+      # them. So do not rely on a held package's security fix arriving as a pull request. When
+      # an advisory lands on a held package, check the Dependabot alert: an update that could
+      # not be produced shows there as an error, not as a pull request. NuGet audit in the
+      # build reports advisories independently. Security updates also have their own fixed
+      # limit of 10 open pull requests; beyond that only the alerts remain.
       # Aspire is held at the 13.4.x patch line for the v1.x series (ZEB-33). 13.5.x is
       # unpatched for GHSA-f7vh-h5g3-7jrh, and 13.6.5, the only patched release,
       # requires YamlDotNet 18.1.0 or later (as does 13.6.0), which the YamlDotNet hold
       # below rules out. Patch updates within 13.4.x still flow.
       # AspireVersionLockstepGuardTests fails an Aspire patch pull request until
       # VouchfxDcpVersion (Directory.Packages.props) and every Aspire.AppHost.Sdk
-      # version are moved on the same branch. Security updates are unaffected by this
-      # hold, so Dependabot will still attempt a security update to 13.6.5 (a pull
-      # request that cannot pass, or an update error on the alert); it cannot succeed
-      # while YamlDotNet is held, and the repository's Dependabot alert stays open. The
-      # advisory is suppressed in NuGet audit in Directory.Build.props; lift this hold
-      # when that entry is removed. The hold also covers Aspire.Hosting.Elasticsearch
-      # (pinned 13.3.0, see Directory.Packages.props), so its move to 13.4.x is a manual
-      # edit.
+      # version are moved on the same branch. Dependabot may attempt a security update to
+      # 13.6.5 despite this hold (see above), as a pull request that cannot pass or as an
+      # update error on the alert; it cannot succeed while YamlDotNet is held, and the
+      # repository's Dependabot alert stays open. The advisory is suppressed in NuGet audit
+      # in Directory.Build.props; lift this hold when that entry is removed. The hold also
+      # covers Aspire.Hosting.Elasticsearch (pinned 13.3.0, see Directory.Packages.props),
+      # so its move to 13.4.x is a manual edit.
       - dependency-name: "Aspire.*"
         update-types: ["version-update:semver-minor", "version-update:semver-major"]
       # YamlDotNet types are part of the frozen Vouchfx.Sdk v1 surface (IStepBinder<T>.Bind
@@ -110,16 +137,23 @@ updates:
       # (see PR #662).
       - dependency-name: "Npgsql"
         update-types: ["version-update:semver-major"]
-      # System.Text.Json 11.x ships no net8.0 asset (only net10.0, net11.0, net462 and
-      # netstandard2.0). On a net8.0 project its build targets, and those of the transitive
-      # System.Text.Encodings.Web, System.IO.Pipelines and Microsoft.Bcl.AsyncInterfaces 11.x,
-      # report "doesn't support net8.0", which -warnaserror turns into an error. Held until the
-      # repository targets net10.0 or later.
+      # System.Text.Json versions with the .NET release, and its next major can drop older
+      # target frameworks: 11.x ships no net8.0 asset (only net10.0, net11.0, net462 and
+      # netstandard2.0), so on a net8.0 project its build targets report "doesn't support
+      # net8.0", which -warnaserror turns into an error. Held until the repository targets
+      # net10.0 or later. No other runtime-tied package is listed because Dependabot's NuGet
+      # version updates act only on packages a project references directly (a PackageReference,
+      # or a GlobalPackageReference, which this repository does not use). A package that is
+      # only a central transitive pin (a PackageVersion with no PackageReference, such as
+      # System.Security.Cryptography.Pkcs) is not version-updated, so a hold on it would do
+      # nothing there. A runtime-tied package that a project starts referencing directly needs
+      # its own major hold. For security updates, see the note above the Aspire hold.
       - dependency-name: "System.Text.Json"
         update-types: ["version-update:semver-major"]
       # MySqlConnector 3.x targets net8.0 and builds clean, but it has not been run against the
       # MySQL seed, reset and TLS paths. Held until a dedicated upgrade passes the Docker
-      # integration jobs. MySqlConnectorPinGuardTests enforces the 2.6.1 security floor, and
-      # security updates are unaffected by this hold.
+      # integration jobs. MySqlConnectorPinGuardTests enforces the 2.6.1 security floor. A
+      # security fix that exists only in 3.x may not arrive as a pull request while this hold
+      # is in place (see the note above the Aspire hold); check the Dependabot alert.
       - dependency-name: "MySqlConnector"
         update-types: ["version-update:semver-major"]
