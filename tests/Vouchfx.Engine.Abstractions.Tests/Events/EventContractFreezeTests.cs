@@ -1449,7 +1449,7 @@ public sealed partial class EventContractFreezeTests
     /// <c>Directory.Packages.props</c> at 10, the major the file header's MEASURED facts were
     /// re-checked against. Since the net10.0 move the pin resolves in no project: NuGet prunes
     /// a transitive <c>System.Text.Json</c> edge that the shared framework's version satisfies,
-    /// and every such edge in this solution does, so the CLI serialises with the framework's
+    /// and every <c>System.Text.Json</c> edge in this solution is one, so the CLI serialises with the framework's
     /// 10.x assembly (measured with SDK 10.0.115, with the pin at 10.0.15 and at 11.0.0). An
     /// edge that requires 11.x or later is not pruned. The hazard a new major brings is
     /// twofold. A net10.0 project that references the package directly (NuGet refuses a direct

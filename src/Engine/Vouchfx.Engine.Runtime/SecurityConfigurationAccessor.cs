@@ -1000,13 +1000,15 @@ internal sealed class SecurityConfigurationAccessor : ISecurityConfigurationAcce
                 }
 
                 // ISSUE #375's SIBLING GAP, AND THIS IS THE ONE THAT WAS MEASURED LEAKING.
-                // Unlike LoadCa's CryptoAPI constructor, `X509Certificate2.CreateFromPemFile`
-                // opens the files through System.IO, so a missing one throws
-                // `FileNotFoundException` — an `IOException`, which this filter admits — carrying
-                // .NET's own text: "Could not find file 'C:\...\client-key.pem'." Measured on this
-                // host, 2026-08-31, alongside the LoadCa cases tabulated above; the two constructors
-                // genuinely differ, which is why the fix is applied at both catches rather than at
-                // whichever one an author happened to hit.
+                // `X509Certificate2.CreateFromPemFile` opens the files through System.IO, so a
+                // missing one throws `FileNotFoundException` — an `IOException`, which this filter
+                // admits — carrying .NET's own text: "Could not find file 'C:\...\client-key.pem'."
+                // Measured on Windows, 2026-08-31. The same Windows measurement found LoadCa's
+                // then-current `new X509Certificate2(string)` constructor path-free (it went
+                // through CryptoAPI); LoadCa now uses X509CertificateLoader, which has not been
+                // measured on Windows (see the comment in LoadCa). The fix is applied at both
+                // catches, rather than at whichever one an author happened to hit, so neither
+                // site depends on how its loader reports a missing file.
                 //
                 // It is REACHABLE, not hypothetical: EnvironmentSecurityValidator existence-checks
                 // both files pre-topology, so arriving here means the file changed between that

@@ -58,7 +58,7 @@ public static class RepoRoot
     /// <summary>
     /// Walks up from the calling process's own base directory
     /// (<see cref="AppContext.BaseDirectory"/> - a test assembly's build output, under
-    /// <c>bin/&lt;configuration&gt;/net8.0</c>) until it finds a directory containing
+    /// <c>bin/&lt;configuration&gt;/net10.0</c>) until it finds a directory containing
     /// <see cref="AnchorFileName"/>, and returns that directory. Cached after the first call: the
     /// answer cannot change within one test run.
     /// </summary>

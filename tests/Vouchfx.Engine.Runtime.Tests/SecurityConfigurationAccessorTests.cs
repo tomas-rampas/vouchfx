@@ -766,8 +766,10 @@ public sealed class SecurityConfigurationAccessorTests
             Assert.IsAssignableFrom<CryptographicException>(ex.InnerException);
             Assert.DoesNotContain(bed.SuiteDirectory, ex.Message, StringComparison.OrdinalIgnoreCase);
 
-            // The refusal is cached for the run: a second read throws the same diagnostic type.
-            Assert.Throws<SecurityMaterialException>(() => certificates.CaCertificate);
+            // The refusal is cached for the run: a second read rethrows the same exception
+            // instance rather than loading the file again.
+            var again = Assert.Throws<SecurityMaterialException>(() => certificates.CaCertificate);
+            Assert.Same(ex, again);
         }
         finally
         {

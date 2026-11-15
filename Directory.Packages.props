@@ -57,7 +57,7 @@
          (the CVE fix landed in 8.0.5; 10.0.8 targets net8.0).
          Since the move to net10.0 this pin resolves in no project: NuGet prunes a net10.0
          graph's System.Text.Json edges that the shared framework's version satisfies (every
-         such edge in this solution does; an edge requiring 11.x or later is not pruned), and
+         System.Text.Json edge in this solution is one; an edge requiring 11.x or later is not pruned), and
          none of the net8.0 provider-contract libraries pulls it in. It is kept, unchanged,
          so that a net8.0 library that later gains a transitive System.Text.Json dependency
          is held on this patched 10.x line rather than whatever floor that dependency
