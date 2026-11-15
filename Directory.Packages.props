@@ -55,18 +55,19 @@
          Aspire.Hosting.* 13.4.6 imposes everywhere else,
          to avoid NU1109 downgrade errors under CentralPackageTransitivePinningEnabled
          (the CVE fix landed in 8.0.5; 10.0.8 targets net8.0).
-         Since the move to net10.0 this pin resolves in no project: NuGet prunes the package
-         from every net10.0 graph in favour of the shared framework's copy, and none of the
-         net8.0 provider-contract libraries pulls it in. It is kept, unchanged, so that a
-         net8.0 library that later gains a transitive System.Text.Json dependency is held
-         on this patched 10.x line rather than whatever floor that dependency declares.
-         Keep it on 10.x. Measured with SDK 10.0.115: raising it to 11.0.0 still resolves the
-         package in no project of this solution, but a project that then references it
-         directly (NU1510 refuses a direct 10.x reference that would be pruned, not an 11.x
-         one), or a library that gains it transitively, takes 11.x. On net10.0 that copies
-         the 11.x assembly beside the application, replacing the framework serializer the
-         event-wire notes were measured against; System.Text.Json 11 also ships no net8.0
-         asset. EventContractFreezeTests pins this major. -->
+         Since the move to net10.0 this pin resolves in no project: NuGet prunes a net10.0
+         graph's System.Text.Json edges that the shared framework's version satisfies (every
+         such edge in this solution does; an edge requiring 11.x or later is not pruned), and
+         none of the net8.0 provider-contract libraries pulls it in. It is kept, unchanged,
+         so that a net8.0 library that later gains a transitive System.Text.Json dependency
+         is held on this patched 10.x line rather than whatever floor that dependency
+         declares. Keep it on 10.x. Measured with SDK 10.0.115: raising it to 11.0.0 still
+         resolves the package in no project of this solution, but a net10.0 project that
+         then references it directly (NU1510 refuses a direct 10.x reference that would be
+         pruned, not an 11.x one) takes 11.x and ships it beside the application, replacing
+         the framework serializer the event-wire notes were measured against; a net8.0
+         library that gains it transitively takes 11.x's netstandard2.0 asset, unsupported
+         on net8.0. EventContractFreezeTests pins this major. -->
     <PackageVersion Include="System.Text.Json" Version="10.0.15" />
   </ItemGroup>
   <ItemGroup Label="CLI runner (S07-C-01) — System.CommandLine GA 2.0.x">
