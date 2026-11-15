@@ -109,7 +109,7 @@ def validate_package(path, version, nuget_cache=None):
             "Use a reviewed distribution strategy; do not remove native helpers, licences or notices.")
     with zipfile.ZipFile(path) as package:
         names = {name for name in package.namelist() if not name.endswith("/")}
-        validate_bundle(names, package.read, package.open, "tools/net8.0/any/", version, SUPPORTED_RIDS, nuget_cache)
+        validate_bundle(names, package.read, package.open, "tools/net10.0/any/", version, SUPPORTED_RIDS, nuget_cache)
     return f"Tool package: {size}/{MAX_PACKAGE_BYTES} bytes, four complete DCP {version} bundles"
 
 

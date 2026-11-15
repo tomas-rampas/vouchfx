@@ -49,7 +49,7 @@ scheduling bound preserves `requires=docker`, mini crash dumps, coverage and
 project-specific TRX files. It does not change intentional concurrency inside the
 engine's `ParallelSuiteRunner` or its parallel capstone.
 
-To measure that scheduling boundary with two real .NET 8 test assemblies:
+To measure that scheduling boundary with two real .NET 10 test assemblies:
 
 ```sh
 python -B scripts/ci/probe_docker_serialization.py

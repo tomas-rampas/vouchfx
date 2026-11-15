@@ -36,9 +36,10 @@
 #  workflow-contract Blocking workflow lint and actual Docker pre-pull regressions.
 #               Uses fixture commands only; it never pulls or starts containers.
 #
-#  analyser-forward Advisory, non-blocking rebuild with .NET 10's recommended
-#               analysers.  Runs outside the checkout so global.json's .NET 8
-#               SDK pin cannot hide rules added in later SDKs.
+#  analyser-forward Advisory, non-blocking rebuild with the next major SDK's
+#               (.NET 11) recommended analysers.  Runs outside the checkout so
+#               global.json's .NET 10 SDK pin cannot hide rules added in later
+#               SDKs.
 #
 #  vuln-scan    ADVISORY, NON-BLOCKING dependency-vulnerability scan
 #               (continue-on-error: true).  Surfaces known-vulnerable
@@ -161,13 +162,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # Install the .NET 8 SDK.  The version spec "8.0.x" satisfies global.json
-      # (sdk.version = "8.0.424", rollForward = latestFeature) — the setup
-      # action will resolve the latest 8.0 feature band available on the runner.
-      - name: Set up .NET 8 SDK
+      # Install the .NET 10 SDK.  The version spec "10.0.x" satisfies global.json
+      # (sdk.version = "10.0.100", rollForward = latestFeature) — the setup
+      # action will resolve the latest 10.0 feature band available on the runner.
+      - name: Set up .NET 10 SDK
         uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
-          dotnet-version: "8.0.x"
+          dotnet-version: "10.0.x"
 
       # Restore NuGet packages using the lock file if present; otherwise resolve
       # centrally-managed versions from Directory.Packages.props.
@@ -296,9 +297,11 @@ jobs:
 
   # Rebuild every project with the newer SDK's recommended analyser set. An
   # incremental build can skip already-built projects and miss violations.
-  # This is advisory while the repository's supported SDK remains .NET 8.
+  # This is advisory: the repository's supported SDK is .NET 10, and this job
+  # looks one major ahead. (With the target itself on net10.0, a .NET 10 forward
+  # job would only repeat the build job.)
   analyser-forward:
-    name: Analyser forward (.NET 10, non-blocking)
+    name: Analyser forward (.NET 11, non-blocking)
     runs-on: ubuntu-latest
     continue-on-error: true
 
@@ -306,29 +309,29 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Set up .NET 10 SDK
+      - name: Set up .NET 11 SDK
         uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
-          dotnet-version: "10.0.x"
+          dotnet-version: "11.0.x"
 
       - name: Rebuild solution with forward analysers
         working-directory: ${{ runner.temp }}
         run: |
           # The hosted image carries several SDKs and the muxer picks the newest
-          # one when no global.json is in scope, so a newer major (.NET 11) would
-          # beat the 10.0 SDK installed above.  The muxer resolves global.json by
-          # walking up from the working directory, not from the solution, so a
-          # pin written into a scratch directory outside the checkout governs
-          # both the version check and the build while the repository's own
-          # .NET 8 pin stays out of the way.  latestFeature rolls only within
-          # 10.0, so it takes the newest installed 10.0.x and fails closed if
-          # none exists instead of drifting to another major.
+          # one when no global.json is in scope, so a newer major (.NET 12)
+          # would beat the 11.0 SDK installed above.  The muxer resolves
+          # global.json by walking up from the working directory, not from the
+          # solution, so a pin written into a scratch directory outside the
+          # checkout governs both the version check and the build while the
+          # repository's own .NET 10 pin stays out of the way.  latestFeature
+          # rolls only within 11.0, so it takes the newest installed 11.0.x and
+          # fails closed if none exists instead of drifting to another major.
           mkdir -p analyser-forward
           cd analyser-forward
-          printf '%s\n' '{"sdk":{"version":"10.0.100","rollForward":"latestFeature"}}' > global.json
+          printf '%s\n' '{"sdk":{"version":"11.0.100","rollForward":"latestFeature"}}' > global.json
           sdk_version="$(dotnet --version)"
           echo "Forward analyser SDK: $sdk_version"
-          [[ "$sdk_version" == 10.* ]]
+          [[ "$sdk_version" == 11.* ]]
           dotnet build "$GITHUB_WORKSPACE/vouchfx.sln" -c Release -t:Rebuild -warnaserror
 
   windows-unit:
@@ -342,10 +345,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Set up .NET 8 SDK
+      - name: Set up .NET 10 SDK
         uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
-          dotnet-version: "8.0.x"
+          dotnet-version: "10.0.x"
 
       - name: Restore dependencies
         run: dotnet restore vouchfx.sln
@@ -396,10 +399,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Set up .NET 8 SDK
+      - name: Set up .NET 10 SDK
         uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
-          dotnet-version: "8.0.x"
+          dotnet-version: "10.0.x"
 
       - name: Restore dependencies
         run: dotnet restore vouchfx.sln
@@ -448,10 +451,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Set up .NET 8 SDK
+      - name: Set up .NET 10 SDK
         uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
-          dotnet-version: "8.0.x"
+          dotnet-version: "10.0.x"
 
       - name: Set up Python for capture collection
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
@@ -1330,7 +1333,7 @@ jobs:
       #     a row owns no named resource, prove the property in-process instead.
       #   • -m:1 below serialises solution test projects across assemblies (#525).
       #     scripts/ci/probe_docker_serialization.py measures this with two real
-      #     .NET 8 test hosts and an overlapping control; it is not hosted Docker proof.
+      #     .NET 10 test hosts and an overlapping control; it is not hosted Docker proof.
       # (The Sprint08 parallel capstone intentionally runs two topologies at once
       # via the engine's own ParallelSuiteRunner — unaffected by, and orthogonal
       # to, xUnit/VSTest scheduling.)
@@ -1376,7 +1379,7 @@ jobs:
         run: |
           python -B scripts/assert-owned-environment-acceptance.py --prepare \
             --directory "$VOUCHFX_TOPOLOGY_ACCEPTANCE_RESULTS" \
-            --cli src/Cli/Vouchfx.Cli/bin/Release/net8.0/vouchfx.dll \
+            --cli src/Cli/Vouchfx.Cli/bin/Release/net10.0/vouchfx.dll \
             --checkout-sha "$(git rev-parse HEAD)" --head-sha "$VOUCHFX_TOPOLOGY_PR_HEAD_SHA"
           echo "VOUCHFX_TOPOLOGY_ACCEPTANCE_RESULTS=$VOUCHFX_TOPOLOGY_ACCEPTANCE_RESULTS" >> "$GITHUB_ENV"
 
@@ -1409,7 +1412,7 @@ jobs:
         run: |
           python -B scripts/assert-owned-environment-acceptance.py \
             --directory "$VOUCHFX_TOPOLOGY_ACCEPTANCE_RESULTS" \
-            --cli src/Cli/Vouchfx.Cli/bin/Release/net8.0/vouchfx.dll
+            --cli src/Cli/Vouchfx.Cli/bin/Release/net10.0/vouchfx.dll
 
       - name: Upload first-attempt owned topology evidence
         if: always() && steps.topology-evidence-preparation.outcome == 'success'
@@ -1490,10 +1493,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Set up .NET 8 SDK
+      - name: Set up .NET 10 SDK
         uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
-          dotnet-version: "8.0.x"
+          dotnet-version: "10.0.x"
 
       - name: Restore dependencies
         run: dotnet restore vouchfx.sln
@@ -1707,10 +1710,10 @@ jobs:
           name: coverage
           path: TestResults
 
-      - name: Set up .NET 8 SDK
+      - name: Set up .NET 10 SDK
         uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
-          dotnet-version: "8.0.x"
+          dotnet-version: "10.0.x"
 
       # Exact-version pin per repo convention for third-party tooling.  The
       # global-tool shim lands under ~/.dotnet/tools, which is NOT guaranteed

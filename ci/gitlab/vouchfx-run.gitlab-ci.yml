@@ -80,8 +80,8 @@
 #   • PIN every entry in VOUCHFX_PREWARM_IMAGES to an immutable image DIGEST
 #     (name@sha256:...), NOT a floating tag — a digest guarantees you pull the exact image
 #     you reviewed; `:latest` can change.
-#   • PIN VOUCHFX_DOTNET_IMAGE to a digest (mcr.microsoft.com/dotnet/sdk:8.0@sha256:...)
-#     rather than the floating `:8.0` tag for a fully repeatable build image.
+#   • PIN VOUCHFX_DOTNET_IMAGE to a digest (mcr.microsoft.com/dotnet/sdk:10.0@sha256:...)
+#     rather than the floating `:10.0` tag for a fully repeatable build image.
 #     (The defaults below use tags only to stay legible in this reference; production
 #     callers should supply digests.)
 #
@@ -101,9 +101,9 @@
 #                              commit's SHA)    a full commit SHA) of VOUCHFX_REPO_URL to build
 #                                              vouchfx from. Defaults to $CI_COMMIT_SHA so the
 #                                              engine and this template stay in lock-step.
-#   VOUCHFX_DOTNET_IMAGE       (default          The .NET 8 SDK container image the job runs in
+#   VOUCHFX_DOTNET_IMAGE       (default          The .NET 10 SDK container image the job runs in
 #                              mcr.microsoft.com  (and that carries the `dotnet` CLI used to build
-#                              /dotnet/sdk:8.0)   and run vouchfx). vouchfx targets .NET 8 LTS.
+#                              /dotnet/sdk:10.0)  and run vouchfx). vouchfx targets .NET 10 LTS.
 #   VOUCHFX_FAIL_ON_ENV_ERROR  (default "false") When truthy, pass --fail-on-env-error so an
 #                                              Environment-error verdict (unhealthy container,
 #                                              image-pull / seed / tunnel failure) fails the job
@@ -155,7 +155,7 @@
 # A consumer can `extends: .vouchfx-run`, or just configure the concrete `vouchfx-run`
 # job declared at the bottom (which itself `extends:` this).
 .vouchfx-run:
-  # The .NET 8 SDK image carries the `dotnet` CLI used to build and run vouchfx. Pin to a
+  # The .NET 10 SDK image carries the `dotnet` CLI used to build and run vouchfx. Pin to a
   # digest in production (see the supply-chain note in the header).
   image: "$VOUCHFX_DOTNET_IMAGE"
 
@@ -172,7 +172,7 @@
     VOUCHFX_SCENARIO_PATH: "."
     VOUCHFX_REPO_URL: "$CI_REPOSITORY_URL"
     VOUCHFX_REF: "$CI_COMMIT_SHA"
-    VOUCHFX_DOTNET_IMAGE: "mcr.microsoft.com/dotnet/sdk:8.0"
+    VOUCHFX_DOTNET_IMAGE: "mcr.microsoft.com/dotnet/sdk:10.0"
     VOUCHFX_FAIL_ON_ENV_ERROR: "false"
     VOUCHFX_FAIL_ON_INCONCLUSIVE: "false"
     VOUCHFX_PREWARM_IMAGES: ""
@@ -255,7 +255,7 @@
         sleep 1
       done
 
-    # 2. Install the .NET 8 SDK's tooling sanity check (the image already ships it).
+    # 2. Install the .NET 10 SDK's tooling sanity check (the image already ships it).
     - dotnet --info
 
     # 3. Clone the vouchfx SOURCE at the requested repo/ref into a sub-path. A shallow,
