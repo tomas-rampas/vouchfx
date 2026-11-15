@@ -285,7 +285,7 @@ jobs:
             [CmdletBinding()]
             param(
                 [Parameter(Mandatory)]
-                [ValidateSet('8.0', '9.0', '10.0')]
+                [ValidateSet('8.0', '9.0', '10.0', '11.0')]
                 [string]$ExpectedDotnet,
                 [string]$InstallRoot = $env:DOTNET_INSTALL_DIR,
                 [string]$RunnerTemp = $env:RUNNER_TEMP

@@ -1,11 +1,18 @@
 # The source targets net10.0 (the published provider SDK libraries keep a net8.0
-# asset, which loads in the net10.0 host). Each lane installs ONE SDK major into an
-# isolated directory and removes every other shared framework, so no preinstalled
-# runtime can satisfy a build, test host or the packed tool. .NET 8 and .NET 9
-# cannot run net10.0 code, so the matrix holds .NET 10 only; add the next major
-# (.NET 11) here once it is a supported roll-forward target for the tool. The
-# existing CI retains Docker and release checks; this matrix exercises the source
-# and Docker-free runtime paths in isolation.
+# asset, which loads in the net10.0 host). The .NET 10 lanes install ONE SDK major
+# into an isolated directory and remove every other shared framework, so no
+# preinstalled runtime can satisfy a build, test host or the packed tool. .NET 8
+# and .NET 9 cannot run net10.0 code, so those lanes hold .NET 10 only.
+#
+# The roll-forward job proves RollForward=Major, which the README, the
+# getting-started guide and the changelog promise: it builds and packs the CLI
+# with the .NET 10 SDK (global.json pins the 10.0 band), then removes the .NET 10
+# SDK and shared frameworks and runs the installed tool with only a newer major
+# runtime present. It is a runtime-only lane: the solution's test hosts cannot be
+# run on the newer runtime there, because `dotnet test` needs the .NET 10 SDK and
+# that SDK needs the .NET 10 runtime. The existing CI retains Docker and release
+# checks; this workflow exercises the source and Docker-free runtime paths in
+# isolation.
 name: .NET compatibility
 
 on:
@@ -123,6 +130,122 @@ jobs:
             "$packages" > "$RUNNER_TEMP/compatibility-nuget.config"
           dotnet tool install vouchfx --version 0.0.0-compatibility \
             --tool-path "$tools" --configfile "$RUNNER_TEMP/compatibility-nuget.config"
+          "$tools/vouchfx" --version
+          expected_major="${EXPECTED_DOTNET%%.*}"
+          suite="$RUNNER_TEMP/compatibility-runtime.e2e.yaml"
+          cat > "$suite" <<YAML
+          steps:
+            - id: runtime-proof
+              type: script.csharp
+              code: |
+                Console.WriteLine("RUNTIME=" + System.Environment.Version);
+                if (System.Environment.Version.Major != $expected_major)
+                    throw new Exception("Unexpected runtime: " + System.Environment.Version);
+          YAML
+          "$tools/vouchfx" validate "$suite"
+          "$tools/vouchfx" run "$suite" --events "$RUNNER_TEMP/compatibility-events.jsonl" \
+            --fail-on-env-error --fail-on-inconclusive --no-telemetry --no-decorations \
+            | tee "$RUNNER_TEMP/compatibility-runtime.log"
+          grep -F "RUNTIME=$expected_major." "$RUNNER_TEMP/compatibility-runtime.log"
+
+  # Runtime-only roll-forward proof (the role the 9.0 and 10.0 lanes played for
+  # the net8.0 tool before the move). Build and pack with the .NET 10 SDK, then
+  # keep only the newer major's SDK and shared frameworks, so the installed
+  # framework-dependent tool can start only by rolling forward.
+  roll-forward:
+    name: .NET ${{ matrix.dotnet }} roll-forward
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        dotnet: ['11.0']
+    env:
+      BUILD_DOTNET: '10.0'
+      DOTNET_MULTILEVEL_LOOKUP: '0'
+      DOTNET_NOLOGO: 'true'
+      DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Configure isolated SDK installation
+        run: printf 'DOTNET_INSTALL_DIR=%s/dotnet-compatibility\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+
+      # The .NET 10 SDK builds (global.json); the newer SDK is installed only for
+      # its shared frameworks, which are all that remain once the tool runs.
+      - name: Install isolated .NET SDKs
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          dotnet-version: |
+            10.0.x
+            ${{ matrix.dotnet }}.x
+
+      - name: Test runtime-isolation guard safety
+        shell: pwsh
+        run: ./scripts/ci/test-select-dotnet-runtime.ps1
+
+      - name: Require the build SDK and the two runtime lines only
+        env:
+          EXPECTED_DOTNET: ${{ matrix.dotnet }}
+        run: |
+          set -euo pipefail
+          test "$(dirname "$(command -v dotnet)")" = "$DOTNET_INSTALL_DIR"
+          sdk="$(dotnet --version)"
+          [[ "$sdk" == "$BUILD_DOTNET".* ]]
+          runtimes="$(dotnet --list-runtimes)"
+          printf '%s\n' "$sdk" "$runtimes"
+          while read -r _framework version _location; do
+            [[ "$version" == "$BUILD_DOTNET".* || "$version" == "$EXPECTED_DOTNET".* ]]
+          done <<< "$runtimes"
+
+      - name: Build, pack and install the CLI with the .NET 10 SDK
+        run: |
+          set -euo pipefail
+          packages="$RUNNER_TEMP/compatibility-packages"
+          dotnet restore vouchfx.sln
+          dotnet build vouchfx.sln -c Release --no-restore -warnaserror
+          dotnet pack src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj -c Release --no-build \
+            -p:PackageVersion=0.0.0-compatibility -o "$packages"
+          python3 scripts/check_distribution.py --package "$packages/vouchfx.0.0.0-compatibility.nupkg" \
+            --nuget-cache "$HOME/.nuget/packages"
+          printf '<configuration><packageSources><clear/><add key="local" value="%s"/></packageSources></configuration>\n' \
+            "$packages" > "$RUNNER_TEMP/compatibility-nuget.config"
+          dotnet tool install vouchfx --version 0.0.0-compatibility \
+            --tool-path "$RUNNER_TEMP/compatibility-tools" --configfile "$RUNNER_TEMP/compatibility-nuget.config"
+
+      - name: Keep only the newer SDK and shared frameworks
+        env:
+          EXPECTED_DOTNET: '${{ matrix.dotnet }}'
+        shell: pwsh
+        run: ./scripts/ci/select-dotnet-runtime.ps1 -ExpectedDotnet $env:EXPECTED_DOTNET
+
+      - name: Require the newer runtime only
+        env:
+          EXPECTED_DOTNET: ${{ matrix.dotnet }}
+        run: |
+          set -euo pipefail
+          runtimes="$(dotnet --list-runtimes)"
+          printf '%s\n' "$runtimes"
+          [[ "$runtimes" == *Microsoft.NETCore.App* ]]
+          [[ "$runtimes" == *Microsoft.AspNetCore.App* ]]
+          while read -r _framework version _location; do
+            [[ "$version" == "$EXPECTED_DOTNET".* ]]
+          done <<< "$runtimes"
+
+      # Run outside the checkout so its global.json (.NET 10 band) is not in scope.
+      - name: Run the installed CLI on the newer runtime
+        working-directory: ${{ runner.temp }}
+        env:
+          EXPECTED_DOTNET: ${{ matrix.dotnet }}
+        run: |
+          set -euo pipefail
+          tools="$RUNNER_TEMP/compatibility-tools"
           "$tools/vouchfx" --version
           expected_major="${EXPECTED_DOTNET%%.*}"
           suite="$RUNNER_TEMP/compatibility-runtime.e2e.yaml"

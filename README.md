@@ -34,7 +34,8 @@ Framework-dependent executables need a .NET 10 runtime and use major-version rol
 only to a newer runtime. The provider SDK packages keep their `net8.0` assets for the v1.x
 series, so providers built against them still load. The
 [compatibility workflow](https://github.com/tomas-rampas/vouchfx/blob/main/.github/workflows/dotnet-compatibility.yml) builds and runs
-tests with the .NET 10 SDK/runtime installed in isolation. Previously published
+tests with the .NET 10 SDK/runtime installed in isolation, and runs the packed tool with only
+the .NET 11 runtime installed to check the roll-forward. Previously published
 packages retain the runtime policy with which they were built.
 
 ## Install

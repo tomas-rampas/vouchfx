@@ -50,7 +50,7 @@ function Add-TestLink {
 }
 
 try {
-    foreach ($line in @('8.0', '9.0', '10.0')) {
+    foreach ($line in @('8.0', '9.0', '10.0', '11.0')) {
         $fixture = New-Fixture "valid-$line" $line
         $extra = if ($line -eq '10.0') { '11.0.1' } else { '10.0.13' }
         $removed = @()
@@ -115,7 +115,7 @@ try {
     $passed++
 
     $fixture = New-Fixture 'invalid-selector'
-    $fixture.Line = '11.0'
+    $fixture.Line = '12.0'
     Assert-Refused $fixture
     $passed++
 
