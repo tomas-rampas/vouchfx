@@ -18,13 +18,16 @@
 #      microsoft-prod apt list and its keyring. Left in place they make a mixed-vendor
 #      install: Ubuntu's dotnet-host-10.0 conflicts with Microsoft's dotnet-host, so apt
 #      removes the muxer and cross-grades hostfxr, stranding the old SDK and runtimes
-#      in /usr/share/dotnet with no host. So, whenever it runs as root, the hook purges
-#      every installed dotnet*/aspnetcore*/netstandard* package whose version is not an
-#      Ubuntu build, refusing if that purge would remove anything else, and deletes the
-#      Microsoft list, keyring and legacy apt preference if they exist. A fresh container
-#      without them skips that step. Before installing, an apt preference pins those packages to
-#      Ubuntu's <codename>-updates and <codename>-security suites only, and the install
-#      runs with --no-remove, so it fails rather than removing any package.
+#      in /usr/share/dotnet with no host. So, whenever it runs as root, the hook first
+#      deletes the Microsoft list, keyring and legacy apt preference if they exist, then
+#      purges every installed dotnet*/aspnetcore*/netstandard* package whose version is
+#      not an Ubuntu build. The purge is simulated first: if the simulation fails, or
+#      prints any action other than a purge of exactly those packages, the hook stops and
+#      purges nothing. A fresh container without them skips that step. Also whenever it
+#      runs as root, it (re)writes an apt preference that pins those packages to Ubuntu's
+#      <codename>-updates and <codename>-security suites only, replacing any wider pin an
+#      earlier version wrote, and the install runs with --no-remove, so it fails rather
+#      than removing any package.
 #   2. /usr/bin/dotnet, and DOTNET_ROOT/PATH in /etc/profile.d/dotnet.sh and in
 #      $CLAUDE_ENV_FILE, so login shells and the session's own tool calls agree.
 #
@@ -86,43 +89,85 @@ foreign_dotnet_packages() {
     awk -F'\t' '$1 ~ / installed$/ && $3 !~ /ubuntu/ { print $2 }' || true
 }
 
+# True when the first argument, without any :arch suffix, names one of the remaining
+# arguments, also compared without their :arch suffix. Exact string comparison only.
+in_package_set() {
+  local want="${1%%:*}" pkg
+  shift
+  for pkg in "$@"; do
+    [ "${pkg%%:*}" = "$want" ] && return 0
+  done
+  return 1
+}
+
 remove_microsoft_feed() {
-  local -a foreign
-  local extra file
-  mapfile -t foreign < <(foreign_dotnet_packages)
-  if [ "${#foreign[@]}" -gt 0 ]; then
-    # Purge exactly these, and nothing that depends on them: a simulated purge that would
-    # take any other package with it is refused rather than carried out.
-    extra="$(apt-get purge -s "${foreign[@]}" | awk '$1 == "Purg" { print $2 }' |
-      grep -vxF -f <(printf '%s\n' "${foreign[@]}") || true)"
-    if [ -n "$extra" ]; then
-      log "ERROR: purging the Microsoft-feed .NET packages would also remove: ${extra//$'\n'/ }. Remove them yourself."
-      exit 1
-    fi
-    log "Purging Microsoft-feed .NET packages: ${foreign[*]}."
-    apt-get purge -y -qq "${foreign[@]}" >/dev/null
-  fi
+  local -a foreign refused
+  local file sim line verb name
+  # The Microsoft list, keyring and preference go first, so no apt operation below can
+  # see the Microsoft feed or its priority-1001 pin.
   for file in "$LEGACY_MS_LIST" "$LEGACY_MS_KEYRING" "$LEGACY_MS_PREFS"; do
     if [ -e "$file" ]; then
       log "Removing ${file}."
       rm -f "$file"
     fi
   done
+
+  mapfile -t foreign < <(foreign_dotnet_packages)
+  if [ "${#foreign[@]}" -eq 0 ]; then
+    return 0
+  fi
+  # Purge exactly these, and nothing else. The simulation runs first and is not
+  # guarded, so if it fails the hook stops here under set -e. Every action line it
+  # prints (Inst, Remv, Purg, Conf: a capitalised four-letter verb, then a space) must
+  # be a Purg of a package in the set; any other action, or a Purg of any other
+  # package, refuses the purge rather than carrying it out.
+  sim="$(apt-get purge -s "${foreign[@]}")"
+  refused=()
+  while IFS= read -r line; do
+    [[ "$line" =~ ^[A-Z][a-z]{3}\  ]] || continue
+    read -r verb name _ <<<"$line"
+    if [ "$verb" != "Purg" ] || [ -z "${name:-}" ] || ! in_package_set "$name" "${foreign[@]}"; then
+      refused+=("$line")
+    fi
+  done <<<"$sim"
+  if [ "${#refused[@]}" -gt 0 ]; then
+    log "ERROR: purging the Microsoft-feed .NET packages (${foreign[*]}) would also do: ${refused[*]}. Nothing was purged; remove them yourself."
+    exit 1
+  fi
+  log "Purging Microsoft-feed .NET packages: ${foreign[*]}."
+  apt-get purge -y -qq "${foreign[@]}" >/dev/null
 }
 
-install_sdk() {
-  export DEBIAN_FRONTEND=noninteractive
+# The Ubuntu codename from /etc/os-release; stops the hook when there is none.
+os_codename() {
   local codename
   codename="$(awk -F= '$1 == "VERSION_CODENAME" { gsub(/"/, "", $2); print $2 }' /etc/os-release 2>/dev/null || true)"
   if [ -z "$codename" ]; then
     log "ERROR: /etc/os-release names no VERSION_CODENAME, so the Ubuntu suites to pin are unknown."
     exit 1
   fi
+  printf '%s\n' "$codename"
+}
+
+# Pins dotnet*, aspnetcore* and netstandard* to Ubuntu's <codename>-updates and
+# <codename>-security suites. Written whenever the hook runs as root, not only before an
+# install, so a container where an earlier version of this hook wrote a wider pin gets
+# this one. Rewriting it is idempotent.
+write_dotnet_pin() {
+  local codename
+  codename="$(os_codename)"
 
   # Above 1000 a pin also permits downgrades, so it names only the two suites that publish
   # dotnet-sdk-10.0, not every Ubuntu suite (backports and proposed stay at their defaults).
   printf 'Package: dotnet* aspnetcore* netstandard*\nPin: release o=Ubuntu,a=%s\nPin-Priority: 1001\n\n' \
     "${codename}-updates" "${codename}-security" >"$DOTNET_PREFS"
+}
+
+install_sdk() {
+  export DEBIAN_FRONTEND=noninteractive
+  local codename
+  codename="$(os_codename)"
+  write_dotnet_pin
 
   # dotnet-sdk-10.0 is published in <codename>-updates and -security, so the image's own
   # Ubuntu lists need a refresh; the package archive is reachable through the proxy.
@@ -152,10 +197,12 @@ export DOTNET_NOLOGO=1'
 
 # Runs whenever root, not only before a fresh install: a container that an earlier version
 # of this hook already moved to the Ubuntu SDK may still hold the stranded Microsoft-feed
-# packages. On a clean container it finds nothing and changes nothing.
+# packages and the wider pin. On a clean container the purge finds nothing and changes
+# nothing, and the pin is rewritten with the same content.
 if is_root; then
   export DEBIAN_FRONTEND=noninteractive
   remove_microsoft_feed
+  write_dotnet_pin
 fi
 if ! sdk_ok; then
   if ! is_root; then
