@@ -30,9 +30,8 @@
 # to avoid NU1109/NU1605 under transitive pinning (Microsoft.Data.SqlClient, RabbitMQ.Client,
 # System.Text.Json). A Dependabot bump of one of those (or of Aspire.Hosting.*) can fail
 # restore with NU1109/NU1605; resolve it on the PR branch by moving the paired pins together,
-# not by reverting the bump. The majors of System.Text.Json and
-# System.Security.Cryptography.Pkcs are the exception: they are held in the nuget `ignore`
-# list below because their next major can drop the net8.0 asset.
+# not by reverting the bump. A System.Text.Json major is the exception: it is held
+# in the nuget `ignore` list below because 11.x ships no net8.0 asset.
 version: 2
 updates:
   - package-ecosystem: "github-actions"
@@ -54,15 +53,16 @@ updates:
     # to triage, and any paired-pin / NU1109 fix-up is paid once per week). Aspire.Hosting.*
     # ships in lockstep, so it is grouped on its own so a partial Aspire bump never lands.
     # Security updates are not affected by `groups` unless `applies-to: security-updates`
-    # is set, so advisory fixes still arrive immediately as their own PRs.
+    # is set, so these groups never batch an advisory fix: any security update that is
+    # raised comes as its own PR. Whether a hold in the ignore list also stops one is a
+    # separate question; see the note on security updates in the ignore list below.
     #
     # Majors are deliberately kept OUT of the weekly group (update-types below). Dependabot
     # cannot split a grouped pull request, so when a major that cannot build sat in the
     # group, every safe minor and patch in the same pull request went red with it. A major
     # that is not in the group arrives as its own pull request, which can fail or be
-    # deferred without blocking the rest. Deferring a major also defers that package's
-    # minor and patch updates, because a package with an unheld major available leaves
-    # the group entirely; to bring them back into the group, add a major hold below.
+    # deferred without blocking the rest. A package with a major available still gets its
+    # minor and patch updates in the group; only the major arrives as its own pull request.
     # The aspire group is left without update-types on purpose: the Aspire.* ignore below
     # already limits it to patches, and if that hold is ever lifted a major must still move
     # every Aspire package together in one pull request, never one package at a time.
@@ -110,11 +110,10 @@ updates:
       # version are moved on the same branch. Dependabot may attempt a security update to
       # 13.6.5 despite this hold (see above), as a pull request that cannot pass or as an
       # update error on the alert; it cannot succeed while YamlDotNet is held, and the
-      # repository's Dependabot alert stays open. The
-      # advisory is suppressed in NuGet audit in Directory.Build.props; lift this hold
-      # when that entry is removed. The hold also covers Aspire.Hosting.Elasticsearch
-      # (pinned 13.3.0, see Directory.Packages.props), so its move to 13.4.x is a manual
-      # edit.
+      # repository's Dependabot alert stays open. The advisory is suppressed in NuGet audit
+      # in Directory.Build.props; lift this hold when that entry is removed. The hold also
+      # covers Aspire.Hosting.Elasticsearch (pinned 13.3.0, see Directory.Packages.props),
+      # so its move to 13.4.x is a manual edit.
       - dependency-name: "Aspire.*"
         update-types: ["version-update:semver-minor", "version-update:semver-major"]
       # YamlDotNet types are part of the frozen Vouchfx.Sdk v1 surface (IStepBinder<T>.Bind
@@ -138,20 +137,18 @@ updates:
       # (see PR #662).
       - dependency-name: "Npgsql"
         update-types: ["version-update:semver-major"]
-      # RUNTIME-TIED PACKAGES. These two packages version in step with the .NET release and
-      # can drop older target frameworks when their major moves. System.Text.Json 11.x, for
-      # example, ships no net8.0 asset (only net10.0, net11.0, net462 and netstandard2.0), so on
-      # a net8.0 project its build targets report "doesn't support net8.0", which -warnaserror
-      # turns into an error. Only declared packages are held: Dependabot version updates act on
-      # declared packages only, so a hold on a name that is merely transitive would do nothing
-      # for version updates. Currently declared in Directory.Packages.props: System.Text.Json
-      # and System.Security.Cryptography.Pkcs. A newly declared runtime-tied package must be
-      # added to this list by hand. Lift these holds when the repository's target framework
-      # moves to the next LTS (it targets net8.0 today). As above, update-types only, never a
-      # versions: range, and see the note above the Aspire hold on security updates.
+      # System.Text.Json versions with the .NET release, and its next major can drop older
+      # target frameworks: 11.x ships no net8.0 asset (only net10.0, net11.0, net462 and
+      # netstandard2.0), so on a net8.0 project its build targets report "doesn't support
+      # net8.0", which -warnaserror turns into an error. Held until the repository targets
+      # net10.0 or later. No other runtime-tied package is listed because Dependabot's NuGet
+      # version updates act only on packages a project references directly (a PackageReference,
+      # or a GlobalPackageReference, which this repository does not use). A package that is
+      # only a central transitive pin (a PackageVersion with no PackageReference, such as
+      # System.Security.Cryptography.Pkcs) is not version-updated, so a hold on it would do
+      # nothing there. A runtime-tied package that a project starts referencing directly needs
+      # its own major hold. For security updates, see the note above the Aspire hold.
       - dependency-name: "System.Text.Json"
-        update-types: ["version-update:semver-major"]
-      - dependency-name: "System.Security.Cryptography.Pkcs"
         update-types: ["version-update:semver-major"]
       # MySqlConnector 3.x targets net8.0 and builds clean, but it has not been run against the
       # MySQL seed, reset and TLS paths. Held until a dedicated upgrade passes the Docker
