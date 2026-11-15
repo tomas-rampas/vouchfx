@@ -21,7 +21,10 @@
          net8.0, and a net8.0 library loads unchanged in the net10.0 host. Those five
          projects set TargetFramework to VouchfxProviderContractTargetFramework, so the
          decision lives here once. Every package they depend on must keep a net8.0 (or
-         netstandard2.0) asset for as long as this stays net8.0. -->
+         netstandard2.0) asset for as long as this stays net8.0. The two worked-example
+         provider templates (examples/Example.Steps.Hello and .Echo, not their tests)
+         use the same property, so a provider copied from them installs through
+         `vouchfx provider install` (net8.0 assets) and loads in older net8.0 CLIs. -->
     <VouchfxProviderContractTargetFramework>net8.0</VouchfxProviderContractTargetFramework>
     <TargetFramework>net10.0</TargetFramework>
     <!-- Lets the CLI, test hosts and executable fixtures run when only a newer major

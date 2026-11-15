@@ -442,7 +442,9 @@ contract — consumed by providers, not part of the engine internals.
 for the step-type model, the frozen v1 contract in `Vouchfx.Sdk`, and the composition rules.
 [`Example.Steps.Hello`](https://github.com/tomas-rampas/vouchfx/tree/main/examples/Example.Steps.Hello)
 is a minimal template; [`Example.Steps.Echo`](https://github.com/tomas-rampas/vouchfx/tree/main/examples/Example.Steps.Echo)
-demonstrates all four mandatory interfaces. The hub's
+demonstrates all four mandatory interfaces. Both templates build the provider for .NET 8 (`net8.0`),
+the frozen contract's framework, so it loads in current .NET 10 CLIs and in earlier .NET 8 CLIs alike;
+their test projects run on .NET 10. The hub's
 [`Vouchfx.Community.JsonRpc`](https://github.com/tomas-rampas/vouchfx-providers/tree/main/community/Vouchfx.Community.JsonRpc)
 is the canonical full reference implementation.
 
