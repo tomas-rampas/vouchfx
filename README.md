@@ -389,7 +389,13 @@ CI (`.github/workflows/build.yml`) defines a blocking Linux **build** job (build
 tests), a blocking **windows-unit** job (restore + Release build + Docker-free unit tests), a
 blocking **memory-leak** job over 5,000 load-unload cycles, a blocking Linux **integration** job
 for Docker/Aspire tests, and a blocking **documentation** job that builds the site and checks its
-publication boundary.
+publication boundary. The **analyser-forward** job is advisory (`continue-on-error`): it rebuilds
+with the .NET 10 SDK's recommended analysers. It runs from a scratch directory outside the
+checkout and writes its own `global.json` (`10.0.100`, `rollForward: latestFeature`) there. The
+muxer walks upward from the working directory, so that pin governs the job while the repository's
+.NET 8 `global.json` stays in force for every other job. Hosted images that also carry a newer
+major (measured: .NET 11) would otherwise win, and the job's own `10.*` version guard would fail
+before the rebuild. Deleting that scratch `global.json` reproduces the failure.
 
 <details>
 <summary><strong>Repository layout</strong></summary>

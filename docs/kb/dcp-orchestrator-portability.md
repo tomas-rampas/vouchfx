@@ -2,7 +2,8 @@
 
 **Applies to:** CLI global tools, archives and installers.
 
-**Updated:** 2026-10-13. Core `1.0.0` introduced bundled DCP; legacy `1.0.0-rc.6` remains cache-dependent.
+**Updated:** 2026-11-15. Core `1.0.0` introduced bundled DCP; legacy `1.0.0-rc.6` remains cache-dependent.
+Published releases through v1.2.1 bundle DCP 13.4.2. Current source pins DCP at 13.4.6.
 
 ## Symptoms and cause
 
@@ -21,7 +22,11 @@ with matching Aspire 13.4.2 tools supplied through `ASPIRE_DCP_PATH`.
 
 The published `1.0.0` global tool carries complete `win-x64`, glibc `linux-x64`, `osx-x64` and `osx-arm64` DCP trees.
 Archives/installers carry their selected RID. Paths are relative to the resolved host assembly,
-not the current directory: `dcp/13.4.2/<rid>/tools/`.
+not the current directory. Releases from `1.0.0` through `1.2.1` use `dcp/13.4.2/<rid>/tools/`.
+Current source sets `VouchfxDcpVersion` to 13.4.6, in lockstep with `Aspire.Hosting` and
+`Aspire.AppHost.Sdk`, so a package built from this tree uses `dcp/13.4.6/<rid>/tools/`. The cache
+fallback probes that same version: the informational version of the loaded `Aspire.Hosting`
+assembly, truncated at `+`.
 
 | Condition | Behaviour |
 |---|---|
@@ -47,9 +52,10 @@ Upgrade to the latest stable bundled CLI with
 `dotnet tool update --global vouchfx`. Its installed path requires no source checkout,
 Aspire workload or warmed NuGet cache.
 
-If you must retain a legacy package, supply exact platform tools through `ASPIRE_DCP_PATH`.
+If you must retain a legacy rc.6 package, supply exact platform tools through `ASPIRE_DCP_PATH`.
 It names the directory containing `dcp`/`dcp.exe`, not the executable. An AppHost restore at
-Aspire 13.4.2 can populate those tools for legacy/source builds; the retired Aspire workload cannot.
+Aspire 13.4.2 populates those tools for that legacy package. A source build of current main
+restores 13.4.6 instead; the retired Aspire workload populates neither.
 Do not describe an rc.6 install with this override as a standalone pass.
 See [troubleshooting](../troubleshooting.md#the-aspire-orchestration-component-is-not-installed-could-not-be-located).
 

@@ -113,22 +113,35 @@ vouchfx runs at all.
 
 ## The Aspire orchestration component is not installed / could not be located
 
-**Symptom:**
+**Symptom:** the message names a concrete tools path. Published tools through v1.2.1 (the latest
+GitHub release) still name Aspire **13.4.2**:
+
 ```
 System.IO.FileNotFoundException: The Aspire orchestration component is not installed
 at "/home/runner/.nuget/packages/aspire.hosting.orchestration.linux-x64/13.4.2/tools/dcp".
 ```
-or, from legacy cache-based builds and unbundled source/custom AppHosts:
+
+A cache miss on an unbundled source or custom AppHost names the package version it probed:
+
 ```
 EnvironmentError: The Aspire DCP orchestration component could not be located. …
 no 'aspire.hosting.orchestration.<rid>' version '13.4.2' package was found at '…'.
 ```
 
-**What it means:** the inline Aspire environment could not locate a matching native DCP tool.
-Published `1.0.0` distributions bundle Aspire 13.4.2 under `dcp/13.4.2/<rid>/tools/`, beside the CLI.
-Supported process platforms are `win-x64`, glibc `linux-x64`, `osx-x64` and `osx-arm64`.
+That version is the one to restore. `DcpPathResolver.ResolveVersion` takes the loaded
+`Aspire.Hosting` informational version, truncated at `+`, and falls back to the version segment
+of the stale `DcpCliPath` metadata. A source build of current main loads Aspire.Hosting **13.4.6**,
+so the same sentence names `13.4.6`. A 13.4.2 cache entry does not satisfy that probe.
 
-**Fix for published 1.0.0 distributions:** reinstall the complete matching package/archive. Keep the `dcp/`
+**What it means:** the inline Aspire environment could not locate a matching native DCP tool.
+Stable releases from `1.0.0` through `1.2.1` bundle Aspire 13.4.2 under `dcp/13.4.2/<rid>/tools/`,
+beside the CLI. Current source pins `Aspire.Hosting`, `Aspire.Hosting.AppHost`, `Aspire.AppHost.Sdk`
+and `VouchfxDcpVersion` together at 13.4.6 (`Directory.Packages.props`; `AspireVersionLockstepGuardTests`
+refuses a partial bump). The next package bundles that tree at `dcp/13.4.6/<rid>/tools/`.
+`Aspire.Hosting.Elasticsearch` stays at 13.3.0 and is not the DCP package. Supported process
+platforms are `win-x64`, glibc `linux-x64`, `osx-x64` and `osx-arm64`.
+
+**Fix for a published bundled distribution:** reinstall the complete matching package/archive. Keep the `dcp/`
 tree with the CLI; copying only the executable is insufficient. An incomplete declared bundle
 fails explicitly, even when another DCP happens to exist in a local NuGet cache. On Unix, archives
 and installers must preserve executable permissions on `dcp` and `dcptun_c`; global-tool startup
@@ -136,17 +149,27 @@ repairs those bits in its selected bundle. A read-only installation with missing
 repair by its owner. Unsupported RIDs require a supported distribution or an explicit matching
 DCP override.
 
-**Legacy published rc.6 and older cache-based builds:** the native tools are not bundled. A fresh-cache
+**Legacy published rc.6:** the native tools are not bundled. A fresh-cache
 `1.0.0-rc.6` installation was measured on 2026-10-10 to fail before Docker starts; an earlier cache
-fallback did not eliminate this prerequisite. Supply the exact platform's Aspire 13.4.2 tools and
-set `ASPIRE_DCP_PATH` to their **directory**, or upgrade to the latest stable CLI.
-Do not infer the installed version from its error path: even newer legacy packages can display a
-packaging runner's stale path. Restoring an AppHost at the exact version populates tools for source
-builds, but is not a prerequisite for installed `1.0.0` distributions. The retired Aspire workload does not
-provide these NuGet tools.
+fallback did not eliminate this prerequisite. That release probes Aspire **13.4.2**. Supply that
+platform's tools and set `ASPIRE_DCP_PATH` to their **directory**, or upgrade to the latest stable CLI.
+Do not infer the installed CLI version from a packaging runner's stale path: the version in the
+`no '…' version '…'` clause is the probe. Restoring an AppHost at the exact version populates tools
+for source builds, but is not a prerequisite for installed stable distributions. The retired Aspire
+workload does not provide these NuGet tools.
 
 ```powershell
 $env:ASPIRE_DCP_PATH = "$env:USERPROFILE/.nuget/packages/aspire.hosting.orchestration.win-x64/13.4.2/tools"
+```
+
+**Source builds and custom AppHosts from current main:** `dotnet restore` of this repository
+populates `aspire.hosting.orchestration.<rid>` **13.4.6**. When the path baked into AppHost metadata
+is absent on this machine, the fallback probes exactly
+`<nuget-packages>/aspire.hosting.orchestration.<rid>/13.4.6/tools/dcp` (or `dcp.exe` on Windows).
+Point `ASPIRE_DCP_PATH` at that tools **directory** when you must override:
+
+```powershell
+$env:ASPIRE_DCP_PATH = "$env:USERPROFILE\.nuget\packages\aspire.hosting.orchestration.win-x64\13.4.6\tools"
 ```
 
 The explicit override remains authoritative; unset it to use the installed bundle. DCP provisioning

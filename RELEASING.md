@@ -201,7 +201,12 @@ version-matched DCP tools trees for `win-x64`, `linux-x64`, `osx-x64` and
 prerequisite. At topology start, `DcpPathResolver` selects the executing RID's
 bundle beside the host assembly before stale build-machine cache metadata.
 `ASPIRE_DCP_PATH` remains an explicit override for an existing DCP installation
-(the directory containing `dcp`).
+(the directory containing `dcp`). The bundled tree is
+`dcp/<VouchfxDcpVersion>/<rid>/tools/`. That property is 13.4.6 on current main, in lockstep
+with `Aspire.Hosting` and `Aspire.AppHost.Sdk`. The published v1.2.1 tool still bundles 13.4.2;
+a release cut from current main ships 13.4.6. `AspireVersionLockstepGuardTests` fails the
+unit-test run when `VouchfxDcpVersion`, the Aspire.Hosting package versions and the
+`Aspire.AppHost.Sdk` versions diverge.
 
 **Legacy published rc.6:** this older package does not bundle DCP and requires
 `aspire.hosting.orchestration.<rid>` version 13.4.2 in the executing machine's

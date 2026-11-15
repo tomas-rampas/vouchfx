@@ -401,8 +401,12 @@ you pinned — pin a release tag or SHA to track a released engine.
 Published `1.0.0-rc.6` requires matching Aspire **13.4.2** native DCP tools provisioned separately for
 the host platform, usually through an AppHost restore; set `ASPIRE_DCP_PATH` to their existing tools
 directory. Core `1.0.0` introduced bundled matching native tools for installed distributions on
-supported platforms; these need no warmed NuGet cache. Source AppHosts retain their restore/metadata
-fallback. See [version-specific installation prerequisites](getting-started.md#installing-vouchfx).
+supported platforms; these need no warmed NuGet cache. Releases through v1.2.1 bundle DCP 13.4.2.
+Source AppHosts retain their restore/metadata fallback, and the version they probe is the
+`Aspire.Hosting` version that pinned ref restored. Current main pins that package, `Aspire.AppHost.Sdk`
+and `VouchfxDcpVersion` at **13.4.6**, so a workflow pinned to current main looks for
+`aspire.hosting.orchestration.<rid>` 13.4.6 when the embedded path is missing. A checkout of v1.2.1
+still looks for 13.4.2. See [version-specific installation prerequisites](getting-started.md#installing-vouchfx).
 Current source keeps a `net8.0` binary baseline. `global.json` uses `rollForward: major` (minimum
 SDK 8.0.424) and executables set `RollForward=Major`, so a machine with only .NET 9 or 10 can build
 and run that source. A published global tool follows the runtime policy of the release that packed

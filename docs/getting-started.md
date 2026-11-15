@@ -139,17 +139,21 @@ contains all four native trees; an archive or installer contains its own platfor
 distributions need no source checkout, Aspire workload or warmed NuGet cache. The engine selects the
 bundle beside its host assembly, so changing directories does not change the executable it uses.
 
-**Legacy rc.6 and source/custom AppHosts:** `1.0.0-rc.6` lacks this bundled payload; on a clean machine
-its container topology fails before Docker starts. Upgrade the global tool to the latest stable release.
-If you must retain the legacy package or use an unbundled custom AppHost, supply the exact Aspire 13.4.2 tools
-through `ASPIRE_DCP_PATH`. Set it to the directory containing `dcp`/`dcp.exe`, not the executable:
+**Legacy rc.6:** `1.0.0-rc.6` lacks this bundled payload; on a clean machine its container topology
+fails before Docker starts. Upgrade the global tool to the latest stable release. If you must retain
+that package, supply its Aspire **13.4.2** tools through `ASPIRE_DCP_PATH`. Set it to the directory
+containing `dcp`/`dcp.exe`, not the executable:
 
 ```powershell
 $env:ASPIRE_DCP_PATH = "$env:USERPROFILE/.nuget/packages/aspire.hosting.orchestration.win-x64/13.4.2/tools"
 ```
 
-This override requires those matching tools to exist; setting a path does not install them. Older
-AppHost-based source/custom runners retain their metadata and NuGet-cache fallback. The retired
+**Source and custom AppHosts** keep Aspire's metadata and NuGet-cache fallback. The cache probe uses
+the `Aspire.Hosting` version that build restored. Published releases through v1.2.1, and the `1.0.0`
+bundle, use 13.4.2. Current main pins `VouchfxDcpVersion`, `Aspire.Hosting` and `Aspire.AppHost.Sdk`
+at **13.4.6**, so the fallback looks for
+`aspire.hosting.orchestration.<rid>/13.4.6/tools`. A 13.4.2 directory does not satisfy that probe.
+`dotnet restore` of this repository populates the matching package. The retired
 `dotnet workload install aspire` command is not a remedy. See [DCP troubleshooting](troubleshooting.md#the-aspire-orchestration-component-is-not-installed-could-not-be-located).
 
 ## Building vouchfx from source
@@ -168,6 +172,11 @@ dotnet build vouchfx.sln
 ```
 
 This compiles the engine, providers, and the CLI runner. The build takes a minute or two and should produce zero warnings.
+Restore also fetches the native DCP tools at `VouchfxDcpVersion` (13.4.6 on current main) into the
+NuGet cache. A source CLI uses the path embedded by `Aspire.AppHost.Sdk` when that file exists, and
+otherwise probes that same version under `aspire.hosting.orchestration.<rid>`. See
+[DCP troubleshooting](troubleshooting.md#the-aspire-orchestration-component-is-not-installed-could-not-be-located)
+when topology start reports the component missing.
 
 Alternatively, if you want only the CLI (faster), build that project:
 
