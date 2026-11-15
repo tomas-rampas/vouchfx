@@ -466,9 +466,9 @@ Use one of these approaches:
    dotnet build src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj -c Release
 
    # Run the built binary
-   src/Cli/Vouchfx.Cli/bin/Release/net8.0/vouchfx run ./tests/e2e
+   src/Cli/Vouchfx.Cli/bin/Release/net10.0/vouchfx run ./tests/e2e
    ```
-   (On Windows: `src\Cli\Vouchfx.Cli\bin\Release\net8.0\vouchfx.exe run .\tests\e2e`)
+   (On Windows: `src\Cli\Vouchfx.Cli\bin\Release\net10.0\vouchfx.exe run .\tests\e2e`)
 
    The binary runs from your current directory, so relative paths work as expected.
 
@@ -590,17 +590,17 @@ A later check can also fail because `dotnet` on `PATH` is not the copy under `$R
 
 **What it means:**
 
-`.github/workflows/vouchfx-run.yml` installs `dotnet-version` into its own directory and then deletes every SDK and shared-framework line other than the requested major. `actions/setup-dotnet` v6 first installs the latest LTS runtime (`--channel LTS`); that major can change without a workflow update, and the selector removes it when it is not the selected major. Leaving that extra runtime in place would let the `net8.0` CLI start even when the job asked for a different major. The selector runs under PowerShell 7. Accepted values begin with `8.0`, `9.0` or `10.0` and then either end or continue with a version suffix (`8.0.x`, `10.0.401`). `actions/setup-dotnet` runs before that selector and can fail first, with its own error. If the selector is reached, a value outside the accepted form is refused with `The isolated workflow supports .NET 8, 9 and 10 SDKs.` before anything is deleted.
+`.github/workflows/vouchfx-run.yml` installs `dotnet-version` into its own directory and then deletes every SDK and shared-framework line other than the requested major. `actions/setup-dotnet` v6 first installs the latest LTS runtime (`--channel LTS`); that major can change without a workflow update, and the selector removes it when it is not the selected major. Leaving that extra runtime in place would let the CLI start on it even when the job asked for a different major. The selector runs under PowerShell 7. Accepted values begin with `8.0`, `9.0` or `10.0` and then either end or continue with a version suffix (`8.0.x`, `10.0.401`). `actions/setup-dotnet` runs before that selector and can fail first, with its own error. If the selector is reached, a value outside the accepted form is refused with `The isolated workflow supports .NET 8, 9 and 10 SDKs.` before anything is deleted.
 
 The following `dotnet --version` check runs inside the vouchfx checkout, so the caller's `global.json` is not what selects the SDK. See [Isolated SDK on GitHub Actions](ci-integration.md#isolated-sdk-on-github-actions).
 
 **Fix:**
 
-1. Pass `8.0.x`, `9.0.x` or `10.0.x` (or an explicit `8.0` / `9.0` / `10.0` patch). The default is `8.0.x`.
+1. Pass `10.0.x` (or an explicit `10.0` patch), the default, which current source needs. `8.0.x` and `9.0.x` are accepted only for an older `vouchfx-ref` built for .NET 8.
 2. Use a runner that provides `pwsh` (PowerShell 7). GitHub-hosted runners do.
 3. Do not point `DOTNET_INSTALL_DIR` at a shared or pre-warmed SDK for this workflow. The selector only accepts a physical directory directly under `RUNNER_TEMP` named `vouchfx-suite-dotnet`.
 4. If the selected shared frameworks are missing, the requested SDK channel did not install both `Microsoft.NETCore.App` and `Microsoft.AspNetCore.App`. Retry with a complete `8.0.x`, `9.0.x` or `10.0.x` channel.
-5. On GitLab, choose the SDK with `VOUCHFX_DOTNET_IMAGE` instead. That template does not run this selector; an image that still contains .NET 8 will run the CLI on .NET 8.
+5. On GitLab, choose the SDK with `VOUCHFX_DOTNET_IMAGE` instead. That template does not run this selector; the CLI runs on whichever .NET 10 or newer runtime the image contains.
 
 ---
 

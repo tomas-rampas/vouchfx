@@ -403,13 +403,14 @@ the host platform, usually through an AppHost restore; set `ASPIRE_DCP_PATH` to 
 directory. Core `1.0.0` introduced bundled matching native tools for installed distributions on
 supported platforms; these need no warmed NuGet cache. Source AppHosts retain their restore/metadata
 fallback. See [version-specific installation prerequisites](getting-started.md#installing-vouchfx).
-Current source keeps a `net8.0` binary baseline. `global.json` uses `rollForward: major` (minimum
-SDK 8.0.424) and executables set `RollForward=Major`, so a machine with only .NET 9 or 10 can build
-and run that source. A published global tool follows the runtime policy of the release that packed
-it; releases from before this policy still need the .NET 8 runtime. Self-contained archives and
+Current source targets `net10.0`. `global.json` selects SDK 10.0.100 or a later 10.0 feature
+band (`rollForward: latestFeature`) and executables set `RollForward=Major`, so building that
+source needs the .NET 10 SDK and running it needs a .NET 10 or newer runtime. A published global
+tool follows the runtime policy of the release that packed it; releases built before the move to
+.NET 10 still run on the .NET 8 runtime. Self-contained archives and
 installers on the [latest stable GitHub release](https://github.com/tomas-rampas/vouchfx/releases/latest)
 bundle a runtime and do not need a machine-wide SDK, subject to that version's DCP prerequisites.
-See [Getting Started](getting-started.md#net-8-9-and-10-compatibility).
+See [Getting Started](getting-started.md#net-compatibility).
 
 ### The floating convenience tags
 
@@ -454,7 +455,7 @@ jobs:
 | `scenario-path` | string | `.` | Directory (relative to the caller's checkout) to search recursively for `.e2e.yaml` scenarios. |
 | `vouchfx-repo` | string | `${{ github.repository }}` | The `owner/repo` of the vouchfx repository to build from source. Override to track a fork, or to pin a released version. |
 | `vouchfx-ref` | string | `${{ github.sha }}` | The git ref (commit SHA, tag or branch) of `vouchfx-repo` to build. Recommended: a full commit SHA for supply-chain repeatability. |
-| `dotnet-version` | string | `8.0.x` | SDK used to build and run the suite. Accepts .NET 8, 9 or 10 in the `8.0`, `9.0` or `10.0` form, including `8.0.x` and a patch such as `10.0.401`. See [Isolated SDK on GitHub Actions](#isolated-sdk-on-github-actions). |
+| `dotnet-version` | string | `10.0.x` | SDK used to build and run the suite. Current source needs .NET 10; the workflow also accepts the `8.0` and `9.0` forms for an older `vouchfx-ref` built for .NET 8. Accepted forms include `10.0`, `10.0.x` and a patch such as `10.0.401`. See [Isolated SDK on GitHub Actions](#isolated-sdk-on-github-actions). |
 | `fail-on-env-error` | boolean | `false` | When `true`, an environment-error verdict fails the job with exit code 3. |
 | `fail-on-inconclusive` | boolean | `false` | When `true`, an inconclusive verdict fails the job with exit code 4. |
 | `prewarm-images` | string | (empty) | Optional newline-separated list of container images (one per line) to `docker pull` before the run, warming the Docker cache and mitigating Aspire/DCP's ~20-second per-resource cold-start watchdog. Each pull is best-effort and non-fatal. |
@@ -464,7 +465,7 @@ jobs:
 ### Isolated SDK on GitHub Actions
 
 `actions/setup-dotnet` v6 first installs the latest LTS runtime (`--channel LTS`); that major can
-change without a workflow update. On a hosted runner the extra runtime would let a `net8.0`
+change without a workflow update. On a hosted runner the extra runtime would let a `net10.0`
 executable start even when the job asked for a different major, so a roll-forward failure would stay
 hidden. The reusable workflow therefore:
 
@@ -474,7 +475,9 @@ hidden. The reusable workflow therefore:
 4. Deletes every other SDK and shared-framework line from that owned tree, after checking the tree is a physical directory directly under `RUNNER_TEMP` and contains no links or reparse points. `Microsoft.NETCore.App` and `Microsoft.AspNetCore.App` for the selected line must both be present; an unexpected shared-framework directory aborts before deletion.
 5. Runs `dotnet --version` and `dotnet --list-runtimes` from the vouchfx checkout. SDK selection uses vouchfx's own `global.json`, so a `global.json` in the calling repository does not change this check. `dotnet` on `PATH` must be the isolated install, and every listed runtime must belong to the requested major.
 
-The GitLab template does not run this selector. Its job image is the boundary: `mcr.microsoft.com/dotnet/sdk:8.0` stays the default, and `sdk:9.0` or `sdk:10.0` also build current source. An image that still contains the .NET 8 runtime will use that runtime for the `net8.0` CLI. `RollForward=Major` applies when the requested major is the only one present.
+The selector still accepts `8.0` and `9.0` because the workflow can build an older `vouchfx-ref`; current source needs `10.0`, which is the default.
+
+The GitLab template does not run this selector. Its job image is the boundary: `mcr.microsoft.com/dotnet/sdk:10.0` is the default and is what current source needs. `RollForward=Major` lets the `net10.0` CLI run on a newer major when that is the only runtime in the image.
 
 ### Worked example
 
@@ -509,7 +512,7 @@ vouchfx-run:
 | `VOUCHFX_SCENARIO_PATH` | string | `.` | Directory (relative to the project root) to search recursively for `.e2e.yaml` scenarios. |
 | `VOUCHFX_REPO_URL` | string | `$CI_REPOSITORY_URL` | Git URL of the vouchfx repository to build from source. Defaults to the calling project; override to track a fork. |
 | `VOUCHFX_REF` | string | `$CI_COMMIT_SHA` | Git ref (commit SHA, tag or branch) of `VOUCHFX_REPO_URL` to build. |
-| `VOUCHFX_DOTNET_IMAGE` | string | `mcr.microsoft.com/dotnet/sdk:8.0` | SDK image the job runs in. The default is .NET 8. Current source also builds in the `9.0` and `10.0` SDK images. Pin the image to a digest in production. The image is the isolation boundary; this template does not strip extra runtimes the way the GitHub workflow does. |
+| `VOUCHFX_DOTNET_IMAGE` | string | `mcr.microsoft.com/dotnet/sdk:10.0` | SDK image the job runs in. The default is .NET 10, which current source needs; an older `VOUCHFX_REF` built for .NET 8 can use the `8.0` image. Pin the image to a digest in production. The image is the isolation boundary; this template does not strip extra runtimes the way the GitHub workflow does. |
 | `VOUCHFX_FAIL_ON_ENV_ERROR` | string | `"false"` | When truthy, an environment-error verdict fails the job with exit code 3. |
 | `VOUCHFX_FAIL_ON_INCONCLUSIVE` | string | `"false"` | When truthy, an inconclusive verdict fails the job with exit code 4. |
 | `VOUCHFX_PREWARM_IMAGES` | string | (empty) | Optional whitespace/newline-separated list of container images to pre-warm. Pin each entry to an immutable digest. |
@@ -595,7 +598,7 @@ For production use, pin everything to something immutable.
 
 **GitLab CI:** the same four rules — pin the `include:` `ref:` to a full commit SHA, pin `VOUCHFX_REF`,
 pin each `VOUCHFX_PREWARM_IMAGES` entry to a digest, and pin `VOUCHFX_DOTNET_IMAGE` to a digest
-(`mcr.microsoft.com/dotnet/sdk:8.0@sha256:…`) rather than the floating tag.
+(`mcr.microsoft.com/dotnet/sdk:10.0@sha256:…`) rather than the floating tag.
 
 ### Keeping the pin current
 

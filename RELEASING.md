@@ -187,15 +187,16 @@ Dependency-Check, Grype, Trivy, etc.) for vulnerability correlation.
 
 ### Primary: dotnet global tool (nupkg)
 
-**Recommended for developers with .NET 8 SDK.**
+**Recommended for developers with a .NET 10 SDK or runtime.**
 
 ```bash
 dotnet tool install --global vouchfx
 vouchfx --version
 ```
 
-The tool is framework-dependent and requires .NET 8 (runtime or SDK) on the
-target machine. Stable Core distributions, beginning with `1.0.0`, bundle the engine DLLs and the complete,
+The tool is framework-dependent and requires .NET 10 or a newer major (runtime
+or SDK) on the target machine; releases built before the move to .NET 10
+require .NET 8. Stable Core distributions, beginning with `1.0.0`, bundle the engine DLLs and the complete,
 version-matched DCP tools trees for `win-x64`, `linux-x64`, `osx-x64` and
 `osx-arm64`. A source checkout or prior Aspire restore is not an installation
 prerequisite. At topology start, `DcpPathResolver` selects the executing RID's
@@ -214,7 +215,7 @@ Aspire workload does not provide the required NuGet package.
 **For machines without a .NET SDK, or for OS-native package management.**
 
 The self-contained archives (`*.tar.gz`) and native installers (`.msi`,
-`.deb`, `.pkg`) bundle the .NET 8 runtime alongside vouchfx.  Users do not
+`.deb`, `.pkg`) bundle the .NET 10 runtime alongside vouchfx.  Users do not
 need the .NET SDK or runtime installed.
 
 **Bundled DCP portability:** current self-contained archives and installers

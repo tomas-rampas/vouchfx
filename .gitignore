@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------------------
-# .gitignore for the vouchfx .NET 8 LTS solution
+# .gitignore for the vouchfx .NET 10 LTS solution
 # Covers: .NET build output, Visual Studio / Rider / VS Code, NuGet, test
 # results, the (TypeScript) VS Code extension, local secrets, and OS cruft.
 # ---------------------------------------------------------------------------

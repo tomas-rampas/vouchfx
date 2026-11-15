@@ -21,7 +21,7 @@ One coherent business transaction spanning:
 
 ## Prerequisites
 
-- **.NET 8 SDK** (pinned in `global.json`).
+- **.NET 10 SDK** (pinned in `global.json`).
 - **Docker** running locally (for the Aspire/Testcontainers topology).
 - **`VOUCHFX_REF_BEARER_TOKEN`** environment variable set to a test value (any non-empty string; the whoami service ignores it, but it must be present to resolve the secret).
 

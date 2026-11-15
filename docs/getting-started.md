@@ -16,43 +16,44 @@ This guide focuses on the essentials. For architecture, the provider model, secr
 
 **What you need on your machine.**
 
-### .NET 8, 9 or 10 SDK
+### .NET 10 SDK
 
-Current source retains a **.NET 8** binary baseline and supports building and running with
-the **.NET 8, 9 and 10 SDKs**. The repository selects its build SDK separately in `global.json`.
-Check the SDKs and runtimes installed on your machine:
+Current source targets **.NET 10** (`net10.0`). The global tool needs a .NET 10 or later
+runtime, and building from source needs a .NET 10 SDK. Check the SDKs and runtimes installed
+on your machine:
 
 ```bash
 dotnet --list-sdks
 dotnet --list-runtimes
 ```
 
-Use SDK 8.0.424 or a later stable .NET 8, 9 or 10 SDK. `global.json` prefers a compatible
-.NET 8 SDK when installed and permits a higher major when it is absent. Executables built from
-this source use runtime `RollForward=Major`, so they also run on .NET 9 or 10 without .NET 8.
-Library packages continue to expose `net8.0` assets, which .NET 9 and 10 projects can reference.
-Older published tools retain their original runtime requirements; install .NET 8 alongside a
-newer SDK when using a release that predates this policy.
+`global.json` selects SDK 10.0.100 or a later 10.0 feature band. Executables built from this
+source use runtime `RollForward=Major`, so they also run on a newer major runtime when .NET 10
+is absent, but never on .NET 8 or 9. The provider SDK packages (`Vouchfx.Sdk`,
+`Vouchfx.Sdk.Testing` and the engine libraries they depend on) keep their `net8.0` assets for
+the v1.x series, so providers built against them keep working. Older published tools retain
+their original runtime requirements; releases built before this change target .NET 8.
 
 Run `dotnet --version` from the repository to check the selected SDK. See Microsoft's
 [SDK selection rules](https://learn.microsoft.com/en-us/dotnet/core/tools/global-json#rollforward).
 
-### .NET 8, 9 and 10 compatibility
+### .NET compatibility
 
 The runtime used by vouchfx and the runtime used by your application are separate:
 
-| Use case | .NET 8 | .NET 9 and 10 |
-|----------|--------|---------------|
-| Run a global tool built from current source | Uses the installed .NET 8 runtime. | Rolls forward to the installed .NET 9 or 10 runtime when .NET 8 is absent. Older published packages retain their original runtime policy. |
-| Run a self-contained archive or native installer | Uses its bundled runtime. | Uses its bundled runtime; no machine-wide .NET installation is required for the CLI. |
-| Build vouchfx from source | Use SDK 8.0.424 or later. | `global.json` permits SDK 9 or 10 when a compatible .NET 8 SDK is absent. |
-| Test an application packaged as a container image | The image supplies the application's runtime. | The image supplies the application's runtime, independently of vouchfx's runtime. |
-| Test an application through `environment.services[].project` | Install the SDK/runtime required by that application. | Install the matching SDK/runtime and ensure the application's SDK selection allows its target framework. |
+| Use case | Requirement |
+|----------|-------------|
+| Run a global tool built from current source | A .NET 10 runtime, or a newer major runtime when .NET 10 is absent. A machine with only .NET 8 or 9 cannot run it. Older published packages retain their original runtime policy. |
+| Run a self-contained archive or native installer | Uses its bundled runtime; no machine-wide .NET installation is required for the CLI. |
+| Build vouchfx from source | SDK 10.0.100 or a later 10.0 feature band, as `global.json` selects. |
+| Build an external provider | Reference `Vouchfx.Sdk`; its `net8.0` asset can be consumed from `net8.0` or later projects, and the provider loads into the .NET 10 CLI. |
+| Test an application packaged as a container image | The image supplies the application's runtime, independently of vouchfx's runtime. |
+| Test an application through `environment.services[].project` | Install the SDK/runtime required by that application and ensure the application's SDK selection allows its target framework. |
 
-For applications targeting .NET 8, 9 or 10, container images keep the application's build and runtime requirements inside its image. This is the same protocol-based testing model used for applications written in other languages. A `project:` service instead runs through Aspire's project hosting and needs the application's toolchain on the host; the CLI's bundled runtime does not provide that toolchain. A `global.json` selecting SDK 8 cannot build a `net9.0` or `net10.0` application.
+For applications targeting any .NET version, container images keep the application's build and runtime requirements inside its image. This is the same protocol-based testing model used for applications written in other languages. A `project:` service instead runs through Aspire's project hosting and needs the application's toolchain on the host; the CLI's bundled runtime does not provide that toolchain.
 
-The engine keeps one `net8.0` asset baseline. Compatibility workflows test the SDKs and runtimes
-in isolation; the separate .NET 10 analyser job remains advisory. Microsoft's
+Compatibility workflows test the .NET 10 SDK and runtime in isolation; the separate analyser
+job, which builds with the next major SDK, remains advisory. Microsoft's
 [runtime selection rules](https://learn.microsoft.com/en-us/dotnet/core/versions/selection)
 describe the explicit major roll-forward policy used by executables built from current source.
 
@@ -308,12 +309,12 @@ dotnet build src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj -c Release
 **Run the example from the built binary:**
 
 ```bash
-src/Cli/Vouchfx.Cli/bin/Release/net8.0/vouchfx run examples/getting-started
+src/Cli/Vouchfx.Cli/bin/Release/net10.0/vouchfx run examples/getting-started
 ```
 
-(On Windows the binary is `vouchfx.exe`, so the command is `…\net8.0\vouchfx.exe run examples\getting-started`.)
+(On Windows the binary is `vouchfx.exe`, so the command is `…\net10.0\vouchfx.exe run examples\getting-started`.)
 
-**Tip:** Add the `src/Cli/Vouchfx.Cli/bin/Release/net8.0` directory to your PATH (or create an alias `vouchfx`) so you can type just `vouchfx run <path>`. Alternatively, if you prefer to use `dotnet run`, you must pass an **absolute** scenario path (because `dotnet run` executes from the project directory):
+**Tip:** Add the `src/Cli/Vouchfx.Cli/bin/Release/net10.0` directory to your PATH (or create an alias `vouchfx`) so you can type just `vouchfx run <path>`. Alternatively, if you prefer to use `dotnet run`, you must pass an **absolute** scenario path (because `dotnet run` executes from the project directory):
 
 ```bash
 dotnet run --project src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj -- run "$(pwd)/examples/getting-started"

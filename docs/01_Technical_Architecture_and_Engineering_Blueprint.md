@@ -1,6 +1,6 @@
 # Technical Architecture & Engineering Blueprint
 
-*A declarative YAML-to-CSX integration testing platform for distributed .NET systems (engine on .NET 8 LTS)*
+*A declarative YAML-to-CSX integration testing platform for distributed .NET systems (engine on .NET 10 LTS)*
 
 *Technical Architecture*
 
@@ -322,7 +322,7 @@ The compiler and runtime layer depends on a small number of external libraries w
 
 *Table 5.1 — Library and version commitments at v1.0. The platform pins majors and selects minors to track upstream security patches; providers target the same majors so the engine's load context never serves two versions of the same package.*
 
-**.NET runtime baseline. **Assemblies keep a `net8.0` binary baseline so an organisation on .NET 8 LTS can adopt the tool without retargeting. Executables built from current source set `RollForward=Major`, and `global.json` uses `rollForward: major`, so the same source also builds and runs when only .NET 9 or 10 is installed. That baseline is the platform's own runtime contract, not a constraint on the system under test: the system under test may use any runtime that runs in a container. A `project:` service still needs the application's SDK on the host. A published tool keeps the runtime policy of the release that packed it.
+**.NET runtime baseline. **The engine, Core providers and CLI target `net10.0` (.NET 10 LTS), since .NET 8 support ended on 10 November 2026. The published provider-facing libraries (`Vouchfx.Sdk`, `Vouchfx.Sdk.Testing` and the Abstractions, Authoring and Compilation libraries they depend on) keep a `net8.0` asset for the v1.x series, so external providers built against the frozen v1 contract keep compiling and load unchanged in the .NET 10 host. Executables built from current source set `RollForward=Major`, so they run on .NET 10 or a newer major runtime, and `global.json` selects a .NET 10 SDK (`rollForward: latestFeature`). That baseline is the platform's own runtime contract, not a constraint on the system under test: the system under test may use any runtime that runs in a container. A `project:` service still needs the application's SDK on the host. A published tool keeps the runtime policy of the release that packed it.
 
 **Aspire version stance. **Aspire's API surface is still moving across minor versions, and the platform team has been bitten by tracking previews. The platform pins to a known-stable Aspire minor version per engine release and follows Aspire forward at engine-minor cadence, not Aspire-minor cadence. Adopters therefore upgrade Aspire alongside the engine rather than independently of it. This trade-off buys adopters predictability at the cost of some Aspire-newer-feature availability, which is the right trade for a tool that must be stable enough to trust in CI.
 

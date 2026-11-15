@@ -29,11 +29,12 @@ It is **not** a unit-test framework and **not** a UI/browser tool.
 
 ## .NET compatibility
 
-Current source builds with .NET 8, 9 and 10 SDKs and retains a `net8.0` binary baseline.
-Framework-dependent executables use major-version roll-forward when .NET 8 is absent;
-SDK libraries can be consumed by .NET 8, 9 and 10 projects. The
-[compatibility matrix](https://github.com/tomas-rampas/vouchfx/blob/main/.github/workflows/dotnet-compatibility.yml) builds and runs
-Docker-free tests with each SDK/runtime installed in isolation. Previously published
+Current source targets .NET 10 (`net10.0`) and builds with the .NET 10 SDK.
+Framework-dependent executables need a .NET 10 runtime and use major-version roll-forward
+only to a newer runtime. The provider SDK packages keep their `net8.0` assets for the v1.x
+series, so providers built against them still load. The
+[compatibility workflow](https://github.com/tomas-rampas/vouchfx/blob/main/.github/workflows/dotnet-compatibility.yml) builds and runs
+tests with the .NET 10 SDK/runtime installed in isolation. Previously published
 packages retain the runtime policy with which they were built.
 
 ## Install
@@ -42,17 +43,17 @@ packages retain the runtime policy with which they were built.
 dotnet tool install --global vouchfx
 ```
 
-Current source supports the [.NET 8, 9 and 10 SDKs](https://dotnet.microsoft.com/download/dotnet).
+Current source needs the [.NET 10 runtime or SDK](https://dotnet.microsoft.com/download/dotnet).
 Previously published packages may still require .NET 8. Running a suite also
 needs a Docker daemon, since vouchfx starts real containers — but `vouchfx validate` and `vouchfx list`
 are Docker-free, so authoring and checking suites works on a machine without one. Machines without a
 .NET SDK can use the self-contained per-OS archives and MSI/deb/pkg installers available from the
 [latest stable release](https://github.com/tomas-rampas/vouchfx/releases/latest).
 
-**Testing .NET 8, 9 or 10 applications:** the CLI targets `net8.0`, while containerised applications
-carry their own runtimes. For the global tool, keep the .NET 8 runtime alongside SDK 9/10;
-self-contained distributions bundle it. Source builds use the .NET 8 SDK selected by `global.json`.
-See the [.NET compatibility table](https://vouchfx.io/getting-started/#net-8-9-and-10-compatibility)
+**Testing applications on any .NET version:** the CLI targets `net10.0`, while containerised
+applications carry their own runtimes. The global tool needs a .NET 10 (or newer) runtime;
+self-contained distributions bundle it. Source builds use the .NET 10 SDK selected by `global.json`.
+See the [.NET compatibility table](https://vouchfx.io/getting-started/#net-compatibility)
 for host, application and project-service requirements.
 
 Core `1.0.0` introduced bundled Aspire DCP tools for Windows x64, Linux x64 (glibc),
@@ -327,7 +328,7 @@ storage locations.
 
 ## Building from source
 
-**Prerequisites:** a .NET 8, 9 or 10 SDK (`global.json` sets the minimum and roll-forward policy) and, for the integration tests only, a
+**Prerequisites:** a .NET 10 SDK (`global.json` sets the minimum and roll-forward policy) and, for the integration tests only, a
 running Docker daemon. The unit tests require the SDK but do not need Docker.
 
 ```bash
