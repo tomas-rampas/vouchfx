@@ -50,15 +50,22 @@
     <!-- Azure.Messaging.ServiceBus 7.18.2 (via System.Memory.Data) floors System.Text.Json
          at a 6.0.x build vulnerable to CVE-2024-43485 (GHSA-8g4q-xg66-9fp4, .NET DoS;
          Dependabot alerts #31/#32/#56/#57 on the two azureservicebus providers and their
-         tests — the only projects with no Aspire reference to lift them). Pinned to
-         10.0.14, above the 10.0.8 floor Aspire.Hosting.* 13.4.6 imposes everywhere else,
+         tests — the only projects with no Aspire reference to lift them). Pinned to a
+         10.0.x patch (10.0.14 at the time, now 10.0.15), above the 10.0.8 floor Aspire.Hosting.* 13.4.6 imposes everywhere else,
          to avoid NU1109 downgrade errors under CentralPackageTransitivePinningEnabled
          (the CVE fix landed in 8.0.5; 10.0.8 targets net8.0).
          Since the move to net10.0 this pin resolves in no project: NuGet prunes the package
          from every net10.0 graph in favour of the shared framework's copy, and none of the
          net8.0 provider-contract libraries pulls it in. It is kept, unchanged, so that a
          net8.0 library that later gains a transitive System.Text.Json dependency is held
-         on this patched 10.x line rather than whatever floor that dependency declares. -->
+         on this patched 10.x line rather than whatever floor that dependency declares.
+         Keep it on 10.x. Measured with SDK 10.0.115: raising it to 11.0.0 still resolves the
+         package in no project of this solution, but a project that then references it
+         directly (NU1510 refuses a direct 10.x reference that would be pruned, not an 11.x
+         one), or a library that gains it transitively, takes 11.x. On net10.0 that copies
+         the 11.x assembly beside the application, replacing the framework serializer the
+         event-wire notes were measured against; System.Text.Json 11 also ships no net8.0
+         asset. EventContractFreezeTests pins this major. -->
     <PackageVersion Include="System.Text.Json" Version="10.0.15" />
   </ItemGroup>
   <ItemGroup Label="CLI runner (S07-C-01) — System.CommandLine GA 2.0.x">
