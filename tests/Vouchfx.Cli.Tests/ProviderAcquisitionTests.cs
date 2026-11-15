@@ -96,15 +96,17 @@ public sealed class ProviderAcquisitionTests
     // Provider packages are resolved for net8.0 only, even though the CLI itself runs on
     // net10.0: a provider built for the frozen net8.0 contract loads in older and current
     // CLIs alike. A package carrying only lib/net10.0 assets is therefore refused, not
-    // silently installed.
+    // silently installed. Unlike the net9.0-only dependency test above, which covers a
+    // skipped dependency version on the success path, this covers the refusal of the root
+    // package itself: the exact dependency-graph diagnostic and no store or transaction residue.
     [Fact]
-    public async Task Net10_only_provider_package_is_refused_with_the_net8_asset_diagnostic()
+    public async Task Net10_only_provider_package_is_refused_with_the_dependency_graph_diagnostic_and_nothing_installed()
     {
         var feed = Temp(); var root = Temp(); var id = Unique();
         Package(feed, id, "1.0.0", Compile(Temp(), id, Provider), framework: "net10.0");
         var store = new ProviderStore(root);
         var refusal = await Assert.ThrowsAsync<ProviderLoadException>(() => store.InstallAsync(id, null, feed, CancellationToken.None));
-        Assert.Equal("Provider dependency graph has incompatible version ranges or host assemblies for .NET 8.", refusal.Message);
+        Assert.Equal("Provider dependency graph has incompatible version ranges, host assemblies or lib assets for the net8.0 provider contract framework.", refusal.Message);
         Assert.Empty(store.List());
         Assert.Empty(Directory.GetFileSystemEntries(Transactions(root)));
     }
