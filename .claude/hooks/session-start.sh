@@ -19,15 +19,19 @@
 #      install: Ubuntu's dotnet-host-10.0 conflicts with Microsoft's dotnet-host, so apt
 #      removes the muxer and cross-grades hostfxr, stranding the old SDK and runtimes
 #      in /usr/share/dotnet with no host. So, whenever it runs as root, the hook first
-#      deletes the Microsoft list, keyring and legacy apt preference if they exist, then
-#      purges every installed dotnet*/aspnetcore*/netstandard* package whose version is
-#      not an Ubuntu build. The purge is simulated first: if the simulation fails, or
-#      prints any action other than a purge of exactly those packages, the hook stops and
-#      purges nothing. A fresh container without them skips that step. Also whenever it
-#      runs as root, it (re)writes an apt preference that pins those packages to Ubuntu's
-#      <codename>-updates and <codename>-security suites only, replacing any wider pin an
-#      earlier version wrote, and the install runs with --no-remove, so it fails rather
-#      than removing any package.
+#      deletes the Microsoft list, keyring and legacy apt preference if they exist. It
+#      then purges every installed dotnet*/aspnetcore*/netstandard* package whose
+#      version is not an Ubuntu build, but only when that earlier hook's footprint is
+#      present: one of those three files existed when this run started, or a non-Ubuntu
+#      dotnet-host (the package that conflicts) is installed. Otherwise non-Ubuntu .NET
+#      packages, which someone may have installed on purpose, are left alone. The purge
+#      is simulated first: if the simulation fails, or prints any action other than a
+#      purge of exactly those packages, the hook stops and purges nothing. A fresh
+#      container skips that step. Also whenever it runs as root, it (re)writes an apt
+#      preference that pins those packages to Ubuntu's <codename>-updates and
+#      <codename>-security suites only, replacing any wider pin an earlier version wrote;
+#      a missing or malformed VERSION_CODENAME stops the hook before the pin is written.
+#      The install runs with --no-remove, so it fails rather than removing any package.
 #   2. /usr/bin/dotnet, and DOTNET_ROOT/PATH in /etc/profile.d/dotnet.sh and in
 #      $CLAUDE_ENV_FILE, so login shells and the session's own tool calls agree.
 #
@@ -41,7 +45,7 @@
 # races a half-installed toolchain. On a container that already has the SDK (the web
 # environment caches container state after this hook completes) it finishes in well
 # under a second. Progress goes to stderr; the single summary line on stdout is what
-# the session sees.
+# the session sees, so it also reports how many packages a purge removed.
 #
 # Trust model. This file comes from the checked-out branch, and the SessionStart hook
 # runs it at session start (as root in a web container) before anyone has read the
@@ -64,6 +68,8 @@ DOTNET_PREFS=/etc/apt/preferences.d/dotnet-ubuntu
 LEGACY_MS_LIST=/etc/apt/sources.list.d/microsoft-prod.list
 LEGACY_MS_KEYRING=/usr/share/keyrings/microsoft-prod.gpg
 LEGACY_MS_PREFS=/etc/apt/preferences.d/dotnet-microsoft
+# Set by remove_microsoft_feed to the number of packages it purged, for the summary line.
+PURGED_COUNT=0
 
 log() { printf '[session-start] %s\n' "$*" >&2; }
 REPO_DIR="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
@@ -102,11 +108,13 @@ in_package_set() {
 
 remove_microsoft_feed() {
   local -a foreign refused
-  local file sim line verb name
+  local file sim line verb name legacy_footprint=false
   # The Microsoft list, keyring and preference go first, so no apt operation below can
-  # see the Microsoft feed or its priority-1001 pin.
+  # see the Microsoft feed or its priority-1001 pin. Whether any of them was present is
+  # recorded before it is deleted: it is the evidence that gates the purge below.
   for file in "$LEGACY_MS_LIST" "$LEGACY_MS_KEYRING" "$LEGACY_MS_PREFS"; do
     if [ -e "$file" ]; then
+      legacy_footprint=true
       log "Removing ${file}."
       rm -f "$file"
     fi
@@ -116,15 +124,27 @@ remove_microsoft_feed() {
   if [ "${#foreign[@]}" -eq 0 ]; then
     return 0
   fi
-  # Purge exactly these, and nothing else. The simulation runs first and is not
-  # guarded, so if it fails the hook stops here under set -e. Every action line it
-  # prints (Inst, Remv, Purg, Conf: a capitalised four-letter verb, then a space) must
-  # be a Purg of a package in the set; any other action, or a Purg of any other
-  # package, refuses the purge rather than carrying it out.
-  sim="$(apt-get purge -s "${foreign[@]}")"
+  # Purge only when the earlier hook's footprint is here: its feed files were present
+  # at the start of this run, or a non-Ubuntu dotnet-host is installed (the package
+  # that conflicts with Ubuntu's dotnet-host-10.0). Without either, these packages came
+  # from somewhere this hook did not touch, and they are left in place.
+  if [ "$legacy_footprint" != true ] && ! in_package_set dotnet-host "${foreign[@]}"; then
+    log "Leaving ${#foreign[@]} non-Ubuntu .NET package(s) in place: no Microsoft feed file was present and no non-Ubuntu dotnet-host is installed."
+    return 0
+  fi
+  # Purge exactly these, and nothing else. The simulation runs first; if it fails the
+  # hook stops and purges nothing. An action line is one that starts with Inst, Remv,
+  # Purg or Conf followed by a space or the end of the line. Every action line must be
+  # a Purg of a package in the set; any other action, or a Purg of any other package,
+  # refuses the purge rather than carrying it out. Lines that do not start with one of
+  # those four verbs (headings, "Need to get ...") are not actions.
+  sim="$(apt-get purge -s "${foreign[@]}")" || {
+    log "ERROR: the simulated purge of ${foreign[*]} failed; nothing was purged."
+    exit 1
+  }
   refused=()
   while IFS= read -r line; do
-    [[ "$line" =~ ^[A-Z][a-z]{3}\  ]] || continue
+    [[ "$line" =~ ^(Inst|Remv|Purg|Conf)( |$) ]] || continue
     read -r verb name _ <<<"$line"
     if [ "$verb" != "Purg" ] || [ -z "${name:-}" ] || ! in_package_set "$name" "${foreign[@]}"; then
       refused+=("$line")
@@ -136,14 +156,22 @@ remove_microsoft_feed() {
   fi
   log "Purging Microsoft-feed .NET packages: ${foreign[*]}."
   apt-get purge -y -qq "${foreign[@]}" >/dev/null
+  PURGED_COUNT="${#foreign[@]}"
 }
 
-# The Ubuntu codename from /etc/os-release; stops the hook when there is none.
+# The Ubuntu codename from /etc/os-release; stops the hook when there is none, or when
+# it is anything but one plain lower-case word (it is written into the apt preference).
+# Callers run it in a command substitution, so its exit only ends that subshell: each
+# caller must stop on its failure explicitly.
 os_codename() {
   local codename
   codename="$(awk -F= '$1 == "VERSION_CODENAME" { gsub(/"/, "", $2); print $2 }' /etc/os-release 2>/dev/null || true)"
   if [ -z "$codename" ]; then
     log "ERROR: /etc/os-release names no VERSION_CODENAME, so the Ubuntu suites to pin are unknown."
+    exit 1
+  fi
+  if ! [[ "$codename" =~ ^[a-z][a-z0-9]*$ ]]; then
+    log "ERROR: VERSION_CODENAME in /etc/os-release is not a single lower-case word, so it is not written into the apt preference."
     exit 1
   fi
   printf '%s\n' "$codename"
@@ -155,7 +183,7 @@ os_codename() {
 # this one. Rewriting it is idempotent.
 write_dotnet_pin() {
   local codename
-  codename="$(os_codename)"
+  codename="$(os_codename)" || exit 1
 
   # Above 1000 a pin also permits downgrades, so it names only the two suites that publish
   # dotnet-sdk-10.0, not every Ubuntu suite (backports and proposed stay at their defaults).
@@ -163,11 +191,12 @@ write_dotnet_pin() {
     "${codename}-updates" "${codename}-security" >"$DOTNET_PREFS"
 }
 
+# Reached only as root, after the main block below has written the pin, so it does not
+# write the pin again.
 install_sdk() {
   export DEBIAN_FRONTEND=noninteractive
   local codename
-  codename="$(os_codename)"
-  write_dotnet_pin
+  codename="$(os_codename)" || exit 1
 
   # dotnet-sdk-10.0 is published in <codename>-updates and -security, so the image's own
   # Ubuntu lists need a refresh; the package archive is reachable through the proxy.
@@ -198,7 +227,8 @@ export DOTNET_NOLOGO=1'
 # Runs whenever root, not only before a fresh install: a container that an earlier version
 # of this hook already moved to the Ubuntu SDK may still hold the stranded Microsoft-feed
 # packages and the wider pin. On a clean container the purge finds nothing and changes
-# nothing, and the pin is rewritten with the same content.
+# nothing, and the pin is rewritten with the same content. install_sdk relies on the pin
+# written here.
 if is_root; then
   export DEBIAN_FRONTEND=noninteractive
   remove_microsoft_feed
@@ -220,4 +250,8 @@ fi
 write_profile
 
 export DOTNET_ROOT="$DOTNET_DIR" DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
-echo "session-start: .NET SDK $("$DOTNET_DIR/dotnet" --version) ready (global.json floor 10.0.100)."
+purge_note=""
+if [ "$PURGED_COUNT" -gt 0 ]; then
+  purge_note="; purged ${PURGED_COUNT} Microsoft-feed .NET packages"
+fi
+echo "session-start: .NET SDK $("$DOTNET_DIR/dotnet" --version) ready (global.json floor 10.0.100)${purge_note}."
