@@ -24,7 +24,7 @@ to published pre-releases on 2026-07-14.
 **Upgrade notes.** Two changes in this release can stop an existing setup:
 
 - **The `vouchfx` global tool needs a .NET 10 or later runtime to start.** It no longer starts on a machine with only .NET 8 or .NET 9. Install the .NET 10 runtime or SDK, or stay on the last release that targets .NET 8 by passing `--version` to `dotnet tool install` or `dotnet tool update`.
-- **`security.caCert` no longer accepts a PKCS#12 (`.pfx`) bundle.** It takes one certificate in PEM or DER form. Convert an existing bundle with `openssl pkcs12 -in anchor.pfx -nokeys -out anchor.pem` and point `caCert` at the PEM file; if the bundle holds more than one certificate, keep only the trust anchor in that file.
+- **`security.caCert` no longer accepts a PKCS#12 (`.pfx`) bundle.** It takes one certificate in PEM or DER form. Convert an existing bundle with `openssl pkcs12 -in anchor.pfx -nokeys -cacerts -out anchor.pem` and point `caCert` at the PEM file (add `-legacy` if OpenSSL 3 reports an unsupported algorithm). The file must hold only the trust anchor, because `caCert` reads the first certificate in it, and without `-cacerts` an identity bundle lists the leaf certificate first. Check the result with `openssl x509 -in anchor.pem -noout -subject -ext basicConstraints`, which should show your CA and `CA:TRUE`. If the bundle holds only the CA certificate, `-cacerts` is not needed; if the CA is a chain, keep only the one certificate you trust.
 
 ### Security
 

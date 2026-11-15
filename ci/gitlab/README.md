@@ -121,7 +121,8 @@ does not remove an extra major that the image already contains. Because the temp
 vouchfx from source, the image must contain a .NET 10 SDK (10.0.100 or a later 10.0 feature
 band): `global.json` refuses an image that has only a newer-major SDK. Roll-forward applies only
 to running the built CLI: the `net10.0` executable uses .NET 10 when that runtime is present and
-rolls forward to a newer major only when it is absent.
+rolls forward to a newer major only when it is absent. In this template the image always contains
+the .NET 10 SDK, so the built CLI always runs on the image's .NET 10 runtime.
 
 ## Exit-code gating (verdict taxonomy §12.1)
 

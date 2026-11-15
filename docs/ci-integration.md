@@ -477,7 +477,7 @@ hidden. The reusable workflow therefore:
 
 The selector still accepts `8.0` and `9.0` because the workflow can build an older `vouchfx-ref`; current source needs `10.0`, which is the default.
 
-The GitLab template does not run this selector. Its job image is the boundary: `mcr.microsoft.com/dotnet/sdk:10.0` is the default and is what current source needs. The template builds from source, so the image must contain a .NET 10 SDK: `global.json` (10.0.100, `rollForward: latestFeature`) refuses an image that has only a newer-major SDK. `RollForward=Major` applies only to running the built CLI: it lets the `net10.0` CLI run on a newer major runtime when .NET 10 is absent.
+The GitLab template does not run this selector. Its job image is the boundary: `mcr.microsoft.com/dotnet/sdk:10.0` is the default and is what current source needs. The template builds from source, so the image must contain a .NET 10 SDK: `global.json` (10.0.100, `rollForward: latestFeature`) refuses an image that has only a newer-major SDK. `RollForward=Major` applies only to running the built CLI: it lets the `net10.0` CLI run on a newer major runtime when .NET 10 is absent. In this template the image always contains the .NET 10 SDK, so the built CLI always runs on the image's .NET 10 runtime.
 
 ### Worked example
 

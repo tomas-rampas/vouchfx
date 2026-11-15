@@ -22,11 +22,15 @@ namespace Vouchfx.Engine.Compilation.Tests;
 /// guard pins it.
 /// </para>
 /// <para>
-/// This is a bounded text check over MSBuild XML. It reads the root <c>Directory.Build.props</c>
-/// and the seven named project files. It does not evaluate MSBuild properties, so a project must
-/// spell its framework as <c>$(VouchfxProviderContractTargetFramework)</c> or literally as
-/// <c>net8.0</c>. Missing files and a missing property fail the test, so a moved project cannot
-/// make the guard pass without checking anything.
+/// This is a bounded text check over MSBuild XML. It reads the root <c>Directory.Build.props</c>,
+/// the <c>Directory.Build.props</c> files under <c>src</c>, <c>tests</c> and <c>examples</c> that
+/// exist, and the seven named project files. It does not evaluate MSBuild properties or imports,
+/// so a project must spell its framework as <c>$(VouchfxProviderContractTargetFramework)</c> or
+/// literally as <c>net8.0</c>, must not redefine the contract property, and must not put a
+/// <c>Condition</c> on its <c>TargetFramework</c> element or the enclosing property group.
+/// Overrides made elsewhere, such as in other imported files, command-line properties or
+/// environment variables, are not detected. Missing project files and a missing property fail the
+/// test, so a moved project cannot make the guard pass without checking anything.
 /// </para>
 /// </remarks>
 public sealed class ProviderContractTargetFrameworkGuardTests
@@ -55,6 +59,13 @@ public sealed class ProviderContractTargetFrameworkGuardTests
         "src/Engine/Vouchfx.Engine.Compilation/Vouchfx.Engine.Compilation.csproj",
         "examples/Example.Steps.Echo/Example.Steps.Echo.csproj",
         "examples/Example.Steps.Hello/Example.Steps.Hello.csproj",
+    };
+
+    private static readonly string[] IntermediateBuildProps =
+    {
+        "src/Directory.Build.props",
+        "tests/Directory.Build.props",
+        "examples/Directory.Build.props",
     };
 
     private readonly ITestOutputHelper _output;
@@ -96,6 +107,35 @@ public sealed class ProviderContractTargetFrameworkGuardTests
     }
 
     [Fact]
+    public void GivenIntermediateBuildProps_WhenTheyAreRead_ThenNoneRedefinesTheContractProperty()
+    {
+        var root = RepoRoot.Resolve();
+        var failures = new List<string>();
+
+        foreach (var relative in IntermediateBuildProps)
+        {
+            var path = Path.Combine(root, relative.Replace('/', Path.DirectorySeparatorChar));
+            if (!File.Exists(path))
+            {
+                _output.WriteLine($"{relative}: not present");
+                continue;
+            }
+
+            var values = PropertyValues(XDocument.Load(path), ContractPropertyName);
+            _output.WriteLine($"{relative}: {ContractPropertyName}=[{string.Join(", ", values)}]");
+            if (values.Count != 0)
+            {
+                failures.Add($"{relative}: defines {ContractPropertyName} as '{string.Join(", ", values)}', which can override "
+                    + $"the root value. Remove it; {BuildPropsName} at the repository root is the only place that sets it.");
+            }
+        }
+
+        Assert.True(
+            failures.Count == 0,
+            $"{ContractPropertyName} must be set only in the root {BuildPropsName}. {WhyHint} Found: [{string.Join("; ", failures)}].");
+    }
+
+    [Fact]
     public void GivenContractProjects_WhenTheirTargetFrameworkIsRead_ThenEachUsesTheNet8ContractFramework()
     {
         var root = RepoRoot.Resolve();
@@ -115,11 +155,24 @@ public sealed class ProviderContractTargetFrameworkGuardTests
             var document = XDocument.Load(path);
             var single = PropertyValues(document, "TargetFramework");
             var multiple = PropertyValues(document, "TargetFrameworks");
+            var redefined = PropertyValues(document, ContractPropertyName);
             _output.WriteLine($"{relative}: TargetFramework=[{string.Join(", ", single)}] TargetFrameworks=[{string.Join(", ", multiple)}]");
 
             if (multiple.Count != 0)
             {
                 failures.Add($"{relative}: sets TargetFrameworks, which overrides the single net8.0 target. Remove it.");
+            }
+
+            if (redefined.Count != 0)
+            {
+                failures.Add($"{relative}: defines {ContractPropertyName} as '{string.Join(", ", redefined)}', which can override "
+                    + $"the root value. Remove it; only {BuildPropsName} at the repository root may set it.");
+            }
+
+            foreach (var element in PropertyElements(document, "TargetFramework").Where(HasCondition))
+            {
+                failures.Add($"{relative}: the TargetFramework element '{element.Value.Trim()}' or its PropertyGroup has a Condition, "
+                    + $"so the net8.0 target may not apply. Remove the Condition and keep <TargetFramework>{ContractPropertyReference}</TargetFramework> unconditional.");
             }
 
             if (single.Count == 0)
@@ -147,10 +200,16 @@ public sealed class ProviderContractTargetFrameworkGuardTests
         XDocument.Load(Path.Combine(RepoRoot.Resolve(), BuildPropsName));
 
     private static List<string> PropertyValues(XDocument document, string localName) =>
+        PropertyElements(document, localName).Select(e => e.Value.Trim()).ToList();
+
+    private static List<XElement> PropertyElements(XDocument document, string localName) =>
         document
             .Descendants()
             .Where(e => string.Equals(e.Name.LocalName, localName, StringComparison.OrdinalIgnoreCase))
             .Where(e => e.Parent is { } parent && string.Equals(parent.Name.LocalName, "PropertyGroup", StringComparison.OrdinalIgnoreCase))
-            .Select(e => e.Value.Trim())
             .ToList();
+
+    private static bool HasCondition(XElement element) =>
+        element.Attributes().Any(a => string.Equals(a.Name.LocalName, "Condition", StringComparison.OrdinalIgnoreCase))
+        || (element.Parent?.Attributes().Any(a => string.Equals(a.Name.LocalName, "Condition", StringComparison.OrdinalIgnoreCase)) ?? false);
 }

@@ -24,7 +24,8 @@
 #      version is not an Ubuntu build, but only when that earlier hook's footprint is
 #      present: one of those three files existed when this run started, or a non-Ubuntu
 #      dotnet-host (the package that conflicts) is installed. Otherwise non-Ubuntu .NET
-#      packages, which someone may have installed on purpose, are left alone. The purge
+#      packages, which someone may have installed on purpose, are not purged (installing the
+#      SDK can still move any of its own dependencies to the Ubuntu build). The purge
 #      is simulated first: if the simulation fails, or prints any action other than a
 #      purge of exactly those packages, the hook stops and purges nothing. A fresh
 #      container skips that step. Also whenever it runs as root, it (re)writes an apt
@@ -252,6 +253,6 @@ write_profile
 export DOTNET_ROOT="$DOTNET_DIR" DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
 purge_note=""
 if [ "$PURGED_COUNT" -gt 0 ]; then
-  purge_note="; purged ${PURGED_COUNT} Microsoft-feed .NET packages"
+  purge_note="; purged ${PURGED_COUNT} Microsoft-feed .NET package(s)"
 fi
 echo "session-start: .NET SDK $("$DOTNET_DIR/dotnet" --version) ready (global.json floor 10.0.100)${purge_note}."
