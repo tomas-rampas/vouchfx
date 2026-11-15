@@ -677,29 +677,32 @@ internal sealed class SecurityConfigurationAccessor : ISecurityConfigurationAcce
                 //
                 // No X509KeyStorageFlags decision to make here, unlike LoadClient below: a trust
                 // anchor is a public certificate with no private key, so nothing is imported into
-                // any key store and EphemeralKeySet would have nothing to apply to. Measured on
-                // this host — loading the anchor adds zero files to the user CNG key store.
+                // any key store and EphemeralKeySet would have nothing to apply to. Measured with
+                // the replaced constructor on Windows (.NET 8): loading the anchor added zero files
+                // to the user CNG key store. This loader cannot load a private key at all.
                 return X509CertificateLoader.LoadCertificateFromFile(ca.Resolved);
             }
             catch (Exception ex) when (ex is CryptographicException or IOException or UnauthorizedAccessException)
             {
-                // ISSUE #375's sibling shape, substituted here as DEFENCE IN DEPTH — and the
-                // measurement is what makes that the honest word rather than "closed here".
+                // ISSUE #375's sibling shape. The platform's own message is folded into the
+                // diagnostic, so the declared path is substituted back over the resolved one.
                 //
-                // MEASURED on this host (.NET 8, Windows 10.0.26200), the three ways this catch is
-                // reachable through `new X509Certificate2(string)`:
+                // MEASURED on Linux / .NET 10.0.15, through X509CertificateLoader.LoadCertificateFromFile:
                 //
-                //   file missing      CryptographicException "The system cannot find the file specified."
-                //   file locked       CryptographicException "The process cannot access the file ..."
-                //   path is a folder  CryptographicException "Unspecified error"
+                //   file missing      CryptographicException "error:10000080:BIO routines::no such file"
+                //   path is a folder  CryptographicException "ASN1 corrupted data."
+                //   PKCS#12 bundle    CryptographicException (refused; see above)
                 //
-                // None names the path: this constructor goes through CryptoAPI, whose messages are
-                // path-free. So there is no measured leak at THIS site. The substitution is applied
-                // anyway because the filter admits `IOException` and `UnauthorizedAccessException`
-                // too, and those are the .NET types that DO embed the path they tried — the sibling
-                // site below is where that was measured actually happening. One rule at both
-                // catches costs an allocation on an already-failing path and removes the question
-                // of which platform, which runtime and which file-open route is which.
+                // None names the path there. NOT measured on Windows. The earlier measurement
+                // there (.NET 8, Windows 10.0.26200) was of the replaced `new X509Certificate2(string)`
+                // constructor, which went through CryptoAPI and was path-free; it says nothing
+                // about this loader. If the loader opens the file through managed file I/O on
+                // Windows, an IOException or UnauthorizedAccessException carrying the path is
+                // plausible (an inference, not a measurement), and the substitution below is then
+                // what keeps it out of the diagnostic. The filter admits those types for that
+                // reason, as the sibling site below does, where such a leak was measured.
+                // SecurityPathDisclosureLedgerTests.LoadCa_WhenTheAnchorVanishesAfterValidation_*
+                // pins the result on every platform the unit lanes run.
                 throw new SecurityMaterialException(
                     $"{_fieldPathPrefix}.caCert: '{ca.Declared}' could not be read as a certificate " +
                     $"({WithDeclaredPaths(ex.Message, ca)}).",

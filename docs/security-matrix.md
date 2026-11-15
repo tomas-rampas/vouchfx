@@ -117,8 +117,8 @@ a literal absolute container-file path. Secret-reference syntax is unsupported i
 and is diagnosed before endpoint resolution or container-path shape checks.
 
 `caCert` is the asymmetric case, and it invites the wrong generalisation: the trust anchor is loaded
-through a path constructor that auto-detects PEM and DER, so one field is format-tolerant and the
-other is not.
+by a certificate loader that accepts a single PEM or DER certificate, so one field is format-tolerant
+and the other is not. Other containers, such as a PKCS#12 (`.pfx`) bundle, are refused.
 
 ## Engine 1.0.2 source capability
 

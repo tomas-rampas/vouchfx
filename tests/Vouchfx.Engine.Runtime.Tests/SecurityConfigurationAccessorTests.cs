@@ -670,6 +670,111 @@ public sealed class SecurityConfigurationAccessorTests
         }
     }
 
+    // ── The caCert format contract ─────────────────────────────────────────────────────────────
+    //
+    // The anchor is read by X509CertificateLoader.LoadCertificateFromFile, which loads ONE
+    // certificate from a PEM or DER file. The obsolete X509Certificate2(string) constructor it
+    // replaced also accepted a PKCS#12 bundle, private key included; the loader refuses one. These
+    // arms pin both halves, so a later change of loader cannot widen the accepted formats silently.
+
+    /// <summary>A <c>tls</c> block declaring only the trust anchor, at <paramref name="caCert"/>.</summary>
+    private static SecuritySpec TlsWithAnchor(string caCert) =>
+        new(
+            Profile: "tls",
+            Endpoint: "8443",
+            CaCert: caCert,
+            ClientCert: null,
+            ClientKey: null,
+            ServerArtifacts: null);
+
+    /// <summary>
+    /// A PEM and a DER anchor both load, as the bed's own public CA certificate with no private
+    /// key.
+    /// </summary>
+    [Theory]
+    [InlineData("anchor.pem", false)]
+    [InlineData("anchor.der", true)]
+    public void For_CaCertificateAsPemOrDer_LoadsThePublicAnchor(string declared, bool der)
+    {
+        using var bed = TestCertificateAuthority.CreateSuiteDirectory();
+        File.WriteAllBytes(
+            Path.Combine(bed.SuiteDirectory, declared),
+            der ? bed.CaCertificate.Export(X509ContentType.Cert) : File.ReadAllBytes(bed.CaPath));
+        if (der)
+        {
+            // NOT VACUOUS: the DER file really is binary, not PEM text under another name.
+            Assert.NotEqual((byte)'-', File.ReadAllBytes(Path.Combine(bed.SuiteDirectory, declared))[0]);
+        }
+
+        var accessor = BuildWithNoSecretAccessor(
+            AstWithSecuredService("payments", TlsWithAnchor(declared)), bed.SuiteDirectory);
+        try
+        {
+            var anchor = accessor.For("payments")!.Certificates!.CaCertificate;
+
+            Assert.NotNull(anchor);
+            Assert.Equal(bed.CaCertificate.Thumbprint, anchor!.Thumbprint);
+            Assert.False(anchor.HasPrivateKey);
+        }
+        finally
+        {
+            (accessor as IDisposable)?.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// A passwordless PKCS#12 anchor carrying a private key is refused with the existing
+    /// <c>caCert</c> diagnostic, naming the declared path only. No certificate object is
+    /// returned, so the key in the bundle is never loaded.
+    /// </summary>
+    [Fact]
+    public void For_CaCertificateAsPasswordlessPkcs12_IsRefusedAndLoadsNoPrivateKey()
+    {
+        using var bed = TestCertificateAuthority.CreateSuiteDirectory();
+        const string Declared = "anchor.pfx";
+
+        // A self-signed CA with its key, exported WITHOUT a password: the bundle the obsolete
+        // constructor would have loaded key and all. The subject carries this process's token, as
+        // the canonical bed's authorities do, so the final certificate-store guard would see a copy
+        // of it if a regression ever loaded and cached it.
+        using (var key = RSA.Create(2048))
+        {
+            var request = new CertificateRequest(
+                $"CN=Vouchfx PKCS12 Anchor{TestCertificateAuthority.ProcessTokenMarker}",
+                key,
+                HashAlgorithmName.SHA256,
+                RSASignaturePadding.Pkcs1);
+            request.CertificateExtensions.Add(
+                new X509BasicConstraintsExtension(certificateAuthority: true, hasPathLengthConstraint: false, 0, critical: true));
+            var now = DateTimeOffset.UtcNow;
+            using var withKey = request.CreateSelfSigned(now.AddDays(-1), now.AddDays(1));
+            Assert.True(withKey.HasPrivateKey);
+            File.WriteAllBytes(Path.Combine(bed.SuiteDirectory, Declared), withKey.Export(X509ContentType.Pkcs12));
+        }
+
+        var accessor = BuildWithNoSecretAccessor(
+            AstWithSecuredService("payments", TlsWithAnchor(Declared)), bed.SuiteDirectory);
+        try
+        {
+            var certificates = accessor.For("payments")!.Certificates!;
+            var ex = Assert.Throws<SecurityMaterialException>(() => certificates.CaCertificate);
+
+            Assert.StartsWith(
+                $"environment.services.payments.security.caCert: '{Declared}' could not be read as a certificate (",
+                ex.Message,
+                StringComparison.Ordinal);
+            Assert.IsAssignableFrom<CryptographicException>(ex.InnerException);
+            Assert.DoesNotContain(bed.SuiteDirectory, ex.Message, StringComparison.OrdinalIgnoreCase);
+
+            // The refusal is stable: a second read does not fall back to another loader.
+            Assert.Throws<SecurityMaterialException>(() => certificates.CaCertificate);
+        }
+        finally
+        {
+            (accessor as IDisposable)?.Dispose();
+        }
+    }
+
     // ── The ENCRYPTED private key, which is what an enterprise PKI hands out by default ───────
     //
     // MEASURED on .NET 8.0.29 / Windows 10.0.26200 against X509Certificate2.CreateFromPemFile —

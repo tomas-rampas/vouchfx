@@ -176,9 +176,10 @@ public sealed class SecuredEndpointProbeTests : IDisposable
     /// message) would have archived a host path had the load stayed inside the callback.
     /// </para>
     /// <para>
-    /// The file really is read: <c>Load</c> calls the same <c>new X509Certificate2(path)</c>
-    /// constructor production does and wraps the same three exception types, so this stays honest
-    /// if the platform's failure classification for a malformed PEM ever moves.
+    /// The file really is read: <c>Load</c> calls the same
+    /// <c>X509CertificateLoader.LoadCertificateFromFile(path)</c> production does and wraps the
+    /// same three exception types, so this stays honest if the platform's failure classification
+    /// for a malformed PEM ever moves.
     /// </para>
     /// </remarks>
     private sealed class MalformedCaMaterial : ISecurityCertificateMaterial
