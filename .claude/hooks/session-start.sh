@@ -12,10 +12,19 @@
 #      which this hook used for .NET 8, publishes no dotnet-sdk-10.0. Ubuntu 24.04's own
 #      archive (noble-updates/noble-security) carries dotnet-sdk-10.0 in the 10.0.1xx
 #      band, which satisfies global.json, so that is the source used. It installs under
-#      /usr/lib/dotnet. An apt preference pins every dotnet package to Ubuntu's archive,
-#      so apt never mixes Microsoft's feed packages into the Ubuntu SDK; Ubuntu's
-#      dotnet-host-10.0 conflicts with Microsoft's dotnet-host, so a .NET 8 SDK this hook
-#      installed from the Microsoft feed in an earlier container is replaced.
+#      /usr/lib/dotnet.
+#      A container in which the .NET 8 version of this hook ran carries Microsoft-feed
+#      .NET packages (SDK, runtimes, dotnet-host, hostfxr, targeting packs), the
+#      microsoft-prod apt list and its keyring. Left in place they make a mixed-vendor
+#      install: Ubuntu's dotnet-host-10.0 conflicts with Microsoft's dotnet-host, so apt
+#      removes the muxer and cross-grades hostfxr, stranding the old SDK and runtimes
+#      in /usr/share/dotnet with no host. So, whenever it runs as root, the hook purges
+#      every installed dotnet*/aspnetcore*/netstandard* package whose version is not an
+#      Ubuntu build, refusing if that purge would remove anything else, and deletes the
+#      Microsoft list, keyring and legacy apt preference if they exist. A fresh container
+#      without them skips that step. Before installing, an apt preference pins those packages to
+#      Ubuntu's <codename>-updates and <codename>-security suites only, and the install
+#      runs with --no-remove, so it fails rather than removing any package.
 #   2. /usr/bin/dotnet, and DOTNET_ROOT/PATH in /etc/profile.d/dotnet.sh and in
 #      $CLAUDE_ENV_FILE, so login shells and the session's own tool calls agree.
 #
@@ -47,7 +56,10 @@ fi
 
 DOTNET_DIR=/usr/lib/dotnet
 DOTNET_PREFS=/etc/apt/preferences.d/dotnet-ubuntu
-# Written by the .NET 8 version of this hook; it pinned dotnet packages to Microsoft's feed.
+# Written by the .NET 8 version of this hook: Microsoft's jammy feed, its signing key, and
+# the preference that pinned dotnet packages to it.
+LEGACY_MS_LIST=/etc/apt/sources.list.d/microsoft-prod.list
+LEGACY_MS_KEYRING=/usr/share/keyrings/microsoft-prod.gpg
 LEGACY_MS_PREFS=/etc/apt/preferences.d/dotnet-microsoft
 
 log() { printf '[session-start] %s\n' "$*" >&2; }
@@ -66,18 +78,57 @@ is_root() { [ "$(id -u)" -eq 0 ]; }
 # the way a hard-coded version band could.
 sdk_ok() { (cd "$REPO_DIR" && "$DOTNET_DIR/dotnet" --version) >/dev/null 2>&1; }
 
+# Installed .NET packages that are not Ubuntu archive builds, one name per line. Every
+# Ubuntu build of these source packages carries "ubuntu" in its version
+# (10.0.115-0ubuntu1~24.04.1); Microsoft's feed versions do not (8.0.427-1, 9.0.4-1).
+foreign_dotnet_packages() {
+  dpkg-query -W -f='${Status}\t${Package}\t${Version}\n' 'dotnet*' 'aspnetcore*' 'netstandard*' 2>/dev/null |
+    awk -F'\t' '$1 ~ / installed$/ && $3 !~ /ubuntu/ { print $2 }' || true
+}
+
+remove_microsoft_feed() {
+  local -a foreign
+  local extra file
+  mapfile -t foreign < <(foreign_dotnet_packages)
+  if [ "${#foreign[@]}" -gt 0 ]; then
+    # Purge exactly these, and nothing that depends on them: a simulated purge that would
+    # take any other package with it is refused rather than carried out.
+    extra="$(apt-get purge -s "${foreign[@]}" | awk '$1 == "Purg" { print $2 }' |
+      grep -vxF -f <(printf '%s\n' "${foreign[@]}") || true)"
+    if [ -n "$extra" ]; then
+      log "ERROR: purging the Microsoft-feed .NET packages would also remove: ${extra//$'\n'/ }. Remove them yourself."
+      exit 1
+    fi
+    log "Purging Microsoft-feed .NET packages: ${foreign[*]}."
+    apt-get purge -y -qq "${foreign[@]}" >/dev/null
+  fi
+  for file in "$LEGACY_MS_LIST" "$LEGACY_MS_KEYRING" "$LEGACY_MS_PREFS"; do
+    if [ -e "$file" ]; then
+      log "Removing ${file}."
+      rm -f "$file"
+    fi
+  done
+}
+
 install_sdk() {
   export DEBIAN_FRONTEND=noninteractive
+  local codename
+  codename="$(awk -F= '$1 == "VERSION_CODENAME" { gsub(/"/, "", $2); print $2 }' /etc/os-release 2>/dev/null || true)"
+  if [ -z "$codename" ]; then
+    log "ERROR: /etc/os-release names no VERSION_CODENAME, so the Ubuntu suites to pin are unknown."
+    exit 1
+  fi
 
-  rm -f "$LEGACY_MS_PREFS"
-  printf 'Package: dotnet* aspnetcore* netstandard*\nPin: release o=Ubuntu\nPin-Priority: 1001\n' \
-    >"$DOTNET_PREFS"
+  # Above 1000 a pin also permits downgrades, so it names only the two suites that publish
+  # dotnet-sdk-10.0, not every Ubuntu suite (backports and proposed stay at their defaults).
+  printf 'Package: dotnet* aspnetcore* netstandard*\nPin: release o=Ubuntu,a=%s\nPin-Priority: 1001\n\n' \
+    "${codename}-updates" "${codename}-security" >"$DOTNET_PREFS"
 
-  # dotnet-sdk-10.0 is published in noble-updates and noble-security, so the image's own
+  # dotnet-sdk-10.0 is published in <codename>-updates and -security, so the image's own
   # Ubuntu lists need a refresh; the package archive is reachable through the proxy.
-  log "Installing dotnet-sdk-10.0 from Ubuntu's noble archive."
+  log "Installing dotnet-sdk-10.0 from Ubuntu's ${codename}-updates/${codename}-security archive."
   apt-get update -qq
-  apt-get install -y -qq dotnet-sdk-10.0 >/dev/null
+  apt-get install -y -qq --no-remove dotnet-sdk-10.0 >/dev/null
 }
 
 write_profile() {
@@ -99,6 +150,13 @@ export DOTNET_NOLOGO=1'
   fi
 }
 
+# Runs whenever root, not only before a fresh install: a container that an earlier version
+# of this hook already moved to the Ubuntu SDK may still hold the stranded Microsoft-feed
+# packages. On a clean container it finds nothing and changes nothing.
+if is_root; then
+  export DEBIAN_FRONTEND=noninteractive
+  remove_microsoft_feed
+fi
 if ! sdk_ok; then
   if ! is_root; then
     log "ERROR: no SDK under ${DOTNET_DIR} satisfies global.json, and installing one needs root. This hook never escalates; install the SDK yourself."
