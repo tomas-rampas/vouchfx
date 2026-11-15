@@ -30,8 +30,9 @@
 # to avoid NU1109/NU1605 under transitive pinning (Microsoft.Data.SqlClient, RabbitMQ.Client,
 # System.Text.Json). A Dependabot bump of one of those (or of Aspire.Hosting.*) can fail
 # restore with NU1109/NU1605; resolve it on the PR branch by moving the paired pins together,
-# not by reverting the bump. A System.Text.Json major is the exception: it is held
-# in the nuget `ignore` list below because 11.x ships no net8.0 asset.
+# not by reverting the bump. A major of a runtime-tied package (System.Text.Json and the
+# other families) is the exception: it is held in the nuget `ignore` list below, as a family,
+# because those majors drop the net8.0 asset.
 version: 2
 updates:
   - package-ecosystem: "github-actions"
@@ -49,11 +50,23 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
-    # Collapse each week's version updates into ONE pull request (fewer PRs to triage, and
-    # any paired-pin / NU1109 fix-up is paid once per week). Aspire.Hosting.* ships in
-    # lockstep, so it is grouped on its own so a partial Aspire bump never lands.
+    # Collapse each week's MINOR and PATCH version updates into ONE pull request (fewer PRs
+    # to triage, and any paired-pin / NU1109 fix-up is paid once per week). Aspire.Hosting.*
+    # ships in lockstep, so it is grouped on its own so a partial Aspire bump never lands.
     # Security updates are not affected by `groups` unless `applies-to: security-updates`
     # is set, so advisory fixes still arrive immediately as their own PRs.
+    #
+    # Majors are deliberately kept OUT of the weekly group (update-types below). Dependabot
+    # cannot split a grouped pull request, so when a major that cannot build sat in the
+    # group, every safe minor and patch in the same pull request went red with it. A major
+    # that is not in the group arrives as its own pull request, which can fail or be
+    # deferred without blocking the rest.
+    # The aspire group is left without update-types on purpose: the Aspire.* ignore below
+    # already limits it to patches, and if that hold is ever lifted a major must still move
+    # every Aspire package together in one pull request, never one package at a time.
+    # open-pull-requests-limit stays at 5: two slots serve the groups, leaving three for
+    # individual majors. Most majors are held below, so few are expected at once. Security
+    # updates have their own separate limit and are not queued behind these.
     groups:
       aspire:
         patterns:
@@ -63,6 +76,9 @@ updates:
           - "*"
         exclude-patterns:
           - "Aspire.*"
+        update-types:
+          - "minor"
+          - "patch"
     ignore:
       # Roslyn follows the pinned .NET 8 SDK's compiler (mcp measured CS9057 on a 5.x bump
       # under -warnaserror). Scripting and the plain compiler move in lockstep.
@@ -110,12 +126,36 @@ updates:
       # (see PR #662).
       - dependency-name: "Npgsql"
         update-types: ["version-update:semver-major"]
-      # System.Text.Json 11.x ships no net8.0 asset (only net10.0, net11.0, net462 and
-      # netstandard2.0). On a net8.0 project its build targets, and those of the transitive
-      # System.Text.Encodings.Web, System.IO.Pipelines and Microsoft.Bcl.AsyncInterfaces 11.x,
-      # report "doesn't support net8.0", which -warnaserror turns into an error. Held until the
-      # repository targets net10.0 or later.
+      # RUNTIME-TIED PACKAGE FAMILIES. These packages version in step with the .NET release and
+      # drop the older target frameworks when their major moves. System.Text.Json 11.x, for
+      # example, ships no net8.0 asset (only net10.0, net11.0, net462 and netstandard2.0), so on
+      # a net8.0 project its build targets, and those of the transitive System.Text.Encodings.Web,
+      # System.IO.Pipelines and Microsoft.Bcl.AsyncInterfaces 11.x, report "doesn't support
+      # net8.0", which -warnaserror turns into an error. Held: Microsoft.Extensions.* and
+      # Microsoft.Bcl.* by wildcard (every match tracks the runtime), and the System.* members
+      # below by name. System.* is NOT wildcarded because it also holds independently versioned
+      # packages (System.CommandLine, which keeps its own hold above, and for instance
+      # System.Linq.Async or System.Reactive if they are ever added); a new runtime-tied System.*
+      # package must be added to this list by hand. Currently declared in
+      # Directory.Packages.props: System.Text.Json and System.Security.Cryptography.Pkcs; the
+      # other names are listed for their transitive use and match nothing today.
+      # Lift these holds when the repository's target framework moves to the next LTS (it
+      # targets net8.0 today). A security fix that exists only in the next major will still
+      # produce a pull request that cannot build: that is visible, and is the signal to move
+      # the target framework. As above, update-types only, never a versions: range.
+      - dependency-name: "Microsoft.Extensions.*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "Microsoft.Bcl.*"
+        update-types: ["version-update:semver-major"]
       - dependency-name: "System.Text.Json"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "System.Security.Cryptography.Pkcs"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "System.Formats.Asn1"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "System.Text.Encodings.Web"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "System.IO.Pipelines"
         update-types: ["version-update:semver-major"]
       # MySqlConnector 3.x targets net8.0 and builds clean, but it has not been run against the
       # MySQL seed, reset and TLS paths. Held until a dedicated upgrade passes the Docker
