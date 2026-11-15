@@ -30,6 +30,9 @@
     <!-- Lets the CLI, test hosts and executable fixtures run when only a newer major
          runtime than .NET 10 is installed. -->
     <RollForward>Major</RollForward>
+    <!-- Warning: the net10.0 [GeneratedRegex] source generator can emit C# 12 syntax, which
+         fails with CS9058 under C# 11. A project that hits it raises LangVersion locally; see
+         tests/Vouchfx.Steps.MqExpect.Kafka.Tests/Vouchfx.Steps.MqExpect.Kafka.Tests.csproj. -->
     <LangVersion>11</LangVersion>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
