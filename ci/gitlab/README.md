@@ -151,7 +151,7 @@ GitLab pipeline / MR test report. `expire_in: 7 days` mirrors the GitHub `retent
 - **Pin the `include:` `ref:` to a full commit SHA**, not a moving branch/tag.
 - **Pin `VOUCHFX_REF` to a commit SHA or release tag**, never a branch.
 - **Pin every `VOUCHFX_PREWARM_IMAGES` entry to an image digest** (`name@sha256:…`).
-- **Pin `VOUCHFX_DOTNET_IMAGE` to a digest** (`mcr.microsoft.com/dotnet/sdk:8.0@sha256:…`).
+- **Pin `VOUCHFX_DOTNET_IMAGE` to a digest** (`mcr.microsoft.com/dotnet/sdk:10.0@sha256:…`).
 
 (The defaults in the template use tags only to stay legible; production callers should
 supply digests — mirroring the GitHub header guidance.)
