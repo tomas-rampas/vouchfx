@@ -1,4 +1,4 @@
-vouchfx emitted-code baseline v1
+vouchfx emitted-code baseline v2
 suite: examples/compose-orders/inline.e2e.yaml
 outcome: emitted
 namespace: VouchfxGenerated
@@ -8,8 +8,21 @@ steps: 3
 id: fresh-database
 type: db-assert.postgres
 provider: Vouchfx.Steps.DbAssert.Postgres.DbAssertPostgresProvider
+model: Vouchfx.Steps.DbAssert.Postgres.DbAssertPostgresModel
 retry: false
 timeout-ms: none
+@@@@ step 1 model
+{
+  "Target": "db",
+  "Query": "SELECT order_id FROM orders",
+  "Parameters": null,
+  "Expect": {
+    "RowCount": 0,
+    "Row": null
+  }
+}
+@@@@ step 1 host-resources
+[]
 @@@@ step 1 usings
 System
 System.Collections.Generic
@@ -39,8 +52,24 @@ Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef
 id: create-order
 type: http.rest
 provider: Vouchfx.Steps.HttpRest.HttpRestProvider
+model: Vouchfx.Steps.HttpRest.HttpRestModel
 retry: false
 timeout-ms: none
+@@@@ step 2 model
+{
+  "Target": "api",
+  "Method": "POST",
+  "Path": "/orders",
+  "Headers": null,
+  "Body": "{\"id\":\"compose-order-1\"}",
+  "Expect": {
+    "Status": 201,
+    "Json": null,
+    "BodyContains": null
+  }
+}
+@@@@ step 2 host-resources
+[]
 @@@@ step 2 usings
 System
 System.Collections.Generic
@@ -85,8 +114,25 @@ HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01c
 id: stored-order
 type: db-assert.postgres
 provider: Vouchfx.Steps.DbAssert.Postgres.DbAssertPostgresProvider
+model: Vouchfx.Steps.DbAssert.Postgres.DbAssertPostgresModel
 retry: false
 timeout-ms: none
+@@@@ step 3 model
+{
+  "Target": "db",
+  "Query": "SELECT status FROM orders WHERE order_id = @id",
+  "Parameters": {
+    "id": "compose-order-1"
+  },
+  "Expect": {
+    "RowCount": 1,
+    "Row": {
+      "status": "CREATED"
+    }
+  }
+}
+@@@@ step 3 host-resources
+[]
 @@@@ step 3 usings
 System
 System.Collections.Generic

@@ -1,15 +1,22 @@
 // EmittedCodeBaselineTests - the emitted-code baseline gate.
 //
-// WHAT IT PINS. For every `.e2e.yaml` file in the repository (examples, test fixtures, corpora), the C#
-// the engine emits for it, or - for a suite the engine refuses - the stage and message of the refusal.
-// One golden per suite lives under Golden/EmittedCode/, mirroring the suite's repository-relative path
-// with a `.txt` suffix. Each golden records, per step, the fragment the provider returned (required
-// usings, helper class names with SHA-256, statement block) and then the full assembled script, so a
-// difference is attributable to one step and one provider. See EmittedCodeBaseline for the format.
+// WHAT IT PINS. For every `.e2e.yaml` file in the repository (examples, test fixtures, corpora, editor
+// samples, and the binder-coverage corpus under EmittedCodeCorpus/), what each step binds to and the C#
+// the engine emits for it, or - for a suite the engine refuses - the stage and numbered diagnostics of
+// the refusal and, when the suite reached the AST, what each step binds to all the same. One golden per
+// suite lives under Golden/EmittedCode/, mirroring the suite's repository-relative path with a `.txt`
+// suffix. Each golden records, per step, the bound model as JSON and the host-resource requirements (or
+// the bind failure), then, when the suite emits, the fragment the provider returned (required usings,
+// helper class names with SHA-256, statement block), and finally the full assembled script, so a
+// difference is attributable to one section of one step and one provider. See EmittedCodeBaseline for
+// the format and EmittedCodeBaselineModels for how a model is written.
 //
 // WHY IT EXISTS. Changing how a provider reads its YAML (the provider binder input type) must not change
-// a single byte of generated code. This gate is the proof: it runs the real front end over every suite
-// in the repository and compares the result with a committed record.
+// a single byte of what a binder produces or of generated code. This gate is the proof: it runs the
+// real front end over every suite in the repository and compares the result with a committed record.
+// The EmittedCodeCorpus/ suites exist only for this gate: between them they set every step field of
+// the 25 Core providers and the YAML forms a binder input type must reproduce (quoted and plain typed
+// scalars, null tokens, block scalars, flow collections, anchors, aliases and merge keys).
 //
 // NOTHING IS RUN. The gate stops at emitted text: no topology, container or network, and the script is
 // neither compiled, loaded nor executed. A suite with a `<name>.setup.(sh|ps1)` script runs it first,
@@ -26,13 +33,14 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Text.RegularExpressions;
 using Vouchfx.TestSupport;
 using Xunit;
 
 namespace Vouchfx.Engine.Runtime.Tests;
 
 /// <summary>
-/// Gate: the emitted code (or refusal) of every repository suite equals its committed golden.
+/// Gate: the bound models and emitted code (or refusal) of every repository suite equal its committed golden.
 /// </summary>
 public sealed class EmittedCodeBaselineTests
 {
@@ -43,8 +51,8 @@ public sealed class EmittedCodeBaselineTests
     private const string RegenHint =
         "To accept a deliberate change run: VOUCHFX_REGEN_EMITTED_CODE=1 dotnet test "
         + "tests/Vouchfx.Engine.Runtime.Tests --filter \"FullyQualifiedName~EmittedCodeBaselineTests\", "
-        + "then review and commit the golden diff. A change you did not intend to make to emitted code "
-        + "is a defect, not a golden update.";
+        + "then review and commit the golden diff. A change you did not intend to make to a bound model or "
+        + "to emitted code is a defect, not a golden update.";
 
     /// <summary>
     /// Suites deliberately left out of the baseline, each with the reason. A suite listed here has no
@@ -54,6 +62,24 @@ public sealed class EmittedCodeBaselineTests
         new Dictionary<string, string>(StringComparer.Ordinal);
 
     private static readonly UTF8Encoding s_utf8NoBom = new(encoderShouldEmitUTF8Identifier: false);
+
+    /// <summary>A step section header: "step N of M" (the step's header) or "step N &lt;part&gt;".</summary>
+    private static readonly Regex s_stepHeader = new(
+        @"^step (\d+) (?:of (\d+)$)?",
+        RegexOptions.CultureInvariant,
+        TimeSpan.FromSeconds(5));
+
+    /// <summary>
+    /// Directory names discovery never enters: build output, package caches and the state folders of
+    /// tools and editors. Each is named exactly; a dot-directory not listed here (for example
+    /// <c>.github</c>) is searched, because a tracked suite could live there.
+    /// </summary>
+    private static readonly HashSet<string> s_skippedDirectories = new(StringComparer.Ordinal)
+    {
+        "bin", "obj", "node_modules", "TestResults",
+        ".git", ".vs", ".idea", ".vscode-test", ".dotnet", ".nuget", ".venv", ".cache",
+        ".pytest_cache", ".mypy_cache", ".ruff_cache", ".serena", ".code-review-graph",
+    };
 
     private static string GoldenRoot =>
         Path.Combine(RepoRoot.Resolve(), "tests", "Vouchfx.Engine.Runtime.Tests", "Golden", "EmittedCode");
@@ -94,7 +120,7 @@ public sealed class EmittedCodeBaselineTests
         }
 
         Assert.Fail(
-            $"{suite}: the emitted code changed.{Environment.NewLine}{Describe(expected, actual)}{Environment.NewLine}{RegenHint}");
+            $"{suite}: what the suite binds to or compiles to changed.{Environment.NewLine}{Describe(expected, actual)}{Environment.NewLine}{RegenHint}");
     }
 
     [Fact]
@@ -149,6 +175,26 @@ public sealed class EmittedCodeBaselineTests
     }
 
     [Fact]
+    public void Describe_NamesTheSectionForEveryKindOfDifference()
+    {
+        const string golden =
+            "vouchfx emitted-code baseline v2\nsuite: s.e2e.yaml\noutcome: refused\nstage: schema\n"
+            + "@@@@ diagnostic 1 of 2\n/a\tfirst\n@@@@ diagnostic 2 of 2\n/b\tsecond\n@@@@ end\n";
+
+        var secondDiagnostic = Describe(golden, golden.Replace("second", "changed", StringComparison.Ordinal));
+        Assert.Contains("section 'diagnostic 2 of 2' differs", secondDiagnostic, StringComparison.Ordinal);
+        Assert.DoesNotContain("diagnostic 1 of 2", secondDiagnostic, StringComparison.Ordinal);
+
+        var preamble = Describe(golden, golden.Replace("stage: schema", "stage: parse", StringComparison.Ordinal));
+        Assert.Contains("section 'preamble' differs at its line 4", preamble, StringComparison.Ordinal);
+
+        const string steps =
+            "v\n@@@@ step 1 of 1\nid: a\ntype: t\nprovider: P\n@@@@ step 1 model\n{\n  \"X\": 1\n}\n@@@@ end\n";
+        var model = Describe(steps, steps.Replace("\"X\": 1", "\"X\": 2", StringComparison.Ordinal));
+        Assert.Contains("section 'step 1 model' (id: a, provider: P) differs", model, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Discovery_FindsSuites_AndTheRegistryIsTheFullCoreSet()
     {
         Assert.NotEmpty(DiscoverSuites());
@@ -158,9 +204,13 @@ public sealed class EmittedCodeBaselineTests
     }
 
     /// <summary>
-    /// Finds every <c>*.e2e.yaml</c> under the repository root, skipping build output, dependency
-    /// folders and dot-directories (<c>.git</c> and tool state). Reads the file system only; it does not
-    /// ask git, so an untracked suite fails the gate until it has a golden, which is the safe direction.
+    /// Finds every <c>*.e2e.yaml</c> under the repository root. It skips the directories named in
+    /// <see cref="s_skippedDirectories"/>, any directory holding its own <c>.git</c> entry (a nested
+    /// checkout or worktree, such as an agent worktree under <c>.claude/</c>, is another copy of the
+    /// repository rather than part of it) and symbolic links to directories (git records the link,
+    /// not what it points at). Other dot-directories, <c>.github</c> among them, are searched. Reads the
+    /// file system only; it does not ask git, so an untracked suite fails the gate until it has a
+    /// golden, which is the safe direction.
     /// </summary>
     internal static IReadOnlyList<string> DiscoverSuites()
     {
@@ -180,8 +230,10 @@ public sealed class EmittedCodeBaselineTests
 
         foreach (var child in Directory.EnumerateDirectories(directory))
         {
-            var name = Path.GetFileName(child);
-            if (name is "bin" or "obj" or "node_modules" || name.StartsWith('.'))
+            if (s_skippedDirectories.Contains(Path.GetFileName(child))
+                || (File.GetAttributes(child) & FileAttributes.ReparsePoint) != 0
+                || File.Exists(Path.Combine(child, ".git"))
+                || Directory.Exists(Path.Combine(child, ".git")))
             {
                 continue;
             }
@@ -195,20 +247,22 @@ public sealed class EmittedCodeBaselineTests
 
     /// <summary>
     /// Names the sections that differ, and for a step section the step id and provider, so a failure
-    /// says which step of which suite changed rather than only that something did.
+    /// says which step of which suite changed rather than only that something did. Every golden line
+    /// belongs to exactly one section (the lines before the first marker form the 'preamble'), and
+    /// section headers are unique within a golden, so any difference names at least one section.
     /// </summary>
-    private static string Describe(string expected, string actual)
+    internal static string Describe(string expected, string actual)
     {
         var before = Sections(expected);
         var after = Sections(actual);
         var report = new StringBuilder();
         var shown = 0;
 
-        var headers = before.Select(s => s.Header).Union(after.Select(s => s.Header)).ToList();
+        var headers = before.Keys.Union(after.Keys).ToList();
         foreach (var header in headers)
         {
-            var was = before.FirstOrDefault(s => s.Header == header);
-            var now = after.FirstOrDefault(s => s.Header == header);
+            before.TryGetValue(header, out var was);
+            after.TryGetValue(header, out var now);
             if (was is not null && now is not null && was.Body == now.Body)
             {
                 continue;
@@ -251,64 +305,82 @@ public sealed class EmittedCodeBaselineTests
             }
         }
 
+        if (shown == 0)
+        {
+            // Unreachable while every line belongs to a uniquely named section; kept so a golden that
+            // breaks that rule still produces a description instead of an empty one.
+            var oldLines = expected.Split('\n');
+            var newLines = actual.Split('\n');
+            var at = 0;
+            while (at < oldLines.Length && at < newLines.Length && oldLines[at] == newLines[at])
+            {
+                at++;
+            }
+
+            report.Append("  the goldens differ at line ").Append(at + 1).Append(" but no section could be named:\n");
+            report.Append("    golden: ").Append(at < oldLines.Length ? oldLines[at] : "(end)").Append('\n');
+            report.Append("    actual: ").Append(at < newLines.Length ? newLines[at] : "(end)").Append('\n');
+        }
+
         return report.ToString().TrimEnd('\n');
     }
 
-    private static List<Section> Sections(string text)
+    /// <summary>
+    /// Splits a golden into its sections, keyed by header in document order. The lines before the
+    /// first marker form the 'preamble' section. A repeated header (which the renderer refuses to
+    /// write) is kept apart by an occurrence suffix, so it can never hide a difference.
+    /// </summary>
+    private static Dictionary<string, Section> Sections(string text)
     {
-        var sections = new List<Section>();
-        var identity = string.Empty;
-        Section? current = null;
+        var raw = new List<(string Header, string Body)>();
+        var header = "preamble";
         var body = new StringBuilder();
-        var stepLines = new List<string>();
         foreach (var line in text.Split('\n'))
         {
             if (line.StartsWith(EmittedCodeBaseline.Marker, StringComparison.Ordinal))
             {
-                if (current is not null)
-                {
-                    sections.Add(Close(current, body.ToString(), identity));
-                }
-
+                raw.Add((header, body.ToString()));
                 body.Clear();
-                var header = line[EmittedCodeBaseline.Marker.Length..];
-                if (!header.StartsWith("step ", StringComparison.Ordinal)
-                    || header.Contains(" of ", StringComparison.Ordinal))
-                {
-                    stepLines.Clear();
-                    identity = string.Empty;
-                }
-
-                current = new Section(header, identity, string.Empty);
+                header = line[EmittedCodeBaseline.Marker.Length..];
                 continue;
             }
 
-            if (current is not null)
+            body.Append(line).Append('\n');
+        }
+
+        raw.Add((header, body.ToString()));
+
+        // A step's identity (its id and provider) comes from its "step N of M" header section and is
+        // attached to every "step N ..." section.
+        var identities = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var (sectionHeader, sectionBody) in raw)
+        {
+            var match = s_stepHeader.Match(sectionHeader);
+            if (match.Success && match.Groups[2].Success)
             {
-                body.Append(line).Append('\n');
-                if (current.Header.Contains(" of ", StringComparison.Ordinal)
-                    && (line.StartsWith("id: ", StringComparison.Ordinal) || line.StartsWith("provider: ", StringComparison.Ordinal)))
-                {
-                    stepLines.Add(line);
-                    identity = string.Join(", ", stepLines);
-                }
+                identities[match.Groups[1].Value] = string.Join(
+                    ", ",
+                    sectionBody.Split('\n').Where(l =>
+                        l.StartsWith("id: ", StringComparison.Ordinal) || l.StartsWith("provider: ", StringComparison.Ordinal)));
             }
         }
 
-        if (current is not null)
+        var sections = new Dictionary<string, Section>(StringComparer.Ordinal);
+        foreach (var (sectionHeader, sectionBody) in raw)
         {
-            sections.Add(Close(current, body.ToString(), identity));
+            var key = sectionHeader;
+            for (var occurrence = 2; sections.ContainsKey(key); occurrence++)
+            {
+                key = sectionHeader + " (occurrence " + occurrence.ToString(System.Globalization.CultureInfo.InvariantCulture) + ")";
+            }
+
+            var match = s_stepHeader.Match(sectionHeader);
+            var identity = match.Success && identities.TryGetValue(match.Groups[1].Value, out var found) ? found : string.Empty;
+            sections.Add(key, new Section(key, identity, sectionBody));
         }
 
         return sections;
     }
-
-    private static Section Close(Section section, string body, string identity) =>
-        section with
-        {
-            Body = body,
-            Identity = section.Header.Contains(" of ", StringComparison.Ordinal) ? identity : section.Identity,
-        };
 
     private sealed record Section(string Header, string Identity, string Body);
 

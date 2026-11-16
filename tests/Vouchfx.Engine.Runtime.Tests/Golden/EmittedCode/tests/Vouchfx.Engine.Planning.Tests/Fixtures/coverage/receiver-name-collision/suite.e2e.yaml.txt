@@ -1,7 +1,79 @@
-vouchfx emitted-code baseline v1
+vouchfx emitted-code baseline v2
 suite: tests/Vouchfx.Engine.Planning.Tests/Fixtures/coverage/receiver-name-collision/suite.e2e.yaml
 outcome: refused
 stage: pipeline
-@@@@ diagnostic
+steps: 3
+@@@@ diagnostic 1 of 1
 -	host resource 'api' (kind 'otlp-receiver', declared by step 'watch-api-trace') collides with a declared service (environment.services.api). A host resource (e.g. a webhook listener) cannot share a name with a declared service or with a dependency's own sidecar endpoint - rename one of the two.
+
+@@@@ step 1 of 3
+id: publish-event
+type: mq-publish.kafka
+provider: Vouchfx.Steps.MqPublish.Kafka.MqPublishKafkaProvider
+model: Vouchfx.Steps.MqPublish.Kafka.MqPublishKafkaModel
+retry: false
+timeout-ms: none
+@@@@ step 1 model
+{
+  "Target": "events",
+  "Topic": "planner-events",
+  "Key": null,
+  "Payload": "{\"event\":\"planner-fixture\"}",
+  "Headers": null,
+  "Avro": null
+}
+@@@@ step 1 host-resources
+[]
+
+@@@@ step 2 of 3
+id: watch-events-trace
+type: trace-expect.otlp
+provider: Vouchfx.Steps.TraceExpect.Otlp.TraceExpectOtlpProvider
+model: Vouchfx.Steps.TraceExpect.Otlp.TraceExpectOtlpModel
+retry: false
+timeout-ms: none
+@@@@ step 2 model
+{
+  "Receiver": "events",
+  "Match": {
+    "TraceId": "{traceId}",
+    "Service": null,
+    "SpanName": null,
+    "Attributes": null,
+    "PeerCertificateSha256": null
+  }
+}
+@@@@ step 2 host-resources
+[
+  {
+    "Kind": "otlp-receiver",
+    "VarName": "events"
+  }
+]
+
+@@@@ step 3 of 3
+id: watch-api-trace
+type: trace-expect.otlp
+provider: Vouchfx.Steps.TraceExpect.Otlp.TraceExpectOtlpProvider
+model: Vouchfx.Steps.TraceExpect.Otlp.TraceExpectOtlpModel
+retry: false
+timeout-ms: none
+@@@@ step 3 model
+{
+  "Receiver": "api",
+  "Match": {
+    "TraceId": "{traceId}",
+    "Service": null,
+    "SpanName": null,
+    "Attributes": null,
+    "PeerCertificateSha256": null
+  }
+}
+@@@@ step 3 host-resources
+[
+  {
+    "Kind": "otlp-receiver",
+    "VarName": "api"
+  }
+]
 @@@@ end

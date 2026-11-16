@@ -1,4 +1,4 @@
-vouchfx emitted-code baseline v1
+vouchfx emitted-code baseline v2
 suite: examples/db-assert-dynamodb.e2e.yaml
 outcome: emitted
 namespace: VouchfxGenerated
@@ -8,8 +8,24 @@ steps: 4
 id: trigger-order
 type: http.rest
 provider: Vouchfx.Steps.HttpRest.HttpRestProvider
+model: Vouchfx.Steps.HttpRest.HttpRestModel
 retry: false
 timeout-ms: none
+@@@@ step 1 model
+{
+  "Target": "app",
+  "Method": "POST",
+  "Path": "/orders",
+  "Headers": null,
+  "Body": "{\"orderId\":\"1001\",\"customerId\":\"cust-1\",\"amount\":49.99}",
+  "Expect": {
+    "Status": 200,
+    "Json": null,
+    "BodyContains": null
+  }
+}
+@@@@ step 1 host-resources
+[]
 @@@@ step 1 usings
 System
 System.Collections.Generic
@@ -54,8 +70,16 @@ HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01c
 id: simulate-order-write
 type: script.csharp
 provider: Vouchfx.Steps.Script.Csharp.ScriptCsharpProvider
+model: Vouchfx.Steps.Script.Csharp.ScriptCsharpModel
 retry: false
 timeout-ms: none
+@@@@ step 2 model
+{
+  "Code": "var connStr = (string)Vars[\"conn::orders-db\"];\nstring serviceUrl = string.Empty, accessKey = string.Empty, secretKey = string.Empty;\nforeach (var part in connStr.Split(';', StringSplitOptions.RemoveEmptyEntries))\n{\n  var eq = part.IndexOf('=');\n  if (eq <= 0) continue;\n  var k = part.Substring(0, eq).Trim();\n  var v = part.Substring(eq + 1).Trim();\n  if (string.Equals(k, \"ServiceURL\", StringComparison.OrdinalIgnoreCase)) serviceUrl = v;\n  else if (string.Equals(k, \"AccessKey\", StringComparison.OrdinalIgnoreCase)) accessKey = v;\n  else if (string.Equals(k, \"SecretKey\", StringComparison.OrdinalIgnoreCase)) secretKey = v;\n}\n\nAmazon.DynamoDBv2.AmazonDynamoDBClient client = null;\ntry\n{\n  client = new Amazon.DynamoDBv2.AmazonDynamoDBClient(\n    new Amazon.Runtime.BasicAWSCredentials(accessKey, secretKey),\n    new Amazon.DynamoDBv2.AmazonDynamoDBConfig\n    {\n      ServiceURL = serviceUrl,\n      MaxErrorRetry = 0,\n      Timeout = TimeSpan.FromSeconds(5),\n      ConnectTimeout = TimeSpan.FromSeconds(5),\n    });\n\n  try\n  {\n    await client.CreateTableAsync(new Amazon.DynamoDBv2.Model.CreateTableRequest\n    {\n      TableName = \"Orders\",\n      AttributeDefinitions = new System.Collections.Generic.List<Amazon.DynamoDBv2.Model.AttributeDefinition>\n      {\n        new Amazon.DynamoDBv2.Model.AttributeDefinition(\"orderId\", Amazon.DynamoDBv2.ScalarAttributeType.S),\n      },\n      KeySchema = new System.Collections.Generic.List<Amazon.DynamoDBv2.Model.KeySchemaElement>\n      {\n        new Amazon.DynamoDBv2.Model.KeySchemaElement(\"orderId\", Amazon.DynamoDBv2.KeyType.HASH),\n      },\n      BillingMode = Amazon.DynamoDBv2.BillingMode.PAY_PER_REQUEST,\n    });\n  }\n  catch (Amazon.DynamoDBv2.Model.ResourceInUseException)\n  {\n    // Table already exists from a prior scenario run against the same container.\n  }\n\n  for (var i = 0; i < 20; i++)\n  {\n    var describe = await client.DescribeTableAsync(\"Orders\");\n    if (describe.Table.TableStatus == Amazon.DynamoDBv2.TableStatus.ACTIVE) break;\n    await Task.Delay(TimeSpan.FromMilliseconds(250));\n  }\n\n  var orderId = (string)Vars[\"orderId\"];\n  await client.PutItemAsync(new Amazon.DynamoDBv2.Model.PutItemRequest\n  {\n    TableName = \"Orders\",\n    Item = new System.Collections.Generic.Dictionary<string, Amazon.DynamoDBv2.Model.AttributeValue>\n    {\n      [\"orderId\"] = new Amazon.DynamoDBv2.Model.AttributeValue { S = orderId },\n      [\"status\"] = new Amazon.DynamoDBv2.Model.AttributeValue { S = \"SHIPPED\" },\n    },\n  });\n}\nfinally\n{\n  client?.Dispose();\n}\n",
+  "File": null
+}
+@@@@ step 2 host-resources
+[]
 @@@@ step 2 usings
 System
 System.Diagnostics
@@ -168,8 +192,23 @@ finally
 id: assert-order-written
 type: db-assert.dynamodb
 provider: Vouchfx.Steps.DbAssert.Dynamodb.DbAssertDynamodbProvider
+model: Vouchfx.Steps.DbAssert.Dynamodb.DbAssertDynamodbModel
 retry: true
 timeout-ms: 15000
+@@@@ step 3 model
+{
+  "Target": "orders-db",
+  "Table": "Orders",
+  "Key": "{\"orderId\":\"{orderId}\"}",
+  "Expect": {
+    "Exists": true,
+    "Item": {
+      "status": "SHIPPED"
+    }
+  }
+}
+@@@@ step 3 host-resources
+[]
 @@@@ step 3 usings
 System
 System.Collections.Generic
@@ -201,8 +240,21 @@ Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef
 id: assert-cancelled-order-absent
 type: db-assert.dynamodb
 provider: Vouchfx.Steps.DbAssert.Dynamodb.DbAssertDynamodbProvider
+model: Vouchfx.Steps.DbAssert.Dynamodb.DbAssertDynamodbModel
 retry: false
 timeout-ms: none
+@@@@ step 4 model
+{
+  "Target": "orders-db",
+  "Table": "Orders",
+  "Key": "{\"orderId\":\"cancelled-999\"}",
+  "Expect": {
+    "Exists": false,
+    "Item": null
+  }
+}
+@@@@ step 4 host-resources
+[]
 @@@@ step 4 usings
 System
 System.Collections.Generic

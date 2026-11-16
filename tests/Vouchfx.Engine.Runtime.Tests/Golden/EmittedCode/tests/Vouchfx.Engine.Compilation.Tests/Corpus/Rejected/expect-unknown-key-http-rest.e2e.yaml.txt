@@ -1,7 +1,7 @@
-vouchfx emitted-code baseline v1
+vouchfx emitted-code baseline v2
 suite: tests/Vouchfx.Engine.Compilation.Tests/Corpus/Rejected/expect-unknown-key-http-rest.e2e.yaml
 outcome: refused
 stage: schema
-@@@@ diagnostic
+@@@@ diagnostic 1 of 1
 /steps/0/expect/statuss	(line 19) Unknown property 'statuss'
 @@@@ end

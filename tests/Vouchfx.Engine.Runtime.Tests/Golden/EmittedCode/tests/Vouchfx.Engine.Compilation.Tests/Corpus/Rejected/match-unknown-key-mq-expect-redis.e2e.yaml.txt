@@ -1,7 +1,7 @@
-vouchfx emitted-code baseline v1
+vouchfx emitted-code baseline v2
 suite: tests/Vouchfx.Engine.Compilation.Tests/Corpus/Rejected/match-unknown-key-mq-expect-redis.e2e.yaml
 outcome: refused
 stage: schema
-@@@@ diagnostic
+@@@@ diagnostic 1 of 1
 /steps/0/match/extra	(line 21) Unknown property 'extra'
 @@@@ end

@@ -1,4 +1,4 @@
-vouchfx emitted-code baseline v1
+vouchfx emitted-code baseline v2
 suite: tests/Vouchfx.Engine.Planning.Tests/Fixtures/history/retry-noise/retry-noise.e2e.yaml
 outcome: emitted
 namespace: VouchfxGenerated
@@ -8,8 +8,20 @@ steps: 1
 id: retry-step
 type: http.rest
 provider: Vouchfx.Steps.HttpRest.HttpRestProvider
+model: Vouchfx.Steps.HttpRest.HttpRestModel
 retry: true
 timeout-ms: none
+@@@@ step 1 model
+{
+  "Target": "api",
+  "Method": "GET",
+  "Path": "/health",
+  "Headers": null,
+  "Body": null,
+  "Expect": null
+}
+@@@@ step 1 host-resources
+[]
 @@@@ step 1 usings
 System
 System.Collections.Generic

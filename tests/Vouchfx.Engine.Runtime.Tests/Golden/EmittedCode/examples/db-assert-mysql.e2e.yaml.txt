@@ -1,4 +1,4 @@
-vouchfx emitted-code baseline v1
+vouchfx emitted-code baseline v2
 suite: examples/db-assert-mysql.e2e.yaml
 outcome: emitted
 namespace: VouchfxGenerated
@@ -8,8 +8,16 @@ steps: 2
 id: seed-order
 type: script.csharp
 provider: Vouchfx.Steps.Script.Csharp.ScriptCsharpProvider
+model: Vouchfx.Steps.Script.Csharp.ScriptCsharpModel
 retry: false
 timeout-ms: none
+@@@@ step 1 model
+{
+  "Code": "var connStr = (string)Vars[\"conn::ordersdb\"];\nvar conn = new MySqlConnector.MySqlConnection(connStr);\ntry\n{\n    await conn.OpenAsync();\n    var cmd = conn.CreateCommand();\n    try\n    {\n        cmd.CommandText =\n            \"CREATE TABLE IF NOT EXISTS orders (id INT PRIMARY KEY, status VARCHAR(50) NOT NULL)\";\n        await cmd.ExecuteNonQueryAsync();\n        cmd.CommandText = \"DELETE FROM orders\";\n        await cmd.ExecuteNonQueryAsync();\n        // Bind the id from the same 'orderId' variable the assertion\n        // below substitutes, so seed and assert cannot drift apart.\n        cmd.CommandText = \"INSERT INTO orders (id, status) VALUES (@id, 'PENDING')\";\n        var idParam = cmd.CreateParameter();\n        idParam.ParameterName = \"@id\";\n        idParam.Value = int.Parse(\n            (string)Vars[\"orderId\"], System.Globalization.CultureInfo.InvariantCulture);\n        cmd.Parameters.Add(idParam);\n        await cmd.ExecuteNonQueryAsync();\n    }\n    finally { cmd.Dispose(); }\n}\nfinally { conn.Dispose(); }\n",
+  "File": null
+}
+@@@@ step 1 host-resources
+[]
 @@@@ step 1 usings
 System
 System.Diagnostics
@@ -79,8 +87,25 @@ finally { conn.Dispose(); }
 id: assert-order-in-mysql
 type: db-assert.mysql
 provider: Vouchfx.Steps.DbAssert.Mysql.DbAssertMysqlProvider
+model: Vouchfx.Steps.DbAssert.Mysql.DbAssertMysqlModel
 retry: false
 timeout-ms: none
+@@@@ step 2 model
+{
+  "Target": "ordersdb",
+  "Query": "SELECT id, status FROM orders WHERE id = @orderId",
+  "Parameters": {
+    "orderId": "{orderId}"
+  },
+  "Expect": {
+    "RowCount": 1,
+    "Row": {
+      "status": "PENDING"
+    }
+  }
+}
+@@@@ step 2 host-resources
+[]
 @@@@ step 2 usings
 System
 System.Collections.Generic

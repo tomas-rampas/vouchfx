@@ -1,4 +1,4 @@
-vouchfx emitted-code baseline v1
+vouchfx emitted-code baseline v2
 suite: examples/cache-assert-elasticsearch.e2e.yaml
 outcome: emitted
 namespace: VouchfxGenerated
@@ -8,8 +8,24 @@ steps: 3
 id: trigger-order
 type: http.rest
 provider: Vouchfx.Steps.HttpRest.HttpRestProvider
+model: Vouchfx.Steps.HttpRest.HttpRestModel
 retry: false
 timeout-ms: none
+@@@@ step 1 model
+{
+  "Target": "app",
+  "Method": "POST",
+  "Path": "/orders",
+  "Headers": null,
+  "Body": "{\"id\":\"ord-001\",\"status\":\"fulfilled\",\"region\":\"EU\"}",
+  "Expect": {
+    "Status": 200,
+    "Json": null,
+    "BodyContains": null
+  }
+}
+@@@@ step 1 host-resources
+[]
 @@@@ step 1 usings
 System
 System.Collections.Generic
@@ -54,8 +70,16 @@ HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01c
 id: simulate-order-index
 type: script.csharp
 provider: Vouchfx.Steps.Script.Csharp.ScriptCsharpProvider
+model: Vouchfx.Steps.Script.Csharp.ScriptCsharpModel
 retry: false
 timeout-ms: none
+@@@@ step 2 model
+{
+  "Code": "var rawUrl = (string)Vars[\"conn::search\"];\nvar parsedUri = new Uri(rawUrl);\n// Uri.Authority is host:port WITHOUT userinfo — credentials must never\n// ride in the request URL (they would leak via logs/proxies); they go\n// into the Authorization header below instead, exactly as the\n// cache-assert.elasticsearch provider does.\nvar baseUrl = parsedUri.Scheme + \"://\" + parsedUri.Authority;\nstring authHeader = null;\nif (!string.IsNullOrEmpty(parsedUri.UserInfo))\n{\n    authHeader = Convert.ToBase64String(\n        System.Text.Encoding.UTF8.GetBytes(Uri.UnescapeDataString(parsedUri.UserInfo)));\n}\n\nvar http = new System.Net.Http.HttpClient();\ntry\n{\n    if (authHeader != null)\n    {\n        http.DefaultRequestHeaders.Authorization =\n            new System.Net.Http.Headers.AuthenticationHeaderValue(\"Basic\", authHeader);\n    }\n\n    var orderId = (string)Vars[\"orderId\"];\n    var body = \"{\\\"id\\\":\\\"\" + orderId + \"\\\",\\\"status\\\":\\\"fulfilled\\\",\\\"region\\\":\\\"EU\\\"}\";\n\n    // Bounded retry: the health gate proves the cluster answers, but a\n    // just-started single node can still 503 its first index write while\n    // allocation settles (the same bounded-poll idiom the dynamodb\n    // example uses for table-ACTIVE).\n    var indexed = false;\n    for (var attempt = 0; attempt < 10 && !indexed; attempt++)\n    {\n        var content = new System.Net.Http.StringContent(\n            body, System.Text.Encoding.UTF8, \"application/json\");\n        try\n        {\n            var response = await http.PutAsync(\n                baseUrl + \"/orders/_doc/\" + orderId + \"?refresh=true\", content);\n            try\n            {\n                if (response.IsSuccessStatusCode)\n                {\n                    indexed = true;\n                }\n                else if ((int)response.StatusCode == 503 && attempt < 9)\n                {\n                    await Task.Delay(TimeSpan.FromMilliseconds(500));\n                }\n                else\n                {\n                    response.EnsureSuccessStatusCode();\n                }\n            }\n            finally { response.Dispose(); }\n        }\n        finally { content.Dispose(); }\n    }\n}\nfinally { http.Dispose(); }\n",
+  "File": null
+}
+@@@@ step 2 host-resources
+[]
 @@@@ step 2 usings
 System
 System.Diagnostics
@@ -159,8 +183,31 @@ finally { http.Dispose(); }
 id: check-order-indexed
 type: cache-assert.elasticsearch
 provider: Vouchfx.Steps.CacheAssert.Elasticsearch.CacheAssertElasticsearchProvider
+model: Vouchfx.Steps.CacheAssert.Elasticsearch.CacheAssertElasticsearchModel
 retry: true
 timeout-ms: 30000
+@@@@ step 3 model
+{
+  "Target": "search",
+  "Index": "orders",
+  "Query": "{\"query\":{\"term\":{\"id.keyword\":\"{orderId}\"}}}",
+  "Expect": {
+    "Count": 1,
+    "MinCount": 1,
+    "Fields": [
+      {
+        "Field": "status",
+        "Value": "fulfilled"
+      },
+      {
+        "Field": "region",
+        "Value": "EU"
+      }
+    ]
+  }
+}
+@@@@ step 3 host-resources
+[]
 @@@@ step 3 usings
 System
 System.Collections.Generic

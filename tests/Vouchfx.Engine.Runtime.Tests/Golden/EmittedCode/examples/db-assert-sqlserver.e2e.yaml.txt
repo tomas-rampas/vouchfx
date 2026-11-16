@@ -1,4 +1,4 @@
-vouchfx emitted-code baseline v1
+vouchfx emitted-code baseline v2
 suite: examples/db-assert-sqlserver.e2e.yaml
 outcome: emitted
 namespace: VouchfxGenerated
@@ -8,8 +8,16 @@ steps: 2
 id: seed-order
 type: script.csharp
 provider: Vouchfx.Steps.Script.Csharp.ScriptCsharpProvider
+model: Vouchfx.Steps.Script.Csharp.ScriptCsharpModel
 retry: false
 timeout-ms: none
+@@@@ step 1 model
+{
+  "Code": "var connStr = (string)Vars[\"conn::ordersdb\"];\nvar conn = new Microsoft.Data.SqlClient.SqlConnection(connStr);\ntry\n{\n    await conn.OpenAsync();\n    var cmd = conn.CreateCommand();\n    try\n    {\n        cmd.CommandText =\n            \"IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'orders') \" +\n            \"CREATE TABLE orders (id INT PRIMARY KEY, status NVARCHAR(50) NOT NULL); \" +\n            \"DELETE FROM orders; \" +\n            \"INSERT INTO orders (id, status) VALUES (1, 'PENDING');\";\n        await cmd.ExecuteNonQueryAsync();\n    }\n    finally { cmd.Dispose(); }\n}\nfinally { conn.Dispose(); }\n",
+  "File": null
+}
+@@@@ step 1 host-resources
+[]
 @@@@ step 1 usings
 System
 System.Diagnostics
@@ -71,8 +79,23 @@ finally { conn.Dispose(); }
 id: assert-order-exists
 type: db-assert.sqlserver
 provider: Vouchfx.Steps.DbAssert.SqlServer.DbAssertSqlServerProvider
+model: Vouchfx.Steps.DbAssert.SqlServer.DbAssertSqlServerModel
 retry: false
 timeout-ms: none
+@@@@ step 2 model
+{
+  "Target": "ordersdb",
+  "Query": "SELECT id, status FROM orders WHERE id = 1",
+  "Parameters": null,
+  "Expect": {
+    "RowCount": 1,
+    "Row": {
+      "status": "PENDING"
+    }
+  }
+}
+@@@@ step 2 host-resources
+[]
 @@@@ step 2 usings
 System
 System.Collections.Generic

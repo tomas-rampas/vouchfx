@@ -1,9 +1,9 @@
-vouchfx emitted-code baseline v1
+vouchfx emitted-code baseline v2
 suite: tests/Vouchfx.Engine.Compilation.Tests/Corpus/Rejected/inbound-listener-invalid-fingerprint-receiver.e2e.yaml
 outcome: refused
 stage: schema
-@@@@ diagnostic
+@@@@ diagnostic 1 of 2
 /steps/0/match	(line 7) Required properties ["traceId"] are not present
-@@@@ diagnostic
+@@@@ diagnostic 2 of 2
 /steps/0/match/peerCertificateSha256	(line 7) The string value is not a match for the indicated regular expression
 @@@@ end

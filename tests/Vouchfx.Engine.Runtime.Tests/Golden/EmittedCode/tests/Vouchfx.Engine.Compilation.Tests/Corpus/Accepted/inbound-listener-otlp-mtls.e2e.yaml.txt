@@ -1,7 +1,34 @@
-vouchfx emitted-code baseline v1
+vouchfx emitted-code baseline v2
 suite: tests/Vouchfx.Engine.Compilation.Tests/Corpus/Accepted/inbound-listener-otlp-mtls.e2e.yaml
 outcome: refused
 stage: pipeline
-@@@@ diagnostic
+steps: 1
+@@@@ diagnostic 1 of 1
 security-preflight	listeners.telemetry.security.serverCert: declared file 'certs/server.pem' is missing or unreadable.
+
+@@@@ step 1 of 1
+id: traces
+type: trace-expect.otlp
+provider: Vouchfx.Steps.TraceExpect.Otlp.TraceExpectOtlpProvider
+model: Vouchfx.Steps.TraceExpect.Otlp.TraceExpectOtlpModel
+retry: false
+timeout-ms: none
+@@@@ step 1 model
+{
+  "Receiver": "telemetry",
+  "Match": {
+    "TraceId": "abc",
+    "Service": null,
+    "SpanName": null,
+    "Attributes": null,
+    "PeerCertificateSha256": null
+  }
+}
+@@@@ step 1 host-resources
+[
+  {
+    "Kind": "otlp-receiver",
+    "VarName": "telemetry"
+  }
+]
 @@@@ end

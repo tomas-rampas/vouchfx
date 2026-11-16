@@ -1,4 +1,4 @@
-vouchfx emitted-code baseline v1
+vouchfx emitted-code baseline v2
 suite: examples/storage-assert-s3.e2e.yaml
 outcome: emitted
 namespace: VouchfxGenerated
@@ -8,8 +8,24 @@ steps: 4
 id: trigger-export
 type: http.rest
 provider: Vouchfx.Steps.HttpRest.HttpRestProvider
+model: Vouchfx.Steps.HttpRest.HttpRestModel
 retry: false
 timeout-ms: none
+@@@@ step 1 model
+{
+  "Target": "app",
+  "Method": "POST",
+  "Path": "/reports/export",
+  "Headers": null,
+  "Body": "{\"format\":\"csv\"}",
+  "Expect": {
+    "Status": 200,
+    "Json": null,
+    "BodyContains": null
+  }
+}
+@@@@ step 1 host-resources
+[]
 @@@@ step 1 usings
 System
 System.Collections.Generic
@@ -54,8 +70,16 @@ HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01c
 id: simulate-report-write
 type: script.csharp
 provider: Vouchfx.Steps.Script.Csharp.ScriptCsharpProvider
+model: Vouchfx.Steps.Script.Csharp.ScriptCsharpModel
 retry: false
 timeout-ms: none
+@@@@ step 2 model
+{
+  "Code": "var connStr = (string)Vars[\"conn::reports\"];\nstring serviceUrl = string.Empty, accessKey = string.Empty, secretKey = string.Empty;\nforeach (var part in connStr.Split(';', StringSplitOptions.RemoveEmptyEntries))\n{\n  var eq = part.IndexOf('=');\n  if (eq <= 0) continue;\n  var k = part.Substring(0, eq).Trim();\n  var v = part.Substring(eq + 1).Trim();\n  if (string.Equals(k, \"ServiceURL\", StringComparison.OrdinalIgnoreCase)) serviceUrl = v;\n  else if (string.Equals(k, \"AccessKey\", StringComparison.OrdinalIgnoreCase)) accessKey = v;\n  else if (string.Equals(k, \"SecretKey\", StringComparison.OrdinalIgnoreCase)) secretKey = v;\n}\n\nAmazon.S3.AmazonS3Client client = null;\ntry\n{\n  client = new Amazon.S3.AmazonS3Client(\n    new Amazon.Runtime.BasicAWSCredentials(accessKey, secretKey),\n    new Amazon.S3.AmazonS3Config\n    {\n      ServiceURL = serviceUrl,\n      ForcePathStyle = true,\n      MaxErrorRetry = 0,\n      Timeout = TimeSpan.FromSeconds(5),\n      ConnectTimeout = TimeSpan.FromSeconds(5),\n    });\n\n  try\n  {\n    await client.PutBucketAsync(\"reports\");\n  }\n  catch (Amazon.S3.AmazonS3Exception ex) when (\n    string.Equals(ex.ErrorCode, \"BucketAlreadyOwnedByYou\", StringComparison.Ordinal)\n    || string.Equals(ex.ErrorCode, \"BucketAlreadyExists\", StringComparison.Ordinal))\n  {\n    // Already created by a prior scenario run against the same container.\n  }\n\n  var reportKey = (string)Vars[\"reportKey\"];\n  var body = \"date,amount\\n2026-07-08,49.99\\n\";\n  await client.PutObjectAsync(new Amazon.S3.Model.PutObjectRequest\n  {\n    BucketName = \"reports\",\n    Key = reportKey,\n    ContentBody = body,\n    ContentType = \"text/csv\",\n  });\n}\nfinally\n{\n  client?.Dispose();\n}\n",
+  "File": null
+}
+@@@@ step 2 host-resources
+[]
 @@@@ step 2 usings
 System
 System.Diagnostics
@@ -151,8 +175,26 @@ finally
 id: assert-report-written
 type: storage-assert.s3
 provider: Vouchfx.Steps.StorageAssert.S3.StorageAssertS3Provider
+model: Vouchfx.Steps.StorageAssert.S3.StorageAssertS3Model
 retry: true
 timeout-ms: 15000
+@@@@ step 3 model
+{
+  "Target": "reports",
+  "Bucket": "reports",
+  "Key": "{reportKey}",
+  "Expect": {
+    "Exists": true,
+    "Size": null,
+    "MinSize": "1",
+    "Sha256": null,
+    "ContentContains": null,
+    "ContentType": "text/csv",
+    "Metadata": null
+  }
+}
+@@@@ step 3 host-resources
+[]
 @@@@ step 3 usings
 System
 System.Collections.Generic
@@ -195,8 +237,26 @@ Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16a
 id: assert-report-not-yet-purged
 type: storage-assert.s3
 provider: Vouchfx.Steps.StorageAssert.S3.StorageAssertS3Provider
+model: Vouchfx.Steps.StorageAssert.S3.StorageAssertS3Model
 retry: false
 timeout-ms: none
+@@@@ step 4 model
+{
+  "Target": "reports",
+  "Bucket": "reports",
+  "Key": "exports/already-purged.csv",
+  "Expect": {
+    "Exists": false,
+    "Size": null,
+    "MinSize": null,
+    "Sha256": null,
+    "ContentContains": null,
+    "ContentType": null,
+    "Metadata": null
+  }
+}
+@@@@ step 4 host-resources
+[]
 @@@@ step 4 usings
 System
 System.Collections.Generic

@@ -1,7 +1,7 @@
-vouchfx emitted-code baseline v1
+vouchfx emitted-code baseline v2
 suite: tests/Vouchfx.Engine.Compilation.Tests/Corpus/Rejected/security-serverartifacts-unknown-key.e2e.yaml
 outcome: refused
 stage: schema
-@@@@ diagnostic
+@@@@ diagnostic 1 of 1
 /environment/dependencies/events-kafka/security/serverArtifacts/0/bogus	(line 19) Unknown property 'bogus' in dependency 'events-kafka' (at security.serverArtifacts[0].bogus)
 @@@@ end

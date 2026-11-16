@@ -1,26 +1,44 @@
-// EmittedCodeBaseline - renders the C# a suite compiles to, in a plain-text, deterministic form
-// that the emitted-code baseline gate (EmittedCodeBaselineTests) commits as a golden.
+// EmittedCodeBaseline - renders what a suite binds to and the C# it compiles to, in a plain-text,
+// deterministic form that the emitted-code baseline gate (EmittedCodeBaselineTests) commits as a golden.
 //
 // WHAT IT DRIVES. The same front end `vouchfx run` uses before it touches a topology, and nothing
 // after it: DocumentValidator.Validate, YamlDocumentParser.Parse, AstBuilder.Build and
 // ProviderPipeline.Compile over the frozen 25-provider Core registry. No topology, container or
 // network is started, and the assembled script is never handed to Roslyn, loaded or run.
 //
+// BOUND MODELS FOR EVERY SUITE THAT REACHES THE AST. Compile can refuse a suite before any step is
+// bound (the environment binding, the security preflight, the protocol-conflict check) or after it
+// (a step's Validate, a host-resource collision). Either way the binders would go unrecorded, so for
+// every suite whose AST builds, the renderer also calls ProviderPipeline.BindAllSteps itself, with
+// the same three inputs Compile passes it (the AST, the registry and the suite directory; nothing
+// from the preflight), and records each step's model (EmittedCodeBaselineModels), its host-resource
+// requirements, or the bind failure. BindAllSteps stops at the first step whose Bind throws, as
+// Compile does, so the steps after it have no model to record.
+//
 // WHY A SECOND WALK OVER THE STEPS. ProviderPipeline.Compile returns only the assembled script, not
 // the fragment each provider returned, and a baseline that says "step 4 of this suite changed" needs
-// the fragment. So the renderer binds the steps with ProviderPipeline.BindAllSteps, builds the same
-// project context and calls each provider's Emit exactly as Compile's Pass 2 does, then reassembles
-// the recorded fragments with CsxAssembler and requires the result to equal the script Compile
-// produced. If Compile ever changes how it builds an Emit context, that equality check fails loudly
-// rather than letting the per-step record drift from what the engine really emits.
+// the fragment. So for a suite Compile accepts, the renderer builds the same project context from the
+// bound steps and calls each provider's Emit exactly as Compile's Pass 2 does, then reassembles the
+// recorded fragments with CsxAssembler and requires the result to equal the script Compile produced.
+// If Compile ever changes how it builds an Emit context, that equality check fails loudly rather than
+// letting the per-step record drift from what the engine really emits.
+//
+// FORMAT. The first lines (format version, suite, outcome, and stage or namespace, and the step
+// count) form the preamble. Every later section starts with a line beginning with Marker, and no two
+// sections share a header: refusal diagnostics are numbered ("diagnostic 2 of 3"), and each step has
+// a header section ("step 2 of 5": id, type, provider, model type, retry, timeout) followed by
+// "step 2 model", "step 2 host-resources" (or "step 2 bind-failure") and, when the suite emits,
+// "step 2 usings", "step 2 helpers" and "step 2 statement-block". An emitted suite ends with the
+// assembled script.
 //
 // DETERMINISM. Everything written is a function of the suite file, the providers and the engine:
 // line endings are normalised to LF, helper bodies are recorded by name and SHA-256 over their LF
-// text, and no path, timestamp or identifier of the machine is written. A diagnostic that embeds an
-// absolute path of this checkout is refused here rather than silently written.
+// text, and no path, timestamp or identifier of the machine is written. A diagnostic or model value
+// that embeds an absolute path of this checkout is refused here rather than silently written.
 
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -29,6 +47,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using Vouchfx.Engine.Abstractions;
 using Vouchfx.Engine.Authoring;
+using Vouchfx.Engine.Authoring.Ast;
 using Vouchfx.Engine.Compilation;
 using Vouchfx.Engine.Compilation.Schema;
 using Vouchfx.Engine.Orchestration.Environments;
@@ -41,10 +60,10 @@ internal static class EmittedCodeBaseline
     /// <summary>The suite namespace the engine passes to every provider (ScenarioRunner.SuiteNamespace).</summary>
     internal const string SuiteNamespace = "VouchfxGenerated";
 
-    /// <summary>Prefix of every structural line of a golden; no emitted line may start with it.</summary>
+    /// <summary>Prefix of every structural line of a golden; no recorded line may start with it.</summary>
     internal const string Marker = "@@@@ ";
 
-    private const string FormatVersion = "vouchfx emitted-code baseline v1";
+    private const string FormatVersion = "vouchfx emitted-code baseline v2";
 
     private static readonly Regex s_helperClassName = new(
         @"\bstatic\s+class\s+(\w+)",
@@ -70,13 +89,13 @@ internal static class EmittedCodeBaseline
         var validation = DocumentValidator.Validate(yaml, registry);
         if (!validation.IsValid)
         {
-            AppendRefusal(text, "schema", validation.Errors.Select(e => $"{e.InstanceLocation}\t{e.Message}"));
+            AppendRefusal(text, "schema", validation.Errors.Select(e => $"{e.InstanceLocation}\t{e.Message}").ToList());
             return Finish(text, suiteDirectory);
         }
 
         // 2. Parse and build the AST. Only the authoring exceptions are refusals; anything else is a
         //    defect and propagates so the gate names the suite instead of recording it.
-        Vouchfx.Engine.Authoring.Ast.ScenarioAst ast;
+        ScenarioAst ast;
         try
         {
             var document = YamlDocumentParser.Parse(yaml);
@@ -94,33 +113,30 @@ internal static class EmittedCodeBaseline
             return Finish(text, suiteDirectory);
         }
 
-        // 3. The provider pipeline (bind, validate, resources, emit, assemble).
+        // 3. The provider pipeline (bind, validate, resources, emit, assemble), then the binders on
+        //    their own, whatever the pipeline decided.
         var result = ProviderPipeline.Compile(ast, registry, SuiteNamespace, suiteDirectory);
+        var (boundSteps, bindFailure) = ProviderPipeline.BindAllSteps(ast, registry, suiteDirectory);
+        var stepCount = ast.Steps.Count.ToString(CultureInfo.InvariantCulture);
+
         if (result.Failure is { } failure)
         {
-            var flags = new List<string>();
-            if (failure.IsProviderOrEngineFault)
-            {
-                flags.Add("provider-or-engine-fault");
-            }
-
-            if (failure.IsSecurityPreflight)
-            {
-                flags.Add("security-preflight");
-            }
-
-            AppendRefusal(
-                text,
-                "pipeline",
-                new[] { (flags.Count == 0 ? "-" : string.Join(",", flags)) + "\t" + failure.Message });
+            AppendRefusal(text, "pipeline", new[] { DescribeFailure(failure) }, "steps: " + stepCount);
+            AppendBoundSteps(text, ast, registry, boundSteps, bindFailure, fragments: null);
+            text.Append(Marker).Append("end\n");
             return Finish(text, suiteDirectory);
         }
 
         var assembled = result.Assembled
             ?? throw new InvalidOperationException($"{suiteRelativePath}: Compile returned neither a failure nor a script.");
+        if (bindFailure is not null)
+        {
+            throw new InvalidOperationException(
+                $"{suiteRelativePath}: Compile succeeded but BindAllSteps failed: {bindFailure.Message}");
+        }
 
         // 4. Per-step fragments, recorded the way Compile's Pass 2 obtains them.
-        var plans = RecordFragments(ast, registry, suiteDirectory, out var providers);
+        var plans = RecordFragments(ast, suiteDirectory, boundSteps);
         var reassembled = CsxAssembler.Assemble(plans);
         if (!string.Equals(reassembled.CsxSource, assembled.CsxSource, StringComparison.Ordinal))
         {
@@ -132,12 +148,9 @@ internal static class EmittedCodeBaseline
 
         text.Append("outcome: emitted\n");
         text.Append("namespace: ").Append(SuiteNamespace).Append('\n');
-        text.Append("steps: ").Append(plans.Count.ToString(System.Globalization.CultureInfo.InvariantCulture)).Append('\n');
+        text.Append("steps: ").Append(stepCount).Append('\n');
 
-        for (var i = 0; i < plans.Count; i++)
-        {
-            AppendStep(text, i + 1, plans.Count, plans[i], providers[i], ast.Steps[i].CanonicalType);
-        }
+        AppendBoundSteps(text, ast, registry, boundSteps, bindFailure: null, plans);
 
         AppendSection(
             text, "assembled-script", ElideHelpers(assembled.CsxSource, plans.SelectMany(p => p.Fragment.RequiredHelpers)));
@@ -145,18 +158,25 @@ internal static class EmittedCodeBaseline
         return Finish(text, suiteDirectory);
     }
 
-    private static List<StepCompilePlan> RecordFragments(
-        Vouchfx.Engine.Authoring.Ast.ScenarioAst ast,
-        StepKindRegistry registry,
-        string suiteDirectory,
-        out List<string> providers)
+    private static string DescribeFailure(ValidationFailure failure)
     {
-        var (boundSteps, registryFailure) = ProviderPipeline.BindAllSteps(ast, registry, suiteDirectory);
-        if (registryFailure is not null)
+        var flags = new List<string>();
+        if (failure.IsProviderOrEngineFault)
         {
-            throw new InvalidOperationException("Bind failed after Compile succeeded: " + registryFailure.Message);
+            flags.Add("provider-or-engine-fault");
         }
 
+        if (failure.IsSecurityPreflight)
+        {
+            flags.Add("security-preflight");
+        }
+
+        return (flags.Count == 0 ? "-" : string.Join(",", flags)) + "\t" + failure.Message;
+    }
+
+    private static List<StepCompilePlan> RecordFragments(
+        ScenarioAst ast, string suiteDirectory, List<BoundStep> boundSteps)
+    {
         // Compile builds the environment plan first and hands its declarations to the project
         // context only when the suite names an environment source.
         var environmentPlan = EnvironmentDriverRegistry.BuiltIn.Bind(ast.Environment, suiteDirectory);
@@ -168,7 +188,6 @@ internal static class EmittedCodeBaseline
             ast.Environment?.Source is null ? null : environmentPlan.Declarations);
 
         var plans = new List<StepCompilePlan>(boundSteps.Count);
-        providers = new List<string>(boundSteps.Count);
         foreach (var bound in boundSteps)
         {
             var node = bound.Node;
@@ -186,27 +205,90 @@ internal static class EmittedCodeBaseline
                 Retry: node.VerifyMode == VerifyMode.Retry,
                 TimeoutMs: node.Timeout is { } t ? (long)t.TotalMilliseconds : null,
                 PollIntervalMs: null));
-            providers.Add(bound.Instance.GetType().FullName ?? bound.Instance.GetType().Name);
         }
 
         return plans;
     }
 
-    private static void AppendStep(
-        StringBuilder text, int number, int total, StepCompilePlan plan, string provider, string canonicalType)
+    /// <summary>
+    /// Writes, per step, the header and the bound model with its host-resource requirements and, when
+    /// <paramref name="fragments"/> is given, the step's emitted fragment. A bind failure is written
+    /// under the step it names; BindAllSteps binds no step after it.
+    /// </summary>
+    private static void AppendBoundSteps(
+        StringBuilder text,
+        ScenarioAst ast,
+        StepKindRegistry registry,
+        List<BoundStep> boundSteps,
+        ValidationFailure? bindFailure,
+        List<StepCompilePlan>? fragments)
     {
-        var n = number.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var total = ast.Steps.Count;
+        for (var i = 0; i < boundSteps.Count; i++)
+        {
+            var bound = boundSteps[i];
+            var n = (i + 1).ToString(CultureInfo.InvariantCulture);
+            AppendStepHeader(text, i + 1, total, bound.Node, ProviderName(bound.Instance), bound.Model.GetType().FullName);
+            AppendSection(text, "step " + n + " model", EmittedCodeBaselineModels.SerialiseModel(bound.Model));
+            AppendSection(
+                text,
+                "step " + n + " host-resources",
+                bound.HostResourcesFailure is { } hostFailure
+                    ? "failure: " + hostFailure.GetType().FullName + "\t" + hostFailure.Message
+                    : EmittedCodeBaselineModels.SerialiseHostResources(bound.HostResources));
+
+            if (fragments is not null)
+            {
+                AppendFragment(text, n, fragments[i]);
+            }
+        }
+
+        if (bindFailure is null)
+        {
+            return;
+        }
+
+        if (boundSteps.Count < total)
+        {
+            var node = ast.Steps[boundSteps.Count];
+            var number = boundSteps.Count + 1;
+            var provider = registry.TryGet(node.CanonicalType, out var registered) && registered is not null
+                ? ProviderName(registered.Instance)
+                : "(not in registry)";
+            AppendStepHeader(text, number, total, node, provider, modelType: null);
+            AppendSection(
+                text,
+                "step " + number.ToString(CultureInfo.InvariantCulture) + " bind-failure",
+                "stage: bind\n" + DescribeFailure(bindFailure));
+        }
+        else
+        {
+            AppendSection(text, "bind-failure", "stage: bind\n" + DescribeFailure(bindFailure));
+        }
+    }
+
+    private static string ProviderName(IStepProvider instance) =>
+        instance.GetType().FullName ?? instance.GetType().Name;
+
+    private static void AppendStepHeader(
+        StringBuilder text, int number, int total, StepNode node, string provider, string? modelType)
+    {
+        var n = number.ToString(CultureInfo.InvariantCulture);
         text.Append('\n');
         text.Append(Marker).Append("step ").Append(n).Append(" of ")
-            .Append(total.ToString(System.Globalization.CultureInfo.InvariantCulture)).Append('\n');
-        text.Append("id: ").Append(plan.StepId).Append('\n');
-        text.Append("type: ").Append(canonicalType).Append('\n');
+            .Append(total.ToString(CultureInfo.InvariantCulture)).Append('\n');
+        text.Append("id: ").Append(node.Id).Append('\n');
+        text.Append("type: ").Append(node.CanonicalType).Append('\n');
         text.Append("provider: ").Append(provider).Append('\n');
-        text.Append("retry: ").Append(plan.Retry ? "true" : "false").Append('\n');
+        text.Append("model: ").Append(modelType ?? "(not bound)").Append('\n');
+        text.Append("retry: ").Append(node.VerifyMode == VerifyMode.Retry ? "true" : "false").Append('\n');
         text.Append("timeout-ms: ")
-            .Append(plan.TimeoutMs is { } ms ? ms.ToString(System.Globalization.CultureInfo.InvariantCulture) : "none")
+            .Append(node.Timeout is { } t ? ((long)t.TotalMilliseconds).ToString(CultureInfo.InvariantCulture) : "none")
             .Append('\n');
+    }
 
+    private static void AppendFragment(StringBuilder text, string n, StepCompilePlan plan)
+    {
         AppendSection(text, "step " + n + " usings", string.Join("\n", plan.Fragment.RequiredUsings));
 
         var helperLines = new List<string>();
@@ -259,16 +341,31 @@ internal static class EmittedCodeBaseline
         return result;
     }
 
-    private static void AppendRefusal(StringBuilder text, string stage, IEnumerable<string> diagnostics)
+    /// <summary>
+    /// Writes the refusal preamble and one numbered section per diagnostic. The caller writes the end
+    /// marker unless <paramref name="preambleTail"/> is null, in which case the refusal is the whole golden.
+    /// </summary>
+    private static void AppendRefusal(
+        StringBuilder text, string stage, IReadOnlyList<string> diagnostics, string? preambleTail = null)
     {
         text.Append("outcome: refused\n");
         text.Append("stage: ").Append(stage).Append('\n');
-        foreach (var diagnostic in diagnostics)
+        if (preambleTail is not null)
         {
-            AppendSection(text, "diagnostic", diagnostic);
+            text.Append(preambleTail).Append('\n');
         }
 
-        text.Append(Marker).Append("end\n");
+        var total = diagnostics.Count.ToString(CultureInfo.InvariantCulture);
+        for (var i = 0; i < diagnostics.Count; i++)
+        {
+            AppendSection(
+                text, "diagnostic " + (i + 1).ToString(CultureInfo.InvariantCulture) + " of " + total, diagnostics[i]);
+        }
+
+        if (preambleTail is null)
+        {
+            text.Append(Marker).Append("end\n");
+        }
     }
 
     private static void AppendSection(StringBuilder text, string name, string body)
@@ -280,7 +377,7 @@ internal static class EmittedCodeBaseline
             if (line.StartsWith(Marker, StringComparison.Ordinal))
             {
                 throw new InvalidOperationException(
-                    $"Emitted text contains a line starting with the golden's delimiter '{Marker}': {line}");
+                    $"Recorded text contains a line starting with the golden's delimiter '{Marker}': {line}");
             }
         }
 
@@ -307,6 +404,17 @@ internal static class EmittedCodeBaseline
                         $"The rendered baseline embeds the machine path '{spelling}'. A golden must be identical on every "
                         + "machine: neutralise the path in EmittedCodeBaseline before committing it.");
                 }
+            }
+        }
+
+        var headers = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var line in result.Split('\n'))
+        {
+            if (line.StartsWith(Marker, StringComparison.Ordinal) && !headers.Add(line))
+            {
+                throw new InvalidOperationException(
+                    $"The rendered baseline repeats the section header '{line}'; every header must be unique so a "
+                    + "difference can be attributed to one section.");
             }
         }
 

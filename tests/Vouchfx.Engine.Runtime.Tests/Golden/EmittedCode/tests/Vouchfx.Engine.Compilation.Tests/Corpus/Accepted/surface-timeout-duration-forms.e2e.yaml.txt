@@ -1,4 +1,4 @@
-vouchfx emitted-code baseline v1
+vouchfx emitted-code baseline v2
 suite: tests/Vouchfx.Engine.Compilation.Tests/Corpus/Accepted/surface-timeout-duration-forms.e2e.yaml
 outcome: emitted
 namespace: VouchfxGenerated
@@ -8,8 +8,20 @@ steps: 4
 id: milliseconds-form
 type: http.rest
 provider: Vouchfx.Steps.HttpRest.HttpRestProvider
+model: Vouchfx.Steps.HttpRest.HttpRestModel
 retry: false
 timeout-ms: 500
+@@@@ step 1 model
+{
+  "Target": "app",
+  "Method": "GET",
+  "Path": "/api",
+  "Headers": null,
+  "Body": null,
+  "Expect": null
+}
+@@@@ step 1 host-resources
+[]
 @@@@ step 1 usings
 System
 System.Collections.Generic
@@ -54,8 +66,20 @@ HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01c
 id: seconds-form
 type: http.rest
 provider: Vouchfx.Steps.HttpRest.HttpRestProvider
+model: Vouchfx.Steps.HttpRest.HttpRestModel
 retry: false
 timeout-ms: 30000
+@@@@ step 2 model
+{
+  "Target": "app",
+  "Method": "GET",
+  "Path": "/api",
+  "Headers": null,
+  "Body": null,
+  "Expect": null
+}
+@@@@ step 2 host-resources
+[]
 @@@@ step 2 usings
 System
 System.Collections.Generic
@@ -100,8 +124,20 @@ HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01c
 id: minutes-form
 type: http.rest
 provider: Vouchfx.Steps.HttpRest.HttpRestProvider
+model: Vouchfx.Steps.HttpRest.HttpRestModel
 retry: false
 timeout-ms: 120000
+@@@@ step 3 model
+{
+  "Target": "app",
+  "Method": "GET",
+  "Path": "/api",
+  "Headers": null,
+  "Body": null,
+  "Expect": null
+}
+@@@@ step 3 host-resources
+[]
 @@@@ step 3 usings
 System
 System.Collections.Generic
@@ -146,8 +182,20 @@ HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01c
 id: bare-integer-form
 type: http.rest
 provider: Vouchfx.Steps.HttpRest.HttpRestProvider
+model: Vouchfx.Steps.HttpRest.HttpRestModel
 retry: false
 timeout-ms: 45000
+@@@@ step 4 model
+{
+  "Target": "app",
+  "Method": "GET",
+  "Path": "/api",
+  "Headers": null,
+  "Body": null,
+  "Expect": null
+}
+@@@@ step 4 host-resources
+[]
 @@@@ step 4 usings
 System
 System.Collections.Generic

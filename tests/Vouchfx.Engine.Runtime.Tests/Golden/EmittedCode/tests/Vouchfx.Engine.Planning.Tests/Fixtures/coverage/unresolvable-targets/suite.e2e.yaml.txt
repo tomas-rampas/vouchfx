@@ -1,7 +1,49 @@
-vouchfx emitted-code baseline v1
+vouchfx emitted-code baseline v2
 suite: tests/Vouchfx.Engine.Planning.Tests/Fixtures/coverage/unresolvable-targets/suite.e2e.yaml
 outcome: refused
 stage: pipeline
-@@@@ diagnostic
+steps: 2
+@@@@ diagnostic 1 of 1
 -	Step 'call-api-with-placeholder-target' model validation failed: http.rest: 'target' '{apiName}' names neither a declared service in environment.services nor a declared dependency in environment.dependencies. Declared dependencies: cache. Declared services: api.
+
+@@@@ step 1 of 2
+id: call-api-with-placeholder-target
+type: http.rest
+provider: Vouchfx.Steps.HttpRest.HttpRestProvider
+model: Vouchfx.Steps.HttpRest.HttpRestModel
+retry: false
+timeout-ms: none
+@@@@ step 1 model
+{
+  "Target": "{apiName}",
+  "Method": "GET",
+  "Path": "/health",
+  "Headers": null,
+  "Body": null,
+  "Expect": null
+}
+@@@@ step 1 host-resources
+[]
+
+@@@@ step 2 of 2
+id: assert-cache-with-secret-target
+type: cache-assert.redis
+provider: Vouchfx.Steps.CacheAssert.Redis.CacheAssertRedisProvider
+model: Vouchfx.Steps.CacheAssert.Redis.CacheAssertRedisModel
+retry: false
+timeout-ms: none
+@@@@ step 2 model
+{
+  "Target": "${secret:vault/cache-name}",
+  "Key": "planner-key",
+  "Operation": "Exists",
+  "Field": null,
+  "Expect": {
+    "Value": null,
+    "Exists": true,
+    "Length": null
+  }
+}
+@@@@ step 2 host-resources
+[]
 @@@@ end

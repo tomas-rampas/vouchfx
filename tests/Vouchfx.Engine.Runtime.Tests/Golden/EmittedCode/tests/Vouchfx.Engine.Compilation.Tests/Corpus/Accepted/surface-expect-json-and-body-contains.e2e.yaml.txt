@@ -1,4 +1,4 @@
-vouchfx emitted-code baseline v1
+vouchfx emitted-code baseline v2
 suite: tests/Vouchfx.Engine.Compilation.Tests/Corpus/Accepted/surface-expect-json-and-body-contains.e2e.yaml
 outcome: emitted
 namespace: VouchfxGenerated
@@ -8,8 +8,80 @@ steps: 2
 id: get-order
 type: http.rest
 provider: Vouchfx.Steps.HttpRest.HttpRestProvider
+model: Vouchfx.Steps.HttpRest.HttpRestModel
 retry: false
 timeout-ms: none
+@@@@ step 1 model
+{
+  "Target": "app",
+  "Method": "GET",
+  "Path": "/api",
+  "Headers": null,
+  "Body": null,
+  "Expect": {
+    "Status": 200,
+    "Json": [
+      {
+        "Path": "$.id",
+        "Expected": "{orderId}",
+        "Exists": null
+      },
+      {
+        "Path": "$.status",
+        "Expected": "PENDING",
+        "Exists": null
+      },
+      {
+        "Path": "$.quantity",
+        "Expected": "2",
+        "Exists": null
+      },
+      {
+        "Path": "$.price",
+        "Expected": "1.5",
+        "Exists": null
+      },
+      {
+        "Path": "$.gift",
+        "Expected": "false",
+        "Exists": null
+      },
+      {
+        "Path": "$.cancelledAt",
+        "Expected": "null",
+        "Exists": null
+      },
+      {
+        "Path": "$.note",
+        "Expected": "",
+        "Exists": null
+      },
+      {
+        "Path": "$.lines[?@.sku == 'SKU-1'].quantity",
+        "Expected": "2",
+        "Exists": null
+      },
+      {
+        "Path": "$.audit.caller",
+        "Expected": "${secret:env/API_CLIENT_ID}",
+        "Exists": null
+      },
+      {
+        "Path": "$.createdAt",
+        "Expected": null,
+        "Exists": true
+      },
+      {
+        "Path": "$..password",
+        "Expected": null,
+        "Exists": false
+      }
+    ],
+    "BodyContains": "Hostname"
+  }
+}
+@@@@ step 1 host-resources
+[]
 @@@@ step 1 usings
 System
 System.Collections.Generic
@@ -54,8 +126,24 @@ HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01c
 id: get-text
 type: http.rest
 provider: Vouchfx.Steps.HttpRest.HttpRestProvider
+model: Vouchfx.Steps.HttpRest.HttpRestModel
 retry: false
 timeout-ms: none
+@@@@ step 2 model
+{
+  "Target": "app",
+  "Method": "GET",
+  "Path": "/",
+  "Headers": null,
+  "Body": null,
+  "Expect": {
+    "Status": null,
+    "Json": null,
+    "BodyContains": "42"
+  }
+}
+@@@@ step 2 host-resources
+[]
 @@@@ step 2 usings
 System
 System.Collections.Generic

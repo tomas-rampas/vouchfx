@@ -1,7 +1,7 @@
-vouchfx emitted-code baseline v1
+vouchfx emitted-code baseline v2
 suite: tests/Vouchfx.Engine.Compilation.Tests/Corpus/Rejected/security-serverartifacts-target-not-absolute.e2e.yaml
 outcome: refused
 stage: schema
-@@@@ diagnostic
+@@@@ diagnostic 1 of 1
 /environment/dependencies/events-kafka/security/serverArtifacts/0/target	(line 18) The string value is not a match for the indicated regular expression
 @@@@ end

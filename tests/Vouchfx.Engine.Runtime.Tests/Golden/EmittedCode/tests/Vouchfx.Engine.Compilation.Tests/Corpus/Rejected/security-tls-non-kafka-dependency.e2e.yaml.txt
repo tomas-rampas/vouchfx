@@ -1,7 +1,7 @@
-vouchfx emitted-code baseline v1
+vouchfx emitted-code baseline v2
 suite: tests/Vouchfx.Engine.Compilation.Tests/Corpus/Rejected/security-tls-non-kafka-dependency.e2e.yaml
 outcome: refused
 stage: schema
-@@@@ diagnostic
+@@@@ diagnostic 1 of 1
 /environment/dependencies/cache/security	(line 32) Dependency 'cache' (type 'redis') declares 'security', but no security profile is wired for dependency kind 'redis' in this release - only a 'kafka' dependency, or a declared service, can carry a 'security' block today. Transport security for the remaining dependency kinds arrives in 1.1.
 @@@@ end

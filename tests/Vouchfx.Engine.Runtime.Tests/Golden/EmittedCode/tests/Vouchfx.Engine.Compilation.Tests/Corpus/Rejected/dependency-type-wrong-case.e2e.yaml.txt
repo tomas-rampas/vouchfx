@@ -1,7 +1,7 @@
-vouchfx emitted-code baseline v1
+vouchfx emitted-code baseline v2
 suite: tests/Vouchfx.Engine.Compilation.Tests/Corpus/Rejected/dependency-type-wrong-case.e2e.yaml
 outcome: refused
 stage: schema
-@@@@ diagnostic
+@@@@ diagnostic 1 of 1
 /environment/dependencies/db/type	(line 17) Value 'Postgres' is not one of the accepted values for 'type': postgres, sqlserver, mysql, mongodb, redis, elasticsearch, rabbitmq, nats, ... and 6 more - write 'postgres'
 @@@@ end

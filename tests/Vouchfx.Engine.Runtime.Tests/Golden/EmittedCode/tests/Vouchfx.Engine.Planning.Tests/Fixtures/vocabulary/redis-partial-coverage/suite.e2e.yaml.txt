@@ -1,4 +1,4 @@
-vouchfx emitted-code baseline v1
+vouchfx emitted-code baseline v2
 suite: tests/Vouchfx.Engine.Planning.Tests/Fixtures/vocabulary/redis-partial-coverage/suite.e2e.yaml
 outcome: emitted
 namespace: VouchfxGenerated
@@ -8,8 +8,23 @@ steps: 1
 id: assert-session
 type: cache-assert.redis
 provider: Vouchfx.Steps.CacheAssert.Redis.CacheAssertRedisProvider
+model: Vouchfx.Steps.CacheAssert.Redis.CacheAssertRedisModel
 retry: false
 timeout-ms: none
+@@@@ step 1 model
+{
+  "Target": "sessions",
+  "Key": "planner-key",
+  "Operation": "Exists",
+  "Field": null,
+  "Expect": {
+    "Value": null,
+    "Exists": true,
+    "Length": null
+  }
+}
+@@@@ step 1 host-resources
+[]
 @@@@ step 1 usings
 System
 System.Collections.Generic

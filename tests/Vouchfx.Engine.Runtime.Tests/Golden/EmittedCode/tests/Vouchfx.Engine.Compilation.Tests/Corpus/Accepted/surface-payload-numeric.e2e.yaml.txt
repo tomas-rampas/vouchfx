@@ -1,4 +1,4 @@
-vouchfx emitted-code baseline v1
+vouchfx emitted-code baseline v2
 suite: tests/Vouchfx.Engine.Compilation.Tests/Corpus/Accepted/surface-payload-numeric.e2e.yaml
 outcome: emitted
 namespace: VouchfxGenerated
@@ -8,8 +8,20 @@ steps: 1
 id: publish-event
 type: mq-publish.kafka
 provider: Vouchfx.Steps.MqPublish.Kafka.MqPublishKafkaProvider
+model: Vouchfx.Steps.MqPublish.Kafka.MqPublishKafkaModel
 retry: false
 timeout-ms: none
+@@@@ step 1 model
+{
+  "Target": "events",
+  "Topic": "orders",
+  "Key": null,
+  "Payload": "12345",
+  "Headers": null,
+  "Avro": null
+}
+@@@@ step 1 host-resources
+[]
 @@@@ step 1 usings
 System
 System.Collections.Generic

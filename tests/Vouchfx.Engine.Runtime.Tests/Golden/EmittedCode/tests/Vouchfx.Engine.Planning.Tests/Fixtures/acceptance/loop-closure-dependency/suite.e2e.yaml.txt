@@ -1,7 +1,7 @@
-vouchfx emitted-code baseline v1
+vouchfx emitted-code baseline v2
 suite: tests/Vouchfx.Engine.Planning.Tests/Fixtures/acceptance/loop-closure-dependency/suite.e2e.yaml
 outcome: refused
 stage: schema
-@@@@ diagnostic
+@@@@ diagnostic 1 of 1
 /steps	(line 6) Value should have at least 1 items
 @@@@ end

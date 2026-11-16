@@ -1,4 +1,4 @@
-vouchfx emitted-code baseline v1
+vouchfx emitted-code baseline v2
 suite: examples/mq-redis.e2e.yaml
 outcome: emitted
 namespace: VouchfxGenerated
@@ -8,8 +8,24 @@ steps: 3
 id: trigger-order-event
 type: http.rest
 provider: Vouchfx.Steps.HttpRest.HttpRestProvider
+model: Vouchfx.Steps.HttpRest.HttpRestModel
 retry: false
 timeout-ms: none
+@@@@ step 1 model
+{
+  "Target": "app",
+  "Method": "POST",
+  "Path": "/orders",
+  "Headers": null,
+  "Body": "{\"customerId\":\"cust-1\",\"amount\":49.99}",
+  "Expect": {
+    "Status": 200,
+    "Json": null,
+    "BodyContains": null
+  }
+}
+@@@@ step 1 host-resources
+[]
 @@@@ step 1 usings
 System
 System.Collections.Generic
@@ -54,8 +70,17 @@ HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01c
 id: publish-order-event
 type: mq-publish.redis
 provider: Vouchfx.Steps.MqPublish.Redis.MqPublishRedisProvider
+model: Vouchfx.Steps.MqPublish.Redis.MqPublishRedisModel
 retry: false
 timeout-ms: none
+@@@@ step 2 model
+{
+  "Target": "cache",
+  "Stream": "orders-created",
+  "Payload": "{\"event\":\"order-created\",\"orderId\":\"ord-001\",\"customerId\":\"cust-1\"}"
+}
+@@@@ step 2 host-resources
+[]
 @@@@ step 2 usings
 System
 System.Collections.Generic
@@ -81,8 +106,22 @@ Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16a
 id: assert-order-event
 type: mq-expect.redis
 provider: Vouchfx.Steps.MqExpect.Redis.MqExpectRedisProvider
+model: Vouchfx.Steps.MqExpect.Redis.MqExpectRedisModel
 retry: true
 timeout-ms: 30000
+@@@@ step 3 model
+{
+  "Target": "cache",
+  "Stream": "orders-created",
+  "Match": {
+    "PayloadContains": "order-created",
+    "Json": {
+      "$.orderId": "ord-001"
+    }
+  }
+}
+@@@@ step 3 host-resources
+[]
 @@@@ step 3 usings
 System
 System.Collections.Generic

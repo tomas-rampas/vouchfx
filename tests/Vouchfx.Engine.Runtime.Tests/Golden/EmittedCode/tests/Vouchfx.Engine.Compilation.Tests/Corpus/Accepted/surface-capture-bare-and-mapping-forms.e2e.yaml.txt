@@ -1,4 +1,4 @@
-vouchfx emitted-code baseline v1
+vouchfx emitted-code baseline v2
 suite: tests/Vouchfx.Engine.Compilation.Tests/Corpus/Accepted/surface-capture-bare-and-mapping-forms.e2e.yaml
 outcome: emitted
 namespace: VouchfxGenerated
@@ -8,8 +8,24 @@ steps: 1
 id: call-app
 type: http.rest
 provider: Vouchfx.Steps.HttpRest.HttpRestProvider
+model: Vouchfx.Steps.HttpRest.HttpRestModel
 retry: false
 timeout-ms: none
+@@@@ step 1 model
+{
+  "Target": "app",
+  "Method": "GET",
+  "Path": "/api",
+  "Headers": null,
+  "Body": null,
+  "Expect": {
+    "Status": 200,
+    "Json": null,
+    "BodyContains": null
+  }
+}
+@@@@ step 1 host-resources
+[]
 @@@@ step 1 usings
 System
 System.Collections.Generic

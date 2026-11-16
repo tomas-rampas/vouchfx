@@ -1,7 +1,58 @@
-vouchfx emitted-code baseline v1
+vouchfx emitted-code baseline v2
 suite: tools/vscode-vouchfx/examples/script-csharp-highlighting.e2e.yaml
 outcome: refused
 stage: pipeline
-@@@@ diagnostic
+steps: 3
+@@@@ diagnostic 1 of 1
 -	Step 'assert-shape' model validation failed: db-assert.postgres: 'target' 'appdb' is not a postgres dependency declared in environment.dependencies.
+
+@@@@ step 1 of 3
+id: compute
+type: script.csharp
+provider: Vouchfx.Steps.Script.Csharp.ScriptCsharpProvider
+model: Vouchfx.Steps.Script.Csharp.ScriptCsharpModel
+retry: false
+timeout-ms: none
+@@@@ step 1 model
+{
+  "Code": "// This whole block should highlight as C#.\nvar id = Vars[\"greeting\"]?.ToString() ?? \"world\";\nvar count = 0;\nfor (var i = 0; i < 3; i++)\n{\n    count += i;\n}\nVars[\"message\"] = $\"{id} ({count})\";\nConsole.WriteLine(Vars[\"message\"]);\n",
+  "File": null
+}
+@@@@ step 1 host-resources
+[]
+
+@@@@ step 2 of 3
+id: assert-shape
+type: db-assert.postgres
+provider: Vouchfx.Steps.DbAssert.Postgres.DbAssertPostgresProvider
+model: Vouchfx.Steps.DbAssert.Postgres.DbAssertPostgresModel
+retry: false
+timeout-ms: none
+@@@@ step 2 model
+{
+  "Target": "appdb",
+  "Query": "SELECT 1",
+  "Parameters": null,
+  "Expect": {
+    "RowCount": 1,
+    "Row": null
+  }
+}
+@@@@ step 2 host-resources
+[]
+
+@@@@ step 3 of 3
+id: compute-folded
+type: script.csharp
+provider: Vouchfx.Steps.Script.Csharp.ScriptCsharpProvider
+model: Vouchfx.Steps.Script.Csharp.ScriptCsharpModel
+retry: false
+timeout-ms: none
+@@@@ step 3 model
+{
+  "Code": "Vars[\"folded\"] = \"still C#\"; var ok = true;",
+  "File": null
+}
+@@@@ step 3 host-resources
+[]
 @@@@ end

@@ -1,4 +1,4 @@
-vouchfx emitted-code baseline v1
+vouchfx emitted-code baseline v2
 suite: examples/cache-assert-redis.e2e.yaml
 outcome: emitted
 namespace: VouchfxGenerated
@@ -8,8 +8,24 @@ steps: 8
 id: prime-cache
 type: http.rest
 provider: Vouchfx.Steps.HttpRest.HttpRestProvider
+model: Vouchfx.Steps.HttpRest.HttpRestModel
 retry: false
 timeout-ms: none
+@@@@ step 1 model
+{
+  "Target": "app",
+  "Method": "POST",
+  "Path": "/sessions",
+  "Headers": null,
+  "Body": "{\"userId\":\"42\",\"status\":\"active\"}",
+  "Expect": {
+    "Status": 200,
+    "Json": null,
+    "BodyContains": null
+  }
+}
+@@@@ step 1 host-resources
+[]
 @@@@ step 1 usings
 System
 System.Collections.Generic
@@ -54,8 +70,16 @@ HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01c
 id: simulate-session-write
 type: script.csharp
 provider: Vouchfx.Steps.Script.Csharp.ScriptCsharpProvider
+model: Vouchfx.Steps.Script.Csharp.ScriptCsharpModel
 retry: false
 timeout-ms: none
+@@@@ step 2 model
+{
+  "Code": "var connStr = (string)Vars[\"conn::cache\"];\nvar userId = (string)Vars[\"userId\"];\nvar muxer = await StackExchange.Redis.ConnectionMultiplexer.ConnectAsync(connStr);\ntry\n{\n    var db = muxer.GetDatabase();\n    await db.StringSetAsync(\"user:\" + userId, \"active\", TimeSpan.FromMinutes(5));\n    await db.HashSetAsync(\n        \"user:\" + userId + \":profile\",\n        new StackExchange.Redis.HashEntry[]\n        {\n            new StackExchange.Redis.HashEntry(\"status\", \"verified\"),\n        });\n    var queueKey = \"user:\" + userId + \":queue\";\n    await db.KeyDeleteAsync(queueKey);\n    await db.ListRightPushAsync(\n        queueKey,\n        new StackExchange.Redis.RedisValue[] { \"job-1\", \"job-2\", \"job-3\" });\n    var tagsKey = \"user:\" + userId + \":tags\";\n    await db.KeyDeleteAsync(tagsKey);\n    await db.SetAddAsync(\n        tagsKey,\n        new StackExchange.Redis.RedisValue[] { \"beta\", \"early-adopter\" });\n}\nfinally { muxer.Dispose(); }\n",
+  "File": null
+}
+@@@@ step 2 host-resources
+[]
 @@@@ step 2 usings
 System
 System.Diagnostics
@@ -124,8 +148,23 @@ finally { muxer.Dispose(); }
 id: assert-session-value
 type: cache-assert.redis
 provider: Vouchfx.Steps.CacheAssert.Redis.CacheAssertRedisProvider
+model: Vouchfx.Steps.CacheAssert.Redis.CacheAssertRedisModel
 retry: true
 timeout-ms: 10000
+@@@@ step 3 model
+{
+  "Target": "cache",
+  "Key": "user:{userId}",
+  "Operation": "Get",
+  "Field": null,
+  "Expect": {
+    "Value": "active",
+    "Exists": null,
+    "Length": null
+  }
+}
+@@@@ step 3 host-resources
+[]
 @@@@ step 3 usings
 System
 System.Collections.Generic
@@ -153,8 +192,23 @@ Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef
 id: assert-session-present
 type: cache-assert.redis
 provider: Vouchfx.Steps.CacheAssert.Redis.CacheAssertRedisProvider
+model: Vouchfx.Steps.CacheAssert.Redis.CacheAssertRedisModel
 retry: false
 timeout-ms: none
+@@@@ step 4 model
+{
+  "Target": "cache",
+  "Key": "user:{userId}",
+  "Operation": "Exists",
+  "Field": null,
+  "Expect": {
+    "Value": null,
+    "Exists": true,
+    "Length": null
+  }
+}
+@@@@ step 4 host-resources
+[]
 @@@@ step 4 usings
 System
 System.Collections.Generic
@@ -182,8 +236,23 @@ Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef
 id: assert-session-has-ttl
 type: cache-assert.redis
 provider: Vouchfx.Steps.CacheAssert.Redis.CacheAssertRedisProvider
+model: Vouchfx.Steps.CacheAssert.Redis.CacheAssertRedisModel
 retry: false
 timeout-ms: none
+@@@@ step 5 model
+{
+  "Target": "cache",
+  "Key": "user:{userId}",
+  "Operation": "Ttl",
+  "Field": null,
+  "Expect": {
+    "Value": null,
+    "Exists": true,
+    "Length": null
+  }
+}
+@@@@ step 5 host-resources
+[]
 @@@@ step 5 usings
 System
 System.Collections.Generic
@@ -211,8 +280,23 @@ Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef
 id: assert-profile-status
 type: cache-assert.redis
 provider: Vouchfx.Steps.CacheAssert.Redis.CacheAssertRedisProvider
+model: Vouchfx.Steps.CacheAssert.Redis.CacheAssertRedisModel
 retry: false
 timeout-ms: none
+@@@@ step 6 model
+{
+  "Target": "cache",
+  "Key": "user:{userId}:profile",
+  "Operation": "HGet",
+  "Field": "status",
+  "Expect": {
+    "Value": "verified",
+    "Exists": null,
+    "Length": null
+  }
+}
+@@@@ step 6 host-resources
+[]
 @@@@ step 6 usings
 System
 System.Collections.Generic
@@ -240,8 +324,23 @@ Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef
 id: assert-queue-length
 type: cache-assert.redis
 provider: Vouchfx.Steps.CacheAssert.Redis.CacheAssertRedisProvider
+model: Vouchfx.Steps.CacheAssert.Redis.CacheAssertRedisModel
 retry: false
 timeout-ms: none
+@@@@ step 7 model
+{
+  "Target": "cache",
+  "Key": "user:{userId}:queue",
+  "Operation": "LLen",
+  "Field": null,
+  "Expect": {
+    "Value": null,
+    "Exists": null,
+    "Length": 3
+  }
+}
+@@@@ step 7 host-resources
+[]
 @@@@ step 7 usings
 System
 System.Collections.Generic
@@ -269,8 +368,23 @@ Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef
 id: assert-tag-count
 type: cache-assert.redis
 provider: Vouchfx.Steps.CacheAssert.Redis.CacheAssertRedisProvider
+model: Vouchfx.Steps.CacheAssert.Redis.CacheAssertRedisModel
 retry: false
 timeout-ms: none
+@@@@ step 8 model
+{
+  "Target": "cache",
+  "Key": "user:{userId}:tags",
+  "Operation": "SCard",
+  "Field": null,
+  "Expect": {
+    "Value": null,
+    "Exists": null,
+    "Length": 2
+  }
+}
+@@@@ step 8 host-resources
+[]
 @@@@ step 8 usings
 System
 System.Collections.Generic

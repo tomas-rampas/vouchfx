@@ -1,4 +1,4 @@
-vouchfx emitted-code baseline v1
+vouchfx emitted-code baseline v2
 suite: examples/mail-expect-smtp.e2e.yaml
 outcome: emitted
 namespace: VouchfxGenerated
@@ -8,8 +8,24 @@ steps: 3
 id: trigger-welcome-email
 type: http.rest
 provider: Vouchfx.Steps.HttpRest.HttpRestProvider
+model: Vouchfx.Steps.HttpRest.HttpRestModel
 retry: false
 timeout-ms: none
+@@@@ step 1 model
+{
+  "Target": "app",
+  "Method": "POST",
+  "Path": "/send-welcome",
+  "Headers": null,
+  "Body": "{\"to\":\"alice@example.com\",\"name\":\"Alice\"}",
+  "Expect": {
+    "Status": 200,
+    "Json": null,
+    "BodyContains": null
+  }
+}
+@@@@ step 1 host-resources
+[]
 @@@@ step 1 usings
 System
 System.Collections.Generic
@@ -54,8 +70,16 @@ HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01c
 id: simulate-welcome-email
 type: script.csharp
 provider: Vouchfx.Steps.Script.Csharp.ScriptCsharpProvider
+model: Vouchfx.Steps.Script.Csharp.ScriptCsharpModel
 retry: false
 timeout-ms: none
+@@@@ step 2 model
+{
+  "Code": "// Clear the mailbox first so the exact count:1 assertion below stays true\n// when the suite reruns against the same container (e.g. under --watch —\n// Mailpit is not covered by the automatic state reset, so messages would\n// otherwise accumulate across iterations).\nvar apiUrl = (string)Vars[\"conn::mailpit\"];\nvar http = new System.Net.Http.HttpClient();\ntry\n{\n    var clear = await http.DeleteAsync(apiUrl.TrimEnd('/') + \"/api/v1/messages\");\n    try\n    {\n        clear.EnsureSuccessStatusCode();\n    }\n    finally { clear.Dispose(); }\n}\nfinally { http.Dispose(); }\n\nvar raw = (string)Vars[\"svc::mailpit-smtp\"];\nstring host;\nint port;\nif (raw.Contains(\"://\"))\n{\n    var uri = new Uri(raw);\n    host = uri.Host;\n    port = uri.Port;\n}\nelse\n{\n    var idx = raw.LastIndexOf(':');\n    host = raw.Substring(0, idx);\n    port = int.Parse(raw.Substring(idx + 1), System.Globalization.CultureInfo.InvariantCulture);\n}\n\nvar smtp = new System.Net.Mail.SmtpClient(host, port);\ntry\n{\n    var message = new System.Net.Mail.MailMessage(\n        \"noreply@example.com\",\n        \"alice@example.com\",\n        \"Welcome to Example\",\n        \"Hello, Alice - welcome aboard!\");\n    try\n    {\n        await smtp.SendMailAsync(message);\n    }\n    finally { message.Dispose(); }\n}\nfinally { smtp.Dispose(); }\n",
+  "File": null
+}
+@@@@ step 2 host-resources
+[]
 @@@@ step 2 usings
 System
 System.Diagnostics
@@ -147,8 +171,23 @@ finally { smtp.Dispose(); }
 id: assert-welcome-email
 type: mail-expect.smtp
 provider: Vouchfx.Steps.MailExpect.Smtp.MailExpectSmtpProvider
+model: Vouchfx.Steps.MailExpect.Smtp.MailExpectSmtpModel
 retry: true
 timeout-ms: 30000
+@@@@ step 3 model
+{
+  "Target": "mailpit",
+  "Expect": {
+    "Match": {
+      "To": "alice@example.com",
+      "SubjectContains": "Welcome",
+      "BodyContains": "Hello, Alice"
+    },
+    "Count": 1
+  }
+}
+@@@@ step 3 host-resources
+[]
 @@@@ step 3 usings
 System
 System.Collections.Generic

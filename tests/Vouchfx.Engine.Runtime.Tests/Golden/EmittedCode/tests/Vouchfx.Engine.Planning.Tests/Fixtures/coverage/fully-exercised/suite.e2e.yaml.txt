@@ -1,4 +1,4 @@
-vouchfx emitted-code baseline v1
+vouchfx emitted-code baseline v2
 suite: tests/Vouchfx.Engine.Planning.Tests/Fixtures/coverage/fully-exercised/suite.e2e.yaml
 outcome: emitted
 namespace: VouchfxGenerated
@@ -8,8 +8,20 @@ steps: 2
 id: create-order
 type: http.rest
 provider: Vouchfx.Steps.HttpRest.HttpRestProvider
+model: Vouchfx.Steps.HttpRest.HttpRestModel
 retry: false
 timeout-ms: none
+@@@@ step 1 model
+{
+  "Target": "api",
+  "Method": "GET",
+  "Path": "/health",
+  "Headers": null,
+  "Body": null,
+  "Expect": null
+}
+@@@@ step 1 host-resources
+[]
 @@@@ step 1 usings
 System
 System.Collections.Generic
@@ -54,8 +66,21 @@ HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01c
 id: assert-order-row
 type: db-assert.postgres
 provider: Vouchfx.Steps.DbAssert.Postgres.DbAssertPostgresProvider
+model: Vouchfx.Steps.DbAssert.Postgres.DbAssertPostgresModel
 retry: false
 timeout-ms: none
+@@@@ step 2 model
+{
+  "Target": "orders-db",
+  "Query": "SELECT 1",
+  "Parameters": null,
+  "Expect": {
+    "RowCount": 1,
+    "Row": null
+  }
+}
+@@@@ step 2 host-resources
+[]
 @@@@ step 2 usings
 System
 System.Collections.Generic

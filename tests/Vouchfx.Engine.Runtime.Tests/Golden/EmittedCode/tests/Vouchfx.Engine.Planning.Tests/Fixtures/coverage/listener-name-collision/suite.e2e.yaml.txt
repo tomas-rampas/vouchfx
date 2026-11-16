@@ -1,7 +1,79 @@
-vouchfx emitted-code baseline v1
+vouchfx emitted-code baseline v2
 suite: tests/Vouchfx.Engine.Planning.Tests/Fixtures/coverage/listener-name-collision/suite.e2e.yaml
 outcome: refused
 stage: pipeline
-@@@@ diagnostic
+steps: 3
+@@@@ diagnostic 1 of 1
 -	host resource 'web' (kind 'webhook-listener', declared by step 'listen-for-web-callback') collides with a declared service (environment.services.web). A host resource (e.g. a webhook listener) cannot share a name with a declared service or with a dependency's own sidecar endpoint - rename one of the two.
+
+@@@@ step 1 of 3
+id: publish-to-queue
+type: mq-publish.kafka
+provider: Vouchfx.Steps.MqPublish.Kafka.MqPublishKafkaProvider
+model: Vouchfx.Steps.MqPublish.Kafka.MqPublishKafkaModel
+retry: false
+timeout-ms: none
+@@@@ step 1 model
+{
+  "Target": "queue",
+  "Topic": "planner-events",
+  "Key": null,
+  "Payload": "{\"event\":\"planner-fixture\"}",
+  "Headers": null,
+  "Avro": null
+}
+@@@@ step 1 host-resources
+[]
+
+@@@@ step 2 of 3
+id: listen-for-queue-callback
+type: webhook-listen.http
+provider: Vouchfx.Steps.WebhookListen.Http.WebhookListenHttpProvider
+model: Vouchfx.Steps.WebhookListen.Http.WebhookListenHttpModel
+retry: false
+timeout-ms: none
+@@@@ step 2 model
+{
+  "Listener": "queue",
+  "Match": {
+    "Method": "POST",
+    "Path": null,
+    "Headers": null,
+    "BodyContains": null,
+    "PeerCertificateSha256": null
+  }
+}
+@@@@ step 2 host-resources
+[
+  {
+    "Kind": "webhook-listener",
+    "VarName": "queue"
+  }
+]
+
+@@@@ step 3 of 3
+id: listen-for-web-callback
+type: webhook-listen.http
+provider: Vouchfx.Steps.WebhookListen.Http.WebhookListenHttpProvider
+model: Vouchfx.Steps.WebhookListen.Http.WebhookListenHttpModel
+retry: false
+timeout-ms: none
+@@@@ step 3 model
+{
+  "Listener": "web",
+  "Match": {
+    "Method": "POST",
+    "Path": null,
+    "Headers": null,
+    "BodyContains": null,
+    "PeerCertificateSha256": null
+  }
+}
+@@@@ step 3 host-resources
+[
+  {
+    "Kind": "webhook-listener",
+    "VarName": "web"
+  }
+]
 @@@@ end

@@ -1,4 +1,4 @@
-vouchfx emitted-code baseline v1
+vouchfx emitted-code baseline v2
 suite: tests/Vouchfx.Engine.Compilation.Tests/Corpus/Accepted/regression-66aef95-dependency-schemaregistry-null-key.e2e.yaml
 outcome: emitted
 namespace: VouchfxGenerated
@@ -8,8 +8,16 @@ steps: 1
 id: noop
 type: script.csharp
 provider: Vouchfx.Steps.Script.Csharp.ScriptCsharpProvider
+model: Vouchfx.Steps.Script.Csharp.ScriptCsharpModel
 retry: false
 timeout-ms: none
+@@@@ step 1 model
+{
+  "Code": "// Filler step: this fixture exercises a null-valued 'schemaRegistry:' key.",
+  "File": null
+}
+@@@@ step 1 host-resources
+[]
 @@@@ step 1 usings
 System
 System.Diagnostics

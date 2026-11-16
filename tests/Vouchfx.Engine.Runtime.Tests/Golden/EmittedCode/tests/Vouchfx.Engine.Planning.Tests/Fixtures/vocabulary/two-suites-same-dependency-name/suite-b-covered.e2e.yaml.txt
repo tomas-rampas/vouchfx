@@ -1,4 +1,4 @@
-vouchfx emitted-code baseline v1
+vouchfx emitted-code baseline v2
 suite: tests/Vouchfx.Engine.Planning.Tests/Fixtures/vocabulary/two-suites-same-dependency-name/suite-b-covered.e2e.yaml
 outcome: emitted
 namespace: VouchfxGenerated
@@ -8,8 +8,23 @@ steps: 2
 id: assert-cache
 type: cache-assert.redis
 provider: Vouchfx.Steps.CacheAssert.Redis.CacheAssertRedisProvider
+model: Vouchfx.Steps.CacheAssert.Redis.CacheAssertRedisModel
 retry: false
 timeout-ms: none
+@@@@ step 1 model
+{
+  "Target": "cache",
+  "Key": "planner-key",
+  "Operation": "Exists",
+  "Field": null,
+  "Expect": {
+    "Value": null,
+    "Exists": true,
+    "Length": null
+  }
+}
+@@@@ step 1 host-resources
+[]
 @@@@ step 1 usings
 System
 System.Collections.Generic
@@ -37,8 +52,20 @@ Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef
 id: call-web
 type: http.rest
 provider: Vouchfx.Steps.HttpRest.HttpRestProvider
+model: Vouchfx.Steps.HttpRest.HttpRestModel
 retry: false
 timeout-ms: none
+@@@@ step 2 model
+{
+  "Target": "web",
+  "Method": "GET",
+  "Path": "/health",
+  "Headers": null,
+  "Body": null,
+  "Expect": null
+}
+@@@@ step 2 host-resources
+[]
 @@@@ step 2 usings
 System
 System.Collections.Generic

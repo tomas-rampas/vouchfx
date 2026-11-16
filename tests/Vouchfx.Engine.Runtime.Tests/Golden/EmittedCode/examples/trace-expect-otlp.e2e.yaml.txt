@@ -1,4 +1,4 @@
-vouchfx emitted-code baseline v1
+vouchfx emitted-code baseline v2
 suite: examples/trace-expect-otlp.e2e.yaml
 outcome: emitted
 namespace: VouchfxGenerated
@@ -8,8 +8,26 @@ steps: 3
 id: trigger-order
 type: http.rest
 provider: Vouchfx.Steps.HttpRest.HttpRestProvider
+model: Vouchfx.Steps.HttpRest.HttpRestModel
 retry: false
 timeout-ms: none
+@@@@ step 1 model
+{
+  "Target": "app",
+  "Method": "POST",
+  "Path": "/orders",
+  "Headers": {
+    "traceparent": "{traceparent}"
+  },
+  "Body": "{\"customerId\":\"cust-1\",\"amount\":49.99}",
+  "Expect": {
+    "Status": 200,
+    "Json": null,
+    "BodyContains": null
+  }
+}
+@@@@ step 1 host-resources
+[]
 @@@@ step 1 usings
 System
 System.Collections.Generic
@@ -54,8 +72,16 @@ HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01c
 id: simulate-otlp-export
 type: script.csharp
 provider: Vouchfx.Steps.Script.Csharp.ScriptCsharpProvider
+model: Vouchfx.Steps.Script.Csharp.ScriptCsharpModel
 retry: false
 timeout-ms: none
+@@@@ step 2 model
+{
+  "Code": "var receiverUrl = (string)Vars[\"traces\"];   // staged by trace-expect.otlp below, plain key\nvar traceId = \"4bf92f3577b34da6a3ce929d0e0e4736\"; // the 32-hex segment of {traceparent}\nvar payload =\n  \"{\\\"resourceSpans\\\":[{\" +\n  \"\\\"resource\\\":{\\\"attributes\\\":[{\\\"key\\\":\\\"service.name\\\",\\\"value\\\":{\\\"stringValue\\\":\\\"app\\\"}}]},\" +\n  \"\\\"scopeSpans\\\":[{\\\"spans\\\":[{\" +\n  \"\\\"traceId\\\":\\\"\" + traceId + \"\\\",\" +\n  \"\\\"spanId\\\":\\\"00f067aa0ba902b7\\\",\" +\n  \"\\\"parentSpanId\\\":\\\"\\\",\" +\n  \"\\\"name\\\":\\\"POST /orders\\\",\" +\n  \"\\\"status\\\":{\\\"code\\\":\\\"STATUS_CODE_OK\\\"}\" +\n  \"}]}]\" +\n  \"}]}\";\nvar client = new System.Net.Http.HttpClient();\ntry {\n  var content = new System.Net.Http.StringContent(payload, System.Text.Encoding.UTF8, \"application/json\");\n  var resp = await client.PostAsync(receiverUrl + \"/v1/traces\", content);\n  if ((int)resp.StatusCode >= 300)\n    throw new System.Exception(\"Simulated OTLP export failed: \" + (int)resp.StatusCode);\n} finally { client.Dispose(); }\n",
+  "File": null
+}
+@@@@ step 2 host-resources
+[]
 @@@@ step 2 usings
 System
 System.Diagnostics
@@ -119,8 +145,27 @@ try {
 id: assert-order-span
 type: trace-expect.otlp
 provider: Vouchfx.Steps.TraceExpect.Otlp.TraceExpectOtlpProvider
+model: Vouchfx.Steps.TraceExpect.Otlp.TraceExpectOtlpModel
 retry: true
 timeout-ms: 30000
+@@@@ step 3 model
+{
+  "Receiver": "traces",
+  "Match": {
+    "TraceId": "{traceparent}",
+    "Service": "app",
+    "SpanName": "POST /orders",
+    "Attributes": null,
+    "PeerCertificateSha256": null
+  }
+}
+@@@@ step 3 host-resources
+[
+  {
+    "Kind": "otlp-receiver",
+    "VarName": "traces"
+  }
+]
 @@@@ step 3 usings
 System
 System.Collections.Generic

@@ -1,4 +1,4 @@
-vouchfx emitted-code baseline v1
+vouchfx emitted-code baseline v2
 suite: tests/Vouchfx.Engine.Planning.Tests/Fixtures/acceptance/loop-closure-service/suite.e2e.yaml
 outcome: emitted
 namespace: VouchfxGenerated
@@ -8,8 +8,16 @@ steps: 1
 id: no-op
 type: script.csharp
 provider: Vouchfx.Steps.Script.Csharp.ScriptCsharpProvider
+model: Vouchfx.Steps.Script.Csharp.ScriptCsharpModel
 retry: false
 timeout-ms: none
+@@@@ step 1 model
+{
+  "Code": "// no-op",
+  "File": null
+}
+@@@@ step 1 host-resources
+[]
 @@@@ step 1 usings
 System
 System.Diagnostics

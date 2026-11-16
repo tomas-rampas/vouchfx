@@ -1,0 +1,652 @@
+vouchfx emitted-code baseline v2
+suite: tests/Vouchfx.Engine.Runtime.Tests/EmittedCodeCorpus/messaging.e2e.yaml
+outcome: emitted
+namespace: VouchfxGenerated
+steps: 7
+
+@@@@ step 1 of 7
+id: kafka-publish-keyed
+type: mq-publish.kafka
+provider: Vouchfx.Steps.MqPublish.Kafka.MqPublishKafkaProvider
+model: Vouchfx.Steps.MqPublish.Kafka.MqPublishKafkaModel
+retry: false
+timeout-ms: none
+@@@@ step 1 model
+{
+  "Target": "events",
+  "Topic": "orders",
+  "Key": "42",
+  "Payload": "{\"orderId\":\"ord-1\",\"amount\":49.50}",
+  "Headers": {
+    "x-count": "007",
+    "x-quoted-count": "007",
+    "x-flag": "true",
+    "x-quoted-flag": "true",
+    "x-text": "order-created"
+  },
+  "Avro": null
+}
+@@@@ step 1 host-resources
+[]
+@@@@ step 1 usings
+System
+System.Collections.Generic
+System.Diagnostics
+System.Threading.Tasks
+Confluent.Kafka
+Vouchfx.Engine.Abstractions
+@@@@ step 1 helpers
+MqPublishKafka_Helpers sha256=f4646d77fdb0eaa101c228c0bb9ad840c0b9fc24ec0586b2c5c95c6089186e9e
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
+KafkaSecurity_V2_Helpers sha256=780484a478c04266bd1a4fa89ced518c98e1d8ac8af881835213b7c22c7e2945
+@@@@ step 1 statement-block
+{
+    await MqPublishKafka_Helpers.PublishAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::kafka_publish_keyed",
+        "conn::events",
+        "events",
+        "orders",
+        "42",
+        "{\u0022orderId\u0022:\u0022ord-1\u0022,\u0022amount\u0022:49.50}",
+        new string[] { "x-count", "x-quoted-count", "x-flag", "x-quoted-flag", "x-text" },
+        new string[] { "007", "007", "true", "true", "order-created" },
+        null,
+        null,
+        null,
+        new string[] { },
+        new string[] { },
+        __stepCt_kafka_publish_keyed,
+        __stepBudgetGoverned_kafka_publish_keyed);
+}
+
+@@@@ step 2 of 7
+id: kafka-publish-avro
+type: mq-publish.kafka
+provider: Vouchfx.Steps.MqPublish.Kafka.MqPublishKafkaProvider
+model: Vouchfx.Steps.MqPublish.Kafka.MqPublishKafkaModel
+retry: false
+timeout-ms: none
+@@@@ step 2 model
+{
+  "Target": "events",
+  "Topic": "2024",
+  "Key": "42",
+  "Payload": "avro-encoded",
+  "Headers": null,
+  "Avro": {
+    "SchemaRegistryTarget": "events",
+    "Subject": "orders-value",
+    "Schema": "{\"type\": \"record\", \"name\": \"Order\", \"fields\": [\n  {\"name\": \"orderId\", \"type\": \"string\"},\n  {\"name\": \"amount\", \"type\": \"double\"},\n  {\"name\": \"paid\", \"type\": \"boolean\"}]}\n",
+    "Record": {
+      "orderId": "ord-1",
+      "amount": "49.50",
+      "paid": "true"
+    }
+  }
+}
+@@@@ step 2 host-resources
+[]
+@@@@ step 2 usings
+System
+System.Collections.Generic
+System.Diagnostics
+System.Threading.Tasks
+Confluent.Kafka
+Vouchfx.Engine.Abstractions
+@@@@ step 2 helpers
+MqPublishKafka_Helpers sha256=f4646d77fdb0eaa101c228c0bb9ad840c0b9fc24ec0586b2c5c95c6089186e9e
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
+KafkaSecurity_V2_Helpers sha256=780484a478c04266bd1a4fa89ced518c98e1d8ac8af881835213b7c22c7e2945
+@@@@ step 2 statement-block
+{
+    await MqPublishKafka_Helpers.PublishAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::kafka_publish_avro",
+        "conn::events",
+        "events",
+        "2024",
+        "42",
+        "avro-encoded",
+        new string[] { },
+        new string[] { },
+        "svc::events-sr",
+        "orders-value",
+        "{\u0022type\u0022: \u0022record\u0022, \u0022name\u0022: \u0022Order\u0022, \u0022fields\u0022: [\n  {\u0022name\u0022: \u0022orderId\u0022, \u0022type\u0022: \u0022string\u0022},\n  {\u0022name\u0022: \u0022amount\u0022, \u0022type\u0022: \u0022double\u0022},\n  {\u0022name\u0022: \u0022paid\u0022, \u0022type\u0022: \u0022boolean\u0022}]}\n",
+        new string[] { "orderId", "amount", "paid" },
+        new string[] { "ord-1", "49.50", "true" },
+        __stepCt_kafka_publish_avro,
+        __stepBudgetGoverned_kafka_publish_avro);
+}
+
+@@@@ step 3 of 7
+id: kafka-expect-keyed
+type: mq-expect.kafka
+provider: Vouchfx.Steps.MqExpect.Kafka.MqExpectKafkaProvider
+model: Vouchfx.Steps.MqExpect.Kafka.MqExpectKafkaModel
+retry: false
+timeout-ms: none
+@@@@ step 3 model
+{
+  "Target": "events",
+  "Topic": "orders",
+  "Match": {
+    "Key": "42",
+    "Headers": {
+      "x-count": "007",
+      "x-flag": "true"
+    },
+    "PayloadContains": "ord-1",
+    "Json": {
+      "$.amount": "49.50"
+    }
+  },
+  "Avro": null
+}
+@@@@ step 3 host-resources
+[]
+@@@@ step 3 usings
+System
+System.Collections.Generic
+System.Diagnostics
+System.Threading
+System.Threading.Tasks
+Confluent.Kafka
+Vouchfx.Engine.Abstractions
+@@@@ step 3 helpers
+MqExpectKafka_Helpers sha256=2bed91b8263ca592b9958ddeb9bb4e4e26e69a06f6fb6460b6ac728a88b21f21
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
+KafkaSecurity_V2_Helpers sha256=780484a478c04266bd1a4fa89ced518c98e1d8ac8af881835213b7c22c7e2945
+@@@@ step 3 statement-block
+{
+    await MqExpectKafka_Helpers.ExpectAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::kafka_expect_keyed",
+        "conn::events",
+        "events",
+        "orders",
+        "42",
+        "ord-1",
+        new string[] { "x-count", "x-flag" },
+        new string[] { "007", "true" },
+        new string[] { "$.amount" },
+        new string[] { "49.50" },
+        false,
+        null,
+        __stepCt_kafka_expect_keyed,
+        __stepBudgetGoverned_kafka_expect_keyed);
+}
+
+@@@@ step 4 of 7
+id: kafka-expect-avro
+type: mq-expect.kafka
+provider: Vouchfx.Steps.MqExpect.Kafka.MqExpectKafkaProvider
+model: Vouchfx.Steps.MqExpect.Kafka.MqExpectKafkaModel
+retry: false
+timeout-ms: none
+@@@@ step 4 model
+{
+  "Target": "events",
+  "Topic": "2024",
+  "Match": {
+    "Key": "42",
+    "Headers": null,
+    "PayloadContains": null,
+    "Json": {
+      "$.paid": "true"
+    }
+  },
+  "Avro": {
+    "SchemaRegistryTarget": "events",
+    "Subject": "orders-value",
+    "Schema": "{\"type\": \"record\", \"name\": \"Order\", \"fields\": [{\"name\": \"orderId\", \"type\": \"string\"}]}"
+  }
+}
+@@@@ step 4 host-resources
+[]
+@@@@ step 4 usings
+System
+System.Collections.Generic
+System.Diagnostics
+System.Threading
+System.Threading.Tasks
+Confluent.Kafka
+Vouchfx.Engine.Abstractions
+@@@@ step 4 helpers
+MqExpectKafka_Helpers sha256=2bed91b8263ca592b9958ddeb9bb4e4e26e69a06f6fb6460b6ac728a88b21f21
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
+KafkaSecurity_V2_Helpers sha256=780484a478c04266bd1a4fa89ced518c98e1d8ac8af881835213b7c22c7e2945
+@@@@ step 4 statement-block
+{
+    await MqExpectKafka_Helpers.ExpectAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::kafka_expect_avro",
+        "conn::events",
+        "events",
+        "2024",
+        "42",
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { "$.paid" },
+        new string[] { "true" },
+        true,
+        "svc::events-sr",
+        __stepCt_kafka_expect_avro,
+        __stepBudgetGoverned_kafka_expect_avro);
+}
+
+@@@@ step 5 of 7
+id: nats-publish-stream
+type: mq-publish.nats
+provider: Vouchfx.Steps.MqPublish.Nats.MqPublishNatsProvider
+model: Vouchfx.Steps.MqPublish.Nats.MqPublishNatsModel
+retry: false
+timeout-ms: none
+@@@@ step 5 model
+{
+  "Target": "nats-broker",
+  "Subject": "orders.created",
+  "Stream": "ORDERS",
+  "Payload": "{\"orderId\":\"ord-1\"}"
+}
+@@@@ step 5 host-resources
+[]
+@@@@ step 5 usings
+System
+System.Collections.Generic
+System.Diagnostics
+System.Threading
+System.Threading.Tasks
+NATS.Client.Core
+NATS.Client.JetStream
+Vouchfx.Engine.Abstractions
+@@@@ step 5 helpers
+MqPublishNats_Helpers sha256=8c90e8738dcb240d567c118427b2dae4da32b40180a2cc6a464ae452cc42d6f5
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
+@@@@ step 5 statement-block
+{
+    await MqPublishNats_Helpers.PublishAsync(
+        Vars,
+        Secrets,
+        "__outcome::nats_publish_stream",
+        "conn::nats-broker",
+        "orders.created",
+        "ORDERS",
+        "{\u0022orderId\u0022:\u0022ord-1\u0022}",
+        __stepCt_nats_publish_stream,
+        __stepBudgetGoverned_nats_publish_stream);
+}
+
+@@@@ step 6 of 7
+id: nats-expect-stream
+type: mq-expect.nats
+provider: Vouchfx.Steps.MqExpect.Nats.MqExpectNatsProvider
+model: Vouchfx.Steps.MqExpect.Nats.MqExpectNatsModel
+retry: false
+timeout-ms: none
+@@@@ step 6 model
+{
+  "Target": "nats-broker",
+  "Subject": "orders.created",
+  "Stream": "ORDERS",
+  "Match": {
+    "PayloadContains": "ord-1",
+    "Json": null
+  }
+}
+@@@@ step 6 host-resources
+[]
+@@@@ step 6 usings
+System
+System.Collections.Generic
+System.Diagnostics
+System.Threading
+System.Threading.Tasks
+NATS.Client.Core
+NATS.Client.JetStream
+Vouchfx.Engine.Abstractions
+@@@@ step 6 helpers
+MqExpectNats_Helpers sha256=d7c821d2b26f8373d044410573c67d1ff5c7a19de9436d4be5e44ae207e4210f
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
+@@@@ step 6 statement-block
+{
+    await MqExpectNats_Helpers.ExpectAsync(
+        Vars,
+        Secrets,
+        "__outcome::nats_expect_stream",
+        "conn::nats-broker",
+        "orders.created",
+        "ORDERS",
+        "ord-1",
+        new string[] { },
+        new string[] { },
+        __stepCt_nats_expect_stream,
+        __stepBudgetGoverned_nats_expect_stream);
+}
+
+@@@@ step 7 of 7
+id: rabbitmq-publish-exchange
+type: mq-publish.rabbitmq
+provider: Vouchfx.Steps.MqPublish.Rabbitmq.MqPublishRabbitmqProvider
+model: Vouchfx.Steps.MqPublish.Rabbitmq.MqPublishRabbitmqModel
+retry: false
+timeout-ms: none
+@@@@ step 7 model
+{
+  "Target": "orders-mq",
+  "Exchange": "orders.topic",
+  "RoutingKey": "orders.created",
+  "Payload": "123",
+  "Headers": {
+    "x-retry": "0"
+  }
+}
+@@@@ step 7 host-resources
+[]
+@@@@ step 7 usings
+System
+System.Collections.Generic
+System.Diagnostics
+System.Threading
+System.Threading.Tasks
+RabbitMQ.Client
+Vouchfx.Engine.Abstractions
+@@@@ step 7 helpers
+MqPublishRabbitmq_Helpers sha256=3fc3f420a57a8ccaa238db43a525ae127a8d59987a5ee9691a6f30ee32de08fa
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
+@@@@ step 7 statement-block
+{
+    await MqPublishRabbitmq_Helpers.PublishAsync(
+        Vars,
+        Secrets,
+        "__outcome::rabbitmq_publish_exchange",
+        "conn::orders-mq",
+        "orders.topic",
+        "orders.created",
+        "123",
+        new string[] { "x-retry" },
+        new string[] { "0" },
+        __stepCt_rabbitmq_publish_exchange,
+        __stepBudgetGoverned_rabbitmq_publish_exchange);
+}
+@@@@ assembled-script
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Threading.Tasks;
+using Confluent.Kafka;
+using Vouchfx.Engine.Abstractions;
+using System.Threading;
+using NATS.Client.Core;
+using NATS.Client.JetStream;
+using RabbitMQ.Client;
+
+// [helper MqPublishKafka_Helpers sha256=f4646d77fdb0eaa101c228c0bb9ad840c0b9fc24ec0586b2c5c95c6089186e9e: body elided, recorded by name and hash]
+// [helper Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d: body elided, recorded by name and hash]
+// [helper Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1: body elided, recorded by name and hash]
+// [helper KafkaSecurity_V2_Helpers sha256=780484a478c04266bd1a4fa89ced518c98e1d8ac8af881835213b7c22c7e2945: body elided, recorded by name and hash]
+// [helper MqExpectKafka_Helpers sha256=2bed91b8263ca592b9958ddeb9bb4e4e26e69a06f6fb6460b6ac728a88b21f21: body elided, recorded by name and hash]
+// [helper MqPublishNats_Helpers sha256=8c90e8738dcb240d567c118427b2dae4da32b40180a2cc6a464ae452cc42d6f5: body elided, recorded by name and hash]
+// [helper MqExpectNats_Helpers sha256=d7c821d2b26f8373d044410573c67d1ff5c7a19de9436d4be5e44ae207e4210f: body elided, recorded by name and hash]
+// [helper MqPublishRabbitmq_Helpers sha256=3fc3f420a57a8ccaa238db43a525ae127a8d59987a5ee9691a6f30ee32de08fa: body elided, recorded by name and hash]
+
+var __vouchfxRunCt = Services.TryGetValue("__vouchfx_run_cancellation", out var __vouchfxRunToken) && __vouchfxRunToken is System.Threading.CancellationToken __vouchfxToken
+    ? __vouchfxToken : System.Threading.CancellationToken.None;
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_kafka_publish_keyed = __vouchfxRunCt;
+    _ = __stepCt_kafka_publish_keyed;
+    bool __stepBudgetGoverned_kafka_publish_keyed = false;
+    _ = __stepBudgetGoverned_kafka_publish_keyed;
+    StepEvents?.OnStepStarted("kafka-publish-keyed");
+{
+    await MqPublishKafka_Helpers.PublishAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::kafka_publish_keyed",
+        "conn::events",
+        "events",
+        "orders",
+        "42",
+        "{\u0022orderId\u0022:\u0022ord-1\u0022,\u0022amount\u0022:49.50}",
+        new string[] { "x-count", "x-quoted-count", "x-flag", "x-quoted-flag", "x-text" },
+        new string[] { "007", "007", "true", "true", "order-created" },
+        null,
+        null,
+        null,
+        new string[] { },
+        new string[] { },
+        __stepCt_kafka_publish_keyed,
+        __stepBudgetGoverned_kafka_publish_keyed);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::kafka_publish_keyed");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "kafka-publish-keyed",
+        Vars.TryGetValue("__outcome::kafka_publish_keyed", out var __sco_kafka_publish_keyed) ? __sco_kafka_publish_keyed as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::kafka_publish_keyed", out var __scs_kafka_publish_keyed) ? __scs_kafka_publish_keyed as string : null);
+}
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_kafka_publish_avro = __vouchfxRunCt;
+    _ = __stepCt_kafka_publish_avro;
+    bool __stepBudgetGoverned_kafka_publish_avro = false;
+    _ = __stepBudgetGoverned_kafka_publish_avro;
+    StepEvents?.OnStepStarted("kafka-publish-avro");
+{
+    await MqPublishKafka_Helpers.PublishAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::kafka_publish_avro",
+        "conn::events",
+        "events",
+        "2024",
+        "42",
+        "avro-encoded",
+        new string[] { },
+        new string[] { },
+        "svc::events-sr",
+        "orders-value",
+        "{\u0022type\u0022: \u0022record\u0022, \u0022name\u0022: \u0022Order\u0022, \u0022fields\u0022: [\n  {\u0022name\u0022: \u0022orderId\u0022, \u0022type\u0022: \u0022string\u0022},\n  {\u0022name\u0022: \u0022amount\u0022, \u0022type\u0022: \u0022double\u0022},\n  {\u0022name\u0022: \u0022paid\u0022, \u0022type\u0022: \u0022boolean\u0022}]}\n",
+        new string[] { "orderId", "amount", "paid" },
+        new string[] { "ord-1", "49.50", "true" },
+        __stepCt_kafka_publish_avro,
+        __stepBudgetGoverned_kafka_publish_avro);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::kafka_publish_avro");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "kafka-publish-avro",
+        Vars.TryGetValue("__outcome::kafka_publish_avro", out var __sco_kafka_publish_avro) ? __sco_kafka_publish_avro as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::kafka_publish_avro", out var __scs_kafka_publish_avro) ? __scs_kafka_publish_avro as string : null);
+}
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_kafka_expect_keyed = __vouchfxRunCt;
+    _ = __stepCt_kafka_expect_keyed;
+    bool __stepBudgetGoverned_kafka_expect_keyed = false;
+    _ = __stepBudgetGoverned_kafka_expect_keyed;
+    StepEvents?.OnStepStarted("kafka-expect-keyed");
+{
+    await MqExpectKafka_Helpers.ExpectAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::kafka_expect_keyed",
+        "conn::events",
+        "events",
+        "orders",
+        "42",
+        "ord-1",
+        new string[] { "x-count", "x-flag" },
+        new string[] { "007", "true" },
+        new string[] { "$.amount" },
+        new string[] { "49.50" },
+        false,
+        null,
+        __stepCt_kafka_expect_keyed,
+        __stepBudgetGoverned_kafka_expect_keyed);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::kafka_expect_keyed");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "kafka-expect-keyed",
+        Vars.TryGetValue("__outcome::kafka_expect_keyed", out var __sco_kafka_expect_keyed) ? __sco_kafka_expect_keyed as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::kafka_expect_keyed", out var __scs_kafka_expect_keyed) ? __scs_kafka_expect_keyed as string : null);
+}
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_kafka_expect_avro = __vouchfxRunCt;
+    _ = __stepCt_kafka_expect_avro;
+    bool __stepBudgetGoverned_kafka_expect_avro = false;
+    _ = __stepBudgetGoverned_kafka_expect_avro;
+    StepEvents?.OnStepStarted("kafka-expect-avro");
+{
+    await MqExpectKafka_Helpers.ExpectAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::kafka_expect_avro",
+        "conn::events",
+        "events",
+        "2024",
+        "42",
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { "$.paid" },
+        new string[] { "true" },
+        true,
+        "svc::events-sr",
+        __stepCt_kafka_expect_avro,
+        __stepBudgetGoverned_kafka_expect_avro);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::kafka_expect_avro");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "kafka-expect-avro",
+        Vars.TryGetValue("__outcome::kafka_expect_avro", out var __sco_kafka_expect_avro) ? __sco_kafka_expect_avro as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::kafka_expect_avro", out var __scs_kafka_expect_avro) ? __scs_kafka_expect_avro as string : null);
+}
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_nats_publish_stream = __vouchfxRunCt;
+    _ = __stepCt_nats_publish_stream;
+    bool __stepBudgetGoverned_nats_publish_stream = false;
+    _ = __stepBudgetGoverned_nats_publish_stream;
+    StepEvents?.OnStepStarted("nats-publish-stream");
+{
+    await MqPublishNats_Helpers.PublishAsync(
+        Vars,
+        Secrets,
+        "__outcome::nats_publish_stream",
+        "conn::nats-broker",
+        "orders.created",
+        "ORDERS",
+        "{\u0022orderId\u0022:\u0022ord-1\u0022}",
+        __stepCt_nats_publish_stream,
+        __stepBudgetGoverned_nats_publish_stream);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::nats_publish_stream");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "nats-publish-stream",
+        Vars.TryGetValue("__outcome::nats_publish_stream", out var __sco_nats_publish_stream) ? __sco_nats_publish_stream as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::nats_publish_stream", out var __scs_nats_publish_stream) ? __scs_nats_publish_stream as string : null);
+}
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_nats_expect_stream = __vouchfxRunCt;
+    _ = __stepCt_nats_expect_stream;
+    bool __stepBudgetGoverned_nats_expect_stream = false;
+    _ = __stepBudgetGoverned_nats_expect_stream;
+    StepEvents?.OnStepStarted("nats-expect-stream");
+{
+    await MqExpectNats_Helpers.ExpectAsync(
+        Vars,
+        Secrets,
+        "__outcome::nats_expect_stream",
+        "conn::nats-broker",
+        "orders.created",
+        "ORDERS",
+        "ord-1",
+        new string[] { },
+        new string[] { },
+        __stepCt_nats_expect_stream,
+        __stepBudgetGoverned_nats_expect_stream);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::nats_expect_stream");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "nats-expect-stream",
+        Vars.TryGetValue("__outcome::nats_expect_stream", out var __sco_nats_expect_stream) ? __sco_nats_expect_stream as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::nats_expect_stream", out var __scs_nats_expect_stream) ? __scs_nats_expect_stream as string : null);
+}
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_rabbitmq_publish_exchange = __vouchfxRunCt;
+    _ = __stepCt_rabbitmq_publish_exchange;
+    bool __stepBudgetGoverned_rabbitmq_publish_exchange = false;
+    _ = __stepBudgetGoverned_rabbitmq_publish_exchange;
+    StepEvents?.OnStepStarted("rabbitmq-publish-exchange");
+{
+    await MqPublishRabbitmq_Helpers.PublishAsync(
+        Vars,
+        Secrets,
+        "__outcome::rabbitmq_publish_exchange",
+        "conn::orders-mq",
+        "orders.topic",
+        "orders.created",
+        "123",
+        new string[] { "x-retry" },
+        new string[] { "0" },
+        __stepCt_rabbitmq_publish_exchange,
+        __stepBudgetGoverned_rabbitmq_publish_exchange);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::rabbitmq_publish_exchange");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "rabbitmq-publish-exchange",
+        Vars.TryGetValue("__outcome::rabbitmq_publish_exchange", out var __sco_rabbitmq_publish_exchange) ? __sco_rabbitmq_publish_exchange as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::rabbitmq_publish_exchange", out var __scs_rabbitmq_publish_exchange) ? __scs_rabbitmq_publish_exchange as string : null);
+}
+@@@@ end

@@ -1,4 +1,4 @@
-vouchfx emitted-code baseline v1
+vouchfx emitted-code baseline v2
 suite: examples/dependency-image-override/mongodb-private-registry.e2e.yaml
 outcome: emitted
 namespace: VouchfxGenerated
@@ -8,8 +8,24 @@ steps: 3
 id: place-order
 type: http.rest
 provider: Vouchfx.Steps.HttpRest.HttpRestProvider
+model: Vouchfx.Steps.HttpRest.HttpRestModel
 retry: false
 timeout-ms: none
+@@@@ step 1 model
+{
+  "Target": "app",
+  "Method": "POST",
+  "Path": "/orders",
+  "Headers": null,
+  "Body": "{\"productId\": \"XYZ-789\", \"quantity\": 3}\n",
+  "Expect": {
+    "Status": 200,
+    "Json": null,
+    "BodyContains": null
+  }
+}
+@@@@ step 1 host-resources
+[]
 @@@@ step 1 usings
 System
 System.Collections.Generic
@@ -54,8 +70,16 @@ HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01c
 id: simulate-order-write
 type: script.csharp
 provider: Vouchfx.Steps.Script.Csharp.ScriptCsharpProvider
+model: Vouchfx.Steps.Script.Csharp.ScriptCsharpModel
 retry: false
 timeout-ms: none
+@@@@ step 2 model
+{
+  "Code": "var connStr = (string)Vars[\"conn::orders-mongo\"];\nvar dbName = new MongoDB.Driver.MongoUrl(connStr).DatabaseName;\nvar client = new MongoDB.Driver.MongoClient(connStr);\ntry\n{\n    var db = client.GetDatabase(dbName);\n    var collection = db.GetCollection<MongoDB.Bson.BsonDocument>(\"orders\");\n    var orderId = (string)Vars[\"orderId\"];\n    var filter = MongoDB.Driver.Builders<MongoDB.Bson.BsonDocument>.Filter.Eq(\"_id\", orderId);\n    await collection.DeleteManyAsync(filter);\n    await collection.InsertOneAsync(new MongoDB.Bson.BsonDocument\n    {\n        { \"_id\", orderId },\n        { \"productId\", \"XYZ-789\" },\n        { \"quantity\", 3 },\n        { \"status\", \"PENDING\" },\n    });\n}\nfinally { client.Dispose(); }\n",
+  "File": null
+}
+@@@@ step 2 host-resources
+[]
 @@@@ step 2 usings
 System
 System.Diagnostics
@@ -118,8 +142,25 @@ finally { client.Dispose(); }
 id: assert-order-persisted
 type: db-assert.mongodb
 provider: Vouchfx.Steps.DbAssert.Mongodb.DbAssertMongodbProvider
+model: Vouchfx.Steps.DbAssert.Mongodb.DbAssertMongodbModel
 retry: true
 timeout-ms: 30000
+@@@@ step 3 model
+{
+  "Target": "orders-mongo",
+  "Collection": "orders",
+  "Filter": "{\"_id\": \"{orderId}\"}",
+  "Expect": {
+    "Count": 1,
+    "Document": {
+      "productId": "XYZ-789",
+      "quantity": "3",
+      "status": "PENDING"
+    }
+  }
+}
+@@@@ step 3 host-resources
+[]
 @@@@ step 3 usings
 System
 System.Collections.Generic

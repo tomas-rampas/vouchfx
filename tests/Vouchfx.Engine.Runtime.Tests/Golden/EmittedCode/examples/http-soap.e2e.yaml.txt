@@ -1,4 +1,4 @@
-vouchfx emitted-code baseline v1
+vouchfx emitted-code baseline v2
 suite: examples/http-soap.e2e.yaml
 outcome: emitted
 namespace: VouchfxGenerated
@@ -8,8 +8,23 @@ steps: 1
 id: get-user
 type: http.soap
 provider: Vouchfx.Steps.Http.Soap.HttpSoapProvider
+model: Vouchfx.Steps.Http.Soap.HttpSoapModel
 retry: false
 timeout-ms: none
+@@@@ step 1 model
+{
+  "Target": "app",
+  "Path": "/soap/users",
+  "Action": "http://example.com/GetUser",
+  "Envelope": "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<soap:Envelope xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\">\n  <soap:Body>\n    <GetUser xmlns=\"http://example.com/users\">\n      <UserId>{userId}</UserId>\n    </GetUser>\n  </soap:Body>\n</soap:Envelope>\n",
+  "Expect": {
+    "Status": 200,
+    "Fault": null,
+    "Xpath": null
+  }
+}
+@@@@ step 1 host-resources
+[]
 @@@@ step 1 usings
 System
 System.Collections.Generic
