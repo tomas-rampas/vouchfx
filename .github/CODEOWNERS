@@ -53,6 +53,7 @@
 # it must not be owned at the same bar as a README (it is otherwise catch-all only).
 /Directory.Build.props                          @tomas-rampas
 /Directory.Packages.props                       @tomas-rampas
+# global.json can select the SDK that the .claude/ session hook runs as root.
 /global.json                                    @tomas-rampas
 /nuget.config                                   @tomas-rampas
 # The guard for the NuGet audit suppression is owner-reviewed alongside the suppression itself.
