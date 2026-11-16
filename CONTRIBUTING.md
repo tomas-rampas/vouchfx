@@ -206,6 +206,8 @@ dotnet test YourProvider.Tests -c Release --filter "requires!=docker"
 
 **Include Docker integration tests** if your provider uses infrastructure. You would author those tests against the engine's topology in the repository's own test suite, or ship your provider as a separate repository with its own Docker-based integration fixture.
 
+Pull requests to this repository do not run the Docker suites automatically. If your change touches a provider or the topology, run them before you ask for merge. If you work from a fork, run the `requires=docker` tests locally, or run the `CI` and `.NET compatibility` workflows from your own fork's Actions tab once Actions is enabled there (select **Run workflow** and pick your branch). Maintainers with write access can dispatch them on a branch of this repository.
+
 ### Governance Tiers
 
 All vouchfx providers are governed in two tiers, all Apache-2.0. This is how the community grows the platform without the platform team implementing every database or broker.

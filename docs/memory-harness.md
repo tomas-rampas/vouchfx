@@ -1,6 +1,6 @@
 # The memory-leak harness
 
-vouchfx's central engineering claim is its memory model: every `.e2e.yaml` suite is compiled **once** into a collectible `AssemblyLoadContext`, invoked N times, and unloaded back to baseline. If that claim were ever violated — by the engine itself, or by a static cache deep inside a provider's client library — a long-running or watch-mode session would grow without bound. The memory-leak harness is the permanent, blocking CI gate that proves the claim holds, on every push and on a weekly schedule.
+vouchfx's central engineering claim is its memory model: every `.e2e.yaml` suite is compiled **once** into a collectible `AssemblyLoadContext`, invoked N times, and unloaded back to baseline. If that claim were ever violated — by the engine itself, or by a static cache deep inside a provider's client library — a long-running or watch-mode session would grow without bound. The memory-leak harness is the permanent, blocking CI gate that proves the claim holds, on every push and on a daily schedule.
 
 This page documents the harness as a tool: what it measures, how to run it yourself, and what a passing report looks like.
 
@@ -70,7 +70,7 @@ The machine-readable JSON line the harness also emits (`netDeltaBytes`, `passed`
 
 ## Where it runs in CI
 
-The gate is the `memory-leak` job in `.github/workflows/build.yml`: **blocking** on every push and pull request, and scheduled weekly (Mondays 06:00 UTC) so a leak introduced by a dependency upgrade between pushes is still caught within days. It is a permanent CI gate from the project's first milestone because a leak discovered late costs far more than one caught the week a client library enters the closure.
+The gate is the `memory-leak` job in `.github/workflows/build.yml`: **blocking** on every push and pull request, and scheduled daily (06:17 UTC) so a leak introduced by a dependency upgrade between pushes is still caught within a day. It is a permanent CI gate from the project's first milestone because a leak discovered late costs far more than one caught the week a client library enters the closure.
 
 ## Adding a provider to the closure
 

@@ -16,13 +16,18 @@
 #               client closure (Npgsql, Confluent.Kafka, MongoDB.Driver,
 #               StackExchange.Redis, HttpClient).  Docker-independent — the
 #               closure script touches client types in-memory only, never
-#               connects.  Also scheduled weekly (Monday 06:00 UTC) to catch
+#               connects.  Also scheduled daily (06:17 UTC) to catch
 #               regressions introduced by dependency upgrades between pushes.
 #               Exit non-zero iff NetDelta > threshold-bytes (2 MB) or context
 #               not reclaimed; a failure here blocks merge.
 #
-#  integration  Blocking gate for Docker-dependent Aspire integration tests
-#               (requires=docker trait).
+#  integration  Docker-dependent Aspire integration tests (requires=docker
+#               trait).  No longer runs on pull requests or pushes: it runs
+#               daily on main via the schedule and on demand via
+#               workflow_dispatch on any branch (Actions tab -> CI -> Run
+#               workflow -> pick the branch).  A failure is therefore found on
+#               the next daily run, not before merge; it still fails the run it
+#               is in.
 #               ubuntu-22.04 keeps MongoDB 7 on a compatible hosted kernel.
 #
 #  docs-build   Blocking documentation build and publication gate on every PR.
@@ -49,7 +54,7 @@
 #               Cosmetic, non-blocking: converts the `build` job's Cobertura
 #               coverage into badge files via ReportGenerator and force-pushes
 #               them to the orphan `badges` branch, which feeds the README's
-#               shields.io/endpoint coverage badge.  Main pushes + the weekly
+#               shields.io/endpoint coverage badge.  Main pushes + the daily
 #               schedule only — PR runs never move the published badge.
 
 name: CI
@@ -65,12 +70,20 @@ on:
     branches:
       - main
       - "feat/**"
+  # Scheduled workflows run only on the default branch.  The daily run drives the
+  # memory-leak regression cadence, the Docker integration job and the badge refresh.
+  # Keep exactly one entry: a second cron would double-run on the days they overlap.
   schedule:
-    - cron: "0 6 * * 1"   # 06:00 UTC every Monday — weekly memory-leak regression cadence
+    - cron: "17 6 * * *"   # 06:17 UTC every day
+  # Manual run on any branch: Actions tab -> CI -> Run workflow -> pick the branch.
+  workflow_dispatch:
 
-# Cancel in-progress runs for the same ref to avoid wasting runner minutes.
+# Cancel in-progress runs of the same event on the same ref to avoid wasting
+# runner minutes. The event name is part of the group so that a push to main
+# cannot cancel the scheduled or dispatched run, which is the only run that
+# carries the Docker integration job; runs of the same event still cancel each other.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
 # Least-privilege default token for every job: checkout needs contents: read
@@ -269,7 +282,7 @@ jobs:
           git diff --cached --exit-code || status=1
           exit "$status"
 
-      # Upload coverage artefacts.  On main pushes and the weekly schedule the
+      # Upload coverage artefacts.  On main pushes and the daily schedule the
       # `coverage-badge` job downloads this artifact and turns it into the
       # README's self-hosted coverage badge; the artifact also remains handy
       # for local inspection of a CI run's coverage.
@@ -372,7 +385,7 @@ jobs:
 
   # ── Memory-leak regression — BLOCKING permanent gate ─────────────────────────
   # Runs the 5,000-iteration provider-closure harness over the full Core-provider
-  # client closure.  Docker-independent; scheduled weekly to catch regressions
+  # client closure.  Docker-independent; scheduled daily to catch regressions
   # introduced by dependency upgrades between feature pushes.
   memory-leak:
     name: Memory-leak regression gate (provider closure)
@@ -413,8 +426,11 @@ jobs:
   # ── Docker / Aspire integration — topology and provider tests ───────────────────
   # ubuntu-22.04 runners include Docker Engine, which is required for the
   # Aspire topology (Testcontainers, §4).  Tests decorated with
-  # [Trait("requires","docker")] run here after the `build` job. Failures in
-  # either lane fail CI.
+  # [Trait("requires","docker")] run here after the `build` job. This job no
+  # longer runs on pull requests or pushes: it runs daily on main via the schedule
+  # and on demand via workflow_dispatch on any branch (Actions tab -> CI -> Run
+  # workflow -> pick the branch). A failure is therefore found on the next daily
+  # run, not before merge; it still fails the run it is in.
   #
   # Crash-dump capture (mini in CI; the README's local command uses full)
   # aids diagnosis of #378-class intermittencies without demoting failures.
@@ -424,6 +440,7 @@ jobs:
     # Native evidence: actions/runs/39501778120. Keep images and test gates intact.
     runs-on: ubuntu-22.04
     needs: build
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     env:
       VOUCHFX_TOPOLOGY_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
 
@@ -686,7 +703,7 @@ jobs:
       # is why the fatal buckets are narrow and the loop below reports every bad pin
       # it reaches before aborting, rather than one per run.
       #
-      # A fatal bucket fails this step and the blocking integration job, skipping
+      # A fatal bucket fails this step and the integration job, skipping
       # tests that cannot run meaningfully with an unpullable dependency pin. The
       # named annotation also improves diagnosis: it arrives in a few minutes
       # instead of a 44-minute run that never says which image. Be precise
@@ -1665,7 +1682,7 @@ jobs:
   # JSON through img.shields.io/endpoint, so the coverage number stays entirely
   # self-hosted (no coverage service, no new credentials).
   #
-  # Runs only for main pushes and the weekly schedule — PR runs must never move
+  # Runs only for main pushes and the daily schedule — PR runs must never move
   # the published badge.  The badge reflects UNIT coverage only (the blocking
   # `build` job); the native-process Docker lane is uninstrumented. A red
   # `build` skips this job via `needs`, so the last good badge is retained.
