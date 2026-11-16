@@ -133,7 +133,7 @@ on:
         description: >-
           The .NET SDK version to install for building vouchfx and running the suite.
           Current source targets net10.0 and needs the .NET 10 SDK; an older
-          `vouchfx-ref` built for net8.0 builds with .NET 8 (1.3.x also with .NET 9).
+          `vouchfx-ref` built for net8.0 builds with .NET 8 (a commit of `main` between 1.2.1 and 1.4.0 also with .NET 9).
           The SDK is isolated so another installed major cannot satisfy this run.
         type: string
         required: false
