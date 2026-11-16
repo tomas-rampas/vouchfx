@@ -207,6 +207,15 @@ source "$1"
         self.assertEqual([{"cron": "47 6 * * *"}], compatibility["on"]["schedule"])
         self.assertIn("workflow_dispatch", compatibility["on"])
         self.assertEqual(DOCKER_JOB_IF, compatibility["jobs"]["docker"]["if"])
+        self.assertEqual(["main"], compatibility["on"]["pull_request"]["branches"])
+        self.assertEqual(["main"], compatibility["on"]["push"]["branches"])
+        for always_job in ["build", "windows-unit", "memory-leak", "docs-build"]:
+            with self.subTest(job=always_job):
+                self.assertNotIn("if", data["jobs"][always_job])
+        self.assertEqual("build", data["jobs"]["memory-leak"]["needs"])
+        badge_concurrency = data["jobs"]["coverage-badge"]["concurrency"]
+        self.assertEqual("coverage-badge-main", badge_concurrency["group"])
+        self.assertIs(False, badge_concurrency["cancel-in-progress"])
         for per_pr_job in ["compatibility", "memory", "tls"]:
             with self.subTest(job=per_pr_job):
                 self.assertNotIn("if", compatibility["jobs"][per_pr_job])

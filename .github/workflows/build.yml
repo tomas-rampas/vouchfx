@@ -16,7 +16,7 @@
 #               client closure (Npgsql, Confluent.Kafka, MongoDB.Driver,
 #               StackExchange.Redis, HttpClient).  Docker-independent — the
 #               closure script touches client types in-memory only, never
-#               connects.  Also scheduled daily (06:17 UTC) to catch
+#               connects.  Also scheduled daily for 06:17 UTC to catch
 #               regressions introduced by dependency upgrades between pushes.
 #               Exit non-zero iff NetDelta > threshold-bytes (2 MB) or context
 #               not reclaimed; a failure here blocks merge.
@@ -72,7 +72,7 @@ on:
       - "feat/**"
   # Scheduled workflows run only on the default branch.  The daily run drives the
   # memory-leak regression cadence, the Docker integration job and the badge refresh.
-  # Keep exactly one entry: a second cron would double-run on the days they overlap.
+  # Keep exactly one entry: a second entry would run the full workflow twice on the days it fires.
   schedule:
     - cron: "17 6 * * *"   # 06:17 UTC every day
   # Manual run on any branch: Actions tab -> CI -> Run workflow -> pick the branch.
@@ -1692,6 +1692,11 @@ jobs:
     needs: build
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'schedule')
     continue-on-error: true            # cosmetic — must never redden CI
+    # Push and scheduled runs on main are in separate workflow concurrency groups,
+    # so the badge pushes are serialised here instead.
+    concurrency:
+      group: coverage-badge-main
+      cancel-in-progress: false
     permissions:
       contents: write                  # push to the `badges` branch (this job only)
 

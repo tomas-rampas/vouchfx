@@ -654,15 +654,17 @@ Each pull request to `main` runs the build and unit tests (Linux and Windows), t
 Docker-free .NET 8, 9 and 10 compatibility matrix, the .NET 9 and 10 memory gate, the native TLS
 lanes, the documentation build and the workflow contract. The Docker integration suites (the
 `integration` job and the `docker` matrix) do not run on pull requests or pushes. They run daily on
-`main`, at 06:17 UTC in `build.yml` and 06:47 UTC in `dotnet-compatibility.yml`, and on manual
-dispatch from any branch. A Docker-test failure therefore surfaces on the next daily run, not before
-merge. On a pull request the Docker integration checks are reported as skipped, which is expected.
+`main`, scheduled for 06:17 UTC in `build.yml` and 06:47 UTC in `dotnet-compatibility.yml`, and on
+manual dispatch from any branch. A Docker-test failure therefore surfaces on the next daily run, not
+before merge. On a pull request the Docker integration checks are reported as skipped, which is
+expected. GitHub disables scheduled workflows after 60 days without repository activity; re-enable
+them from the Actions tab if the daily runs stop.
 
 To run them on a branch before merging, open the Actions tab, choose the `CI` or `.NET compatibility`
-workflow, select **Run workflow** and pick the branch. The two workflows are separate, so run both if
-a change touches both. Manual dispatch needs write access to this repository: a fork contributor
-runs the workflows from their own fork's Actions tab (once Actions is enabled there) or runs the
-`requires=docker` tests locally.
+workflow, select **Run workflow** and pick the branch. The two workflows are separate, so run both to
+cover .NET 8 (`CI`) and .NET 9 and 10 (`.NET compatibility`). Manual dispatch needs write access to
+this repository: a fork contributor runs the workflows from their own fork's Actions tab (once
+Actions is enabled there) or runs the `requires=docker` tests locally.
 
 ## See also
 
