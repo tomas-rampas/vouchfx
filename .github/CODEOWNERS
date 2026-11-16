@@ -38,13 +38,10 @@
 /.github/actions/                               @tomas-rampas
 /ci/                                            @tomas-rampas
 
-# Claude Code on the web bootstrap. WHY: .claude/settings.json registers
-# .claude/hooks/session-start.sh as a SessionStart hook, so a web session runs the
-# checked-out branch's copy of it, as root, before anyone has read the diff: the same
-# supply-chain class as the workflows above. The same file's allow/ask permission
-# rules also take effect for a session opened on a branch before the diff is read,
-# so a branch could widen them. Owner review is mandatory, and web sessions should
-# be opened only on branches you trust.
+# Claude Code project settings. WHY: .claude/settings.json holds the allow/ask
+# permission rules, which take effect for a session opened on a branch before the
+# diff is read, so a branch could widen them. Owner review is mandatory, and web
+# sessions should be opened only on branches you trust.
 /.claude/                                       @tomas-rampas
 
 # Central build / dependency-version / package-feed control. WHY: an unreviewed
@@ -53,7 +50,7 @@
 # it must not be owned at the same bar as a README (it is otherwise catch-all only).
 /Directory.Build.props                          @tomas-rampas
 /Directory.Packages.props                       @tomas-rampas
-# global.json can select the SDK that the .claude/ session hook runs as root.
+# global.json selects the SDK that every build and test run uses.
 /global.json                                    @tomas-rampas
 /nuget.config                                   @tomas-rampas
 # The guard for the NuGet audit suppression is owner-reviewed alongside the suppression itself.

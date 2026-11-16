@@ -132,15 +132,11 @@ desktop.ini
 
 # Custom
 # Everything under .claude/ stays local (the harness's agent worktrees, personal
-# settings, scratch) EXCEPT two tracked files: .claude/settings.json (the SessionStart
-# hook registration and the project permission rules) and the hook script itself.
-# Git cannot re-include a file below an ignored directory, so the directory's
-# CONTENTS are ignored rather than the directory itself.
+# settings, scratch) EXCEPT one tracked file: .claude/settings.json (the project
+# permission rules). Git cannot re-include a file below an ignored directory, so
+# the directory's CONTENTS are ignored rather than the directory itself.
 .claude/*
 !.claude/settings.json
-!.claude/hooks/
-.claude/hooks/*
-!.claude/hooks/session-start.sh
 .serena/
 .vscode/
 .rider/
