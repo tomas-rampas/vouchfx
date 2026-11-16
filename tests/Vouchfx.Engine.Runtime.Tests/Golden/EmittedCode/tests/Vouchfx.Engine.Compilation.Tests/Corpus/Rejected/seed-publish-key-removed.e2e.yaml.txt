@@ -1,0 +1,7 @@
+vouchfx emitted-code baseline v1
+suite: tests/Vouchfx.Engine.Compilation.Tests/Corpus/Rejected/seed-publish-key-removed.e2e.yaml
+outcome: refused
+stage: schema
+@@@@ diagnostic
+/environment/seed/events/publish	(line 21) Unknown property 'publish'
+@@@@ end

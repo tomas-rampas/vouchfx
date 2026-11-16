@@ -120,6 +120,12 @@ public sealed class ExamplesCompileTests
     private static readonly StepKindRegistry s_registry =
         StepKindRegistry.BuildAndFreeze(s_providerAssemblies);
 
+    /// <summary>
+    /// The frozen registry over all 25 Core providers, shared with the emitted-code baseline
+    /// gate so both read one provider list.
+    /// </summary>
+    internal static StepKindRegistry CoreRegistry => s_registry;
+
     private const string SuiteNamespace = "VouchfxGenerated";
 
     // ── Discover every examples/**/*.e2e.yaml file from disk ───────────────────────────
@@ -214,7 +220,7 @@ public sealed class ExamplesCompileTests
     /// asymmetry, not a hypothetical one — CI discovers `*.setup.sh` only, so a `.sh`-only
     /// example would be green on Linux and cryptic on Windows.
     /// </remarks>
-    private static void EnsureFixtureMaterial(string examplePath)
+    internal static void EnsureFixtureMaterial(string examplePath)
     {
         const string suffix = ".e2e.yaml";
         var stem = examplePath[..^suffix.Length] + ".setup";

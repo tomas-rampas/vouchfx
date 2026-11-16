@@ -1,0 +1,7 @@
+vouchfx emitted-code baseline v1
+suite: tests/Vouchfx.Engine.Compilation.Tests/Corpus/Rejected/seed-documents-key-removed.e2e.yaml
+outcome: refused
+stage: schema
+@@@@ diagnostic
+/environment/seed/catalog-store/documents	(line 21) Unknown property 'documents'
+@@@@ end

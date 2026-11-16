@@ -1,0 +1,9 @@
+vouchfx emitted-code baseline v1
+suite: tests/Vouchfx.Engine.Planning.Tests/Fixtures/ingest/all-malformed/bad-two.e2e.yaml
+outcome: refused
+stage: schema
+@@@@ diagnostic
+/steps/0	(line 5) Required properties ["id"] are not present
+@@@@ diagnostic
+/steps/0	(line 5) Required properties ["target","query","expect"] are not present
+@@@@ end

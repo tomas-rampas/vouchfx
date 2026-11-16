@@ -1,0 +1,7 @@
+vouchfx emitted-code baseline v1
+suite: tests/Vouchfx.Engine.Compilation.Tests/Corpus/Rejected/service-healthcheck-tcp-missing-port.e2e.yaml
+outcome: refused
+stage: schema
+@@@@ diagnostic
+/environment/services/kafka-broker/healthCheck	(line 14) Required properties ["port"] are not present in service 'kafka-broker' (at healthCheck)
+@@@@ end

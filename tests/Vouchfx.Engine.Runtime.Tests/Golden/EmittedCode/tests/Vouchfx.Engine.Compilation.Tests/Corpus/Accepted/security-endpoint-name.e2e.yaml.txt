@@ -1,0 +1,7 @@
+vouchfx emitted-code baseline v1
+suite: tests/Vouchfx.Engine.Compilation.Tests/Corpus/Accepted/security-endpoint-name.e2e.yaml
+outcome: refused
+stage: pipeline
+@@@@ diagnostic
+security-preflight	environment.dependencies.events.security.endpoint: select 'tcp', 'internal', or a port in 1..65535; the named endpoint is not configured.
+@@@@ end

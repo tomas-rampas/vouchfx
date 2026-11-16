@@ -1,0 +1,7 @@
+vouchfx emitted-code baseline v1
+suite: tests/Vouchfx.Engine.Compilation.Tests/Corpus/Rejected/service-ports-on-project-form.e2e.yaml
+outcome: refused
+stage: schema
+@@@@ diagnostic
+/environment/services/app/ports	(line 15) Property 'ports' is not valid on service 'app'
+@@@@ end

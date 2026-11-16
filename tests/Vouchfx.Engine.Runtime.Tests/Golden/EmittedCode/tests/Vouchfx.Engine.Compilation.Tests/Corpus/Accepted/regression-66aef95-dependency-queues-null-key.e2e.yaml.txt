@@ -1,0 +1,106 @@
+vouchfx emitted-code baseline v1
+suite: tests/Vouchfx.Engine.Compilation.Tests/Corpus/Accepted/regression-66aef95-dependency-queues-null-key.e2e.yaml
+outcome: emitted
+namespace: VouchfxGenerated
+steps: 1
+
+@@@@ step 1 of 1
+id: noop
+type: script.csharp
+provider: Vouchfx.Steps.Script.Csharp.ScriptCsharpProvider
+retry: false
+timeout-ms: none
+@@@@ step 1 usings
+System
+System.Diagnostics
+System.Threading.Tasks
+Vouchfx.Engine.Abstractions
+@@@@ step 1 helpers
+
+@@@@ step 1 statement-block
+{
+    var __sw_noop = System.Diagnostics.Stopwatch.StartNew();
+    Vouchfx.Engine.Abstractions.Verdict __v_noop = Vouchfx.Engine.Abstractions.Verdict.Pass;
+    string? __obs_noop = null;
+    async System.Threading.Tasks.Task __body_noop()
+    {
+        await System.Threading.Tasks.Task.CompletedTask;
+        // ---- begin author code (spliced verbatim) ----
+// Filler step: this fixture exercises a null-valued 'queues:' key.
+        // ---- end author code ----
+    }
+    try
+    {
+        await __body_noop();
+    }
+    catch (System.OperationCanceledException) when (__stepCt_noop.IsCancellationRequested)
+    {
+        throw;
+    }
+    catch (System.Exception __ex_noop)
+    {
+        __v_noop = Vouchfx.Engine.Abstractions.Verdict.Fail;
+        __obs_noop = __ex_noop.Message;
+    }
+    finally
+    {
+        __sw_noop.Stop();
+    }
+    Vars["__outcome::noop"] = new Vouchfx.Engine.Abstractions.StepOutcome(__v_noop, __sw_noop.ElapsedMilliseconds, __obs_noop);
+}
+@@@@ assembled-script
+using System;
+using System.Diagnostics;
+using System.Threading.Tasks;
+using Vouchfx.Engine.Abstractions;
+
+var __vouchfxRunCt = Services.TryGetValue("__vouchfx_run_cancellation", out var __vouchfxRunToken) && __vouchfxRunToken is System.Threading.CancellationToken __vouchfxToken
+    ? __vouchfxToken : System.Threading.CancellationToken.None;
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_noop = __vouchfxRunCt;
+    _ = __stepCt_noop;
+    bool __stepBudgetGoverned_noop = false;
+    _ = __stepBudgetGoverned_noop;
+    StepEvents?.OnStepStarted("noop");
+{
+    var __sw_noop = System.Diagnostics.Stopwatch.StartNew();
+    Vouchfx.Engine.Abstractions.Verdict __v_noop = Vouchfx.Engine.Abstractions.Verdict.Pass;
+    string? __obs_noop = null;
+    async System.Threading.Tasks.Task __body_noop()
+    {
+        await System.Threading.Tasks.Task.CompletedTask;
+        // ---- begin author code (spliced verbatim) ----
+// Filler step: this fixture exercises a null-valued 'queues:' key.
+        // ---- end author code ----
+    }
+    try
+    {
+        await __body_noop();
+    }
+    catch (System.OperationCanceledException) when (__stepCt_noop.IsCancellationRequested)
+    {
+        throw;
+    }
+    catch (System.Exception __ex_noop)
+    {
+        __v_noop = Vouchfx.Engine.Abstractions.Verdict.Fail;
+        __obs_noop = __ex_noop.Message;
+    }
+    finally
+    {
+        __sw_noop.Stop();
+    }
+    Vars["__outcome::noop"] = new Vouchfx.Engine.Abstractions.StepOutcome(__v_noop, __sw_noop.ElapsedMilliseconds, __obs_noop);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::noop");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "noop",
+        Vars.TryGetValue("__outcome::noop", out var __sco_noop) ? __sco_noop as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::noop", out var __scs_noop) ? __scs_noop as string : null);
+}
+@@@@ end

@@ -1,0 +1,7 @@
+vouchfx emitted-code baseline v1
+suite: tests/Vouchfx.Engine.Compilation.Tests/Corpus/Rejected/expect-body-contains-empty-http-rest.e2e.yaml
+outcome: refused
+stage: schema
+@@@@ diagnostic
+/steps/0/expect/bodyContains	(line 15) Value should be at least 1 characters
+@@@@ end

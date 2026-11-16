@@ -1,0 +1,7 @@
+vouchfx emitted-code baseline v1
+suite: tests/Vouchfx.Engine.Compilation.Tests/Corpus/Rejected/avro-unknown-key-mq-publish-kafka.e2e.yaml
+outcome: refused
+stage: schema
+@@@@ diagnostic
+/steps/0/avro/extra	(line 26) Unknown property 'extra'
+@@@@ end

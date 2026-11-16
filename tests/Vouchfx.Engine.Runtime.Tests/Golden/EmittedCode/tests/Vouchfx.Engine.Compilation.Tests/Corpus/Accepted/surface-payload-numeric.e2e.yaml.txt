@@ -1,0 +1,100 @@
+vouchfx emitted-code baseline v1
+suite: tests/Vouchfx.Engine.Compilation.Tests/Corpus/Accepted/surface-payload-numeric.e2e.yaml
+outcome: emitted
+namespace: VouchfxGenerated
+steps: 1
+
+@@@@ step 1 of 1
+id: publish-event
+type: mq-publish.kafka
+provider: Vouchfx.Steps.MqPublish.Kafka.MqPublishKafkaProvider
+retry: false
+timeout-ms: none
+@@@@ step 1 usings
+System
+System.Collections.Generic
+System.Diagnostics
+System.Threading.Tasks
+Confluent.Kafka
+Vouchfx.Engine.Abstractions
+@@@@ step 1 helpers
+MqPublishKafka_Helpers sha256=f4646d77fdb0eaa101c228c0bb9ad840c0b9fc24ec0586b2c5c95c6089186e9e
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
+KafkaSecurity_V2_Helpers sha256=780484a478c04266bd1a4fa89ced518c98e1d8ac8af881835213b7c22c7e2945
+@@@@ step 1 statement-block
+{
+    await MqPublishKafka_Helpers.PublishAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::publish_event",
+        "conn::events",
+        "events",
+        "orders",
+        null,
+        "12345",
+        new string[] { },
+        new string[] { },
+        null,
+        null,
+        null,
+        new string[] { },
+        new string[] { },
+        __stepCt_publish_event,
+        __stepBudgetGoverned_publish_event);
+}
+@@@@ assembled-script
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Threading.Tasks;
+using Confluent.Kafka;
+using Vouchfx.Engine.Abstractions;
+
+// [helper MqPublishKafka_Helpers sha256=f4646d77fdb0eaa101c228c0bb9ad840c0b9fc24ec0586b2c5c95c6089186e9e: body elided, recorded by name and hash]
+// [helper Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d: body elided, recorded by name and hash]
+// [helper Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1: body elided, recorded by name and hash]
+// [helper KafkaSecurity_V2_Helpers sha256=780484a478c04266bd1a4fa89ced518c98e1d8ac8af881835213b7c22c7e2945: body elided, recorded by name and hash]
+
+var __vouchfxRunCt = Services.TryGetValue("__vouchfx_run_cancellation", out var __vouchfxRunToken) && __vouchfxRunToken is System.Threading.CancellationToken __vouchfxToken
+    ? __vouchfxToken : System.Threading.CancellationToken.None;
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_publish_event = __vouchfxRunCt;
+    _ = __stepCt_publish_event;
+    bool __stepBudgetGoverned_publish_event = false;
+    _ = __stepBudgetGoverned_publish_event;
+    StepEvents?.OnStepStarted("publish-event");
+{
+    await MqPublishKafka_Helpers.PublishAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::publish_event",
+        "conn::events",
+        "events",
+        "orders",
+        null,
+        "12345",
+        new string[] { },
+        new string[] { },
+        null,
+        null,
+        null,
+        new string[] { },
+        new string[] { },
+        __stepCt_publish_event,
+        __stepBudgetGoverned_publish_event);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::publish_event");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "publish-event",
+        Vars.TryGetValue("__outcome::publish_event", out var __sco_publish_event) ? __sco_publish_event as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::publish_event", out var __scs_publish_event) ? __scs_publish_event as string : null);
+}
+@@@@ end

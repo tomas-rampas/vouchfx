@@ -1,0 +1,327 @@
+vouchfx emitted-code baseline v1
+suite: examples/trace-expect-otlp.e2e.yaml
+outcome: emitted
+namespace: VouchfxGenerated
+steps: 3
+
+@@@@ step 1 of 3
+id: trigger-order
+type: http.rest
+provider: Vouchfx.Steps.HttpRest.HttpRestProvider
+retry: false
+timeout-ms: none
+@@@@ step 1 usings
+System
+System.Collections.Generic
+System.Net.Http
+System.Diagnostics
+System.Threading.Tasks
+Vouchfx.Engine.Abstractions
+@@@@ step 1 helpers
+HttpRest_Helpers sha256=4d12af26d4219f1bc2d3ea5286bdf1268638e1ffc96911b948ee37bfdad0ecab
+HttpRest_BodyAssertions sha256=b8e0052f0a55602345e1b981ab24079f1a37115d6864648136c83f5c4e011a62
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
+HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01ce6e1d5c
+@@@@ step 1 statement-block
+{
+    await HttpRest_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::trigger_order",
+        "__capture_status::trigger_order",
+        "svc::app",
+        "app",
+        "POST",
+        "/orders",
+        "{\u0022customerId\u0022:\u0022cust-1\u0022,\u0022amount\u0022:49.99}",
+        new string[] { "traceparent" },
+        new string[] { "{traceparent}" },
+        200,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_trigger_order,
+        __stepBudgetGoverned_trigger_order);
+}
+
+@@@@ step 2 of 3
+id: simulate-otlp-export
+type: script.csharp
+provider: Vouchfx.Steps.Script.Csharp.ScriptCsharpProvider
+retry: false
+timeout-ms: none
+@@@@ step 2 usings
+System
+System.Diagnostics
+System.Threading.Tasks
+Vouchfx.Engine.Abstractions
+@@@@ step 2 helpers
+
+@@@@ step 2 statement-block
+{
+    var __sw_simulate_otlp_export = System.Diagnostics.Stopwatch.StartNew();
+    Vouchfx.Engine.Abstractions.Verdict __v_simulate_otlp_export = Vouchfx.Engine.Abstractions.Verdict.Pass;
+    string? __obs_simulate_otlp_export = null;
+    async System.Threading.Tasks.Task __body_simulate_otlp_export()
+    {
+        await System.Threading.Tasks.Task.CompletedTask;
+        // ---- begin author code (spliced verbatim) ----
+var receiverUrl = (string)Vars["traces"];   // staged by trace-expect.otlp below, plain key
+var traceId = "4bf92f3577b34da6a3ce929d0e0e4736"; // the 32-hex segment of {traceparent}
+var payload =
+  "{\"resourceSpans\":[{" +
+  "\"resource\":{\"attributes\":[{\"key\":\"service.name\",\"value\":{\"stringValue\":\"app\"}}]}," +
+  "\"scopeSpans\":[{\"spans\":[{" +
+  "\"traceId\":\"" + traceId + "\"," +
+  "\"spanId\":\"00f067aa0ba902b7\"," +
+  "\"parentSpanId\":\"\"," +
+  "\"name\":\"POST /orders\"," +
+  "\"status\":{\"code\":\"STATUS_CODE_OK\"}" +
+  "}]}]" +
+  "}]}";
+var client = new System.Net.Http.HttpClient();
+try {
+  var content = new System.Net.Http.StringContent(payload, System.Text.Encoding.UTF8, "application/json");
+  var resp = await client.PostAsync(receiverUrl + "/v1/traces", content);
+  if ((int)resp.StatusCode >= 300)
+    throw new System.Exception("Simulated OTLP export failed: " + (int)resp.StatusCode);
+} finally { client.Dispose(); }
+
+        // ---- end author code ----
+    }
+    try
+    {
+        await __body_simulate_otlp_export();
+    }
+    catch (System.OperationCanceledException) when (__stepCt_simulate_otlp_export.IsCancellationRequested)
+    {
+        throw;
+    }
+    catch (System.Exception __ex_simulate_otlp_export)
+    {
+        __v_simulate_otlp_export = Vouchfx.Engine.Abstractions.Verdict.Fail;
+        __obs_simulate_otlp_export = __ex_simulate_otlp_export.Message;
+    }
+    finally
+    {
+        __sw_simulate_otlp_export.Stop();
+    }
+    Vars["__outcome::simulate_otlp_export"] = new Vouchfx.Engine.Abstractions.StepOutcome(__v_simulate_otlp_export, __sw_simulate_otlp_export.ElapsedMilliseconds, __obs_simulate_otlp_export);
+}
+
+@@@@ step 3 of 3
+id: assert-order-span
+type: trace-expect.otlp
+provider: Vouchfx.Steps.TraceExpect.Otlp.TraceExpectOtlpProvider
+retry: true
+timeout-ms: 30000
+@@@@ step 3 usings
+System
+System.Collections.Generic
+System.Diagnostics
+System.Threading.Tasks
+Vouchfx.Engine.Abstractions
+Vouchfx.Engine.Abstractions.Traces
+@@@@ step 3 helpers
+TraceExpectOtlp_Helpers sha256=5bb74a577e0ace792b39ee47cbefe7b39f99fce4c5e2942c5af8b7d463f866c4
+Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
+@@@@ step 3 statement-block
+{
+    await TraceExpectOtlp_Helpers.AssertAsync(
+        Vars,
+        Secrets,
+        Traces,
+        "__outcome::assert_order_span",
+        "__capture_status::assert_order_span",
+        "traces",
+        "{traceparent}",
+        "app",
+        "POST /orders",
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { "spanId" },
+        new string[] { "$.spanId" },
+        new string[] { "json" },
+        __stepCt_assert_order_span);
+}
+@@@@ assembled-script
+using System;
+using System.Collections.Generic;
+using System.Net.Http;
+using System.Diagnostics;
+using System.Threading.Tasks;
+using Vouchfx.Engine.Abstractions;
+using Vouchfx.Engine.Abstractions.Traces;
+
+// [helper HttpRest_Helpers sha256=4d12af26d4219f1bc2d3ea5286bdf1268638e1ffc96911b948ee37bfdad0ecab: body elided, recorded by name and hash]
+// [helper HttpRest_BodyAssertions sha256=b8e0052f0a55602345e1b981ab24079f1a37115d6864648136c83f5c4e011a62: body elided, recorded by name and hash]
+// [helper Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d: body elided, recorded by name and hash]
+// [helper Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1: body elided, recorded by name and hash]
+// [helper HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01ce6e1d5c: body elided, recorded by name and hash]
+// [helper TraceExpectOtlp_Helpers sha256=5bb74a577e0ace792b39ee47cbefe7b39f99fce4c5e2942c5af8b7d463f866c4: body elided, recorded by name and hash]
+
+var __vouchfxRunCt = Services.TryGetValue("__vouchfx_run_cancellation", out var __vouchfxRunToken) && __vouchfxRunToken is System.Threading.CancellationToken __vouchfxToken
+    ? __vouchfxToken : System.Threading.CancellationToken.None;
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_trigger_order = __vouchfxRunCt;
+    _ = __stepCt_trigger_order;
+    bool __stepBudgetGoverned_trigger_order = false;
+    _ = __stepBudgetGoverned_trigger_order;
+    StepEvents?.OnStepStarted("trigger-order");
+{
+    await HttpRest_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::trigger_order",
+        "__capture_status::trigger_order",
+        "svc::app",
+        "app",
+        "POST",
+        "/orders",
+        "{\u0022customerId\u0022:\u0022cust-1\u0022,\u0022amount\u0022:49.99}",
+        new string[] { "traceparent" },
+        new string[] { "{traceparent}" },
+        200,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_trigger_order,
+        __stepBudgetGoverned_trigger_order);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::trigger_order");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "trigger-order",
+        Vars.TryGetValue("__outcome::trigger_order", out var __sco_trigger_order) ? __sco_trigger_order as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::trigger_order", out var __scs_trigger_order) ? __scs_trigger_order as string : null);
+}
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_simulate_otlp_export = __vouchfxRunCt;
+    _ = __stepCt_simulate_otlp_export;
+    bool __stepBudgetGoverned_simulate_otlp_export = false;
+    _ = __stepBudgetGoverned_simulate_otlp_export;
+    StepEvents?.OnStepStarted("simulate-otlp-export");
+{
+    var __sw_simulate_otlp_export = System.Diagnostics.Stopwatch.StartNew();
+    Vouchfx.Engine.Abstractions.Verdict __v_simulate_otlp_export = Vouchfx.Engine.Abstractions.Verdict.Pass;
+    string? __obs_simulate_otlp_export = null;
+    async System.Threading.Tasks.Task __body_simulate_otlp_export()
+    {
+        await System.Threading.Tasks.Task.CompletedTask;
+        // ---- begin author code (spliced verbatim) ----
+var receiverUrl = (string)Vars["traces"];   // staged by trace-expect.otlp below, plain key
+var traceId = "4bf92f3577b34da6a3ce929d0e0e4736"; // the 32-hex segment of {traceparent}
+var payload =
+  "{\"resourceSpans\":[{" +
+  "\"resource\":{\"attributes\":[{\"key\":\"service.name\",\"value\":{\"stringValue\":\"app\"}}]}," +
+  "\"scopeSpans\":[{\"spans\":[{" +
+  "\"traceId\":\"" + traceId + "\"," +
+  "\"spanId\":\"00f067aa0ba902b7\"," +
+  "\"parentSpanId\":\"\"," +
+  "\"name\":\"POST /orders\"," +
+  "\"status\":{\"code\":\"STATUS_CODE_OK\"}" +
+  "}]}]" +
+  "}]}";
+var client = new System.Net.Http.HttpClient();
+try {
+  var content = new System.Net.Http.StringContent(payload, System.Text.Encoding.UTF8, "application/json");
+  var resp = await client.PostAsync(receiverUrl + "/v1/traces", content);
+  if ((int)resp.StatusCode >= 300)
+    throw new System.Exception("Simulated OTLP export failed: " + (int)resp.StatusCode);
+} finally { client.Dispose(); }
+
+        // ---- end author code ----
+    }
+    try
+    {
+        await __body_simulate_otlp_export();
+    }
+    catch (System.OperationCanceledException) when (__stepCt_simulate_otlp_export.IsCancellationRequested)
+    {
+        throw;
+    }
+    catch (System.Exception __ex_simulate_otlp_export)
+    {
+        __v_simulate_otlp_export = Vouchfx.Engine.Abstractions.Verdict.Fail;
+        __obs_simulate_otlp_export = __ex_simulate_otlp_export.Message;
+    }
+    finally
+    {
+        __sw_simulate_otlp_export.Stop();
+    }
+    Vars["__outcome::simulate_otlp_export"] = new Vouchfx.Engine.Abstractions.StepOutcome(__v_simulate_otlp_export, __sw_simulate_otlp_export.ElapsedMilliseconds, __obs_simulate_otlp_export);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::simulate_otlp_export");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "simulate-otlp-export",
+        Vars.TryGetValue("__outcome::simulate_otlp_export", out var __sco_simulate_otlp_export) ? __sco_simulate_otlp_export as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::simulate_otlp_export", out var __scs_simulate_otlp_export) ? __scs_simulate_otlp_export as string : null);
+}
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    StepEvents?.OnStepStarted("assert-order-span");
+    async System.Threading.Tasks.Task<Vouchfx.Engine.Abstractions.StepOutcome> __attempt_assert_order_span(System.Threading.CancellationToken __ct_assert_order_span)
+    {
+        System.Threading.CancellationToken __stepCt_assert_order_span = __ct_assert_order_span;
+        _ = __stepCt_assert_order_span;
+        bool __stepBudgetGoverned_assert_order_span = false;
+        _ = __stepBudgetGoverned_assert_order_span;
+{
+    await TraceExpectOtlp_Helpers.AssertAsync(
+        Vars,
+        Secrets,
+        Traces,
+        "__outcome::assert_order_span",
+        "__capture_status::assert_order_span",
+        "traces",
+        "{traceparent}",
+        "app",
+        "POST /orders",
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { "spanId" },
+        new string[] { "$.spanId" },
+        new string[] { "json" },
+        __stepCt_assert_order_span);
+}
+        var __o_assert_order_span = Vars.TryGetValue("__outcome::assert_order_span", out var __raw_assert_order_span) && __raw_assert_order_span is Vouchfx.Engine.Abstractions.StepOutcome __so_assert_order_span
+            ? __so_assert_order_span
+            : new Vouchfx.Engine.Abstractions.StepOutcome(Vouchfx.Engine.Abstractions.Verdict.Inconclusive, 0L, null);
+        Vars.Remove("__outcome::assert_order_span");
+        return __o_assert_order_span;
+    }
+    await Vouchfx.Engine.Abstractions.Retry.RetryRunner.PollAsync(
+        Vars, "__outcome::assert_order_span", "__attempts::assert_order_span", 30000L, null, __attempt_assert_order_span, StepEvents, "assert-order-span", ct: __vouchfxRunCt);
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::assert_order_span");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "assert-order-span",
+        Vars.TryGetValue("__outcome::assert_order_span", out var __sco_assert_order_span) ? __sco_assert_order_span as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::assert_order_span", out var __scs_assert_order_span) ? __scs_assert_order_span as string : null);
+}
+@@@@ end

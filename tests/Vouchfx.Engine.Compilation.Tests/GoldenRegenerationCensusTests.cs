@@ -28,6 +28,7 @@ public sealed class GoldenRegenerationCensusTests
             ["Vouchfx.Engine.Compilation.Tests/CompilationPublicApiContractTests.cs"] = "VOUCHFX_REGEN_COMPILATION_CONTRACT",
             ["Vouchfx.Engine.Orchestration.Tests/OrchestrationEventContractFreezeTests.cs"] = "VOUCHFX_REGEN_ORCHESTRATION_EVENT_CONTRACT",
             ["Vouchfx.Engine.Planning.Tests/PlanningPublicApiContractTests.cs"] = "VOUCHFX_REGEN_PLANNING_CONTRACT",
+            ["Vouchfx.Engine.Runtime.Tests/EmittedCodeBaselineTests.cs"] = "VOUCHFX_REGEN_EMITTED_CODE",
         };
         var testsRoot = Path.Combine(RepoRoot.Resolve(), "tests");
         var actual = new Dictionary<string, string>(StringComparer.Ordinal);

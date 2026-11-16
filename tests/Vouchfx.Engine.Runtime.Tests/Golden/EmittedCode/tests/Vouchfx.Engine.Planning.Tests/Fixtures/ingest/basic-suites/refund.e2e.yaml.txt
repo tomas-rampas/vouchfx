@@ -1,0 +1,7 @@
+vouchfx emitted-code baseline v1
+suite: tests/Vouchfx.Engine.Planning.Tests/Fixtures/ingest/basic-suites/refund.e2e.yaml
+outcome: refused
+stage: pipeline
+@@@@ diagnostic
+-	Step 'publish-refund-event' model validation failed: mq-publish.kafka: 'target' 'events' is not a kafka dependency declared in environment.dependencies, nor a declared service in environment.services. Declared dependencies: (none). Declared services: (none).
+@@@@ end

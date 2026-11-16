@@ -1,0 +1,7 @@
+vouchfx emitted-code baseline v1
+suite: tests/Vouchfx.Engine.Compilation.Tests/Corpus/Rejected/security-clientcert-under-tls.e2e.yaml
+outcome: refused
+stage: schema
+@@@@ diagnostic
+/environment/services/app/security/clientCert	(line 18) Property 'clientCert' is not valid when 'profile' is 'tls'
+@@@@ end

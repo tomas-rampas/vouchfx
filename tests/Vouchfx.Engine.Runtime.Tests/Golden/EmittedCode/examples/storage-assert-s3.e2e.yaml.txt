@@ -1,0 +1,488 @@
+vouchfx emitted-code baseline v1
+suite: examples/storage-assert-s3.e2e.yaml
+outcome: emitted
+namespace: VouchfxGenerated
+steps: 4
+
+@@@@ step 1 of 4
+id: trigger-export
+type: http.rest
+provider: Vouchfx.Steps.HttpRest.HttpRestProvider
+retry: false
+timeout-ms: none
+@@@@ step 1 usings
+System
+System.Collections.Generic
+System.Net.Http
+System.Diagnostics
+System.Threading.Tasks
+Vouchfx.Engine.Abstractions
+@@@@ step 1 helpers
+HttpRest_Helpers sha256=4d12af26d4219f1bc2d3ea5286bdf1268638e1ffc96911b948ee37bfdad0ecab
+HttpRest_BodyAssertions sha256=b8e0052f0a55602345e1b981ab24079f1a37115d6864648136c83f5c4e011a62
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
+HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01ce6e1d5c
+@@@@ step 1 statement-block
+{
+    await HttpRest_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::trigger_export",
+        "__capture_status::trigger_export",
+        "svc::app",
+        "app",
+        "POST",
+        "/reports/export",
+        "{\u0022format\u0022:\u0022csv\u0022}",
+        new string[] { },
+        new string[] { },
+        200,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_trigger_export,
+        __stepBudgetGoverned_trigger_export);
+}
+
+@@@@ step 2 of 4
+id: simulate-report-write
+type: script.csharp
+provider: Vouchfx.Steps.Script.Csharp.ScriptCsharpProvider
+retry: false
+timeout-ms: none
+@@@@ step 2 usings
+System
+System.Diagnostics
+System.Threading.Tasks
+Vouchfx.Engine.Abstractions
+@@@@ step 2 helpers
+
+@@@@ step 2 statement-block
+{
+    var __sw_simulate_report_write = System.Diagnostics.Stopwatch.StartNew();
+    Vouchfx.Engine.Abstractions.Verdict __v_simulate_report_write = Vouchfx.Engine.Abstractions.Verdict.Pass;
+    string? __obs_simulate_report_write = null;
+    async System.Threading.Tasks.Task __body_simulate_report_write()
+    {
+        await System.Threading.Tasks.Task.CompletedTask;
+        // ---- begin author code (spliced verbatim) ----
+var connStr = (string)Vars["conn::reports"];
+string serviceUrl = string.Empty, accessKey = string.Empty, secretKey = string.Empty;
+foreach (var part in connStr.Split(';', StringSplitOptions.RemoveEmptyEntries))
+{
+  var eq = part.IndexOf('=');
+  if (eq <= 0) continue;
+  var k = part.Substring(0, eq).Trim();
+  var v = part.Substring(eq + 1).Trim();
+  if (string.Equals(k, "ServiceURL", StringComparison.OrdinalIgnoreCase)) serviceUrl = v;
+  else if (string.Equals(k, "AccessKey", StringComparison.OrdinalIgnoreCase)) accessKey = v;
+  else if (string.Equals(k, "SecretKey", StringComparison.OrdinalIgnoreCase)) secretKey = v;
+}
+
+Amazon.S3.AmazonS3Client client = null;
+try
+{
+  client = new Amazon.S3.AmazonS3Client(
+    new Amazon.Runtime.BasicAWSCredentials(accessKey, secretKey),
+    new Amazon.S3.AmazonS3Config
+    {
+      ServiceURL = serviceUrl,
+      ForcePathStyle = true,
+      MaxErrorRetry = 0,
+      Timeout = TimeSpan.FromSeconds(5),
+      ConnectTimeout = TimeSpan.FromSeconds(5),
+    });
+
+  try
+  {
+    await client.PutBucketAsync("reports");
+  }
+  catch (Amazon.S3.AmazonS3Exception ex) when (
+    string.Equals(ex.ErrorCode, "BucketAlreadyOwnedByYou", StringComparison.Ordinal)
+    || string.Equals(ex.ErrorCode, "BucketAlreadyExists", StringComparison.Ordinal))
+  {
+    // Already created by a prior scenario run against the same container.
+  }
+
+  var reportKey = (string)Vars["reportKey"];
+  var body = "date,amount\n2026-07-08,49.99\n";
+  await client.PutObjectAsync(new Amazon.S3.Model.PutObjectRequest
+  {
+    BucketName = "reports",
+    Key = reportKey,
+    ContentBody = body,
+    ContentType = "text/csv",
+  });
+}
+finally
+{
+  client?.Dispose();
+}
+
+        // ---- end author code ----
+    }
+    try
+    {
+        await __body_simulate_report_write();
+    }
+    catch (System.OperationCanceledException) when (__stepCt_simulate_report_write.IsCancellationRequested)
+    {
+        throw;
+    }
+    catch (System.Exception __ex_simulate_report_write)
+    {
+        __v_simulate_report_write = Vouchfx.Engine.Abstractions.Verdict.Fail;
+        __obs_simulate_report_write = __ex_simulate_report_write.Message;
+    }
+    finally
+    {
+        __sw_simulate_report_write.Stop();
+    }
+    Vars["__outcome::simulate_report_write"] = new Vouchfx.Engine.Abstractions.StepOutcome(__v_simulate_report_write, __sw_simulate_report_write.ElapsedMilliseconds, __obs_simulate_report_write);
+}
+
+@@@@ step 3 of 4
+id: assert-report-written
+type: storage-assert.s3
+provider: Vouchfx.Steps.StorageAssert.S3.StorageAssertS3Provider
+retry: true
+timeout-ms: 15000
+@@@@ step 3 usings
+System
+System.Collections.Generic
+System.Diagnostics
+System.Threading.Tasks
+Amazon.S3
+Amazon.S3.Model
+Amazon.Runtime
+Vouchfx.Engine.Abstractions
+@@@@ step 3 helpers
+StorageAssertS3_Helpers sha256=9cdc79f9c81453b4d02d22a4cdcd910a54f97c8cb780394b2deb8d2c97c9ce87
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
+@@@@ step 3 statement-block
+{
+    await StorageAssertS3_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        "__outcome::assert_report_written",
+        "__capture_status::assert_report_written",
+        "conn::reports",
+        "reports",
+        "{reportKey}",
+        true,
+        null,
+        "1",
+        null,
+        null,
+        "text/csv",
+        new string[] { },
+        new string[] { },
+        new string[] { "reportEtag" },
+        new string[] { "$.etag" },
+        new string[] { "json" },
+        __stepCt_assert_report_written,
+        __stepBudgetGoverned_assert_report_written);
+}
+
+@@@@ step 4 of 4
+id: assert-report-not-yet-purged
+type: storage-assert.s3
+provider: Vouchfx.Steps.StorageAssert.S3.StorageAssertS3Provider
+retry: false
+timeout-ms: none
+@@@@ step 4 usings
+System
+System.Collections.Generic
+System.Diagnostics
+System.Threading.Tasks
+Amazon.S3
+Amazon.S3.Model
+Amazon.Runtime
+Vouchfx.Engine.Abstractions
+@@@@ step 4 helpers
+StorageAssertS3_Helpers sha256=9cdc79f9c81453b4d02d22a4cdcd910a54f97c8cb780394b2deb8d2c97c9ce87
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
+@@@@ step 4 statement-block
+{
+    await StorageAssertS3_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        "__outcome::assert_report_not_yet_purged",
+        "__capture_status::assert_report_not_yet_purged",
+        "conn::reports",
+        "reports",
+        "exports/already-purged.csv",
+        false,
+        null,
+        null,
+        null,
+        null,
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_assert_report_not_yet_purged,
+        __stepBudgetGoverned_assert_report_not_yet_purged);
+}
+@@@@ assembled-script
+using System;
+using System.Collections.Generic;
+using System.Net.Http;
+using System.Diagnostics;
+using System.Threading.Tasks;
+using Vouchfx.Engine.Abstractions;
+using Amazon.S3;
+using Amazon.S3.Model;
+using Amazon.Runtime;
+
+// [helper HttpRest_Helpers sha256=4d12af26d4219f1bc2d3ea5286bdf1268638e1ffc96911b948ee37bfdad0ecab: body elided, recorded by name and hash]
+// [helper HttpRest_BodyAssertions sha256=b8e0052f0a55602345e1b981ab24079f1a37115d6864648136c83f5c4e011a62: body elided, recorded by name and hash]
+// [helper Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d: body elided, recorded by name and hash]
+// [helper Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1: body elided, recorded by name and hash]
+// [helper HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01ce6e1d5c: body elided, recorded by name and hash]
+// [helper StorageAssertS3_Helpers sha256=9cdc79f9c81453b4d02d22a4cdcd910a54f97c8cb780394b2deb8d2c97c9ce87: body elided, recorded by name and hash]
+
+var __vouchfxRunCt = Services.TryGetValue("__vouchfx_run_cancellation", out var __vouchfxRunToken) && __vouchfxRunToken is System.Threading.CancellationToken __vouchfxToken
+    ? __vouchfxToken : System.Threading.CancellationToken.None;
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_trigger_export = __vouchfxRunCt;
+    _ = __stepCt_trigger_export;
+    bool __stepBudgetGoverned_trigger_export = false;
+    _ = __stepBudgetGoverned_trigger_export;
+    StepEvents?.OnStepStarted("trigger-export");
+{
+    await HttpRest_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::trigger_export",
+        "__capture_status::trigger_export",
+        "svc::app",
+        "app",
+        "POST",
+        "/reports/export",
+        "{\u0022format\u0022:\u0022csv\u0022}",
+        new string[] { },
+        new string[] { },
+        200,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_trigger_export,
+        __stepBudgetGoverned_trigger_export);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::trigger_export");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "trigger-export",
+        Vars.TryGetValue("__outcome::trigger_export", out var __sco_trigger_export) ? __sco_trigger_export as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::trigger_export", out var __scs_trigger_export) ? __scs_trigger_export as string : null);
+}
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_simulate_report_write = __vouchfxRunCt;
+    _ = __stepCt_simulate_report_write;
+    bool __stepBudgetGoverned_simulate_report_write = false;
+    _ = __stepBudgetGoverned_simulate_report_write;
+    StepEvents?.OnStepStarted("simulate-report-write");
+{
+    var __sw_simulate_report_write = System.Diagnostics.Stopwatch.StartNew();
+    Vouchfx.Engine.Abstractions.Verdict __v_simulate_report_write = Vouchfx.Engine.Abstractions.Verdict.Pass;
+    string? __obs_simulate_report_write = null;
+    async System.Threading.Tasks.Task __body_simulate_report_write()
+    {
+        await System.Threading.Tasks.Task.CompletedTask;
+        // ---- begin author code (spliced verbatim) ----
+var connStr = (string)Vars["conn::reports"];
+string serviceUrl = string.Empty, accessKey = string.Empty, secretKey = string.Empty;
+foreach (var part in connStr.Split(';', StringSplitOptions.RemoveEmptyEntries))
+{
+  var eq = part.IndexOf('=');
+  if (eq <= 0) continue;
+  var k = part.Substring(0, eq).Trim();
+  var v = part.Substring(eq + 1).Trim();
+  if (string.Equals(k, "ServiceURL", StringComparison.OrdinalIgnoreCase)) serviceUrl = v;
+  else if (string.Equals(k, "AccessKey", StringComparison.OrdinalIgnoreCase)) accessKey = v;
+  else if (string.Equals(k, "SecretKey", StringComparison.OrdinalIgnoreCase)) secretKey = v;
+}
+
+Amazon.S3.AmazonS3Client client = null;
+try
+{
+  client = new Amazon.S3.AmazonS3Client(
+    new Amazon.Runtime.BasicAWSCredentials(accessKey, secretKey),
+    new Amazon.S3.AmazonS3Config
+    {
+      ServiceURL = serviceUrl,
+      ForcePathStyle = true,
+      MaxErrorRetry = 0,
+      Timeout = TimeSpan.FromSeconds(5),
+      ConnectTimeout = TimeSpan.FromSeconds(5),
+    });
+
+  try
+  {
+    await client.PutBucketAsync("reports");
+  }
+  catch (Amazon.S3.AmazonS3Exception ex) when (
+    string.Equals(ex.ErrorCode, "BucketAlreadyOwnedByYou", StringComparison.Ordinal)
+    || string.Equals(ex.ErrorCode, "BucketAlreadyExists", StringComparison.Ordinal))
+  {
+    // Already created by a prior scenario run against the same container.
+  }
+
+  var reportKey = (string)Vars["reportKey"];
+  var body = "date,amount\n2026-07-08,49.99\n";
+  await client.PutObjectAsync(new Amazon.S3.Model.PutObjectRequest
+  {
+    BucketName = "reports",
+    Key = reportKey,
+    ContentBody = body,
+    ContentType = "text/csv",
+  });
+}
+finally
+{
+  client?.Dispose();
+}
+
+        // ---- end author code ----
+    }
+    try
+    {
+        await __body_simulate_report_write();
+    }
+    catch (System.OperationCanceledException) when (__stepCt_simulate_report_write.IsCancellationRequested)
+    {
+        throw;
+    }
+    catch (System.Exception __ex_simulate_report_write)
+    {
+        __v_simulate_report_write = Vouchfx.Engine.Abstractions.Verdict.Fail;
+        __obs_simulate_report_write = __ex_simulate_report_write.Message;
+    }
+    finally
+    {
+        __sw_simulate_report_write.Stop();
+    }
+    Vars["__outcome::simulate_report_write"] = new Vouchfx.Engine.Abstractions.StepOutcome(__v_simulate_report_write, __sw_simulate_report_write.ElapsedMilliseconds, __obs_simulate_report_write);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::simulate_report_write");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "simulate-report-write",
+        Vars.TryGetValue("__outcome::simulate_report_write", out var __sco_simulate_report_write) ? __sco_simulate_report_write as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::simulate_report_write", out var __scs_simulate_report_write) ? __scs_simulate_report_write as string : null);
+}
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    StepEvents?.OnStepStarted("assert-report-written");
+    async System.Threading.Tasks.Task<Vouchfx.Engine.Abstractions.StepOutcome> __attempt_assert_report_written(System.Threading.CancellationToken __ct_assert_report_written)
+    {
+        System.Threading.CancellationToken __stepCt_assert_report_written = __ct_assert_report_written;
+        _ = __stepCt_assert_report_written;
+        bool __stepBudgetGoverned_assert_report_written = false;
+        _ = __stepBudgetGoverned_assert_report_written;
+{
+    await StorageAssertS3_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        "__outcome::assert_report_written",
+        "__capture_status::assert_report_written",
+        "conn::reports",
+        "reports",
+        "{reportKey}",
+        true,
+        null,
+        "1",
+        null,
+        null,
+        "text/csv",
+        new string[] { },
+        new string[] { },
+        new string[] { "reportEtag" },
+        new string[] { "$.etag" },
+        new string[] { "json" },
+        __stepCt_assert_report_written,
+        __stepBudgetGoverned_assert_report_written);
+}
+        var __o_assert_report_written = Vars.TryGetValue("__outcome::assert_report_written", out var __raw_assert_report_written) && __raw_assert_report_written is Vouchfx.Engine.Abstractions.StepOutcome __so_assert_report_written
+            ? __so_assert_report_written
+            : new Vouchfx.Engine.Abstractions.StepOutcome(Vouchfx.Engine.Abstractions.Verdict.Inconclusive, 0L, null);
+        Vars.Remove("__outcome::assert_report_written");
+        return __o_assert_report_written;
+    }
+    await Vouchfx.Engine.Abstractions.Retry.RetryRunner.PollAsync(
+        Vars, "__outcome::assert_report_written", "__attempts::assert_report_written", 15000L, null, __attempt_assert_report_written, StepEvents, "assert-report-written", ct: __vouchfxRunCt);
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::assert_report_written");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "assert-report-written",
+        Vars.TryGetValue("__outcome::assert_report_written", out var __sco_assert_report_written) ? __sco_assert_report_written as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::assert_report_written", out var __scs_assert_report_written) ? __scs_assert_report_written as string : null);
+}
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_assert_report_not_yet_purged = __vouchfxRunCt;
+    _ = __stepCt_assert_report_not_yet_purged;
+    bool __stepBudgetGoverned_assert_report_not_yet_purged = false;
+    _ = __stepBudgetGoverned_assert_report_not_yet_purged;
+    StepEvents?.OnStepStarted("assert-report-not-yet-purged");
+{
+    await StorageAssertS3_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        "__outcome::assert_report_not_yet_purged",
+        "__capture_status::assert_report_not_yet_purged",
+        "conn::reports",
+        "reports",
+        "exports/already-purged.csv",
+        false,
+        null,
+        null,
+        null,
+        null,
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_assert_report_not_yet_purged,
+        __stepBudgetGoverned_assert_report_not_yet_purged);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::assert_report_not_yet_purged");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "assert-report-not-yet-purged",
+        Vars.TryGetValue("__outcome::assert_report_not_yet_purged", out var __sco_assert_report_not_yet_purged) ? __sco_assert_report_not_yet_purged as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::assert_report_not_yet_purged", out var __scs_assert_report_not_yet_purged) ? __scs_assert_report_not_yet_purged as string : null);
+}
+@@@@ end

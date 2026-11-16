@@ -1,0 +1,7 @@
+vouchfx emitted-code baseline v1
+suite: tests/Vouchfx.Engine.Compilation.Tests/Corpus/Rejected/service-ports-duplicate.e2e.yaml
+outcome: refused
+stage: schema
+@@@@ diagnostic
+/environment/services/kafka-broker/ports	(line 14) Found duplicates at the following index pairs: ["(0,1)"]
+@@@@ end

@@ -1,0 +1,372 @@
+vouchfx emitted-code baseline v1
+suite: examples/mail-expect-smtp.e2e.yaml
+outcome: emitted
+namespace: VouchfxGenerated
+steps: 3
+
+@@@@ step 1 of 3
+id: trigger-welcome-email
+type: http.rest
+provider: Vouchfx.Steps.HttpRest.HttpRestProvider
+retry: false
+timeout-ms: none
+@@@@ step 1 usings
+System
+System.Collections.Generic
+System.Net.Http
+System.Diagnostics
+System.Threading.Tasks
+Vouchfx.Engine.Abstractions
+@@@@ step 1 helpers
+HttpRest_Helpers sha256=4d12af26d4219f1bc2d3ea5286bdf1268638e1ffc96911b948ee37bfdad0ecab
+HttpRest_BodyAssertions sha256=b8e0052f0a55602345e1b981ab24079f1a37115d6864648136c83f5c4e011a62
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
+HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01ce6e1d5c
+@@@@ step 1 statement-block
+{
+    await HttpRest_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::trigger_welcome_email",
+        "__capture_status::trigger_welcome_email",
+        "svc::app",
+        "app",
+        "POST",
+        "/send-welcome",
+        "{\u0022to\u0022:\u0022alice@example.com\u0022,\u0022name\u0022:\u0022Alice\u0022}",
+        new string[] { },
+        new string[] { },
+        200,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_trigger_welcome_email,
+        __stepBudgetGoverned_trigger_welcome_email);
+}
+
+@@@@ step 2 of 3
+id: simulate-welcome-email
+type: script.csharp
+provider: Vouchfx.Steps.Script.Csharp.ScriptCsharpProvider
+retry: false
+timeout-ms: none
+@@@@ step 2 usings
+System
+System.Diagnostics
+System.Threading.Tasks
+Vouchfx.Engine.Abstractions
+@@@@ step 2 helpers
+
+@@@@ step 2 statement-block
+{
+    var __sw_simulate_welcome_email = System.Diagnostics.Stopwatch.StartNew();
+    Vouchfx.Engine.Abstractions.Verdict __v_simulate_welcome_email = Vouchfx.Engine.Abstractions.Verdict.Pass;
+    string? __obs_simulate_welcome_email = null;
+    async System.Threading.Tasks.Task __body_simulate_welcome_email()
+    {
+        await System.Threading.Tasks.Task.CompletedTask;
+        // ---- begin author code (spliced verbatim) ----
+// Clear the mailbox first so the exact count:1 assertion below stays true
+// when the suite reruns against the same container (e.g. under --watch —
+// Mailpit is not covered by the automatic state reset, so messages would
+// otherwise accumulate across iterations).
+var apiUrl = (string)Vars["conn::mailpit"];
+var http = new System.Net.Http.HttpClient();
+try
+{
+    var clear = await http.DeleteAsync(apiUrl.TrimEnd('/') + "/api/v1/messages");
+    try
+    {
+        clear.EnsureSuccessStatusCode();
+    }
+    finally { clear.Dispose(); }
+}
+finally { http.Dispose(); }
+
+var raw = (string)Vars["svc::mailpit-smtp"];
+string host;
+int port;
+if (raw.Contains("://"))
+{
+    var uri = new Uri(raw);
+    host = uri.Host;
+    port = uri.Port;
+}
+else
+{
+    var idx = raw.LastIndexOf(':');
+    host = raw.Substring(0, idx);
+    port = int.Parse(raw.Substring(idx + 1), System.Globalization.CultureInfo.InvariantCulture);
+}
+
+var smtp = new System.Net.Mail.SmtpClient(host, port);
+try
+{
+    var message = new System.Net.Mail.MailMessage(
+        "noreply@example.com",
+        "alice@example.com",
+        "Welcome to Example",
+        "Hello, Alice - welcome aboard!");
+    try
+    {
+        await smtp.SendMailAsync(message);
+    }
+    finally { message.Dispose(); }
+}
+finally { smtp.Dispose(); }
+
+        // ---- end author code ----
+    }
+    try
+    {
+        await __body_simulate_welcome_email();
+    }
+    catch (System.OperationCanceledException) when (__stepCt_simulate_welcome_email.IsCancellationRequested)
+    {
+        throw;
+    }
+    catch (System.Exception __ex_simulate_welcome_email)
+    {
+        __v_simulate_welcome_email = Vouchfx.Engine.Abstractions.Verdict.Fail;
+        __obs_simulate_welcome_email = __ex_simulate_welcome_email.Message;
+    }
+    finally
+    {
+        __sw_simulate_welcome_email.Stop();
+    }
+    Vars["__outcome::simulate_welcome_email"] = new Vouchfx.Engine.Abstractions.StepOutcome(__v_simulate_welcome_email, __sw_simulate_welcome_email.ElapsedMilliseconds, __obs_simulate_welcome_email);
+}
+
+@@@@ step 3 of 3
+id: assert-welcome-email
+type: mail-expect.smtp
+provider: Vouchfx.Steps.MailExpect.Smtp.MailExpectSmtpProvider
+retry: true
+timeout-ms: 30000
+@@@@ step 3 usings
+System
+System.Collections.Generic
+System.Diagnostics
+System.Globalization
+System.Threading.Tasks
+Vouchfx.Engine.Abstractions
+@@@@ step 3 helpers
+MailExpectSmtp_Helpers sha256=a3ec136874328ce0b14088bcd5c1af198789af3e7906e117bb8c8fb25ec92371
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
+@@@@ step 3 statement-block
+{
+    await MailExpectSmtp_Helpers.ExpectAsync(
+        Vars,
+        Secrets,
+        "__outcome::assert_welcome_email",
+        "conn::mailpit",
+        "alice@example.com",
+        "Welcome",
+        "Hello, Alice",
+        1,
+        __stepCt_assert_welcome_email,
+        __stepBudgetGoverned_assert_welcome_email);
+}
+@@@@ assembled-script
+using System;
+using System.Collections.Generic;
+using System.Net.Http;
+using System.Diagnostics;
+using System.Threading.Tasks;
+using Vouchfx.Engine.Abstractions;
+using System.Globalization;
+
+// [helper HttpRest_Helpers sha256=4d12af26d4219f1bc2d3ea5286bdf1268638e1ffc96911b948ee37bfdad0ecab: body elided, recorded by name and hash]
+// [helper HttpRest_BodyAssertions sha256=b8e0052f0a55602345e1b981ab24079f1a37115d6864648136c83f5c4e011a62: body elided, recorded by name and hash]
+// [helper Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d: body elided, recorded by name and hash]
+// [helper Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1: body elided, recorded by name and hash]
+// [helper HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01ce6e1d5c: body elided, recorded by name and hash]
+// [helper MailExpectSmtp_Helpers sha256=a3ec136874328ce0b14088bcd5c1af198789af3e7906e117bb8c8fb25ec92371: body elided, recorded by name and hash]
+
+var __vouchfxRunCt = Services.TryGetValue("__vouchfx_run_cancellation", out var __vouchfxRunToken) && __vouchfxRunToken is System.Threading.CancellationToken __vouchfxToken
+    ? __vouchfxToken : System.Threading.CancellationToken.None;
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_trigger_welcome_email = __vouchfxRunCt;
+    _ = __stepCt_trigger_welcome_email;
+    bool __stepBudgetGoverned_trigger_welcome_email = false;
+    _ = __stepBudgetGoverned_trigger_welcome_email;
+    StepEvents?.OnStepStarted("trigger-welcome-email");
+{
+    await HttpRest_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::trigger_welcome_email",
+        "__capture_status::trigger_welcome_email",
+        "svc::app",
+        "app",
+        "POST",
+        "/send-welcome",
+        "{\u0022to\u0022:\u0022alice@example.com\u0022,\u0022name\u0022:\u0022Alice\u0022}",
+        new string[] { },
+        new string[] { },
+        200,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_trigger_welcome_email,
+        __stepBudgetGoverned_trigger_welcome_email);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::trigger_welcome_email");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "trigger-welcome-email",
+        Vars.TryGetValue("__outcome::trigger_welcome_email", out var __sco_trigger_welcome_email) ? __sco_trigger_welcome_email as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::trigger_welcome_email", out var __scs_trigger_welcome_email) ? __scs_trigger_welcome_email as string : null);
+}
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_simulate_welcome_email = __vouchfxRunCt;
+    _ = __stepCt_simulate_welcome_email;
+    bool __stepBudgetGoverned_simulate_welcome_email = false;
+    _ = __stepBudgetGoverned_simulate_welcome_email;
+    StepEvents?.OnStepStarted("simulate-welcome-email");
+{
+    var __sw_simulate_welcome_email = System.Diagnostics.Stopwatch.StartNew();
+    Vouchfx.Engine.Abstractions.Verdict __v_simulate_welcome_email = Vouchfx.Engine.Abstractions.Verdict.Pass;
+    string? __obs_simulate_welcome_email = null;
+    async System.Threading.Tasks.Task __body_simulate_welcome_email()
+    {
+        await System.Threading.Tasks.Task.CompletedTask;
+        // ---- begin author code (spliced verbatim) ----
+// Clear the mailbox first so the exact count:1 assertion below stays true
+// when the suite reruns against the same container (e.g. under --watch —
+// Mailpit is not covered by the automatic state reset, so messages would
+// otherwise accumulate across iterations).
+var apiUrl = (string)Vars["conn::mailpit"];
+var http = new System.Net.Http.HttpClient();
+try
+{
+    var clear = await http.DeleteAsync(apiUrl.TrimEnd('/') + "/api/v1/messages");
+    try
+    {
+        clear.EnsureSuccessStatusCode();
+    }
+    finally { clear.Dispose(); }
+}
+finally { http.Dispose(); }
+
+var raw = (string)Vars["svc::mailpit-smtp"];
+string host;
+int port;
+if (raw.Contains("://"))
+{
+    var uri = new Uri(raw);
+    host = uri.Host;
+    port = uri.Port;
+}
+else
+{
+    var idx = raw.LastIndexOf(':');
+    host = raw.Substring(0, idx);
+    port = int.Parse(raw.Substring(idx + 1), System.Globalization.CultureInfo.InvariantCulture);
+}
+
+var smtp = new System.Net.Mail.SmtpClient(host, port);
+try
+{
+    var message = new System.Net.Mail.MailMessage(
+        "noreply@example.com",
+        "alice@example.com",
+        "Welcome to Example",
+        "Hello, Alice - welcome aboard!");
+    try
+    {
+        await smtp.SendMailAsync(message);
+    }
+    finally { message.Dispose(); }
+}
+finally { smtp.Dispose(); }
+
+        // ---- end author code ----
+    }
+    try
+    {
+        await __body_simulate_welcome_email();
+    }
+    catch (System.OperationCanceledException) when (__stepCt_simulate_welcome_email.IsCancellationRequested)
+    {
+        throw;
+    }
+    catch (System.Exception __ex_simulate_welcome_email)
+    {
+        __v_simulate_welcome_email = Vouchfx.Engine.Abstractions.Verdict.Fail;
+        __obs_simulate_welcome_email = __ex_simulate_welcome_email.Message;
+    }
+    finally
+    {
+        __sw_simulate_welcome_email.Stop();
+    }
+    Vars["__outcome::simulate_welcome_email"] = new Vouchfx.Engine.Abstractions.StepOutcome(__v_simulate_welcome_email, __sw_simulate_welcome_email.ElapsedMilliseconds, __obs_simulate_welcome_email);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::simulate_welcome_email");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "simulate-welcome-email",
+        Vars.TryGetValue("__outcome::simulate_welcome_email", out var __sco_simulate_welcome_email) ? __sco_simulate_welcome_email as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::simulate_welcome_email", out var __scs_simulate_welcome_email) ? __scs_simulate_welcome_email as string : null);
+}
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    StepEvents?.OnStepStarted("assert-welcome-email");
+    async System.Threading.Tasks.Task<Vouchfx.Engine.Abstractions.StepOutcome> __attempt_assert_welcome_email(System.Threading.CancellationToken __ct_assert_welcome_email)
+    {
+        System.Threading.CancellationToken __stepCt_assert_welcome_email = __ct_assert_welcome_email;
+        _ = __stepCt_assert_welcome_email;
+        bool __stepBudgetGoverned_assert_welcome_email = false;
+        _ = __stepBudgetGoverned_assert_welcome_email;
+{
+    await MailExpectSmtp_Helpers.ExpectAsync(
+        Vars,
+        Secrets,
+        "__outcome::assert_welcome_email",
+        "conn::mailpit",
+        "alice@example.com",
+        "Welcome",
+        "Hello, Alice",
+        1,
+        __stepCt_assert_welcome_email,
+        __stepBudgetGoverned_assert_welcome_email);
+}
+        var __o_assert_welcome_email = Vars.TryGetValue("__outcome::assert_welcome_email", out var __raw_assert_welcome_email) && __raw_assert_welcome_email is Vouchfx.Engine.Abstractions.StepOutcome __so_assert_welcome_email
+            ? __so_assert_welcome_email
+            : new Vouchfx.Engine.Abstractions.StepOutcome(Vouchfx.Engine.Abstractions.Verdict.Inconclusive, 0L, null);
+        Vars.Remove("__outcome::assert_welcome_email");
+        return __o_assert_welcome_email;
+    }
+    await Vouchfx.Engine.Abstractions.Retry.RetryRunner.PollAsync(
+        Vars, "__outcome::assert_welcome_email", "__attempts::assert_welcome_email", 30000L, null, __attempt_assert_welcome_email, StepEvents, "assert-welcome-email", ct: __vouchfxRunCt);
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::assert_welcome_email");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "assert-welcome-email",
+        Vars.TryGetValue("__outcome::assert_welcome_email", out var __sco_assert_welcome_email) ? __sco_assert_welcome_email as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::assert_welcome_email", out var __scs_assert_welcome_email) ? __scs_assert_welcome_email as string : null);
+}
+@@@@ end

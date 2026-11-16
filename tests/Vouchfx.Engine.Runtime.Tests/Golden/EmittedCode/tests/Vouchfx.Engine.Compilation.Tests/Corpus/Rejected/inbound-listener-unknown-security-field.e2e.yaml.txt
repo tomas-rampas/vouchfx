@@ -1,0 +1,7 @@
+vouchfx emitted-code baseline v1
+suite: tests/Vouchfx.Engine.Compilation.Tests/Corpus/Rejected/inbound-listener-unknown-security-field.e2e.yaml
+outcome: refused
+stage: schema
+@@@@ diagnostic
+/listeners/callbacks/security/unsupported	(line 7) Unknown property 'unsupported'
+@@@@ end

@@ -1,0 +1,234 @@
+vouchfx emitted-code baseline v1
+suite: examples/mq-redis.e2e.yaml
+outcome: emitted
+namespace: VouchfxGenerated
+steps: 3
+
+@@@@ step 1 of 3
+id: trigger-order-event
+type: http.rest
+provider: Vouchfx.Steps.HttpRest.HttpRestProvider
+retry: false
+timeout-ms: none
+@@@@ step 1 usings
+System
+System.Collections.Generic
+System.Net.Http
+System.Diagnostics
+System.Threading.Tasks
+Vouchfx.Engine.Abstractions
+@@@@ step 1 helpers
+HttpRest_Helpers sha256=4d12af26d4219f1bc2d3ea5286bdf1268638e1ffc96911b948ee37bfdad0ecab
+HttpRest_BodyAssertions sha256=b8e0052f0a55602345e1b981ab24079f1a37115d6864648136c83f5c4e011a62
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
+HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01ce6e1d5c
+@@@@ step 1 statement-block
+{
+    await HttpRest_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::trigger_order_event",
+        "__capture_status::trigger_order_event",
+        "svc::app",
+        "app",
+        "POST",
+        "/orders",
+        "{\u0022customerId\u0022:\u0022cust-1\u0022,\u0022amount\u0022:49.99}",
+        new string[] { },
+        new string[] { },
+        200,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_trigger_order_event,
+        __stepBudgetGoverned_trigger_order_event);
+}
+
+@@@@ step 2 of 3
+id: publish-order-event
+type: mq-publish.redis
+provider: Vouchfx.Steps.MqPublish.Redis.MqPublishRedisProvider
+retry: false
+timeout-ms: none
+@@@@ step 2 usings
+System
+System.Collections.Generic
+System.Diagnostics
+Vouchfx.Engine.Abstractions
+@@@@ step 2 helpers
+MqPublishRedis_Helpers sha256=123091a7b5bb2ded75ba06bde1a9b5c3289a98d4c9b37a433ce9dd1da0937298
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
+@@@@ step 2 statement-block
+{
+    await MqPublishRedis_Helpers.PublishAsync(
+        Vars,
+        Secrets,
+        "__outcome::publish_order_event",
+        "conn::cache",
+        "orders-created",
+        "{\u0022event\u0022:\u0022order-created\u0022,\u0022orderId\u0022:\u0022ord-001\u0022,\u0022customerId\u0022:\u0022cust-1\u0022}",
+        __stepCt_publish_order_event);
+}
+
+@@@@ step 3 of 3
+id: assert-order-event
+type: mq-expect.redis
+provider: Vouchfx.Steps.MqExpect.Redis.MqExpectRedisProvider
+retry: true
+timeout-ms: 30000
+@@@@ step 3 usings
+System
+System.Collections.Generic
+System.Diagnostics
+Vouchfx.Engine.Abstractions
+@@@@ step 3 helpers
+MqExpectRedis_Helpers sha256=9b76413c1bf32ad084f3a46f9f194577257dce95e19c86e45d7e4dc5cdd805a7
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
+@@@@ step 3 statement-block
+{
+    await MqExpectRedis_Helpers.ExpectAsync(
+        Vars,
+        Secrets,
+        "__outcome::assert_order_event",
+        "conn::cache",
+        "orders-created",
+        "order-created",
+        new string[] { "$.orderId" },
+        new string[] { "ord-001" },
+        __stepCt_assert_order_event);
+}
+@@@@ assembled-script
+using System;
+using System.Collections.Generic;
+using System.Net.Http;
+using System.Diagnostics;
+using System.Threading.Tasks;
+using Vouchfx.Engine.Abstractions;
+
+// [helper HttpRest_Helpers sha256=4d12af26d4219f1bc2d3ea5286bdf1268638e1ffc96911b948ee37bfdad0ecab: body elided, recorded by name and hash]
+// [helper HttpRest_BodyAssertions sha256=b8e0052f0a55602345e1b981ab24079f1a37115d6864648136c83f5c4e011a62: body elided, recorded by name and hash]
+// [helper Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d: body elided, recorded by name and hash]
+// [helper Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1: body elided, recorded by name and hash]
+// [helper HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01ce6e1d5c: body elided, recorded by name and hash]
+// [helper MqPublishRedis_Helpers sha256=123091a7b5bb2ded75ba06bde1a9b5c3289a98d4c9b37a433ce9dd1da0937298: body elided, recorded by name and hash]
+// [helper MqExpectRedis_Helpers sha256=9b76413c1bf32ad084f3a46f9f194577257dce95e19c86e45d7e4dc5cdd805a7: body elided, recorded by name and hash]
+
+var __vouchfxRunCt = Services.TryGetValue("__vouchfx_run_cancellation", out var __vouchfxRunToken) && __vouchfxRunToken is System.Threading.CancellationToken __vouchfxToken
+    ? __vouchfxToken : System.Threading.CancellationToken.None;
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_trigger_order_event = __vouchfxRunCt;
+    _ = __stepCt_trigger_order_event;
+    bool __stepBudgetGoverned_trigger_order_event = false;
+    _ = __stepBudgetGoverned_trigger_order_event;
+    StepEvents?.OnStepStarted("trigger-order-event");
+{
+    await HttpRest_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::trigger_order_event",
+        "__capture_status::trigger_order_event",
+        "svc::app",
+        "app",
+        "POST",
+        "/orders",
+        "{\u0022customerId\u0022:\u0022cust-1\u0022,\u0022amount\u0022:49.99}",
+        new string[] { },
+        new string[] { },
+        200,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_trigger_order_event,
+        __stepBudgetGoverned_trigger_order_event);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::trigger_order_event");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "trigger-order-event",
+        Vars.TryGetValue("__outcome::trigger_order_event", out var __sco_trigger_order_event) ? __sco_trigger_order_event as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::trigger_order_event", out var __scs_trigger_order_event) ? __scs_trigger_order_event as string : null);
+}
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_publish_order_event = __vouchfxRunCt;
+    _ = __stepCt_publish_order_event;
+    bool __stepBudgetGoverned_publish_order_event = false;
+    _ = __stepBudgetGoverned_publish_order_event;
+    StepEvents?.OnStepStarted("publish-order-event");
+{
+    await MqPublishRedis_Helpers.PublishAsync(
+        Vars,
+        Secrets,
+        "__outcome::publish_order_event",
+        "conn::cache",
+        "orders-created",
+        "{\u0022event\u0022:\u0022order-created\u0022,\u0022orderId\u0022:\u0022ord-001\u0022,\u0022customerId\u0022:\u0022cust-1\u0022}",
+        __stepCt_publish_order_event);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::publish_order_event");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "publish-order-event",
+        Vars.TryGetValue("__outcome::publish_order_event", out var __sco_publish_order_event) ? __sco_publish_order_event as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::publish_order_event", out var __scs_publish_order_event) ? __scs_publish_order_event as string : null);
+}
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    StepEvents?.OnStepStarted("assert-order-event");
+    async System.Threading.Tasks.Task<Vouchfx.Engine.Abstractions.StepOutcome> __attempt_assert_order_event(System.Threading.CancellationToken __ct_assert_order_event)
+    {
+        System.Threading.CancellationToken __stepCt_assert_order_event = __ct_assert_order_event;
+        _ = __stepCt_assert_order_event;
+        bool __stepBudgetGoverned_assert_order_event = false;
+        _ = __stepBudgetGoverned_assert_order_event;
+{
+    await MqExpectRedis_Helpers.ExpectAsync(
+        Vars,
+        Secrets,
+        "__outcome::assert_order_event",
+        "conn::cache",
+        "orders-created",
+        "order-created",
+        new string[] { "$.orderId" },
+        new string[] { "ord-001" },
+        __stepCt_assert_order_event);
+}
+        var __o_assert_order_event = Vars.TryGetValue("__outcome::assert_order_event", out var __raw_assert_order_event) && __raw_assert_order_event is Vouchfx.Engine.Abstractions.StepOutcome __so_assert_order_event
+            ? __so_assert_order_event
+            : new Vouchfx.Engine.Abstractions.StepOutcome(Vouchfx.Engine.Abstractions.Verdict.Inconclusive, 0L, null);
+        Vars.Remove("__outcome::assert_order_event");
+        return __o_assert_order_event;
+    }
+    await Vouchfx.Engine.Abstractions.Retry.RetryRunner.PollAsync(
+        Vars, "__outcome::assert_order_event", "__attempts::assert_order_event", 30000L, null, __attempt_assert_order_event, StepEvents, "assert-order-event", ct: __vouchfxRunCt);
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::assert_order_event");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "assert-order-event",
+        Vars.TryGetValue("__outcome::assert_order_event", out var __sco_assert_order_event) ? __sco_assert_order_event as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::assert_order_event", out var __scs_assert_order_event) ? __scs_assert_order_event as string : null);
+}
+@@@@ end

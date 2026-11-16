@@ -1,0 +1,7 @@
+vouchfx emitted-code baseline v1
+suite: tests/Vouchfx.Engine.Compilation.Tests/Corpus/Rejected/service-healthcheck-type-wrong-case.e2e.yaml
+outcome: refused
+stage: schema
+@@@@ diagnostic
+/environment/services/kafka-broker/healthCheck/type	(line 15) Value 'TCP' is not one of the accepted values for 'type': tcp, http - write 'tcp'
+@@@@ end

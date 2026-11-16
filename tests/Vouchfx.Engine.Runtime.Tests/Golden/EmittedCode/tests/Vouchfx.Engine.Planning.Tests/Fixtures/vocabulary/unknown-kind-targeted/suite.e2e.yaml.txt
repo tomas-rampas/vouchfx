@@ -1,0 +1,9 @@
+vouchfx emitted-code baseline v1
+suite: tests/Vouchfx.Engine.Planning.Tests/Fixtures/vocabulary/unknown-kind-targeted/suite.e2e.yaml
+outcome: refused
+stage: schema
+@@@@ diagnostic
+/steps/0/target	(line 12) Unknown property 'target' on step type 'script.csharp'
+@@@@ diagnostic
+/environment/dependencies/legacy-cache/type	(line 7) Value 'cassandra' is not one of the accepted values for 'type': postgres, sqlserver, mysql, mongodb, redis, elasticsearch, rabbitmq, nats, ... and 6 more
+@@@@ end

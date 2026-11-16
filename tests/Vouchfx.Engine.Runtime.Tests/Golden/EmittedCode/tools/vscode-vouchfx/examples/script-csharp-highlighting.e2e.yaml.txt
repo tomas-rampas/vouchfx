@@ -1,0 +1,7 @@
+vouchfx emitted-code baseline v1
+suite: tools/vscode-vouchfx/examples/script-csharp-highlighting.e2e.yaml
+outcome: refused
+stage: pipeline
+@@@@ diagnostic
+-	Step 'assert-shape' model validation failed: db-assert.postgres: 'target' 'appdb' is not a postgres dependency declared in environment.dependencies.
+@@@@ end

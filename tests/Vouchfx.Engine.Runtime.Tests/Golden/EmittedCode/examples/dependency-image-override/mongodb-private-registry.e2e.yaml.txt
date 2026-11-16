@@ -1,0 +1,315 @@
+vouchfx emitted-code baseline v1
+suite: examples/dependency-image-override/mongodb-private-registry.e2e.yaml
+outcome: emitted
+namespace: VouchfxGenerated
+steps: 3
+
+@@@@ step 1 of 3
+id: place-order
+type: http.rest
+provider: Vouchfx.Steps.HttpRest.HttpRestProvider
+retry: false
+timeout-ms: none
+@@@@ step 1 usings
+System
+System.Collections.Generic
+System.Net.Http
+System.Diagnostics
+System.Threading.Tasks
+Vouchfx.Engine.Abstractions
+@@@@ step 1 helpers
+HttpRest_Helpers sha256=4d12af26d4219f1bc2d3ea5286bdf1268638e1ffc96911b948ee37bfdad0ecab
+HttpRest_BodyAssertions sha256=b8e0052f0a55602345e1b981ab24079f1a37115d6864648136c83f5c4e011a62
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
+HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01ce6e1d5c
+@@@@ step 1 statement-block
+{
+    await HttpRest_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::place_order",
+        "__capture_status::place_order",
+        "svc::app",
+        "app",
+        "POST",
+        "/orders",
+        "{\u0022productId\u0022: \u0022XYZ-789\u0022, \u0022quantity\u0022: 3}\n",
+        new string[] { },
+        new string[] { },
+        200,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_place_order,
+        __stepBudgetGoverned_place_order);
+}
+
+@@@@ step 2 of 3
+id: simulate-order-write
+type: script.csharp
+provider: Vouchfx.Steps.Script.Csharp.ScriptCsharpProvider
+retry: false
+timeout-ms: none
+@@@@ step 2 usings
+System
+System.Diagnostics
+System.Threading.Tasks
+Vouchfx.Engine.Abstractions
+@@@@ step 2 helpers
+
+@@@@ step 2 statement-block
+{
+    var __sw_simulate_order_write = System.Diagnostics.Stopwatch.StartNew();
+    Vouchfx.Engine.Abstractions.Verdict __v_simulate_order_write = Vouchfx.Engine.Abstractions.Verdict.Pass;
+    string? __obs_simulate_order_write = null;
+    async System.Threading.Tasks.Task __body_simulate_order_write()
+    {
+        await System.Threading.Tasks.Task.CompletedTask;
+        // ---- begin author code (spliced verbatim) ----
+var connStr = (string)Vars["conn::orders-mongo"];
+var dbName = new MongoDB.Driver.MongoUrl(connStr).DatabaseName;
+var client = new MongoDB.Driver.MongoClient(connStr);
+try
+{
+    var db = client.GetDatabase(dbName);
+    var collection = db.GetCollection<MongoDB.Bson.BsonDocument>("orders");
+    var orderId = (string)Vars["orderId"];
+    var filter = MongoDB.Driver.Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", orderId);
+    await collection.DeleteManyAsync(filter);
+    await collection.InsertOneAsync(new MongoDB.Bson.BsonDocument
+    {
+        { "_id", orderId },
+        { "productId", "XYZ-789" },
+        { "quantity", 3 },
+        { "status", "PENDING" },
+    });
+}
+finally { client.Dispose(); }
+
+        // ---- end author code ----
+    }
+    try
+    {
+        await __body_simulate_order_write();
+    }
+    catch (System.OperationCanceledException) when (__stepCt_simulate_order_write.IsCancellationRequested)
+    {
+        throw;
+    }
+    catch (System.Exception __ex_simulate_order_write)
+    {
+        __v_simulate_order_write = Vouchfx.Engine.Abstractions.Verdict.Fail;
+        __obs_simulate_order_write = __ex_simulate_order_write.Message;
+    }
+    finally
+    {
+        __sw_simulate_order_write.Stop();
+    }
+    Vars["__outcome::simulate_order_write"] = new Vouchfx.Engine.Abstractions.StepOutcome(__v_simulate_order_write, __sw_simulate_order_write.ElapsedMilliseconds, __obs_simulate_order_write);
+}
+
+@@@@ step 3 of 3
+id: assert-order-persisted
+type: db-assert.mongodb
+provider: Vouchfx.Steps.DbAssert.Mongodb.DbAssertMongodbProvider
+retry: true
+timeout-ms: 30000
+@@@@ step 3 usings
+System
+System.Collections.Generic
+System.Diagnostics
+System.Threading.Tasks
+MongoDB.Driver
+MongoDB.Bson
+Vouchfx.Engine.Abstractions
+@@@@ step 3 helpers
+DbAssertMongodb_Helpers sha256=e7c6963caa4e348da77aaa792c476e04ded3a2f756957989f4ceb2a1a3606264
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+@@@@ step 3 statement-block
+{
+    await DbAssertMongodb_Helpers.ExecuteAsync(
+        Vars,
+        "__outcome::assert_order_persisted",
+        "conn::orders-mongo",
+        "orders",
+        "{\u0022_id\u0022: \u0022{orderId}\u0022}",
+        1L,
+        new string[] { "productId", "quantity", "status" },
+        new string[] { Substitute_Helpers.Resolve(Vars, "XYZ-789"), Substitute_Helpers.Resolve(Vars, "3"), Substitute_Helpers.Resolve(Vars, "PENDING") },
+        __stepCt_assert_order_persisted,
+        __stepBudgetGoverned_assert_order_persisted);
+}
+@@@@ assembled-script
+using System;
+using System.Collections.Generic;
+using System.Net.Http;
+using System.Diagnostics;
+using System.Threading.Tasks;
+using Vouchfx.Engine.Abstractions;
+using MongoDB.Driver;
+using MongoDB.Bson;
+
+// [helper HttpRest_Helpers sha256=4d12af26d4219f1bc2d3ea5286bdf1268638e1ffc96911b948ee37bfdad0ecab: body elided, recorded by name and hash]
+// [helper HttpRest_BodyAssertions sha256=b8e0052f0a55602345e1b981ab24079f1a37115d6864648136c83f5c4e011a62: body elided, recorded by name and hash]
+// [helper Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d: body elided, recorded by name and hash]
+// [helper Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1: body elided, recorded by name and hash]
+// [helper HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01ce6e1d5c: body elided, recorded by name and hash]
+// [helper DbAssertMongodb_Helpers sha256=e7c6963caa4e348da77aaa792c476e04ded3a2f756957989f4ceb2a1a3606264: body elided, recorded by name and hash]
+
+var __vouchfxRunCt = Services.TryGetValue("__vouchfx_run_cancellation", out var __vouchfxRunToken) && __vouchfxRunToken is System.Threading.CancellationToken __vouchfxToken
+    ? __vouchfxToken : System.Threading.CancellationToken.None;
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_place_order = __vouchfxRunCt;
+    _ = __stepCt_place_order;
+    bool __stepBudgetGoverned_place_order = false;
+    _ = __stepBudgetGoverned_place_order;
+    StepEvents?.OnStepStarted("place-order");
+{
+    await HttpRest_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::place_order",
+        "__capture_status::place_order",
+        "svc::app",
+        "app",
+        "POST",
+        "/orders",
+        "{\u0022productId\u0022: \u0022XYZ-789\u0022, \u0022quantity\u0022: 3}\n",
+        new string[] { },
+        new string[] { },
+        200,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_place_order,
+        __stepBudgetGoverned_place_order);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::place_order");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "place-order",
+        Vars.TryGetValue("__outcome::place_order", out var __sco_place_order) ? __sco_place_order as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::place_order", out var __scs_place_order) ? __scs_place_order as string : null);
+}
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_simulate_order_write = __vouchfxRunCt;
+    _ = __stepCt_simulate_order_write;
+    bool __stepBudgetGoverned_simulate_order_write = false;
+    _ = __stepBudgetGoverned_simulate_order_write;
+    StepEvents?.OnStepStarted("simulate-order-write");
+{
+    var __sw_simulate_order_write = System.Diagnostics.Stopwatch.StartNew();
+    Vouchfx.Engine.Abstractions.Verdict __v_simulate_order_write = Vouchfx.Engine.Abstractions.Verdict.Pass;
+    string? __obs_simulate_order_write = null;
+    async System.Threading.Tasks.Task __body_simulate_order_write()
+    {
+        await System.Threading.Tasks.Task.CompletedTask;
+        // ---- begin author code (spliced verbatim) ----
+var connStr = (string)Vars["conn::orders-mongo"];
+var dbName = new MongoDB.Driver.MongoUrl(connStr).DatabaseName;
+var client = new MongoDB.Driver.MongoClient(connStr);
+try
+{
+    var db = client.GetDatabase(dbName);
+    var collection = db.GetCollection<MongoDB.Bson.BsonDocument>("orders");
+    var orderId = (string)Vars["orderId"];
+    var filter = MongoDB.Driver.Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", orderId);
+    await collection.DeleteManyAsync(filter);
+    await collection.InsertOneAsync(new MongoDB.Bson.BsonDocument
+    {
+        { "_id", orderId },
+        { "productId", "XYZ-789" },
+        { "quantity", 3 },
+        { "status", "PENDING" },
+    });
+}
+finally { client.Dispose(); }
+
+        // ---- end author code ----
+    }
+    try
+    {
+        await __body_simulate_order_write();
+    }
+    catch (System.OperationCanceledException) when (__stepCt_simulate_order_write.IsCancellationRequested)
+    {
+        throw;
+    }
+    catch (System.Exception __ex_simulate_order_write)
+    {
+        __v_simulate_order_write = Vouchfx.Engine.Abstractions.Verdict.Fail;
+        __obs_simulate_order_write = __ex_simulate_order_write.Message;
+    }
+    finally
+    {
+        __sw_simulate_order_write.Stop();
+    }
+    Vars["__outcome::simulate_order_write"] = new Vouchfx.Engine.Abstractions.StepOutcome(__v_simulate_order_write, __sw_simulate_order_write.ElapsedMilliseconds, __obs_simulate_order_write);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::simulate_order_write");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "simulate-order-write",
+        Vars.TryGetValue("__outcome::simulate_order_write", out var __sco_simulate_order_write) ? __sco_simulate_order_write as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::simulate_order_write", out var __scs_simulate_order_write) ? __scs_simulate_order_write as string : null);
+}
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    StepEvents?.OnStepStarted("assert-order-persisted");
+    async System.Threading.Tasks.Task<Vouchfx.Engine.Abstractions.StepOutcome> __attempt_assert_order_persisted(System.Threading.CancellationToken __ct_assert_order_persisted)
+    {
+        System.Threading.CancellationToken __stepCt_assert_order_persisted = __ct_assert_order_persisted;
+        _ = __stepCt_assert_order_persisted;
+        bool __stepBudgetGoverned_assert_order_persisted = false;
+        _ = __stepBudgetGoverned_assert_order_persisted;
+{
+    await DbAssertMongodb_Helpers.ExecuteAsync(
+        Vars,
+        "__outcome::assert_order_persisted",
+        "conn::orders-mongo",
+        "orders",
+        "{\u0022_id\u0022: \u0022{orderId}\u0022}",
+        1L,
+        new string[] { "productId", "quantity", "status" },
+        new string[] { Substitute_Helpers.Resolve(Vars, "XYZ-789"), Substitute_Helpers.Resolve(Vars, "3"), Substitute_Helpers.Resolve(Vars, "PENDING") },
+        __stepCt_assert_order_persisted,
+        __stepBudgetGoverned_assert_order_persisted);
+}
+        var __o_assert_order_persisted = Vars.TryGetValue("__outcome::assert_order_persisted", out var __raw_assert_order_persisted) && __raw_assert_order_persisted is Vouchfx.Engine.Abstractions.StepOutcome __so_assert_order_persisted
+            ? __so_assert_order_persisted
+            : new Vouchfx.Engine.Abstractions.StepOutcome(Vouchfx.Engine.Abstractions.Verdict.Inconclusive, 0L, null);
+        Vars.Remove("__outcome::assert_order_persisted");
+        return __o_assert_order_persisted;
+    }
+    await Vouchfx.Engine.Abstractions.Retry.RetryRunner.PollAsync(
+        Vars, "__outcome::assert_order_persisted", "__attempts::assert_order_persisted", 30000L, null, __attempt_assert_order_persisted, StepEvents, "assert-order-persisted", ct: __vouchfxRunCt);
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::assert_order_persisted");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "assert-order-persisted",
+        Vars.TryGetValue("__outcome::assert_order_persisted", out var __sco_assert_order_persisted) ? __sco_assert_order_persisted as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::assert_order_persisted", out var __scs_assert_order_persisted) ? __scs_assert_order_persisted as string : null);
+}
+@@@@ end

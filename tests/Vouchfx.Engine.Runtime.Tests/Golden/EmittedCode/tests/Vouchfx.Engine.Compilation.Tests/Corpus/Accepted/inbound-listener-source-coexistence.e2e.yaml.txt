@@ -1,0 +1,7 @@
+vouchfx emitted-code baseline v1
+suite: tests/Vouchfx.Engine.Compilation.Tests/Corpus/Accepted/inbound-listener-source-coexistence.e2e.yaml
+outcome: refused
+stage: pipeline
+@@@@ diagnostic
+-	Compose configuration references a missing or unreadable input file.
+@@@@ end

@@ -1,0 +1,7 @@
+vouchfx emitted-code baseline v1
+suite: tests/Vouchfx.Engine.Compilation.Tests/Corpus/Accepted/surface-services-healthcheck-http-path.e2e.yaml
+outcome: refused
+stage: pipeline
+@@@@ diagnostic
+-	Service 'web' sets 'image: traefik/whoami' with no tag or digest. This would silently float on ':latest', defeating the section 4 determinism invariant. Embed a tag or a 'sha256:' digest in 'image:'. (Parameter 'env')
+@@@@ end

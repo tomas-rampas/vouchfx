@@ -1,0 +1,7 @@
+vouchfx emitted-code baseline v1
+suite: tests/Vouchfx.Engine.Compilation.Tests/Corpus/Rejected/expect-json-empty-map-http-rest.e2e.yaml
+outcome: refused
+stage: schema
+@@@@ diagnostic
+/steps/0/expect/json	(line 14) Value should have at least 1 properties
+@@@@ end

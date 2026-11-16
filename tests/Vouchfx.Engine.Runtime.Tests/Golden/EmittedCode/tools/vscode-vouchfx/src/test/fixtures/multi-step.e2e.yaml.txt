@@ -1,0 +1,7 @@
+vouchfx emitted-code baseline v1
+suite: tools/vscode-vouchfx/src/test/fixtures/multi-step.e2e.yaml
+outcome: refused
+stage: schema
+@@@@ diagnostic
+/steps/2	(line 36) Required properties ["id"] are not present
+@@@@ end

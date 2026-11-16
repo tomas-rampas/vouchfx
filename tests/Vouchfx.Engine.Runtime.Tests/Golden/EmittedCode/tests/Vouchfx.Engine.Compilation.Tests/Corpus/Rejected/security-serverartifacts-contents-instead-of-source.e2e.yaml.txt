@@ -1,0 +1,9 @@
+vouchfx emitted-code baseline v1
+suite: tests/Vouchfx.Engine.Compilation.Tests/Corpus/Rejected/security-serverartifacts-contents-instead-of-source.e2e.yaml
+outcome: refused
+stage: schema
+@@@@ diagnostic
+/environment/dependencies/events-kafka/security/serverArtifacts/0	(line 20) Required properties ["source"] are not present in dependency 'events-kafka' (at security.serverArtifacts[0])
+@@@@ diagnostic
+/environment/dependencies/events-kafka/security/serverArtifacts/0/contents	(line 20) Unknown property 'contents' in dependency 'events-kafka' (at security.serverArtifacts[0].contents)
+@@@@ end

@@ -1,0 +1,7 @@
+vouchfx emitted-code baseline v1
+suite: tests/Vouchfx.Engine.Compilation.Tests/Corpus/Rejected/dependency-unrecognised-type.e2e.yaml
+outcome: refused
+stage: schema
+@@@@ diagnostic
+/environment/dependencies/db/type	(line 15) Value 'cassandra' is not one of the accepted values for 'type': postgres, sqlserver, mysql, mongodb, redis, elasticsearch, rabbitmq, nats, ... and 6 more
+@@@@ end

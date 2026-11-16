@@ -1,0 +1,7 @@
+vouchfx emitted-code baseline v1
+suite: tests/Vouchfx.Engine.Compilation.Tests/Corpus/Rejected/service-httpport-out-of-range.e2e.yaml
+outcome: refused
+stage: schema
+@@@@ diagnostic
+/environment/services/app/httpPort	(line 17) 99999 should be at most 65535
+@@@@ end

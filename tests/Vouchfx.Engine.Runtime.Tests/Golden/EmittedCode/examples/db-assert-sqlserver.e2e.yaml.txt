@@ -1,0 +1,208 @@
+vouchfx emitted-code baseline v1
+suite: examples/db-assert-sqlserver.e2e.yaml
+outcome: emitted
+namespace: VouchfxGenerated
+steps: 2
+
+@@@@ step 1 of 2
+id: seed-order
+type: script.csharp
+provider: Vouchfx.Steps.Script.Csharp.ScriptCsharpProvider
+retry: false
+timeout-ms: none
+@@@@ step 1 usings
+System
+System.Diagnostics
+System.Threading.Tasks
+Vouchfx.Engine.Abstractions
+@@@@ step 1 helpers
+
+@@@@ step 1 statement-block
+{
+    var __sw_seed_order = System.Diagnostics.Stopwatch.StartNew();
+    Vouchfx.Engine.Abstractions.Verdict __v_seed_order = Vouchfx.Engine.Abstractions.Verdict.Pass;
+    string? __obs_seed_order = null;
+    async System.Threading.Tasks.Task __body_seed_order()
+    {
+        await System.Threading.Tasks.Task.CompletedTask;
+        // ---- begin author code (spliced verbatim) ----
+var connStr = (string)Vars["conn::ordersdb"];
+var conn = new Microsoft.Data.SqlClient.SqlConnection(connStr);
+try
+{
+    await conn.OpenAsync();
+    var cmd = conn.CreateCommand();
+    try
+    {
+        cmd.CommandText =
+            "IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'orders') " +
+            "CREATE TABLE orders (id INT PRIMARY KEY, status NVARCHAR(50) NOT NULL); " +
+            "DELETE FROM orders; " +
+            "INSERT INTO orders (id, status) VALUES (1, 'PENDING');";
+        await cmd.ExecuteNonQueryAsync();
+    }
+    finally { cmd.Dispose(); }
+}
+finally { conn.Dispose(); }
+
+        // ---- end author code ----
+    }
+    try
+    {
+        await __body_seed_order();
+    }
+    catch (System.OperationCanceledException) when (__stepCt_seed_order.IsCancellationRequested)
+    {
+        throw;
+    }
+    catch (System.Exception __ex_seed_order)
+    {
+        __v_seed_order = Vouchfx.Engine.Abstractions.Verdict.Fail;
+        __obs_seed_order = __ex_seed_order.Message;
+    }
+    finally
+    {
+        __sw_seed_order.Stop();
+    }
+    Vars["__outcome::seed_order"] = new Vouchfx.Engine.Abstractions.StepOutcome(__v_seed_order, __sw_seed_order.ElapsedMilliseconds, __obs_seed_order);
+}
+
+@@@@ step 2 of 2
+id: assert-order-exists
+type: db-assert.sqlserver
+provider: Vouchfx.Steps.DbAssert.SqlServer.DbAssertSqlServerProvider
+retry: false
+timeout-ms: none
+@@@@ step 2 usings
+System
+System.Collections.Generic
+System.Diagnostics
+System.Threading.Tasks
+Microsoft.Data.SqlClient
+Vouchfx.Engine.Abstractions
+@@@@ step 2 helpers
+DbAssertSqlServer_Helpers sha256=ccefbb44ee09e1ba9a5a40772b38ba52dc08bfcf52ce7bb59e9dcfc4fa370fc5
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+@@@@ step 2 statement-block
+{
+    await DbAssertSqlServer_Helpers.ExecuteAsync(
+        Vars,
+        "__outcome::assert_order_exists",
+        "conn::ordersdb",
+        "SELECT id, status FROM orders WHERE id = 1",
+        new string[] { },
+        new string[] { },
+        1,
+        new string[] { "status" },
+        new string[] { Substitute_Helpers.Resolve(Vars, "PENDING") },
+        __stepCt_assert_order_exists, __stepBudgetGoverned_assert_order_exists);
+}
+@@@@ assembled-script
+using System;
+using System.Diagnostics;
+using System.Threading.Tasks;
+using Vouchfx.Engine.Abstractions;
+using System.Collections.Generic;
+using Microsoft.Data.SqlClient;
+
+// [helper DbAssertSqlServer_Helpers sha256=ccefbb44ee09e1ba9a5a40772b38ba52dc08bfcf52ce7bb59e9dcfc4fa370fc5: body elided, recorded by name and hash]
+// [helper Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d: body elided, recorded by name and hash]
+
+var __vouchfxRunCt = Services.TryGetValue("__vouchfx_run_cancellation", out var __vouchfxRunToken) && __vouchfxRunToken is System.Threading.CancellationToken __vouchfxToken
+    ? __vouchfxToken : System.Threading.CancellationToken.None;
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_seed_order = __vouchfxRunCt;
+    _ = __stepCt_seed_order;
+    bool __stepBudgetGoverned_seed_order = false;
+    _ = __stepBudgetGoverned_seed_order;
+    StepEvents?.OnStepStarted("seed-order");
+{
+    var __sw_seed_order = System.Diagnostics.Stopwatch.StartNew();
+    Vouchfx.Engine.Abstractions.Verdict __v_seed_order = Vouchfx.Engine.Abstractions.Verdict.Pass;
+    string? __obs_seed_order = null;
+    async System.Threading.Tasks.Task __body_seed_order()
+    {
+        await System.Threading.Tasks.Task.CompletedTask;
+        // ---- begin author code (spliced verbatim) ----
+var connStr = (string)Vars["conn::ordersdb"];
+var conn = new Microsoft.Data.SqlClient.SqlConnection(connStr);
+try
+{
+    await conn.OpenAsync();
+    var cmd = conn.CreateCommand();
+    try
+    {
+        cmd.CommandText =
+            "IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'orders') " +
+            "CREATE TABLE orders (id INT PRIMARY KEY, status NVARCHAR(50) NOT NULL); " +
+            "DELETE FROM orders; " +
+            "INSERT INTO orders (id, status) VALUES (1, 'PENDING');";
+        await cmd.ExecuteNonQueryAsync();
+    }
+    finally { cmd.Dispose(); }
+}
+finally { conn.Dispose(); }
+
+        // ---- end author code ----
+    }
+    try
+    {
+        await __body_seed_order();
+    }
+    catch (System.OperationCanceledException) when (__stepCt_seed_order.IsCancellationRequested)
+    {
+        throw;
+    }
+    catch (System.Exception __ex_seed_order)
+    {
+        __v_seed_order = Vouchfx.Engine.Abstractions.Verdict.Fail;
+        __obs_seed_order = __ex_seed_order.Message;
+    }
+    finally
+    {
+        __sw_seed_order.Stop();
+    }
+    Vars["__outcome::seed_order"] = new Vouchfx.Engine.Abstractions.StepOutcome(__v_seed_order, __sw_seed_order.ElapsedMilliseconds, __obs_seed_order);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::seed_order");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "seed-order",
+        Vars.TryGetValue("__outcome::seed_order", out var __sco_seed_order) ? __sco_seed_order as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::seed_order", out var __scs_seed_order) ? __scs_seed_order as string : null);
+}
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_assert_order_exists = __vouchfxRunCt;
+    _ = __stepCt_assert_order_exists;
+    bool __stepBudgetGoverned_assert_order_exists = false;
+    _ = __stepBudgetGoverned_assert_order_exists;
+    StepEvents?.OnStepStarted("assert-order-exists");
+{
+    await DbAssertSqlServer_Helpers.ExecuteAsync(
+        Vars,
+        "__outcome::assert_order_exists",
+        "conn::ordersdb",
+        "SELECT id, status FROM orders WHERE id = 1",
+        new string[] { },
+        new string[] { },
+        1,
+        new string[] { "status" },
+        new string[] { Substitute_Helpers.Resolve(Vars, "PENDING") },
+        __stepCt_assert_order_exists, __stepBudgetGoverned_assert_order_exists);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::assert_order_exists");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "assert-order-exists",
+        Vars.TryGetValue("__outcome::assert_order_exists", out var __sco_assert_order_exists) ? __sco_assert_order_exists as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::assert_order_exists", out var __scs_assert_order_exists) ? __scs_assert_order_exists as string : null);
+}
+@@@@ end

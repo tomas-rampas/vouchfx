@@ -1,0 +1,7 @@
+vouchfx emitted-code baseline v1
+suite: tests/Vouchfx.Engine.Planning.Tests/Fixtures/coverage/unresolvable-targets/suite.e2e.yaml
+outcome: refused
+stage: pipeline
+@@@@ diagnostic
+-	Step 'call-api-with-placeholder-target' model validation failed: http.rest: 'target' '{apiName}' names neither a declared service in environment.services nor a declared dependency in environment.dependencies. Declared dependencies: cache. Declared services: api.
+@@@@ end

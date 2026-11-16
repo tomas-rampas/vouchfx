@@ -1,0 +1,106 @@
+vouchfx emitted-code baseline v1
+suite: tests/Vouchfx.Engine.Planning.Tests/Fixtures/vocabulary/service-no-http/suite.e2e.yaml
+outcome: emitted
+namespace: VouchfxGenerated
+steps: 1
+
+@@@@ step 1 of 1
+id: run-script
+type: script.csharp
+provider: Vouchfx.Steps.Script.Csharp.ScriptCsharpProvider
+retry: false
+timeout-ms: none
+@@@@ step 1 usings
+System
+System.Diagnostics
+System.Threading.Tasks
+Vouchfx.Engine.Abstractions
+@@@@ step 1 helpers
+
+@@@@ step 1 statement-block
+{
+    var __sw_run_script = System.Diagnostics.Stopwatch.StartNew();
+    Vouchfx.Engine.Abstractions.Verdict __v_run_script = Vouchfx.Engine.Abstractions.Verdict.Pass;
+    string? __obs_run_script = null;
+    async System.Threading.Tasks.Task __body_run_script()
+    {
+        await System.Threading.Tasks.Task.CompletedTask;
+        // ---- begin author code (spliced verbatim) ----
+var plannerFixture = true;
+        // ---- end author code ----
+    }
+    try
+    {
+        await __body_run_script();
+    }
+    catch (System.OperationCanceledException) when (__stepCt_run_script.IsCancellationRequested)
+    {
+        throw;
+    }
+    catch (System.Exception __ex_run_script)
+    {
+        __v_run_script = Vouchfx.Engine.Abstractions.Verdict.Fail;
+        __obs_run_script = __ex_run_script.Message;
+    }
+    finally
+    {
+        __sw_run_script.Stop();
+    }
+    Vars["__outcome::run_script"] = new Vouchfx.Engine.Abstractions.StepOutcome(__v_run_script, __sw_run_script.ElapsedMilliseconds, __obs_run_script);
+}
+@@@@ assembled-script
+using System;
+using System.Diagnostics;
+using System.Threading.Tasks;
+using Vouchfx.Engine.Abstractions;
+
+var __vouchfxRunCt = Services.TryGetValue("__vouchfx_run_cancellation", out var __vouchfxRunToken) && __vouchfxRunToken is System.Threading.CancellationToken __vouchfxToken
+    ? __vouchfxToken : System.Threading.CancellationToken.None;
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_run_script = __vouchfxRunCt;
+    _ = __stepCt_run_script;
+    bool __stepBudgetGoverned_run_script = false;
+    _ = __stepBudgetGoverned_run_script;
+    StepEvents?.OnStepStarted("run-script");
+{
+    var __sw_run_script = System.Diagnostics.Stopwatch.StartNew();
+    Vouchfx.Engine.Abstractions.Verdict __v_run_script = Vouchfx.Engine.Abstractions.Verdict.Pass;
+    string? __obs_run_script = null;
+    async System.Threading.Tasks.Task __body_run_script()
+    {
+        await System.Threading.Tasks.Task.CompletedTask;
+        // ---- begin author code (spliced verbatim) ----
+var plannerFixture = true;
+        // ---- end author code ----
+    }
+    try
+    {
+        await __body_run_script();
+    }
+    catch (System.OperationCanceledException) when (__stepCt_run_script.IsCancellationRequested)
+    {
+        throw;
+    }
+    catch (System.Exception __ex_run_script)
+    {
+        __v_run_script = Vouchfx.Engine.Abstractions.Verdict.Fail;
+        __obs_run_script = __ex_run_script.Message;
+    }
+    finally
+    {
+        __sw_run_script.Stop();
+    }
+    Vars["__outcome::run_script"] = new Vouchfx.Engine.Abstractions.StepOutcome(__v_run_script, __sw_run_script.ElapsedMilliseconds, __obs_run_script);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::run_script");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "run-script",
+        Vars.TryGetValue("__outcome::run_script", out var __sco_run_script) ? __sco_run_script as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::run_script", out var __scs_run_script) ? __scs_run_script as string : null);
+}
+@@@@ end

@@ -1,0 +1,76 @@
+vouchfx emitted-code baseline v1
+suite: tests/Vouchfx.Engine.Planning.Tests/Fixtures/vocabulary/redis-partial-coverage/suite.e2e.yaml
+outcome: emitted
+namespace: VouchfxGenerated
+steps: 1
+
+@@@@ step 1 of 1
+id: assert-session
+type: cache-assert.redis
+provider: Vouchfx.Steps.CacheAssert.Redis.CacheAssertRedisProvider
+retry: false
+timeout-ms: none
+@@@@ step 1 usings
+System
+System.Collections.Generic
+System.Diagnostics
+Vouchfx.Engine.Abstractions
+@@@@ step 1 helpers
+CacheAssertRedis_Helpers sha256=91f37ccc243fcbe6d1fd151a60bf61422161dbc11490ed6f98df45aee0b31160
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+@@@@ step 1 statement-block
+{
+    CacheAssertRedis_Helpers.Execute(
+        Vars,
+        "__outcome::assert_session",
+        "conn::sessions",
+        "exists",
+        "planner-key",
+        null,
+        null,
+        true,
+        null,
+        __stepCt_assert_session);
+}
+@@@@ assembled-script
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using Vouchfx.Engine.Abstractions;
+
+// [helper CacheAssertRedis_Helpers sha256=91f37ccc243fcbe6d1fd151a60bf61422161dbc11490ed6f98df45aee0b31160: body elided, recorded by name and hash]
+// [helper Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d: body elided, recorded by name and hash]
+
+var __vouchfxRunCt = Services.TryGetValue("__vouchfx_run_cancellation", out var __vouchfxRunToken) && __vouchfxRunToken is System.Threading.CancellationToken __vouchfxToken
+    ? __vouchfxToken : System.Threading.CancellationToken.None;
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_assert_session = __vouchfxRunCt;
+    _ = __stepCt_assert_session;
+    bool __stepBudgetGoverned_assert_session = false;
+    _ = __stepBudgetGoverned_assert_session;
+    StepEvents?.OnStepStarted("assert-session");
+{
+    CacheAssertRedis_Helpers.Execute(
+        Vars,
+        "__outcome::assert_session",
+        "conn::sessions",
+        "exists",
+        "planner-key",
+        null,
+        null,
+        true,
+        null,
+        __stepCt_assert_session);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::assert_session");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "assert-session",
+        Vars.TryGetValue("__outcome::assert_session", out var __sco_assert_session) ? __sco_assert_session as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::assert_session", out var __scs_assert_session) ? __scs_assert_session as string : null);
+}
+@@@@ end

@@ -1,0 +1,170 @@
+vouchfx emitted-code baseline v1
+suite: tests/Vouchfx.Engine.Planning.Tests/Fixtures/vocabulary/two-suites-same-dependency-name/suite-b-covered.e2e.yaml
+outcome: emitted
+namespace: VouchfxGenerated
+steps: 2
+
+@@@@ step 1 of 2
+id: assert-cache
+type: cache-assert.redis
+provider: Vouchfx.Steps.CacheAssert.Redis.CacheAssertRedisProvider
+retry: false
+timeout-ms: none
+@@@@ step 1 usings
+System
+System.Collections.Generic
+System.Diagnostics
+Vouchfx.Engine.Abstractions
+@@@@ step 1 helpers
+CacheAssertRedis_Helpers sha256=91f37ccc243fcbe6d1fd151a60bf61422161dbc11490ed6f98df45aee0b31160
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+@@@@ step 1 statement-block
+{
+    CacheAssertRedis_Helpers.Execute(
+        Vars,
+        "__outcome::assert_cache",
+        "conn::cache",
+        "exists",
+        "planner-key",
+        null,
+        null,
+        true,
+        null,
+        __stepCt_assert_cache);
+}
+
+@@@@ step 2 of 2
+id: call-web
+type: http.rest
+provider: Vouchfx.Steps.HttpRest.HttpRestProvider
+retry: false
+timeout-ms: none
+@@@@ step 2 usings
+System
+System.Collections.Generic
+System.Net.Http
+System.Diagnostics
+System.Threading.Tasks
+Vouchfx.Engine.Abstractions
+@@@@ step 2 helpers
+HttpRest_Helpers sha256=4d12af26d4219f1bc2d3ea5286bdf1268638e1ffc96911b948ee37bfdad0ecab
+HttpRest_BodyAssertions sha256=b8e0052f0a55602345e1b981ab24079f1a37115d6864648136c83f5c4e011a62
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
+HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01ce6e1d5c
+@@@@ step 2 statement-block
+{
+    await HttpRest_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::call_web",
+        "__capture_status::call_web",
+        "svc::web",
+        "web",
+        "GET",
+        "/health",
+        null,
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_call_web,
+        __stepBudgetGoverned_call_web);
+}
+@@@@ assembled-script
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using Vouchfx.Engine.Abstractions;
+using System.Net.Http;
+using System.Threading.Tasks;
+
+// [helper CacheAssertRedis_Helpers sha256=91f37ccc243fcbe6d1fd151a60bf61422161dbc11490ed6f98df45aee0b31160: body elided, recorded by name and hash]
+// [helper Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d: body elided, recorded by name and hash]
+// [helper HttpRest_Helpers sha256=4d12af26d4219f1bc2d3ea5286bdf1268638e1ffc96911b948ee37bfdad0ecab: body elided, recorded by name and hash]
+// [helper HttpRest_BodyAssertions sha256=b8e0052f0a55602345e1b981ab24079f1a37115d6864648136c83f5c4e011a62: body elided, recorded by name and hash]
+// [helper Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1: body elided, recorded by name and hash]
+// [helper HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01ce6e1d5c: body elided, recorded by name and hash]
+
+var __vouchfxRunCt = Services.TryGetValue("__vouchfx_run_cancellation", out var __vouchfxRunToken) && __vouchfxRunToken is System.Threading.CancellationToken __vouchfxToken
+    ? __vouchfxToken : System.Threading.CancellationToken.None;
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_assert_cache = __vouchfxRunCt;
+    _ = __stepCt_assert_cache;
+    bool __stepBudgetGoverned_assert_cache = false;
+    _ = __stepBudgetGoverned_assert_cache;
+    StepEvents?.OnStepStarted("assert-cache");
+{
+    CacheAssertRedis_Helpers.Execute(
+        Vars,
+        "__outcome::assert_cache",
+        "conn::cache",
+        "exists",
+        "planner-key",
+        null,
+        null,
+        true,
+        null,
+        __stepCt_assert_cache);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::assert_cache");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "assert-cache",
+        Vars.TryGetValue("__outcome::assert_cache", out var __sco_assert_cache) ? __sco_assert_cache as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::assert_cache", out var __scs_assert_cache) ? __scs_assert_cache as string : null);
+}
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_call_web = __vouchfxRunCt;
+    _ = __stepCt_call_web;
+    bool __stepBudgetGoverned_call_web = false;
+    _ = __stepBudgetGoverned_call_web;
+    StepEvents?.OnStepStarted("call-web");
+{
+    await HttpRest_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::call_web",
+        "__capture_status::call_web",
+        "svc::web",
+        "web",
+        "GET",
+        "/health",
+        null,
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_call_web,
+        __stepBudgetGoverned_call_web);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::call_web");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "call-web",
+        Vars.TryGetValue("__outcome::call_web", out var __sco_call_web) ? __sco_call_web as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::call_web", out var __scs_call_web) ? __scs_call_web as string : null);
+}
+@@@@ end

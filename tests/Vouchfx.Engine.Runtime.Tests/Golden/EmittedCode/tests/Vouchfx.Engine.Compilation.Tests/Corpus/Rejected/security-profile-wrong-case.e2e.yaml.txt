@@ -1,0 +1,7 @@
+vouchfx emitted-code baseline v1
+suite: tests/Vouchfx.Engine.Compilation.Tests/Corpus/Rejected/security-profile-wrong-case.e2e.yaml
+outcome: refused
+stage: schema
+@@@@ diagnostic
+/environment/services/app/security/profile	(line 22) The string value is not a match for the indicated regular expression
+@@@@ end

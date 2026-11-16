@@ -1,0 +1,343 @@
+vouchfx emitted-code baseline v1
+suite: tests/Vouchfx.Engine.Planning.Tests/Fixtures/coverage/mixed-gaps/checkout.e2e.yaml
+outcome: emitted
+namespace: VouchfxGenerated
+steps: 4
+
+@@@@ step 1 of 4
+id: create-order
+type: http.rest
+provider: Vouchfx.Steps.HttpRest.HttpRestProvider
+retry: false
+timeout-ms: none
+@@@@ step 1 usings
+System
+System.Collections.Generic
+System.Net.Http
+System.Diagnostics
+System.Threading.Tasks
+Vouchfx.Engine.Abstractions
+@@@@ step 1 helpers
+HttpRest_Helpers sha256=4d12af26d4219f1bc2d3ea5286bdf1268638e1ffc96911b948ee37bfdad0ecab
+HttpRest_BodyAssertions sha256=b8e0052f0a55602345e1b981ab24079f1a37115d6864648136c83f5c4e011a62
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
+HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01ce6e1d5c
+@@@@ step 1 statement-block
+{
+    await HttpRest_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::create_order",
+        "__capture_status::create_order",
+        "svc::api",
+        "api",
+        "GET",
+        "/health",
+        null,
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_create_order,
+        __stepBudgetGoverned_create_order);
+}
+
+@@@@ step 2 of 4
+id: assert-order-row
+type: db-assert.postgres
+provider: Vouchfx.Steps.DbAssert.Postgres.DbAssertPostgresProvider
+retry: false
+timeout-ms: none
+@@@@ step 2 usings
+System
+System.Collections.Generic
+System.Diagnostics
+System.Threading.Tasks
+Npgsql
+Vouchfx.Engine.Abstractions
+@@@@ step 2 helpers
+DbAssertPostgres_Helpers sha256=c0df084c7cfdb76f73ba2cc3741b35b20289a3831b4340487cd39307752063fe
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+@@@@ step 2 statement-block
+{
+    await DbAssertPostgres_Helpers.ExecuteAsync(
+        Vars,
+        "__outcome::assert_order_row",
+        "conn::orders-db",
+        "SELECT 1",
+        new string[] { },
+        new string[] { },
+        1,
+        new string[] { },
+        new string[] { },
+        __stepCt_assert_order_row, __stepBudgetGoverned_assert_order_row);
+}
+
+@@@@ step 3 of 4
+id: publish-order-event
+type: mq-publish.kafka
+provider: Vouchfx.Steps.MqPublish.Kafka.MqPublishKafkaProvider
+retry: false
+timeout-ms: none
+@@@@ step 3 usings
+System
+System.Collections.Generic
+System.Diagnostics
+System.Threading.Tasks
+Confluent.Kafka
+Vouchfx.Engine.Abstractions
+@@@@ step 3 helpers
+MqPublishKafka_Helpers sha256=f4646d77fdb0eaa101c228c0bb9ad840c0b9fc24ec0586b2c5c95c6089186e9e
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
+KafkaSecurity_V2_Helpers sha256=780484a478c04266bd1a4fa89ced518c98e1d8ac8af881835213b7c22c7e2945
+@@@@ step 3 statement-block
+{
+    await MqPublishKafka_Helpers.PublishAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::publish_order_event",
+        "conn::events",
+        "events",
+        "planner-events",
+        null,
+        "{\u0022event\u0022:\u0022planner-fixture\u0022}",
+        new string[] { },
+        new string[] { },
+        null,
+        null,
+        null,
+        new string[] { },
+        new string[] { },
+        __stepCt_publish_order_event,
+        __stepBudgetGoverned_publish_order_event);
+}
+
+@@@@ step 4 of 4
+id: never-called-step
+type: http.rest
+provider: Vouchfx.Steps.HttpRest.HttpRestProvider
+retry: false
+timeout-ms: none
+@@@@ step 4 usings
+System
+System.Collections.Generic
+System.Net.Http
+System.Diagnostics
+System.Threading.Tasks
+Vouchfx.Engine.Abstractions
+@@@@ step 4 helpers
+HttpRest_Helpers sha256=4d12af26d4219f1bc2d3ea5286bdf1268638e1ffc96911b948ee37bfdad0ecab
+HttpRest_BodyAssertions sha256=b8e0052f0a55602345e1b981ab24079f1a37115d6864648136c83f5c4e011a62
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
+HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01ce6e1d5c
+@@@@ step 4 statement-block
+{
+    await HttpRest_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::never_called_step",
+        "__capture_status::never_called_step",
+        "svc::api",
+        "api",
+        "GET",
+        "/health",
+        null,
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_never_called_step,
+        __stepBudgetGoverned_never_called_step);
+}
+@@@@ assembled-script
+using System;
+using System.Collections.Generic;
+using System.Net.Http;
+using System.Diagnostics;
+using System.Threading.Tasks;
+using Vouchfx.Engine.Abstractions;
+using Npgsql;
+using Confluent.Kafka;
+
+// [helper HttpRest_Helpers sha256=4d12af26d4219f1bc2d3ea5286bdf1268638e1ffc96911b948ee37bfdad0ecab: body elided, recorded by name and hash]
+// [helper HttpRest_BodyAssertions sha256=b8e0052f0a55602345e1b981ab24079f1a37115d6864648136c83f5c4e011a62: body elided, recorded by name and hash]
+// [helper Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d: body elided, recorded by name and hash]
+// [helper Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1: body elided, recorded by name and hash]
+// [helper HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01ce6e1d5c: body elided, recorded by name and hash]
+// [helper DbAssertPostgres_Helpers sha256=c0df084c7cfdb76f73ba2cc3741b35b20289a3831b4340487cd39307752063fe: body elided, recorded by name and hash]
+// [helper MqPublishKafka_Helpers sha256=f4646d77fdb0eaa101c228c0bb9ad840c0b9fc24ec0586b2c5c95c6089186e9e: body elided, recorded by name and hash]
+// [helper KafkaSecurity_V2_Helpers sha256=780484a478c04266bd1a4fa89ced518c98e1d8ac8af881835213b7c22c7e2945: body elided, recorded by name and hash]
+
+var __vouchfxRunCt = Services.TryGetValue("__vouchfx_run_cancellation", out var __vouchfxRunToken) && __vouchfxRunToken is System.Threading.CancellationToken __vouchfxToken
+    ? __vouchfxToken : System.Threading.CancellationToken.None;
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_create_order = __vouchfxRunCt;
+    _ = __stepCt_create_order;
+    bool __stepBudgetGoverned_create_order = false;
+    _ = __stepBudgetGoverned_create_order;
+    StepEvents?.OnStepStarted("create-order");
+{
+    await HttpRest_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::create_order",
+        "__capture_status::create_order",
+        "svc::api",
+        "api",
+        "GET",
+        "/health",
+        null,
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_create_order,
+        __stepBudgetGoverned_create_order);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::create_order");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "create-order",
+        Vars.TryGetValue("__outcome::create_order", out var __sco_create_order) ? __sco_create_order as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::create_order", out var __scs_create_order) ? __scs_create_order as string : null);
+}
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_assert_order_row = __vouchfxRunCt;
+    _ = __stepCt_assert_order_row;
+    bool __stepBudgetGoverned_assert_order_row = false;
+    _ = __stepBudgetGoverned_assert_order_row;
+    StepEvents?.OnStepStarted("assert-order-row");
+{
+    await DbAssertPostgres_Helpers.ExecuteAsync(
+        Vars,
+        "__outcome::assert_order_row",
+        "conn::orders-db",
+        "SELECT 1",
+        new string[] { },
+        new string[] { },
+        1,
+        new string[] { },
+        new string[] { },
+        __stepCt_assert_order_row, __stepBudgetGoverned_assert_order_row);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::assert_order_row");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "assert-order-row",
+        Vars.TryGetValue("__outcome::assert_order_row", out var __sco_assert_order_row) ? __sco_assert_order_row as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::assert_order_row", out var __scs_assert_order_row) ? __scs_assert_order_row as string : null);
+}
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_publish_order_event = __vouchfxRunCt;
+    _ = __stepCt_publish_order_event;
+    bool __stepBudgetGoverned_publish_order_event = false;
+    _ = __stepBudgetGoverned_publish_order_event;
+    StepEvents?.OnStepStarted("publish-order-event");
+{
+    await MqPublishKafka_Helpers.PublishAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::publish_order_event",
+        "conn::events",
+        "events",
+        "planner-events",
+        null,
+        "{\u0022event\u0022:\u0022planner-fixture\u0022}",
+        new string[] { },
+        new string[] { },
+        null,
+        null,
+        null,
+        new string[] { },
+        new string[] { },
+        __stepCt_publish_order_event,
+        __stepBudgetGoverned_publish_order_event);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::publish_order_event");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "publish-order-event",
+        Vars.TryGetValue("__outcome::publish_order_event", out var __sco_publish_order_event) ? __sco_publish_order_event as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::publish_order_event", out var __scs_publish_order_event) ? __scs_publish_order_event as string : null);
+}
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_never_called_step = __vouchfxRunCt;
+    _ = __stepCt_never_called_step;
+    bool __stepBudgetGoverned_never_called_step = false;
+    _ = __stepBudgetGoverned_never_called_step;
+    StepEvents?.OnStepStarted("never-called-step");
+{
+    await HttpRest_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::never_called_step",
+        "__capture_status::never_called_step",
+        "svc::api",
+        "api",
+        "GET",
+        "/health",
+        null,
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_never_called_step,
+        __stepBudgetGoverned_never_called_step);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::never_called_step");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "never-called-step",
+        Vars.TryGetValue("__outcome::never_called_step", out var __sco_never_called_step) ? __sco_never_called_step as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::never_called_step", out var __scs_never_called_step) ? __scs_never_called_step as string : null);
+}
+@@@@ end

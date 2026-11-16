@@ -264,6 +264,21 @@ The Docker integration suites no longer run on pull requests or pushes; they run
 
 All contributions must honour the hard invariants in [`CLAUDE.md`](CLAUDE.md). Documentation prose is British English.
 
+### The emitted-code baseline
+
+`EmittedCodeBaselineTests` (in `tests/Vouchfx.Engine.Runtime.Tests`) pins the C# the engine emits for every `.e2e.yaml` file in the repository: `examples/`, the test fixtures and corpora, and the editor-extension samples. It runs the front end up to emitted text, so it starts no topology, container or network and never compiles or runs the script. Each suite has a golden under `tests/Vouchfx.Engine.Runtime.Tests/Golden/EmittedCode/`, mirroring its repository-relative path with a `.txt` suffix. A golden records, step by step, the fragment each provider returned (required usings, helper class names with SHA-256, the statement block) followed by the assembled script with helper bodies reduced to name and hash. A suite the engine refuses records the stage and message of the refusal instead. A failure names the suite, the step and the provider.
+
+The gate fails when emitted code changes, when a discovered suite has no golden, and when a golden outlives its suite. A new suite therefore needs its golden in the same change.
+
+Regenerating is legitimate when the change to emitted code is the intended product of your work: a provider's generated statements, a helper body, the assembler, or a suite you added or edited. It is not legitimate to regenerate in order to make a refactor pass. A change that is meant to leave emitted code alone, such as changing how a provider reads its YAML, must leave every golden byte-identical, and a diff there is a defect to fix. To regenerate deliberately, run
+
+```bash
+VOUCHFX_REGEN_EMITTED_CODE=1 dotnet test tests/Vouchfx.Engine.Runtime.Tests \
+  --filter "FullyQualifiedName~EmittedCodeBaselineTests"
+```
+
+then review the golden diff and commit it with the change that caused it. Regeneration is refused when `CI` or `GITHUB_ACTIONS` is set, like the other golden gates. The gate runs a suite's `<name>.setup.(sh|ps1)` script first when it has one, as `ExamplesCompileTests` does, so the files that suite declares exist.
+
 Fixed diagnostic formatting, Core provider diff separators and public schema descriptions use ASCII. Diff tables use `|`, `-` and `+`; a literal pipe in a cell is shown as `\u007c`. Preserve Unicode in authored or observed values. Generated CSX comments and frozen SDK `Source` constants retain their existing bytes.
 
 ## Licence

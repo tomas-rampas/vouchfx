@@ -1,0 +1,7 @@
+vouchfx emitted-code baseline v1
+suite: tests/Vouchfx.Engine.Compilation.Tests/Corpus/Rejected/dependency-unknown-key.e2e.yaml
+outcome: refused
+stage: schema
+@@@@ diagnostic
+/environment/dependencies/db/qeues	(line 17) Unknown property 'qeues' on dependency 'db'
+@@@@ end

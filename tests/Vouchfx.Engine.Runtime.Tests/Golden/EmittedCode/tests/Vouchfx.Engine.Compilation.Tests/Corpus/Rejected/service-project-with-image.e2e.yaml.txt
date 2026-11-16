@@ -1,0 +1,7 @@
+vouchfx emitted-code baseline v1
+suite: tests/Vouchfx.Engine.Compilation.Tests/Corpus/Rejected/service-project-with-image.e2e.yaml
+outcome: refused
+stage: schema
+@@@@ diagnostic
+/environment/services/app/project	(line 17) Property 'project' cannot be combined with 'image' on service 'app' - exactly one of the two is required (DSL section 3.2)
+@@@@ end

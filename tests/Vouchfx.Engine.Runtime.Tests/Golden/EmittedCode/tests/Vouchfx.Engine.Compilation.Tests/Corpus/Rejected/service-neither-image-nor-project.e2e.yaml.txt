@@ -1,0 +1,9 @@
+vouchfx emitted-code baseline v1
+suite: tests/Vouchfx.Engine.Compilation.Tests/Corpus/Rejected/service-neither-image-nor-project.e2e.yaml
+outcome: refused
+stage: schema
+@@@@ diagnostic
+/environment/services/app	(line 15) Required properties ["image"] are not present
+@@@@ diagnostic
+/environment/services/app	(line 15) Required properties ["project"] are not present
+@@@@ end

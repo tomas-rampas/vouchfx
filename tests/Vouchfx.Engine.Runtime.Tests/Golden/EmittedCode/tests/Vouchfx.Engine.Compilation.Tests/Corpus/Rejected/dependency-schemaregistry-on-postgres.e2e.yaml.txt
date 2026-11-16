@@ -1,0 +1,7 @@
+vouchfx emitted-code baseline v1
+suite: tests/Vouchfx.Engine.Compilation.Tests/Corpus/Rejected/dependency-schemaregistry-on-postgres.e2e.yaml
+outcome: refused
+stage: schema
+@@@@ diagnostic
+/environment/dependencies/db/schemaRegistry	(line 19) Property 'schemaRegistry' is not valid on a 'postgres' dependency
+@@@@ end

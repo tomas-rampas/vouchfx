@@ -1,0 +1,106 @@
+vouchfx emitted-code baseline v1
+suite: tests/Vouchfx.Engine.Planning.Tests/Fixtures/acceptance/loop-closure-service/suite.e2e.yaml
+outcome: emitted
+namespace: VouchfxGenerated
+steps: 1
+
+@@@@ step 1 of 1
+id: no-op
+type: script.csharp
+provider: Vouchfx.Steps.Script.Csharp.ScriptCsharpProvider
+retry: false
+timeout-ms: none
+@@@@ step 1 usings
+System
+System.Diagnostics
+System.Threading.Tasks
+Vouchfx.Engine.Abstractions
+@@@@ step 1 helpers
+
+@@@@ step 1 statement-block
+{
+    var __sw_no_op = System.Diagnostics.Stopwatch.StartNew();
+    Vouchfx.Engine.Abstractions.Verdict __v_no_op = Vouchfx.Engine.Abstractions.Verdict.Pass;
+    string? __obs_no_op = null;
+    async System.Threading.Tasks.Task __body_no_op()
+    {
+        await System.Threading.Tasks.Task.CompletedTask;
+        // ---- begin author code (spliced verbatim) ----
+// no-op
+        // ---- end author code ----
+    }
+    try
+    {
+        await __body_no_op();
+    }
+    catch (System.OperationCanceledException) when (__stepCt_no_op.IsCancellationRequested)
+    {
+        throw;
+    }
+    catch (System.Exception __ex_no_op)
+    {
+        __v_no_op = Vouchfx.Engine.Abstractions.Verdict.Fail;
+        __obs_no_op = __ex_no_op.Message;
+    }
+    finally
+    {
+        __sw_no_op.Stop();
+    }
+    Vars["__outcome::no_op"] = new Vouchfx.Engine.Abstractions.StepOutcome(__v_no_op, __sw_no_op.ElapsedMilliseconds, __obs_no_op);
+}
+@@@@ assembled-script
+using System;
+using System.Diagnostics;
+using System.Threading.Tasks;
+using Vouchfx.Engine.Abstractions;
+
+var __vouchfxRunCt = Services.TryGetValue("__vouchfx_run_cancellation", out var __vouchfxRunToken) && __vouchfxRunToken is System.Threading.CancellationToken __vouchfxToken
+    ? __vouchfxToken : System.Threading.CancellationToken.None;
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_no_op = __vouchfxRunCt;
+    _ = __stepCt_no_op;
+    bool __stepBudgetGoverned_no_op = false;
+    _ = __stepBudgetGoverned_no_op;
+    StepEvents?.OnStepStarted("no-op");
+{
+    var __sw_no_op = System.Diagnostics.Stopwatch.StartNew();
+    Vouchfx.Engine.Abstractions.Verdict __v_no_op = Vouchfx.Engine.Abstractions.Verdict.Pass;
+    string? __obs_no_op = null;
+    async System.Threading.Tasks.Task __body_no_op()
+    {
+        await System.Threading.Tasks.Task.CompletedTask;
+        // ---- begin author code (spliced verbatim) ----
+// no-op
+        // ---- end author code ----
+    }
+    try
+    {
+        await __body_no_op();
+    }
+    catch (System.OperationCanceledException) when (__stepCt_no_op.IsCancellationRequested)
+    {
+        throw;
+    }
+    catch (System.Exception __ex_no_op)
+    {
+        __v_no_op = Vouchfx.Engine.Abstractions.Verdict.Fail;
+        __obs_no_op = __ex_no_op.Message;
+    }
+    finally
+    {
+        __sw_no_op.Stop();
+    }
+    Vars["__outcome::no_op"] = new Vouchfx.Engine.Abstractions.StepOutcome(__v_no_op, __sw_no_op.ElapsedMilliseconds, __obs_no_op);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::no_op");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "no-op",
+        Vars.TryGetValue("__outcome::no_op", out var __sco_no_op) ? __sco_no_op as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::no_op", out var __scs_no_op) ? __scs_no_op as string : null);
+}
+@@@@ end

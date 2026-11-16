@@ -1,0 +1,7 @@
+vouchfx emitted-code baseline v1
+suite: tests/Vouchfx.Engine.Compilation.Tests/Corpus/Rejected/inbound-listener-malformed-security.e2e.yaml
+outcome: refused
+stage: schema
+@@@@ diagnostic
+/listeners/callbacks/security	(line 6) Value is "boolean" but should be "object"
+@@@@ end

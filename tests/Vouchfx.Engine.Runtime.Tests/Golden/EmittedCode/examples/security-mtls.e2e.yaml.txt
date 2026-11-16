@@ -1,0 +1,507 @@
+vouchfx emitted-code baseline v1
+suite: examples/security-mtls.e2e.yaml
+outcome: emitted
+namespace: VouchfxGenerated
+steps: 4
+
+@@@@ step 1 of 4
+id: call-api
+type: http.rest
+provider: Vouchfx.Steps.HttpRest.HttpRestProvider
+retry: false
+timeout-ms: 30000
+@@@@ step 1 usings
+System
+System.Collections.Generic
+System.Net.Http
+System.Diagnostics
+System.Threading.Tasks
+Vouchfx.Engine.Abstractions
+@@@@ step 1 helpers
+HttpRest_Helpers sha256=4d12af26d4219f1bc2d3ea5286bdf1268638e1ffc96911b948ee37bfdad0ecab
+HttpRest_BodyAssertions sha256=b8e0052f0a55602345e1b981ab24079f1a37115d6864648136c83f5c4e011a62
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
+HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01ce6e1d5c
+@@@@ step 1 statement-block
+{
+    await HttpRest_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::call_api",
+        "__capture_status::call_api",
+        "svc::orders-api",
+        "orders-api",
+        "GET",
+        "/orders",
+        null,
+        new string[] { },
+        new string[] { },
+        200,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { "clientDn", "verify" },
+        new string[] { "$.clientDn", "$.verify" },
+        new string[] { "json", "json" },
+        __stepCt_call_api,
+        __stepBudgetGoverned_call_api);
+}
+
+@@@@ step 2 of 4
+id: assert-client-authenticated
+type: script.csharp
+provider: Vouchfx.Steps.Script.Csharp.ScriptCsharpProvider
+retry: false
+timeout-ms: 15000
+@@@@ step 2 usings
+System
+System.Diagnostics
+System.Threading.Tasks
+Vouchfx.Engine.Abstractions
+@@@@ step 2 helpers
+
+@@@@ step 2 statement-block
+{
+    var __sw_assert_client_authenticated = System.Diagnostics.Stopwatch.StartNew();
+    Vouchfx.Engine.Abstractions.Verdict __v_assert_client_authenticated = Vouchfx.Engine.Abstractions.Verdict.Pass;
+    string? __obs_assert_client_authenticated = null;
+    async System.Threading.Tasks.Task __body_assert_client_authenticated()
+    {
+        await System.Threading.Tasks.Task.CompletedTask;
+        // ---- begin author code (spliced verbatim) ----
+var verify = (string)Vars["verify"];
+var clientDn = (string)Vars["clientDn"];
+
+if (verify != "SUCCESS")
+{
+  throw new System.Exception(
+    "The API did not verify this suite's client certificate: it reported "
+    + "ssl_client_verify='" + verify + "', expected 'SUCCESS'. Either the API is no "
+    + "longer requiring a client certificate (check ssl_verify_client in "
+    + "examples/security-mtls/nginx-mtls.conf) or the certificate presented does not "
+    + "chain to the CA the API trusts.");
+}
+
+if (clientDn != "CN=vouchfx-example-client")
+{
+  throw new System.Exception(
+    "The API authenticated a DIFFERENT identity than the one declared: it saw '"
+    + clientDn + "', expected 'CN=vouchfx-example-client'. The certificates under "
+    + "examples/security-mtls/certs/ are probably stale — regenerate them.");
+}
+
+        // ---- end author code ----
+    }
+    try
+    {
+        await __body_assert_client_authenticated();
+    }
+    catch (System.OperationCanceledException) when (__stepCt_assert_client_authenticated.IsCancellationRequested)
+    {
+        throw;
+    }
+    catch (System.Exception __ex_assert_client_authenticated)
+    {
+        __v_assert_client_authenticated = Vouchfx.Engine.Abstractions.Verdict.Fail;
+        __obs_assert_client_authenticated = __ex_assert_client_authenticated.Message;
+    }
+    finally
+    {
+        __sw_assert_client_authenticated.Stop();
+    }
+    Vars["__outcome::assert_client_authenticated"] = new Vouchfx.Engine.Abstractions.StepOutcome(__v_assert_client_authenticated, __sw_assert_client_authenticated.ElapsedMilliseconds, __obs_assert_client_authenticated);
+}
+
+@@@@ step 3 of 4
+id: publish-order
+type: mq-publish.kafka
+provider: Vouchfx.Steps.MqPublish.Kafka.MqPublishKafkaProvider
+retry: false
+timeout-ms: 30000
+@@@@ step 3 usings
+System
+System.Collections.Generic
+System.Diagnostics
+System.Threading.Tasks
+Confluent.Kafka
+Vouchfx.Engine.Abstractions
+@@@@ step 3 helpers
+MqPublishKafka_Helpers sha256=f4646d77fdb0eaa101c228c0bb9ad840c0b9fc24ec0586b2c5c95c6089186e9e
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
+KafkaSecurity_V2_Helpers sha256=780484a478c04266bd1a4fa89ced518c98e1d8ac8af881835213b7c22c7e2945
+@@@@ step 3 statement-block
+{
+    await MqPublishKafka_Helpers.PublishAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::publish_order",
+        "svc::orders-broker",
+        "orders-broker",
+        "orders",
+        null,
+        "{\u0022orderId\u0022:\u0022ord-001\u0022,\u0022clientDn\u0022:\u0022{clientDn}\u0022,\u0022verify\u0022:\u0022{verify}\u0022}",
+        new string[] { },
+        new string[] { },
+        null,
+        null,
+        null,
+        new string[] { },
+        new string[] { },
+        __stepCt_publish_order,
+        __stepBudgetGoverned_publish_order);
+}
+
+@@@@ step 4 of 4
+id: consume-order
+type: mq-expect.kafka
+provider: Vouchfx.Steps.MqExpect.Kafka.MqExpectKafkaProvider
+retry: true
+timeout-ms: 60000
+@@@@ step 4 usings
+System
+System.Collections.Generic
+System.Diagnostics
+System.Threading
+System.Threading.Tasks
+Confluent.Kafka
+Vouchfx.Engine.Abstractions
+@@@@ step 4 helpers
+MqExpectKafka_Helpers sha256=2bed91b8263ca592b9958ddeb9bb4e4e26e69a06f6fb6460b6ac728a88b21f21
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
+KafkaSecurity_V2_Helpers sha256=780484a478c04266bd1a4fa89ced518c98e1d8ac8af881835213b7c22c7e2945
+@@@@ step 4 statement-block
+{
+    await MqExpectKafka_Helpers.ExpectAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::consume_order",
+        "svc::orders-broker",
+        "orders-broker",
+        "orders",
+        null,
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { "$.orderId", "$.clientDn", "$.verify" },
+        new string[] { "ord-001", "CN=vouchfx-example-client", "SUCCESS" },
+        false,
+        null,
+        __stepCt_consume_order,
+        __stepBudgetGoverned_consume_order);
+}
+@@@@ assembled-script
+using System;
+using System.Collections.Generic;
+using System.Net.Http;
+using System.Diagnostics;
+using System.Threading.Tasks;
+using Vouchfx.Engine.Abstractions;
+using Confluent.Kafka;
+using System.Threading;
+
+// [helper HttpRest_Helpers sha256=4d12af26d4219f1bc2d3ea5286bdf1268638e1ffc96911b948ee37bfdad0ecab: body elided, recorded by name and hash]
+// [helper HttpRest_BodyAssertions sha256=b8e0052f0a55602345e1b981ab24079f1a37115d6864648136c83f5c4e011a62: body elided, recorded by name and hash]
+// [helper Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d: body elided, recorded by name and hash]
+// [helper Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1: body elided, recorded by name and hash]
+// [helper HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01ce6e1d5c: body elided, recorded by name and hash]
+// [helper MqPublishKafka_Helpers sha256=f4646d77fdb0eaa101c228c0bb9ad840c0b9fc24ec0586b2c5c95c6089186e9e: body elided, recorded by name and hash]
+// [helper KafkaSecurity_V2_Helpers sha256=780484a478c04266bd1a4fa89ced518c98e1d8ac8af881835213b7c22c7e2945: body elided, recorded by name and hash]
+// [helper MqExpectKafka_Helpers sha256=2bed91b8263ca592b9958ddeb9bb4e4e26e69a06f6fb6460b6ac728a88b21f21: body elided, recorded by name and hash]
+
+var __vouchfxRunCt = Services.TryGetValue("__vouchfx_run_cancellation", out var __vouchfxRunToken) && __vouchfxRunToken is System.Threading.CancellationToken __vouchfxToken
+    ? __vouchfxToken : System.Threading.CancellationToken.None;
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    var __stepSw_call_api = System.Diagnostics.Stopwatch.StartNew();
+    var __stepCts_call_api = System.Threading.CancellationTokenSource.CreateLinkedTokenSource(__vouchfxRunCt);
+    __stepCts_call_api.CancelAfter(System.TimeSpan.FromMilliseconds(30000L));
+    System.Threading.CancellationToken __stepCt_call_api = __stepCts_call_api.Token;
+    _ = __stepCt_call_api;
+    bool __stepBudgetGoverned_call_api = true;
+    _ = __stepBudgetGoverned_call_api;
+    StepEvents?.OnStepStarted("call-api");
+    var __stepTimedOut_call_api = false;
+    try
+    {
+{
+    await HttpRest_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::call_api",
+        "__capture_status::call_api",
+        "svc::orders-api",
+        "orders-api",
+        "GET",
+        "/orders",
+        null,
+        new string[] { },
+        new string[] { },
+        200,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { "clientDn", "verify" },
+        new string[] { "$.clientDn", "$.verify" },
+        new string[] { "json", "json" },
+        __stepCt_call_api,
+        __stepBudgetGoverned_call_api);
+}
+    }
+    catch (System.OperationCanceledException) when (__stepCts_call_api.IsCancellationRequested && !__vouchfxRunCt.IsCancellationRequested)
+    {
+        // Early cooperative cut: the body observed the step token (section 4, #232).
+        __stepTimedOut_call_api = true;
+        Vars["__outcome::call_api"] = new Vouchfx.Engine.Abstractions.StepOutcome(
+            Vouchfx.Engine.Abstractions.Verdict.Inconclusive,
+            __stepSw_call_api.ElapsedMilliseconds,
+            "{\u0022reason\u0022:\u0022step-timeout\u0022,\u0022timeoutMs\u0022:30000}");
+    }
+    finally
+    {
+        __stepSw_call_api.Stop();
+        __stepCts_call_api.Dispose();
+    }
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::call_api");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    if (!__stepTimedOut_call_api && __stepSw_call_api.ElapsedMilliseconds > 30000L)
+    {
+        var __prior_call_api = Vars.TryGetValue("__outcome::call_api", out var __praw_call_api) && __praw_call_api is Vouchfx.Engine.Abstractions.StepOutcome __pso_call_api
+            ? __pso_call_api.Verdict.ToString()
+            : "(none)";
+        Vars["__outcome::call_api"] = new Vouchfx.Engine.Abstractions.StepOutcome(
+            Vouchfx.Engine.Abstractions.Verdict.Inconclusive,
+            __stepSw_call_api.ElapsedMilliseconds,
+            "{\u0022reason\u0022:\u0022step-timeout\u0022,\u0022timeoutMs\u0022:30000,\u0022supersededVerdict\u0022:\u0022" + __prior_call_api + "\u0022}");
+    }
+    StepEvents?.OnStepCompleted(
+        "call-api",
+        Vars.TryGetValue("__outcome::call_api", out var __sco_call_api) ? __sco_call_api as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::call_api", out var __scs_call_api) ? __scs_call_api as string : null);
+}
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    var __stepSw_assert_client_authenticated = System.Diagnostics.Stopwatch.StartNew();
+    var __stepCts_assert_client_authenticated = System.Threading.CancellationTokenSource.CreateLinkedTokenSource(__vouchfxRunCt);
+    __stepCts_assert_client_authenticated.CancelAfter(System.TimeSpan.FromMilliseconds(15000L));
+    System.Threading.CancellationToken __stepCt_assert_client_authenticated = __stepCts_assert_client_authenticated.Token;
+    _ = __stepCt_assert_client_authenticated;
+    bool __stepBudgetGoverned_assert_client_authenticated = true;
+    _ = __stepBudgetGoverned_assert_client_authenticated;
+    StepEvents?.OnStepStarted("assert-client-authenticated");
+    var __stepTimedOut_assert_client_authenticated = false;
+    try
+    {
+{
+    var __sw_assert_client_authenticated = System.Diagnostics.Stopwatch.StartNew();
+    Vouchfx.Engine.Abstractions.Verdict __v_assert_client_authenticated = Vouchfx.Engine.Abstractions.Verdict.Pass;
+    string? __obs_assert_client_authenticated = null;
+    async System.Threading.Tasks.Task __body_assert_client_authenticated()
+    {
+        await System.Threading.Tasks.Task.CompletedTask;
+        // ---- begin author code (spliced verbatim) ----
+var verify = (string)Vars["verify"];
+var clientDn = (string)Vars["clientDn"];
+
+if (verify != "SUCCESS")
+{
+  throw new System.Exception(
+    "The API did not verify this suite's client certificate: it reported "
+    + "ssl_client_verify='" + verify + "', expected 'SUCCESS'. Either the API is no "
+    + "longer requiring a client certificate (check ssl_verify_client in "
+    + "examples/security-mtls/nginx-mtls.conf) or the certificate presented does not "
+    + "chain to the CA the API trusts.");
+}
+
+if (clientDn != "CN=vouchfx-example-client")
+{
+  throw new System.Exception(
+    "The API authenticated a DIFFERENT identity than the one declared: it saw '"
+    + clientDn + "', expected 'CN=vouchfx-example-client'. The certificates under "
+    + "examples/security-mtls/certs/ are probably stale — regenerate them.");
+}
+
+        // ---- end author code ----
+    }
+    try
+    {
+        await __body_assert_client_authenticated();
+    }
+    catch (System.OperationCanceledException) when (__stepCt_assert_client_authenticated.IsCancellationRequested)
+    {
+        throw;
+    }
+    catch (System.Exception __ex_assert_client_authenticated)
+    {
+        __v_assert_client_authenticated = Vouchfx.Engine.Abstractions.Verdict.Fail;
+        __obs_assert_client_authenticated = __ex_assert_client_authenticated.Message;
+    }
+    finally
+    {
+        __sw_assert_client_authenticated.Stop();
+    }
+    Vars["__outcome::assert_client_authenticated"] = new Vouchfx.Engine.Abstractions.StepOutcome(__v_assert_client_authenticated, __sw_assert_client_authenticated.ElapsedMilliseconds, __obs_assert_client_authenticated);
+}
+    }
+    catch (System.OperationCanceledException) when (__stepCts_assert_client_authenticated.IsCancellationRequested && !__vouchfxRunCt.IsCancellationRequested)
+    {
+        // Early cooperative cut: the body observed the step token (section 4, #232).
+        __stepTimedOut_assert_client_authenticated = true;
+        Vars["__outcome::assert_client_authenticated"] = new Vouchfx.Engine.Abstractions.StepOutcome(
+            Vouchfx.Engine.Abstractions.Verdict.Inconclusive,
+            __stepSw_assert_client_authenticated.ElapsedMilliseconds,
+            "{\u0022reason\u0022:\u0022step-timeout\u0022,\u0022timeoutMs\u0022:15000}");
+    }
+    finally
+    {
+        __stepSw_assert_client_authenticated.Stop();
+        __stepCts_assert_client_authenticated.Dispose();
+    }
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::assert_client_authenticated");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    if (!__stepTimedOut_assert_client_authenticated && __stepSw_assert_client_authenticated.ElapsedMilliseconds > 15000L)
+    {
+        var __prior_assert_client_authenticated = Vars.TryGetValue("__outcome::assert_client_authenticated", out var __praw_assert_client_authenticated) && __praw_assert_client_authenticated is Vouchfx.Engine.Abstractions.StepOutcome __pso_assert_client_authenticated
+            ? __pso_assert_client_authenticated.Verdict.ToString()
+            : "(none)";
+        Vars["__outcome::assert_client_authenticated"] = new Vouchfx.Engine.Abstractions.StepOutcome(
+            Vouchfx.Engine.Abstractions.Verdict.Inconclusive,
+            __stepSw_assert_client_authenticated.ElapsedMilliseconds,
+            "{\u0022reason\u0022:\u0022step-timeout\u0022,\u0022timeoutMs\u0022:15000,\u0022supersededVerdict\u0022:\u0022" + __prior_assert_client_authenticated + "\u0022}");
+    }
+    StepEvents?.OnStepCompleted(
+        "assert-client-authenticated",
+        Vars.TryGetValue("__outcome::assert_client_authenticated", out var __sco_assert_client_authenticated) ? __sco_assert_client_authenticated as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::assert_client_authenticated", out var __scs_assert_client_authenticated) ? __scs_assert_client_authenticated as string : null);
+}
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    var __stepSw_publish_order = System.Diagnostics.Stopwatch.StartNew();
+    var __stepCts_publish_order = System.Threading.CancellationTokenSource.CreateLinkedTokenSource(__vouchfxRunCt);
+    __stepCts_publish_order.CancelAfter(System.TimeSpan.FromMilliseconds(30000L));
+    System.Threading.CancellationToken __stepCt_publish_order = __stepCts_publish_order.Token;
+    _ = __stepCt_publish_order;
+    bool __stepBudgetGoverned_publish_order = true;
+    _ = __stepBudgetGoverned_publish_order;
+    StepEvents?.OnStepStarted("publish-order");
+    var __stepTimedOut_publish_order = false;
+    try
+    {
+{
+    await MqPublishKafka_Helpers.PublishAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::publish_order",
+        "svc::orders-broker",
+        "orders-broker",
+        "orders",
+        null,
+        "{\u0022orderId\u0022:\u0022ord-001\u0022,\u0022clientDn\u0022:\u0022{clientDn}\u0022,\u0022verify\u0022:\u0022{verify}\u0022}",
+        new string[] { },
+        new string[] { },
+        null,
+        null,
+        null,
+        new string[] { },
+        new string[] { },
+        __stepCt_publish_order,
+        __stepBudgetGoverned_publish_order);
+}
+    }
+    catch (System.OperationCanceledException) when (__stepCts_publish_order.IsCancellationRequested && !__vouchfxRunCt.IsCancellationRequested)
+    {
+        // Early cooperative cut: the body observed the step token (section 4, #232).
+        __stepTimedOut_publish_order = true;
+        Vars["__outcome::publish_order"] = new Vouchfx.Engine.Abstractions.StepOutcome(
+            Vouchfx.Engine.Abstractions.Verdict.Inconclusive,
+            __stepSw_publish_order.ElapsedMilliseconds,
+            "{\u0022reason\u0022:\u0022step-timeout\u0022,\u0022timeoutMs\u0022:30000}");
+    }
+    finally
+    {
+        __stepSw_publish_order.Stop();
+        __stepCts_publish_order.Dispose();
+    }
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::publish_order");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    if (!__stepTimedOut_publish_order && __stepSw_publish_order.ElapsedMilliseconds > 30000L)
+    {
+        var __prior_publish_order = Vars.TryGetValue("__outcome::publish_order", out var __praw_publish_order) && __praw_publish_order is Vouchfx.Engine.Abstractions.StepOutcome __pso_publish_order
+            ? __pso_publish_order.Verdict.ToString()
+            : "(none)";
+        Vars["__outcome::publish_order"] = new Vouchfx.Engine.Abstractions.StepOutcome(
+            Vouchfx.Engine.Abstractions.Verdict.Inconclusive,
+            __stepSw_publish_order.ElapsedMilliseconds,
+            "{\u0022reason\u0022:\u0022step-timeout\u0022,\u0022timeoutMs\u0022:30000,\u0022supersededVerdict\u0022:\u0022" + __prior_publish_order + "\u0022}");
+    }
+    StepEvents?.OnStepCompleted(
+        "publish-order",
+        Vars.TryGetValue("__outcome::publish_order", out var __sco_publish_order) ? __sco_publish_order as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::publish_order", out var __scs_publish_order) ? __scs_publish_order as string : null);
+}
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    StepEvents?.OnStepStarted("consume-order");
+    async System.Threading.Tasks.Task<Vouchfx.Engine.Abstractions.StepOutcome> __attempt_consume_order(System.Threading.CancellationToken __ct_consume_order)
+    {
+        System.Threading.CancellationToken __stepCt_consume_order = __ct_consume_order;
+        _ = __stepCt_consume_order;
+        bool __stepBudgetGoverned_consume_order = false;
+        _ = __stepBudgetGoverned_consume_order;
+{
+    await MqExpectKafka_Helpers.ExpectAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::consume_order",
+        "svc::orders-broker",
+        "orders-broker",
+        "orders",
+        null,
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { "$.orderId", "$.clientDn", "$.verify" },
+        new string[] { "ord-001", "CN=vouchfx-example-client", "SUCCESS" },
+        false,
+        null,
+        __stepCt_consume_order,
+        __stepBudgetGoverned_consume_order);
+}
+        var __o_consume_order = Vars.TryGetValue("__outcome::consume_order", out var __raw_consume_order) && __raw_consume_order is Vouchfx.Engine.Abstractions.StepOutcome __so_consume_order
+            ? __so_consume_order
+            : new Vouchfx.Engine.Abstractions.StepOutcome(Vouchfx.Engine.Abstractions.Verdict.Inconclusive, 0L, null);
+        Vars.Remove("__outcome::consume_order");
+        return __o_consume_order;
+    }
+    await Vouchfx.Engine.Abstractions.Retry.RetryRunner.PollAsync(
+        Vars, "__outcome::consume_order", "__attempts::consume_order", 60000L, null, __attempt_consume_order, StepEvents, "consume-order", ct: __vouchfxRunCt);
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::consume_order");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "consume-order",
+        Vars.TryGetValue("__outcome::consume_order", out var __sco_consume_order) ? __sco_consume_order as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::consume_order", out var __scs_consume_order) ? __scs_consume_order as string : null);
+}
+@@@@ end

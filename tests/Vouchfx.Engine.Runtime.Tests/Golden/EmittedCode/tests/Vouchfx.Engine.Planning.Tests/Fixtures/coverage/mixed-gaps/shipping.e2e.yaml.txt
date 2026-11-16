@@ -1,0 +1,7 @@
+vouchfx emitted-code baseline v1
+suite: tests/Vouchfx.Engine.Planning.Tests/Fixtures/coverage/mixed-gaps/shipping.e2e.yaml
+outcome: refused
+stage: pipeline
+@@@@ diagnostic
+-	Step 'ship-order' model validation failed: http.rest: 'target' 'api' names neither a declared service in environment.services nor a declared dependency in environment.dependencies. Declared dependencies: (none). Declared services: (none).
+@@@@ end

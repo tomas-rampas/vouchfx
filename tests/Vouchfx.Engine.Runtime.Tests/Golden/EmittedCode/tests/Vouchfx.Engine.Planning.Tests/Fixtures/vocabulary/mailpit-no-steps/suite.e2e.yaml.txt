@@ -1,0 +1,7 @@
+vouchfx emitted-code baseline v1
+suite: tests/Vouchfx.Engine.Planning.Tests/Fixtures/vocabulary/mailpit-no-steps/suite.e2e.yaml
+outcome: refused
+stage: schema
+@@@@ diagnostic
+/steps	(line 6) Value should have at least 1 items
+@@@@ end

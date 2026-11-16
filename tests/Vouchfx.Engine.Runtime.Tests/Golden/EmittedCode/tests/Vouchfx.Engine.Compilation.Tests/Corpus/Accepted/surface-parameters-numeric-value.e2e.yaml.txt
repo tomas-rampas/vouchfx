@@ -1,0 +1,80 @@
+vouchfx emitted-code baseline v1
+suite: tests/Vouchfx.Engine.Compilation.Tests/Corpus/Accepted/surface-parameters-numeric-value.e2e.yaml
+outcome: emitted
+namespace: VouchfxGenerated
+steps: 1
+
+@@@@ step 1 of 1
+id: assert-order
+type: db-assert.postgres
+provider: Vouchfx.Steps.DbAssert.Postgres.DbAssertPostgresProvider
+retry: false
+timeout-ms: none
+@@@@ step 1 usings
+System
+System.Collections.Generic
+System.Diagnostics
+System.Threading.Tasks
+Npgsql
+Vouchfx.Engine.Abstractions
+@@@@ step 1 helpers
+DbAssertPostgres_Helpers sha256=c0df084c7cfdb76f73ba2cc3741b35b20289a3831b4340487cd39307752063fe
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+@@@@ step 1 statement-block
+{
+    await DbAssertPostgres_Helpers.ExecuteAsync(
+        Vars,
+        "__outcome::assert_order",
+        "conn::orders-db",
+        "SELECT * FROM orders WHERE id = @id",
+        new string[] { "id" },
+        new string[] { Substitute_Helpers.Resolve(Vars, "42") },
+        1,
+        new string[] { },
+        new string[] { },
+        __stepCt_assert_order, __stepBudgetGoverned_assert_order);
+}
+@@@@ assembled-script
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Threading.Tasks;
+using Npgsql;
+using Vouchfx.Engine.Abstractions;
+
+// [helper DbAssertPostgres_Helpers sha256=c0df084c7cfdb76f73ba2cc3741b35b20289a3831b4340487cd39307752063fe: body elided, recorded by name and hash]
+// [helper Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d: body elided, recorded by name and hash]
+
+var __vouchfxRunCt = Services.TryGetValue("__vouchfx_run_cancellation", out var __vouchfxRunToken) && __vouchfxRunToken is System.Threading.CancellationToken __vouchfxToken
+    ? __vouchfxToken : System.Threading.CancellationToken.None;
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_assert_order = __vouchfxRunCt;
+    _ = __stepCt_assert_order;
+    bool __stepBudgetGoverned_assert_order = false;
+    _ = __stepBudgetGoverned_assert_order;
+    StepEvents?.OnStepStarted("assert-order");
+{
+    await DbAssertPostgres_Helpers.ExecuteAsync(
+        Vars,
+        "__outcome::assert_order",
+        "conn::orders-db",
+        "SELECT * FROM orders WHERE id = @id",
+        new string[] { "id" },
+        new string[] { Substitute_Helpers.Resolve(Vars, "42") },
+        1,
+        new string[] { },
+        new string[] { },
+        __stepCt_assert_order, __stepBudgetGoverned_assert_order);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::assert_order");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "assert-order",
+        Vars.TryGetValue("__outcome::assert_order", out var __sco_assert_order) ? __sco_assert_order as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::assert_order", out var __scs_assert_order) ? __scs_assert_order as string : null);
+}
+@@@@ end

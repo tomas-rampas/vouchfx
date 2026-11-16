@@ -1,0 +1,7 @@
+vouchfx emitted-code baseline v1
+suite: tests/Vouchfx.Engine.Compilation.Tests/Corpus/Rejected/capture-reserved-prefix-key.e2e.yaml
+outcome: refused
+stage: schema
+@@@@ diagnostic
+/steps/0/capture/conn::orders-db	(line 18) Property name 'conn::orders-db' begins with an engine-reserved bookkeeping prefix - see this field's own description for the reserved prefix list.
+@@@@ end

@@ -1,0 +1,7 @@
+vouchfx emitted-code baseline v1
+suite: tests/Vouchfx.Engine.Compilation.Tests/Corpus/Accepted/security-mtls-without-cacert.e2e.yaml
+outcome: refused
+stage: pipeline
+@@@@ diagnostic
+security-preflight	environment.dependencies.events-kafka.security.clientCert: file './certs/client.pem' not found, relative to the suite directory.
+@@@@ end

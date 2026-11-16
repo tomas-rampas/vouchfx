@@ -1,0 +1,7 @@
+vouchfx emitted-code baseline v1
+suite: tests/Vouchfx.Engine.Compilation.Tests/Corpus/Rejected/capture-empty-mapping.e2e.yaml
+outcome: refused
+stage: schema
+@@@@ diagnostic
+/steps/0/capture/neither	(line 20) Capture entry 'neither' must set at least one of 'jsonpath', 'xpath' - none is present (DSL section 6.1).
+@@@@ end

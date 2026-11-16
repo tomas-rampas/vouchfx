@@ -1,0 +1,398 @@
+vouchfx emitted-code baseline v1
+suite: examples/mq-rabbitmq.e2e.yaml
+outcome: emitted
+namespace: VouchfxGenerated
+steps: 4
+
+@@@@ step 1 of 4
+id: trigger-order-event
+type: http.rest
+provider: Vouchfx.Steps.HttpRest.HttpRestProvider
+retry: false
+timeout-ms: none
+@@@@ step 1 usings
+System
+System.Collections.Generic
+System.Net.Http
+System.Diagnostics
+System.Threading.Tasks
+Vouchfx.Engine.Abstractions
+@@@@ step 1 helpers
+HttpRest_Helpers sha256=4d12af26d4219f1bc2d3ea5286bdf1268638e1ffc96911b948ee37bfdad0ecab
+HttpRest_BodyAssertions sha256=b8e0052f0a55602345e1b981ab24079f1a37115d6864648136c83f5c4e011a62
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
+HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01ce6e1d5c
+@@@@ step 1 statement-block
+{
+    await HttpRest_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::trigger_order_event",
+        "__capture_status::trigger_order_event",
+        "svc::app",
+        "app",
+        "POST",
+        "/orders",
+        "{\u0022customerId\u0022:\u0022cust-1\u0022,\u0022amount\u0022:49.99}",
+        new string[] { },
+        new string[] { },
+        200,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_trigger_order_event,
+        __stepBudgetGoverned_trigger_order_event);
+}
+
+@@@@ step 2 of 4
+id: declare-orders-queue
+type: script.csharp
+provider: Vouchfx.Steps.Script.Csharp.ScriptCsharpProvider
+retry: false
+timeout-ms: none
+@@@@ step 2 usings
+System
+System.Diagnostics
+System.Threading.Tasks
+Vouchfx.Engine.Abstractions
+@@@@ step 2 helpers
+
+@@@@ step 2 statement-block
+{
+    var __sw_declare_orders_queue = System.Diagnostics.Stopwatch.StartNew();
+    Vouchfx.Engine.Abstractions.Verdict __v_declare_orders_queue = Vouchfx.Engine.Abstractions.Verdict.Pass;
+    string? __obs_declare_orders_queue = null;
+    async System.Threading.Tasks.Task __body_declare_orders_queue()
+    {
+        await System.Threading.Tasks.Task.CompletedTask;
+        // ---- begin author code (spliced verbatim) ----
+var connStr = (string)Vars["conn::rmq"];
+var factory = new RabbitMQ.Client.ConnectionFactory { Uri = new Uri(connStr) };
+RabbitMQ.Client.IConnection conn = null;
+RabbitMQ.Client.IChannel channel = null;
+try
+{
+    conn = await factory.CreateConnectionAsync(System.Threading.CancellationToken.None);
+    channel = await conn.CreateChannelAsync(
+        cancellationToken: System.Threading.CancellationToken.None);
+    // durable: true is required — RabbitMQ 4.x deprecates transient
+    // non-exclusive queues (declaring one is refused with AMQP 541
+    // INTERNAL_ERROR "Feature `transient_nonexcl_queues` is deprecated").
+    await channel.QueueDeclareAsync(
+        queue: "orders",
+        durable: true,
+        exclusive: false,
+        autoDelete: false,
+        arguments: null,
+        cancellationToken: System.Threading.CancellationToken.None);
+}
+finally
+{
+    if (channel != null) { await channel.DisposeAsync(); }
+    if (conn != null) { await conn.DisposeAsync(); }
+}
+
+        // ---- end author code ----
+    }
+    try
+    {
+        await __body_declare_orders_queue();
+    }
+    catch (System.OperationCanceledException) when (__stepCt_declare_orders_queue.IsCancellationRequested)
+    {
+        throw;
+    }
+    catch (System.Exception __ex_declare_orders_queue)
+    {
+        __v_declare_orders_queue = Vouchfx.Engine.Abstractions.Verdict.Fail;
+        __obs_declare_orders_queue = __ex_declare_orders_queue.Message;
+    }
+    finally
+    {
+        __sw_declare_orders_queue.Stop();
+    }
+    Vars["__outcome::declare_orders_queue"] = new Vouchfx.Engine.Abstractions.StepOutcome(__v_declare_orders_queue, __sw_declare_orders_queue.ElapsedMilliseconds, __obs_declare_orders_queue);
+}
+
+@@@@ step 3 of 4
+id: publish-order-event
+type: mq-publish.rabbitmq
+provider: Vouchfx.Steps.MqPublish.Rabbitmq.MqPublishRabbitmqProvider
+retry: false
+timeout-ms: none
+@@@@ step 3 usings
+System
+System.Collections.Generic
+System.Diagnostics
+System.Threading
+System.Threading.Tasks
+RabbitMQ.Client
+Vouchfx.Engine.Abstractions
+@@@@ step 3 helpers
+MqPublishRabbitmq_Helpers sha256=3fc3f420a57a8ccaa238db43a525ae127a8d59987a5ee9691a6f30ee32de08fa
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
+@@@@ step 3 statement-block
+{
+    await MqPublishRabbitmq_Helpers.PublishAsync(
+        Vars,
+        Secrets,
+        "__outcome::publish_order_event",
+        "conn::rmq",
+        null,
+        "orders",
+        "{\u0022event\u0022:\u0022order-created\u0022,\u0022orderId\u0022:\u0022ord-001\u0022,\u0022customerId\u0022:\u0022cust-1\u0022}",
+        new string[] { "x-event-type" },
+        new string[] { "order-created" },
+        __stepCt_publish_order_event,
+        __stepBudgetGoverned_publish_order_event);
+}
+
+@@@@ step 4 of 4
+id: assert-order-event
+type: mq-expect.rabbitmq
+provider: Vouchfx.Steps.MqExpect.Rabbitmq.MqExpectRabbitmqProvider
+retry: true
+timeout-ms: 30000
+@@@@ step 4 usings
+System
+System.Collections.Generic
+System.Diagnostics
+System.Threading
+System.Threading.Tasks
+RabbitMQ.Client
+Vouchfx.Engine.Abstractions
+@@@@ step 4 helpers
+MqExpectRabbitmq_Helpers sha256=e18d454cc144af18ff6e1bf0671b6829e71650d79b23f68b0b207104e897faf8
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
+@@@@ step 4 statement-block
+{
+    await MqExpectRabbitmq_Helpers.ExpectAsync(
+        Vars,
+        Secrets,
+        "__outcome::assert_order_event",
+        "conn::rmq",
+        "orders",
+        "order-created",
+        new string[] { "x-event-type" },
+        new string[] { "order-created" },
+        new string[] { "$.orderId" },
+        new string[] { "ord-001" },
+        __stepCt_assert_order_event,
+        __stepBudgetGoverned_assert_order_event);
+}
+@@@@ assembled-script
+using System;
+using System.Collections.Generic;
+using System.Net.Http;
+using System.Diagnostics;
+using System.Threading.Tasks;
+using Vouchfx.Engine.Abstractions;
+using System.Threading;
+using RabbitMQ.Client;
+
+// [helper HttpRest_Helpers sha256=4d12af26d4219f1bc2d3ea5286bdf1268638e1ffc96911b948ee37bfdad0ecab: body elided, recorded by name and hash]
+// [helper HttpRest_BodyAssertions sha256=b8e0052f0a55602345e1b981ab24079f1a37115d6864648136c83f5c4e011a62: body elided, recorded by name and hash]
+// [helper Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d: body elided, recorded by name and hash]
+// [helper Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1: body elided, recorded by name and hash]
+// [helper HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01ce6e1d5c: body elided, recorded by name and hash]
+// [helper MqPublishRabbitmq_Helpers sha256=3fc3f420a57a8ccaa238db43a525ae127a8d59987a5ee9691a6f30ee32de08fa: body elided, recorded by name and hash]
+// [helper MqExpectRabbitmq_Helpers sha256=e18d454cc144af18ff6e1bf0671b6829e71650d79b23f68b0b207104e897faf8: body elided, recorded by name and hash]
+
+var __vouchfxRunCt = Services.TryGetValue("__vouchfx_run_cancellation", out var __vouchfxRunToken) && __vouchfxRunToken is System.Threading.CancellationToken __vouchfxToken
+    ? __vouchfxToken : System.Threading.CancellationToken.None;
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_trigger_order_event = __vouchfxRunCt;
+    _ = __stepCt_trigger_order_event;
+    bool __stepBudgetGoverned_trigger_order_event = false;
+    _ = __stepBudgetGoverned_trigger_order_event;
+    StepEvents?.OnStepStarted("trigger-order-event");
+{
+    await HttpRest_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::trigger_order_event",
+        "__capture_status::trigger_order_event",
+        "svc::app",
+        "app",
+        "POST",
+        "/orders",
+        "{\u0022customerId\u0022:\u0022cust-1\u0022,\u0022amount\u0022:49.99}",
+        new string[] { },
+        new string[] { },
+        200,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_trigger_order_event,
+        __stepBudgetGoverned_trigger_order_event);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::trigger_order_event");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "trigger-order-event",
+        Vars.TryGetValue("__outcome::trigger_order_event", out var __sco_trigger_order_event) ? __sco_trigger_order_event as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::trigger_order_event", out var __scs_trigger_order_event) ? __scs_trigger_order_event as string : null);
+}
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_declare_orders_queue = __vouchfxRunCt;
+    _ = __stepCt_declare_orders_queue;
+    bool __stepBudgetGoverned_declare_orders_queue = false;
+    _ = __stepBudgetGoverned_declare_orders_queue;
+    StepEvents?.OnStepStarted("declare-orders-queue");
+{
+    var __sw_declare_orders_queue = System.Diagnostics.Stopwatch.StartNew();
+    Vouchfx.Engine.Abstractions.Verdict __v_declare_orders_queue = Vouchfx.Engine.Abstractions.Verdict.Pass;
+    string? __obs_declare_orders_queue = null;
+    async System.Threading.Tasks.Task __body_declare_orders_queue()
+    {
+        await System.Threading.Tasks.Task.CompletedTask;
+        // ---- begin author code (spliced verbatim) ----
+var connStr = (string)Vars["conn::rmq"];
+var factory = new RabbitMQ.Client.ConnectionFactory { Uri = new Uri(connStr) };
+RabbitMQ.Client.IConnection conn = null;
+RabbitMQ.Client.IChannel channel = null;
+try
+{
+    conn = await factory.CreateConnectionAsync(System.Threading.CancellationToken.None);
+    channel = await conn.CreateChannelAsync(
+        cancellationToken: System.Threading.CancellationToken.None);
+    // durable: true is required — RabbitMQ 4.x deprecates transient
+    // non-exclusive queues (declaring one is refused with AMQP 541
+    // INTERNAL_ERROR "Feature `transient_nonexcl_queues` is deprecated").
+    await channel.QueueDeclareAsync(
+        queue: "orders",
+        durable: true,
+        exclusive: false,
+        autoDelete: false,
+        arguments: null,
+        cancellationToken: System.Threading.CancellationToken.None);
+}
+finally
+{
+    if (channel != null) { await channel.DisposeAsync(); }
+    if (conn != null) { await conn.DisposeAsync(); }
+}
+
+        // ---- end author code ----
+    }
+    try
+    {
+        await __body_declare_orders_queue();
+    }
+    catch (System.OperationCanceledException) when (__stepCt_declare_orders_queue.IsCancellationRequested)
+    {
+        throw;
+    }
+    catch (System.Exception __ex_declare_orders_queue)
+    {
+        __v_declare_orders_queue = Vouchfx.Engine.Abstractions.Verdict.Fail;
+        __obs_declare_orders_queue = __ex_declare_orders_queue.Message;
+    }
+    finally
+    {
+        __sw_declare_orders_queue.Stop();
+    }
+    Vars["__outcome::declare_orders_queue"] = new Vouchfx.Engine.Abstractions.StepOutcome(__v_declare_orders_queue, __sw_declare_orders_queue.ElapsedMilliseconds, __obs_declare_orders_queue);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::declare_orders_queue");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "declare-orders-queue",
+        Vars.TryGetValue("__outcome::declare_orders_queue", out var __sco_declare_orders_queue) ? __sco_declare_orders_queue as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::declare_orders_queue", out var __scs_declare_orders_queue) ? __scs_declare_orders_queue as string : null);
+}
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_publish_order_event = __vouchfxRunCt;
+    _ = __stepCt_publish_order_event;
+    bool __stepBudgetGoverned_publish_order_event = false;
+    _ = __stepBudgetGoverned_publish_order_event;
+    StepEvents?.OnStepStarted("publish-order-event");
+{
+    await MqPublishRabbitmq_Helpers.PublishAsync(
+        Vars,
+        Secrets,
+        "__outcome::publish_order_event",
+        "conn::rmq",
+        null,
+        "orders",
+        "{\u0022event\u0022:\u0022order-created\u0022,\u0022orderId\u0022:\u0022ord-001\u0022,\u0022customerId\u0022:\u0022cust-1\u0022}",
+        new string[] { "x-event-type" },
+        new string[] { "order-created" },
+        __stepCt_publish_order_event,
+        __stepBudgetGoverned_publish_order_event);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::publish_order_event");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "publish-order-event",
+        Vars.TryGetValue("__outcome::publish_order_event", out var __sco_publish_order_event) ? __sco_publish_order_event as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::publish_order_event", out var __scs_publish_order_event) ? __scs_publish_order_event as string : null);
+}
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    StepEvents?.OnStepStarted("assert-order-event");
+    async System.Threading.Tasks.Task<Vouchfx.Engine.Abstractions.StepOutcome> __attempt_assert_order_event(System.Threading.CancellationToken __ct_assert_order_event)
+    {
+        System.Threading.CancellationToken __stepCt_assert_order_event = __ct_assert_order_event;
+        _ = __stepCt_assert_order_event;
+        bool __stepBudgetGoverned_assert_order_event = false;
+        _ = __stepBudgetGoverned_assert_order_event;
+{
+    await MqExpectRabbitmq_Helpers.ExpectAsync(
+        Vars,
+        Secrets,
+        "__outcome::assert_order_event",
+        "conn::rmq",
+        "orders",
+        "order-created",
+        new string[] { "x-event-type" },
+        new string[] { "order-created" },
+        new string[] { "$.orderId" },
+        new string[] { "ord-001" },
+        __stepCt_assert_order_event,
+        __stepBudgetGoverned_assert_order_event);
+}
+        var __o_assert_order_event = Vars.TryGetValue("__outcome::assert_order_event", out var __raw_assert_order_event) && __raw_assert_order_event is Vouchfx.Engine.Abstractions.StepOutcome __so_assert_order_event
+            ? __so_assert_order_event
+            : new Vouchfx.Engine.Abstractions.StepOutcome(Vouchfx.Engine.Abstractions.Verdict.Inconclusive, 0L, null);
+        Vars.Remove("__outcome::assert_order_event");
+        return __o_assert_order_event;
+    }
+    await Vouchfx.Engine.Abstractions.Retry.RetryRunner.PollAsync(
+        Vars, "__outcome::assert_order_event", "__attempts::assert_order_event", 30000L, null, __attempt_assert_order_event, StepEvents, "assert-order-event", ct: __vouchfxRunCt);
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::assert_order_event");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "assert-order-event",
+        Vars.TryGetValue("__outcome::assert_order_event", out var __sco_assert_order_event) ? __sco_assert_order_event as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::assert_order_event", out var __scs_assert_order_event) ? __scs_assert_order_event as string : null);
+}
+@@@@ end

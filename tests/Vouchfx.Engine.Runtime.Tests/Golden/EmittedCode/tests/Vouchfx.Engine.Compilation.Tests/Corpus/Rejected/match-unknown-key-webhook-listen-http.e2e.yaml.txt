@@ -1,0 +1,7 @@
+vouchfx emitted-code baseline v1
+suite: tests/Vouchfx.Engine.Compilation.Tests/Corpus/Rejected/match-unknown-key-webhook-listen-http.e2e.yaml
+outcome: refused
+stage: schema
+@@@@ diagnostic
+/steps/0/match/extra	(line 16) Unknown property 'extra'
+@@@@ end

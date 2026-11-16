@@ -1,0 +1,7 @@
+vouchfx emitted-code baseline v1
+suite: tests/Vouchfx.Engine.Compilation.Tests/Corpus/Rejected/service-ports-malformed-pin.e2e.yaml
+outcome: refused
+stage: schema
+@@@@ diagnostic
+/environment/services/broker/ports/0	(line 20) The string value is not a match for the indicated regular expression
+@@@@ end

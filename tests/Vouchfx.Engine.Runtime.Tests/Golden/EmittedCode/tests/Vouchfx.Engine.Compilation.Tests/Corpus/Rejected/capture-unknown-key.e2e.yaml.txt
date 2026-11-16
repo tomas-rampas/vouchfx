@@ -1,0 +1,7 @@
+vouchfx emitted-code baseline v1
+suite: tests/Vouchfx.Engine.Compilation.Tests/Corpus/Rejected/capture-unknown-key.e2e.yaml
+outcome: refused
+stage: schema
+@@@@ diagnostic
+/steps/0/capture/typo/jsonpat	(line 15) Unknown property 'jsonpat' on capture entry 'typo'
+@@@@ end

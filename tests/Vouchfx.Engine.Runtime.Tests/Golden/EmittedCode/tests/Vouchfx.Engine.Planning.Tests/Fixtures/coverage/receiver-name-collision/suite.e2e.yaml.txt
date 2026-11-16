@@ -1,0 +1,7 @@
+vouchfx emitted-code baseline v1
+suite: tests/Vouchfx.Engine.Planning.Tests/Fixtures/coverage/receiver-name-collision/suite.e2e.yaml
+outcome: refused
+stage: pipeline
+@@@@ diagnostic
+-	host resource 'api' (kind 'otlp-receiver', declared by step 'watch-api-trace') collides with a declared service (environment.services.api). A host resource (e.g. a webhook listener) cannot share a name with a declared service or with a dependency's own sidecar endpoint - rename one of the two.
+@@@@ end

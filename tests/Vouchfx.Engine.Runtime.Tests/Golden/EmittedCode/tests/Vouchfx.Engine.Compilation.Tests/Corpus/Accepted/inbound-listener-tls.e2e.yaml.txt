@@ -1,0 +1,7 @@
+vouchfx emitted-code baseline v1
+suite: tests/Vouchfx.Engine.Compilation.Tests/Corpus/Accepted/inbound-listener-tls.e2e.yaml
+outcome: refused
+stage: pipeline
+@@@@ diagnostic
+security-preflight	listeners.callbacks.security.serverCert: declared file 'certs/server.pem' is missing or unreadable.
+@@@@ end

@@ -1,0 +1,198 @@
+vouchfx emitted-code baseline v1
+suite: tests/Vouchfx.Engine.Compilation.Tests/Corpus/Accepted/surface-expect-json-and-body-contains.e2e.yaml
+outcome: emitted
+namespace: VouchfxGenerated
+steps: 2
+
+@@@@ step 1 of 2
+id: get-order
+type: http.rest
+provider: Vouchfx.Steps.HttpRest.HttpRestProvider
+retry: false
+timeout-ms: none
+@@@@ step 1 usings
+System
+System.Collections.Generic
+System.Net.Http
+System.Diagnostics
+System.Threading.Tasks
+Vouchfx.Engine.Abstractions
+@@@@ step 1 helpers
+HttpRest_Helpers sha256=4d12af26d4219f1bc2d3ea5286bdf1268638e1ffc96911b948ee37bfdad0ecab
+HttpRest_BodyAssertions sha256=b8e0052f0a55602345e1b981ab24079f1a37115d6864648136c83f5c4e011a62
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
+HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01ce6e1d5c
+@@@@ step 1 statement-block
+{
+    await HttpRest_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::get_order",
+        "__capture_status::get_order",
+        "svc::app",
+        "app",
+        "GET",
+        "/api",
+        null,
+        new string[] { },
+        new string[] { },
+        200,
+        new string[] { "$.id", "$.status", "$.quantity", "$.price", "$.gift", "$.cancelledAt", "$.note", "$.lines[?@.sku == \u0027SKU-1\u0027].quantity", "$.audit.caller", "$.createdAt", "$..password" },
+        new string[] { "{orderId}", "PENDING", "2", "1.5", "false", "null", "", "2", "${secret:env/API_CLIENT_ID}", "", "" },
+        new string[] { "equals", "equals", "equals", "equals", "equals", "equals", "equals", "equals", "equals", "exists", "absent" },
+        "Hostname",
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_get_order,
+        __stepBudgetGoverned_get_order);
+}
+
+@@@@ step 2 of 2
+id: get-text
+type: http.rest
+provider: Vouchfx.Steps.HttpRest.HttpRestProvider
+retry: false
+timeout-ms: none
+@@@@ step 2 usings
+System
+System.Collections.Generic
+System.Net.Http
+System.Diagnostics
+System.Threading.Tasks
+Vouchfx.Engine.Abstractions
+@@@@ step 2 helpers
+HttpRest_Helpers sha256=4d12af26d4219f1bc2d3ea5286bdf1268638e1ffc96911b948ee37bfdad0ecab
+HttpRest_BodyAssertions sha256=b8e0052f0a55602345e1b981ab24079f1a37115d6864648136c83f5c4e011a62
+Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d
+Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1
+HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01ce6e1d5c
+@@@@ step 2 statement-block
+{
+    await HttpRest_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::get_text",
+        "__capture_status::get_text",
+        "svc::app",
+        "app",
+        "GET",
+        "/",
+        null,
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        "42",
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_get_text,
+        __stepBudgetGoverned_get_text);
+}
+@@@@ assembled-script
+using System;
+using System.Collections.Generic;
+using System.Net.Http;
+using System.Diagnostics;
+using System.Threading.Tasks;
+using Vouchfx.Engine.Abstractions;
+
+// [helper HttpRest_Helpers sha256=4d12af26d4219f1bc2d3ea5286bdf1268638e1ffc96911b948ee37bfdad0ecab: body elided, recorded by name and hash]
+// [helper HttpRest_BodyAssertions sha256=b8e0052f0a55602345e1b981ab24079f1a37115d6864648136c83f5c4e011a62: body elided, recorded by name and hash]
+// [helper Substitute_Helpers sha256=84fe3893f80e3873684ad1ce98f6dfd218307841dc051f484946ef6fe163180d: body elided, recorded by name and hash]
+// [helper Secret_Helpers sha256=ae0097688f9bbcc829b0d3f6c38b03361f017fd187b1aaf9e6509fc16ab9d7c1: body elided, recorded by name and hash]
+// [helper HttpTls_Helpers sha256=00b1396228dc9f9f2422fc5f1b20bf41ff666b54258cfc5c6d750d01ce6e1d5c: body elided, recorded by name and hash]
+
+var __vouchfxRunCt = Services.TryGetValue("__vouchfx_run_cancellation", out var __vouchfxRunToken) && __vouchfxRunToken is System.Threading.CancellationToken __vouchfxToken
+    ? __vouchfxToken : System.Threading.CancellationToken.None;
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_get_order = __vouchfxRunCt;
+    _ = __stepCt_get_order;
+    bool __stepBudgetGoverned_get_order = false;
+    _ = __stepBudgetGoverned_get_order;
+    StepEvents?.OnStepStarted("get-order");
+{
+    await HttpRest_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::get_order",
+        "__capture_status::get_order",
+        "svc::app",
+        "app",
+        "GET",
+        "/api",
+        null,
+        new string[] { },
+        new string[] { },
+        200,
+        new string[] { "$.id", "$.status", "$.quantity", "$.price", "$.gift", "$.cancelledAt", "$.note", "$.lines[?@.sku == \u0027SKU-1\u0027].quantity", "$.audit.caller", "$.createdAt", "$..password" },
+        new string[] { "{orderId}", "PENDING", "2", "1.5", "false", "null", "", "2", "${secret:env/API_CLIENT_ID}", "", "" },
+        new string[] { "equals", "equals", "equals", "equals", "equals", "equals", "equals", "equals", "equals", "exists", "absent" },
+        "Hostname",
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_get_order,
+        __stepBudgetGoverned_get_order);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::get_order");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "get-order",
+        Vars.TryGetValue("__outcome::get_order", out var __sco_get_order) ? __sco_get_order as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::get_order", out var __scs_get_order) ? __scs_get_order as string : null);
+}
+{
+    __vouchfxRunCt.ThrowIfCancellationRequested();
+    System.Threading.CancellationToken __stepCt_get_text = __vouchfxRunCt;
+    _ = __stepCt_get_text;
+    bool __stepBudgetGoverned_get_text = false;
+    _ = __stepBudgetGoverned_get_text;
+    StepEvents?.OnStepStarted("get-text");
+{
+    await HttpRest_Helpers.ExecuteAsync(
+        Vars,
+        Secrets,
+        Security,
+        "__outcome::get_text",
+        "__capture_status::get_text",
+        "svc::app",
+        "app",
+        "GET",
+        "/",
+        null,
+        new string[] { },
+        new string[] { },
+        null,
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        "42",
+        new string[] { },
+        new string[] { },
+        new string[] { },
+        __stepCt_get_text,
+        __stepBudgetGoverned_get_text);
+}
+    if (__vouchfxRunCt.IsCancellationRequested)
+    {
+        Vars.Remove("__outcome::get_text");
+        __vouchfxRunCt.ThrowIfCancellationRequested();
+    }
+    StepEvents?.OnStepCompleted(
+        "get-text",
+        Vars.TryGetValue("__outcome::get_text", out var __sco_get_text) ? __sco_get_text as Vouchfx.Engine.Abstractions.StepOutcome : null,
+        Vars.TryGetValue("__capture_status::get_text", out var __scs_get_text) ? __scs_get_text as string : null);
+}
+@@@@ end
