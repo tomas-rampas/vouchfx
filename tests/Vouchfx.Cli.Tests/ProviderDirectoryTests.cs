@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.CommandLine;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
@@ -184,6 +185,101 @@ public sealed class ProviderDirectoryTests
             var parsed = command.Parse(arguments.Concat(new[] { "--providers", "one", "--providers", "two", "--no-default-providers" }).ToArray());
             Assert.Empty(parsed.Errors);
         }
+    }
+
+    // Shared-framework assemblies outside Microsoft.NETCore.App (Microsoft.AspNetCore.App carries Microsoft.Extensions.*)
+    // follow the same "requested <= host" rule as the runtime directory; app-local assemblies need an exact match.
+    private static readonly Type s_aspNetCoreFrameworkType = typeof(Microsoft.Extensions.Logging.ILogger);
+    private static readonly Type s_appLocalType = typeof(Microsoft.Extensions.AI.AIFunction);
+
+    [Fact]
+    public void Host_assembly_fixtures_come_from_the_expected_locations()
+    {
+        var runtimeDirectory = Path.GetFullPath(System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory())
+            .TrimEnd(Path.DirectorySeparatorChar);
+        var frameworkAssembly = s_aspNetCoreFrameworkType.Assembly.Location;
+        Assert.NotEqual(runtimeDirectory, Path.GetDirectoryName(frameworkAssembly));
+        Assert.Contains("Microsoft.AspNetCore.App", frameworkAssembly);
+        Assert.Equal(AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar),
+            Path.GetDirectoryName(s_appLocalType.Assembly.Location));
+    }
+
+    [Theory]
+    [InlineData(0, true)]   // same version as the host's shared-framework copy
+    [InlineData(-1, true)]  // lower: what a provider built against the previous framework packages carries
+    [InlineData(1, false)]  // higher than the host: still refused
+    public void Shared_framework_reference_outside_the_runtime_directory_may_not_exceed_the_host(int delta, bool admitted)
+    {
+        var directory = Temp();
+        var reference = ReferenceVersion(s_aspNetCoreFrameworkType, delta);
+        var path = CompileAgainstForgedReference(directory, Unique(), s_aspNetCoreFrameworkType.Assembly, reference);
+        var load = () => ProviderDirectoryScanner.Load(new[] { directory });
+        var compatible = ProviderDirectoryScanner.CreateHostCompatibilityCheck()(directory);
+        Assert.Equal(admitted, compatible);
+        if (admitted)
+            Assert.Empty(load());
+        else
+        {
+            var failure = Assert.Throws<ProviderLoadException>(load);
+            Assert.Contains(path, failure.Message);
+            Assert.Contains("conflicting with host", failure.Message);
+        }
+    }
+
+    [Theory]
+    [InlineData(0, true)]
+    [InlineData(-1, false)] // app-local assemblies keep needing an exact match
+    [InlineData(1, false)]
+    public void App_local_reference_needs_an_exact_match(int delta, bool admitted)
+    {
+        var directory = Temp();
+        var reference = ReferenceVersion(s_appLocalType, delta);
+        var path = CompileAgainstForgedReference(directory, Unique(), s_appLocalType.Assembly, reference);
+        var load = () => ProviderDirectoryScanner.Load(new[] { directory });
+        Assert.Equal(admitted, ProviderDirectoryScanner.CreateHostCompatibilityCheck()(directory));
+        if (admitted)
+            Assert.Empty(load());
+        else
+            Assert.Contains(path, Assert.Throws<ProviderLoadException>(load).Message);
+    }
+
+    private static Version ReferenceVersion(Type host, int delta)
+    {
+        var version = host.Assembly.GetName().Version!;
+        return delta switch
+        {
+            0 => version,
+            < 0 => new Version(version.Major - 2, 0, 0, 0),
+            _ => new Version(version.Major + 1, 0, 0, 0),
+        };
+    }
+
+    // Compiles a provider-less assembly whose only reference to the host assembly carries the given version and the
+    // host assembly's real public key, by compiling against a delay-signed stand-in of that identity.
+    private static string CompileAgainstForgedReference(string directory, string name, System.Reflection.Assembly host, Version version)
+    {
+        var identity = host.GetName();
+        var stub = CSharpCompilation.Create(identity.Name,
+            new[] { CSharpSyntaxTree.ParseText($"[assembly: System.Reflection.AssemblyVersion(\"{version}\")] namespace ForgedHost {{ public interface IMarker {{ }} }}") },
+            ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!).Split(Path.PathSeparator)
+                .Where(path => Path.GetFileNameWithoutExtension(path) is "System.Runtime" or "System.Private.CoreLib")
+                .Select(path => MetadataReference.CreateFromFile(path)),
+            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary)
+                .WithCryptoPublicKey(identity.GetPublicKey()!.ToImmutableArray()).WithDelaySign(true));
+        using var stubImage = new MemoryStream();
+        var emitted = stub.Emit(stubImage, options: new Microsoft.CodeAnalysis.Emit.EmitOptions(metadataOnly: true));
+        Assert.True(emitted.Success, string.Join(Environment.NewLine, emitted.Diagnostics));
+        var references = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!).Split(Path.PathSeparator)
+            .Where(path => Path.GetFileNameWithoutExtension(path) != identity.Name)
+            .Select(path => (MetadataReference)MetadataReference.CreateFromFile(path))
+            .Append(MetadataReference.CreateFromImage(stubImage.ToArray()));
+        var compilation = CSharpCompilation.Create(name,
+            new[] { CSharpSyntaxTree.ParseText("public sealed class UsesHost { public ForgedHost.IMarker? Marker; }") }, references,
+            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+        var path = Path.Combine(directory, name + ".dll");
+        var result = compilation.Emit(path);
+        Assert.True(result.Success, string.Join(Environment.NewLine, result.Diagnostics));
+        return path;
     }
 
     private static string Compile(string directory, string name, string source, string[]? extraReferences = null, bool includeSdk = true)

@@ -153,6 +153,32 @@ jobs:
             | tee "$RUNNER_TEMP/compatibility-runtime.log"
           grep -F "RUNTIME=$expected_major." "$RUNNER_TEMP/compatibility-runtime.log"
 
+      # The example provider targets net8.0, the frozen provider-contract target
+      # framework; this proves a genuinely net8.0-built provider loads and runs
+      # in the installed net10.0 CLI.
+      - name: Run the net8.0 example provider with the installed CLI
+        run: |
+          set -euo pipefail
+          providers="$RUNNER_TEMP/compatibility-providers"
+          dotnet build examples/Example.Steps.Hello -c Release --no-restore -warnaserror
+          mkdir -p "$providers"
+          cp examples/Example.Steps.Hello/bin/Release/net8.0/Example.Steps.Hello.dll "$providers/"
+          tools="$RUNNER_TEMP/compatibility-tools"
+          suite="$RUNNER_TEMP/compatibility-hello.e2e.yaml"
+          cat > "$suite" <<YAML
+          steps:
+            - id: say-hello
+              type: hello.console
+              message: "hello, vouchfx"
+              expect: "hello, vouchfx"
+          YAML
+          "$tools/vouchfx" validate "$suite" --providers "$providers" --no-default-providers
+          "$tools/vouchfx" run "$suite" --providers "$providers" --no-default-providers \
+            --events "$RUNNER_TEMP/compatibility-hello-events.jsonl" \
+            --fail-on-env-error --fail-on-inconclusive --no-telemetry --no-decorations \
+            | tee "$RUNNER_TEMP/compatibility-hello.log"
+          grep -F "step 'say-hello': PASS" "$RUNNER_TEMP/compatibility-hello.log"
+
   # Runtime-only roll-forward proof (the role the 9.0 and 10.0 lanes played for
   # the net8.0 tool before the move). Build and pack with the .NET 10 SDK, then
   # keep only the newer major's SDK and shared frameworks, so the installed
@@ -215,6 +241,12 @@ jobs:
           packages="$RUNNER_TEMP/compatibility-packages"
           dotnet restore vouchfx.sln
           dotnet build vouchfx.sln -c Release --no-restore -warnaserror
+          # The net8.0 example provider is staged here, while the SDK exists: only the
+          # newer runtime remains when it runs below.
+          dotnet build examples/Example.Steps.Hello -c Release --no-restore -warnaserror
+          providers="$RUNNER_TEMP/compatibility-providers"
+          mkdir -p "$providers"
+          cp examples/Example.Steps.Hello/bin/Release/net8.0/Example.Steps.Hello.dll "$providers/"
           dotnet pack src/Cli/Vouchfx.Cli/Vouchfx.Cli.csproj -c Release --no-build \
             -p:PackageVersion=0.0.0-compatibility -o "$packages"
           python3 scripts/check_distribution.py --package "$packages/vouchfx.0.0.0-compatibility.nupkg" \
@@ -268,6 +300,28 @@ jobs:
             --fail-on-env-error --fail-on-inconclusive --no-telemetry --no-decorations \
             | tee "$RUNNER_TEMP/compatibility-runtime.log"
           grep -F "RUNTIME=$expected_major." "$RUNNER_TEMP/compatibility-runtime.log"
+
+      # A net8.0-built provider must also load when the host rolled forward.
+      - name: Run the net8.0 example provider on the newer runtime
+        working-directory: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          tools="$RUNNER_TEMP/compatibility-tools"
+          providers="$RUNNER_TEMP/compatibility-providers"
+          suite="$RUNNER_TEMP/compatibility-hello.e2e.yaml"
+          cat > "$suite" <<YAML
+          steps:
+            - id: say-hello
+              type: hello.console
+              message: "hello, vouchfx"
+              expect: "hello, vouchfx"
+          YAML
+          "$tools/vouchfx" validate "$suite" --providers "$providers" --no-default-providers
+          "$tools/vouchfx" run "$suite" --providers "$providers" --no-default-providers \
+            --events "$RUNNER_TEMP/compatibility-hello-events.jsonl" \
+            --fail-on-env-error --fail-on-inconclusive --no-telemetry --no-decorations \
+            | tee "$RUNNER_TEMP/compatibility-hello.log"
+          grep -F "step 'say-hello': PASS" "$RUNNER_TEMP/compatibility-hello.log"
 
   # build.yml keeps its existing CI lanes and check names. The `docker` lane
   # exercises all Docker tests with only the selected SDK and runtime installed.
