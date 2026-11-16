@@ -77,7 +77,7 @@ def main():
     sdk = run("sdk", [dotnet, "--version"]).stdout.decode().strip()
     if not sdk.startswith("10.0."):
         raise AssertionError(f"Expected actual .NET 10 SDK, got {sdk}")
-    run("solution", [dotnet, "new", "sln", "--name", "Scheduling"])
+    run("solution", [dotnet, "new", "sln", "--format", "sln", "--name", "Scheduling"])
     projects = []
     for name in ["ProbeA", "ProbeB"]:
         folder = scratch / name
